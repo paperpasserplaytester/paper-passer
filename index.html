@@ -20,12 +20,11 @@
     touch-action: none; cursor: crosshair;
   }
   @supports (height: 100dvh) { canvas { width: min(100vw, 177.7dvh); } }
-  /* touch mode: fill the whole screen, forced landscape (html.rot = phone held upright, page turned 90deg) */
-  html.fill canvas { width: 100vw; height: 100vh; aspect-ratio: auto; }
-  @supports (height: 100dvh) { html.fill canvas { height: 100dvh; } }
+  /* touch mode: forced landscape (html.rot = phone held upright, page turned 90deg); the game keeps its 16:9 shape (never stretched) */
   html.rot body { inset: auto; top: 0; left: 0; width: 100vh; height: 100vw; transform-origin: 0 0; transform: translateX(100vw) rotate(90deg); }
   @supports (height: 100dvh) { html.rot body { width: 100dvh; } }
-  html.rot canvas { width: 100%; height: 100%; }
+  html.rot canvas { width: min(100vh, 177.7vw); }
+  @supports (height: 100dvh) { html.rot canvas { width: min(100dvh, 177.7vw); } }
   /* touch controls (see "// --- mobile") */
   #tui { position: fixed; inset: 0; pointer-events: none; display: none; z-index: 5; font: bold 11px/1 system-ui, sans-serif; color: #fff; }
   #tui.on { display: block; }
@@ -12072,7 +12071,8 @@ function mirrorFor() {
   const m = MATCH.home === 'you' ? -1 : 1;
   return game.quarter === 2 || game.quarter === 3 ? -m : m;
 }
-const camZ = () => tut ? Math.max(tutZoomFloor(), zoom * userZoom * passPull) : zoom * userZoom * passPull;
+const TOUCH_ZOOM = 1.2;   // phones: the game is zoomed in a bit more
+const camZ = () => tut ? Math.max(tutZoomFloor(), zoom * userZoom * passPull * (TOUCH ? TOUCH_ZOOM : 1)) : zoom * userZoom * passPull * (TOUCH ? TOUCH_ZOOM : 1);
 
 // --- drawing ---------------------------------------------------------------------------
 const DIVE_EASE = 0.68;   // a dive / tackle / slide rotates from upright to laid out over this fraction of it
@@ -17757,7 +17757,8 @@ function drawScoreboard() {
     ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(255,255,255,0.9)';
     ctx.font = 'bold 14px monospace';
-    ctx.fillText((ball ? '▶ ' : '') + (name || ''), x + 10, top + 19, w - 62);
+    if (ball) { ctx.beginPath(); ctx.moveTo(x + 10, top + 8); ctx.lineTo(x + 10, top + 20); ctx.lineTo(x + 19, top + 14); ctx.closePath(); ctx.fill(); }   // (a plain triangle: the ▶ character draws as an emoji on phones)
+    ctx.fillText(name || '', x + (ball ? 24 : 10), top + 19, w - (ball ? 76 : 62));
     for (let i = 0; i < 3; i++) {                    // timeout pips
       ctx.fillStyle = i < timeouts ? '#ffd94a' : 'rgba(0,0,0,0.35)';
       ctx.fillRect(x + 10 + i * 14, top + 27, 10, 5);
@@ -26460,14 +26461,14 @@ addEventListener('resize', fitScreen);
 const TSETS = {
   // (no timeout / next / celebrate buttons: a tap anywhere is NEXT, big plays and scores celebrate on their own; run / kickoff / defense sprint on their own,
   // and hurdle / stiff arm / truck / dive / hit stick / jump are swipes: see SWIPE below)
-  pre:    [['SNAP', 'tap', 'Space', 'big'], ['AUDIBLE', 'tap', 'KeyQ'], ['LOB / BULLET', 'tap', 'KeyV']],
+  pre:    [['SNAP', 'tap', 'Space', 'big'], ['LOB / BULLET', 'tap', 'KeyV']],
   next:   [],
   tap:    [],
   flight: [['DIVE (SWIPE DOWN)', 'tap', 'KeyS'], ['ONE HAND (SWIPE BACK)', 'tap', 'KeyD'], ['RUN CATCH (SWIPE FORWARD)', 'hold', 'KeyA']],
   pocket: [['SPIN', 'tap', 'KeyR', 'big'], ['JUKE UP', 'dbl', 'KeyW'], ['JUKE DOWN', 'dbl', 'KeyS'], ['STIFF ARM', 'hold', 'KeyQ'], ['STEP UP', 'hold', 'KeyA']],
   run:    [['SPIN', 'tap', 'KeyR', 'big'], ['JUKE UP', 'dbl', 'KeyW'], ['JUKE DOWN', 'dbl', 'KeyS']],
   kickoff: [['SPIN', 'tap', 'KeyR', 'big'], ['JUKE UP', 'dbl', 'KeyW'], ['JUKE DOWN', 'dbl', 'KeyS'], ['KNEEL / FAIR', 'tap', 'KeyD']],
-  def:    [['SWITCH', 'tap', 'KeyO', 'big'], ['STRIP', 'tap', 'KeyF']],
+  def:    [],   // (tap a defender to switch to him)
   replay: [['PAUSE', 'tap', 'Space', 'big']],
 };
 function tuiWhich() {
