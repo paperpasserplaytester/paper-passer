@@ -2,19 +2,44 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-fullscreen">
+<meta name="apple-mobile-web-app-title" content="Paper Passer">
+<meta name="theme-color" content="#111111">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <title>Paper Passer</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #111; }
-  body { display: flex; align-items: center; justify-content: center; }
+  html, body { margin: 0; height: 100%; background: #111; overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  body { display: flex; align-items: center; justify-content: center; position: fixed; inset: 0; }
   canvas {
     width: min(100vw, 177.7vh); aspect-ratio: 16 / 9;
     touch-action: none; cursor: crosshair;
   }
+  @supports (height: 100dvh) { canvas { width: min(100vw, 177.7dvh); } }
+  /* touch controls (see "// --- mobile") */
+  #tui { position: fixed; inset: 0; pointer-events: none; display: none; z-index: 5; font: bold 11px/1 system-ui, sans-serif; color: #fff; }
+  #tui.on { display: block; }
+  #tui * { touch-action: none; -webkit-user-select: none; user-select: none; }
+  #tpad { position: absolute; left: max(3vmin, env(safe-area-inset-left)); bottom: max(3vmin, env(safe-area-inset-bottom)); width: 30vmin; height: 30vmin; max-width: 190px; max-height: 190px; border-radius: 50%; background: rgba(255,255,255,.12); border: 2px solid rgba(255,255,255,.35); pointer-events: auto; }
+  #tknob { position: absolute; left: 50%; top: 50%; width: 42%; height: 42%; margin: -21% 0 0 -21%; border-radius: 50%; background: rgba(255,255,255,.4); border: 2px solid rgba(255,255,255,.7); }
+  #tbtns { position: absolute; right: max(2vmin, env(safe-area-inset-right)); bottom: max(2vmin, env(safe-area-inset-bottom)); display: flex; flex-direction: row-reverse; flex-wrap: wrap-reverse; gap: 1.6vmin; width: min(calc(46vmin + 3.2vmin), 300px); justify-content: flex-start; align-content: flex-start; }
+  .tb { pointer-events: auto; width: 15vmin; height: 15vmin; max-width: 92px; max-height: 92px; border-radius: 50%; background: rgba(20,24,40,.55); border: 2px solid rgba(255,255,255,.55); display: flex; align-items: center; justify-content: center; text-align: center; font-size: clamp(9px, 2.3vmin, 13px); letter-spacing: .3px; }
+  .tb.big { background: rgba(255,170,40,.5); }
+  .tb.on { background: rgba(255,255,255,.55); color: #000; }
+  #tpause { position: absolute; top: max(1.5vmin, env(safe-area-inset-top)); right: max(1.5vmin, env(safe-area-inset-right)); width: 9vmin; height: 9vmin; max-width: 52px; max-height: 52px; border-radius: 12px; pointer-events: auto; background: rgba(20,24,40,.55); border: 2px solid rgba(255,255,255,.55); display: flex; align-items: center; justify-content: center; font-size: 16px; }
+  #trot { position: fixed; inset: 0; background: #111; color: #fff; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 14px; font: 600 20px system-ui, sans-serif; z-index: 9; text-align: center; padding: 20px; }
+  #trot.on { display: flex; }
+  #trot b { font-size: 56px; }
 </style>
 </head>
 <body>
 <canvas id="game" width="1280" height="720"></canvas>
+<div id="tui"><div id="tpad"><div id="tknob"></div></div><div id="tbtns"></div><div id="tpause">II</div></div>
+<div id="trot"><b>&#x21BB;</b>Rotate your phone to landscape</div>
 <script src="images/logos.js"></script><script src="audio/clips.js"></script><script>
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -25,6 +50,35 @@ const round2Text = t => typeof t === 'number' ? String(Math.round(t * 100) / 100
 for (const f of ['fillText', 'strokeText', 'measureText']) {
   const orig = CanvasRenderingContext2D.prototype[f];
   CanvasRenderingContext2D.prototype[f] = function (t, ...a) { return orig.call(this, round2Text(t), ...a); };
+}
+// A ¤ in drawn text is the credits icon (a gold coin as wide as the text is tall): fillText / measureText draw and size it.
+{
+  const fill = CanvasRenderingContext2D.prototype.fillText, meas = CanvasRenderingContext2D.prototype.measureText;
+  const fontPx = c => parseFloat((c.font.match(/(\d+(?:\.\d+)?)px/) || [])[1]) || 16;
+  CanvasRenderingContext2D.prototype.measureText = function (t) {
+    if (typeof t !== 'string' || !t.includes('¤')) return meas.call(this, t);
+    const n = t.split('¤').length - 1, m = meas.call(this, t.replace(/¤/g, ''));
+    return { width: m.width + n * fontPx(this) * 0.9 };
+  };
+  CanvasRenderingContext2D.prototype.fillText = function (t, x, y, maxW) {
+    if (typeof t !== 'string' || !t.includes('¤')) return fill.call(this, t, x, y, maxW);
+    const px = fontPx(this), cw = px * 0.9, parts = t.split('¤'), w = meas.call(this, parts.join('')).width + (parts.length - 1) * cw;
+    const al = this.textAlign, bl = this.textBaseline, col = this.fillStyle, fnt = this.font;
+    let cx = al === 'center' ? x - w / 2 : al === 'right' || al === 'end' ? x - w : x;
+    const cy = y + (bl === 'middle' ? 0 : bl === 'top' || bl === 'hanging' ? px * 0.5 : bl === 'bottom' ? -px * 0.5 : -px * 0.32);
+    this.save(); this.textAlign = 'left';
+    parts.forEach((s, i) => {
+      this.fillStyle = col; this.font = fnt; this.textAlign = 'left'; this.textBaseline = bl;
+      if (s) { fill.call(this, s, cx, y); cx += meas.call(this, s).width; }
+      if (i < parts.length - 1) {
+        this.fillStyle = '#ffd23a'; this.strokeStyle = '#8a6a00'; this.lineWidth = Math.max(1, px * 0.07);
+        this.beginPath(); this.arc(cx + cw / 2, cy, px * 0.4, 0, Math.PI * 2); this.fill(); this.stroke();
+        this.fillStyle = '#8a6a00'; this.font = `bold ${px * 0.5}px monospace`; this.textAlign = 'center'; this.textBaseline = 'middle';
+        fill.call(this, 'c', cx + cw / 2, cy + px * 0.03); cx += cw;
+      }
+    });
+    this.restore();
+  };
 }
 
 // World x is yards-from-own-goal * YD and grows downfield; world y runs across the
@@ -168,7 +222,7 @@ const SCRAMBLE_ANGLE = { speed: 0.35, k: 0.85, max: 0.9 };
 const ENGAGED_SIDE = 0.2;   // pass pro: x the sideways part of an engaged rusher's push toward the QB (1 = the pair shadows the QB's every sideways move)
 const DE_CONTAIN = { width: 4.8, after: 0.8, slow: 0.7, edgeSpeed: 1.5, lead: 0.45, keep: 1.4 };   // edgeSpeed/lead/keep: a QB running at an end's side (yd/s) is cut off from the sideline: the end aims lead s ahead of him and keep yd outside
 // a free lineman diving at a QB who is getting away behind the line: range yd to try it, rate per second, hit = reach of the dive (yd), lunge yd, dur s, cool s before another
-const DL_DIVE = { range: 3.0, rate: 2.2, hit: 1.7, lunge: 3.2, dur: 0.3, cool: 1.4 };
+const DL_DIVE = { range: 3.0, rate: 2.2, hit: 1.2, lunge: 3.2, dur: 0.3, cool: 1.4 };
 const DUCK_DROP = 0.4;       // x of his catch odds lost on a full wobbler (a throw by a QB who got hit)
 const ONE_HAND_PICK = 0.04;   // chance an interception is a one-handed grab (animated)
 const DL_SHED = 1.12;     // linemen take x this long to beat their blocks
@@ -13236,7 +13290,7 @@ function drawPlayer(p) {
   // head top: both hands on the ball as he takes it over the defender's helmet and brings it down
   const headTopping = p.hasBall && p.headTop && ac - p.headTop.t >= 0 && ac - p.headTop.t < HEAD_TOP.dur + HEAD_TOP.hold;
   const pickGrab = p.action === 'swat' && !!p.act && !!p.act.pick && !p.act.one;   // (a two-hand pick: hands on the ball, not swatting)
-  const holdingOut = (p.hasBall && !ball.tucked && (!p.action || pickGrab) && !p.cradle && p !== qb && !stiff && (nearBall || pickGrab)) || headTopping;
+  const holdingOut = !armsUp && (p.hasBall && !ball.tucked && (!p.action || pickGrab) && !p.cradle && p !== qb && !stiff && (nearBall || pickGrab)) || (headTopping && !armsUp);
   // the arm at his side swings with the stride; a man running without the ball pumps both (the far one behind him)
   const sideArm = !armsUp && !tucked && !holdingOut && !(p.action === 'dive' && p.hitStick) && !overShoulder && !(p.action === 'kneel' && p.holding) &&
                   !p.kickSwing && p.action !== 'wrap' && !armsOut && !(p.flex && !p.hasBall) && p.action !== 'point' && !cradle && !cocked && !throwing && !stiff && !oneHand && !swim;
@@ -13582,7 +13636,8 @@ function drawPlayer(p) {
       ctx.restore();
     }
   };
-  if (armsUp && diveArms) drawUpArms();
+  const upDone = !!(fx && fx.arms);   // (a pose that draws its own arms: never a second pair of raised ones on top)
+  if (armsUp && diveArms && !upDone) drawUpArms();
 
   const hy = -20 + bob + (truck ? 4 : 0);
   // eyes on the ball: the helmet turns to it (tipping up / down, or turned right round over the shoulder for one behind him)
@@ -13594,7 +13649,8 @@ function drawPlayer(p) {
   const hW = headLook(p, look3, hy, watchB);
   let yaw = lying ? 0 : headYaw(p, watchB);
   ctx.save();
-  if (hW !== null) {   // (tips up / down only: a ball behind him is looked at over the shoulder by the yaw, never by flipping the head round)
+  const fakeLook = !!(p.relFx && p.relFx.kind === 'shoulder' && !p.action && !p.hasBall && (ac - p.relFx.t) / p.relFx.dur <= 1);   // (a head fake turns side to side: never tipped down at the ground)
+  if (hW !== null && !fakeLook) {   // (tips up / down only: a ball behind him is looked at over the shoulder by the yaw, never by flipping the head round)
     const sa = Math.atan2(Math.sin(hW), Math.cos(hW) * p.face), back = Math.cos(sa) < 0;
     ctx.translate(0, hy + 3);
     ctx.rotate(Math.max(-LOOK_BALL.up, Math.min(LOOK_BALL.down, back ? wrapAngle(Math.PI - sa) : sa)));
@@ -13633,7 +13689,7 @@ function drawPlayer(p) {
   ctx.restore();
   ctx.restore();
 
-  if (armsUp && !diveArms) drawUpArms();
+  if (armsUp && !diveArms && !upDone) drawUpArms();
   if (p.act && p.act.punch && p.act.t < 0.9 && (p.action === 'wrap' || p.action === 'dive' || p.action === 'down')) {
     // going for the strip: the free arm comes up and hammers down at the ball once
     const st = p.act.t, k = st < 0.15 ? 1 - st / 0.15 : Math.min(1, (st - 0.15) / 0.2);   // up, then one stroke down
@@ -18112,7 +18168,7 @@ function drawOffPop() {
   ctx.restore();
 }
 const OFF_TIPS = {
-  awards: ['AWARDS', 'The league honors its best players and one head coach. Every award your team wins pays 2 credits, and winners wear that medal on their player card forever. Circled cards are yours.'],
+  awards: ['AWARDS', 'The league honors its best players and one head coach. Every award your team wins pays 2 ¤, and winners wear that medal on their player card forever. Circled cards are yours.'],
   pbowl: ['THE PAPER BOWL', 'The winning team is on the left. Every player on the champion gets a ring, shown at the bottom right of his card. Open a card and press STATS for his game.'],
   resign: ['EXPIRING CONTRACTS', 'These players are in the last year of their deal. RE-SIGN them at their asking price (it counts against your salary cap) or LET GO and a rookie takes the spot. Decide on everyone to move on.'],
   fa: ['FREE AGENTS', 'Players other teams let go. Open a card and SIGN him: you need an open roster spot on his side of the ball and the cap room. Use ROSTER to DROP a player and free a spot. Anyone nobody signs stays in your FRONT OFFICE.'],
@@ -18701,7 +18757,7 @@ function drawFA() {
     coinBox(20, 16, LEAGUE.coins, RES.bright);
     if (!all) {
       ctx.font = 'bold 15px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#c81b1b';
-      ctx.fillText(!spot ? 'NO ROSTER SPOT: DROP SOMEONE' : !ok ? `need ${fmtM(need)} more cap room` : `need ${cost - LEAGUE.coins} more credits`, SIGN_BTN.x + SIGN_BTN.w + 14, SIGN_BTN.y + SIGN_BTN.h / 2);
+      ctx.fillText(!spot ? 'NO ROSTER SPOT: DROP SOMEONE' : !ok ? `need ${fmtM(need)} more cap room` : `need ${cost - LEAGUE.coins} more ¤`, SIGN_BTN.x + SIGN_BTN.w + 14, SIGN_BTN.y + SIGN_BTN.h / 2);
     }
     return;
   }
@@ -18765,7 +18821,7 @@ function faSugPage(i, L) {
   }
   const s = L[k - 1], p = s.p, cost = signCost(p);
   return { title: `SUGGESTION  ${k + 1}/${n}`, player: { p, k: p.from || season.team, open: () => { OFF.fa.sel = p; } },
-    lines: [`${p.tag}  ${p.short || p.name}  ${p.stars} STARS  ${p.age}Y`, `Your weakest ${p.group}: ${s.nd.weak ? s.nd.weak + ' stars' : 'empty spot'} (+${+(p.stars - s.nd.weak).toFixed(1)})`, `Asks: ${fmtM(p.salary)} for ${p.years}Y   ${cost} credits`, s.ok ? 'FITS YOUR CAP AND ROSTER' : !faHasSpot(season.team, p) ? 'NO ROSTER SPOT: DROP SOMEONE' : 'NEEDS MORE CAP ROOM', 'Click his card to open his page.'],
+    lines: [`${p.tag}  ${p.short || p.name}  ${p.stars} STARS  ${p.age}Y`, `Your weakest ${p.group}: ${s.nd.weak ? s.nd.weak + ' stars' : 'empty spot'} (+${+(p.stars - s.nd.weak).toFixed(1)})`, `Asks: ${fmtM(p.salary)} for ${p.years}Y   ${cost} ¤`, s.ok ? 'FITS YOUR CAP AND ROSTER' : !faHasSpot(season.team, p) ? 'NO ROSTER SPOT: DROP SOMEONE' : 'NEEDS MORE CAP ROOM', 'Click his card to open his page.'],
     btns: nav };
 }
 function faClick(pt) {
@@ -18777,8 +18833,8 @@ function faClick(pt) {
     const p = F.sel;
     if (!faHasSpot(me, p)) { offPopShow({ title: 'ROSTER FULL', lines: wrapLines(`There is no open ${OFF_GROUPS.includes(p.group) ? 'offensive' : 'defensive'} roster spot for ${p.name}. Open the ROSTER and DROP a player first.`, 54) }); return; }
     if (p.salary > capRoom(me)) { offPopShow({ title: 'NOT ENOUGH CAP', lines: wrapLines(`You need ${fmtM(p.salary - capRoom(me))} more cap room to sign ${p.name}. Drop a player to free up salary.`, 54) }); return; }
-    if (LEAGUE.coins < signCost(p)) { offPopShow({ title: 'NOT ENOUGH CREDITS', lines: wrapLines(`Signing ${p.name} costs ${signCost(p)} credits and you have ${LEAGUE.coins}.`, 54) }); return; }
-    offPopShow({ title: 'SIGN HIM?', lines: [`${p.name} (${p.tag}, ${p.stars} stars)`, `${fmtM(p.salary)} a year for ${p.years} year${p.years > 1 ? 's' : ''}`, `Costs ${signCost(p)} credits.`],
+    if (LEAGUE.coins < signCost(p)) { offPopShow({ title: 'NOT ENOUGH ¤', lines: wrapLines(`Signing ${p.name} costs ${signCost(p)} ¤ and you have ${LEAGUE.coins}.`, 54) }); return; }
+    offPopShow({ title: 'SIGN HIM?', lines: [`${p.name} (${p.tag}, ${p.stars} stars)`, `${fmtM(p.salary)} a year for ${p.years} year${p.years > 1 ? 's' : ''}`, `Costs ${signCost(p)} ¤.`],
       btns: [{ label: 'CANCEL' }, { label: 'OK', green: true, on: () => faSign(p) }] });
     return;
   }
@@ -20066,7 +20122,7 @@ function drawWeekEnd() {
     const cnd = p.inj && SETTINGS.injuries ? 'INJ' : `${condOf(p)}%`;
     const si = LEAGUE.roster.findIndex(r => r[2] === p), xp = si >= 0 && STATS[si] ? statXP(STATS[si]) : (p.gameXP || 0);
     drawFace(68, y, 11, off && !k ? '#ffd23a' : k ? '#ff9a3a' : '#3ab8ff');
-    ctx.font = 'bold 22px monospace'; ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.fillText(p.tag || p.name, 95, y);
+    ctx.font = 'bold 22px monospace'; ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.fillText(p.short || p.name || p.tag, 95, y, 400);
     ctx.textAlign = 'center'; ctx.fillStyle = POS_COLOR[pos] || (off ? '#5fc8ff' : '#ff4a3a'); ctx.fillText(pos, 325, y);
     [cnd, `${xp}`, p.upgThisGame ? 'Yes' : 'No'].forEach((v, j) => { ctx.fillStyle = j === 1 ? RES.gold : j === 0 && v === 'INJ' ? '#c81b1b' : RES.line; ctx.fillText(v, cols[j + 1][1], y); });
   });
@@ -20947,11 +21003,11 @@ function tipsList() {
   if (p.ability) { const h = abilityHelp(p); L.push({ t: h.title, lines: wrapLines(h.text, 54) }); }
   L.push({ t: 'ATTRIBUTES', lines: attrHelp(p) });
   if (bench) L.push({ t: 'BENCH', lines: wrapLines('Sits him out the next game only (offense or defense). He takes the week off, so his condition goes back to 100%, and the next player at his position starts in his place. Press BENCHED again to put him back.', 54) });
-  if (drop) L.push({ t: 'DROP', lines: wrapLines('Releases him to free agency for good. His salary comes off your cap and his roster spot opens up. You can drop anybody: if that leaves a position short of its starters, an unnamed backup plays it. Other teams will sign the good ones fast; to get him back you have to pay credits in FRONT OFFICE > FREE AGENTS (3 to 25 by stars). Dropping a good player also hurts mood and the fans.', 54) });
+  if (drop) L.push({ t: 'DROP', lines: wrapLines('Releases him to free agency for good. His salary comes off your cap and his roster spot opens up. You can drop anybody: if that leaves a position short of its starters, an unnamed backup plays it. Other teams will sign the good ones fast; to get him back you have to pay ¤ in FRONT OFFICE > FREE AGENTS (3 to 25 by stars). Dropping a good player also hurts mood and the fans.', 54) });
   if (p.salary != null) L.push({ t: 'CONTRACT', lines: wrapLines(`${p.name} is paid ${fmtM(p.salary)} a year for ${p.years} year${p.years === 1 ? '' : 's'} (${fmtM(p.salary * p.years)} in all). The yearly amount counts against your salary cap every season until the deal runs out.`, 54) });
   if (own) L.push({ t: 'KICK RETURNER', lines: wrapLines('Click the bookmark at the top left to make him your kick returner. Click it again to untag him; with nobody tagged it is your fastest back, receiver or defensive back.', 54) });
   if (results.screen === 'draft') L.push({ t: 'SCOUT & DRAFT', lines: wrapLines('SCOUT shows a guess at his potential and value (a few scouts a round). DRAFT signs him to his rookie deal and needs an open roster spot on his side of the ball. His true potential shows once he is yours.', 54) });
-  if (results.screen === 'fa' && OFF && OFF.fa.sel === p) L.push({ t: 'SIGN', lines: wrapLines('Needs an open roster spot on his side of the ball, cap room for his salary, and credits: 3 for a 1-star up to 25 for a 5-star.', 54) });
+  if (results.screen === 'fa' && OFF && OFF.fa.sel === p) L.push({ t: 'SIGN', lines: wrapLines('Needs an open roster spot on his side of the ball, cap room for his salary, and ¤: 3 for a 1-star up to 25 for a 5-star.', 54) });
   return L;
 }
 function tipsPage(i) {
@@ -21162,7 +21218,7 @@ function drawStaff() {
     staff.forEach((c, i) => menuBtn(STAFF_CARDS[i], '', RES.bright, 20, b => drawStaffCard(b, c, team)));
     drawCapBar(team, 150, 636, 760);
     const atMax = (LEAGUE.cap || CAP.start) >= CAP.max, can = LEAGUE.coins >= CAP.cost && !atMax;
-    menuBtn(CAP_UP_BTN, atMax ? `CAP MAXED (${CAP.max}M)` : `+${CAP.step}M CAP (${CAP.cost} CREDITS)`, can ? RES.bright : CARD_GRAY, 18);
+    menuBtn(CAP_UP_BTN, atMax ? `CAP MAXED (${CAP.max}M)` : `+${CAP.step}M CAP (${CAP.cost} ¤)`, can ? RES.bright : CARD_GRAY, 18);
     menuBtn(FA_BTN, 'FREE AGENTS', RES.bright, 20);
     menuBtn(TR_TOP_BTN, 'TRADES', RES.bright, 20);
     drawCapFx();
@@ -21230,8 +21286,10 @@ function drawStaff() {
       else { ctx.font = 'bold 15px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(c.stars < 3 ? 'AT 3 STARS: UPGRADE HIS TRAIT. AT 5: A SECOND ONE.' : (c.tlvl || 1) > 1 && c.stars < 5 ? 'TRAIT UPGRADED. AT 5 STARS: A SECOND TRAIT.' : 'TRAIT UPGRADED' + (c.trait2 ? ', SECOND TRAIT EQUIPPED.' : '.'), 610, 556, 600); }
     }
   }
+  if (staffView.sel >= 1 && team === MATCH.you && season && !exhibition) menuBtn(STAFF_HIRE_BTN, 'HIRING BOARD', RES.bright, 20);
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
 }
+const STAFF_HIRE_BTN = { x: 930, y: 628, w: 290, h: 56 };
 const FA_BTN = { x: 1030, y: 14, w: 230, h: 62 };
 const HC_MAIN_BTNS = Array.from({ length: 6 }, (_, i) => ({ x: 600 + (i % 3) * 204, y: 610 + Math.floor(i / 3) * 54, w: 196, h: 46 }));   // (head coach page: offense row, defense row)
 function staffClick(pt) {
@@ -21242,6 +21300,7 @@ function staffClick(pt) {
     const i = HC_MAIN_BTNS.findIndex(b => inBtn(pt, b));
     if (i >= 0) { career.hcMain = career.hcMain === HC_MAIN[i].id ? null : HC_MAIN[i].id; if (career.hcMain) upgradeSfx(); autosaveSoon(); return; }
   }
+  if (staffView.sel >= 1 && season && !exhibition && inBtn(pt, STAFF_HIRE_BTN)) { HB.role = staffView.sel === 1 ? 'oc' : 'dc'; HB.sel = null; HB.cand = null; results.screen = 'board'; return; }
   if (staffView.sel >= 1) {   // a coordinator's page: upgrade his trait (3 stars) / equip a second one (5 stars)
     const c = (STAFF[MATCH.you] || {})[staffView.sel === 1 ? 'oc' : 'dc'];
     if (c && c.stars >= 5 && !c.trait2) { const i = Object.keys(TRAIT_INFO).filter(t => t !== c.trait).findIndex((t, j) => inBtn(pt, traitPickBtn(j))); if (i >= 0) { c.trait2 = Object.keys(TRAIT_INFO).filter(t => t !== c.trait)[i]; upgradeSfx(); autosaveSoon(); return; } }
@@ -21318,7 +21377,7 @@ function goalsGameEnd() {
 const GOAL_BY = Object.fromEntries(GOAL_DEFS.map(d => [d.id, d]));
 const GOAL_POPUPS = { JUKED: 'juke', 'SPIN MOVE': 'spin', 'SPUN AWAY': 'spin', HURDLE: 'hurdle', TRUCKED: 'truck', TRUCK: 'truck', 'STIFF ARM': 'stiff' };
 const HC_ABIL = [   // head coach abilities, unlocked at star milestones
-  { at: 2, name: 'TASKMASTER', desc: '+1 credit from every goal' },
+  { at: 2, name: 'TASKMASTER', desc: '+1 ¤ from every goal' },
   { at: 3, name: 'MENTOR', desc: '+10% XP on every player' },
   { at: 5, name: 'LEGEND', desc: '+25% XP to all coaches' },
 ];
@@ -21385,7 +21444,7 @@ function goalsShow(title, hide = false) {
   if (!g) return;
   const lines = g.list.flatMap(q => wrapLines(`${q.done ? '[X]' : '[ ]'} ${goalLabel(q)}  (${q.lv} CR, ${goalProg(q).txt.replace(/ \/ /, '/')})`, 54));
   const t = Math.max(0, Math.min(1, (hcStars(meK()) - 0.5) / 4.5));
-  offPopShow({ title, hide, lines: [...lines, '', ...wrapLines(`Finish a goal in this week's game: credits, coach XP and x${(GOAL.boost + (GOAL.boostMax - GOAL.boost) * t).toFixed(2)} XP on your players.`, 54)] });
+  offPopShow({ title, hide, lines: [...lines, '', ...wrapLines(`Finish a goal in this week's game: ¤, coach XP and x${(GOAL.boost + (GOAL.boostMax - GOAL.boost) * t).toFixed(2)} XP on your players.`, 54)] });
 }
 // coach XP and levels
 const coachNeed = (role, stars) => role === 'hc' ? COACH.hcBase + COACH.hcPer * stars : COACH.coBase + COACH.coPer * stars;
@@ -21428,7 +21487,7 @@ function coachBar(x, y, w, role, c) {   // XP toward the next star under a coach
 // Every starter earns XP in each game you play (half from his stat line where the stat sheet has one, else a flat share). Enough XP =
 // one upgrade: +1 to an attribute of your choice on his page, never past his potential. A 3-star needs about a full season of average
 // games to climb to 4 stars; the better a player already is, the more XP each point costs.
-const UPG = { potChange: 0.04, base: 4.5, grow: 1.06, mid: 40, flat: 1, stat: 0.5, statK: 1.2, bench: 0.2, xpK: 0.4, rookieK: 0.6, perYr: 0.12, maxK: 2 };   // base = average games' XP one point costs at a 40 rating; grow = x per rating point; flat = x average XP for a starter with no stat line; stat = share of a stat line's XP; bench = x average XP for a healthy backup who sat (passive); rookieK / perYr / maxK = cost x for a rookie, + per year in the league (age past 22), capped
+const UPG = { potChange: 0.01, base: 4.5, grow: 1.06, mid: 40, flat: 1, stat: 0.5, statK: 1.2, bench: 0.2, xpK: 0.4, rookieK: 0.6, perYr: 0.12, maxK: 2 };   // base = average games' XP one point costs at a 40 rating; grow = x per rating point; flat = x average XP for a starter with no stat line; stat = share of a stat line's XP; bench = x average XP for a healthy backup who sat (passive); rookieK / perYr / maxK = cost x for a rookie, + per year in the league (age past 22), capped
 const yrsPro = p => p.rookie ? 0 : Math.max(0, (p.age || 22) - 22);   // (years in the league: no draft year on file, so age stands in)
 const upgCost = p => MARKET.avgXP * UPG.base * Math.pow(UPG.grow, scoreOf(p) - UPG.mid) * Math.min(UPG.maxK, UPG.rookieK + UPG.perYr * yrsPro(p));
 const upgRoom = p => Math.max(0, ptsOf(p) - scoreOf(p) - (p.upg || 0));   // (attribute points left under his potential, past the upgrades already waiting)
@@ -22089,7 +22148,7 @@ function tradePropose() {
     capCuts = fix.cuts;
   }
   const cost = tradeCost(TR.get);
-  if (LEAGUE.coins < cost) { say('NOT ENOUGH CREDITS', [`This trade costs ${cost} credits and you have ${LEAGUE.coins}.`]); return; }
+  if (LEAGUE.coins < cost) { say('NOT ENOUGH ¤', [`This trade costs ${cost} ¤ and you have ${LEAGUE.coins}.`]); return; }
   const D = tradeDecide(k, TR.give, TR.get);
   if (D.ok) {
     const gp = TR.give.slice(), tp = TR.get.slice(), names = l => l.map(assetName).join(', ');
@@ -22098,7 +22157,7 @@ function tradePropose() {
     if (capCuts && capCuts.length) { for (const p of capCuts) { const R = ROSTER[k], i = R.indexOf(p); if (i >= 0) { faRelease(p, k); vacate(k, p); } } recalcTeamStars(); }   // (to fit under their cap)
     gp.forEach(a => { if (a.kind === 'player') moveMood(a.p, -1); }); tp.forEach(a => { if (a.kind === 'player') moveMood(a.p, 1); });
     recalcTeamStars(); TR.give = []; TR.get = []; TR.v++; autosaveSoon();
-    say('TRADE ACCEPTED', [`You send: ${names(gp)}`, `You get: ${names(tp)}`, `It cost ${cost} credits.`, ...(capCuts && capCuts.length ? [`To fit under the cap they released: ${capCuts.map(p => `${p.short || p.name} ${p.tag}`).join(', ')}.`] : []), ...(D.roll ? [`It was close: they rolled a ${D.roll}.`] : [])], [{ label: 'TO ROSTER', green: true, on: () => { offOpenRoster(); rosterReturn = TR.ret && OFF_SCREENS.includes(TR.ret) ? TR.ret : null; } }]);   // (leaving the roster goes to the home screen, or back into the offseason step the trade started in: never to the roster / front office / trade screen it came through)
+    say('TRADE ACCEPTED', [`You send: ${names(gp)}`, `You get: ${names(tp)}`, `It cost ${cost} ¤.`, ...(capCuts && capCuts.length ? [`To fit under the cap they released: ${capCuts.map(p => `${p.short || p.name} ${p.tag}`).join(', ')}.`] : []), ...(D.roll ? [`It was close: they rolled a ${D.roll}.`] : [])], [{ label: 'TO ROSTER', green: true, on: () => { offOpenRoster(); rosterReturn = TR.ret && OFF_SCREENS.includes(TR.ret) ? TR.ret : null; } }]);   // (leaving the roster goes to the home screen, or back into the offseason step the trade started in: never to the roster / front office / trade screen it came through)
     return;
   }
   const c = D.lock ? null : tradeCounter(me, k, TR.give, TR.get);
@@ -23566,7 +23625,7 @@ function pracReplace(side) {
 // (years; coordinators keep theirs in `years`, which offStaff also runs). Salaries add up to the crewPay, which can't pass the budget
 // (grows with fans and facilities). The pool (career.hire) is rebuilt each offseason; candidates can sign elsewhere during the year.
 // A candidate may refuse: the odds come from your offer against his ask, your facilities, your record and fans, and his stars.
-const HIRE = { budget: 16, perFans: 10, perLevel: 0.8, poolSize: 5, scout: 1, elsewhere: 0.06, retire: 60, poach: 0.85, buyout: 4 };
+const HIRE = { budget: 25, perFans: 0, perLevel: 0, poolSize: 5, scout: 1, elsewhere: 0.06, retire: 60, poach: 0.85, buyout: 4 };
 const HIRE_ROLE = { oc: { label: 'OFFENSIVE COORDINATOR', short: 'OC', side: 'off' }, dc: { label: 'DEFENSIVE COORDINATOR', short: 'DC', side: 'def' },
                     to: { label: 'OFFENSE TRAINER', short: 'OFF TRAINER', side: 'off' }, td: { label: 'DEFENSE TRAINER', short: 'DEF TRAINER', side: 'def' } };
 const HIRE_ROLES = ['oc', 'dc', 'to', 'td'];
@@ -23720,7 +23779,7 @@ function drawHire() {
   ctx.fillStyle = '#e2dcc6'; ctx.fillRect(B.x, B.y, B.w, B.h);
   ctx.fillStyle = pay > bud ? '#c81b1b' : '#2e8b57'; ctx.fillRect(B.x, B.y, B.w * Math.min(1, pay / bud), B.h);
   ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(B.x, B.y, B.w, B.h);
-  ctx.fillStyle = RES.dim; ctx.font = '13px monospace'; ctx.fillText('The budget grows with your fans and facilities. Stars cost more: you can\'t afford four.', B.x, B.y + 44);
+  ctx.fillStyle = RES.dim; ctx.font = '13px monospace'; ctx.fillText('The budget is $25M. Stars cost more: you can\'t afford four.', B.x, B.y + 44);
   if (HB.msg && performance.now() - HB.msg.t < 3000) { ctx.textAlign = 'right'; ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.fillText(HB.msg.text, 1250, 614); }
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
   tourQDraw();
@@ -23734,7 +23793,7 @@ function hireClick(pt) {
     if (!inBtn(pt, HIRE_FIRE[i])) return;
     const p = hireGet(r), cost = buyoutOf(p);
     if (p.interim) { HB.msg = { t: performance.now(), text: 'HE IS ONLY AN INTERIM' }; return; }
-    offPopShow({ title: `FIRE ${p.name}?`, lines: wrapLines(`An interim (1 star) takes over until you hire someone. Buyout: ${cost} credits (his contract has ${p.years} year${p.years === 1 ? '' : 's'} left).`, 54), btns: [{ label: 'KEEP HIM' }, { label: 'FIRE HIM', on: () => hireFire(r) }] });
+    offPopShow({ title: `FIRE ${p.name}?`, lines: wrapLines(`An interim (1 star) takes over until you hire someone. Buyout: ${cost} ¤ (his contract has ${p.years} year${p.years === 1 ? '' : 's'} left).`, 54), btns: [{ label: 'KEEP HIM' }, { label: 'FIRE HIM', on: () => hireFire(r) }] });
   });
 }
 
@@ -23850,7 +23909,7 @@ const TOUR_STEPS = {
     { scr: 'tradeb', rect: () => TR_METER, text: 'The TV METER weighs both sides the way the AI sees it: red = likely rejected, yellow = balanced (could go either way), green = they will accept.' },
     { scr: 'tradeb', enter: () => tourPractice(1), rect: () => [TR_METER, tbRows(0, 3), tbRows(1, 3)], text: 'PRACTICE: this pre-filled swap offers a cheap asset for their best one. Look at the meter: it sits in the red.' },
     { scr: 'tradeb', enter: () => tourPractice(2), rect: () => [TR_METER, tbRows(0, 3), tbRows(1, 3)], text: 'Now you ask for less and offer more, and the marker slides toward green. Try adding or removing rows yourself.' },
-    { scr: 'tradeb', rect: () => MENU_NEXT, text: 'When the meter looks good, PROPOSE. It costs credits and a close deal can still be turned down. Nothing here was real: your trade is back as you left it.' },
+    { scr: 'tradeb', rect: () => MENU_NEXT, text: 'When the meter looks good, PROPOSE. It costs ¤ and a close deal can still be turned down. Nothing here was real: your trade is back as you left it.' },
   ],
   hire: [
     { scr: 'hire', rect: () => [HIRE_CARDS[0], HIRE_CARDS[1]], text: 'COORDINATORS (OC / DC) lead your offense and defense. Their stars lift your team rating, and their specialty shapes your play-calling.' },
@@ -24059,12 +24118,12 @@ function drawPractice() {
     resPanel(30, 492, 618, 120, [[`${D.name}  LEVEL ${F.lvl} OF 5`, 24]], RES.bright);
     ctx.fillStyle = RES.line; ctx.font = '15px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     wrapLines(D.text, 46).slice(0, 2).forEach((ln, i) => ctx.fillText(ln, 48, 526 + i * 20));
-    ctx.fillStyle = RES.dim; ctx.fillText(F.build ? `UNDER CONSTRUCTION: ${F.build.left} of ${F.build.total} weeks to go` : F.lvl >= 5 ? 'FULLY UPGRADED' : `NEXT LEVEL: ${cost} credits, ${D.wks[F.lvl - 1]} weeks to build`, 48, 574);
+    ctx.fillStyle = RES.dim; ctx.fillText(F.build ? `UNDER CONSTRUCTION: ${F.build.left} of ${F.build.total} weeks to go` : F.lvl >= 5 ? 'FULLY UPGRADED' : `NEXT LEVEL: ${cost} ¤, ${D.wks[F.lvl - 1]} weeks to build`, 48, 574);
     const can = !F.build && F.lvl < 5 && LEAGUE.coins >= cost;
     const free = !F.build && F.lvl < 5;
     menuBtn(PR_UP, free ? 'UPGRADE' : '', can ? '#6cc070' : RES.bright, 22, null, free);
     if (!free) { ctx.fillStyle = RES.dim; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.fillText(F.build ? 'BUILDING' : 'MAXED', PR_UP.x + PR_UP.w / 2, PR_UP.y + PR_UP.h / 2); }
-    if (!can && !F.build && F.lvl < 5) { ctx.fillStyle = RES.dim; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'; ctx.fillText('NOT ENOUGH CREDITS', PR_UP.x + PR_UP.w / 2, PR_UP.y + PR_UP.h + 8); }
+    if (!can && !F.build && F.lvl < 5) { ctx.fillStyle = RES.dim; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'; ctx.fillText('NOT ENOUGH ¤', PR_UP.x + PR_UP.w / 2, PR_UP.y + PR_UP.h + 8); }
   }
   // the dashboard: one card per unit
   for (const side of ['off', 'def']) {
@@ -25449,6 +25508,7 @@ canvas.addEventListener('pointercancel', () => { aim = null; });
 // After a touchdown, right-click celebrates instead.
 canvas.addEventListener('contextmenu', e => {
   e.preventDefault();
+  if (touchLong) return;   // (a long-press on a phone fires this: not a right-click)
   if (rec && rec.replaying) return;
   if (aiOff()) { if (state === 'done' && allPlayers().some(p => p.celebrate && p.team === 'def')) tryCelebrate(); return; }   // (on defense: no bullet toggle; only your own pick six / scoop and score celebrates)
   if (state === 'done' && allPlayers().some(p => p.celebrate)) tryCelebrate();
@@ -25695,6 +25755,107 @@ function randomizeWorld() {
   LEAGUE.lean = null; leanOf(MATCH.you);   // (new offense / defense leans for this franchise)
   recalcTeamStars();
 }
+
+// --- mobile: touch controls, fullscreen / landscape, installable app --------------------------------
+// Detected from the device (?touch=1 / ?touch=0 forces it); a touch on a laptop turns it on too. The controls are an HTML layer over the
+// canvas (a joystick + buttons for the current state) that feeds the real keyboard handlers with synthetic key events, so every
+// rule (remaps, drive-direction flips, double-taps, defense keys) is the keyboard's. The throw is still the drag on the QB.
+const TUI = {
+  q: new URLSearchParams(location.search).get('touch'),
+  on: false, held: {}, set: '', fs: false,
+  stick: 0.35,    // how far (0-1 of the pad radius) the stick must go to press a direction
+  tapMs: 90,      // a tapped key is let go this long after (so per-frame key reads see it)
+};
+let touchLong = false;   // the last pointer was a finger: a long-press' contextmenu is not a right-click (bullet toggle)
+const IS_MOBILE = TUI.q === '1' || (TUI.q !== '0' && (/Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) || (matchMedia('(pointer: coarse)').matches && matchMedia('(hover: none)').matches)));
+const tuiEl = document.getElementById('tui'), tbtns = document.getElementById('tbtns'), tpad = document.getElementById('tpad'), tknob = document.getElementById('tknob'), trot = document.getElementById('trot');
+function tkey(code, down) { window.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code, bubbles: true, cancelable: true })); }
+function tuiSet(on) { TUI.on = on; tuiEl.classList.toggle('on', on); }
+// buttons per state: [label, mode, key, class]; mode: hold (down while pressed), tap, dbl (double-tap), ctx (the right-click: celebrate / point)
+const TSETS = {
+  pre:    [['SNAP', 'tap', 'Space', 'big'], ['AUDIBLE', 'tap', 'KeyQ'], ['LOB / BULLET', 'tap', 'KeyV'], ['TIMEOUT', 'tap', 'KeyT']],
+  next:   [['NEXT', 'tap', 'Space', 'big'], ['TIMEOUT', 'tap', 'KeyT'], ['CELEBRATE', 'ctx', '']],
+  tap:    [['TAP', 'tap', 'Space', 'big']],
+  flight: [['JUMP', 'tap', 'KeyW', 'big'], ['SECURE', 'tap', 'KeyS'], ['ONE HAND', 'tap', 'KeyD'], ['RUN CATCH', 'hold', 'KeyA']],
+  pocket: [['SPIN', 'tap', 'KeyR', 'big'], ['JUKE UP', 'dbl', 'KeyW'], ['JUKE DOWN', 'dbl', 'KeyS'], ['STIFF ARM', 'hold', 'KeyQ'], ['LOB / BULLET', 'tap', 'KeyV'], ['STEP UP', 'hold', 'KeyA']],
+  run:    [['SPRINT', 'hold', 'KeyA', 'big'], ['SPIN', 'tap', 'KeyR'], ['DIVE', 'tap', 'KeyV'], ['JUKE UP', 'dbl', 'KeyW'], ['JUKE DOWN', 'dbl', 'KeyS'], ['HURDLE', 'tap', 'KeyE'], ['STIFF ARM', 'hold', 'KeyQ'], ['TRUCK', 'hold', 'KeyC'], ['PROTECT', 'hold', 'KeyG']],
+  kickoff: [['SPRINT', 'hold', 'KeyA', 'big'], ['SPIN', 'tap', 'KeyR'], ['DIVE', 'tap', 'KeyV'], ['JUKE UP', 'dbl', 'KeyW'], ['JUKE DOWN', 'dbl', 'KeyS'], ['HURDLE', 'tap', 'KeyE'], ['STIFF ARM', 'hold', 'KeyQ'], ['TRUCK', 'hold', 'KeyC'], ['KNEEL / FAIR', 'tap', 'KeyD']],
+  def:    [['SWITCH', 'tap', 'KeyO', 'big'], ['DIVE', 'tap', 'KeyT'], ['HIT STICK', 'tap', 'KeyR'], ['STRIP', 'tap', 'KeyF'], ['JUMP', 'tap', 'KeyW'], ['SPRINT', 'hold', 'KeyA']],
+  replay: [['PAUSE', 'tap', 'Space', 'big']],
+};
+function tuiWhich() {
+  if (rec && rec.replaying) return 'replay';
+  if (state === 'done' || state === 'sim') return 'next';
+  if (state === 'kick') return 'tap';
+  if (aiOff()) return 'def';
+  if (state === 'pre') return 'pre';
+  if (state === 'flight') return 'flight';
+  if (state === 'pocket' || state === 'drop') return 'pocket';
+  if (state === 'kickoff') return 'kickoff';
+  return 'run';
+}
+function tuiBuild(name) {
+  tbtns.textContent = '';
+  for (const [label, mode, code, cls] of TSETS[name] || []) {
+    const b = document.createElement('div');
+    b.className = 'tb ' + (cls || ''); b.textContent = label;
+    const rel = () => { if (b._down) { b._down = false; b.classList.remove('on'); if (mode === 'hold') tkey(code, false); } };
+    b.addEventListener('pointerdown', e => {
+      e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch (err) {} b._down = true; b.classList.add('on');
+      if (mode === 'hold') tkey(code, true);
+      else if (mode === 'tap') { tkey(code, true); setTimeout(() => tkey(code, false), TUI.tapMs); }
+      else if (mode === 'dbl') { tkey(code, true); tkey(code, false); tkey(code, true); setTimeout(() => tkey(code, false), TUI.tapMs); }
+      else if (mode === 'ctx') { touchLong = false; canvas.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })); touchLong = true; }
+    });
+    for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) b.addEventListener(ev, rel);
+    tbtns.appendChild(b);
+  }
+}
+// the joystick: arrow keys, 8 ways (the keyboard's own screen-relative movement keys)
+function tuiStick(e, end) {
+  const r = tpad.getBoundingClientRect(), R = r.width / 2;
+  let dx = e.clientX - (r.left + R), dy = e.clientY - (r.top + R);
+  const m = Math.hypot(dx, dy);
+  if (end) dx = dy = 0; else if (m > R) { dx *= R / m; dy *= R / m; }
+  tknob.style.transform = `translate(${dx}px,${dy}px)`;
+  const want = { ArrowLeft: dx < -TUI.stick * R, ArrowRight: dx > TUI.stick * R, ArrowUp: dy < -TUI.stick * R, ArrowDown: dy > TUI.stick * R };
+  for (const k in want) if (!!TUI.held[k] !== want[k]) { TUI.held[k] = want[k]; tkey(k, want[k]); }
+}
+tpad.addEventListener('pointerdown', e => { e.preventDefault(); try { tpad.setPointerCapture(e.pointerId); } catch (err) {} tpad._id = e.pointerId; tuiStick(e); });
+tpad.addEventListener('pointermove', e => { if (tpad._id === e.pointerId) tuiStick(e); });
+for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) tpad.addEventListener(ev, e => { if (tpad._id === e.pointerId) { tpad._id = null; tuiStick(e, true); } });
+const tpause = document.getElementById('tpause');
+tpause.addEventListener('pointerdown', e => { e.preventDefault(); tkey('Escape', true); tkey('Escape', false); });
+// every frame-ish: which buttons, whether the layer shows at all (not on menus / results / the pause menu), the rotate-me notice
+setInterval(() => {
+  trot.classList.toggle('on', TUI.on && innerHeight > innerWidth);
+  if (!TUI.on) return;
+  let live = false, name = 'run';
+  try { live = !results && !showKeys && !settingsOpen && !slotUI && !hl && !paused; if (live) name = tuiWhich(); } catch (err) { live = false; }
+  tpad.style.display = tbtns.style.display = live ? '' : 'none';
+  tpause.style.display = (!results && !settingsOpen && !slotUI) ? '' : 'none';
+  if (live && name !== TUI.set) { TUI.set = name; tuiBuild(name); }
+  if (!live) { TUI.set = ''; for (const k in TUI.held) if (TUI.held[k]) { TUI.held[k] = false; tkey(k, false); } }
+}, 100);
+// a finger on the page: touch mode on (even on a laptop with a screen), long-press is not a right-click; the first tap goes fullscreen + landscape
+window.addEventListener('pointerdown', e => {
+  touchLong = e.pointerType === 'touch';
+  if (touchLong && TUI.q !== '0' && !TUI.on) tuiSet(true);
+}, true);
+window.addEventListener('pointerup', e => {
+  if (e.pointerType !== 'touch' || TUI.fs || !TUI.on) return;
+  TUI.fs = true;
+  if (matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || navigator.standalone) return;
+  const de = document.documentElement, go = de.requestFullscreen || de.webkitRequestFullscreen;
+  if (go && !document.fullscreenElement) Promise.resolve(go.call(de, { navigationUI: 'hide' })).then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape')).catch(() => {});
+}, true);
+document.addEventListener('contextmenu', e => { if (TUI.on) e.preventDefault(); });
+document.addEventListener('gesturestart', e => e.preventDefault());   // (Safari's pinch zoom)
+if (IS_MOBILE) tuiSet(true);
+// installable / offline: the service worker (sw.js) keeps what was fetched; needs http(s), so not when opened from a file
+if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => {});
+
 requestAnimationFrame(frame);
 </script>
 </body>
