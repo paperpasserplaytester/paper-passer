@@ -43,6 +43,11 @@
 <script src="images/logos.js"></script><script src="audio/clips.js"></script><script>
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
+// handwriting: every ctx.font that asks for monospace gets this stack (no font files: whatever the system has, then cursive)
+const HAND_FONT = '"Segoe Print", "Bradley Hand", "Chalkboard SE", "Comic Sans MS", "Marker Felt", cursive';
+{ const fd = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'font'), fc = {};
+  Object.defineProperty(ctx, 'font', { get() { return fd.get.call(this); },
+    set(v) { fd.set.call(this, fc[v] || (fc[v] = typeof v === 'string' ? v.replace(/\bmonospace\b/g, HAND_FONT) : v)); } }); }
 const W = canvas.width, H = canvas.height;
 // Every number drawn as text shows at most 2 decimals (float noise like 50.400000000000006 -> 50.4).
 const round2Text = t => typeof t === 'number' ? String(Math.round(t * 100) / 100)
@@ -64,6 +69,10 @@ for (const f of ['fillText', 'strokeText', 'measureText']) {
     if (typeof t !== 'string' || !t.includes('¤')) return fill.call(this, t, x, y, maxW);
     const px = fontPx(this), cw = px * 0.9, parts = t.split('¤'), w = meas.call(this, parts.join('')).width + (parts.length - 1) * cw;
     const al = this.textAlign, bl = this.textBaseline, col = this.fillStyle, fnt = this.font;
+    if (maxW && w > maxW) {   // (too wide: shrink the font so the text and its coin fit maxW)
+      this.font = fnt.replace(/(\d+(?:\.\d+)?)px/, (m, n) => `${n * maxW / w}px`);
+      CanvasRenderingContext2D.prototype.fillText.call(this, t, x, y); this.font = fnt; return;
+    }
     let cx = al === 'center' ? x - w / 2 : al === 'right' || al === 'end' ? x - w : x;
     const cy = y + (bl === 'middle' ? 0 : bl === 'top' || bl === 'hanging' ? px * 0.5 : bl === 'bottom' ? -px * 0.5 : -px * 0.32);
     this.save(); this.textAlign = 'left';
@@ -71,10 +80,7 @@ for (const f of ['fillText', 'strokeText', 'measureText']) {
       this.fillStyle = col; this.font = fnt; this.textAlign = 'left'; this.textBaseline = bl;
       if (s) { fill.call(this, s, cx, y); cx += meas.call(this, s).width; }
       if (i < parts.length - 1) {
-        this.fillStyle = '#ffd23a'; this.strokeStyle = '#8a6a00'; this.lineWidth = Math.max(1, px * 0.07);
-        this.beginPath(); this.arc(cx + cw / 2, cy, px * 0.4, 0, Math.PI * 2); this.fill(); this.stroke();
-        this.fillStyle = '#8a6a00'; this.font = `bold ${px * 0.5}px monospace`; this.textAlign = 'center'; this.textBaseline = 'middle';
-        fill.call(this, 'c', cx + cw / 2, cy + px * 0.03); cx += cw;
+        eraserIcon(cx + cw / 2, cy, px * 0.3, -0.5, this); cx += cw;   // (the credits icon is the pink eraser)
       }
     });
     this.restore();
@@ -971,7 +977,7 @@ const BREAKDOWN = { range: 4.5 * YD, k: 0.72 };   // special-teams coverage: ins
 // he's knocked out of bounds, sliding past yd beyond the line
 const SIDE_OUT = { range: 2.5, speed: 1.5, past: 1 };
 const TACKLE_FALL = { runner: 0.45, tackler: 0.85, backBias: 0.5, fast: 0.3, slow: 0.5, sideRatio: 1.2, sideMin: 2, sideCarry: 1.1,
-                      push: 1.1, slideTime: 0.6, speedPush: 0.6 };   // (visual) the pair is driven push x that momentum, easing off over slideTime s; a tackler near top speed adds speedPush x his speed
+                      push: 0.7, slideTime: 0.45, speedPush: 0.6, maxSlide: 1.6 };   // maxSlide = most yd a tackled runner skids (sideline knock-outs excepted);   // (visual) the pair is driven push x that momentum, easing off over slideTime s; a tackler near top speed adds speedPush x his speed
 const BIG_HIT_PUSH = { base: 2.5 * YD, speed: 0.55, carry: 0.2, slide: 0.6, sideRatio: 1.2, olMass: 1.6 };   // (visual) hit stick: runner launched base + speed x the hitter's speed (+ carry x his own)
 const GATOR = { front: 0.06, other: 0.22, roll: 2.4 * YD, time: 0.75, turns: 1 };   // gator roll: tackler wraps the ankles and rolls him down (chance head-on / from side or behind)
 const DIVE_TOUCH = { slow: 0.25, stumble: 0.5, fall: 0.1 };   // a dive tackle that missed but touched the carrier: extra slow, stumble s, odds he falls over
@@ -1459,7 +1465,7 @@ for (const [team, s] of Object.entries(PHYS)) ROSTER[team].forEach((p, i) => {
 //   8 high-top, 9 curly top | hairColour 0 black, 1 dark brown, 2 brown, 3 dirty blond, 4 blond, 5 red, 6 gray
 //   facial 0 none, 1 stubble, 2 mustache, 3 goatee, 4 short beard, 5 full beard, 6 long beard, 7 chin strap
 //   eyes 0 dark brown, 1 brown, 2 hazel, 3 blue, 4 green | expr 0 smile, 1 neutral, 2 grin, 3 stern
-//   acc bits: 1 skull cap / hat, 2 headband, 4 glasses, 8 headset | cap = hat colour, beard = beard colour (default: the hair's)
+//   acc bits: 1 skull cap / hat, 2 headband, 4 glasses, 8 headset, 16 earrings (your coach only) | cap = hat colour, beard = beard colour (default: the hair's)
 const FACE_SKINS = ['#f6d9c0', '#eec39d', '#dba679', '#c68a5e', '#a56b43', '#8a5233', '#6d3e25', '#4a2a19'];
 const FACE_HAIRS = ['#17110d', '#3a2414', '#6b4423', '#b58a4a', '#d8b865', '#a8431f', '#b8b8b8'];
 const FACE_EYES = ['#2b1a10', '#5a3a1c', '#8a6a2a', '#3a74c8', '#3a8a4a'];
@@ -1694,6 +1700,11 @@ function drawAvatar(f, cx, cy, R, o = {}) {
     ctx.beginPath(); ctx.ellipse(0, -4, rx + 3.2, ry + 3.2, 0, Math.PI * 1.04, Math.PI * 1.96); ctx.lineWidth = 2.6; ctx.strokeStyle = '#2a2a30'; ctx.stroke();
     rr(-rx - 6.2, -9, 6, 12, 2, '#2a2a30'); rr(rx + 0.2, -9, 6, 12, 2, '#2a2a30');
     ctx.beginPath(); ctx.moveTo(-rx - 3, 3); ctx.quadraticCurveTo(-rx + 1, my + 4, -5, my + 3.5); ctx.lineWidth = 1.5; ctx.stroke(); ctx.strokeStyle = line; ctx.lineWidth = 1.7;
+  }
+  if (f.acc & 16) {   // earrings (bit 16: only in face objects, the hex codes hold 0-15): a gold hoop under each ear
+    ctx.strokeStyle = '#d9a82a'; ctx.lineWidth = 1.6;
+    for (const s of [-1, 1]) { ctx.beginPath(); ctx.arc(s * (rx + 0.8), 4.8, 2.7, 0, TAU); ctx.stroke(); }
+    ctx.strokeStyle = line; ctx.lineWidth = 1.7;
   }
   ctx.restore();
   ctx.beginPath(); ctx.arc(0, 0, 50, 0, TAU); ctx.lineWidth = 2.4; ctx.strokeStyle = line; ctx.stroke();
@@ -2881,7 +2892,7 @@ const saveSettings = () => { try { localStorage.setItem(SETTINGS_KEY, JSON.strin
 const DIFFICULTY = {
   BABY:    { def: 0.82, rz: -2,   sim: -2.6, hit: 0.35, fum: 0.45, shed: 1.5,  cover: 0.7,  drop: 2.0,  run: 0.78, stars: 0.5, brk: 1.6, pick: 0.4,  pbu: 0.55, punch: 0.4 },
   EASY:    { def: 0.93, rz: -0.5, sim: -1.4, hit: 0.55, fum: 0.65, shed: 1.28, cover: 0.8,  drop: 1.5,  run: 0.85, brk: 1.4,  pick: 0.6,  pbu: 0.7,  punch: 0.6 },
-  NORMAL:  { def: 1.03, rz: -0.1, sim: -0.4, hit: 0.65, fum: 0.85, shed: 1.12, cover: 0.92, drop: 1.2,  run: 0.92, brk: 1.12, pick: 0.82, pbu: 0.88, punch: 0.85 },   // (easier than it was: their defense covers, picks and strips a bit less)
+  NORMAL:  { def: 0.98, rz: -0.4, sim: -0.9, hit: 0.55, fum: 0.72, shed: 1.2, cover: 0.85, drop: 1.35,  run: 0.88, brk: 1.25, pick: 0.7, pbu: 0.78, punch: 0.72 },   // (easier again: their defense covers, picks, hits and strips noticeably less)
   HARD:    { def: 1.09, rz: 0.7,  sim: 1.05, hit: 1.3,  fum: 1.1,  shed: 0.85, cover: 1.24, drop: 0.68, run: 1.14, brk: 0.78, pick: 1.25, pbu: 1.15, punch: 1.2 },
   EXTREME: { def: 1.16, rz: 1.5,  sim: 2.2,  hit: 1.8,  fum: 1.2,  shed: 0.7,  cover: 1.5,  drop: 0.42, run: 1.26, brk: 0.62, pick: 1.5,  pbu: 1.3,  punch: 1.45 },
   UNFAIR:  { def: 1.28, rz: 2.8,  sim: 4,    hit: 2.3,  fum: 1.4,  shed: 0.5,  cover: 1.6,  drop: 0.25, run: 1.4, stars: 6, brk: 0.45, pick: 1.8, pbu: 1.5, punch: 1.7 },
@@ -6510,6 +6521,7 @@ function tackleCarrier(c, d, trip) {
   // hit from the infield side near the sideline: he's driven over it and goes down out of bounds (clock stops)
   const near = c.y < MID ? -1 : 1, hvy = d ? (d.svy ?? d.vy ?? 0) : 0;
   const sideOut = !!d && toSideline(c) < SIDE_OUT.range * YD && (c.y - d.y) * near > Math.abs(d.x - c.x) * 0.7 && hvy * near > SIDE_OUT.speed * YD;
+  if (sideOut && c.act) c.act.out = true;
   if (sideOut && c.act) c.act.vy = near * Math.max(Math.abs(c.act.vy || 0), 2 * (toSideline(c) + SIDE_OUT.past * YD) / (c.act.slide || TACKLE_FALL.slideTime));
   const oob = sideOut || !feetInBounds(c) || !ballInBounds(c);
   if (c.act) c.act.maxX = FIELD - 0.4 * YL;   // down short of the goal line: the fall doesn't slide him over it
@@ -6966,7 +6978,14 @@ function updateAction(p, dt) {
     a.t += dt;
     // (a wrap-up slides the pair along their combined momentum for a while longer: look only, the spot's already marked)
     const f = Math.min(1, a.t / (a.slide || 0.4));
-    p.x += a.vx * dt * (1 - f); p.y += a.vy * dt * (1 - f);
+    // (the slide is capped, so a fast hit never skids the pair yards past the spot; launches / sideline knock-outs keep theirs)
+    let sx = a.vx * dt * (1 - f), sy = a.vy * dt * (1 - f);
+    if (!a.launch && !a.gator && !a.out) {
+      const room = Math.max(0, TACKLE_FALL.maxSlide * YD - (a.slid || 0)), sl = Math.hypot(sx, sy);
+      if (sl > room) { const k = sl ? room / sl : 0; sx *= k; sy *= k; }
+      a.slid = (a.slid || 0) + Math.hypot(sx, sy);
+    }
+    p.x += sx; p.y += sy;
     if (a.maxX != null) p.x = Math.min(p.x, a.maxX);
     p.z = a.launch ? Math.sin(Math.PI * Math.min(1, a.t / (a.launchT || 0.45))) * (a.launchH || 12) * S : 0;
   } else if (p.action === 'point') {
@@ -10029,8 +10048,9 @@ function updateReturner(d, dt) {
       d.stiffSide = 0;
       if (ch && !ch.action && Math.random() < stiffOdds(d, ch) * (d.stiffSwap ? STIFF.wrong : 1)) {
         ch.tackling = false; ch.resolved = true;
-        if (Math.random() < STIFF.fall) { startDive(ch, ch.x + (ch.x - d.x), ch.y + (ch.y - d.y), 0.3, 1.3 * YD); ch.recoverUntil = clock + 1.0; }   // shoved off his feet
-        else { const a = Math.atan2(ch.y - d.y, ch.x - d.x), v = STIFF.pushDist * YD / STIFF.pushT; ch.push = { vx: Math.cos(a) * v, vy: Math.sin(a) * v, until: clock + STIFF.pushT }; ch.slow = Math.max(ch.slow || 0, STIFF.stagger); ch.recoverUntil = clock + STIFF.pushT + 0.3; }   // (mostly just driven back and staggered)
+        const fall = Math.random() < STIFF.fall;   // (the same reactions as the offense's stiff arm: shoved down or driven back with his head snapped, rarely the iconic one)
+        missReel(d, ch, 'stiff', fall ? 'stiffDown' : 'stiffShove');
+        if (!fall) { ch.slow = Math.max(ch.slow || 0, STIFF.stagger); ch.stiffed = clock; }
         popup(ch, 'STIFF ARM', '#ffd94a'); stiffSfx();
       }
       else if (ch) ch.resolved = false;
@@ -11481,7 +11501,7 @@ const colMass = p => (p.wt || COLLIDE.wt) * (p.grp && p.at && p.at.str != null ?
 function colSkip(a, b) {
   const air = p => (p.z || 0) > COLLIDE.jump * S;
   if (air(a) || air(b) || a.tackling || b.tackling || a.stiffBy === b || b.stiffBy === a) return true;
-  for (const p of [a, b]) if (p.action === 'dive' || p.action === 'hurdle' || p.action === 'hurdled') return true;
+  for (const p of [a, b]) if (p.action === 'dive' || p.action === 'hurdle' || p.action === 'hurdled' || p.action === 'wrap' || p.action === 'clasp') return true;   // (a tackler riding the runner down is pinned to him: pushing them apart every frame slid the pair across the turf)
   return a.team !== b.team && a.engaged && b.engaged;
 }
 // bodies are solid: overlapping men ease apart (heavier gives less), and a pair that passed through each other this frame is put back
@@ -12036,7 +12056,8 @@ const wrapAngle = a => Math.atan2(Math.sin(a), Math.cos(a));
 // the stands (two versions: sitting, and up on their feet with arms in the air for big plays),
 // an ad wall, then staff, band, photographers and the team bench on the touchline.
 // end = how deep the end-zone stands go, endOver = how far past the bottom sideline they run, endGap = past the end line
-const CROWD = { x0: -ENDZONE - 60 * YD, depth: 18 * YD, wall: 4.4 * YD, end: 40 * YD, endOver: 30 * YD, endGap: 0.6 * YD };
+const CROWD_PAD = 14 * YD;   // stands built this far past each end zone (the sideline stands are clipped just past it: 60 yd of never-seen canvas was ~30% of the crowd's memory)
+const CROWD = { x0: -ENDZONE - CROWD_PAD, depth: 18 * YD, wall: 4.4 * YD, end: 40 * YD, endOver: 30 * YD, endGap: 0.6 * YD };
 let crowdImg = null;
 const BOT_PUSH = 76;     // px the bottom touchline's staff / bench stand further out than the top one's feet: their bodies stand up toward the field
 const BENCH_BACK = 84;   // px from the touchline to the bench players' feet
@@ -12049,7 +12070,7 @@ const benchKit = () => [homeKit(), awayKit()].map(t => [t.shell, t.jersey, t.pan
 const freeCanvas = c => { if (c && c.width) { c.width = 0; c.height = 0; } };
 function buildCrowd() {
   if (crowdImg) { for (const v of Object.values(crowdImg)) if (v instanceof HTMLCanvasElement) freeCanvas(v); crowdImg = null; }
-  const w =Math.ceil(FIELD + 2 * ENDZONE + 120 * YD), h = Math.ceil(CROWD.depth), U = 3.5 * S;
+  const w =Math.ceil(FIELD + 2 * ENDZONE + 2 * CROWD_PAD), h = Math.ceil(CROWD.depth), U = 3.5 * S;
   let seed = 90210;
   const rnd = () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const pick = a => a[Math.floor(rnd() * a.length)];
@@ -12235,7 +12256,7 @@ function buildCrowd() {
 
   // staff on the touchline: band, photographers, assistants, carts and gear
   const items = [];
-  const alongX0 = 60 * YD + 30, alongX1 = w - 60 * YD - 60;   // (staff stay along the sideline: between the end lines, never out in the stands)
+  const alongX0 = CROWD_PAD + 30, alongX1 = w - CROWD_PAD - 60;   // (staff stay along the sideline: between the end lines, never out in the stands)
   for (let x = alongX0 + rnd() * 60; x < alongX1; x += 30 + rnd() * 110) {
     if (x > benchSpan[0] - 40 && x < benchSpan[1] + 160) continue;
     const roll = rnd();
@@ -12399,7 +12420,7 @@ function drawLogo(key, cx, cy, s) {
   const L = LOGOS[key];
   if (!L) return false;
   const k = s / Math.max(L.width, L.height);
-  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = TUI.on ? 'low' : 'high';
   ctx.drawImage(L, cx - L.width * k / 2, cy - L.height * k / 2, L.width * k, L.height * k);
   return true;
 }
@@ -12599,7 +12620,7 @@ function drawFieldNumbers() {
       ctx.save();
       ctx.translate(x, y);
       ctx.scale(MIRROR, 1);
-      drawTextCached(label, 2 * YD, 'bold', 'monospace', 0, 2, 'rgba(255,255,255,0.85)');
+      drawTextCached(label, 2 * YD, 'bold', HAND_FONT, 0, 2, 'rgba(255,255,255,0.85)');   // (the cache canvas isn't patched: pass the handwriting stack)
       ctx.restore();
       if (i === 5) continue;
       const dir = i < 5 ? -1 : 1, ay = y - 0.6 * YD;
@@ -12940,11 +12961,8 @@ function catchAnim(kind, secure, r = tgt, opp = back7) {
   const varied = list => { const l = list.filter(s => s !== CATCH_FX.last); const s = pickOf(l.length ? l : list); CATCH_FX.last = s; return s; };   // (never the same spectacular catch twice running)
   let st = null;
   if ((jump || dive || one) && Math.random() < Math.min(CATCH_FX.max, CATCH_FX.spec * (one ? CATCH_FX.oneK : 1) * (topped || near.length >= 2 ? CATCH_FX.contestK : 1) * rm(r, 'ctc', 'catch') * (1 + CATCH_FX.hiCtc * Math.max(0, rm(r, 'ctc', 'catch') - 1)))) {
-    st = topped && side ? 'mossToe' : topped ? pickOf(['mossOver', 'mossKnee', 'mossBack'])
-       : one && side ? (jump ? 'sideOneLeap' : 'oneSideline')
-       : one && dive ? 'diveOne'
-       : one && jump ? (behind ? varied(['oneBack', 'oneSpin', 'oneHigh', 'oneAcross']) : varied(['jumpOne', 'oneHigh', 'oneSpin', 'oneAcross']))
-       : one ? (lowBall ? varied(['oneLow', 'oneLayout', 'oneStride']) : behind ? varied(['oneBack', 'oneSpin', 'oneAcross', 'oneStride', 'oneHigh']) : varied(['oneStride', 'oneAcross', 'oneHigh', 'oneSpin', 'oneLayout']))
+    st = one ? null   // (one-handers are plain one-handed catches: no special styles)
+       : topped && side ? 'mossToe' : topped ? pickOf(['mossOver', 'mossKnee', 'mossBack'])
        : jump && side && near.length ? 'mossToe'
        : jump && near.length >= 2 ? 'crowd' : null;
   }
@@ -13265,9 +13283,13 @@ function drawPlayer(p) {
 
   if (xfGlow(p)) {   // X-Factor in the zone: a pulsing yellow glow around him
     const pulse = 0.8 + 0.2 * Math.sin(animNow() / 160), gy = p.y + FOOT - 15 * S, gr = 46 * S * pulse;
-    const g = ctx.createRadialGradient(p.x, gy, 4 * S, p.x, gy, gr);
-    g.addColorStop(0, 'rgba(255,225,60,0.55)'); g.addColorStop(0.55, 'rgba(255,205,0,0.28)'); g.addColorStop(1, 'rgba(255,200,0,0)');
-    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(p.x, gy, gr, 0, Math.PI * 2); ctx.fill();
+    if (TUI.on) ctx.fillStyle = 'rgba(255,215,40,0.3)';   // (phones: a flat glow, no gradient per frame)
+    else {
+      const g = ctx.createRadialGradient(p.x, gy, 4 * S, p.x, gy, gr);
+      g.addColorStop(0, 'rgba(255,225,60,0.55)'); g.addColorStop(0.55, 'rgba(255,205,0,0.28)'); g.addColorStop(1, 'rgba(255,200,0,0)');
+      ctx.fillStyle = g;
+    }
+ ctx.beginPath(); ctx.arc(p.x, gy, gr, 0, Math.PI * 2); ctx.fill();
     if (!(p === ud && defLive())) {   // (the defender you steer already has his own yellow ring: no second one)
       ctx.strokeStyle = `rgba(255,222,70,${0.55 * pulse})`; ctx.lineWidth = 2.5;
       ctx.beginPath(); ctx.ellipse(p.x, p.y + FOOT, 16 * S * pulse, 5.5 * S * pulse, 0, 0, Math.PI * 2); ctx.stroke();
@@ -15059,24 +15081,26 @@ function drawKickMeters() {
   const bw = 520, x0 = W / 2 - bw / 2, y0 = TOP_BAR + 12;
   ctx.save(); ctx.globalAlpha = kickFade();   // (a big kick: after the first click both bars fade in and out; see ICE)
   // power: red = not enough to reach, green = enough; it fills and drains until the first click
-  ctx.fillStyle = '#000';
+  ctx.fillStyle = PAPER_COLOR;
   ctx.fillRect(x0 - 3, y0 - 3, bw + 6, 40);
   const need = kick.need * bw, level = (kick.phase === 'power' ? kick.meter : kick.power) * bw;
-  ctx.fillStyle = '#5a1414'; ctx.fillRect(x0, y0, need, 34);
-  ctx.fillStyle = '#14501c'; ctx.fillRect(x0 + need, y0, bw - need, 34);
-  ctx.fillStyle = '#ff2a2a'; ctx.fillRect(x0, y0, Math.min(level, need), 34);
-  if (level > need) { ctx.fillStyle = '#22ff44'; ctx.fillRect(x0 + need, y0, level - need, 34); }
-  if (kick.phase !== 'power') { ctx.fillStyle = '#fff'; ctx.fillRect(x0 + level - 2, y0 - 3, 4, 40); }
+  penHatch(x0, y0, need, 34, '#8a3030', 31);
+  penHatch(x0 + need, y0, bw - need, 34, '#2f7a3a', 32);
+  penHatch(x0, y0, Math.min(level, need), 34, '#e02020', 31);
+  if (level > need) penHatch(x0 + need, y0, level - need, 34, '#12b030', 32);
+  penOutline(x0, y0, bw, 34, 33, '#222', 3);
+  if (kick.phase !== 'power') { ctx.fillStyle = '#111'; ctx.fillRect(x0 + level - 2, y0 - 3, 4, 40); }
   if (kick.userKo && kick.target) { ctx.fillStyle = '#ffd94a'; ctx.fillRect(x0 + need - 3, y0 - 6, 6, 46); }   // (the reticle's range: stop the bar here)
   // aim: an arrow swings across; the green window is where it has to be
   const ay = y0 + 52, aw = kick.window * bw / 2 * 2;
-  ctx.fillStyle = '#000';
+  ctx.fillStyle = PAPER_COLOR;
   ctx.fillRect(x0 - 3, ay - 3, bw + 6, 28);
-  ctx.fillStyle = '#3a3f46'; ctx.fillRect(x0, ay, bw, 22);
-  ctx.fillStyle = '#22ff44'; ctx.fillRect(W / 2 - aw / 2 * 1, ay, aw, 22);
+  penHatch(x0, ay, bw, 22, PEN.graphite, 34);
+  penHatch(W / 2 - aw / 2 * 1, ay, aw, 22, '#12b030', 35);
+  penOutline(x0, ay, bw, 22, 36, '#222', 3);
   if (kick.phase !== 'power') {
     const pos = kick.phase === 'aim' ? kick.pos : kick.clickPos ?? kick.dir, ax = W / 2 + Math.max(-1, Math.min(1, pos)) * bw / 2;
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = '#111';
     ctx.beginPath(); ctx.moveTo(ax, ay - 2); ctx.lineTo(ax - 10, ay - 16); ctx.lineTo(ax + 10, ay - 16); ctx.closePath(); ctx.fill();
     ctx.fillRect(ax - 2, ay, 4, 22);
   }
@@ -16974,6 +16998,11 @@ const pmRect = id => {
   if (!PM_RECTS.has(k)) PM_RECTS.set(k, { x: W / 2 - 130, y, w: 260, h: 48 });
   return PM_RECTS.get(k);
 };
+// a rect-making function that hands back the same object while the rect is unchanged (menuBtn keeps its hover / press easing on the rect)
+function rectCache(fn) {
+  const m = new Map();
+  return (...a) => { const r = fn(...a), k = a.join(','), o = m.get(k); if (o && o.x === r.x && o.y === r.y && o.w === r.w && o.h === r.h) return o; m.set(k, r); return r; };
+}
 let hoverPt = null;   // where the mouse is (canvas coords), for button hover animations
 // a button that lifts and brightens while hovered (easing in and out), presses in when clicked, greyed out when off
 // in-game buttons are coloured paper scraps, the same as the menus' (IN_GAME_PAPER = the colours)
@@ -17026,6 +17055,48 @@ function leaveGame() {
 }
 const overPauseButton = p => p.x >= PAUSE_BTN.x && p.x <= PAUSE_BTN.x + PAUSE_BTN.w && p.y >= PAUSE_BTN.y && p.y <= PAUSE_BTN.y + PAUSE_BTN.h;
 const overKeysButton = p => p.x >= KEYS_BTN.x && p.x <= KEYS_BTN.x + KEYS_BTN.w && p.y >= KEYS_BTN.y && p.y <= KEYS_BTN.y + KEYS_BTN.h;
+// the touch version (phones / tablets: TUI.on) of the list below
+const KEYBINDS_MOBILE = [
+  ['BEFORE THE SNAP', ''],
+  ['Drag the QB', 'Pass play: snap and start aiming (lift your finger to throw)'],
+  ['Tap the RB', 'Run play: snap, hand off or pitch to the back'],
+  ['SNAP / NEXT', 'Snap the ball / start the next play'],
+  ['AUDIBLE', 'New route combos (2-4 per play, by QB awareness)'],
+  ['Tap a receiver', 'Hot route: cycles his route (1-3 men a play, by QB awareness)'],
+  ['LOB / BULLET', 'Toggle lob / bullet - any time'],
+  ['TIMEOUT', 'Timeout once the play is over (stops the runoff)'],
+  ['Pause button', 'Pause menu (resume, reset, sim ahead)'],
+  ['IN THE POCKET', ''],
+  ['Joystick', 'Move the QB (up toward the line: throws on the run go shorter)'],
+  ['JUKE UP / DOWN, SPIN', 'Juke / spin away from a rusher (hold STIFF ARM to fend off)'],
+  ['Lift your finger', 'Throw to the spot (drag backwards = tuck and run)'],
+  ['BALL IN THE AIR', ''],
+  ['Swipe up', 'Jump / high-point it (near the sideline: a toe tap attempt)'],
+  ['Swipe down', 'Dive catch: lay out for it, sure hands in traffic'],
+  ['Swipe the way he runs', 'Catch and run: sprint at full speed through the catch (a little riskier when covered)'],
+  ['Swipe against him', 'One-handed catch (bigger radius, more drops)'],
+  ['Joystick', 'Steer the receiver'],
+  ['WITH THE BALL', ''],
+  ['Joystick', 'Run: downfield by default'],
+  ['SPRINT (hold)', 'Sprint (looser ball, fewer broken tackles)'],
+  ['JUKE UP / DOWN', 'Juke up / down'],
+  ['DIVE', 'Dive forward (QB: slide)'],
+  ['HURDLE', 'Leap over a defender who is a couple of yards ahead (too close and he hits you in the air)'],
+  ['SPIN', 'Spin move'],
+  ['STIFF ARM (hold)', 'Hold a tackler off (slower), keep holding for the best shove'],
+  ['TRUCK (hold)', 'Head down, runs over tacklers in front/side (looser ball)'],
+  ['PROTECT (hold)', 'Both arms on the ball, almost no fumbles, but slower and no moves'],
+  ['KNEEL / FAIR', 'Kneel for a touchback or fair catch on a kick'],
+  ['CELEBRATE', 'Celebrate after a score'],
+  ['PLAYING DEFENSE (settings: SIM DEFENSE off)', ''],
+  ['Joystick', 'Move your defender. Anyone can blitz: run him through the line toward the QB'],
+  ['SWITCH / tap a player', 'Switch to the defender nearest the ball'],
+  ['DIVE', 'Dive tackle from a few yards off'],
+  ['HIT STICK', 'Big hit, can whiff'],
+  ['STRIP', 'Try to knock the ball out'],
+  ['JUMP', 'Jump for the ball: time it to arrive with the ball'],
+  ['Tackling', 'Automatic once you get to the ball carrier'],
+];
 const KEYBINDS = [
   ['BEFORE THE SNAP', ''],
   ['Drag the QB circle', 'Pass play: snap and start aiming (release to throw)'],
@@ -17040,6 +17111,9 @@ const KEYBINDS = [
   ['Click the Star Factors tip', 'Show / hide the Star Factors panel (what turns each star\'s Star Factor on and off); it stays that way in every game'],
   ['Click the player names tip', 'Show / hide the player names before the snap (stays that way in every game)'],
   ['Backspace (tutorial)', 'Start the current tutorial step over'],
+  ['COACH CREATOR (MY COACH)', ''],
+  ['Up / Down, Left / Right', 'Pick an option, change it (or click the arrows and swatches)'],
+  ['R / Enter / Esc', 'Random look / done / back'],
   ['Arrow keys', 'Replay: move the camera around (like a right-drag)'],
   ['A / D', 'Replay: fast forward / rewind'],
   ['IN THE POCKET', ''],
@@ -17119,7 +17193,7 @@ function drawKeybinds() {
   ctx.beginPath(); ctx.rect(0, KEYS_VIEW.top, W, KEYS_VIEW.bottom - KEYS_VIEW.top); ctx.clip();
   const keyX = 500, descX = 525, descW = KEYS_VIEW.bar.x - 30 - descX, line = 38;
   let y = KEYS_VIEW.top + 34 - keysScroll;
-  for (const [k, v] of KEYBINDS) {
+  for (const [k, v] of (TUI.on ? KEYBINDS_MOBILE : KEYBINDS)) {
     if (!v) {
       ctx.textAlign = 'left'; ctx.fillStyle = '#7fe3ff'; ctx.font = 'bold 30px monospace';
       y += 14;
@@ -17223,11 +17297,23 @@ function drawTopCallout() {
   ctx.fillStyle = topCallout.color; ctx.fillText(topCallout.text, W / 2, y + h / 2 + 1);
   ctx.restore();
 }
+// a banner strip torn from a notebook: ragged top and bottom edges (same every frame), blue ruled lines, a red margin line
+let BANNER_EDGE = null;
+function paperStrip(y, h) {
+  if (!BANNER_EDGE) { const r = seeded(11); BANNER_EDGE = [[], []].map(() => Array.from({ length: W / 16 + 2 }, () => (r() - 0.5) * 9)); }
+  const edge = (yy, jit, dir) => { for (let i = 0, x = 0; x <= W + 16; i++, x += 16) ctx.lineTo(x, yy + jit[i] + dir * 2); };
+  ctx.save();
+  const path = () => { ctx.beginPath(); ctx.moveTo(0, y); edge(y, BANNER_EDGE[0], 0); ctx.lineTo(W, y + h); for (let i = BANNER_EDGE[1].length - 1, x = (BANNER_EDGE[1].length - 1) * 16; i >= 0; i--, x -= 16) ctx.lineTo(x, y + h + BANNER_EDGE[1][i]); ctx.closePath(); };
+  ctx.translate(0, 5); path(); ctx.fillStyle = 'rgba(40,25,5,0.3)'; ctx.fill(); ctx.translate(0, -5);
+  path(); ctx.fillStyle = PAPER_COLOR; ctx.fill(); ctx.clip();
+  ctx.fillStyle = 'rgba(80,140,210,0.4)'; for (let ly = y + 14; ly < y + h; ly += 40) ctx.fillRect(0, ly, W, 1.5);   // (wide-ruled, like real notebook paper)
+  ctx.fillStyle = 'rgba(220,70,70,0.5)'; ctx.fillRect(84, y - 10, 2, h + 20);
+  ctx.restore();
+}
 function drawHalfHold() {   // the HALFTIME banner stays up with an OK button until it's pressed
   const h = 96, y = H / 2 - h / 2 + 40, B = HALF_OK_BTN;
   ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,0.78)'; ctx.fillRect(0, y, W, h);
-  ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(0, y, W, 3); ctx.fillRect(0, y + h - 3, W, 3);
+  paperStrip(y, h);
   ctx.font = 'bold 64px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.lineJoin = 'miter'; ctx.lineWidth = 8; ctx.strokeStyle = '#3a2a00'; ctx.strokeText('HALFTIME', W / 2, y + h / 2 + 2);
   ctx.fillStyle = '#ffd94a'; ctx.fillText('HALFTIME', W / 2, y + h / 2 + 2);
@@ -17248,10 +17334,7 @@ function drawTurnoverBanner() {
   const sub = turnoverBanner.sub, h = sub ? 130 : 96, y = H / 2 - h / 2 + 40;
   ctx.save();
   ctx.globalAlpha *= a;
-  ctx.fillStyle = 'rgba(0,0,0,0.78)';
-  ctx.fillRect(0, y, W, h);
-  ctx.fillStyle = 'rgba(255,255,255,0.15)';
-  ctx.fillRect(0, y, W, 3); ctx.fillRect(0, y + h - 3, W, 3);
+  paperStrip(y, h);
   ctx.font = 'bold 64px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   const tx = W / 2 + slide, ty = y + (sub ? 50 : h / 2 + 2);
   ctx.lineJoin = 'miter'; ctx.lineWidth = 8; ctx.strokeStyle = turnoverBanner.edge;
@@ -17259,7 +17342,7 @@ function drawTurnoverBanner() {
   ctx.fillStyle = turnoverBanner.color;
   ctx.fillText(turnoverBanner.text, tx, ty);
   if (sub) {   // who scored, sliding in a beat behind
-    ctx.font = 'bold 26px monospace'; ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 26px monospace'; ctx.fillStyle = RES.line;
     ctx.fillText(sub, W / 2 + Math.max(0, 1 - Math.max(0, e - 120) / 180) * W, y + 102);
   }
   // scanlines for the pixel look
@@ -17316,7 +17399,9 @@ function draw() {
   const holder = allPlayers().find(p => p.hasBall);
   const ballDown = !ball.tucked && ball.z < 20 * S && !holder;
   let ballDrawn = ball.tucked || tossing();
+  const cullX = (W / 2) / camZ() + 8 * YD;   // (players far off the sides of the screen aren't drawn: the sidelines hold a lot of bodies)
   for (const p of (tossing() ? [] : allPlayers()).sort((a, b) => a.y - b.y)) {
+    if (Math.abs(p.x - camX) > cullX && p !== holder) continue;
     // compare where they touch the turf: a player's feet are FOOT below his y, the ball's underside ~4 px below its y
     if (ballDown && !ballDrawn && p.y + FOOT > ball.y + 4 * S) { drawBall(); ballDrawn = true; }
     drawPlayer(p);
@@ -17696,7 +17781,7 @@ const MENU_NEXT = { x: 1040, y: 620, w: 220, h: 80 };
 const MENU_SCREENS = ['result', 'week', 'home', 'matchup'];
 const nextBtn = () => results.screen === 'result' ? RESULT_BTN : MENU_NEXT;
 function advanceResults() {
-  if (teamPick || results.screen === 'start' || results.screen === 'franchise' || results.screen === 'test') return;   // (the team picker / start / test screens have their own buttons)
+  if (teamPick || results.screen === 'start' || results.screen === 'franchise' || results.screen === 'test' || results.screen === 'coach') return;   // (the team picker / start / test screens have their own buttons)
   if (offPop) { if (offPop.btns && offPop.btns.length === 1) offPopClick({ x: offPop.btns[0].x + 1, y: offPop.btns[0].y + 1 }); return; }   // (Space takes an OK popup)
   if (OFF_SCREENS.includes(results.screen) || ['trade', 'tradeb', 'toffers', 'staff', 'roster', 'hof', 'practice', 'hire', 'board'].includes(results.screen)) return;   // (the offseason and trade screens have their own buttons)
   if (results.screen === 'home' && season && season.offseason && !exhibition) { offBegin(); return; }   // OFFSEASON
@@ -17970,6 +18055,7 @@ let showSeeds = false;   // home screen: the standings panel shows the division 
 const STANDINGS_PANEL = { x: 70, y: 345, w: 560, h: 220 };
 // home screen schedule strip: x0 = week 1's x at scroll 0, gap = px between weeks, scroll = weeks scrolled (bar = scroll bar)
 const SCHED = { x0: 140, gap: 330, scroll: 0, at: null, drag: null, bar: { x: 40, y: 280, w: W - 80, h: 10 } };
+const SCHED_STACK = { wk: 116, vs: 143, helmet: 186, r: 28 };   // y of each line in a schedule entry (the circle is at 224) and the helmet's size
 const schedMax = () => Math.max(0, SEASON_WEEKS - (W - 2 * SCHED.x0) / SCHED.gap);
 function schedBarTo(px) {   // the scroll bar: put the thumb's middle under the mouse
   const B = SCHED.bar;
@@ -18278,6 +18364,37 @@ function drawOffPop() {
   const P = offPop; if (!P.btns) P.btns = [{ label: 'OK' }];
   ctx.save();
   ctx.fillStyle = 'rgba(30,25,10,0.5)'; ctx.fillRect(0, 0, W, H);
+  if (P.goals) {   // weekly goals: the same torn-paper rows as the pause menu's GOALS page, on the dimmed screen
+    const g = P.goals, n = g.list.length, h = 70 + n * 92 + 40 + 96, y0 = Math.max(20, Math.round((H - h) / 2)) + 70, x = W / 2 - 300;
+    const card = P.card || (P.card = { x: W / 2 - 380, y: y0 - 70, w: 760, h });
+    ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 34px monospace';
+    ctx.fillText(P.title, W / 2, y0 - 30);
+    g.list.forEach((q, i) => {
+      const gp = goalProg(q), y = y0 + i * 92, prog = gp.prog;
+      const b = (P.rows || (P.rows = []))[i] || (P.rows[i] = { x, y, w: 600, h: 78 }), ink = q.done ? '#fffdf4' : RES.line;
+      paperCard(b, q.done ? IN_GAME_PAPER.green : '#fffdf4', () => {
+        ctx.fillStyle = ink; ctx.font = 'bold 19px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillText(`${q.done ? '[X] ' : ''}${goalLabel(q)}`, x + 14, y + 22, 572);
+        ctx.fillStyle = q.done ? 'rgba(255,255,255,0.25)' : 'rgba(120,100,70,0.12)'; ctx.fillRect(x + 14, y + 42, 440, 22);
+        ctx.fillStyle = q.done ? '#ffe680' : '#2a62b0'; ctx.fillRect(x + 14, y + 42, 440 * prog, 22);
+        ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.strokeRect(x + 14, y + 42, 440, 22);
+        ctx.fillStyle = ink; ctx.font = 'bold 18px monospace'; ctx.fillText(`${gp.txt}   ${q.lv} ¤`, x + 468, y + 54, 125);
+        ctx.textAlign = 'center';
+      });
+    });
+    ctx.fillStyle = '#cfd8d2'; ctx.font = '14px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(P.note || '', W / 2, y0 + n * 92 + 6, 740);
+    const bw = 220, gap = 30, tot = P.btns.length * bw + (P.btns.length - 1) * gap;
+    P.btns.forEach((b, i) => {
+      Object.assign(b, { x: W / 2 - tot / 2 + i * (bw + gap), y: card.y + card.h - 84, w: bw, h: 62 });
+      popBtnDraw = true; menuBtn(b, b.label, b.green ? IN_GAME_PAPER.green : RES.bright, 26); popBtnDraw = false;
+    });
+    if (P.hide) {
+      P.hideBtn = P.hideBtn || { x: card.x + card.w - 224, y: card.y + card.h - 70, w: 190, h: 40 };
+      popBtnDraw = true; menuBtn(P.hideBtn, 'HIDE THIS TIP', RES.bright, 16); popBtnDraw = false;
+    }
+    ctx.restore(); return;
+  }
   // (P.player = { p, k }: his roster card on the left of the popup, the text beside it)
   const pc = P.player, w = pc ? 1000 : 760, h = Math.max(150 + P.lines.length * 28 + 70, pc ? 430 : 0), card = P.card || (P.card = { x: W / 2 - w / 2, y: Math.max(20, Math.round((H - h) / 2)), w, h });
   ctx.save(); ctx.translate(4, 6); tornPath(card); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill(); ctx.restore();
@@ -19743,6 +19860,28 @@ const RES = { bg: '#fbf8ee', line: '#22305a', gold: '#b07a10', dim: '#7a86a3', b
 const SEL = '#2d4f7a';   // menuBtn bg for a selected button (drawn highlighted)
 // a pencilled-in bar like the attribute boxes: `frac` 0-1 of n boxes scribbled in graphite (tone 'green' / 'red' = coloured pencil, for a great / poor condition)
 const PENCIL_TONE = { green: ['rgba(40,150,60,0.8)', 'rgba(20,110,40,0.7)'], red: ['rgba(200,50,50,0.8)', 'rgba(140,20,20,0.7)'] };
+// every bar is penciled in: penHatch = diagonal graphite (or coloured pencil) strokes over a light wash, penOutline = a slightly
+// wobbly box. Both are seeded (strokes are indexed from the bar's left edge), so they never flicker and a growing fill just reveals more.
+const PEN = { gap: 5, wobble: 1.1, alpha: 0.8, wash: 0.2, lw: 1.4, graphite: '#4a4a55' };
+function penHatch(x, y, w, h, col = PEN.graphite, seed = 1) {
+  if (w <= 0 || h <= 0) return;
+  const r = seeded(Math.round(seed) * 31 + 7), ga = ctx.globalAlpha;
+  ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+  ctx.globalAlpha = ga * PEN.wash; ctx.fillStyle = col; ctx.fillRect(x, y, w, h);
+  ctx.globalAlpha = ga * PEN.alpha; ctx.strokeStyle = col; ctx.lineWidth = PEN.lw; ctx.lineCap = 'round'; ctx.beginPath();
+  for (let sx = x - h; sx < x + w; sx += PEN.gap) { const a = r() * 2 - 1, b = r() * 2 - 1; ctx.moveTo(sx + a, y + h + 1); ctx.lineTo(sx + h + b, y - 1); }
+  ctx.stroke(); ctx.restore();
+}
+function penOutline(x, y, w, h, seed = 1, col = RES.line, lw = 2.5) {
+  const r = seeded(Math.round(seed) * 17 + 3), j = () => (r() - 0.5) * 2 * PEN.wobble, pts = [];
+  const nx = Math.max(1, Math.round(w / 60)), ny = Math.max(1, Math.round(h / 60));
+  for (let i = 0; i < nx; i++) pts.push([x + w * i / nx, y]);
+  for (let i = 0; i < ny; i++) pts.push([x + w, y + h * i / ny]);
+  for (let i = 0; i < nx; i++) pts.push([x + w - w * i / nx, y + h]);
+  for (let i = 0; i < ny; i++) pts.push([x, y + h - h * i / ny]);
+  ctx.save(); ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.lineJoin = 'round'; ctx.beginPath();
+  pts.forEach(([px, py], i) => i ? ctx.lineTo(px + j(), py + j()) : ctx.moveTo(px + j(), py + j())); ctx.closePath(); ctx.stroke(); ctx.restore();
+}
 function pencilBar(x, y, w, h, frac, tone, n = 20, seed = 7) {
   const seg = w / n, fill = Math.max(0, Math.min(1, frac)) * n, [c1, c2] = PENCIL_TONE[tone] || ['rgba(60,60,70,0.78)', 'rgba(30,30,40,0.6)'];
   ctx.fillStyle = '#fffdf4'; ctx.fillRect(x, y, w, h);
@@ -19755,7 +19894,7 @@ function pencilBar(x, y, w, h, frac, tone, n = 20, seed = 7) {
   }
   ctx.strokeStyle = RES.line; ctx.lineWidth = 2;
   for (let s = 1; s < n; s++) { ctx.beginPath(); ctx.moveTo(x + s * seg, y); ctx.lineTo(x + s * seg, y + h); ctx.stroke(); }
-  ctx.lineWidth = 3; ctx.strokeRect(x, y, w, h);
+  penOutline(x, y, w, h, x * 3 + y + seed, RES.line, 3);
 }
 // bars that slide from last game's value to the new one when their screen first shows (key -> { from, to, t0 })
 const barAnims = {}, BAR_ANIM_MS = 1600;
@@ -19771,12 +19910,16 @@ const condTone = c => c >= 90 ? 'green' : c < 30 ? 'red' : null;   // (+1 / -1 t
 // a seeded random (same numbers every frame for the same seed): paper creases, torn edges
 const seeded = s => () => (s = (s * 16807 + 11) % 2147483647) / 2147483647;
 // the menus' backgrounds, drawn once: slightly wrinkled notebook paper, and the school desk (start screen)
+const PAPER_COLOR = '#FAFAF7';   // the notebook paper's base colour (near white: text stays readable)
 let PAPER_BG = null, DESK_BG = null;
 function paperBg() {
   if (!PAPER_BG) {
     const c = PAPER_BG = document.createElement('canvas'); c.width = W; c.height = H;
     const g = c.getContext('2d'), r = seeded(7);
-    g.fillStyle = '#f8f4e6'; g.fillRect(0, 0, W, H);
+    g.fillStyle = PAPER_COLOR; g.fillRect(0, 0, W, H);
+    for (const [fx, fy, fx2, fy2] of [[W / 3, 0, W / 3 + 6, H], [0, H / 2, W, H / 2 - 5], [2 * W / 3, 0, 2 * W / 3 - 8, H]]) {   // fold marks: a shadow beside a highlight
+      for (const [col, o] of [['rgba(90,80,60,0.07)', 0], ['rgba(255,255,255,0.7)', 2.5]]) { g.strokeStyle = col; g.lineWidth = 2.5; g.beginPath(); g.moveTo(fx + o, fy + o); g.lineTo(fx2 + o, fy2 + o); g.stroke(); }
+    }
     for (let i = 0; i < 9; i++) {   // soft light / shadow blotches
       const x = r() * W, y = r() * H, rad = 150 + r() * 300, gr = g.createRadialGradient(x, y, 0, x, y, rad);
       gr.addColorStop(0, r() < 0.5 ? 'rgba(255,255,255,0.35)' : 'rgba(120,100,60,0.07)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
@@ -19831,10 +19974,40 @@ function deskBg() {
   ctx.drawImage(DESK_BG, 0, 0);
 }
 // a panel with titles sitting in gaps cut into its top border (lx = null centers the title)
+// panels are notes torn out of a notebook: slightly uneven edges (seeded per box), faint ruled lines, a red margin,
+// and a strip of tape on some corners
+const PANEL_NOTE = { wobble: 1.6, rule: 26, margin: 34, tape: 0.45, minRule: 70 };
+const PANEL_CACHE = new Map();
+function panelShape(x, y, w, h) {
+  const key = `${x},${y},${w},${h}`;
+  let s = PANEL_CACHE.get(key);
+  if (!s) {
+    const r = seeded(Math.round(x * 7 + y * 13 + w * 3 + h) + 5), j = () => (r() - 0.5) * 2 * PANEL_NOTE.wobble, pts = [];
+    const edge = (x0, y0, x1, y1, n) => { for (let i = 0; i < n; i++) pts.push([x0 + (x1 - x0) * i / n + j(), y0 + (y1 - y0) * i / n + j()]); };
+    const nx = Math.max(3, Math.round(w / 40)), ny = Math.max(3, Math.round(h / 40));
+    edge(x, y, x + w, y, nx); edge(x + w, y, x + w, y + h, ny); edge(x + w, y + h, x, y + h, nx); edge(x, y + h, x, y, ny);
+    s = { pts, tape: [r() < PANEL_NOTE.tape, r() < PANEL_NOTE.tape] };   // (no tilt: the contents are drawn in screen space)
+    PANEL_CACHE.set(key, s);
+  }
+  return s;
+}
 function resPanel(x, y, w, h, labels = [], bg = RES.bg) {
-  ctx.fillStyle = RES.shade; ctx.beginPath(); ctx.roundRect(x + 4, y + 5, w, h, 6); ctx.fill();
+  const sh = panelShape(x, y, w, h), path = () => { ctx.beginPath(); sh.pts.forEach(([px, py], i) => i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)); ctx.closePath(); };
+  ctx.save(); ctx.translate(4, 5); path(); ctx.fillStyle = RES.shade; ctx.fill(); ctx.restore();
   ctx.fillStyle = bg; ctx.strokeStyle = RES.line; ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.roundRect(x, y, w, h, 6); ctx.fill(); ctx.stroke();
+  path(); ctx.fill(); ctx.stroke();
+  if ((bg === RES.bg || bg === RES.bright) && h >= PANEL_NOTE.minRule) {
+    ctx.save(); path(); ctx.clip();
+    ctx.fillStyle = 'rgba(80,140,210,0.16)'; for (let ly = y + PANEL_NOTE.rule; ly < y + h - 4; ly += PANEL_NOTE.rule) ctx.fillRect(x, ly, w, 1);
+    if (w >= 160) { ctx.fillStyle = 'rgba(220,70,70,0.28)'; ctx.fillRect(x + PANEL_NOTE.margin, y, 1.5, h); }
+    ctx.restore();
+    sh.tape.forEach((on, i) => {   // a translucent strip of tape across a top corner
+      if (!on) return;
+      ctx.save(); ctx.translate(i ? x + w - 6 : x + 6, y + 2); ctx.rotate(i ? 0.7 : -0.7);
+      ctx.fillStyle = 'rgba(235,225,150,0.7)'; ctx.fillRect(-20, -8, 40, 16); ctx.strokeStyle = 'rgba(150,130,60,0.35)'; ctx.lineWidth = 1; ctx.strokeRect(-20, -8, 40, 16);
+      ctx.restore();
+    });
+  }
   ctx.font = 'bold 22px monospace'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
   for (const [t, lx] of labels) {
     const tw = ctx.measureText(t).width, tx = lx === null ? x + (w - tw) / 2 : x + lx;
@@ -19964,8 +20137,20 @@ function coinBox(x, y, n, bg) {
   resPanel(x, y, 130, 42, [], bg);
   ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   ctx.fillText(String(n === LEAGUE.coins ? Math.max(0, n - coinPending) : n), x + 85, y + 23);   // (counts up as each flying credit lands)
-  ctx.fillStyle = '#ffd23a'; ctx.beginPath(); ctx.arc(x + 105, y + 21, 10, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#8a6a00'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center'; ctx.fillText('c', x + 105, y + 21);
+  eraserIcon(x + 105, y + 21, 10);
+}
+// the credit icon: the eraser head of a mechanical pencil, seen from the side (pink eraser, metal ferrule band), tilted; r = its half height
+function eraserIcon(cx, cy, r, rot = -0.5, g = ctx) {
+  g.save(); g.translate(cx, cy); g.rotate(rot);
+  const L = r * 1.5;   // half length
+  g.fillStyle = '#ee8fa0'; g.beginPath(); g.roundRect(-L, -r * 0.8, L * 1.15, r * 1.6, r * 0.45); g.fill();   // eraser
+  g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(-L + r * 0.3, -r * 0.6, L * 0.8, r * 0.3);
+  const fx = -L + L * 1.15 - 1;
+  g.fillStyle = '#b9bcc4'; g.fillRect(fx, -r * 0.85, r * 0.9, r * 1.7);   // ferrule
+  g.fillStyle = '#8a8d96'; g.fillRect(fx + r * 0.25, -r * 0.85, r * 0.12, r * 1.7); g.fillRect(fx + r * 0.6, -r * 0.85, r * 0.12, r * 1.7);
+  g.fillStyle = '#e8c93a'; g.fillRect(fx + r * 0.9, -r * 0.8, L * 0.55, r * 1.6);   // a bit of barrel
+  g.strokeStyle = '#5a3a40'; g.lineWidth = Math.max(1, r * 0.14); g.strokeRect(-L, -r * 0.85, fx + r * 0.9 + L * 0.55 + L, r * 1.7);
+  g.restore();
 }
 // the ? on the home screen's OFFENSE / DEFENSE boxes: what's holding that side's rating back
 const HOME_HELP = { off: { x: 1008, y: 476, w: 26, h: 26 }, def: { x: 1203, y: 476, w: 26, h: 26 } };
@@ -20165,7 +20350,7 @@ function drawResults() {
 function drawMenus() {
   ({ start: drawStart, franchise: drawCareer, result: drawResults, week: drawWeekEnd, home: drawHome, matchup: drawMatchup, roster: drawRoster, staff: drawStaff, playoffs: drawPlayoffs,
      awards: drawAwards, pbowl: drawPbowl, resign: drawResign, draft: drawDraft, fa: drawFA, offers: drawOffers, trade: drawTrade, tradeb: drawTradeB, toffers: drawTOffers,
-     exhibition: () => drawMatchup(true), exstats: drawExStats, hof: drawHof, practice: drawPractice, hire: drawHire, board: drawBoard, test: drawTest, anims: drawAnims })[results.screen]();
+     exhibition: () => drawMatchup(true), exstats: drawExStats, hof: drawHof, practice: drawPractice, hire: drawHire, board: drawBoard, test: drawTest, anims: drawAnims, coach: drawCoachEd })[results.screen]();
   if (teamPick) drawTeamPicker();
   drawTutPrompt();
   tourWatch(); drawTour();
@@ -20190,17 +20375,13 @@ function drawCoinFly() {
   for (const c of coinFly) {
     const k = (now - c.t0) / (COIN_FLY.time * 1000);
     if (k < 0) {   // waiting its turn: hovering where they come from
-      ctx.fillStyle = '#ffd23a'; ctx.beginPath(); ctx.arc(COIN_FLY.from[0], COIN_FLY.from[1], 16, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = '#8a6a00'; ctx.lineWidth = 3; ctx.stroke();
-      ctx.fillStyle = '#8a6a00'; ctx.font = 'bold 18px monospace'; ctx.fillText('c', COIN_FLY.from[0], COIN_FLY.from[1] + 1);
+      eraserIcon(COIN_FLY.from[0], COIN_FLY.from[1], 16);
       continue;
     }
     if (k >= 1) { if (!c.done) { c.done = true; coinPending = Math.max(0, coinPending - 1); } continue; }
     const e = k * k * (3 - 2 * k), x = COIN_FLY.from[0] + (COIN_FLY.to[0] - COIN_FLY.from[0]) * e,
           y = COIN_FLY.from[1] + (COIN_FLY.to[1] - COIN_FLY.from[1]) * e - Math.sin(Math.PI * k) * 90, r = 16 - 6 * e;
-    ctx.fillStyle = '#ffd23a'; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#8a6a00'; ctx.lineWidth = 3; ctx.stroke();
-    ctx.fillStyle = '#8a6a00'; ctx.font = `bold ${Math.round(r + 2)}px monospace`; ctx.fillText('c', x, y + 1);
+    eraserIcon(x, y, r, -0.5 + k * 6);
   }
   ctx.restore();
   coinFly = coinFly.filter(c => !c.done);
@@ -20415,9 +20596,9 @@ function drawHome() {
   for (const [x, s] of weeks) {
     if (!s) continue;
     ctx.fillStyle = RES.line; ctx.textAlign = 'center';
-    const hy = s.opp ? 34 : 0;   // the opponent's helmet (their home kit, logo on the side) between the week and the matchup
-    ctx.fillText(s.wk, x, 124 - hy * 0.4); ctx.fillText(s.vs, x, 176 + hy * 0.4);
-    if (hy) drawBigHelmet(x - 3, 145, 19, makeKit(s.opp, 'home'), false, s.opp);
+    // one stack per week: the week, "vs / at" + the team, then the opponent's helmet (their home kit, logo on the side) sitting on the circle
+    ctx.fillText(s.wk, x, SCHED_STACK.wk); ctx.fillText(s.vs, x, SCHED_STACK.vs, SCHED.gap - 30);
+    if (s.opp) drawBigHelmet(x - 3, SCHED_STACK.helmet, SCHED_STACK.r, makeKit(s.opp, 'home'), false, s.opp);
     ctx.fillStyle = '#333'; ctx.beginPath(); ctx.ellipse(x, 230, 36, 14, 0, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = s.col; ctx.beginPath(); ctx.ellipse(x, 224, 36, 14, 0, 0, Math.PI * 2); ctx.fill();
     if (s.score) { ctx.fillStyle = RES.line; ctx.fillText(s.score, x, 266); }
@@ -20663,8 +20844,7 @@ function drawCapFx() {   // over the front office screen: coins into the button,
       const k = (now - c.t0) / 420;
       if (k < 0 || k >= 1) continue;
       const e = k * k, x = COIN_FLY.to[0] + c.ox + (cx - COIN_FLY.to[0] - c.ox) * e, y = COIN_FLY.to[1] + c.oy + (cy - COIN_FLY.to[1] - c.oy) * e - Math.sin(Math.PI * k) * 40, r = 11 - 4 * e;
-      ctx.fillStyle = '#ffd23a'; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = '#8a6a00'; ctx.lineWidth = 2; ctx.stroke();
+      eraserIcon(x, y, r, -0.5 + k * 6);
     }
     ctx.restore();
     capCoins = capCoins.filter(c => now - c.t0 < 420);
@@ -20685,9 +20865,8 @@ function drawCapBar(team, x, y, w, skip = []) {   // skip = players whose deals 
   ctx.fillStyle = '#fffdf4'; ctx.fillRect(x, y + 14, w, 18);
   const off = payroll(team, 'off') - skipPay('off'), def = used - off, sc = w / Math.max(CAP.max, used);
   ctx.fillStyle = 'rgba(120,150,120,0.25)'; ctx.fillRect(x, y + 14, cap * sc, 18);   // (the cap itself: it grows when more is bought)
-  ctx.fillStyle = '#2a62b0'; ctx.fillRect(x, y + 14, off * sc, 18);
-  ctx.fillStyle = '#b82a30'; ctx.fillRect(x + off * sc, y + 14, def * sc, 18);
-  ctx.strokeStyle = RES.line; ctx.lineWidth = 2.5; ctx.strokeRect(x, y + 14, w, 18);
+  penHatch(x, y + 14, off * sc, 18, '#2a62b0', 11); penHatch(x + off * sc, y + 14, def * sc, 18, '#b82a30', 12);
+  penOutline(x, y + 14, w, 18, 13, RES.line, 2.5); ctx.strokeStyle = RES.line; ctx.lineWidth = 2.5;
   ctx.beginPath(); ctx.moveTo(x + cap * sc, y + 10); ctx.lineTo(x + cap * sc, y + 36); ctx.stroke();
   ctx.textAlign = 'left'; ctx.font = 'bold 14px monospace'; ctx.fillStyle = RES.dim;
   ctx.fillText(`OFFENSE ${fmtM(off)}   DEFENSE ${fmtM(def)}`, x, y + 48);
@@ -21493,7 +21672,7 @@ const goalHoldVal = h => { if (h === 'pts') return twoP && twoP.flipped ? game.b
 // a goal's bar (0-1) and its numbers; a hold goal's bar is what's left of the allowance
 function goalProg(q) {
   const d = GOAL_BY[q.id], need = d.n[q.lv - 1];
-  if (d.hold) { const v = q.done ? q.p : goalHoldVal(d.hold); return { prog: q.done ? 1 : Math.max(0, 1 - v / need), txt: `${v} / ${need} ALLOWED` }; }
+  if (d.hold) { const v = q.done ? q.p : goalHoldVal(d.hold); return { prog: q.done ? 1 : Math.max(0, 1 - v / need), txt: `${v} / ${need}` }; }
   return { prog: Math.min(1, q.p / need), txt: `${Math.min(q.p, need)} / ${need}` };
 }
 // the final whistle (openResults): the hold goals pass if every one of their drives was played live
@@ -21575,9 +21754,8 @@ function goalBoost() {   // x on every player's XP from a game in which a goal w
 function goalsShow(title, hide = false) {
   const g = goalsEnsure();
   if (!g) return;
-  const lines = g.list.flatMap(q => wrapLines(`${q.done ? '[X]' : '[ ]'} ${goalLabel(q)}  (${q.lv} ¤, ${goalProg(q).txt.replace(/ \/ /, '/')})`, 54));
   const t = Math.max(0, Math.min(1, (hcStars(meK()) - 0.5) / 4.5));
-  offPopShow({ title, hide, lines: [...lines, '', ...wrapLines(`Finish a goal in this week's game: ¤, coach XP and x${(GOAL.boost + (GOAL.boostMax - GOAL.boost) * t).toFixed(2)} XP on your players.`, 54)] });
+  offPopShow({ title, hide, goals: g, lines: [], note: `Finish a goal: ¤, coach XP and x${(GOAL.boost + (GOAL.boostMax - GOAL.boost) * t).toFixed(2)} XP on your players.` });
 }
 // coach XP and levels
 const coachNeed = (role, stars) => role === 'hc' ? COACH.hcBase + COACH.hcPer * stars : COACH.coBase + COACH.coPer * stars;
@@ -21611,8 +21789,8 @@ function coachGame(blue, red) {   // a game of yours is over: XP by result, and 
 function coachBar(x, y, w, role, c) {   // XP toward the next star under a coach's card / page
   const st = role === 'hc' ? hcStars(MATCH.you) : c.stars, X = (career.cxp || {})[role] || 0, max = st >= 5, need = coachNeed(role, st);
   ctx.fillStyle = '#fffdf4'; ctx.fillRect(x, y, w, 10);
-  ctx.fillStyle = '#2a62b0'; ctx.fillRect(x, y, w * (max ? 1 : Math.min(1, X / need)), 10);
-  ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, 10); ctx.fillStyle = RES.line;
+  penHatch(x, y, w * (max ? 1 : Math.min(1, X / need)), 10, '#2a62b0', x * 3 + y);
+  penOutline(x, y, w, 10, x * 3 + y, RES.line, 2); ctx.fillStyle = RES.line;
   return max ? 'MAX RANK' : `XP ${Math.floor(X)} / ${need}`;
 }
 
@@ -21697,8 +21875,8 @@ function drawUpgradeBar(p) {   // under the attributes: his XP toward the next u
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = 'bold 15px monospace'; ctx.fillStyle = rdy ? '#2e8b57' : RES.dim;
   ctx.fillText(rdy ? `${rdy} UPGRADE${rdy > 1 ? 'S' : ''} READY: PRESS +1 ON AN ATTRIBUTE` : room ? `XP ${Math.floor(xp)} / ${Math.ceil(need)} TO THE NEXT UPGRADE` : 'AT HIS POTENTIAL: NOTHING LEFT TO UPGRADE', 690, 570, 470);
   ctx.fillStyle = '#fffdf4'; ctx.fillRect(690, 582, 480, 10);
-  ctx.fillStyle = rdy ? '#2e8b57' : '#2a62b0'; ctx.fillRect(690, 582, 480 * Math.min(1, room ? xp / need : 1), 10);
-  ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(690, 582, 480, 10);
+  penHatch(690, 582, 480 * Math.min(1, room ? xp / need : 1), 10, rdy ? '#2e8b57' : '#2a62b0', 5);
+  penOutline(690, 582, 480, 10, 5, RES.line, 2);
 }
 // the home screen after a game: who has an upgrade ready, and the big trades around the league
 function homeNews() {
@@ -22073,7 +22251,7 @@ function offersOpen() {   // the OFFERS button on the trade screen: each offer i
 }
 // the offers screen: the list on the left, the picked offer on the right (what they want from you -> what they give), ACCEPT / REJECT
 const OFFUI = { sel: 0, page: null };
-const OFF_ROW = i => ({ x: 30, y: 104 + i * 76, w: 340, h: 68 });
+const OFF_ROW = rectCache(i => ({ x: 30, y: 104 + i * 76, w: 340, h: 68 }));
 const OFF_CARDS = [{ x: 430, y: 130, w: 270, h: 248 }, { x: 830, y: 130, w: 270, h: 248 }];
 const OFF_ACCEPT = { x: 430, y: 430, w: 270, h: 62 }, OFF_REJECT = { x: 830, y: 430, w: 270, h: 62 };
 function drawTOffers() {
@@ -22143,9 +22321,9 @@ const TR_SUG_BTN = { x: 440, y: 640, w: 240, h: 58 };   // SUGGESTIONS (the cap 
 const TR = { sel: null, page: 0, side: null, pos: 'ALL', team: null, dd: false, ret: 'staff', v: 0, partner: null, give: [], get: [], tab: [0, 1], pg: [0, 0], pendingGive: null };
 const TR_TOP_BTN = { x: 20, y: 14, w: 230, h: 62 }, TR_TEAM_BTN = { x: 232, y: 12, w: 178, h: 56 }, TR_NEW_BTN = { x: 870, y: 12, w: 178, h: 56 }, TR_GO_BTN = { x: 660, y: 618, w: 300, h: 62 };
 const TB = { x: [40, 660], y: 100, w: 580, h: 470, rows: 8 };
-const tbTabBtn = (s, t) => ({ x: TB.x[s] + 12 + t * 156, y: TB.y + 44, w: 148, h: 36 });
-const tbRow = (s, i) => ({ x: TB.x[s] + 12, y: TB.y + 88 + i * 42, w: TB.w - 24, h: 38 });
-const tbArrow = (s, d) => ({ x: d ? TB.x[s] + TB.w - 72 : TB.x[s] + 12, y: TB.y + 428, w: 60, h: 34 });
+const tbTabBtn = rectCache((s, t) => ({ x: TB.x[s] + 12 + t * 156, y: TB.y + 44, w: 148, h: 36 }));
+const tbRow = rectCache((s, i) => ({ x: TB.x[s] + 12, y: TB.y + 88 + i * 42, w: TB.w - 24, h: 38 }));
+const tbArrow = rectCache((s, d) => ({ x: d ? TB.x[s] + TB.w - 72 : TB.x[s] + 12, y: TB.y + 428, w: 60, h: 34 }));
 const tbAssets = s => { const t = s ? TR.partner : season.team; return TR.tab[s] ? playersOf(t) : picksOf(t); };
 let TR_LIST = { key: '', list: [] };
 function trList() {
@@ -22695,7 +22873,7 @@ function openAnimLib() {
   animStart(0);
 }
 function animLeave() { if (anim) clock = anim.clock0; anim = null; endExhibition('start'); }
-function animListBtn(n) { const col = Math.floor(n / ANIM_ROWS); return { x: 20 + col * ANIM_COLW, y: 126 + (n % ANIM_ROWS) * ANIM_ROWH, w: ANIM_COLW - 8, h: ANIM_ROWH - 6 }; }
+const animListBtn = rectCache(n => { const col = Math.floor(n / ANIM_ROWS); return { x: 20 + col * ANIM_COLW, y: 126 + (n % ANIM_ROWS) * ANIM_ROWH, w: ANIM_COLW - 8, h: ANIM_ROWH - 6 }; });
 function drawAnims() {
   if (!anim) return;
   paperBg();
@@ -23206,7 +23384,8 @@ function wxPrintTick(dt) {
     wxPrints.push({ x: p.x + nx * off, y: p.y + FOOT + ny * off * 0.5, ang: Math.atan2(dy, dx), a: 1 });
     p.wxLastX = p.x; p.wxLastY = p.y;
   }
-  if (wxPrints.length > L.max) wxPrints.splice(0, wxPrints.length - L.max);
+  const cap = L.max * fxK();
+  if (wxPrints.length > cap) wxPrints.splice(0, wxPrints.length - cap);
 }
 // drawing (world space, inside drawField: over the grass, lines, logo and numbers, under the pylons, goal posts, the line of
 // scrimmage and the first-down line): the field darkens in rain; snow covers it all evenly, thicker as it builds, with prints in it
@@ -23228,6 +23407,7 @@ function wxGround() {
 }
 // rain streaks, snowflakes and wind lines over the field (screen space), plus the weather badge and change notices
 const wxParts = { rain: [], snow: [], wind: [], t: 0 };
+const fxK = () => TUI.on ? 0.45 : 1;   // phones / tablets: this share of the particles (rain, snow, wind, footprints) and no gradient glows
 function wxDraw() {
   const g = game.wx;
   if (!g || !g.on) return;
@@ -23247,7 +23427,7 @@ function wxDraw() {
     }
     const fill =(arr, n, make) => { while (arr.length < n) arr.push(make(true)); arr.length = Math.min(arr.length, n); };
     // wind: translucent streaks blowing across
-    const nW = WXI.mph > 8 ? Math.round((WXI.mph - 8) / 26 * 24) : 0;
+    const nW = WXI.mph > 8 ? Math.round((WXI.mph - 8) / 26 * 24 * fxK()) : 0;
     fill(wxParts.wind, nW, () => ({ x: Math.random() * W, y: top + Math.random() * hgt, life: Math.random(), len: 60 + Math.random() * 120 }));
     const wl = Math.hypot(sx, sy) || 1, ux = sx / wl, uy = sy / wl, wsp = 380 + WXI.mph * 22;
     ctx.lineCap = 'round';
@@ -23259,7 +23439,7 @@ function wxDraw() {
       ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x - ux * p.len, p.y - uy * p.len); ctx.stroke();
     }
     // rain
-    fill(wxParts.rain, Math.round(WXI.rain * 280), () => ({ x: Math.random() * W, y: top + Math.random() * hgt, v: 0.8 + Math.random() * 0.4 }));
+    fill(wxParts.rain, Math.round(WXI.rain * 280 * fxK()), () => ({ x: Math.random() * W, y: top + Math.random() * hgt, v: 0.8 + Math.random() * 0.4 }));
     ctx.strokeStyle = 'rgba(200,215,255,0.42)'; ctx.lineWidth = 1.6;
     ctx.beginPath();
     for (const p of wxParts.rain) {
@@ -23271,7 +23451,7 @@ function wxDraw() {
     }
     ctx.stroke();
     // snow
-    fill(wxParts.snow, Math.round(WXI.snow * 240), () => ({ x: Math.random() * W, y: top + Math.random() * hgt, r: 1.4 + Math.random() * 2.4, ph: Math.random() * 6.3 }));
+    fill(wxParts.snow, Math.round(WXI.snow * 240 * fxK()), () => ({ x: Math.random() * W, y: top + Math.random() * hgt, r: 1.4 + Math.random() * 2.4, ph: Math.random() * 6.3 }));
     ctx.fillStyle = 'rgba(255,255,255,0.85)';
     for (const p of wxParts.snow) {
       p.ph += dt * 2;
@@ -23758,7 +23938,7 @@ function pracReplace(side) {
 // (years; coordinators keep theirs in `years`, which offStaff also runs). Salaries add up to the crewPay, which can't pass the budget
 // (grows with fans and facilities). The pool (career.hire) is rebuilt each offseason; candidates can sign elsewhere during the year.
 // A candidate may refuse: the odds come from your offer against his ask, your facilities, your record and fans, and his stars.
-const HIRE = { budget: 25, perFans: 0, perLevel: 0, poolSize: 5, scout: 1, elsewhere: 0.06, retire: 60, poach: 0.85, buyout: 4 };
+const HIRE = { budget: 25, perFans: 0, perLevel: 0, poolSize: 5, scout: 1, elsewhere: 0.06, retire: 60, poach: 0.85, buyout: 4, reroll: 5, half: 0.45 };   // reroll = credits to redraw a role's pool; half = chance a 2-5 star candidate is a half star lower
 const HIRE_ROLE = { oc: { label: 'OFFENSIVE COORDINATOR', short: 'OC', side: 'off' }, dc: { label: 'DEFENSIVE COORDINATOR', short: 'DC', side: 'def' },
                     to: { label: 'OFFENSE TRAINER', short: 'OFF TRAINER', side: 'off' }, td: { label: 'DEFENSE TRAINER', short: 'DEF TRAINER', side: 'def' } };
 const HIRE_ROLES = ['oc', 'dc', 'to', 'td'];
@@ -23771,7 +23951,8 @@ const marketSal = stars => r1(0.8 + 0.55 * stars ** 1.6);
 function hireSpecs(role) { return HIRE_ROLE[role].short.endsWith('TRAINER') ? PRAC_SPEC[HIRE_ROLE[role].side].map(x => x.id) : Object.keys(COORD_SPEC[role]); }
 function hireTraits(role) { return role === 'to' || role === 'td' ? Object.keys(TRAINER_TRAITS) : Object.keys(TRAIT_INFO); }
 function hireCand(role, minStars = 1) {
-  const stars = Math.max(minStars, pick([1, 2, 2, 3, 3, 3, 4, 4, 5])), coord = role === 'oc' || role === 'dc';
+  let stars = Math.max(minStars, pick([1, 2, 2, 3, 3, 3, 4, 4, 5])); const coord = role === 'oc' || role === 'dc';
+  if (stars > Math.max(1, minStars) && Math.random() < HIRE.half) stars -= 0.5;
   const lo = Math.max(1, stars - rint(0, 1)), hi = Math.min(5, stars + rint(0, 1));
   const t = hireTraits(role);
   return { role, name: `${pick(NAME_FIRST)} ${pick(NAME_LAST)}`, stars, spec: pick(hireSpecs(role)), trait: pick(t), trait2: Math.random() < 0.35 ? pick(t) : null,
@@ -23822,7 +24003,7 @@ function hireInterim(role) {
 function hireFire(role) {
   const p = hireGet(role), cost = buyoutOf(p);
   if (LEAGUE.coins < cost) { HB.msg = { t: performance.now(), text: `BUYOUT IS ${cost} ¤` }; return; }
-  LEAGUE.coins -= cost; hireSet(role, hireInterim(role)); HB.msg = { t: performance.now(), text: `${p.name} FIRED` }; autosaveSoon();
+  LEAGUE.coins -= cost; if (cost) spendFx(HIRE_FIRE[HIRE_ROLES.indexOf(role)], cost); hireSet(role, hireInterim(role)); HB.msg = { t: performance.now(), text: `${p.name} FIRED` }; autosaveSoon();
 }
 function hireOffer(c, role, sal, yrs) {
   const cur = hireGet(role), after = r1(crewPay() - cur.sal + sal), cost = buyoutOf(cur);
@@ -23830,7 +24011,7 @@ function hireOffer(c, role, sal, yrs) {
   if (after > staffBudget()) { HB.msg = { t: performance.now(), text: `OVER BUDGET: ${after}M OF ${staffBudget()}M` }; return; }
   if (LEAGUE.coins < cost) { HB.msg = { t: performance.now(), text: `BUYING OUT ${cur.name}: ${cost} ¤` }; return; }
   if (Math.random() < acceptP(c, sal, yrs)) {
-    LEAGUE.coins -= cost; hireSet(role, hirePerson(c, sal, yrs));
+    LEAGUE.coins -= cost; if (cost) spendFx(BN.offer, cost); hireSet(role, hirePerson(c, sal, yrs));
     const pool = hirePool(); pool[role] = pool[role].filter(x => x !== c); HB.sel = null;
     HB.msg = { t: performance.now(), text: `${c.name} SIGNED` }; autosaveSoon();
   } else { c.refused = true; HB.msg = { t: performance.now(), text: `${c.name} TURNED YOU DOWN` }; }
@@ -23915,6 +24096,7 @@ function drawHire() {
   ctx.fillStyle = RES.dim; ctx.font = '13px monospace'; ctx.fillText('The budget is $25M. Stars cost more: you can\'t afford four.', B.x, B.y + 44);
   if (HB.msg && performance.now() - HB.msg.t < 3000) { ctx.textAlign = 'right'; ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.fillText(HB.msg.text, 1250, 614); }
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
+  drawSpendFx();
   tourQDraw();
 }
 function hireClick(pt) {
@@ -23934,7 +24116,42 @@ function hireClick(pt) {
 const BOARD_TABS = HIRE_ROLES.map((r, i) => ({ x: 30 + i * 310, y: 84, w: 300, h: 40 }));
 const BOARD_CARD = i => ({ x: 30 + i * 246, y: 134, w: 236, h: 296 });
 const BN = { sal: { m: { x: 1000, y: 478, w: 44, h: 36 }, p: { x: 1190, y: 478, w: 44, h: 36 } }, yrs: { m: { x: 1000, y: 522, w: 44, h: 36 }, p: { x: 1190, y: 522, w: 44, h: 36 } }, offer: { x: 1000, y: 566, w: 234, h: 48 } };
-const BOARD_SCOUT = i => ({ x: BOARD_CARD(i).x + 48, y: BOARD_CARD(i).y + 258, w: 140, h: 28 });
+const BOARD_REROLL = { x: 130, y: 637, w: 270, h: 56 };
+// a hand-drawn wobbly line (instead of a ruler-straight one)
+function wavyLine(x0, y, x1, col, lw = 1.6) {
+  ctx.save(); ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(x0, y);
+  for (let x = x0; x < x1; x += 8) ctx.quadraticCurveTo(x + 4, y + (((x - x0) / 8) % 2 ? 2.2 : -2.2), Math.min(x + 8, x1), y);
+  ctx.stroke(); ctx.restore();
+}
+// credits spent: they fly from the credits box into whatever they paid for, which then glows (like buying cap)
+let spendFxs = [];
+function spendFx(b, n) {
+  const now = performance.now(), cnt = Math.min(20, 3 + n * 2);
+  spendFxs.push({ b, t0: now, coins: Array.from({ length: cnt }, (_, i) => ({ t0: now + i * 40, ox: (Math.random() - 0.5) * 30, oy: (Math.random() - 0.5) * 20 })) });
+}
+function drawSpendFx() {
+  const now = performance.now();
+  spendFxs = spendFxs.filter(f => now - f.t0 < 1500);
+  for (const f of spendFxs) {
+    const b = f.b, cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    let last = 0;
+    for (const c of f.coins) {
+      const k = (now - c.t0) / 420; last = Math.max(last, c.t0 + 420);
+      if (k < 0 || k >= 1) continue;
+      const e = k * k, x = COIN_FLY.to[0] + c.ox + (cx - COIN_FLY.to[0] - c.ox) * e, y = COIN_FLY.to[1] + c.oy + (cy - COIN_FLY.to[1] - c.oy) * e - Math.sin(Math.PI * k) * 40, r = 11 - 4 * e;
+      eraserIcon(x, y, r, -0.5 + k * 6);
+    }
+    const g = 1 - (now - last) / 900;
+    if (now >= last - 100 && g > 0) {
+      ctx.shadowColor = '#ffd23a'; ctx.shadowBlur = 28 * g; ctx.strokeStyle = `rgba(255,210,58,${g})`; ctx.lineWidth = 6;
+      tornPath(b); ctx.stroke(); ctx.fillStyle = `rgba(255,230,120,${0.25 * g})`; ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+const BOARD_SCOUTS = [];   // (cached so each button keeps its hover / press animation state)
+const BOARD_SCOUT = i => BOARD_SCOUTS[i] || (BOARD_SCOUTS[i] = { x: BOARD_CARD(i).x + 48, y: BOARD_CARD(i).y + 258, w: 140, h: 28 });
 function drawBoard() {
   paperBg(); hireAll();
   const pool = hirePool()[HB.role], cur = hireGet(HB.role), c = HB.sel && pool.includes(HB.sel) ? HB.sel : null;
@@ -23942,22 +24159,24 @@ function drawBoard() {
   ctx.fillText('HIRING BOARD', W / 2, 44); coinBox(26, 22, LEAGUE.coins, RES.bright);
   HIRE_ROLES.forEach((r, i) => menuBtn(BOARD_TABS[i], HIRE_ROLE[r].short, HB.role === r ? SEL : RES.bright, 20));
   const [main] = kitColors(MATCH.you, 'home');
-  pool.forEach((p, i) => {
-    const b = BOARD_CARD(i);
-    ctx.fillStyle = '#fffdf4'; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.strokeStyle = RES.line; ctx.lineWidth = 2.5; ctx.strokeRect(b.x, b.y, b.w, b.h);
-    ctx.fillStyle = mixHex(main, 0.72, 255); ctx.fillRect(b.x + 8, b.y + 8, b.w - 16, 96);
-    ctx.save(); ctx.beginPath(); ctx.rect(b.x + 8, b.y + 8, b.w - 16, 96); ctx.clip(); drawAvatar(p.face, b.x + b.w / 2, b.y + 56, 44, { shirt: HIRE_ROLE[HB.role].side === 'off' ? '#2a62b0' : '#b82a30' }); ctx.restore();
-    ctx.strokeRect(b.x + 8, b.y + 8, b.w - 16, 96);
-    ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.font = 'bold 17px monospace'; ctx.fillText(p.name, b.x + b.w / 2, b.y + 124, b.w - 16);
-    ctx.font = '13px monospace'; ctx.fillText(`AGE ${p.age}`, b.x + b.w / 2, b.y + 144);
-    if (p.scouted) starsRow(b.x + b.w / 2 - 4.4 * 11, b.y + 166, p.stars, 11); else { ctx.font = 'bold 14px monospace'; ctx.fillText(`${p.lo === p.hi ? p.lo : `${p.lo}-${p.hi}`} STARS (EST.)`, b.x + b.w / 2, b.y + 166); }
-    ctx.fillStyle = RES.gold; ctx.font = 'bold 13px monospace';
-    ctx.fillText(p.spec, b.x + b.w / 2, b.y + 188, b.w - 12);
-    ctx.fillText(p.scouted ? traitName({ trait: p.trait, trait2: p.trait2 }).toUpperCase() : `${p.trait.toUpperCase()}${p.trait2 ? ' + ?' : ''}`, b.x + b.w / 2, b.y + 208, b.w - 12);
-    ctx.fillStyle = RES.line; ctx.font = 'bold 14px monospace'; ctx.fillText(`ASKS $${p.ask.toFixed(1)}M, ${p.want} YR`, b.x + b.w / 2, b.y + 234);
-    if (p.refused) { ctx.fillStyle = '#c81b1b'; ctx.fillText('TURNED YOU DOWN', b.x + b.w / 2, b.y + 272); }
-    else if (!p.scouted) menuBtn(BOARD_SCOUT(i), `SCOUT ${HIRE.scout}c`, RES.bright, 14);
-    if (p === c) { ctx.strokeStyle = '#e8b61c'; ctx.lineWidth = 5; ctx.setLineDash([10, 6]); ctx.strokeRect(b.x - 3, b.y - 3, b.w + 6, b.h + 6); ctx.setLineDash([]); }
+  pool.forEach((p, i) => {   // each candidate is a paper scrap button: lifts on hover, presses in on click, yellow when picked
+    const b = BOARD_CARD(i), cx = b.x + b.w / 2, side = HIRE_ROLE[HB.role].side;
+    menuBtn(b, '', p === c ? SEL : '#fffdf4', 12, () => {
+      ctx.fillStyle = b.ink;
+      ctx.save(); ctx.beginPath(); ctx.arc(cx, b.y + 56, 48, 0, Math.PI * 2); ctx.fillStyle = mixHex(main, 0.72, 255); ctx.fill(); ctx.clip();
+      drawAvatar(p.face, cx, b.y + 56, 44, { shirt: side === 'off' ? '#2a62b0' : '#b82a30' }); ctx.restore();
+      ctx.beginPath(); ctx.arc(cx, b.y + 56, 48, 0, Math.PI * 2); ctx.strokeStyle = RES.line; ctx.lineWidth = 2.5; ctx.stroke();
+      ctx.fillStyle = b.ink; ctx.textAlign = 'center'; ctx.font = 'bold 17px monospace'; ctx.fillText(p.name, cx, b.y + 124, b.w - 24);
+      ctx.font = '13px monospace'; ctx.fillText(`AGE ${p.age}`, cx, b.y + 144);
+      if (p.scouted) starsRow(cx - 4.4 * 11, b.y + 166, p.stars, 11); else { ctx.font = 'bold 14px monospace'; ctx.fillText(`${p.lo === p.hi ? p.lo : `${p.lo}-${p.hi}`} STARS (EST.)`, cx, b.y + 166); }
+      ctx.fillStyle = RES.gold; ctx.font = 'bold 13px monospace';
+      ctx.fillText(p.spec, cx, b.y + 188, b.w - 24);
+      ctx.fillText(p.scouted ? traitName({ trait: p.trait, trait2: p.trait2 }).toUpperCase() : `${p.trait.toUpperCase()}${p.trait2 ? ' + ?' : ''}`, cx, b.y + 208, b.w - 24);
+      wavyLine(b.x + 30, b.y + 220, b.x + b.w - 30, b.ink);
+      ctx.fillStyle = b.ink; ctx.font = 'bold 14px monospace'; ctx.fillText(`ASKS $${p.ask.toFixed(1)}M, ${p.want} YR`, cx, b.y + 238);
+      if (p.refused) { ctx.fillStyle = '#c81b1b'; ctx.fillText('TURNED YOU DOWN', cx, b.y + 272); }
+      else if (!p.scouted) menuBtn(BOARD_SCOUT(i), `SCOUT ${HIRE.scout} ¤`, RES.bright, 14);
+    });
   });
   if (!pool.length) { ctx.fillStyle = RES.dim; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.fillText('NOBODY LEFT: THE POOL REFRESHES IN THE OFFSEASON', W / 2, 280); }
   // side by side
@@ -23977,12 +24196,14 @@ function drawBoard() {
     ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = 'bold 17px monospace';
     ctx.fillText(`SALARY   $${HB.sal.toFixed(1)}M / YEAR`, 680, 496); ctx.fillText(`CONTRACT ${HB.yrs} YEAR${HB.yrs === 1 ? '' : 'S'}`, 680, 540);
     ctx.fillStyle = after > bud ? '#c81b1b' : RES.line; ctx.font = '14px monospace'; ctx.fillText(`PAYROLL $${crewPay().toFixed(1)}M > $${after.toFixed(1)}M OF $${bud.toFixed(1)}M`, 680, 574);
-    ctx.fillStyle = RES.line; ctx.fillText(`CHANCE: ${pr < 0.3 ? 'UNLIKELY' : pr < 0.65 ? 'POSSIBLE' : 'LIKELY'}${buy ? `   BUYOUT ${buy}c` : ''}`, 680, 598);
+    ctx.fillStyle = RES.line; ctx.fillText(`CHANCE: ${pr < 0.3 ? 'UNLIKELY' : pr < 0.65 ? 'POSSIBLE' : 'LIKELY'}${buy ? `   BUYOUT ${buy} ¤` : ''}`, 680, 598);
     menuBtn(BN.sal.m, '-', RES.bright, 22); menuBtn(BN.sal.p, '+', RES.bright, 22); menuBtn(BN.yrs.m, '-', RES.bright, 22); menuBtn(BN.yrs.p, '+', RES.bright, 22);
     menuBtn(BN.offer, 'MAKE OFFER', '#6cc070', 22);
   } else { ctx.fillStyle = RES.dim; ctx.font = '15px monospace'; ctx.textAlign = 'center'; ctx.fillText(c ? 'He will not talk to you again this year.' : 'Click a card, then set a salary and contract.', 955, 530); }
-  if (HB.msg && performance.now() - HB.msg.t < 3000) { ctx.textAlign = 'center'; ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.fillText(HB.msg.text, 400, 636); }
+  if (HB.msg && performance.now() - HB.msg.t < 3000) { ctx.textAlign = 'center'; ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.fillText(HB.msg.text, 820, 664); }
+  menuBtn(BOARD_REROLL, `REROLL ${HB.role === 'oc' || HB.role === 'dc' ? HIRE_ROLE[HB.role].short : HIRE_ROLE[HB.role].short.replace(' TRAINER', ' TRN')}  ${HIRE.reroll} ¤`, RES.bright, 18);
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
+  drawSpendFx();
   tourQDraw();
 }
 function boardClick(pt) {
@@ -23991,10 +24212,15 @@ function boardClick(pt) {
   if (inBtn(pt, BACK_BTN)) { results.screen = 'hire'; return; }
   const pool = hirePool()[HB.role];
   HIRE_ROLES.forEach((r, i) => { if (inBtn(pt, BOARD_TABS[i])) { HB.role = r; HB.sel = null; HB.cand = null; } });
+  if (inBtn(pt, BOARD_REROLL)) {
+    if (LEAGUE.coins < HIRE.reroll) { HB.msg = { t: performance.now(), text: `NEED ${HIRE.reroll} ¤ TO REROLL` }; return; }
+    LEAGUE.coins -= HIRE.reroll; hirePool()[HB.role] = Array.from({ length: HIRE.poolSize }, () => hireCand(HB.role));
+    HB.sel = null; HB.cand = null; spendFx(BOARD_REROLL, HIRE.reroll); autosaveSoon(); return;
+  }
   for (let i = 0; i < pool.length; i++) {
     if (!pool[i].scouted && !pool[i].refused && inBtn(pt, BOARD_SCOUT(i))) {
       if (LEAGUE.coins < HIRE.scout) { HB.msg = { t: performance.now(), text: 'NEED 1 ¤ TO SCOUT' }; return; }
-      LEAGUE.coins -= HIRE.scout; pool[i].scouted = true; return;
+      LEAGUE.coins -= HIRE.scout; pool[i].scouted = true; spendFx(BOARD_CARD(i), HIRE.scout); return;
     }
     if (inBtn(pt, BOARD_CARD(i))) { HB.sel = pool[i]; return; }
   }
@@ -24118,7 +24344,8 @@ function drawTour() {
   ctx.fillStyle = RES.line; ctx.font = '17px monospace';
   lines.forEach((ln, j) => ctx.fillText(ln, bx + 16, by + 50 + j * 24));
   const yb = by + bh - 46, last = tour.i === tour.steps.length - 1;
-  tour.btns = { skip: { x: bx + 14, y: yb, w: 110, h: 36 }, back: { x: bx + bw - 252, y: yb, w: 110, h: 36 }, next: { x: bx + bw - 130, y: yb, w: 116, h: 36 } };
+  const tb = tour.btns;   // (moved in place so each button keeps its hover / press animation)
+  tour.btns = { skip: Object.assign(tb.skip || {}, { x: bx + 14, y: yb, w: 110, h: 36 }), back: Object.assign(tb.back || {}, { x: bx + bw - 252, y: yb, w: 110, h: 36 }), next: Object.assign(tb.next || {}, { x: bx + bw - 130, y: yb, w: 116, h: 36 }) };
   menuBtn(tour.btns.skip, 'SKIP', RES.bright, 16);
   if (tour.i > 0) menuBtn(tour.btns.back, 'BACK', RES.bright, 16);
   menuBtn(tour.btns.next, last ? 'DONE' : 'NEXT', '#6cc070', 16);
@@ -24134,8 +24361,8 @@ function tourClick(pt) {
 function drawTradeMeter(k) {
   const { x, y, w, h } = TR_METER, lo = 0.6, hi = 1.5, at = r => x + w * Math.max(0, Math.min(1, (r - lo) / (hi - lo)));
   const zones = [[lo, TRADE.maybe, '#c8493a'], [TRADE.maybe, TRADE.accept, '#e8b61c'], [TRADE.accept, hi, '#4fa766']];
-  zones.forEach(([a, b, c]) => { ctx.fillStyle = c; ctx.fillRect(at(a), y, at(b) - at(a), h); });
-  ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
+  zones.forEach(([a, b, c], i) => penHatch(at(a), y, at(b) - at(a), h, c, 21 + i));
+  penOutline(x, y, w, h, 24, RES.line, 2);
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = 'bold 14px monospace'; ctx.fillStyle = RES.line;
   if (!TR.give.length || !TR.get.length) { ctx.fillText('TV METER: ADD SOMETHING TO BOTH SIDES', x + w + 16, y + h / 2); return; }
   const S = tradeSide(k, TR.give, TR.get), r = Math.min(hi, S.ratio);
@@ -24414,10 +24641,20 @@ function setQtrFromX(x) {
 const PAUSE_SETTINGS = { x: W / 2 + 150, y: H / 2 - 10, w: 180, h: 48 };
 const canSave = () => !!season && !exhibition && !tut && !aiOff();
 const note = text => { settingsNote = { text, t0: performance.now() }; };
+const TOUCH_HELP = [
+  ['JOYSTICK (left)', 'Move / steer / run'],
+  ['BUTTONS (right)', 'Snap, moves, sprint, dive... change with the play'],
+  ['DRAG FROM THE QB', 'Aim the pass, lift to throw'],
+  ['SWIPE UP (ball in air)', 'Jumping catch'],
+  ['SWIPE DOWN (ball in air)', 'Diving catch'],
+  ['SWIPE WITH THE RUNNER', 'Catch and run'],
+  ['SWIPE AGAINST THE RUNNER', 'One-handed catch'],
+  ['PAUSE (top)', 'Pause menu, settings'],
+];
 function drawSettings() {
   deskBg();
   resPanel(SET_X - 40, 50, 520, 620, [['SETTINGS', null]], RES.bright);
-  resPanel(640, 50, 600, 620, [['KEYBINDS  (click, press a key, BKSP clears)', null]], RES.bright);
+  resPanel(640, 50, 600, 620, [[TUI.on ? 'TOUCH CONTROLS' : 'KEYBINDS  (click, press a key, BKSP clears)', null]], RES.bright);
   const B = SET_BTNS;
   const Y = IN_GAME_PAPER.yellow;   // (the settings buttons are yellow, to stand out from the white panels)
   menuBtn(B.inj, `INJURIES: ${SETTINGS.injuries ? 'ON' : 'OFF'}`, Y, 19);
@@ -24456,6 +24693,14 @@ function drawSettings() {
   ctx.font = 'bold 17px monospace';
   if (settingsNote && performance.now() - settingsNote.t0 < 2500) { ctx.fillStyle = RES.gold; ctx.fillText(settingsNote.text, SET_X + 220, 606); }
   menuBtn(B.back, 'BACK', Y, 24);
+  if (TUI.on) {   // phones / tablets: no keys to rebind, the touch controls instead
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; let ty = BIND_LIST.top + 14;
+    for (const [k, v] of TOUCH_HELP) {
+      ctx.fillStyle = RES.line; ctx.font = 'bold 19px monospace'; ctx.fillText(k, 665, ty);
+      ctx.fillStyle = RES.dim; ctx.font = '16px monospace'; ctx.fillText(v, 665, ty + 22); ty += 52;
+    }
+    return;
+  }
   bindScroll = Math.min(bindScroll, bindMax()); placeKeyBtns();
   ctx.save(); ctx.beginPath(); ctx.rect(650, BIND_LIST.top - 4, 590, BIND_LIST.bottom - BIND_LIST.top + 8); ctx.clip();
   BIND_ACTIONS.forEach((a, i) => {
@@ -24474,7 +24719,7 @@ function settingsClick(p) {
   const B = SET_BTNS;
   placeKeyBtns();
   if (rebinding) { rebinding = null; if (inBindView(p) && BIND_ACTIONS.some((a, i) => inBtn(p, KEY_BTNS[i]))) { /* a click on another row switches to it */ } else return; }
-  const ki = inBindView(p) ? KEY_BTNS.findIndex(b => inBtn(p, b)) : -1;
+  const ki = inBindView(p) && !TUI.on ? KEY_BTNS.findIndex(b => inBtn(p, b)) : -1;
   if (ki >= 0) { rebinding = BIND_ACTIONS[ki][0]; return; }
   if (inBtn(p, KEY_RESET)) { SETTINGS.binds = {}; buildRemap(); }
   else if (inBtn(p, B.qtr)) { qtrDrag = true; setQtrFromX(p.x); }
@@ -24656,7 +24901,7 @@ const SLOT_VIEW = { x: 198, y: 96, w: 800, row: 104, gap: 8 };   // (x centres t
 const slotStep = SLOT_VIEW.row + SLOT_VIEW.gap, slotViewH = SLOT_ROWS * slotStep - SLOT_VIEW.gap;
 const slotMax = () => (SLOTS - SLOT_ROWS) * slotStep;
 const SLOT_BTNS = Array.from({ length: SLOTS }, () => ({ x: SLOT_VIEW.x, y: 0, w: SLOT_VIEW.w, h: SLOT_VIEW.row }));
-const SLOT_NEW = { x: W - 240, y: 16, w: 220, h: 80 };
+const SLOT_NEW = { x: W - 170, y: 16, w: 150, h: 64 };   // (same size as the IMPORT button)
 const SLOT_TRASH = SLOT_BTNS.map(b => ({ x: SLOT_VIEW.x + SLOT_VIEW.w + 14, y: 0, w: 70, h: SLOT_VIEW.row }));
 const SLOT_YES = { x: 380, y: 405, w: 240, h: 70 }, SLOT_NO = { x: 660, y: 405, w: 240, h: 70 };
 const placeSlotBtns = () => SLOT_BTNS.forEach((b, i) => { b.y = SLOT_TRASH[i].y = SLOT_VIEW.y + i * slotStep - slotUI.scroll; });
@@ -24709,7 +24954,7 @@ function drawSlots() {
     ctx.lineTo(back.x + 64, back.y + 32); ctx.lineTo(back.x + 64, back.y + 48); ctx.lineTo(back.x + 42, back.y + 48);
     ctx.lineTo(back.x + 42, back.y + 60); ctx.closePath(); ctx.fill();
   }, !U.confirm);
-  if (U.mode !== 'save') menuBtn(SLOT_NEW, 'NEW\nCAREER', RES.bright, 26, null, !U.confirm);
+  if (U.mode !== 'save') menuBtn(SLOT_NEW, 'NEW\nCAREER', RES.bright, 20, null, !U.confirm);
   menuBtn(IO.btn, U.mode === 'save' ? 'EXPORT' : 'IMPORT', RES.bright, 24, null, !U.confirm);   // (top left: the save screen writes a file, the load screens read one)
   if (U.confirm) {   // are you sure
     ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0, 0, W, H);
@@ -24791,7 +25036,115 @@ const START_BTNS = { ex: { x: 470, y: 270, w: 340, h: 88 }, fr: { x: 470, y: 376
 const START_TITLE = { x: 330, y: 90, w: 620, h: 160 };
 const FIRSTS = ['Marquis', 'Tyler', 'Dante', 'Jake', 'Luis', 'Andre', 'Cole', 'Darius', 'Mike', 'Trey', 'Ben', 'Kenji', 'Omar', 'Ryan'];
 const LASTS = ['Hodge', 'Walker', 'Brooks', 'Ramirez', 'Nguyen', 'Carter', 'Mills', 'Foster', 'Bishop', 'Price', 'Okafor', 'Kim', 'Reed'];
-const randCareer = () => ({ first: pick(FIRSTS), last: pick(LASTS), face: makeFace(Math.random, true) });   // (a random coach: random features)
+// --- coach creator
+// Your head coach's look is a face object (see `// --- faces`: drawAvatar draws it like every other coach card), saved on its own under
+// pocketPasser.coach and used for every new career; the creator edits career.face (so a loaded franchise's coach changes too).
+// The FACE box on NEW CAREER opens it (the start screen's CAREER button is still unbuilt and does nothing).
+const COACH_KEY = 'pocketPasser.coach';
+const COACH_OPTS = [   // k = the face feature (bit = an accessory flag in `acc`), n = how many choices, sw = swatch colours, names = text choices
+  { k: 'skin', label: 'SKIN COLOR', n: FACE_SKINS.length, sw: FACE_SKINS },
+  { k: 'shape', label: 'FACE SHAPE', n: 4, names: ['ROUND', 'OVAL', 'SQUARE', 'LONG'] },
+  { k: 'hair', label: 'HAIR STYLE', n: 10, names: ['BALD', 'BUZZ', 'SHORT', 'SWEPT', 'AFRO', 'LONG', 'DREADS', 'BRAIDS', 'HIGH-TOP', 'CURLY TOP'] },
+  { k: 'hc', label: 'HAIR COLOR', n: FACE_HAIRS.length, sw: FACE_HAIRS },
+  { k: 'eyes', label: 'EYE COLOR', n: FACE_EYES.length, sw: FACE_EYES },
+  { k: 'glasses', label: 'GLASSES', n: 2, bit: 4 },
+  { k: 'earring', label: 'EARRINGS', n: 2, bit: 16 },
+];
+const COACH_UI = { row0: 148, rh: 66, lx: 530, ax: 740, vx: 810, vw: 330, bx: 1150 };   // label / left arrow / value area / right arrow columns
+const COACH_BTNS = { done: { x: 1000, y: 625, w: 240, h: 70 }, random: { x: 700, y: 625, w: 270, h: 70 } };
+const COACH_ARR = COACH_OPTS.map((_, i) => ({ l: { x: COACH_UI.ax, y: COACH_UI.row0 + i * COACH_UI.rh, w: 56, h: 50 }, r: { x: COACH_UI.bx, y: COACH_UI.row0 + i * COACH_UI.rh, w: 56, h: 50 } }));
+const COACH_FACE_BOX = { x: 1030, y: 124, w: 210, h: 180 };   // the FACE panel on NEW CAREER: click to edit
+let coachEd = { row: 0, back: 'start' };
+const coachClamp = f => {   // a saved / old face made safe: every feature in range, anything missing = a plain default
+  if (!f || typeof f !== 'object') return null;
+  const n = (v, max, d = 0) => Number.isInteger(v) && v >= 0 && v <= max ? v : d;
+  const hc = n(f.hc, 6, 1);
+  return { skin: n(f.skin, 7, 3), shape: n(f.shape, 3), hair: n(f.hair, 9, 2), hc, facial: n(f.facial, 7), eyes: n(f.eyes, 4), expr: n(f.expr, 3), acc: n(f.acc, 31), cap: n(f.cap, 6), bc: n(f.bc, 6, hc) };
+};
+const coachLoad = () => { try { return coachClamp(JSON.parse(localStorage.getItem(COACH_KEY))); } catch (e) { return null; } };
+const coachSave = () => { try { localStorage.setItem(COACH_KEY, JSON.stringify(career.face)); } catch (e) {} };
+const coachVal = o => o.bit ? (career.face.acc & o.bit ? 1 : 0) : career.face[o.k];
+function coachSet(o, v) {
+  v = ((v % o.n) + o.n) % o.n; const f = career.face;
+  if (o.bit) f.acc = v ? f.acc | o.bit : f.acc & ~o.bit; else { f[o.k] = v; if (o.k === 'hc') f.bc = v; }
+  coachSave();
+}
+function coachOpen(back) {
+  career.face = coachClamp(career.face) || makeFace(Math.random, true);
+  career.face.acc &= ~1;   // (no hat: it would hide the hair being picked)
+  coachEd = { row: 0, back }; career.focus = null; results.screen = 'coach';
+}
+function coachRandom() { career.face = makeFace(Math.random, true); career.face.acc = (career.face.acc & ~1) | 8; coachSave(); }   // (random look, headset on like the coordinators)
+function coachDone() { coachSave(); results.screen = coachEd.back; }
+function drawCoachEd() {
+  paperBg();
+  ctx.fillStyle = RES.line; ctx.font = 'bold 46px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('CREATE YOUR COACH', W / 2, 52);
+  resPanel(60, 110, 400, 490, [['PREVIEW', null]], RES.bright);
+  drawAvatar(career.face, 260, 300, 150, { shirt: '#2a62b0' });
+  ctx.fillStyle = RES.line; ctx.font = 'bold 30px monospace'; ctx.fillText([career.first, career.last].filter(Boolean).join(' ') || 'Coach', 260, 490);
+  ctx.fillStyle = RES.dim; ctx.font = 'bold 20px monospace'; ctx.fillText('HEAD COACH', 260, 526);
+  resPanel(500, 110, 740, 490, [['LOOK', null]], RES.bright);
+  const U = COACH_UI;
+  COACH_OPTS.forEach((o, i) => {
+    const y = U.row0 + i * U.rh, v = coachVal(o), sel = coachEd.row === i;
+    if (sel) { ctx.fillStyle = RES.strip; ctx.fillRect(516, y - 8, 708, 58); }
+    ctx.fillStyle = RES.line; ctx.font = 'bold 24px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(o.label, U.lx, y + 25);
+    menuBtn(COACH_ARR[i].l, '<', RES.bright, 28); menuBtn(COACH_ARR[i].r, '>', RES.bright, 28);
+    ctx.textAlign = 'center';
+    if (o.sw) {
+      const pitch = Math.min(46, U.vw / o.n), x0 = U.vx + (U.vw - pitch * o.n) / 2 + pitch / 2;
+      o.sw.forEach((c, j) => {
+        ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x0 + j * pitch, y + 25, 15, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = j === v ? RES.line : 'rgba(34,48,90,0.35)'; ctx.lineWidth = j === v ? 4 : 1.5; ctx.stroke();
+      });
+    } else if (o.bit) {
+      const bx = U.vx + U.vw / 2 - 70;
+      ctx.fillStyle = '#fff'; ctx.fillRect(bx, y + 5, 40, 40); ctx.strokeStyle = RES.line; ctx.lineWidth = 3; ctx.strokeRect(bx, y + 5, 40, 40);
+      if (v) { ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(bx + 8, y + 26); ctx.lineTo(bx + 17, y + 36); ctx.lineTo(bx + 34, y + 13); ctx.stroke(); ctx.lineCap = 'butt'; }
+      ctx.fillStyle = RES.line; ctx.font = 'bold 26px monospace'; ctx.textAlign = 'left'; ctx.fillText(v ? 'ON' : 'OFF', bx + 58, y + 26);
+    } else { ctx.fillStyle = RES.line; ctx.font = 'bold 28px monospace'; ctx.fillText(o.names[v], U.vx + U.vw / 2, y + 26); }
+  });
+  menuBtn(BACK_BTN, '', RES.bright, 22, back => {
+    ctx.fillStyle = RES.line; ctx.beginPath();
+    ctx.moveTo(back.x + 20, back.y + 40); ctx.lineTo(back.x + 42, back.y + 20); ctx.lineTo(back.x + 42, back.y + 32);
+    ctx.lineTo(back.x + 64, back.y + 32); ctx.lineTo(back.x + 64, back.y + 48); ctx.lineTo(back.x + 42, back.y + 48);
+    ctx.lineTo(back.x + 42, back.y + 60); ctx.closePath(); ctx.fill();
+  });
+  menuBtn(COACH_BTNS.random, 'RANDOM LOOK', RES.bright, 26);
+  menuBtn(COACH_BTNS.done, 'DONE', RES.bright, 30);
+  ctx.fillStyle = RES.dim; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.fillText('UP / DOWN pick   LEFT / RIGHT change   R random   ENTER done', 640, 708);
+}
+function coachClick(p) {
+  if (inBtn(p, BACK_BTN) || inBtn(p, COACH_BTNS.done)) { coachDone(); return; }
+  if (inBtn(p, COACH_BTNS.random)) { coachRandom(); return; }
+  const U = COACH_UI;
+  COACH_OPTS.forEach((o, i) => {
+    const y = U.row0 + i * U.rh;
+    if (p.y < y - 8 || p.y > y + 50 || p.x < 516 || p.x > 1224) return;
+    coachEd.row = i;
+    if (inBtn(p, COACH_ARR[i].l)) coachSet(o, coachVal(o) - 1);
+    else if (inBtn(p, COACH_ARR[i].r)) coachSet(o, coachVal(o) + 1);
+    else if (p.x >= U.vx && p.x <= U.vx + U.vw) {
+      if (o.sw) { const pitch = Math.min(46, U.vw / o.n), j = Math.floor((p.x - (U.vx + (U.vw - pitch * o.n) / 2)) / pitch); if (j >= 0 && j < o.n) coachSet(o, j); }
+      else coachSet(o, coachVal(o) + 1);
+    }
+  });
+}
+function coachKey(e) {   // arrows / R / Enter on the creator (Esc = BACK, handled with every menu's BACK button)
+  if (!results || results.screen !== 'coach') return false;
+  const o = COACH_OPTS[coachEd.row];
+  if (e.code === 'ArrowUp') coachEd.row = (coachEd.row + COACH_OPTS.length - 1) % COACH_OPTS.length;
+  else if (e.code === 'ArrowDown') coachEd.row = (coachEd.row + 1) % COACH_OPTS.length;
+  else if (e.code === 'ArrowLeft') coachSet(o, coachVal(o) - 1);
+  else if (e.code === 'ArrowRight') coachSet(o, coachVal(o) + 1);
+  else if (e.code === 'KeyR') coachRandom();
+  else if (e.code === 'Enter' || e.code === 'Space') coachDone();
+  else return false;
+  e.preventDefault(); return true;
+}
+const coachLook = () => coachLoad() || makeFace(Math.random, true);
+const randCareer = () => ({ first: pick(FIRSTS), last: pick(LASTS), face: coachLook() });   // (a new career: your created coach, or a random one until you make one)
 const career = { ...randCareer(), team: pick(Object.keys(ROSTER).filter(k => NFL[k])), fav: false, focus: null, tut: {} };
 const CAR = { first: { x: 560, y: 160, w: 400, h: 48 }, last: { x: 560, y: 228, w: 400, h: 48 }, team: { x: 320, y: 400, w: 380, h: 80 },
   change: { x: 730, y: 400, w: 230, h: 80 }, check: { x: 870, y: 500, w: 40, h: 40 }, random: { x: 510, y: 615, w: 260, h: 90 },
@@ -24868,8 +25221,13 @@ function drawCareerFace(x, y, w, h) {
       ctx.fillRect(end, f.y + 10, 3, f.h - 20);
     }
   });
+  if (career.nameErr && performance.now() - career.nameErr < 2500) {
+    ctx.fillStyle = '#d52b2b'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('ENTER A FIRST AND LAST NAME TO CONTINUE', 640, 326);
+  }
   resPanel(1030, 124, 210, 180, [['FACE', null]], RES.bright);
   drawCareerFace(1050, 144, 170, 140);
+  ctx.fillStyle = RES.dim; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('CLICK TO EDIT', 1135, 292);
 
   resPanel(280, 360, 720, 200, [['FAVORITE TEAM', null]], RES.bright);
   menuBtn(CAR.team, NFL[career.team].city, RES.bright, 30, b => drawLogo(career.team, b.x + 40, b.y + b.h / 2, 44));
@@ -24897,12 +25255,14 @@ function drawCareerFace(x, y, w, h) {
 function careerClick(p) {
   career.focus = inBtn(p, CAR.first) ? 'first' : inBtn(p, CAR.last) ? 'last' : null;
   if (career.focus) return;
+  if (inBtn(p, COACH_FACE_BOX)) { coachOpen('franchise'); return; }
   if (inBtn(p, CAR.team) || inBtn(p, CAR.change)) { teamPick = 'fav'; pickConf = NFL[career.team].conf.slice(0, 3); }
   else if (inBtn(p, CAR.check)) career.fav = !career.fav;
-  else if (inBtn(p, CAR.random)) Object.assign(career, randCareer());
+  else if (inBtn(p, CAR.random)) { Object.assign(career, randCareer(), { face: makeFace(Math.random, true) }); coachSave(); }   // (name and look: the new look is kept as your coach)
   else if (inBtn(p, CAR.diff)) nextDiff();
   else if (inBtn(p, BACK_BTN)) results.screen = 'start';
   else if (inBtn(p, MENU_NEXT)) {   // on to the season
+    if (!String(career.first || '').trim() || !String(career.last || '').trim()) { career.nameErr = performance.now(); career.focus = String(career.first || '').trim() ? 'last' : 'first'; return; }   // (a coach needs a name)
     resetWorld();   // (a new career never inherits the rosters of the franchise that was loaded before)
     curSlot = null; PST = {}; LPST = {}; HOF = []; pstStash = null;   // (nor its stats: nothing may be written to the old save's slot before the new one is assigned)
     const team = career.fav ? career.team : randomJobTeam();
@@ -24996,6 +25356,41 @@ const TUT_STEPS = [
   { id: 'dline',    title: 'DEFENSE: THE LINE', text: 'While blocked: A or D toward the blocker and QB to bull rush, {up} or {down} to swim. Hold a move until you win.', def: 'ofull', side: 'def', play: 'pass', ud: 'de', alone: true, hold: 7, lineLesson: true, still: true },
   { id: 'dblitz',   title: 'DEFENSE: BLITZING', text: 'Run your linebacker through the line at the QB with {move}. Sack the QB.', def: 'ofull', side: 'def', play: 'pass', ud: 'lbM', alone: true, hold: 7, blitzLesson: true, still: true },
 ];
+// the same steps with touch wording (shown instead of a step's text on a phone / tablet): swipes and the on-screen buttons only
+const TUT_MOBILE = {
+  pass: 'Drag from the QB to aim, lift your finger to throw. Hit the fade.',
+  bullet: 'Tap LOB / BULLET for a faster, flatter bullet. Hit the slant.',
+  jumpcatch: 'Throw, then swipe UP on the field while the ball is in the air so he leaps. Catch it at the top.',
+  divecatch: 'Throw it out in front, then swipe DOWN in the air to lay out.',
+  onehand: 'While the ball is in the air, swipe AGAINST the way he is running. Make a one-handed catch.',
+  runcatch: 'Throw, then swipe the SAME way he is running while the ball is in the air to catch in stride. Catch one on the run.',
+  pocket: 'After the snap, move the QB with the joystick. Slide a few yards, then throw.',
+  scramble: 'Throw straight back or cross the line to run with the QB. Run past the line with the joystick.',
+  run: 'Tap the RB to hand off. Steer with the joystick. Gain 5 yards.',
+  sprint: 'Hand off, then hold SPRINT for a second or two. Looser ball, harder to break tackles.',
+  juke: 'Hand off, then tap JUKE UP or JUKE DOWN as the defender closes.',
+  spin: 'Hand off, then tap SPIN as the defender closes.',
+  stiff: 'Hand off, then hold STIFF ARM as he arrives.',
+  truck: 'Hand off, then hold TRUCK and run through him.',
+  protect: 'Hand off, then hold PROTECT as he arrives. Slower, but almost no fumbles.',
+  dive: 'Hand off, then tap DIVE for extra yards.',
+  hurdle: 'Hand off, then tap HURDLE a couple of yards before the defender. Too late and he grabs you.',
+  celebrate: 'Run it in, then tap CELEBRATE and wait it out.',
+  gap: 'Hand off, let the blocks set, then hit the hole. Gain 3 yards.',
+  timeout: 'After a play, tap TIMEOUT before the clock runs off to save the seconds. Run a play, then call one.',
+  audible: 'Before the snap, tap AUDIBLE to change the play. Two per play.',
+  hot: 'Before the snap, tap a receiver to cycle his route. Change one.',
+  fg: 'Tap to stop the power bar in the green, then tap again to aim. Kick it through.',
+  punt: 'First tap sets power, second sets aim. Steer the ringed coverage man with the joystick. Punt it away.',
+  kickoff: 'Tap for power, then aim. ONSIDE switches to an onside kick. Kick it off.',
+  dswitch: 'You drive one defender. Tap SWITCH to move to the one nearest the ball, or tap a player. Switch defenders.',
+  dtackle: 'Switch to the defender nearest the runner and chase him with the joystick. Make a tackle.',
+  ddive: 'Tap DIVE from a few yards off to dive at him. Bring him down with a dive.',
+  dstick: 'Tap HIT STICK as you close in for a big hit that can knock the ball loose. Lay one on him.',
+  dpick: 'Get under the pass and tap JUMP as the ball arrives. Pick it off.',
+  dline: 'While blocked: push the joystick toward the blocker and QB to bull rush, up or down to swim. Hold a move until you win.',
+  dblitz: 'Run your linebacker through the line at the QB with the joystick. Sack the QB.',
+};
 const TUT_FLASH = { secs: 2.4, rate: 2.5 };   // the audible button's attention flash: for secs, rate flashes per second
 const TUT_POPUPS = { 'ONE-HANDER': 'onehand', 'ONE-HANDED GRAB': 'onehand', 'JUKED': 'juke', 'SPIN MOVE': 'spin', 'SPUN AWAY': 'spin', 'TRUCKED': 'truck',
                     'SHOVED OFF': 'stiff', 'STIFF ARM': 'stiff', 'ICONIC STIFF ARM': 'stiff' };   // (any successful stiff arm / one-hander counts, spectacular or iconic ones too)
@@ -25139,7 +25534,7 @@ function drawTutorial() {
   tutSkipBtn = null;
   ctx.font = 'bold 16px monospace';   // (one size throughout: long lines wrap onto the next line)
   const lines = [];
-  if (st) for (const para of tutText(st.text).split('\n')) {
+  if (st) for (const para of tutText(TUI.on && TUT_MOBILE[st.id] || st.text).split('\n')) {
     let cur = '';
     for (const word of para.split(' ')) {
       if (cur && ctx.measureText(cur + ' ' + word).width > w - 40) { lines.push(cur); cur = word; } else cur = cur ? cur + ' ' + word : word;
@@ -25405,6 +25800,7 @@ canvas.addEventListener('pointerdown', e => {
     if (tutPrompt) { if (e.button === 0) tutPromptClick(pointerPos(e)); return; }
     if (e.button === 0 && results.screen === 'start') { startClick(pointerPos(e)); return; }
     if (e.button === 0 && results.screen === 'franchise') { careerClick(pointerPos(e)); return; }
+    if (results.screen === 'coach') { if (e.button === 0) coachClick(pointerPos(e)); return; }
     if (e.button === 0 && results.screen === 'home' && inBtn(pointerPos(e), HOME_BTNS[2])) { results.screen = 'roster'; rosterView.page = 0; rosterView.sel = null; if (rosterView.side === 'upg') rosterView.side = 'off'; rosterReturn = null; return; }
     if (e.button === 0 && results.screen === 'home' && inBtn(pointerPos(e), HOME_BTNS[3])) { if (exhibition) return; pracOpen(); return; }
     if (results.screen === 'practice') { if (e.button === 0) pracClick(pointerPos(e)); return; }
@@ -25760,7 +26156,7 @@ window.addEventListener('keydown', e => {
     if (!e.repeat || e.code === 'Escape') rebinding = null;
     return;
   }
-  if (!careerKey(e)) { const a = aliasKey(e); if (!e.repeat) heldKeys[e.code] = a; onKeyDown(a); }
+  if (!careerKey(e) && !coachKey(e)) { const a = aliasKey(e); if (!e.repeat) heldKeys[e.code] = a; onKeyDown(a); }
 });
 const heldKeys = {};   // (what each physical key was read as when it went down: it is let go as that, whatever has changed since (the snap, the drive direction))
 function onKeyDown(e) {
@@ -25977,7 +26373,7 @@ const TSETS = {
   pre:    [['SNAP', 'tap', 'Space', 'big'], ['AUDIBLE', 'tap', 'KeyQ'], ['LOB / BULLET', 'tap', 'KeyV'], ['TIMEOUT', 'tap', 'KeyT']],
   next:   [['NEXT', 'tap', 'Space', 'big'], ['TIMEOUT', 'tap', 'KeyT'], ['CELEBRATE', 'ctx', '']],
   tap:    [['TAP', 'tap', 'Space', 'big']],
-  flight: [['JUMP', 'tap', 'KeyW', 'big'], ['SECURE', 'tap', 'KeyS'], ['ONE HAND', 'tap', 'KeyD'], ['RUN CATCH', 'hold', 'KeyA']],
+  flight: [['JUMP (SWIPE UP)', 'tap', 'KeyW', 'big'], ['DIVE (SWIPE DOWN)', 'tap', 'KeyS'], ['ONE HAND (SWIPE BACK)', 'tap', 'KeyD'], ['RUN CATCH (SWIPE FORWARD)', 'hold', 'KeyA']],
   pocket: [['SPIN', 'tap', 'KeyR', 'big'], ['JUKE UP', 'dbl', 'KeyW'], ['JUKE DOWN', 'dbl', 'KeyS'], ['STIFF ARM', 'hold', 'KeyQ'], ['LOB / BULLET', 'tap', 'KeyV'], ['STEP UP', 'hold', 'KeyA']],
   run:    [['SPRINT', 'hold', 'KeyA', 'big'], ['SPIN', 'tap', 'KeyR'], ['DIVE', 'tap', 'KeyV'], ['JUKE UP', 'dbl', 'KeyW'], ['JUKE DOWN', 'dbl', 'KeyS'], ['HURDLE', 'tap', 'KeyE'], ['STIFF ARM', 'hold', 'KeyQ'], ['TRUCK', 'hold', 'KeyC'], ['PROTECT', 'hold', 'KeyG']],
   kickoff: [['SPRINT', 'hold', 'KeyA', 'big'], ['SPIN', 'tap', 'KeyR'], ['DIVE', 'tap', 'KeyV'], ['JUKE UP', 'dbl', 'KeyW'], ['JUKE DOWN', 'dbl', 'KeyS'], ['HURDLE', 'tap', 'KeyE'], ['STIFF ARM', 'hold', 'KeyQ'], ['TRUCK', 'hold', 'KeyC'], ['KNEEL / FAIR', 'tap', 'KeyD']],
@@ -26049,6 +26445,23 @@ window.addEventListener('pointerup', e => {
   if (matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || navigator.standalone) return;
   const de = document.documentElement, go = de.requestFullscreen || de.webkitRequestFullscreen;
   if (go && !document.fullscreenElement) Promise.resolve(go.call(de, { navigationUI: 'hide' })).then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape')).catch(() => {});
+}, true);
+// swipes on the field while the ball is in the air = the catch keys: up = jump (W), down = dive catch (S), with the runner = catch and run (A), against him = one hand (D)
+const SWIPE = { min: 36 };   // px a finger must travel to count as a swipe
+let swipeFrom = null;
+canvas.addEventListener('pointerdown', e => { swipeFrom = TUI.on && e.pointerType === 'touch' && state === 'flight' && !aiOff() ? { id: e.pointerId, x: e.clientX, y: e.clientY } : null; }, true);
+window.addEventListener('pointerup', e => {
+  const s = swipeFrom; if (!s || s.id !== e.pointerId) return;
+  swipeFrom = null;
+  const dx = e.clientX - s.x, dy = e.clientY - s.y;
+  if (state !== 'flight' || Math.hypot(dx, dy) < SWIPE.min) return;
+  let code;
+  if (Math.abs(dy) > Math.abs(dx)) code = dy < 0 ? 'KeyW' : 'KeyS';
+  else {
+    const run = Math.sign((tgt && tgt.vx) || (tgt && tgt.face) || 1), swipeWorld = MIRROR * Math.sign(dx);   // (the field is drawn mirrored)
+    code = swipeWorld === run ? 'KeyA' : 'KeyD';
+  }
+  tkey(code, true); setTimeout(() => tkey(code, false), TUI.tapMs);
 }, true);
 document.addEventListener('contextmenu', e => { if (TUI.on) e.preventDefault(); });
 document.addEventListener('gesturestart', e => e.preventDefault());   // (Safari's pinch zoom)
