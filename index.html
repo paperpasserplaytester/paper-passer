@@ -5757,9 +5757,9 @@ function settle(p, dt) {
     return;
   }
   if (p.engaged) p.vx = p.vy = 0;   // still tied up when the whistle blew: the block just lets go, he is not flung out of it
-  const coast = Math.hypot(p.vx, p.vy), cap = 10 * YD;
+  const coast = Math.hypot(p.vx, p.vy), cap = 7 * YD;   // (cap = fastest he's still moving at the whistle; SETTLE_DECAY = how fast he stops, per s)
   if (coast > cap) { p.vx *= cap / coast; p.vy *= cap / coast; }
-  const f = Math.exp(-(p === ud && aiOff() ? 7 : 2.5) * dt);   // (the defender you were steering stops quickly: no sliding on after the whistle)
+  const f = Math.exp(-(p === ud && aiOff() ? 7 : 5) * dt);   // (the defender you were steering stops quickly: no sliding on after the whistle)
   p.vx *= f; p.vy *= f;
   if (p.svx) { p.svx *= f; p.svy *= f; }
   p.x += p.vx * dt; p.y += p.vy * dt;
@@ -24061,7 +24061,8 @@ function hireLines(p, role) {   // what he does for the team
 }
 function drawHireCard(b, p, role, i, big) {
   const [main] = kitColors(MATCH.you, 'home'), px = b.x + 12, py = b.y + 12, pw = b.w - 24, ph = 118;
-  ctx.fillStyle = '#fffdf4'; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.strokeStyle = RES.line; ctx.lineWidth = 3; ctx.strokeRect(b.x, b.y, b.w, b.h);
+  menuBtn(b, '', RES.bright, 20, () => {   // a paper scrap like the front-office cards: torn edge, lifts on hover
+  ctx.strokeStyle = RES.line; ctx.lineWidth = 3;
   ctx.fillStyle = mixHex(main, 0.72, 255); ctx.fillRect(px, py, pw, ph);
   ctx.save(); ctx.beginPath(); ctx.rect(px, py, pw, ph); ctx.clip(); drawAvatar(p.face, b.x + b.w / 2, py + ph / 2 + 4, 54, { shirt: HIRE_ROLE[role].side === 'off' ? '#2a62b0' : '#b82a30' }); ctx.restore();
   ctx.strokeRect(px, py, pw, ph);
@@ -24079,6 +24080,7 @@ function drawHireCard(b, p, role, i, big) {
   ctx.fillText('IMPACT', b.x + 16, b.y + 320);
   ctx.fillStyle = RES.line;
   hireLines(p, role).filter(Boolean).slice(0, 3).forEach((ln, j) => wrapLines(ln, 30).slice(0, 2).forEach((w, k) => ctx.fillText(w, b.x + 16, b.y + 340 + j * 34 + k * 16, b.w - 28)));
+  });
 }
 function drawHire() {
   paperBg(); hireAll();
@@ -25150,7 +25152,7 @@ const CAR = { first: { x: 560, y: 160, w: 400, h: 48 }, last: { x: 560, y: 228, 
   change: { x: 730, y: 400, w: 230, h: 80 }, check: { x: 870, y: 500, w: 40, h: 40 }, random: { x: 510, y: 615, w: 260, h: 90 },
   diff: { x: 790, y: 615, w: 230, h: 90 } };
 
-const GAME_VERSION = 'v1.0';
+const GAME_VERSION = 'v1.1';
 function drawStart() {
   deskBg();
   ctx.save(); ctx.font = 'bold 22px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
