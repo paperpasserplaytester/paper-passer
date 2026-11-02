@@ -163,10 +163,17 @@ const RUN_ACCEL = 16 * YD * OFF_K;
 const OL_SPEED = 6.5 * YD * OFF_K;     // short shuffles in pass pro
 const OL_RUN = 5.3 * YD * OFF_K;     // linemen running in the open field (climbing, chasing) are slow
 const WR_BLOCK_SPEED = 8 * YD;
-const BLOCK_RANGE = 1.1 * YD;
+const BLOCK_RANGE = 1.25 * YD;   // (was 1.1: +14%, with SACK_RANGE / CONTACT / LUNGE_RANGE so reach still clears the new bodies)
+// Body collision (separatePlayers, every frame after the movement): every man is a circle of radius r (yd); two that overlap
+// are eased apart (ease = how fast, /s; the heavier / stronger one gives less ground, wt = lb for a man with no weight, strPow =
+// how much strength counts toward mass; team = x the push between teammates; downMass = x mass of a man on the turf).
+// A pair that crossed through each other between frames (relative path passed within tunnel x the combined radius) is put back on
+// the side it came from. Locked-up pairs (both engaged), lunging tacklers, diving / leaping men and stiff-arm holds are left alone.
+// show = draw the hitboxes (` key, KEYBINDS)
+const COLLIDE = { r: 0.4 * YD, ease: 14, wt: 220, strPow: 0.5, team: 0.6, downMass: 4, tunnel: 0.9, jump: 6, show: false };
 // teammates near the ball carrier (within near) peel back onto defenders chasing him down (within range of him); bonus = priority, in px
 const PURSUIT_BLOCK = { range: 6 * YD, near: 9 * YD, bonus: 8 * YD };
-const SACK_RANGE = 1.0 * YD;   // (rushers reach the QB from further out)
+const SACK_RANGE = 1.15 * YD;   // (rushers reach the QB from further out)
 const ARM_TACKLE = 0.11;      // chance an engaged lineman grabs a runner squeezing past him
 const WR_WHIFF = 0.05;        // chance a receiver's block fails (was 0.19: a clean miss is rarer now)
 const WR_MOVE = 0.45;          // ...and this share of those failures is the defender's quick move around the block (swim / rip) instead of a clean whiff
@@ -357,9 +364,9 @@ const XF_SIM = 0.35;      // edge (in star steps) each active X-Factor adds to i
 
 // Ball carriers: tackles and the moves that beat them (none are sure things)
 const DIVE_CATCH = { touch: 1.4, lie: 0.5, speed: 0.4 };   // a receiver down after a diving catch: any defender within touch yards ends the play; untouched for lie s he gets up, at speed x top
-const LUNGE_RANGE = 1.6 * YD;
+const LUNGE_RANGE = 1.8 * YD;
 const LUNGE_DIST = 1.9 * YD;
-const CONTACT = 1.0 * YD;
+const CONTACT = 1.15 * YD;
 const BEHIND_REACH = 1.35;     // chasing from behind: longer lunge, wraps up the runner's legs
 const BEHIND_MISS = 0.4;       // ...and his break-tackle odds are cut to this fraction
 const KICK_HOLD = { speed: 1.2, near: 5, lane: 0.04 };   // a returner moving backward at `speed` yd/s or more: kick coverage more than `near` yd from him holds depth and gently shades toward its own lane (x per frame step)
@@ -2570,7 +2577,8 @@ const HIGHLIGHTS = { max: Infinity, gap: 0.7 };   // most tapes kept a game (unl
 let highlights = [];   // this game's tapes
 let hl = null;         // playing them back: { i, live: everything put back afterwards }
 const HL_BTN = { x: 700, y: 605, w: 260, h: 75 };   // (on the result screen, next to CONTINUE)
-const HL_BAR = { prev: { x: 20, y: H - 36, w: 130, h: 32 }, next: { x: 160, y: H - 36, w: 130, h: 32 }, done: { x: W - 150, y: H - 36, w: 130, h: 32 } };
+const HL_BAR = { prev: { x: 20, y: H - 36, w: 130, h: 32 }, next: { x: 160, y: H - 36, w: 130, h: 32 }, done: { x: W - 150, y: H - 36, w: 130, h: 32 },
+                  exp: { x: W - 350, y: H - 36, w: 190, h: 32 }, imp: { x: W - 460, y: H - 36, w: 100, h: 32 } };   // (EXPORT HIGHLIGHTS and IMPORT sit left of DONE, clear of the centred key hint)
 function castPlay() {   // (from recordFrame, at a play's first frame)
   const ps = allPlayers();
   rec.castLive = ps; rec.cast = ps.map(p => ({ ...p }));
@@ -2725,9 +2733,74 @@ function hlClose() {
   [camX, camY, zoom, userZoom, passPull] = L.cam;
   if (MATCH) applyKits();
 }
-const hlBarHit = pt => inBtn(pt, HL_BAR.done) || inBtn(pt, HL_BAR.prev) || inBtn(pt, HL_BAR.next) || (!!rec && !rec.intro && !rec.rewind && inBtn(pt, replaySaveBtn()));
+// export / import (the shared ioExport / ioImport): a file holds the list being watched (the saved ones on the main menu's reel, else this game's);
+// JSON can't keep the players a tape shares between its frames, so ioPack writes a repeated object once ($id) and points at it after ($ref).
+function ioPack(root) {
+  const seen = new Map(), ids = new Map();
+  let n = 0;
+  const count = v => {
+    if (!v || typeof v !== 'object') return;
+    if (seen.has(v)) { seen.set(v, 2); return; }
+    seen.set(v, 1);
+    if (Array.isArray(v)) v.forEach(count); else for (const k in v) count(v[k]);
+  };
+  count(root);
+  const out = v => {
+    if (!v || typeof v !== 'object') return v;
+    const shared = seen.get(v) > 1;
+    if (shared && ids.has(v)) return { $ref: ids.get(v) };
+    let id; if (shared) { id = n++; ids.set(v, id); }
+    if (Array.isArray(v)) { const a = v.map(out); return shared ? { $id: id, $a: a } : a; }
+    const o = {}; if (shared) o.$id = id;
+    for (const k in v) o[k] = out(v[k]);
+    return o;
+  };
+  return out(root);
+}
+function ioUnpack(root) {
+  const byId = new Map(), bad = { __proto__: 1, constructor: 1, prototype: 1 };
+  const back = v => {
+    if (!v || typeof v !== 'object') return v;
+    if (Array.isArray(v)) return v.map(back);
+    if ('$ref' in v) return byId.get(v.$ref);
+    if ('$a' in v) { const a = []; byId.set(v.$id, a); v.$a.forEach((x, i) => { a[i] = back(x); }); return a; }
+    const o = {}; if ('$id' in v) byId.set(v.$id, o);
+    for (const k of Object.keys(v)) if (k !== '$id' && !bad[k]) o[k] = back(v[k]);
+    return o;
+  };
+  return back(root);
+}
+const hlSig = c => [c.label, c.frames.length, c.sb && c.sb.blue, c.sb && c.sb.red, c.sb && c.sb.quarter, c.sb && c.sb.secs, c.field && c.field.los].join('|');   // (two tapes with the same sig are the same play)
+const hlValid = c => !!c && Array.isArray(c.frames) && c.frames.length >= 10 && Array.isArray(c.cast) && Array.isArray(c.shape) && c.shape.length === 5 && c.shape.every(Number.isFinite)
+  && c.shape.reduce((a, b) => a + b, 2) <= c.cast.length && !!c.field && c.frames.every(f => f && Array.isArray(f.players) && f.players.length === c.cast.length);
+function hlExport() {
+  if (!hl || !hl.list.length) return;
+  let data;
+  try { data = { v: 1, tapes: ioPack(hlPlain(hl.list, new Map())) }; } catch (e) { ioToast('COULD NOT EXPORT'); return; }
+  if (ioExport('highlights', data, `paper-passer-highlights-${hl.list.length}`)) ioToast(`${hl.list.length} HIGHLIGHT${hl.list.length > 1 ? 'S' : ''} EXPORTED`, false);
+}
+function hlImportData(d) {   // merged into the saved highlights: invalid and repeated tapes skipped, the cap (HIGHLIGHTS.max) respected
+  if (!d || d.v !== 1 || !Array.isArray(d.tapes)) { ioToast('HIGHLIGHT FILE IS INVALID OR INCOMPATIBLE'); return; }
+  let tapes;
+  try { tapes = ioUnpack(d.tapes); } catch (e) { tapes = null; }
+  if (!Array.isArray(tapes)) { ioToast('HIGHLIGHT FILE IS INVALID OR INCOMPATIBLE'); return; }
+  const have = new Set(savedHighlights.map(hlSig));
+  let added = 0, dup = 0, bad = 0, capped = 0;
+  for (const c of tapes) {
+    if (!hlValid(c)) { bad++; continue; }
+    const s = hlSig(c);
+    if (have.has(s)) { dup++; continue; }
+    if (savedHighlights.length >= HIGHLIGHTS.max) { capped++; continue; }
+    have.add(s); savedHighlights.push(c); added++;
+  }
+  if (added) hlStore();
+  ioToast(`IMPORTED ${added}${dup ? `, ${dup} DUPLICATE` : ''}${bad ? `, ${bad} INVALID` : ''}${capped ? `, ${capped} OVER THE CAP` : ''}`, !added);
+}
+const hlBarHit = pt => inBtn(pt, HL_BAR.done) || inBtn(pt, HL_BAR.exp) || inBtn(pt, HL_BAR.imp) || inBtn(pt, HL_BAR.prev) || inBtn(pt, HL_BAR.next) || (!!rec && !rec.intro && !rec.rewind && inBtn(pt, replaySaveBtn()));
 function hlClick(pt) {
   if (inBtn(pt, HL_BAR.done)) hlClose();
+  else if (inBtn(pt, HL_BAR.exp)) hlExport();
+  else if (inBtn(pt, HL_BAR.imp)) ioImport('highlights', hlImportData);
   else if (inBtn(pt, HL_BAR.prev)) hlPlay(hl.i - 1);
   else if (inBtn(pt, HL_BAR.next)) hlPlay(hl.i + 1);
   else if (rec && !rec.intro && !rec.rewind && inBtn(pt, replaySaveBtn())) hlKeep();
@@ -2738,6 +2811,8 @@ function drawHlBar() {
   menuBtn(HL_BAR.prev, '◂ PREV', hl.i > 0 ? IN_GAME_PAPER.blue : IN_GAME_PAPER.off, 16);
   menuBtn(HL_BAR.next, hl.i < hl.list.length - 1 ? 'NEXT ▸' : 'FINISH', IN_GAME_PAPER.blue, 16);
   menuBtn(HL_BAR.done, 'DONE', IN_GAME_PAPER.red, 16);
+  menuBtn(HL_BAR.exp, 'EXPORT HIGHLIGHTS', IN_GAME_PAPER.yellow, 16);
+  menuBtn(HL_BAR.imp, 'IMPORT', IN_GAME_PAPER.yellow, 16);
   ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#e8e8e8';
   ctx.fillText('ENTER next   BACKSPACE prev   ESC done', W / 2, H - BOT_BAR / 2);
   ctx.restore();
@@ -9920,7 +9995,7 @@ function updateReturner(d, dt) {
       if (d.retDive) {   // your dive on the return: he's down where he lands
         d.retDive = false; d.action = 'down'; d.act = { t: 0, fall: true, vx: 0, vy: 0, angle: d.face > 0 ? 0 : Math.PI };
         if (puntRet) return puntReturned(d, 'Dove forward  -  ');
-        return endPlay(`${ball.scoopReturn ? 'TURNOVER!' : 'INTERCEPTED!'}  Down on the dive`, 0, 'turnover');
+        return pickEnd(d, `${ball.scoopReturn ? 'TURNOVER!' : 'INTERCEPTED!'}  Down on the dive`);
       }
       getUp(d);
     }
@@ -10027,7 +10102,7 @@ function updateReturner(d, dt) {
     if (yours) { showBanner('TOUCHDOWN!', '#ffd94a', '#4a3500', who(d)); crowdCheer(1, 'you', false, true, true); msg += '  -  right-click to celebrate'; }
   } else if (!feetInBounds(d)) {
     if (puntRet) puntReturned(d, 'Pushed out  -  ');
-    else endPlay(`${ball.scoopReturn ? 'TURNOVER!' : 'INTERCEPTED!'}  Returner pushed out`, 0, 'turnover');
+    else pickEnd(d, `${ball.scoopReturn ? 'TURNOVER!' : 'INTERCEPTED!'}  Returner pushed out`);
   }
 }
 
@@ -10054,6 +10129,13 @@ function cpuReturnMove(d) {
     d.hurdleReady = clock + HURDLE.cooldown; d.retMove = { until: clock + HURDLE.userDur }; popup(d, 'HURDLE', '#7fe3ff');
   }
 }
+// a pick (or scoop) return that ends in the returner's own end zone is a touchback (ball at INT_TB.yard), whatever ended it
+function pickEnd(d, text) {
+  const tb = patMode === null && !tut && d.x >= FIELD;
+  if (tb) { popup(d, 'TOUCHBACK', '#7fe3ff'); text = `${ball.scoopReturn ? 'TURNOVER' : 'INTERCEPTED'} by ${who(d)} in the end zone  -  TOUCHBACK`; }
+  endPlay(text, 0, 'turnover');
+  if (tb && pendingSim) pendingSim = { startYd: INT_TB.yard };
+}
 function chaseReturner(p, d, dt) {
   if (p.push && clock < p.push.until && !p.action) { const px = p.x, py = p.y; p.x += p.push.vx * dt; p.y += p.push.vy * dt; clampField(p); setVelocity(p, px, py, dt); p.moving = true; return; }   // (shoved off by the returner's stiff arm: driven back first)
   if (p.action) {
@@ -10068,7 +10150,7 @@ function chaseReturner(p, d, dt) {
         popup(d, 'BOOM!', '#ff6b6b', 'you', true);   // (you laid the hit on their returner)
       } else wrapTackle(d, p);
       if (puntRet) return puntReturned(d, big ? 'BOOM!  ' : '');
-      return endPlay(`${big ? 'BOOM!  ' : ''}${ball.scoopReturn ? 'TURNOVER!' : 'INTERCEPTED!'}  Tackled on the return`, 0, 'turnover');
+      return pickEnd(d, `${big ? 'BOOM!  ' : ''}${ball.scoopReturn ? 'TURNOVER!' : 'INTERCEPTED!'}  Tackled on the return`);
     };
     // hanging on his ankle: sometimes the returner goes down over him
     if (p.action === 'clasp' && p.act.trip && p.act.t >= p.act.tripAt && p.act.target === d && !d.action) return downed(false);
@@ -11395,6 +11477,51 @@ const SIDE_LOCK = 0.7;
 // the defender you drive stands still under this ground speed (yd/s): pushing into the line, a sideline or easing to a stop, his legs no
 // longer cycle slowly in place (that slow churn looked like him rocking back and forth)
 const UD_STAND = 1.2;
+const colMass = p => (p.wt || COLLIDE.wt) * (p.grp && p.at && p.at.str != null ? rm(p, 'str', 'block') ** COLLIDE.strPow : 1) * (p.action === 'down' ? COLLIDE.downMass : 1);
+function colSkip(a, b) {
+  const air = p => (p.z || 0) > COLLIDE.jump * S;
+  if (air(a) || air(b) || a.tackling || b.tackling || a.stiffBy === b || b.stiffBy === a) return true;
+  for (const p of [a, b]) if (p.action === 'dive' || p.action === 'hurdle' || p.action === 'hurdled') return true;
+  return a.team !== b.team && a.engaged && b.engaged;
+}
+// bodies are solid: overlapping men ease apart (heavier gives less), and a pair that passed through each other this frame is put back
+function separatePlayers(dt) {
+  const all = allPlayers();
+  if (state === 'pre' || state === 'sim' || state === 'kick' || (kickoff && kickoff.forming) || (rec && rec.replaying)) { for (const p of all) p.cx = null; return; }
+  const R = COLLIDE.r * 2, k = Math.min(1, COLLIDE.ease * dt);
+  for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
+    const a = all[i], b = all[j];
+    if (colSkip(a, b)) continue;
+    let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+    const ma = colMass(a), mb = colMass(b);
+    if (a.cx != null && b.cx != null && dx * (b.cx - a.cx) + dy * (b.cy - a.cy) < 0) {   // (flipped sides since last frame: did the paths cross inside the bodies?)
+      const px = b.cx - a.cx, py = b.cy - a.cy, sx = dx - px, sy = dy - py, s2 = sx * sx + sy * sy;
+      const t = s2 ? Math.max(0, Math.min(1, -(px * sx + py * sy) / s2)) : 0;
+      if (Math.hypot(px + sx * t, py + sy * t) < R * COLLIDE.tunnel) {
+        const l = Math.hypot(px, py) || 1, ux = px / l, uy = py / l;
+        if (ma >= mb) { b.x = a.x + ux * R; b.y = a.y + uy * R; } else { a.x = b.x - ux * R; a.y = b.y - uy * R; }
+        dx = b.x - a.x; dy = b.y - a.y; d = Math.hypot(dx, dy);
+      }
+    }
+    if (d >= R) continue;
+    if (d < 0.01) { dx = 0; dy = i % 2 ? 1 : -1; d = 1; }
+    const push = (R - Math.hypot(b.x - a.x, b.y - a.y)) * k * (a.team === b.team ? COLLIDE.team : 1), nx = dx / d, ny = dy / d;
+    a.x -= nx * push * mb / (ma + mb); a.y -= ny * push * mb / (ma + mb);
+    b.x += nx * push * ma / (ma + mb); b.y += ny * push * ma / (ma + mb);
+  }
+  for (const p of all) { clampField(p); p.cx = p.x; p.cy = p.y; }
+}
+function drawHitboxes() {
+  ctx.save();
+  ctx.lineWidth = 2;
+  for (const p of allPlayers()) {
+    ctx.strokeStyle = p.team === 'def' ? '#ff4d4d' : '#4dc3ff';
+    ctx.beginPath(); ctx.arc(p.x, p.y, COLLIDE.r, 0, Math.PI * 2); ctx.stroke();
+    if (p.hasBall || p === runner) { ctx.strokeStyle = '#ffd34d'; ctx.beginPath(); ctx.arc(p.x, p.y, CONTACT, 0, Math.PI * 2); ctx.stroke(); }
+    else if (p.engaged) { ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.beginPath(); ctx.arc(p.x, p.y, BLOCK_RANGE, 0, Math.PI * 2); ctx.stroke(); }
+  }
+  ctx.restore();
+}
 function sideLock() {
   if (state === 'sim') return;
   const all = allPlayers();
@@ -11553,6 +11680,7 @@ function update(dt) {
   }
 
   if (state === 'pre') stepFormation(dt);
+  separatePlayers(dt);
   faceOffPairs();
   sideLock();
   updateBall(dt);
@@ -14244,7 +14372,9 @@ function setKickTarget(wx, wy) {
   const lo = kick.punt ? kick.tLos - (PUNT.min + PUNT.span) * YL : KOK.deep[1] * YL, hi = kick.punt ? kick.tLos - PUNT.min * YL : KOK.deep[0] * YL;
   t.x = Math.max(Math.max(lo, -ENDZONE), Math.min(hi, w.x)); t.y = Math.max(Y_MIN + RETICLE.margin, Math.min(Y_MAX - RETICLE.margin, w.y));
   kick.need = reticleNeed();
+  if (!kick.punt) { kick.winBase ??= kick.window; kick.window = kick.winBase * (t.x < 0 ? KOK_TB_HARD.win : 1); }   // (a touchback kick: a tighter aim window)
 }
+const KOK_TB_HARD = { win: 0.55, pow: 0.5 };   // a kickoff aimed into the end zone (a touchback): x the aim window, x the power marker's green tolerance
 function drawKickReticle() {
   const t = kick.target, [rl, rt] = reticleSpread(), from = kickoff && kickoff.kicker || rb;   // (the kicker or punter, never the returner)
   ctx.save();
@@ -15324,6 +15454,7 @@ const kcuOn = () => !!(kcu && state === 'picked' && !aiOff() && !pvpOn() && !tut
 function kcuPick(d, skip = null) {
   const pool = puntRet ? (puntPlay ? puntPlay.cover : []) : [qb, rb, ...ols, ...recs];
   const list = pool.filter(p => p !== skip && p.action !== 'down' && !p.hasBall).sort((a, b) => dist(a, d) - dist(b, d));
+  if (list[0] && list[0] !== kcu) { list[0].svx = list[0].vx || list[0].svx || 0; list[0].svy = list[0].vy || list[0].svy || 0; }   // (switching onto a man keeps his speed and heading)
   kcu = list[0] || kcu;
 }
 function puntReturnStart(d) {
@@ -16674,7 +16805,7 @@ function updateKickoff(dt) {
       let lx = shortPunt ? shortPunt.x : k.punt ? k.punt.land + (Math.random() - 0.5) * 3 * YL : out ? -(ENDZONE / YL + 2 + Math.random() * 10) * YL : (KICKOFF.land[0] + Math.random() * (KICKOFF.land[1] - KICKOFF.land[0])) * YL, ly = shortPunt ? Math.max(Y_MIN + 3 * YD, Math.min(Y_MAX - 3 * YD, shortPunt.y)) : MID + (Math.random() - 0.5) * (k.punt ? 0.5 : 0.35) * FW;
       if (k.user && kick && kick.userKo) {   // your kick: where it comes down is your power and aim (your old kicks' distances), with the kicker's wobble
         // (a greened click, on the power marker / in the aim window, keeps the kick truer to the reticle: less of the kicker's wobble and of the click's own offset)
-        const gP = kick.target && Math.abs(kick.power - (kick.need || 0)) <= KOK.green.pow, gA = kick.target && Math.abs(kick.clickPos || 0) <= (kick.window || 0);
+        const gP = kick.target && Math.abs(kick.power - (kick.need || 0)) <= KOK.green.pow * (!k.punt && kick.target.x < 0 ? KOK_TB_HARD.pow : 1), gA = kick.target && Math.abs(kick.clickPos || 0) <= (kick.window || 0);
         const reach = Math.max(0, Math.min(1, kick.power * kick.pow + (k.punt ? 0 : (Math.random() + Math.random() - 1) * KOK.wobble * (gP ? KOK.green.wob : 1) / kick.acc))), dir = kick.dir * (gA ? KOK.green.lock : 1) + (Math.random() + Math.random() - 1) * 0.25 * (gA ? KOK.green.wob : 1) / kick.acc;
         if (kick.target) {   // the reticle: the power click is judged against the range it needs (kick.need) and the aim click against its line, plus the kicker's own wobble
           const t = kick.target, r0 = reticleReach(), pf = gP && gA ? KOK.green.perfect : 1;   // (both greens: it lands right by the reticle)
@@ -16904,6 +17035,7 @@ const KEYBINDS = [
   ['Right-click / V', 'Toggle lob (white) / bullet (orange) - any time'],
   ['Space', 'Snap / next play (after the 5-second runoff) / pause the replay'],
   ['T', 'Timeout once the play is over (stops the runoff)'],
+  ['` (backtick)', 'Debug: show / hide player hitboxes (blue/red body circles, yellow = tackle contact, white = block range)'],
   ['Esc', 'Pause menu (resume, reset, sim ahead)'],
   ['Click the Star Factors tip', 'Show / hide the Star Factors panel (what turns each star\'s Star Factor on and off); it stays that way in every game'],
   ['Click the player names tip', 'Show / hide the player names before the snap (stays that way in every game)'],
@@ -17191,6 +17323,7 @@ function draw() {
     if (p === holder && !ballDrawn && ball.z < 20 * S) { drawBall(); ballDrawn = true; }
   }
   if (!ballDrawn) drawBall();
+  if (COLLIDE.show) drawHitboxes();
   drawImpacts();
   if ((state === 'pre' || (rec && rec.replaying)) && !tossing() && !SETTINGS.hideNames) drawNameTags();   // (Y hides / shows them in a replay too)
   if (!tossing()) drawStarMarks();
@@ -17332,7 +17465,7 @@ function draw() {
       paperCard(b, IN_GAME_PAPER.green, () => {
         ctx.fillStyle = '#ffe680'; ctx.globalAlpha = a * 0.85; ctx.fillRect(W / 2 - 40, y - 9, 80, 18); ctx.globalAlpha = a;   // (a strip of tape holding it up)
         ctx.fillStyle = '#fffdf4'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.font = 'bold 26px monospace'; ctx.fillText(`GOAL COMPLETE!  +${goalToast.cr} CR`, W / 2, y + 28);
+        ctx.font = 'bold 26px monospace'; ctx.fillText(`GOAL COMPLETE!  +${goalToast.cr} ¤`, W / 2, y + 28);
         ctx.font = 'bold 17px monospace'; ctx.fillText(goalToast.text, W / 2, y + 56, b.w - 20);
       });
       ctx.restore();
@@ -17376,7 +17509,7 @@ function draw() {
           ctx.fillStyle = q.done ? 'rgba(255,255,255,0.25)' : 'rgba(120,100,70,0.12)'; ctx.fillRect(x + 14, y + 42, 440, 22);
           ctx.fillStyle = q.done ? '#ffe680' : '#2a62b0'; ctx.fillRect(x + 14, y + 42, 440 * prog, 22);
           ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.strokeRect(x + 14, y + 42, 440, 22);
-          ctx.fillStyle = ink; ctx.font = 'bold 18px monospace'; ctx.fillText(`${gp.txt}   ${q.lv} CR`, x + 468, y + 54, 125);
+          ctx.fillStyle = ink; ctx.font = 'bold 18px monospace'; ctx.fillText(`${gp.txt}   ${q.lv} ¤`, x + 468, y + 54, 125);
           ctx.textAlign = 'center';
         });
       });
@@ -18068,7 +18201,7 @@ function drawPlayoffs() {
   const inPO = po.seed[me] != null, yours = poYours(), gone = po.rounds.some(rg => rg.some(x => x.hs != null && poHas(x, me) && poWon(x) !== me));
   const mine = po.over ? null : poPending().find(x => poHas(x, me));
   let status = !inPO ? 'YOU MISSED THE PLAYOFFS' : gone ? 'YOU WERE ELIMINATED' : po.over ? '' : mine ? `YOUR GAME: ${mine.h === me ? 'vs ' + shortName(mine.a) : 'at ' + shortName(mine.h)}` : po.round === 0 && po.seed[me] === 1 ? 'YOU HAVE A FIRST-ROUND BYE' : 'YOU ADVANCED';
-  if (po.over) status = po.champ === me ? `PAPER BOWL CHAMPIONS!  +${PO.cup} CREDITS` : `${NFL[po.champ].city} ${NFL[po.champ].nick} WIN THE PAPER BOWL`;
+  if (po.over) status = po.champ === me ? `PAPER BOWL CHAMPIONS!  +${PO.cup} ¤` : `${NFL[po.champ].city} ${NFL[po.champ].nick} WIN THE PAPER BOWL`;
   ctx.fillStyle = po.champ === me ? RES.gold : RES.line; ctx.fillText(status, 40, 650);
   // buttons
   menuBtn(MENU_NEXT, po.over ? 'CONTINUE ▸' : yours ? 'PLAY ▸' : 'NEXT ▸', RES.bright);
@@ -18419,7 +18552,7 @@ function drawAwards() {
   menuBtn(ALLPRO_BTN, 'ALL-PRO TEAM', RES.bright, 24);
   const n = season.awards.filter(a => a.team === me).length;
   ctx.font = 'bold 20px monospace'; ctx.textAlign = 'left'; ctx.fillStyle = n ? RES.gold : RES.dim;
-  ctx.fillText(n ? `YOUR TEAM WON ${n} AWARD${n > 1 ? 'S' : ''}: +${season.awardPay} CREDITS` : 'NO AWARDS FOR YOUR TEAM THIS YEAR', 40, 660);
+  ctx.fillText(n ? `YOUR TEAM WON ${n} AWARD${n > 1 ? 'S' : ''}: +${season.awardPay} ¤` : 'NO AWARDS FOR YOUR TEAM THIS YEAR', 40, 660);
   menuBtn(MENU_NEXT, 'NEXT ▸', RES.bright);
   if (!OFF.confDone && !offPop && !popQ.length) confettiBurst();   // (goes off once, when the screen is really showing)
   drawConfetti(dt);
@@ -18753,7 +18886,7 @@ function drawFA() {
     drawPlayerPage(F.sel.from || me, F.sel, null);
     const spot = faHasSpot(me, F.sel), need = F.sel.salary - capRoom(me), ok = spot && need <= 0;
     const cost = signCost(F.sel), rich = LEAGUE.coins >= cost, all = ok && rich;
-    menuBtn(SIGN_BTN, `SIGN  ${fmtM(F.sel.salary)} / ${F.sel.years}Y\n${cost} CREDITS`, all ? IN_GAME_PAPER.green : CARD_GRAY, 19, null, all);
+    menuBtn(SIGN_BTN, `SIGN  ${fmtM(F.sel.salary)} / ${F.sel.years}Y\n${cost} ¤`, all ? IN_GAME_PAPER.green : CARD_GRAY, 19, null, all);
     coinBox(20, 16, LEAGUE.coins, RES.bright);
     if (!all) {
       ctx.font = 'bold 15px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#c81b1b';
@@ -21442,7 +21575,7 @@ function goalBoost() {   // x on every player's XP from a game in which a goal w
 function goalsShow(title, hide = false) {
   const g = goalsEnsure();
   if (!g) return;
-  const lines = g.list.flatMap(q => wrapLines(`${q.done ? '[X]' : '[ ]'} ${goalLabel(q)}  (${q.lv} CR, ${goalProg(q).txt.replace(/ \/ /, '/')})`, 54));
+  const lines = g.list.flatMap(q => wrapLines(`${q.done ? '[X]' : '[ ]'} ${goalLabel(q)}  (${q.lv} ¤, ${goalProg(q).txt.replace(/ \/ /, '/')})`, 54));
   const t = Math.max(0, Math.min(1, (hcStars(meK()) - 0.5) / 4.5));
   offPopShow({ title, hide, lines: [...lines, '', ...wrapLines(`Finish a goal in this week's game: ¤, coach XP and x${(GOAL.boost + (GOAL.boostMax - GOAL.boost) * t).toFixed(2)} XP on your players.`, 54)] });
 }
@@ -21989,7 +22122,7 @@ function drawTOffers() {
   menuBtn(OFF_ACCEPT, 'ACCEPT', IN_GAME_PAPER.green, 24);
   menuBtn(OFF_REJECT, 'REJECT', IN_GAME_PAPER.red, 24);
   ctx.font = 'bold 14px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center';
-  ctx.fillText(`NO CREDITS NEEDED.  THIS OFFER EXPIRES AFTER WEEK ${o.exp - 1}.`, (OFF_CARDS[0].x + OFF_CARDS[1].x + OFF_CARDS[1].w) / 2, 540);
+  ctx.fillText(`NO ¤ NEEDED.  THIS OFFER EXPIRES AFTER WEEK ${o.exp - 1}.`, (OFF_CARDS[0].x + OFF_CARDS[1].x + OFF_CARDS[1].w) / 2, 540);
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
 }
 function offersClick(pt) {
@@ -22127,7 +22260,7 @@ function drawTradeB() {
   ctx.fillText(`YOUR CAP AFTER: ${fmtM(mine)} / ${fmtM(capOf(me))}      THEIRS: ${fmtM(theirs)} / ${fmtM(capOf(k))}`, 140, 628);
   const closed = tradeClosed();
   const tcost = tradeCost(TR.get);
-  ctx.fillStyle = closed ? '#c81b1b' : '#2e8b57'; ctx.fillText(closed ? `TRADES CLOSED: ${closed}` : `CLICK ASSETS TO ADD THEM, THEN PROPOSE.  COSTS ${tcost} CREDITS (YOU HAVE ${LEAGUE.coins}).`, 140, 658);
+  ctx.fillStyle = closed ? '#c81b1b' : '#2e8b57'; ctx.fillText(closed ? `TRADES CLOSED: ${closed}` : `CLICK ASSETS TO ADD THEM, THEN PROPOSE.  COSTS ${tcost} ¤ (YOU HAVE ${LEAGUE.coins} ¤).`, 140, 658);
   drawTradeMeter(k);
   menuBtn(MENU_NEXT, 'PROPOSE ▸', closed ? CARD_GRAY : IN_GAME_PAPER.green, 24, null, !closed);
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
@@ -23610,11 +23743,11 @@ function pracGrow(p) {
 function pracUpgrade(k) {
   const F = prac().fac[k], D = PRAC_FAC[k];
   if (F.build || F.lvl >= 5) return;
-  if (LEAGUE.coins < D.cost[F.lvl - 1]) { PR.msg = { t: performance.now(), text: `NEED ${D.cost[F.lvl - 1]} CREDITS` }; return; }
+  if (LEAGUE.coins < D.cost[F.lvl - 1]) { PR.msg = { t: performance.now(), text: `NEED ${D.cost[F.lvl - 1]} ¤` }; return; }
   LEAGUE.coins -= D.cost[F.lvl - 1]; F.build = { left: D.wks[F.lvl - 1], total: D.wks[F.lvl - 1] }; autosaveSoon();
 }
 function pracReplace(side) {
-  if (LEAGUE.coins < PRAC.replaceCost) { PR.msg = { t: performance.now(), text: `NEED ${PRAC.replaceCost} CREDITS` }; return; }
+  if (LEAGUE.coins < PRAC.replaceCost) { PR.msg = { t: performance.now(), text: `NEED ${PRAC.replaceCost} ¤` }; return; }
   LEAGUE.coins -= PRAC.replaceCost; prac().tr[side] = pracTrainerNew(side); autosaveSoon();
   PR.msg = { t: performance.now(), text: `HIRED ${prac().tr[side].name}` };
 }
@@ -23688,14 +23821,14 @@ function hireInterim(role) {
 }
 function hireFire(role) {
   const p = hireGet(role), cost = buyoutOf(p);
-  if (LEAGUE.coins < cost) { HB.msg = { t: performance.now(), text: `BUYOUT IS ${cost} CREDITS` }; return; }
+  if (LEAGUE.coins < cost) { HB.msg = { t: performance.now(), text: `BUYOUT IS ${cost} ¤` }; return; }
   LEAGUE.coins -= cost; hireSet(role, hireInterim(role)); HB.msg = { t: performance.now(), text: `${p.name} FIRED` }; autosaveSoon();
 }
 function hireOffer(c, role, sal, yrs) {
   const cur = hireGet(role), after = r1(crewPay() - cur.sal + sal), cost = buyoutOf(cur);
   if (c.refused) return;
   if (after > staffBudget()) { HB.msg = { t: performance.now(), text: `OVER BUDGET: ${after}M OF ${staffBudget()}M` }; return; }
-  if (LEAGUE.coins < cost) { HB.msg = { t: performance.now(), text: `BUYING OUT ${cur.name}: ${cost} CREDITS` }; return; }
+  if (LEAGUE.coins < cost) { HB.msg = { t: performance.now(), text: `BUYING OUT ${cur.name}: ${cost} ¤` }; return; }
   if (Math.random() < acceptP(c, sal, yrs)) {
     LEAGUE.coins -= cost; hireSet(role, hirePerson(c, sal, yrs));
     const pool = hirePool(); pool[role] = pool[role].filter(x => x !== c); HB.sel = null;
@@ -23860,7 +23993,7 @@ function boardClick(pt) {
   HIRE_ROLES.forEach((r, i) => { if (inBtn(pt, BOARD_TABS[i])) { HB.role = r; HB.sel = null; HB.cand = null; } });
   for (let i = 0; i < pool.length; i++) {
     if (!pool[i].scouted && !pool[i].refused && inBtn(pt, BOARD_SCOUT(i))) {
-      if (LEAGUE.coins < HIRE.scout) { HB.msg = { t: performance.now(), text: 'NEED 1 CREDIT TO SCOUT' }; return; }
+      if (LEAGUE.coins < HIRE.scout) { HB.msg = { t: performance.now(), text: 'NEED 1 ¤ TO SCOUT' }; return; }
       LEAGUE.coins -= HIRE.scout; pool[i].scouted = true; return;
     }
     if (inBtn(pt, BOARD_CARD(i))) { HB.sel = pool[i]; return; }
@@ -24378,6 +24511,51 @@ function buildSave() {
   return data;
 }
 
+// --- export / import (saves + highlights share this) --------------------------------------
+// A file is { app, kind: 'save' | 'highlights', v, t, data }. ioExport downloads it; ioImport opens the file picker, checks app / kind /
+// version, then hands the parsed data to the caller (which validates the data itself and decides what to overwrite). Messages: ioToast.
+const IO = { app: 'paper-passer', ver: 1, toastSecs: 3.5, btn: { x: 20, y: 16, w: 150, h: 64 }, btn2: { x: 180, y: 16, w: 150, h: 64 }, toast: null };   // btn / btn2 = top-left (saves) buttons; highlights place their own
+function ioToast(text, bad = true) { IO.toast = { text, bad, t0: performance.now() }; }
+function ioDrawToast() {
+  const T = IO.toast;
+  if (!T) return;
+  if (performance.now() - T.t0 > IO.toastSecs * 1000) { IO.toast = null; return; }
+  ctx.save(); ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const w = Math.min(W - 40, ctx.measureText(T.text).width + 50);
+  ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fillRect(W / 2 - w / 2, H - 100, w, 46);
+  ctx.fillStyle = T.bad ? '#ff8a80' : '#9be7a0'; ctx.fillText(T.text, W / 2, H - 77);
+  ctx.restore();
+}
+function ioExport(kind, data, name) {
+  try {
+    const blob = new Blob([JSON.stringify({ app: IO.app, kind, v: IO.ver, t: Date.now(), data })], { type: 'application/json' });
+    const a = document.createElement('a'), url = URL.createObjectURL(blob);
+    a.href = url; a.download = `${name}.json`; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    return true;
+  } catch (e) { ioToast('COULD NOT EXPORT'); return false; }
+}
+function ioImport(kind, done) {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.json,application/json';
+  inp.onchange = () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onerror = () => ioToast('COULD NOT READ THE FILE');
+    rd.onload = () => {
+      let o = null;
+      try { o = JSON.parse(rd.result); } catch (e) { ioToast('NOT A VALID FILE'); return; }
+      if (!o || o.app !== IO.app || !o.data) { ioToast('NOT A PAPER PASSER FILE'); return; }
+      if (o.kind !== kind) { ioToast(`THAT IS A ${String(o.kind).toUpperCase()} FILE, NOT ${kind.toUpperCase()}`); return; }
+      if (!(o.v >= 1 && o.v <= IO.ver)) { ioToast('INCOMPATIBLE VERSION'); return; }
+      done(o.data, o.v);
+    };
+    rd.readAsText(f);
+  };
+  inp.click();
+}
+
 // --- save slots ---------------------------------------------------------------------------
 // SLOTS franchise saves ('pocketPasser.save.0'...), each with a small summary (SLOT_META) for the save / load screens: the head
 // coach's face, team, offense / defense stars, the year and how many years he has coached. A franchise is assigned a slot (curSlot)
@@ -24409,14 +24587,22 @@ function slotOrder() {
   const m = slotMetas();
   return Array.from({ length: SLOTS }, (_, i) => i).sort((a, b) => (m[b] ? m[b].t || 0 : -1) - (m[a] ? m[a].t || 0 : -1) || a - b);
 }
-function saveToSlot(i, auto) {
+function saveToSlot(i, auto, imported) {   // imported: a save file's data (written as it is; the current franchise and its slot stay as they were)
   try {
-    const data = buildSave(), m = slotMetas().slice();
+    const data = imported || buildSave(), m = slotMetas().slice();
     localStorage.setItem(SLOT_KEY(i), JSON.stringify(data));
     m[i] = metaOfData(data); localStorage.setItem(SLOT_META, JSON.stringify(m)); slotMetaCache = m;
+    if (imported) return;
     curSlot = i; if (!pstStash) pstSaveSlot(i);
     note(auto ? 'AUTOSAVED' : data.live ? 'GAME SAVED (at the last snap)' : 'GAME SAVED');
-  } catch (e) { note('COULD NOT SAVE'); }
+  } catch (e) { if (imported) throw e; note('COULD NOT SAVE'); }
+}
+function importSave(d) {   // a save file's data: checked, then into the first empty slot (none: asks before replacing the oldest)
+  const ok = d && d.v === 1 && d.season && d.match && NFL[d.match.you] && d.career && d.world && d.world.roster && d.world.roster[d.match.you];
+  if (!ok) { ioToast('SAVE FILE IS INVALID OR INCOMPATIBLE'); return; }
+  const m = slotMetas(), empty = m.findIndex(x => !x);
+  if (empty >= 0) { try { saveToSlot(empty, false, d); ioToast('SAVE IMPORTED', false); } catch (e) { ioToast('COULD NOT SAVE (STORAGE FULL?)'); } }
+  else slotUI.confirm = { kind: 'imp', i: slotOrder()[SLOTS - 1], d };
 }
 function autoAssignSlot() {   // a brand-new career: saved at once, to the first empty slot (none free: it isn't saved until you pick one)
   const i = slotMetas().findIndex(m => !m);
@@ -24524,11 +24710,12 @@ function drawSlots() {
     ctx.lineTo(back.x + 42, back.y + 60); ctx.closePath(); ctx.fill();
   }, !U.confirm);
   if (U.mode !== 'save') menuBtn(SLOT_NEW, 'NEW\nCAREER', RES.bright, 26, null, !U.confirm);
+  menuBtn(IO.btn, U.mode === 'save' ? 'EXPORT' : 'IMPORT', RES.bright, 24, null, !U.confirm);   // (top left: the save screen writes a file, the load screens read one)
   if (U.confirm) {   // are you sure
     ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0, 0, W, H);
-    resPanel(330, 240, 620, 260, [[U.confirm.kind === 'del' ? 'DELETE SAVE?' : U.confirm.kind === 'over' ? 'OVERWRITE SAVE?' : U.confirm.kind === 'new' ? 'START A NEW CAREER?' : 'LOAD THIS SAVE?', null]], RES.bright);
+    resPanel(330, 240, 620, 260, [[U.confirm.kind === 'del' ? 'DELETE SAVE?' : U.confirm.kind === 'over' ? 'OVERWRITE SAVE?' : U.confirm.kind === 'imp' ? 'REPLACE A SAVE?' : U.confirm.kind === 'new' ? 'START A NEW CAREER?' : 'LOAD THIS SAVE?', null]], RES.bright);
     ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(U.confirm.kind === 'del' ? `Slot ${slotOrder().indexOf(U.confirm.i) + 1} will be deleted for good.` : U.confirm.kind === 'over' ? `Slot ${slotOrder().indexOf(U.confirm.i) + 1} will be replaced.` : 'Unsaved progress will be lost.', W / 2, 350);
+    ctx.fillText(U.confirm.kind === 'imp' ? `All slots are full: slot ${SLOTS} (oldest) is replaced.` : U.confirm.kind === 'del' ? `Slot ${slotOrder().indexOf(U.confirm.i) + 1} will be deleted for good.` : U.confirm.kind === 'over' ? `Slot ${slotOrder().indexOf(U.confirm.i) + 1} will be replaced.` : 'Unsaved progress will be lost.', W / 2, 350);
     menuBtn(SLOT_YES, 'YES', RES.bright, 30); menuBtn(SLOT_NO, 'NO', RES.bright, 30);
   }
 }
@@ -24559,11 +24746,16 @@ function slotClick(p) {
   const U = slotUI;
   if (U.confirm) {
     const c = U.confirm;
-    if (inBtn(p, SLOT_YES)) { slotUI.confirm = null; if (c.kind === 'del') deleteSlot(c.i); else if (c.kind === 'over') { saveToSlot(c.i); slotUI = null; } else if (c.kind === 'new') newCareerScreen(); else loadFromSlot(c.i); }
+    if (inBtn(p, SLOT_YES)) { slotUI.confirm = null; if (c.kind === 'del') deleteSlot(c.i); else if (c.kind === 'over') { saveToSlot(c.i); slotUI = null; } else if (c.kind === 'new') newCareerScreen(); else if (c.kind === 'imp') { try { saveToSlot(c.i, false, c.d); ioToast('SAVE IMPORTED', false); } catch (e) { ioToast('COULD NOT SAVE (STORAGE FULL?)'); } } else loadFromSlot(c.i); }
     else if (inBtn(p, SLOT_NO)) U.confirm = null;
     return;
   }
   if (inBtn(p, BACK_BTN)) { slotUI = null; return; }
+  if (inBtn(p, IO.btn)) {   // EXPORT (save screen: the franchise as it would be saved) / IMPORT (load screens)
+    if (U.mode === 'save') { const d = buildSave(), m = metaOfData(d); if (ioExport('save', d, `paper-passer-save-${m.team}-year${m.years}`)) ioToast('SAVE EXPORTED', false); }
+    else ioImport('save', importSave);
+    return;
+  }
   if (U.mode !== 'save' && inBtn(p, SLOT_NEW)) {   // NEW CAREER is on every load screen (it asks first when you'd lose an unsaved franchise)
     if (U.mode === 'load' && season && !exhibition) U.confirm = { kind: 'new' }; else newCareerScreen();
     return;
@@ -24605,8 +24797,11 @@ const CAR = { first: { x: 560, y: 160, w: 400, h: 48 }, last: { x: 560, y: 228, 
   change: { x: 730, y: 400, w: 230, h: 80 }, check: { x: 870, y: 500, w: 40, h: 40 }, random: { x: 510, y: 615, w: 260, h: 90 },
   diff: { x: 790, y: 615, w: 230, h: 90 } };
 
+const GAME_VERSION = 'v1.0';
 function drawStart() {
   deskBg();
+  ctx.save(); ctx.font = 'bold 22px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillText(GAME_VERSION, 19, 17); ctx.fillStyle = '#fffdf4'; ctx.fillText(GAME_VERSION, 18, 16); ctx.restore();
   // the title, on a torn sheet
   const t = START_TITLE;
   ctx.save(); tornPath(t); const cx = t.x + t.w / 2, cy = t.y + t.h / 2;
@@ -24626,14 +24821,17 @@ function drawStart() {
   menuBtn(TEST_BTN, 'TEST MODE', RES.bright, 24);
   menuBtn(ANIM_BTN, 'ANIMATION LIBRARY', RES.bright, 18);
   menuBtn(MENU_HL_BTN, savedHighlights.length ? `HIGHLIGHTS (${savedHighlights.length})` : 'HIGHLIGHTS', IN_GAME_PAPER.yellow, 22);
+  menuBtn(MENU_HL_IMP, 'IMPORT', IN_GAME_PAPER.yellow, 18);   // (highlights from a file: works with none saved yet)
   if (performance.now() - hlFlash < 4000) {   // (nothing saved yet)
     ctx.save(); ctx.fillStyle = '#fffdf4'; ctx.fillRect(W - 420, H - 140, 390, 40); ctx.strokeStyle = RES.line; ctx.lineWidth = 3; ctx.strokeRect(W - 420, H - 140, 390, 40);
     ctx.fillStyle = RES.line; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('NO HIGHLIGHTS SAVED YET', W - 225, H - 120); ctx.restore();
   }
 }
 const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-10-26 STEP-60';
+const MENU_HL_IMP = { x: W - 244 - 10 - 110, y: H - 80, w: 110, h: 56 };
 let hlFlash = -1e9;   // when the main menu's HIGHLIGHT button was last clicked
 function startClick(p) {
+  if (inBtn(p, MENU_HL_IMP)) { ioImport('highlights', hlImportData); return; }
   if (inBtn(p, MENU_HL_BTN)) { if (savedHighlights.length) hlOpen(savedHighlights, 'saved'); else hlFlash = performance.now(); return; }
   if (inBtn(p, ANIM_BTN)) openAnimLib();
   else if (inBtn(p, TEST_BTN)) startTestMode();
@@ -25566,6 +25764,7 @@ window.addEventListener('keydown', e => {
 });
 const heldKeys = {};   // (what each physical key was read as when it went down: it is let go as that, whatever has changed since (the snap, the drive direction))
 function onKeyDown(e) {
+  if (e.code === 'Backquote' && !e.repeat && !settingsOpen) { COLLIDE.show = !COLLIDE.show; return; }   // (debug: hitbox outlines)
   if (tour && results) {   // a tutorial is up: Esc skips, Enter / Space / right arrow go on, left arrow goes back
     e.preventDefault();
     if (e.repeat) return;
@@ -25711,6 +25910,7 @@ function frame(now) {
   if (settingsOpen) drawSettings();
   if (slotUI) drawSlots();
   drawCrumple();
+  ioDrawToast();
 }
 newDrive();
 reset();
