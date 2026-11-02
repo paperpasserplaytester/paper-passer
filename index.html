@@ -17658,16 +17658,34 @@ let NAMES_RECT = null, STAR_RECT = null;   // the two little tips' boxes (set as
 function tipClick(p) {
   const hit = r => r && p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
   if (hit(NAMES_RECT)) { SETTINGS.hideNames = !SETTINGS.hideNames; saveSettings(); return true; }
-  if (hit(STAR_RECT)) { SETTINGS.starHud = !SETTINGS.starHud; saveSettings(); return true; }
+  if (hit(STAR_RECT)) {
+    if (TOUCH && STAR_SCROLL.max > 0) { STAR_SCROLL.drag = { y: p.y, off: STAR_SCROLL.off, moved: false }; return true; }   // (a long list scrolls with a finger; a plain tap still hides it, on release)
+    SETTINGS.starHud = !SETTINGS.starHud; saveSettings(); return true;
+  }
   return false;
 }
+// the star tips panel on a phone: drag up / down on it to scroll (off = px scrolled, max = how far it can go)
+const STAR_SCROLL = { off: 0, max: 0, drag: null };
+window.addEventListener('pointermove', e => {
+  const d = STAR_SCROLL.drag; if (!d) return;
+  const dy = pointerPos(e).y - d.y;
+  if (Math.abs(dy) > 6) d.moved = true;
+  if (d.moved) STAR_SCROLL.off = Math.max(0, Math.min(STAR_SCROLL.max, d.off - dy));
+});
+for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, () => {
+  const d = STAR_SCROLL.drag; if (!d) return;
+  STAR_SCROLL.drag = null;
+  if (!d.moved) { SETTINGS.starHud = !SETTINGS.starHud; saveSettings(); }
+});
+const tipScale = () => TOUCH ? 1.5 : 1;   // (the tips are bigger on a phone)
 function drawNamesTip() {   // a small tip: click it to hide / show the player names before the snap (and in a replay)
   NAMES_RECT = null;
   if ((results && !hl) || (state !== 'pre' && !(rec && rec.replaying) && !hl)) return;   // (also over the post-game highlights)
-  ctx.save(); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.font = '11px monospace';
-  const t = `Player names ${SETTINGS.hideNames ? 'hidden' : 'shown'}  -  click to ${SETTINGS.hideNames ? 'show' : 'hide'}`, tw = ctx.measureText(t).width + 16;
-  ctx.fillStyle = 'rgba(8,12,10,0.55)'; ctx.fillRect(12, H - 64, tw, 20); NAMES_RECT = { x: 12, y: H - 64, w: tw, h: 20 };
-  ctx.fillStyle = '#ffd23f'; ctx.fillText(t, 20, H - 50);
+  const S = tipScale(), nh = 20 * S, ny = H - BOT_BAR - 4 - nh;
+  ctx.save(); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.font = `${Math.round(11 * S)}px monospace`;
+  const t = `Player names ${SETTINGS.hideNames ? 'hidden' : 'shown'}  -  click to ${SETTINGS.hideNames ? 'show' : 'hide'}`, tw = ctx.measureText(t).width + 16 * S;
+  ctx.fillStyle = 'rgba(8,12,10,0.55)'; ctx.fillRect(12, ny, tw, nh); NAMES_RECT = { x: 12, y: ny, w: tw, h: nh };
+  ctx.fillStyle = '#ffd23f'; ctx.fillText(t, 12 + 8 * S, ny + nh * 0.7);
   ctx.restore();
 }
 function drawStarHud() {
@@ -17677,15 +17695,21 @@ function drawStarHud() {
   const seen = new Set(), list = [];
   for (const p of stars) if (!seen.has(p.src)) { seen.add(p.src); list.push(p.src); }
   if (!list.length) return;
+  const S = tipScale(), nameY = H - BOT_BAR - 4 - 20 * S;   // (the names tip's top)
   if (!SETTINGS.starHud) {   // hidden: a small reminder of how to bring the tips back
-    ctx.save(); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.font = '11px monospace';
-    const t = 'Star Factor tips hidden  -  click to show', tw = ctx.measureText(t).width + 16;
-    ctx.fillStyle = 'rgba(8,12,10,0.55)'; ctx.fillRect(12, H - 90, tw, 20); STAR_RECT = { x: 12, y: H - 90, w: tw, h: 20 };
-    ctx.fillStyle = '#ffd23f'; ctx.fillText(t, 20, H - 76);
+    STAR_SCROLL.max = 0;
+    const by = nameY - 6 - 20 * S;
+    ctx.save(); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.font = `${Math.round(11 * S)}px monospace`;
+    const t = 'Star Factor tips hidden  -  click to show', tw = ctx.measureText(t).width + 16 * S;
+    ctx.fillStyle = 'rgba(8,12,10,0.55)'; ctx.fillRect(12, by, tw, 20 * S); STAR_RECT = { x: 12, y: by, w: tw, h: 20 * S };
+    ctx.fillStyle = '#ffd23f'; ctx.fillText(t, 12 + 8 * S, by + 14 * S);
     ctx.restore();
     return;
   }
-  const x0 = 12, w = 392, lh = 15, y0 = H - 70 - (24 + list.length * (lh * 2 + 8));   // bottom left, above the names tip
+  const x0 = 12, w = 392 * S, lh = 15 * S, rowH = lh * 2 + 8 * S, headH = 24 * S;
+  const fullH = headH + list.length * rowH, maxH = TOUCH ? 250 : Infinity, hh = Math.min(fullH, maxH);
+  STAR_SCROLL.max = Math.max(0, fullH - hh); STAR_SCROLL.off = Math.max(0, Math.min(STAR_SCROLL.max, STAR_SCROLL.off));
+  const y0 = nameY - 6 - hh;   // bottom left, above the names tip
   ctx.save();
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   const rows = list.map(s => {
@@ -17701,21 +17725,21 @@ function drawStarHud() {
     }
     return { head, line2, on, mine };
   });
-  const h = 24 + rows.length * (lh * 2 + 8);
+  const h = hh;
   ctx.fillStyle = 'rgba(8,12,10,0.62)'; ctx.fillRect(x0, y0, w, h); STAR_RECT = { x: x0, y: y0, w, h };
   ctx.strokeStyle = 'rgba(255,210,63,0.6)'; ctx.lineWidth = 1.5; ctx.strokeRect(x0 + 0.5, y0 + 0.5, w - 1, h - 1);
-  ctx.font = 'bold 12px monospace'; ctx.fillStyle = '#ffd23f';
-  ctx.fillText('STAR FACTORS  (click to hide)', x0 + 8, y0 + 15);
-  ctx.font = '11px monospace'; ctx.fillStyle = '#cfd8d2'; ctx.textAlign = 'right';
-  
+  ctx.font = `bold ${Math.round(12 * S)}px monospace`; ctx.fillStyle = '#ffd23f';
+  ctx.fillText(STAR_SCROLL.max > 0 ? 'STAR FACTORS  (drag to scroll, tap to hide)' : 'STAR FACTORS  (click to hide)', x0 + 8 * S, y0 + 15 * S, w - 16 * S);
   ctx.textAlign = 'left';
+  ctx.beginPath(); ctx.rect(x0, y0 + headH, w, h - headH); ctx.clip();   // (the rows scroll under the heading)
   rows.forEach((r, i) => {
-    const y = y0 + 24 + i * (lh * 2 + 8) + lh;
-    drawStar(x0 + 14, y - 5, 6, r.on ? '#ffd23f' : 'rgba(255,255,255,0.15)', r.on ? '#fff3a0' : '#ffd23f', 1.5);
-    ctx.font = 'bold 12px monospace'; ctx.fillStyle = r.on ? '#ffd23f' : r.mine ? '#bfe8ff' : '#ffc4bd';
-    ctx.fillText(r.head, x0 + 26, y, w - 34);
-    ctx.font = '11px monospace'; ctx.fillStyle = r.on ? '#ffb3a8' : '#cfd8d2';
-    ctx.fillText(r.line2, x0 + 26, y + lh, w - 34);
+    const y = y0 + headH + i * rowH + lh - STAR_SCROLL.off;
+    if (y < y0 + headH - rowH || y > y0 + h + rowH) return;
+    drawStar(x0 + 14 * S, y - 5 * S, 6 * S, r.on ? '#ffd23f' : 'rgba(255,255,255,0.15)', r.on ? '#fff3a0' : '#ffd23f', 1.5);
+    ctx.font = `bold ${Math.round(12 * S)}px monospace`; ctx.fillStyle = r.on ? '#ffd23f' : r.mine ? '#bfe8ff' : '#ffc4bd';
+    ctx.fillText(r.head, x0 + 26 * S, y, w - 34 * S);
+    ctx.font = `${Math.round(11 * S)}px monospace`; ctx.fillStyle = r.on ? '#ffb3a8' : '#cfd8d2';
+    ctx.fillText(r.line2, x0 + 26 * S, y + lh, w - 34 * S);
   });
   ctx.restore();
 }
