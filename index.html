@@ -70,6 +70,10 @@ const touchText = t => typeof t !== 'string' ? t : t
   .replace(/,\s*Space to \w+/g, '').replace(/\s*\/ Space\b/g, '').replace(/\bor press Space\b/g, '')
   .replace(/^SPACE pause.*$/, 'tap = skip  |  hold = slow-mo  |  pinch = zoom')
   .replace(/^or press Space$/, '').replace(/\s*-\s*BACKSPACE to reset the play/, '');
+{   // a widened touch canvas (PAD): anything that fills the whole 1280 width (bars, dimmers, ruled lines, banners' paper) runs on out to the screen edges
+  const fr = CanvasRenderingContext2D.prototype.fillRect;
+  CanvasRenderingContext2D.prototype.fillRect = function (x, y, w, h) { return PAD && x === 0 && w === 1280 ? fr.call(this, -PAD, y, w + 2 * PAD, h) : fr.call(this, x, y, w, h); };
+}
 for (const f of ['fillText', 'strokeText', 'measureText']) {
   const orig = CanvasRenderingContext2D.prototype[f];
   CanvasRenderingContext2D.prototype[f] = function (t, ...a) { return orig.call(this, round2Text(TOUCH ? touchText(t) : t), ...a); };
@@ -13908,16 +13912,18 @@ function drawPlayer(p) {
 }
 
 const PICK_R = 1.7 * YD;
+const RB_TOUCH_K = 1.5;   // mobile: the RB's run-play circle is this much bigger (an easier tap)
+const pickR = p => p === rb && TOUCH ? PICK_R * RB_TOUCH_K : PICK_R;
 function drawPickCircle(p, color, label) {
-  const pulse = 1 + Math.sin(animNow() / 250) * 0.06;
+  const pulse = 1 + Math.sin(animNow() / 250) * 0.06, PR = pickR(p);
   // a ring on the turf under his feet
   ctx.strokeStyle = color;
   ctx.lineWidth = 6;
   ctx.fillStyle = color === '#ffffff' ? 'rgba(255,255,255,0.15)' : 'rgba(183,255,122,0.15)';
-  ctx.beginPath(); ctx.ellipse(p.x, p.y + FOOT, PICK_R * pulse, PICK_R * 0.5 * pulse, 0, 0, Math.PI * 2);
+  ctx.beginPath(); ctx.ellipse(p.x, p.y + FOOT, PR * pulse, PR * 0.5 * pulse, 0, 0, Math.PI * 2);
   ctx.fill(); ctx.stroke();
   ctx.save();
-  ctx.translate(p.x, p.y + FOOT + PICK_R * 0.5 + 0.6 * YD);
+  ctx.translate(p.x, p.y + FOOT + PR * 0.5 + 0.6 * YD);
   ctx.scale(MIRROR, 1);
   drawTextCached(label, 0.9 * YD, 'bold', 'monospace', 0, 0, color, null, 0, 2);
   ctx.restore();
@@ -17340,6 +17346,7 @@ function paperStrip(y, h) {
   if (!BANNER_EDGE) { const r = seeded(11); BANNER_EDGE = [[], []].map(() => Array.from({ length: W / 16 + 2 }, () => (r() - 0.5) * 9)); }
   const edge = (yy, jit, dir) => { for (let i = 0, x = 0; x <= W + 16; i++, x += 16) ctx.lineTo(x, yy + jit[i] + dir * 2); };
   ctx.save();
+  if (PAD) { ctx.translate(-PAD, 0); ctx.scale((W + 2 * PAD) / W, 1); }   // (the strip runs to the edges of a widened screen)
   const path = () => { ctx.beginPath(); ctx.moveTo(0, y); edge(y, BANNER_EDGE[0], 0); ctx.lineTo(W, y + h); for (let i = BANNER_EDGE[1].length - 1, x = (BANNER_EDGE[1].length - 1) * 16; i >= 0; i--, x -= 16) ctx.lineTo(x, y + h + BANNER_EDGE[1][i]); ctx.closePath(); };
   ctx.translate(0, 5); path(); ctx.fillStyle = 'rgba(40,25,5,0.3)'; ctx.fill(); ctx.translate(0, -5);
   path(); ctx.fillStyle = PAPER_COLOR; ctx.fill(); ctx.clip();
@@ -25797,7 +25804,7 @@ function drawCrumple() {
     return [v.sx + (W / 2 + bx * sc - v.sx) * f + v.wx * wob * 0.5 + (cx - W / 2) , v.sy + (H / 2 + by * sc - v.sy) * f + v.wy * wob * 0.5 + (cy - H / 2)];
   });
   ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.setTransform(1, 0, 0, 1, PAD, 0);   // (the 16:9 middle of a widened canvas)
   for (const [ia, ib, ic, shade] of crumple.tris) {
     const s = [crumple.pts[ia], crumple.pts[ib], crumple.pts[ic]], d = [P[ia], P[ib], P[ic]];
     const mx = (d[0][0] + d[1][0] + d[2][0]) / 3, my = (d[0][1] + d[1][1] + d[2][1]) / 3;
@@ -25813,7 +25820,7 @@ function drawCrumple() {
     ctx.save();
     ctx.beginPath(); ctx.moveTo(d0[0], d0[1]); ctx.lineTo(d1[0], d1[1]); ctx.lineTo(d2[0], d2[1]); ctx.closePath();
     ctx.clip();
-    ctx.setTransform(a, b, c, dd, e, ff);
+    ctx.setTransform(a, b, c, dd, e + PAD, ff);
     // (only this facet's patch of the page, not the whole snapshot, is drawn through the clip)
     const bx0 = Math.max(0, Math.min(s[0].sx, s[1].sx, s[2].sx) - 2), by0 = Math.max(0, Math.min(s[0].sy, s[1].sy, s[2].sy) - 2);
     const bx1 = Math.min(W, Math.max(s[0].sx, s[1].sx, s[2].sx) + 2), by1 = Math.min(H, Math.max(s[0].sy, s[1].sy, s[2].sy) + 2);
@@ -25847,7 +25854,7 @@ function screenToWorld(p) {
 // clicking the player or the ring under him counts
 const inCircle = (p, who) => {
   const w = screenToWorld(p);
-  return Math.hypot(w.x - who.x, w.y - (who.y + FOOT)) <= PICK_R * 1.1 ||
+  return Math.hypot(w.x - who.x, w.y - (who.y + FOOT)) <= pickR(who) * 1.1 ||
          Math.hypot(w.x - who.x, w.y - (who.y - 8 * S)) <= 1.4 * YD;
 };
 const rbCloser = p => { const w = screenToWorld(p); return Math.hypot(w.x - rb.x, w.y - rb.y) <= Math.hypot(w.x - qb.x, w.y - qb.y) + 0.25 * YD; };   // (overlapping rings: the RB gets the tie)
@@ -25857,7 +25864,8 @@ const clickedRB = p => !rb.split && inCircle(p, rb);   // any back in the backfi
 // During the drop: press anywhere to aim, release to throw. Right-click: lob/bullet.
 let replayDrag = null;   // right-mouse drag panning the replay camera
 let replayLeft = null;   // left press in a replay: { sx, sy, moved } (moved = a drag, which does nothing)
-canvas.addEventListener('pointerdown', e => { if (e.button === 0) btnPress = { ...pointerPos(e), held: true, upAt: 0 }; }, true);
+canvas.addEventListener('pointerdown', e => { if (e.button === 0) btnPress = { ...pointerPos(e), held: true, upAt: 0 }; if (e.pointerType !== 'mouse') hoverPt = pointerPos(e); }, true);   // (a finger hovers the button it lands on, so the lift / press animation plays on a phone too)
+window.addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') setTimeout(() => { hoverPt = null; }, 160); }, true);   // (...and lets go a beat after, so the lift eases back instead of sticking)
 window.addEventListener('pointerup', () => { if (btnPress && btnPress.held) { btnPress.held = false; btnPress.upAt = performance.now(); } });
 canvas.addEventListener('pointerdown', e => {
   if (oo && !paused && e.button === 0 && ooClick(pointerPos(e))) return;   // (1v1 practice: the force-animation buttons)
@@ -26386,6 +26394,8 @@ function frame(now) {
   const page = pageKey();   // (the canvas still holds the old page here: that's what crumples)
   if (lastPage !== null && page !== lastPage) startCrumple();
   lastPage = page;
+  if (TUI.on && now - lastPaint < PAINT_MIN) return;   // (phones: drawn at most ~60 times a second even on a 90 / 120 Hz screen; the game steps above are unaffected)
+  lastPaint = now;
   if (PAD) { ctx.fillStyle = '#111'; ctx.fillRect(0, 0, canvas.width, H); ctx.save(); ctx.translate(PAD, 0); }   // (the 16:9 game sits in the middle of the wider canvas)
   if (hl) { draw(); if (hl) drawHlBar(); hlDelStep(); if (hl) drawHlDel(); } else if (results) drawMenus(); else draw();
   if (settingsOpen) drawSettings();
@@ -26394,6 +26404,17 @@ function frame(now) {
   ioDrawToast();
   if (PAD) ctx.restore();
 }
+let lastPaint = 0;
+const PAINT_MIN = 15;   // ms between painted frames in touch mode
+// the screen stays on in touch mode, even with no touches for a long stretch (the Wake Lock API; asked for on the first touch, taken again when the page comes back)
+let wakeLock = null;
+async function keepAwake() {
+  if (!TUI.on || !navigator.wakeLock || document.visibilityState !== 'visible' || (wakeLock && !wakeLock.released)) return;
+  try { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } catch (err) {}
+}
+document.addEventListener('visibilitychange', keepAwake);
+window.addEventListener('pointerdown', keepAwake, true);
+setInterval(keepAwake, 15000);
 newDrive();
 reset();
 // the game opens on the start screen (EXHIBITION / FRANCHISE)
@@ -26452,7 +26473,8 @@ let touchLong = false;   // the last pointer was a finger: a long-press' context
 const IS_MOBILE = TUI.q === '1' || (TUI.q !== '0' && (/Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) || (matchMedia('(pointer: coarse)').matches && matchMedia('(hover: none)').matches)));
 const tuiEl = document.getElementById('tui'), tbtns = document.getElementById('tbtns'), tpad = document.getElementById('tpad'), tknob = document.getElementById('tknob'), trot = document.getElementById('trot');
-function tkey(code, down) { window.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code, bubbles: true, cancelable: true })); }
+// (the touch buttons / swipes name the game's own forward (A) and back (D) keys; a keyboard A / D is flipped by the drive direction in aliasKey, so name the physical one that flips to it)
+function tkey(code, down) { if (MIRROR > 0 && (code === 'KeyA' || code === 'KeyD')) code = code === 'KeyA' ? 'KeyD' : 'KeyA'; window.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code, bubbles: true, cancelable: true })); }
 // touch mode: the canvas fills the whole screen (stretched to the phone's ratio) and the page is forced to landscape
 // (orientation lock where the browser allows it, else html.rot turns the page 90 deg while the phone is held upright)
 function fitScreen() {
@@ -26477,7 +26499,7 @@ const TSETS = {
   pre:    [],   // (drag from the QB to snap and aim; double tap flips lob / bullet)
   next:   [],
   tap:    [],
-  flight: [['DIVE (SWIPE DOWN)', 'tap', 'KeyS'], ['ONE HAND (SWIPE BACK)', 'tap', 'KeyD'], ['RUN CATCH (SWIPE FORWARD)', 'hold', 'KeyA']],
+  flight: [],   // (swipes: up = jump, down = dive, toward the end zone = catch and run, away = one hand)
   pocket: [],   // (the QB's moves are swipes too, off the QB: see SWIPE below)
   run:    [],   // (spin = a circle drawn with a finger, juke = swipe up / down: see SPIN_GEST)
   kickoff: [],   // (kneel / fair catch: push the stick backward)
@@ -26524,12 +26546,17 @@ function tuiStick(e, end) {
 }
 // floating joystick: hidden until a finger lands on the left half of the screen, then it appears under that finger (a throw drag from the QB keeps its own touch)
 const STICK_SETS = ['pocket', 'run', 'kickoff', 'def'];   // (no stick while a pass is in the air: the whole screen is swipes for the catch)
+// (nor on a kick before it's taken: kickoffs, field goals and PATs are taps for the power / aim; a field goal / PAT is the 'tap' set anyway)
+const stickOn = name => STICK_SETS.includes(name) && !(name === 'kickoff' && kick && ['enter', 'wait', 'target', 'power', 'aim'].includes(kick.phase));
+let stickTapAt = 0;
 function tuiStickEnd(e) {
   if (tpad._id == null) return;
-  // a quick tap on the stick side (no drag) in the pocket flips lob / bullet
+  // a quick double tap on the stick side (no drag) in the pocket flips lob / bullet
   if (e.pointerId === tpad._id && (state === 'pocket' || state === 'drop') && e.type === 'pointerup' && performance.now() - tpad._t0 < 300) {
-    const lp = layPt(e);
-    if (Math.hypot(lp.x - tpad._p0.x, lp.y - tpad._p0.y) < 14) { bulletMode = !bulletMode; popup(qb, bulletMode ? 'BULLET' : 'LOB', '#ffd94a'); }
+    const lp = layPt(e), now = performance.now();
+    if (Math.hypot(lp.x - tpad._p0.x, lp.y - tpad._p0.y) < 14) {
+      if (now - stickTapAt < 400) { stickTapAt = 0; bulletMode = !bulletMode; popup(qb, bulletMode ? 'BULLET' : 'LOB', '#ffd94a'); } else stickTapAt = now;
+    }
   }
   tuiStick(e, true); tpad._id = null; tpad.style.display = 'none'; }
 // the stick lives on the side away from where the play is going: opposite the aiming reticle on offense, on the offense's side of the ball on defense
@@ -26550,7 +26577,7 @@ function touchHalf(e) {
   return pointerPos(e).x >= losX ? 1 : -1;
 }
 window.addEventListener('pointerdown', e => {
-  if (!TUI.on || (e.pointerType !== 'touch' && e.button !== 0) || tpad._id != null || !STICK_SETS.includes(TUI.set) || (e.target.closest && e.target.closest('#tbtns'))) return;
+  if (!TUI.on || (e.pointerType !== 'touch' && e.button !== 0) || tpad._id != null || !stickOn(TUI.set) || (e.target.closest && e.target.closest('#tbtns'))) return;
   const lp = layPt(e), py = pointerPos(e).y;
   if (py < TOP_BAR || py > H - BOT_BAR) return;   // (the top / bottom bars hold the pause, audible and timeout buttons: a touch there is theirs, never the stick)
   if (touchHalf(e) !== stickSide()) return;
@@ -26571,10 +26598,11 @@ setInterval(() => {
   if (!TUI.on) return;
   let live = false, name = 'run';
   try { live = !results && !showKeys && !settingsOpen && !slotUI && !hl && !paused; if (live) name = tuiWhich(); } catch (err) { live = false; }
-  if (tpad._id != null && (!live || !STICK_SETS.includes(name))) tuiStickEnd({ clientX: 0, clientY: 0 });   // (the play ended under his thumb)
+  if (tpad._id != null && (!live || !stickOn(name))) tuiStickEnd({ clientX: 0, clientY: 0 });   // (the play ended under his thumb)
   tbtns.style.display = live ? '' : 'none';
-  tuiEl.classList.toggle('flip', live && STICK_SETS.includes(name) && stickSide() > 0);   // (stick on the right: the buttons go left)
-  const sprint = live && ['run', 'kickoff', 'def'].includes(name);   // (sprint is always on there: no button)
+  tuiEl.classList.toggle('flip', live && stickOn(name) && stickSide() > 0);   // (stick on the right: the buttons go left)
+  // (sprint is always on there: no button. Not on defense, where the held A key would read as "steering": it ran him toward the line and kept the computer from taking an idle defender over; only a pick return sprints)
+  const sprint = live && (['run', 'kickoff'].includes(name) || (name === 'def' && state === 'picked'));
   if (sprint !== !!TUI.held.KeyA) { TUI.held.KeyA = sprint; tkey('KeyA', sprint); }
   if (live && name !== TUI.set) { TUI.set = name; tuiBuild(name); }
   if (!live) { TUI.set = ''; for (const k in TUI.held) if (TUI.held[k]) { TUI.held[k] = false; tkey(k, false); } }
@@ -26648,11 +26676,12 @@ window.addEventListener('pointerup', e => {
   const vertical = Math.abs(dy) > Math.abs(dx), up = dy < 0;
   const who = s.set === 'flight' ? tgt : controlledPlayer() || runner;
   const along = MIRROR * Math.sign(dx) === Math.sign((who && who.vx) || (who && who.face) || 1);   // (the field is drawn mirrored)
-  if (s.set === 'flight') return tuiKey(vertical ? (up ? 'KeyW' : 'KeyS') : along ? 'KeyA' : 'KeyD');
+  const toward = MIRROR * Math.sign(dx) > 0;   // (a swipe toward the end zone he's scoring on: the field is drawn mirrored)
+  if (s.set === 'flight') return tuiKey(vertical ? (up ? 'KeyW' : 'KeyS') : toward ? 'KeyA' : 'KeyD');   // (toward the end zone = catch and run, the other way = one hand)
   if (s.set === 'pocket') {   // the QB: two fingers down = stiff arm, up / down = juke, toward the line = step up
     if (vertical && s.multi) { if (!up) tuiKey('KeyQ', SWIPE_HOLD.stiff); return; }
     if (vertical) { const code = up ? 'KeyW' : 'KeyS'; tkey(code, true); tkey(code, false); tkey(code, true); setTimeout(() => tkey(code, false), TUI.tapMs); return; }
-    if (MIRROR * Math.sign(dx) === Math.sign(qb.face || 1)) tuiKey('KeyA', SWIPE_HOLD.stiff);
+    if (toward) tuiKey('KeyA', SWIPE_HOLD.stiff);   // (toward the line of scrimmage)
     return;
   }
   if (s.set === 'def') { if (vertical) { if (up) tuiKey('KeyW'); } else tuiKey(along ? 'KeyR' : 'KeyT'); return; }
