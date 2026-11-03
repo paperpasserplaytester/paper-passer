@@ -25614,11 +25614,12 @@ function tutAfterPlay() {
 // the instruction card: a paper note pinned under the scoreboard
 const TUT_TIP_SCALE = 0.8;   // the tip card is drawn this much of its size
 const TUT_KICK_DROP = 92;    // px the card moves down in the kicking lessons, clear of the power / aim meters
+let tutResetBtn = null;      // (touch) the RESET button's screen rect, next to SKIP
 let tutSkipBtn = null;       // the SKIP button's screen rect (set while the card shows a step)
 function drawTutorial() {
   const st = tutStep(), w = 760, x = W / 2 - w / 2, y = TOP_BAR + 8 + (st && st.kick && kick && (state === 'kick' || (state === 'kickoff' && kick.userKo)) ? TUT_KICK_DROP : 0);   // (the kicking lessons: under the kick meters)
   ctx.save(); ctx.translate(W / 2, y); ctx.scale(TUT_TIP_SCALE, TUT_TIP_SCALE); ctx.translate(-W / 2, -y);
-  tutSkipBtn = null;
+  tutSkipBtn = tutResetBtn = null;
   ctx.font = 'bold 16px monospace';   // (one size throughout: long lines wrap onto the next line)
   const lines = [];
   if (st) for (const para of tutText(TUI.on && TUT_MOBILE[st.id] || st.text).split('\n')) {
@@ -25629,7 +25630,7 @@ function drawTutorial() {
     lines.push(cur);
   }
   const h = st ? 72 + 20 * lines.length : 150;
-  if (st && state !== 'pre') {   // how to redo the step: right under the card, never behind it
+  if (st && state !== 'pre' && !TOUCH) {   // how to redo the step: right under the card, never behind it (a phone has the RESET button instead)
     ctx.save(); ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const tip = 'BACKSPACE to reset the play', tw = ctx.measureText(tip).width + 20;
     ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(W / 2 - tw / 2, y + h + 8, tw, 22);
@@ -25650,6 +25651,13 @@ function drawTutorial() {
     ctx.fillStyle = '#e8e2cc'; ctx.fillRect(sk.x, sk.y, sk.w, sk.h); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(sk.x, sk.y, sk.w, sk.h);
     ctx.fillStyle = RES.line; ctx.font = 'bold 15px monospace'; ctx.fillText('SKIP ▸', sk.x + sk.w / 2, sk.y + sk.h / 2 + 1);
     tutSkipBtn = { x: W / 2 + (sk.x - W / 2) * TUT_TIP_SCALE, y: y + (sk.y - y) * TUT_TIP_SCALE, w: sk.w * TUT_TIP_SCALE, h: sk.h * TUT_TIP_SCALE };
+    tutResetBtn = null;
+    if (TOUCH) {   // phones: RESET sits next to SKIP (the keyboard's Backspace starts the step over)
+      const rs = { x: sk.x - 92, y: sk.y, w: 86, h: sk.h };
+      ctx.fillStyle = '#e8e2cc'; ctx.fillRect(rs.x, rs.y, rs.w, rs.h); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(rs.x, rs.y, rs.w, rs.h);
+      ctx.fillStyle = RES.line; ctx.font = 'bold 15px monospace'; ctx.fillText('RESET', rs.x + rs.w / 2, rs.y + rs.h / 2 + 1);
+      tutResetBtn = { x: W / 2 + (rs.x - W / 2) * TUT_TIP_SCALE, y: y + (rs.y - y) * TUT_TIP_SCALE, w: rs.w * TUT_TIP_SCALE, h: rs.h * TUT_TIP_SCALE };
+    }
     ctx.fillStyle = ok ? '#2f8f3a' : RES.line; ctx.font = 'bold 26px monospace';
     ctx.fillText(ok ? `✓ ${st.title}  -  NICE!` : st.title, x + w / 2, y + 30);
     ctx.fillStyle = RES.line; ctx.font = 'bold 16px monospace';
@@ -25944,6 +25952,7 @@ canvas.addEventListener('pointerdown', e => {
   if (tut && !paused && !showKeys && e.button === 0 && !overPauseButton(pointerPos(e)) && !overKeysButton(pointerPos(e))) {
     if (!tutStep()) { if (season && LEAGUE && !LEAGUE.tutPaid) { LEAGUE.tutPaid = 1; LEAGUE.coins += TUT_BONUS; payToFly += TUT_BONUS; } endTutorial(); return; }                             // tutorial complete: any click heads home
     if (tutSkipBtn && inBtn(pointerPos(e), tutSkipBtn)) { tut.passed = true; tutNext(); return; }   // SKIP: on to the next part
+    if (tutResetBtn && inBtn(pointerPos(e), tutResetBtn)) { tut.passed = false; aim = null; reset(); return; }   // RESET (touch): start this step over, like Backspace
     if (tut.passed || state === 'done') { if (state === 'done' && !playSettled()) return; tutNext(); return; }   // any click: the next play (but not out of a celebration)
   }
   if (showKeys) {
