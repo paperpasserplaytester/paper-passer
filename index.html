@@ -24704,6 +24704,7 @@ const TOUCH_HELP = [
   ['JOYSTICK (left)', 'Move / steer / run'],
   ['BUTTONS (right)', 'Snap, moves, sprint, dive... change with the play'],
   ['DRAG FROM THE QB', 'Aim the pass, lift to throw'],
+  ['QB: SWIPE OFF THE QB', 'Juke, spin (circle), step up, stiff arm'],
   ['SWIPE UP (ball in air)', 'Jumping catch'],
   ['SWIPE DOWN (ball in air)', 'Diving catch'],
   ['SWIPE WITH THE RUNNER', 'Catch and run'],
@@ -26467,11 +26468,11 @@ const TSETS = {
   next:   [],
   tap:    [],
   flight: [['DIVE (SWIPE DOWN)', 'tap', 'KeyS'], ['ONE HAND (SWIPE BACK)', 'tap', 'KeyD'], ['RUN CATCH (SWIPE FORWARD)', 'hold', 'KeyA']],
-  pocket: [['SPIN', 'tap', 'KeyR', 'big'], ['JUKE UP', 'dbl', 'KeyW'], ['JUKE DOWN', 'dbl', 'KeyS'], ['STIFF ARM', 'hold', 'KeyQ'], ['STEP UP', 'hold', 'KeyA']],
+  pocket: [],   // (the QB's moves are swipes too, off the QB: see SWIPE below)
   run:    [],   // (spin = a circle drawn with a finger, juke = swipe up / down: see SPIN_GEST)
   kickoff: [],   // (kneel / fair catch: push the stick backward)
   def:    [],   // (tap a defender to switch to him)
-  replay: [['PAUSE', 'tap', 'Space', 'big']],
+  replay: [],   // (no round pause button over a replay: the canvas has its own)
 };
 function tuiWhich() {
   if (rec && rec.replaying) return 'replay';
@@ -26516,15 +26517,24 @@ const STICK_SETS = ['pocket', 'run', 'kickoff', 'def', 'flight'];
 function tuiStickEnd(e) { if (tpad._id == null) return; tuiStick(e, true); tpad._id = null; tpad.style.display = 'none'; }
 // the stick lives on the side away from where the play is going: opposite the aiming reticle on offense, on the offense's side of the ball on defense
 // (+1 = right half of the screen; the field is drawn mirrored). The buttons take the other side.
+// (the screen splits at the line of scrimmage. On offense: the offensive side aims / throws, the defensive side is the joystick. On defense: the
+// offensive side is the joystick, the defensive side the swipes. Kick returns keep the old rule: away from the way the returner faces.)
 function stickSide() {
+  if (TUI.set !== 'kickoff') return aiOff() ? -MIRROR : MIRROR;   // (the offensive side of the ball is the screen side -MIRROR)
   let f = 1;
-  try { const m = TUI.set === 'def' ? qb : (controlledPlayer() || qb); f = (m && m.face) || 1; } catch (err) {}
+  try { const m = controlledPlayer() || qb; f = (m && m.face) || 1; } catch (err) {}
   return -MIRROR * Math.sign(f) || 1;
+}
+// which half of the screen (+1 right, -1 left) a finger is on: split at the line of scrimmage (the middle of the screen for a kick return)
+function touchHalf(e) {
+  if (TUI.set === 'kickoff') return (layPt(e).x >= (document.documentElement.classList.contains('rot') ? innerHeight : innerWidth) / 2) ? 1 : -1;
+  const z = camZ(), losX = W / 2 + MIRROR * z * (los - camX);
+  return pointerPos(e).x >= losX ? 1 : -1;
 }
 window.addEventListener('pointerdown', e => {
   if (!TUI.on || (e.pointerType !== 'touch' && e.button !== 0) || tpad._id != null || !STICK_SETS.includes(TUI.set) || (e.target.closest && e.target.closest('#tbtns'))) return;
-  const lp = layPt(e), half = (document.documentElement.classList.contains('rot') ? innerHeight : innerWidth) / 2;
-  if ((lp.x >= half ? 1 : -1) !== stickSide()) return;
+  const lp = layPt(e);
+  if (touchHalf(e) !== stickSide()) return;
   e.stopImmediatePropagation();   // (this finger is the stick: the canvas never sees it, so it can't start a throw drag or a swipe)
   tpad._id = e.pointerId; swipeFrom = null; bulletTap = null;
   tpad.style.display = 'block';
@@ -26583,7 +26593,7 @@ const SWIPE_HOLD = { stiff: 450, truck: 350 };   // ms the stiff arm / truck key
 // = truck / dive, a circle drawn with the finger = spin. Two fingers swiping up = hurdle, down = stiff arm.
 const SPIN_GEST = { turn: 5.3, minPath: 150, keep: 80 };   // radians swept around the path's centre, px of path, points kept
 let swipeFrom = null;
-const swipeSet = () => (state === 'flight' && !aiOff()) ? 'flight' : ['run', 'kickoff', 'def'].includes(tuiWhich()) ? tuiWhich() : '';
+const swipeSet = () => (state === 'flight' && !aiOff()) ? 'flight' : ['run', 'kickoff', 'def', 'pocket'].includes(tuiWhich()) ? tuiWhich() : '';   // (pocket: the QB's moves, as a swipe that isn't a throw drag)
 canvas.addEventListener('pointerdown', e => {
   const set = TUI.on && e.pointerType === 'touch' ? swipeSet() : '';
   if (!set) { swipeFrom = null; return; }
@@ -26594,7 +26604,8 @@ canvas.addEventListener('pointerdown', e => {
 function tuiKey(code, hold = TUI.tapMs) { tkey(code, true); setTimeout(() => tkey(code, false), hold); }
 window.addEventListener('pointermove', e => {
   const s = swipeFrom;
-  if (!s || s.done || s.multi || e.pointerId !== s.id || (s.set !== 'run' && s.set !== 'kickoff')) return;
+  if (!s || s.done || s.multi || e.pointerId !== s.id || (s.set !== 'run' && s.set !== 'kickoff' && s.set !== 'pocket')) return;
+  if (s.set === 'pocket' && aim) { s.done = true; return; }   // (a throw drag from the QB is not a move)
   const pts = s.pts; pts.push(layPt(e)); if (pts.length > SPIN_GEST.keep) pts.shift();
   let cx = 0, cy = 0, len = 0; for (const q of pts) { cx += q.x; cy += q.y; } cx /= pts.length; cy /= pts.length;
   let turn = 0;
@@ -26612,11 +26623,18 @@ window.addEventListener('pointerup', e => {
   if (s.done) return;
   const lp = layPt(e), dx = lp.x - st.x, dy = lp.y - st.y;
   if (Math.hypot(dx, dy) < SWIPE.min || swipeSet() !== s.set) return;
+  if (s.set === 'pocket' && aim) return;   // (releasing a throw)
   s.done = true;
   const vertical = Math.abs(dy) > Math.abs(dx), up = dy < 0;
   const who = s.set === 'flight' ? tgt : controlledPlayer() || runner;
   const along = MIRROR * Math.sign(dx) === Math.sign((who && who.vx) || (who && who.face) || 1);   // (the field is drawn mirrored)
   if (s.set === 'flight') return tuiKey(vertical ? (up ? 'KeyW' : 'KeyS') : along ? 'KeyA' : 'KeyD');
+  if (s.set === 'pocket') {   // the QB: two fingers down = stiff arm, up / down = juke, toward the line = step up
+    if (vertical && s.multi) { if (!up) tuiKey('KeyQ', SWIPE_HOLD.stiff); return; }
+    if (vertical) { const code = up ? 'KeyW' : 'KeyS'; tkey(code, true); tkey(code, false); tkey(code, true); setTimeout(() => tkey(code, false), TUI.tapMs); return; }
+    if (MIRROR * Math.sign(dx) === Math.sign(qb.face || 1)) tuiKey('KeyA', SWIPE_HOLD.stiff);
+    return;
+  }
   if (s.set === 'def') { if (vertical) { if (up) tuiKey('KeyW'); } else tuiKey(along ? 'KeyR' : 'KeyT'); return; }
   if (vertical && s.multi) return up ? tuiKey('KeyE') : tuiKey('KeyQ', SWIPE_HOLD.stiff);   // (two fingers: hurdle / stiff arm)
   if (vertical) {   // (one finger: a juke, a double tap of the up / down key)
