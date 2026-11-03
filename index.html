@@ -17160,8 +17160,8 @@ const KEYBINDS_MOBILE = [
   ['BALL IN THE AIR', ''],
   ['Swipe up', 'Jump / high-point it (near the sideline: a toe tap attempt)'],
   ['Swipe down', 'Dive catch: lay out for it, sure hands in traffic'],
-  ['Swipe the way he runs', 'Catch and run: sprint at full speed through the catch (a little riskier when covered)'],
-  ['Swipe against him', 'One-handed catch (bigger radius, more drops)'],
+  ['Swipe forward', 'Catch and run: sprint at full speed through the catch (a little riskier when covered)'],
+  ['Swipe backward', 'One-handed catch (bigger radius, more drops)'],
   ['Joystick', 'Steer the receiver'],
   ['WITH THE BALL', ''],
   ['Joystick', 'Run: downfield by default'],
@@ -24803,8 +24803,8 @@ const TOUCH_HELP = [
   ['QB: SWIPE OFF THE QB', 'Juke, spin (circle), step up, stiff arm'],
   ['SWIPE UP (ball in air)', 'Jumping catch'],
   ['SWIPE DOWN (ball in air)', 'Diving catch'],
-  ['SWIPE WITH THE RUNNER', 'Catch and run'],
-  ['SWIPE AGAINST THE RUNNER', 'One-handed catch'],
+  ['SWIPE FORWARD (ball in air)', 'Catch and run'],
+  ['SWIPE BACKWARD (ball in air)', 'One-handed catch'],
   ['PAUSE (top)', 'Pause menu, settings'],
 ];
 function drawSettings() {
@@ -25530,8 +25530,8 @@ const TUT_MOBILE = {
   bullet: 'Tap the joystick side of the screen to switch to a faster, flatter bullet. Hit the slant.',
   jumpcatch: 'Throw, then swipe UP on the field while the ball is in the air so he leaps. Catch it at the top.',
   divecatch: 'Throw it out in front, then swipe DOWN in the air to lay out.',
-  onehand: 'While the ball is in the air, swipe AWAY from the end zone you are scoring on. Make a one-handed catch.',
-  runcatch: 'Throw, then swipe TOWARD the end zone you are scoring on while the ball is in the air to catch in stride. Catch one on the run.',
+  onehand: 'While the ball is in the air, swipe BACKWARD. Make a one-handed catch.',
+  runcatch: 'Throw, then swipe FORWARD while the ball is in the air to catch in stride. Catch one on the run.',
   pocket: 'After the snap, move the QB with the joystick (touch the side of the screen past the line). Slide a few yards, then throw.',
   scramble: 'Throw straight back or cross the line to run with the QB. Run past the line with the joystick.',
   run: 'Tap the RB to hand off. Steer with the joystick. Gain 5 yards.',
@@ -26499,6 +26499,7 @@ function frame(now) {
   // pausing (or the keybinds page) fades every sound out; resuming fades them back in
   duck += Math.max(-dt / DUCK.out, Math.min(dt / DUCK.in, (paused || showKeys ? 0 : 1) - duck));
   if (actx && actx.master) actx.master.gain.value = SETTINGS.volume * duck;
+  hushCheck(paused || showKeys);
   updateCrowd(dt);
   wxAudio();
   stepAudio();
@@ -26535,6 +26536,19 @@ function warmUp() {
 }
 window.addEventListener('pointerdown', warmUp, { capture: true, once: true });
 window.addEventListener('keydown', warmUp, { capture: true, once: true });
+// the pause menu (and the keys page) stops every sound: the Web Audio context is suspended and every HTML audio element that is playing is paused, then both pick up where they were
+let hushed = false;
+function hushCheck(quiet) {
+  if (quiet === hushed) return;
+  hushed = quiet;
+  const els = [...Object.values(sfxPlaying), ...(crowdAmb || []), wxRainEl, ...stepEls];
+  for (const el of els) {
+    if (!el || !el.pause) continue;
+    if (quiet) { if (!el.paused) { el._hushed = true; el.pause(); } }
+    else if (el._hushed) { el._hushed = false; el.play().catch(() => {}); }
+  }
+  try { if (actx) { if (quiet) { if (actx.state === 'running') actx.suspend(); } else if (actx.state === 'suspended') actx.resume(); } } catch (err) {}
+}
 let lastPaint = 0, paintAvg = 0, paintMin = 15;
 const PAINT_MIN = 15, PAINT_MIN_SLOW = 31, PAINT_SLOW = 15;   // ms: between painted frames normally / when painting is slow; a smoothed paint time over PAINT_SLOW counts as slow
 // the screen stays on in touch mode, even with no touches for a long stretch (the Wake Lock API; asked for on the first touch, taken again when the page comes back)
@@ -26709,7 +26723,7 @@ function tuiStickEnd(e) {
 // (the screen splits at the line of scrimmage. On offense: the offensive side aims / throws, the defensive side is the joystick. On defense: the
 // offensive side is the joystick, the defensive side the swipes. Kick returns keep the old rule: away from the way the returner faces.)
 function stickSide() {
-  if (TUI.set !== 'kickoff') return aiOff() ? -MIRROR : MIRROR;   // (the offensive side of the ball is the screen side -MIRROR)
+  if (TUI.set !== 'kickoff') return MIRROR;   // (the defensive side of the ball is the screen side MIRROR: the stick is there on offense and, now, on defense too; the other side aims on offense and is swipes on defense)
   let f = 1;
   try { const m = controlledPlayer() || qb; f = (m && m.face) || 1; } catch (err) {}
   return -MIRROR * Math.sign(f) || 1;
@@ -26781,7 +26795,8 @@ window.addEventListener('pointerup', e => {
   if (now - lastTapAt < 400) { lastTapAt = 0; bulletMode = !bulletMode; popup(qb, bulletMode ? 'BULLET' : 'LOB', '#ffd94a'); }
   else lastTapAt = now;
 }, true);
-const SWIPE_HOLD = { stiff: 450, truck: 350, press: 220 };   // ms the stiff arm key is held after the swipe; press = ms a finger rests on the field before it counts as a hold (the truck)
+const HURDLE_TAP = { move: 30, press: 320, gap: 600 };   // the double tap's slack: px a tap may drift, ms a tap may last (past the truck's press it's a hold), ms between the two taps
+const SWIPE_HOLD = { stiff: 450, truck: 350, press: 340 };   // ms the stiff arm key is held after the swipe; press = ms a finger rests on the field before it counts as a hold (the truck)
 // The ball carrier's moves (run / kick return) are one finger: swipe up / down = juke up / down (double-tap W / S), swipe toward / away from the way he runs
 // = truck / dive, a circle drawn with the finger = spin. Two fingers swiping up = hurdle, down = stiff arm.
 const SPIN_GEST = { turn: 5.3, minPath: 150, keep: 80 };   // radians swept around the path's centre, px of path, points kept
@@ -26833,9 +26848,9 @@ window.addEventListener('pointerup', e => {
   if (s.stiff) { tkey('KeyQ', false); return; }   // (...and the stiff arm)
   if (s.done) return;
   const lp = layPt(e), dx = lp.x - st.x, dy = lp.y - st.y;
-  if (Math.hypot(dx, dy) < 14 && !s.multi && (s.set === 'run' || s.set === 'kickoff') && swipeSet() === s.set && performance.now() - s.t0 < 250) {   // a quick tap with the ball: two in a row = the hurdle
+  if (Math.hypot(dx, dy) < HURDLE_TAP.move && !s.multi && (s.set === 'run' || s.set === 'kickoff') && swipeSet() === s.set && performance.now() - s.t0 < HURDLE_TAP.press) {   // a quick tap with the ball: two in a row = the hurdle
     const now = performance.now();
-    if (now - runTapAt < 400) { runTapAt = 0; tuiKey('KeyE'); } else runTapAt = now;
+    if (now - runTapAt < HURDLE_TAP.gap) { runTapAt = 0; tuiKey('KeyE'); } else runTapAt = now;
     return;
   }
   if (Math.hypot(dx, dy) < SWIPE.min || swipeSet() !== s.set) return;
