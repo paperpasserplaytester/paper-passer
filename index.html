@@ -70,6 +70,10 @@ const touchText = t => typeof t !== 'string' ? t : t
   .replace(/,\s*Space to \w+/g, '').replace(/\s*\/ Space\b/g, '').replace(/\bor press Space\b/g, '')
   .replace(/^SPACE pause.*$/, 'tap = skip  |  hold = slow-mo  |  pinch = zoom')
   .replace(/^or press Space$/, '').replace(/\s*-\s*BACKSPACE to reset the play/, '')
+  .replace(/\bclick(s|ed|ing)?\b/gi, (m, suf) => {   // a phone has no click: click -> tap, clicks -> taps, clicked -> tapped, clicking -> tapping (keeping the capitals)
+    const w = !suf ? 'tap' : suf.toLowerCase() === 's' ? 'taps' : suf.toLowerCase() === 'ed' ? 'tapped' : 'tapping';
+    return m === m.toUpperCase() ? w.toUpperCase() : m[0] === 'C' ? w[0].toUpperCase() + w.slice(1) : w;
+  })
   .replace(/[▶▸]/g, '►').replace(/[◀◂]/g, '◄').replace(/▴/g, '▲').replace(/▾/g, '▼');   // (phones draw ▶ / ◀ as colour emoji: these look-alikes have no emoji form)
 {   // touch mode: every font size is TEXT_K x bigger (menus, HUD, popups, tips): the one place the canvas font is set
   const fd = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'font');
@@ -25443,7 +25447,7 @@ const boundKey = id => {   // (a directional key reads for the way you drive: sp
   const a = BIND_ACTIONS.find(x => x[0] === (MIRROR > 0 && BIND_ACTIONS.some(y => y[0] === id + 'R') ? id + 'R' : id)), k = a && bindKeyOf(a);
   return k ? keyName(k) : '?';
 };
-const TOUCH_TUT = { up: 'swipe up', down: 'swipe down', right: 'swipe back', sprint: 'swipe forward', stiff: 'swipe down with two fingers', truck: 'swipe forward', spin: 'a circle with a finger', dive: 'swipe back', hurdle: 'swipe up with two fingers', protect: 'hold PROTECT', dtackle: 'swipe back', switchD: 'tap SWITCH', move: 'the stick' };
+const TOUCH_TUT = { up: 'swipe up', down: 'swipe down', right: 'swipe back', sprint: 'swipe forward', stiff: 'swipe back and hold', truck: 'press and hold', spin: 'a circle with a finger', dive: 'swipe forward', hurdle: 'swipe up with two fingers', protect: 'hold PROTECT', dtackle: 'swipe back', switchD: 'tap SWITCH', move: 'the stick' };
 const TOUCH_TUT_FIX = [   // lessons whose wording changes on a phone (the removed buttons / keys become swipes and taps)
   [/Right-click \(or \{dive\}\) for a faster, flatter bullet/, 'Tap LOB / BULLET for a faster, flatter bullet'],
   [/double-tap \{up\} or \{down\}/, 'swipe up or down'],
@@ -25491,22 +25495,22 @@ const TUT_STEPS = [
 // the same steps with touch wording (shown instead of a step's text on a phone / tablet): swipes and the on-screen buttons only
 const TUT_MOBILE = {
   pass: 'Drag from the QB to aim, lift your finger to throw. Hit the fade.',
-  bullet: 'Tap LOB / BULLET for a faster, flatter bullet. Hit the slant.',
+  bullet: 'Double-tap the joystick side of the screen to switch to a faster, flatter bullet. Hit the slant.',
   jumpcatch: 'Throw, then swipe UP on the field while the ball is in the air so he leaps. Catch it at the top.',
   divecatch: 'Throw it out in front, then swipe DOWN in the air to lay out.',
-  onehand: 'While the ball is in the air, swipe AGAINST the way he is running. Make a one-handed catch.',
-  runcatch: 'Throw, then swipe the SAME way he is running while the ball is in the air to catch in stride. Catch one on the run.',
-  pocket: 'After the snap, move the QB with the joystick. Slide a few yards, then throw.',
+  onehand: 'While the ball is in the air, swipe AWAY from the end zone you are scoring on. Make a one-handed catch.',
+  runcatch: 'Throw, then swipe TOWARD the end zone you are scoring on while the ball is in the air to catch in stride. Catch one on the run.',
+  pocket: 'After the snap, move the QB with the joystick (touch the side of the screen past the line). Slide a few yards, then throw.',
   scramble: 'Throw straight back or cross the line to run with the QB. Run past the line with the joystick.',
   run: 'Tap the RB to hand off. Steer with the joystick. Gain 5 yards.',
-  sprint: 'Hand off, then hold SPRINT for a second or two. Looser ball, harder to break tackles.',
-  juke: 'Hand off, then tap JUKE UP or JUKE DOWN as the defender closes.',
-  spin: 'Hand off, then tap SPIN as the defender closes.',
-  stiff: 'Hand off, then hold STIFF ARM as he arrives.',
-  truck: 'Hand off, then hold TRUCK and run through him.',
+  sprint: 'Hand off and run: you sprint on your own. Looser ball, harder to break tackles.',
+  juke: 'Hand off, then swipe UP or DOWN (off the joystick) as the defender closes.',
+  spin: 'Hand off, then draw a circle with a finger as the defender closes.',
+  stiff: 'Hand off, then swipe BACK (against the way he runs) as he arrives and keep your finger down to hold him off.',
+  truck: 'Hand off, then press and hold a finger on the field (not the joystick side) and run through him.',
   protect: 'Hand off, then hold PROTECT as he arrives. Slower, but almost no fumbles.',
-  dive: 'Hand off, then tap DIVE for extra yards.',
-  hurdle: 'Hand off, then tap HURDLE a couple of yards before the defender. Too late and he grabs you.',
+  dive: 'Hand off, then swipe FORWARD (the way he runs) for extra yards.',
+  hurdle: 'Hand off, then swipe UP with two fingers a couple of yards before the defender. Too late and he grabs you.',
   celebrate: 'Run it in, then tap CELEBRATE and wait it out.',
   gap: 'Hand off, let the blocks set, then hit the hole. Gain 3 yards.',
   timeout: 'After a play, tap TIMEOUT before the clock runs off to save the seconds. Run a play, then call one.',
@@ -25515,12 +25519,12 @@ const TUT_MOBILE = {
   fg: 'Tap to stop the power bar in the green, then tap again to aim. Kick it through.',
   punt: 'First tap sets power, second sets aim. Steer the ringed coverage man with the joystick. Punt it away.',
   kickoff: 'Tap for power, then aim. ONSIDE switches to an onside kick. Kick it off.',
-  dswitch: 'You drive one defender. Tap SWITCH to move to the one nearest the ball, or tap a player. Switch defenders.',
-  dtackle: 'Switch to the defender nearest the runner and chase him with the joystick. Make a tackle.',
-  ddive: 'Tap DIVE from a few yards off to dive at him. Bring him down with a dive.',
-  dstick: 'Tap HIT STICK as you close in for a big hit that can knock the ball loose. Lay one on him.',
-  dpick: 'Get under the pass and tap JUMP as the ball arrives. Pick it off.',
-  dline: 'While blocked: push the joystick toward the blocker and QB to bull rush, up or down to swim. Hold a move until you win.',
+  dswitch: 'You drive one defender. Tap the player you want to switch to. Switch defenders.',
+  dtackle: 'Tap the defender nearest the runner and chase him with the joystick. Make a tackle.',
+  ddive: 'Swipe AGAINST the way you are running, a few yards off, to dive at him. Bring him down with a dive.',
+  dstick: 'Swipe the way you are running as you close in for a big hit that can knock the ball loose. Lay one on him.',
+  dpick: 'Get under the pass and swipe UP as the ball arrives. Pick it off.',
+  dline: 'While blocked: swipe toward the QB to bull rush, across to swim, away to drop out, or draw a circle to spin. Repeat until you win.',
   dblitz: 'Run your linebacker through the line at the QB with the joystick. Sack the QB.',
 };
 const TUT_FLASH = { secs: 2.4, rate: 2.5 };   // the audible button's attention flash: for secs, rate flashes per second
@@ -26769,13 +26773,25 @@ window.addEventListener('pointermove', e => {
     turn += Math.atan2((a.x - cx) * (b.y - cy) - (a.y - cy) * (b.x - cx), (a.x - cx) * (b.x - cx) + (a.y - cy) * (b.y - cy));
     len += Math.hypot(b.x - a.x, b.y - a.y);
   }
-  if (Math.abs(turn) >= SPIN_GEST.turn && len >= SPIN_GEST.minPath) { s.done = true; tuiKey('KeyR'); }
+  if (Math.abs(turn) >= SPIN_GEST.turn && len >= SPIN_GEST.minPath) { s.done = true; tuiKey('KeyR'); return; }
+  // a swipe BACK (against the way he's running; for the QB, away from the line) is the stiff arm, and it stays on for as long as the finger stays down
+  if (s.set === 'run' || s.set === 'kickoff' || s.set === 'pocket') {
+    const st = s.fingers.get(s.id), cur = pts[pts.length - 1];
+    if (st) {
+      const dx = cur.x - st.x, dy = cur.y - st.y;
+      if (Math.hypot(dx, dy) >= SWIPE.min && Math.abs(dx) > Math.abs(dy) * 0.8) {
+        const who = s.set === 'pocket' ? qb : controlledPlayer() || runner, fwd = s.set === 'pocket' ? 1 : (who && who.vx) || (who && who.face) || 1;
+        if (MIRROR * Math.sign(dx) !== Math.sign(fwd)) { s.done = s.stiff = true; tkey('KeyQ', true); }
+      }
+    }
+  }
 }, true);
 window.addEventListener('pointerup', e => {
   const s = swipeFrom; if (!s || !s.fingers.has(e.pointerId)) return;
   const st = s.fingers.get(e.pointerId); s.fingers.delete(e.pointerId);
   if (!s.fingers.size) swipeFrom = null;
   if (s.truck) { tkey('KeyC', false); return; }   // (the held finger lifted: the truck ends)
+  if (s.stiff) { tkey('KeyQ', false); return; }   // (...and the stiff arm)
   if (s.done) return;
   const lp = layPt(e), dx = lp.x - st.x, dy = lp.y - st.y;
   if (Math.hypot(dx, dy) < SWIPE.min || swipeSet() !== s.set) return;
@@ -26807,7 +26823,7 @@ window.addEventListener('pointerup', e => {
   }
   if (along) tuiKey('KeyV');   // (forward = dive; the truck is a press and hold)
 }, true);
-window.addEventListener('pointercancel', e => { if (swipeFrom) { if (swipeFrom.truck) tkey('KeyC', false); swipeFrom.fingers.delete(e.pointerId); if (!swipeFrom.fingers.size) swipeFrom = null; } }, true);
+window.addEventListener('pointercancel', e => { if (swipeFrom) { if (swipeFrom.truck) tkey('KeyC', false); if (swipeFrom.stiff) tkey('KeyQ', false); swipeFrom.fingers.delete(e.pointerId); if (!swipeFrom.fingers.size) swipeFrom = null; } }, true);
 // pinch to zoom in a replay (two fingers on the field; the wheel does the same on a computer)
 const pinch = { pts: new Map(), d: 0 };
 window.addEventListener('pointerdown', e => { if (e.pointerType === 'touch') { pinch.pts.set(e.pointerId, layPt(e)); pinch.d = 0; } }, true);
