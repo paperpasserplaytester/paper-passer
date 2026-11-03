@@ -24778,7 +24778,7 @@ const SET_BTNS = {
   rep: { x: SET_X, y: 294, w: 440, h: 54 }, qtr: { x: SET_X, y: 362, w: 440, h: 64 },
   save: { x: SET_X, y: 440, w: 210, h: 54 }, load: { x: SET_X + 230, y: 440, w: 210, h: 54 },
   simDef: { x: SET_X, y: 504, w: 210, h: 54 }, autoSw: { x: SET_X + 230, y: 504, w: 210, h: 54 },
-  back: { x: SET_X, y: 618, w: 210, h: 48 }, mobile: { x: SET_X + 230, y: 618, w: 210, h: 48 },
+  back: { x: SET_X, y: 618, w: 210, h: 48 }, mobile: { x: SET_X + 230, y: 618, w: 210, h: 48 }, swap: { x: 665, y: 580, w: 540, h: 56 },   // (swap: touch only, in the controls panel)
 };
 const KEY_BTNS = BIND_ACTIONS.map((a, i) => ({ x: 665, y: 78 + i * 37, w: 540, h: 33 }));
 const KEY_RESET = { x: 840, y: 626, w: 190, h: 36 };
@@ -24856,6 +24856,7 @@ function drawSettings() {
       ctx.fillStyle = RES.line; ctx.font = 'bold 19px monospace'; ctx.fillText(k, 665, ty);
       ctx.fillStyle = RES.dim; ctx.font = '16px monospace'; ctx.fillText(v, 665, ty + 22); ty += 52;
     }
+    menuBtn(B.swap, `SWAP SIDES: ${SETTINGS.swapSides ? 'ON' : 'OFF'}  (joystick / aim)`, Y, 19);
     return;
   }
   bindScroll = Math.min(bindScroll, bindMax()); placeKeyBtns();
@@ -24898,6 +24899,7 @@ function settingsClick(p) {
   else if (inBtn(p, B.save) && canSave()) slotUI = { mode: 'save', scroll: 0, confirm: null };
   else if (inBtn(p, B.load) && hasSave() && !tut) slotUI = { mode: 'load', scroll: 0, confirm: null };
   else if (inBtn(p, B.back)) settingsOpen = false;
+  else if (TUI.on && inBtn(p, B.swap)) SETTINGS.swapSides = !SETTINGS.swapSides;   // (touch: the joystick and the aim / swipe sides trade places)
   else if (inBtn(p, B.mobile)) { SETTINGS.mobile = !TUI.on; tuiSet(SETTINGS.mobile); }   // (touch controls: on by default on a phone / tablet, off on a PC; this overrides that)
   saveSettings();
 }
@@ -26723,10 +26725,11 @@ function tuiStickEnd(e) {
 // (the screen splits at the line of scrimmage. On offense: the offensive side aims / throws, the defensive side is the joystick. On defense: the
 // offensive side is the joystick, the defensive side the swipes. Kick returns keep the old rule: away from the way the returner faces.)
 function stickSide() {
-  if (TUI.set !== 'kickoff') return MIRROR;   // (the defensive side of the ball is the screen side MIRROR: the stick is there on offense and, now, on defense too; the other side aims on offense and is swipes on defense)
+  const sw = SETTINGS.swapSides ? -1 : 1;   // (settings: SWAP SIDES)
+  if (TUI.set !== 'kickoff') return sw * (aiOff() ? -MIRROR : MIRROR);   // (on offense the stick is on the defensive side, MIRROR; on defense it is back on the offensive side, -MIRROR)   // (the defensive side of the ball is the screen side MIRROR: the stick is there on offense and, now, on defense too; the other side aims on offense and is swipes on defense)
   let f = 1;
   try { const m = controlledPlayer() || qb; f = (m && m.face) || 1; } catch (err) {}
-  return -MIRROR * Math.sign(f) || 1;
+  return sw * (-MIRROR * Math.sign(f) || 1);
 }
 // which half of the screen (+1 right, -1 left) a finger is on: split at the line of scrimmage (the middle of the screen for a kick return)
 function touchHalf(e) {
