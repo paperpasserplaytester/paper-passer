@@ -60,6 +60,8 @@ const round2Text = t => typeof t === 'number' ? String(Math.round(t * 100) / 100
   : typeof t === 'string' && /\d\.\d{3}/.test(t) ? t.replace(/\d+\.\d{3,}/g, m => String(Math.round(+m * 100) / 100)) : t;
 // Touch mode (set by tuiSet): no mention of keys anywhere in drawn text ("(Space)", "press Esc", WASD, right-click to celebrate...).
 let TOUCH = false;
+let RK = 1;   // touch mode: the canvas has this share of the pixels (RENDER_K), drawn through a scale of RK: fewer pixels to fill each frame
+const RENDER_K = 0.75;
 let PAD = 0;   // touch mode on a screen wider than 16:9: logical px of extra view on each side of the 1280-wide game (see fitScreen); everything is drawn shifted by it
 const WIDE_MAX = 2.4;   // the widest screen shape used (width / height); past that the sides stay black
 const touchText = t => typeof t !== 'string' ? t : t
@@ -25495,7 +25497,7 @@ const TUT_STEPS = [
 // the same steps with touch wording (shown instead of a step's text on a phone / tablet): swipes and the on-screen buttons only
 const TUT_MOBILE = {
   pass: 'Drag from the QB to aim, lift your finger to throw. Hit the fade.',
-  bullet: 'Double-tap the joystick side of the screen to switch to a faster, flatter bullet. Hit the slant.',
+  bullet: 'Tap the joystick side of the screen to switch to a faster, flatter bullet. Hit the slant.',
   jumpcatch: 'Throw, then swipe UP on the field while the ball is in the air so he leaps. Catch it at the top.',
   divecatch: 'Throw it out in front, then swipe DOWN in the air to lay out.',
   onehand: 'While the ball is in the air, swipe AWAY from the end zone you are scoring on. Make a one-handed catch.',
@@ -25662,12 +25664,14 @@ function tutAfterPlay() {
 }
 // the instruction card: a paper note pinned under the scoreboard
 const TUT_TIP_SCALE = 0.8;   // the tip card is drawn this much of its size
+const tipK = () => TOUCH ? 1 : TUT_TIP_SCALE;   // (phones: full size, with taller lines: the lesson text is much easier to read)
+const tipLH = () => TOUCH ? 26 : 20;
 const TUT_KICK_DROP = 92;    // px the card moves down in the kicking lessons, clear of the power / aim meters
 let tutResetBtn = null;      // (touch) the RESET button's screen rect, next to SKIP
 let tutSkipBtn = null;       // the SKIP button's screen rect (set while the card shows a step)
 function drawTutorial() {
   const st = tutStep(), w = 760, x = W / 2 - w / 2, y = TOP_BAR + 8 + (st && st.kick && kick && (state === 'kick' || (state === 'kickoff' && kick.userKo)) ? TUT_KICK_DROP : 0);   // (the kicking lessons: under the kick meters)
-  ctx.save(); ctx.translate(W / 2, y); ctx.scale(TUT_TIP_SCALE, TUT_TIP_SCALE); ctx.translate(-W / 2, -y);
+  ctx.save(); ctx.translate(W / 2, y); ctx.scale(tipK(), tipK()); ctx.translate(-W / 2, -y);
   tutSkipBtn = tutResetBtn = null;
   ctx.font = 'bold 16px monospace';   // (one size throughout: long lines wrap onto the next line)
   const lines = [];
@@ -25678,7 +25682,7 @@ function drawTutorial() {
     }
     lines.push(cur);
   }
-  const h = st ? 72 + 20 * lines.length : 150;
+  const h = st ? 72 + tipLH() * lines.length : 150;
   if (st && state !== 'pre' && !TOUCH) {   // how to redo the step: right under the card, never behind it (a phone has the RESET button instead)
     ctx.save(); ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const tip = 'BACKSPACE to reset the play', tw = ctx.measureText(tip).width + 20;
@@ -25699,19 +25703,19 @@ function drawTutorial() {
     const sk = { x: x + w - 96, y: y + 14, w: 80, h: 26 };   // SKIP: top right of the card
     ctx.fillStyle = '#e8e2cc'; ctx.fillRect(sk.x, sk.y, sk.w, sk.h); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(sk.x, sk.y, sk.w, sk.h);
     ctx.fillStyle = RES.line; ctx.font = 'bold 15px monospace'; ctx.fillText('SKIP ▸', sk.x + sk.w / 2, sk.y + sk.h / 2 + 1);
-    tutSkipBtn = { x: W / 2 + (sk.x - W / 2) * TUT_TIP_SCALE, y: y + (sk.y - y) * TUT_TIP_SCALE, w: sk.w * TUT_TIP_SCALE, h: sk.h * TUT_TIP_SCALE };
+    tutSkipBtn = { x: W / 2 + (sk.x - W / 2) * tipK(), y: y + (sk.y - y) * tipK(), w: sk.w * tipK(), h: sk.h * tipK() };
     tutResetBtn = null;
     if (TOUCH) {   // phones: RESET sits next to SKIP (the keyboard's Backspace starts the step over)
-      const rs = { x: sk.x - 92, y: sk.y, w: 86, h: sk.h };
+      const rs = { x: x + w - 102, y: y + h - 38, w: 86, h: sk.h };   // (the card's bottom right corner)
       ctx.fillStyle = '#e8e2cc'; ctx.fillRect(rs.x, rs.y, rs.w, rs.h); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(rs.x, rs.y, rs.w, rs.h);
       ctx.fillStyle = RES.line; ctx.font = 'bold 15px monospace'; ctx.fillText('RESET', rs.x + rs.w / 2, rs.y + rs.h / 2 + 1);
-      tutResetBtn = { x: W / 2 + (rs.x - W / 2) * TUT_TIP_SCALE, y: y + (rs.y - y) * TUT_TIP_SCALE, w: rs.w * TUT_TIP_SCALE, h: rs.h * TUT_TIP_SCALE };
+      tutResetBtn = { x: W / 2 + (rs.x - W / 2) * tipK(), y: y + (rs.y - y) * tipK(), w: rs.w * tipK(), h: rs.h * tipK() };
     }
     ctx.fillStyle = ok ? '#2f8f3a' : RES.line; ctx.font = 'bold 26px monospace';
     ctx.fillText(ok ? `✓ ${st.title}  -  NICE!` : st.title, x + w / 2, y + 30);
     ctx.fillStyle = RES.line; ctx.font = 'bold 16px monospace';
     if (ok) ctx.fillText('Click for the next play.', x + w / 2, y + 66);
-    else lines.forEach((l, i) => ctx.fillText(l, x + w / 2, y + 66 + i * 20));
+    else lines.forEach((l, i) => ctx.fillText(l, x + w / 2, y + 66 + i * tipLH()));
   } else {
     ctx.fillStyle = '#2f8f3a'; ctx.font = 'bold 30px monospace';
     ctx.fillText('TUTORIAL COMPLETE!', x + w / 2, y + 36);
@@ -25827,7 +25831,7 @@ function startCrumple() {
   // (just the 16:9 middle. Phones: a half-size snapshot, a quarter of the pixels to copy and to draw through every facet: the copy was the hitch at a page change)
   const K = TOUCH ? 0.5 : 1;
   crumpleSnap.width = Math.round(W * K); crumpleSnap.height = Math.round(H * K);
-  crumpleSnap.getContext('2d').drawImage(canvas, PAD, 0, W, H, 0, 0, crumpleSnap.width, crumpleSnap.height);
+  crumpleSnap.getContext('2d').drawImage(canvas, PAD * RK, 0, W * RK, H * RK, 0, 0, crumpleSnap.width, crumpleSnap.height);
   const r = seeded(Math.floor(Math.random() * 1e6) + 1), G = TOUCH ? { ...CRUMPLE, gx: 5, gy: 3 } : CRUMPLE, pts = [];   // (phones: fewer, bigger facets: each one is a clipped draw, a lot of them at once was a stutter)
   for (let j = 0; j <= G.gy; j++) for (let i = 0; i <= G.gx; i++) {
     const u = i / G.gx * 2 - 1, v = j / G.gy * 2 - 1;
@@ -25870,7 +25874,7 @@ function drawCrumple() {
     return [v.sx + (W / 2 + bx * sc - v.sx) * f + v.wx * wob * 0.5 + (cx - W / 2) , v.sy + (H / 2 + by * sc - v.sy) * f + v.wy * wob * 0.5 + (cy - H / 2)];
   });
   ctx.save();
-  ctx.setTransform(1, 0, 0, 1, PAD, 0);   // (the 16:9 middle of a widened canvas)
+  ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0);   // (the 16:9 middle of a widened canvas)
   for (const [ia, ib, ic, shade] of crumple.tris) {
     const s = [crumple.pts[ia], crumple.pts[ib], crumple.pts[ic]], d = [P[ia], P[ib], P[ic]];
     const mx = (d[0][0] + d[1][0] + d[2][0]) / 3, my = (d[0][1] + d[1][1] + d[2][1]) / 3;
@@ -25886,7 +25890,7 @@ function drawCrumple() {
     ctx.save();
     ctx.beginPath(); ctx.moveTo(d0[0], d0[1]); ctx.lineTo(d1[0], d1[1]); ctx.lineTo(d2[0], d2[1]); ctx.closePath();
     ctx.clip();
-    ctx.setTransform(a, b, c, dd, e + PAD, ff);
+    ctx.setTransform(a * RK, b * RK, c * RK, dd * RK, (e + PAD) * RK, ff * RK);
     // (only this facet's patch of the page, not the whole snapshot, is drawn through the clip)
     const bx0 = Math.max(0, Math.min(s[0].sx, s[1].sx, s[2].sx) - 2), by0 = Math.max(0, Math.min(s[0].sy, s[1].sy, s[2].sy) - 2);
     const bx1 = Math.min(W, Math.max(s[0].sx, s[1].sx, s[2].sx) + 2), by1 = Math.min(H, Math.max(s[0].sy, s[1].sy, s[2].sy) + 2);
@@ -26474,13 +26478,15 @@ function frame(now) {
   if (TUI.on && now - lastPaint < paintMin) return;   // (phones: drawn at most ~60 times a second even on a 90 / 120 Hz screen, ~30 when a frame takes too long to paint; the game steps above are unaffected)
   lastPaint = now;
   const paintT0 = performance.now();
-  if (PAD) { ctx.fillStyle = '#111'; ctx.fillRect(0, 0, canvas.width, H); ctx.save(); ctx.translate(PAD, 0); }   // (the 16:9 game sits in the middle of the wider canvas)
+  // (touch: the canvas has RK x the pixels, drawn through a scale; the 16:9 game sits in the middle of a wider canvas, PAD logical px in)
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#111'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0);
   if (hl) { draw(); if (hl) drawHlBar(); hlDelStep(); if (hl) drawHlDel(); } else if (results) drawMenus(); else draw();
   if (settingsOpen) drawSettings();
   if (slotUI) drawSlots();
   drawCrumple();
   ioDrawToast();
-  if (PAD) ctx.restore();
+  ctx.restore();
   if (TUI.on) {   // how long painting took, smoothed: slow frames drop the paint rate to ~30 (so the game keeps up and the thread isn't always behind), fast ones bring it back
     paintAvg += (performance.now() - paintT0 - paintAvg) * 0.1;
     if (paintAvg > PAINT_SLOW) paintMin = PAINT_MIN_SLOW; else if (paintAvg < PAINT_SLOW * 0.65) paintMin = PAINT_MIN;
@@ -26500,7 +26506,7 @@ function warmUp() {
 window.addEventListener('pointerdown', warmUp, { capture: true, once: true });
 window.addEventListener('keydown', warmUp, { capture: true, once: true });
 let lastPaint = 0, paintAvg = 0, paintMin = 15;
-const PAINT_MIN = 15, PAINT_MIN_SLOW = 31, PAINT_SLOW = 12;   // ms: between painted frames normally / when painting is slow; a smoothed paint time over PAINT_SLOW counts as slow
+const PAINT_MIN = 15, PAINT_MIN_SLOW = 31, PAINT_SLOW = 15;   // ms: between painted frames normally / when painting is slow; a smoothed paint time over PAINT_SLOW counts as slow
 // the screen stays on in touch mode, even with no touches for a long stretch (the Wake Lock API; asked for on the first touch, taken again when the page comes back)
 let wakeLock = null;
 async function keepAwake() {
@@ -26587,8 +26593,11 @@ function fitScreen() {
   const lw = rot ? innerHeight : innerWidth, lh = rot ? innerWidth : innerHeight;
   const asp = TUI.on ? Math.max(W / H, Math.min(WIDE_MAX, lw / lh)) : W / H;
   PAD = Math.round((asp * H - W) / 2);
-  if (canvas.width !== W + 2 * PAD) canvas.width = W + 2 * PAD;
-  canvas.style.width = PAD ? Math.min(lw, lh * asp) + 'px' : ''; canvas.style.aspectRatio = PAD ? `${canvas.width} / ${H}` : '';
+  RK = TUI.on ? RENDER_K : 1;
+  const cw = Math.round((W + 2 * PAD) * RK), ch = Math.round(H * RK);
+  if (canvas.width !== cw) canvas.width = cw;
+  if (canvas.height !== ch) canvas.height = ch;
+  canvas.style.width = PAD ? Math.min(lw, lh * asp) + 'px' : ''; canvas.style.aspectRatio = PAD ? `${W + 2 * PAD} / ${H}` : '';
 }
 function lockLandscape() { try { const o = screen.orientation; if (o && o.lock) o.lock('landscape').catch(() => {}); } catch (err) {} }
 const TUT_GONE = ['sprint', 'protect', 'celebrate', 'timeout'];   // lessons for buttons the phone no longer has
@@ -26661,7 +26670,7 @@ function tuiStickEnd(e) {
   if (e.pointerId === tpad._id && (state === 'pocket' || state === 'drop') && e.type === 'pointerup' && performance.now() - tpad._t0 < 300) {
     const lp = layPt(e), now = performance.now();
     if (Math.hypot(lp.x - tpad._p0.x, lp.y - tpad._p0.y) < 14) {
-      if (now - stickTapAt < 400) { stickTapAt = 0; bulletMode = !bulletMode; popup(qb, bulletMode ? 'BULLET' : 'LOB', '#ffd94a'); } else stickTapAt = now;
+      bulletMode = !bulletMode; popup(qb, bulletMode ? 'BULLET' : 'LOB', '#ffd94a');   // (one quick tap on the stick side)
     }
   }
   tuiStick(e, true); tpad._id = null; tpad.style.display = 'none'; }
