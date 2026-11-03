@@ -26523,8 +26523,15 @@ function tuiStick(e, end) {
   for (const k in want) if (!!TUI.held[k] !== want[k]) { TUI.held[k] = want[k]; tkey(k, want[k]); }
 }
 // floating joystick: hidden until a finger lands on the left half of the screen, then it appears under that finger (a throw drag from the QB keeps its own touch)
-const STICK_SETS = ['pocket', 'run', 'kickoff', 'def', 'flight'];
-function tuiStickEnd(e) { if (tpad._id == null) return; tuiStick(e, true); tpad._id = null; tpad.style.display = 'none'; }
+const STICK_SETS = ['pocket', 'run', 'kickoff', 'def'];   // (no stick while a pass is in the air: the whole screen is swipes for the catch)
+function tuiStickEnd(e) {
+  if (tpad._id == null) return;
+  // a quick tap on the stick side (no drag) in the pocket flips lob / bullet
+  if (e.pointerId === tpad._id && (state === 'pocket' || state === 'drop') && e.type === 'pointerup' && performance.now() - tpad._t0 < 300) {
+    const lp = layPt(e);
+    if (Math.hypot(lp.x - tpad._p0.x, lp.y - tpad._p0.y) < 14) { bulletMode = !bulletMode; popup(qb, bulletMode ? 'BULLET' : 'LOB', '#ffd94a'); }
+  }
+  tuiStick(e, true); tpad._id = null; tpad.style.display = 'none'; }
 // the stick lives on the side away from where the play is going: opposite the aiming reticle on offense, on the offense's side of the ball on defense
 // (+1 = right half of the screen; the field is drawn mirrored). The buttons take the other side.
 // (the screen splits at the line of scrimmage. On offense: the offensive side aims / throws, the defensive side is the joystick. On defense: the
@@ -26537,23 +26544,26 @@ function stickSide() {
 }
 // which half of the screen (+1 right, -1 left) a finger is on: split at the line of scrimmage (the middle of the screen for a kick return)
 function touchHalf(e) {
-  if (TUI.set === 'kickoff') return (layPt(e).x >= (document.documentElement.classList.contains('rot') ? innerHeight : innerWidth) / 2) ? 1 : -1;
+  if (TUI.set === 'kickoff' || TUI.set === 'flight' || (TUI.set === 'run' && !aiOff()))   // (a ball carrier / a catch: the screen splits down the middle, the stick keeps the side it had and the other half is swipes)
+    return (layPt(e).x >= (document.documentElement.classList.contains('rot') ? innerHeight : innerWidth) / 2) ? 1 : -1;
   const z = camZ(), losX = W / 2 + MIRROR * z * (los - camX);
   return pointerPos(e).x >= losX ? 1 : -1;
 }
 window.addEventListener('pointerdown', e => {
   if (!TUI.on || (e.pointerType !== 'touch' && e.button !== 0) || tpad._id != null || !STICK_SETS.includes(TUI.set) || (e.target.closest && e.target.closest('#tbtns'))) return;
-  const lp = layPt(e);
+  const lp = layPt(e), py = pointerPos(e).y;
+  if (py < TOP_BAR || py > H - BOT_BAR) return;   // (the top / bottom bars hold the pause, audible and timeout buttons: a touch there is theirs, never the stick)
   if (touchHalf(e) !== stickSide()) return;
   e.stopImmediatePropagation();   // (this finger is the stick: the canvas never sees it, so it can't start a throw drag or a swipe)
-  tpad._id = e.pointerId; swipeFrom = null; bulletTap = null;
+  tpad._id = e.pointerId; swipeFrom = null; bulletTap = null; tpad._t0 = performance.now(); tpad._p0 = lp;
   tpad.style.display = 'block';
   const R = tpad.offsetWidth / 2;
   tpad.style.left = (lp.x - R) + 'px'; tpad.style.top = (lp.y - R) + 'px'; tpad.style.bottom = 'auto';
   tuiStick(e);
 }, true);
-window.addEventListener('pointermove', e => { if (tpad._id === e.pointerId) tuiStick(e); });
-for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, e => { if (tpad._id === e.pointerId) tuiStickEnd(e); });
+// (capture + stopImmediatePropagation: the stick finger's moves and release never reach the aim / throw code, so steering can't move the reticle or let go of a throw)
+window.addEventListener('pointermove', e => { if (tpad._id === e.pointerId) { tuiStick(e); e.stopImmediatePropagation(); } }, true);
+for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, e => { if (tpad._id === e.pointerId) { tuiStickEnd(e); e.stopImmediatePropagation(); } }, true);
 const tpause = document.getElementById('tpause');   // (the real pause button is the one on the canvas: this one stays hidden)
 // every frame-ish: which buttons, whether the layer shows at all (not on menus / results / the pause menu), the rotate-me notice
 setInterval(() => {
