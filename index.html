@@ -71,6 +71,14 @@ const touchText = t => typeof t !== 'string' ? t : t
   .replace(/^SPACE pause.*$/, 'tap = skip  |  hold = slow-mo  |  pinch = zoom')
   .replace(/^or press Space$/, '').replace(/\s*-\s*BACKSPACE to reset the play/, '')
   .replace(/[▶▸]/g, '►').replace(/[◀◂]/g, '◄').replace(/▴/g, '▲').replace(/▾/g, '▼');   // (phones draw ▶ / ◀ as colour emoji: these look-alikes have no emoji form)
+{   // touch mode: every font size is TEXT_K x bigger (menus, HUD, popups, tips): the one place the canvas font is set
+  const fd = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'font');
+  Object.defineProperty(CanvasRenderingContext2D.prototype, 'font', {
+    configurable: true, enumerable: true, get() { return fd.get.call(this); },
+    set(v) { fd.set.call(this, TOUCH && typeof v === 'string' ? v.replace(/(\d+(?:\.\d+)?)px/, (m, n) => Math.round(n * TEXT_K * 10) / 10 + 'px') : v); },
+  });
+}
+const TEXT_K = 1.2;   // phones / tablets: text this much bigger (see the font setter above)
 {   // a widened touch canvas (PAD): anything that fills the whole 1280 width (bars, dimmers, ruled lines, banners' paper) runs on out to the screen edges
   const fr = CanvasRenderingContext2D.prototype.fillRect;
   CanvasRenderingContext2D.prototype.fillRect = function (x, y, w, h) { return PAD && x === 0 && w === 1280 ? fr.call(this, -PAD, y, w + 2 * PAD, h) : fr.call(this, x, y, w, h); };
@@ -3068,7 +3076,7 @@ function impactSfx({ noiseDur, noiseFreq, noiseQ, noiseVol, thumpHz, thumpDur, t
   const src = a.createBufferSource(), band = a.createBiquadFilter(), ng = a.createGain();
   src.buffer = noiseBuf;
   band.type = 'bandpass'; band.frequency.value = noiseFreq; band.Q.value = noiseQ;
-  ng.gain.setValueAtTime(noiseVol, t);
+  ng.gain.setValueAtTime(0.0001, t); ng.gain.linearRampToValueAtTime(noiseVol, t + 0.004);   // (a few ms of attack: a gain that jumps straight to full clicks on phones)
   ng.gain.exponentialRampToValueAtTime(0.0001, t + noiseDur);
   src.connect(band); band.connect(ng); ng.connect(sfxOut(a));
   src.start(t, Math.random() * 0.5); src.stop(t + noiseDur + 0.02);
@@ -3076,7 +3084,7 @@ function impactSfx({ noiseDur, noiseFreq, noiseQ, noiseVol, thumpHz, thumpDur, t
   o.type = 'sine';
   o.frequency.setValueAtTime(thumpHz, t);
   o.frequency.exponentialRampToValueAtTime(thumpHz * 0.45, t + thumpDur);
-  og.gain.setValueAtTime(thumpVol, t);
+  og.gain.setValueAtTime(0.0001, t); og.gain.linearRampToValueAtTime(thumpVol, t + 0.004);
   og.gain.exponentialRampToValueAtTime(0.0001, t + thumpDur);
   o.connect(og); og.connect(sfxOut(a));
   o.start(t); o.stop(t + thumpDur + 0.02);
@@ -3109,7 +3117,7 @@ function clipSfx([kind, s, e], vol) {
   clipLast[kind] = t;
   const src_ = a.createBufferSource(), g = a.createGain();
   src_.buffer = buf;
-  g.gain.setValueAtTime(vol, t);
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + 0.006);   // (a clip cut from a longer strip starts mid-wave: a short fade-in stops the click)
   const fade = Math.min(CLIP_FADE[kind] || 0.06, (e - s) * 0.6);
   g.gain.setValueAtTime(vol, t + (e - s) - fade);
   g.gain.linearRampToValueAtTime(0, t + (e - s));
@@ -17493,7 +17501,7 @@ function draw() {
       if (tut.audAt == null) tut.audAt = performance.now();
       const t = (performance.now() - tut.audAt) / 1000;
       if (t < TUT_FLASH.secs && Math.floor(t * TUT_FLASH.rate * 2) % 2 === 0) {
-        ctx.save(); ctx.strokeStyle = '#fff36b'; ctx.lineWidth = 5; ctx.shadowColor = '#fff36b'; ctx.shadowBlur = 18;
+        ctx.save(); ctx.strokeStyle = '#fff36b'; ctx.lineWidth = 5; ctx.shadowColor = '#fff36b'; ctx.shadowBlur = TOUCH ? 0 : 18;
         ctx.strokeRect(b.x - 4, b.y - 4, b.w + 8, b.h + 8); ctx.restore();
       }
     }
@@ -17512,7 +17520,7 @@ function draw() {
       if (tut.toAt == null) tut.toAt = performance.now();
       const t = (performance.now() - tut.toAt) / 1000;
       if (Math.floor(t * TUT_FLASH.rate * 2) % 2 === 0) {
-        ctx.save(); ctx.strokeStyle = '#fff36b'; ctx.lineWidth = 5; ctx.shadowColor = '#fff36b'; ctx.shadowBlur = 18;
+        ctx.save(); ctx.strokeStyle = '#fff36b'; ctx.lineWidth = 5; ctx.shadowColor = '#fff36b'; ctx.shadowBlur = TOUCH ? 0 : 18;
         ctx.strokeRect(b.x - 4, b.y - 4, b.w + 8, b.h + 8); ctx.restore();
       }
     }
@@ -20012,22 +20020,25 @@ function drawBgWide(img) {
   ctx.drawImage(img, 400, 0, PAD, H, -PAD, 0, PAD, H);
   ctx.drawImage(img, 560, 0, PAD, H, W, 0, PAD, H);
 }
+const DESK_X = 240;   // px of desk built past each side of the 16:9 page (WIDE_MAX's extra width is at most 224)
 function deskBg() {
   if (!DESK_BG) {
-    const c = DESK_BG = document.createElement('canvas'); c.width = W; c.height = H;
+    // (built DESK_X wider on each side, so a widened touch screen gets real desk, with the same vignette, out to its edges)
+    const c = DESK_BG = document.createElement('canvas'); c.width = W + 2 * DESK_X; c.height = H;
     const g = c.getContext('2d'), r = seeded(3);
-    g.fillStyle = '#b07a45'; g.fillRect(0, 0, W, H);
+    g.translate(DESK_X, 0);
+    g.fillStyle = '#b07a45'; g.fillRect(-DESK_X, 0, W + 2 * DESK_X, H);
     for (let y = 0; y < H; y += 3) {   // wood grain: wavy streaks along the desk
       g.strokeStyle = `rgba(${r() < 0.5 ? '90,50,20' : '220,170,110'},${0.05 + r() * 0.12})`; g.lineWidth = 1 + r() * 2;
       const ph = r() * 6, amp = 2 + r() * 5; g.beginPath();
-      for (let x = 0; x <= W; x += 20) g.lineTo(x, y + Math.sin(x / 140 + ph) * amp);
+      for (let x = -DESK_X; x <= W + DESK_X; x += 20) g.lineTo(x, y + Math.sin(x / 140 + ph) * amp);
       g.stroke();
     }
     g.fillStyle = 'rgba(60,30,10,0.35)';   // the plank seams
-    for (const y of [180, 400, 610]) g.fillRect(0, y, W, 3);
-    const vg = g.createRadialGradient(W / 2, H / 2, 200, W / 2, H / 2, 800);
+    for (const y of [180, 400, 610]) g.fillRect(-DESK_X, y, W + 2 * DESK_X, 3);
+    const vg = g.createRadialGradient(W / 2, H / 2, 200, W / 2, H / 2, 800 + DESK_X);
     vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(30,15,0,0.45)');
-    g.fillStyle = vg; g.fillRect(0, 0, W, H);
+    g.fillStyle = vg; g.fillRect(-DESK_X, 0, W + 2 * DESK_X, H);
     // a pencil lying on the desk (bottom right) and an eraser (top left)
     g.save(); g.translate(990, 650); g.rotate(-0.22);
     g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(-196, 8, 380, 22);
@@ -20042,7 +20053,7 @@ function deskBg() {
     g.fillStyle = '#ef8fa0'; g.fillRect(-60, -22, 120, 44); g.fillStyle = '#d97085'; g.fillRect(-60, 12, 120, 10);
     g.restore();
   }
-  drawBgWide(DESK_BG);
+  ctx.drawImage(DESK_BG, -DESK_X, 0);
 }
 // a panel with titles sitting in gaps cut into its top border (lx = null centers the title)
 // panels are notes torn out of a notebook: slightly uneven edges (seeded per box), faint ruled lines, a red margin,
@@ -23611,6 +23622,7 @@ function silenceLoops() {
   try {
     if (wxRainEl) { wxRainEl._v = 0; wxRainEl.volume = 0; if (!wxRainEl.paused) wxRainEl.pause(); }
     for (const el of stepEls) if (el) { el._v = 0; el.volume = 0; if (!el.paused) el.pause(); }
+    for (const n of stepWA) if (n && actx) { n.g.gain.cancelScheduledValues(actx.currentTime); n.g.gain.value = 0; }
     if (wxAud && actx) wxAud.wg.gain.cancelScheduledValues(actx.currentTime), wxAud.wg.gain.value = 0;
   } catch (e) {}
 }
@@ -23660,7 +23672,25 @@ function controlledPlayer() {
   if (state === 'flight' && tgt) return tgt;
   return null;
 }
+// the footsteps' loop as a decoded buffer (needs the audio context; from a file:// page the fetch fails and the HTML audio loop below stays)
+let stepBuf = null, stepTried = false;
+const stepWA = [null, null];
+function stepLoad() {
+  if (stepTried || !actx) return;
+  stepTried = true;
+  fetch('audio/footsteps.mp3').then(r => r.arrayBuffer()).then(b => new Promise((res, rej) => actx.decodeAudioData(b, res, rej))).then(buf => {
+    const d = buf.getChannelData(0), sr = buf.sampleRate, span = Math.round(0.04 * sr);
+    const zc = t => {   // the nearest rising zero crossing: loop points there join without a jump
+      const i = Math.round(t * sr); let best = i, bv = Infinity;
+      for (let k = -span; k <= span; k++) { const j = i + k; if (j >= 1 && j < d.length && d[j - 1] <= 0 && d[j] > 0 && Math.abs(d[j]) < bv) { bv = Math.abs(d[j]); best = j; } }
+      return best / sr;
+    };
+    stepBuf = { buf, from: zc(STEPS.from), to: zc(STEPS.to) };
+  }).catch(() => {});
+}
 function stepAudio() {
+  const now = performance.now();
+  if (!stepTried && actx) stepLoad();
   if (!sndOn()) { silenceLoops(); return; }
   const on = sndOn() && !(rec && rec.replaying) && state !== 'pre' && state !== 'done';
   const me = on ? controlledPlayer() : null, spd = p => p ? Math.hypot(p.vx || 0, p.vy || 0) / YD : 0;
@@ -23676,6 +23706,23 @@ function stepAudio() {
   [[me, STEPS.vol], [other, STEPS.vol * STEPS.other]].forEach(([p, base], i) => {
     const s = spd(p), airborne = p && (p.z > 2 * S || p.action === 'dive' || p.action === 'slide' || p.action === 'down');
     const want = p && !airborne && s > STEPS.min ? base * Math.min(1, (s - STEPS.min) / 4) * VOL() * duck : 0;
+    if (stepBuf && actx && actx.state === 'running') {   // the loop as a Web Audio buffer: sample-exact loop points on zero crossings, nothing is seeked (the HTML element's seek back to the loop start was the click)
+      let n = stepWA[i];
+      if (!n && want > 0.002) {
+        const src = actx.createBufferSource(), g = actx.createGain();
+        src.buffer = stepBuf.buf; src.loop = true; src.loopStart = stepBuf.from; src.loopEnd = stepBuf.to; g.gain.value = 0;
+        src.connect(g); g.connect(sfxOut(actx));
+        src.start(0, stepBuf.from + Math.random() * (stepBuf.to - stepBuf.from));
+        n = stepWA[i] = { src, g };
+      }
+      if (n) {
+        const t = actx.currentTime, top = WR_TOP / YD, r = STEPS.rate[0] + (STEPS.rate[1] - STEPS.rate[0]) * Math.min(1, s / top);
+        n.src.playbackRate.setTargetAtTime(Math.max(0.5, Math.min(STEPS.max, r)), t, 0.05);
+        n.g.gain.setTargetAtTime(p && !airborne && s > STEPS.min ? base * Math.min(1, (s - STEPS.min) / 4) : 0, t, 0.08);   // (the master gain already carries the volume setting and the pause duck)
+      }
+      if (stepEls[i] && !stepEls[i].paused) stepEls[i].pause();
+      return;
+    }
     let el = stepEls[i];   // (the volume is tracked here, never read back off the element: phones that ignore .volume read 1, which kept the steps playing at full volume)
     if (want > 0.002 && !el) { try { el = stepEls[i] = new Audio('audio/footsteps.mp3'); el.volume = 0; el.preservesPitch = false; el.mozPreservesPitch = false; el.webkitPreservesPitch = false; } catch (e) { return; } }
     if (!el) return;
@@ -23685,7 +23732,8 @@ function stepAudio() {
     try { el.playbackRate = Math.max(0.5, Math.min(STEPS.max, r)); } catch (e) {}
     if (nv > 0.002) {
       if (el.paused) { if (el.currentTime < STEPS.from || el.currentTime > STEPS.to) el.currentTime = STEPS.from + Math.random() * (STEPS.to - STEPS.from); el.play().catch(() => {}); }
-      else if (el.currentTime > STEPS.to) el.currentTime -= STEPS.to - STEPS.from;   // (the steady stretch loops)
+      else if (el.currentTime > STEPS.to) { el.volume = 0; el._dip = now + 90; el.currentTime -= STEPS.to - STEPS.from; }   // (the steady stretch loops: a seek clicks, so he is muted for a beat around it)
+      if (el._dip > now) el.volume = 0;
     } else if (!el.paused) el.pause();
   });
 }
@@ -24399,7 +24447,7 @@ function drawTour() {
   const st = tour.steps[tour.i], rects = st.rect ? [].concat(st.rect()) : [], pad = 6, pulse = 0.5 + 0.5 * Math.sin(performance.now() / 260);
   ctx.save();
   ctx.fillStyle = 'rgba(24,18,8,0.6)';
-  ctx.beginPath(); ctx.rect(0, 0, W, H); rects.forEach(r => ctx.rect(r.x - pad, r.y - pad, r.w + pad * 2, r.h + pad * 2)); ctx.fill('evenodd');
+  ctx.beginPath(); ctx.rect(-PAD, 0, W + 2 * PAD, H); rects.forEach(r => ctx.rect(r.x - pad, r.y - pad, r.w + pad * 2, r.h + pad * 2)); ctx.fill('evenodd');
   ctx.strokeStyle = '#e8b61c'; ctx.lineWidth = 3 + pulse * 2;
   rects.forEach(r => ctx.strokeRect(r.x - pad, r.y - pad, r.w + pad * 2, r.h + pad * 2));
   // the note goes wherever it covers the least of what is lit up
@@ -25740,7 +25788,7 @@ function drawTutPrompt() {
       // grey out everything but the button, then point at it
       const b = MENU_NEXT;
       ctx.fillStyle = 'rgba(30,25,10,0.35)';
-      ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.rect(b.x - 8, b.y - 10, b.w + 16, b.h + 18); ctx.fill('evenodd');
+      ctx.beginPath(); ctx.rect(-PAD, 0, W + 2 * PAD, H); ctx.rect(b.x - 8, b.y - 10, b.w + 16, b.h + 18); ctx.fill('evenodd');
       const bob = Math.sin(performance.now() / 180) * 6, tx = b.x + b.w / 2, ty = b.y - 24 + bob, ty0 = b.y - 24;
       ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 5; ctx.lineCap = 'round';
       ctx.beginPath(); ctx.moveTo(tx - 60, ty - 70); ctx.quadraticCurveTo(tx - 50, ty - 20, tx, ty); ctx.stroke();
@@ -25775,7 +25823,10 @@ crumpleSnap.width = W; crumpleSnap.height = H;
 let crumple = null, lastPage = null;
 const pageKey = () => (results ? results.screen + (teamPick ? ':pick' : '') : tut ? 'tutorial' : 'game') + (slotUI ? ':slots' : '') + (settingsOpen ? ':settings' : '');   // (the save / load and settings screens are pages too)
 function startCrumple() {
-  crumpleSnap.getContext('2d').drawImage(canvas, PAD, 0, W, H, 0, 0, W, H);   // (just the 16:9 middle)
+  // (just the 16:9 middle. Phones: a half-size snapshot, a quarter of the pixels to copy and to draw through every facet: the copy was the hitch at a page change)
+  const K = TOUCH ? 0.5 : 1;
+  crumpleSnap.width = Math.round(W * K); crumpleSnap.height = Math.round(H * K);
+  crumpleSnap.getContext('2d').drawImage(canvas, PAD, 0, W, H, 0, 0, crumpleSnap.width, crumpleSnap.height);
   const r = seeded(Math.floor(Math.random() * 1e6) + 1), G = TOUCH ? { ...CRUMPLE, gx: 5, gy: 3 } : CRUMPLE, pts = [];   // (phones: fewer, bigger facets: each one is a clipped draw, a lot of them at once was a stutter)
   for (let j = 0; j <= G.gy; j++) for (let i = 0; i <= G.gx; i++) {
     const u = i / G.gx * 2 - 1, v = j / G.gy * 2 - 1;
@@ -25838,7 +25889,8 @@ function drawCrumple() {
     // (only this facet's patch of the page, not the whole snapshot, is drawn through the clip)
     const bx0 = Math.max(0, Math.min(s[0].sx, s[1].sx, s[2].sx) - 2), by0 = Math.max(0, Math.min(s[0].sy, s[1].sy, s[2].sy) - 2);
     const bx1 = Math.min(W, Math.max(s[0].sx, s[1].sx, s[2].sx) + 2), by1 = Math.min(H, Math.max(s[0].sy, s[1].sy, s[2].sy) + 2);
-    ctx.drawImage(crumpleSnap, bx0, by0, bx1 - bx0, by1 - by0, bx0, by0, bx1 - bx0, by1 - by0);
+    const SK = crumpleSnap.width / W;
+    ctx.drawImage(crumpleSnap, bx0 * SK, by0 * SK, (bx1 - bx0) * SK, (by1 - by0) * SK, bx0, by0, bx1 - bx0, by1 - by0);
     ctx.restore();
     // creases: each facet catches the light a little differently as it folds
     const k = f * (shade - 0.35) * 0.5;
@@ -26418,8 +26470,9 @@ function frame(now) {
   const page = pageKey();   // (the canvas still holds the old page here: that's what crumples)
   if (lastPage !== null && page !== lastPage) startCrumple();
   lastPage = page;
-  if (TUI.on && now - lastPaint < PAINT_MIN) return;   // (phones: drawn at most ~60 times a second even on a 90 / 120 Hz screen; the game steps above are unaffected)
+  if (TUI.on && now - lastPaint < paintMin) return;   // (phones: drawn at most ~60 times a second even on a 90 / 120 Hz screen, ~30 when a frame takes too long to paint; the game steps above are unaffected)
   lastPaint = now;
+  const paintT0 = performance.now();
   if (PAD) { ctx.fillStyle = '#111'; ctx.fillRect(0, 0, canvas.width, H); ctx.save(); ctx.translate(PAD, 0); }   // (the 16:9 game sits in the middle of the wider canvas)
   if (hl) { draw(); if (hl) drawHlBar(); hlDelStep(); if (hl) drawHlDel(); } else if (results) drawMenus(); else draw();
   if (settingsOpen) drawSettings();
@@ -26427,6 +26480,10 @@ function frame(now) {
   drawCrumple();
   ioDrawToast();
   if (PAD) ctx.restore();
+  if (TUI.on) {   // how long painting took, smoothed: slow frames drop the paint rate to ~30 (so the game keeps up and the thread isn't always behind), fast ones bring it back
+    paintAvg += (performance.now() - paintT0 - paintAvg) * 0.1;
+    if (paintAvg > PAINT_SLOW) paintMin = PAINT_MIN_SLOW; else if (paintAvg < PAINT_SLOW * 0.65) paintMin = PAINT_MIN;
+  }
 }
 // the first touch (a menu, long before a play) gets everything that would otherwise be built mid-play ready: the audio context and its clip buffer (decoded on
 // first use: the hitch at the first catch / tackle / throw), the one-shot sound elements and the footstep loops (the hitch at the first snap)
@@ -26441,8 +26498,8 @@ function warmUp() {
 }
 window.addEventListener('pointerdown', warmUp, { capture: true, once: true });
 window.addEventListener('keydown', warmUp, { capture: true, once: true });
-let lastPaint = 0;
-const PAINT_MIN = 15;   // ms between painted frames in touch mode
+let lastPaint = 0, paintAvg = 0, paintMin = 15;
+const PAINT_MIN = 15, PAINT_MIN_SLOW = 31, PAINT_SLOW = 12;   // ms: between painted frames normally / when painting is slow; a smoothed paint time over PAINT_SLOW counts as slow
 // the screen stays on in touch mode, even with no touches for a long stretch (the Wake Lock API; asked for on the first touch, taken again when the page comes back)
 let wakeLock = null;
 async function keepAwake() {
@@ -26514,13 +26571,14 @@ const tuiEl = document.getElementById('tui'), tbtns = document.getElementById('t
 function tkey(code, down) { if (MIRROR > 0 && (code === 'KeyA' || code === 'KeyD')) code = code === 'KeyA' ? 'KeyD' : 'KeyA'; window.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code, bubbles: true, cancelable: true })); }
 // touch mode: the canvas fills the whole screen (stretched to the phone's ratio) and the page is forced to landscape
 // (orientation lock where the browser allows it, else html.rot turns the page 90 deg while the phone is held upright)
-let rotNow = false, rotVotes = 0;
+let rotNow = false, rotVotes = 0, rotInit = false;
 function fitScreen() {
   const de = document.documentElement;
   // held upright = turned 90 deg. The screen's own orientation decides (the window's size jumps around for a moment on a page change / fullscreen / the address bar and
   // used to flip the game), and a change has to hold for a few checks before it counts
   const o = screen.orientation && screen.orientation.type, want = TUI.on && (o ? o.startsWith('portrait') : innerHeight > innerWidth);
-  if (want === rotNow) rotVotes = 0; else if (++rotVotes >= 3 || !TUI.on) { rotNow = want; rotVotes = 0; }
+  if (!rotInit && TUI.on) { rotInit = true; rotNow = want; rotVotes = 0; }   // (the first check counts at once: the game opens in landscape, never turned back after a moment)
+  else if (want === rotNow) rotVotes = 0; else if (++rotVotes >= 3 || !TUI.on) { rotNow = want; rotVotes = 0; }
   const rot = rotNow;
   de.classList.toggle('fill', TUI.on);
   de.classList.toggle('rot', rot);
