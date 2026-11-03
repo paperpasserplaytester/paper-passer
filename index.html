@@ -24682,7 +24682,7 @@ const SET_BTNS = {
   rep: { x: SET_X, y: 294, w: 440, h: 54 }, qtr: { x: SET_X, y: 362, w: 440, h: 64 },
   save: { x: SET_X, y: 440, w: 210, h: 54 }, load: { x: SET_X + 230, y: 440, w: 210, h: 54 },
   simDef: { x: SET_X, y: 504, w: 210, h: 54 }, autoSw: { x: SET_X + 230, y: 504, w: 210, h: 54 },
-  back: { x: SET_X + 110, y: 618, w: 220, h: 48 },
+  back: { x: SET_X, y: 618, w: 210, h: 48 }, mobile: { x: SET_X + 230, y: 618, w: 210, h: 48 },
 };
 const KEY_BTNS = BIND_ACTIONS.map((a, i) => ({ x: 665, y: 78 + i * 37, w: 540, h: 33 }));
 const KEY_RESET = { x: 840, y: 626, w: 190, h: 36 };
@@ -24752,6 +24752,7 @@ function drawSettings() {
   ctx.font = 'bold 17px monospace';
   if (settingsNote && performance.now() - settingsNote.t0 < 2500) { ctx.fillStyle = RES.gold; ctx.fillText(settingsNote.text, SET_X + 220, 606); }
   menuBtn(B.back, 'BACK', Y, 24);
+  menuBtn(B.mobile, `MOBILE MODE: ${TUI.on ? 'ON' : 'OFF'}`, Y, 17);
   if (TUI.on) {   // phones / tablets: no keys to rebind, the touch controls instead
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; let ty = BIND_LIST.top + 14;
     for (const [k, v] of TOUCH_HELP) {
@@ -24800,6 +24801,7 @@ function settingsClick(p) {
   else if (inBtn(p, B.save) && canSave()) slotUI = { mode: 'save', scroll: 0, confirm: null };
   else if (inBtn(p, B.load) && hasSave() && !tut) slotUI = { mode: 'load', scroll: 0, confirm: null };
   else if (inBtn(p, B.back)) settingsOpen = false;
+  else if (inBtn(p, B.mobile)) { SETTINGS.mobile = !TUI.on; tuiSet(SETTINGS.mobile); }   // (touch controls: on by default on a phone / tablet, off on a PC; this overrides that)
   saveSettings();
 }
 function buildSave() {
@@ -25380,15 +25382,15 @@ const boundKey = id => {   // (a directional key reads for the way you drive: sp
   const a = BIND_ACTIONS.find(x => x[0] === (MIRROR > 0 && BIND_ACTIONS.some(y => y[0] === id + 'R') ? id + 'R' : id)), k = a && bindKeyOf(a);
   return k ? keyName(k) : '?';
 };
-const TOUCH_TUT = { up: 'swipe up', down: 'swipe down', right: 'swipe back', sprint: 'swipe forward', stiff: 'swipe down', truck: 'swipe forward', spin: 'tap SPIN', dive: 'swipe back', hurdle: 'swipe up', protect: 'hold PROTECT', dtackle: 'swipe back', switchD: 'tap SWITCH', move: 'the stick' };
+const TOUCH_TUT = { up: 'swipe up', down: 'swipe down', right: 'swipe back', sprint: 'swipe forward', stiff: 'swipe down with two fingers', truck: 'swipe forward', spin: 'a circle with a finger', dive: 'swipe back', hurdle: 'swipe up with two fingers', protect: 'hold PROTECT', dtackle: 'swipe back', switchD: 'tap SWITCH', move: 'the stick' };
 const TOUCH_TUT_FIX = [   // lessons whose wording changes on a phone (the removed buttons / keys become swipes and taps)
   [/Right-click \(or \{dive\}\) for a faster, flatter bullet/, 'Tap LOB / BULLET for a faster, flatter bullet'],
-  [/double-tap \{up\} or \{down\}/, 'double-tap JUKE UP or JUKE DOWN'],
+  [/double-tap \{up\} or \{down\}/, 'swipe up or down'],
   [/press \{stiff\} or click AUDIBLE/, 'tap AUDIBLE'],
   [/Press \{hurdle\} or \{switchD\} to switch/, 'Tap SWITCH to switch'],
   [/press \{spin\} as the ball arrives/, 'swipe up as the ball arrives'],
   [/While blocked: A or D toward the blocker and QB to bull rush, \{up\} or \{down\} to swim/, 'While blocked: push the stick toward the blocker and QB to bull rush, up or down to swim'],
-  [/press \{spin\}/, 'tap SPIN'],
+  [/press \{spin\}/, 'draw a circle with a finger'],
 ];
 const tutText = s => TOUCH ? TOUCH_TUT_FIX.reduce((t, [re, to]) => t.replace(re, to), s).replace(/\{(\w+)\}/g, (m, id) => TOUCH_TUT[id] || m).replace(/\b(?:press|hold) (swipe|tap)/g, '$1') : s.replace(/\{(\w+)\}/g, (m, id) => id === 'move' ? (['up', 'left', 'down', 'right'].some(k => SETTINGS.binds && SETTINGS.binds[k]) ? ['up', 'left', 'down', 'right'].map(boundKey).join(' ') : 'WASD') : BIND_ACTIONS.some(a => a[0] === id) ? boundKey(id) : m);
 const TUT_STEPS = [
@@ -26461,13 +26463,13 @@ addEventListener('resize', fitScreen);
 const TSETS = {
   // (no timeout / next / celebrate buttons: a tap anywhere is NEXT, big plays and scores celebrate on their own; run / kickoff / defense sprint on their own,
   // and hurdle / stiff arm / truck / dive / hit stick / jump are swipes: see SWIPE below)
-  pre:    [['SNAP', 'tap', 'Space', 'big'], ['LOB / BULLET', 'tap', 'KeyV']],
+  pre:    [],   // (drag from the QB to snap and aim; double tap flips lob / bullet)
   next:   [],
   tap:    [],
   flight: [['DIVE (SWIPE DOWN)', 'tap', 'KeyS'], ['ONE HAND (SWIPE BACK)', 'tap', 'KeyD'], ['RUN CATCH (SWIPE FORWARD)', 'hold', 'KeyA']],
   pocket: [['SPIN', 'tap', 'KeyR', 'big'], ['JUKE UP', 'dbl', 'KeyW'], ['JUKE DOWN', 'dbl', 'KeyS'], ['STIFF ARM', 'hold', 'KeyQ'], ['STEP UP', 'hold', 'KeyA']],
-  run:    [['SPIN', 'tap', 'KeyR', 'big'], ['JUKE UP', 'dbl', 'KeyW'], ['JUKE DOWN', 'dbl', 'KeyS']],
-  kickoff: [['SPIN', 'tap', 'KeyR', 'big'], ['JUKE UP', 'dbl', 'KeyW'], ['JUKE DOWN', 'dbl', 'KeyS'], ['KNEEL / FAIR', 'tap', 'KeyD']],
+  run:    [],   // (spin = a circle drawn with a finger, juke = swipe up / down: see SPIN_GEST)
+  kickoff: [],   // (kneel / fair catch: push the stick backward)
   def:    [],   // (tap a defender to switch to him)
   replay: [['PAUSE', 'tap', 'Space', 'big']],
 };
@@ -26520,15 +26522,16 @@ function stickSide() {
   return -MIRROR * Math.sign(f) || 1;
 }
 window.addEventListener('pointerdown', e => {
-  if (!TUI.on || e.pointerType !== 'touch' || tpad._id != null || !STICK_SETS.includes(TUI.set) || aim || e.target.closest('#tbtns')) return;
+  if (!TUI.on || (e.pointerType !== 'touch' && e.button !== 0) || tpad._id != null || !STICK_SETS.includes(TUI.set) || (e.target.closest && e.target.closest('#tbtns'))) return;
   const lp = layPt(e), half = (document.documentElement.classList.contains('rot') ? innerHeight : innerWidth) / 2;
   if ((lp.x >= half ? 1 : -1) !== stickSide()) return;
-  tpad._id = e.pointerId; swipeFrom = null;
-  tpad.style.display = '';
+  e.stopImmediatePropagation();   // (this finger is the stick: the canvas never sees it, so it can't start a throw drag or a swipe)
+  tpad._id = e.pointerId; swipeFrom = null; bulletTap = null;
+  tpad.style.display = 'block';
   const R = tpad.offsetWidth / 2;
   tpad.style.left = (lp.x - R) + 'px'; tpad.style.top = (lp.y - R) + 'px'; tpad.style.bottom = 'auto';
   tuiStick(e);
-});
+}, true);
 window.addEventListener('pointermove', e => { if (tpad._id === e.pointerId) tuiStick(e); });
 for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, e => { if (tpad._id === e.pointerId) tuiStickEnd(e); });
 const tpause = document.getElementById('tpause');   // (the real pause button is the one on the canvas: this one stays hidden)
@@ -26549,7 +26552,7 @@ setInterval(() => {
 // a finger on the page: touch mode on (even on a laptop with a screen), long-press is not a right-click; the first tap goes fullscreen + landscape
 window.addEventListener('pointerdown', e => {
   touchLong = e.pointerType === 'touch';
-  if (touchLong && TUI.q !== '0' && !TUI.on) tuiSet(true);
+  if (touchLong && TUI.q !== '0' && !TUI.on && SETTINGS.mobile !== false) tuiSet(true);   // (unless MOBILE MODE was turned off in settings)
 }, true);
 window.addEventListener('pointerup', e => {
   if (e.pointerType !== 'touch' || TUI.fs || !TUI.on) return;
@@ -26562,39 +26565,83 @@ window.addEventListener('pointerup', e => {
 const SWIPE = { min: 36 };   // px a finger must travel to count as a swipe
 // With the ball (run / kick return): up = hurdle (E), down = stiff arm (Q, held), the way he's going = truck (C, held), the other way = dive (V).
 // On defense: up = jump for the ball (W), the way he's going = hit stick (R), the other way = dive (T).
-// a quick tap on the field before the throw (not a drag from the QB) flips lob / bullet
-let bulletTap = null;
-window.addEventListener('pointerdown', e => { bulletTap = TUI.on && e.pointerType === 'touch' && (state === 'pocket' || state === 'drop') && tpad._id == null && !e.target.closest('#tbtns') ? { id: e.pointerId, ...layPt(e), t: performance.now(), aimed: !!aim } : null; });
+// a double tap on the field before the throw flips lob / bullet. (A touch in the pocket starts the throw drag, so a tap that doesn't move is
+// cancelled here before its release throws, and two of them in a row switch the pass.)
+let bulletTap = null, lastTapAt = 0;
+window.addEventListener('pointerdown', e => { bulletTap = TUI.on && e.pointerType === 'touch' && (state === 'pocket' || state === 'drop') && tpad._id == null ? { id: e.pointerId, ...layPt(e), t: performance.now() } : null; }, true);
 window.addEventListener('pointerup', e => {
   const s = bulletTap; if (!s || s.id !== e.pointerId) return;
   bulletTap = null;
-  const lp = layPt(e);
-  if (s.aimed || aim || tpad._id != null || Math.hypot(lp.x - s.x, lp.y - s.y) > 14 || performance.now() - s.t > 350 || (state !== 'pocket' && state !== 'drop')) return;
-  bulletMode = !bulletMode; popup(qb, bulletMode ? 'BULLET' : 'LOB', '#ffd94a');
-});
+  const lp = layPt(e), now = performance.now();
+  if (Math.hypot(lp.x - s.x, lp.y - s.y) > 14 || now - s.t > 300 || (state !== 'pocket' && state !== 'drop')) return;
+  aim = null;   // (a tap is not a throw)
+  if (now - lastTapAt < 400) { lastTapAt = 0; bulletMode = !bulletMode; popup(qb, bulletMode ? 'BULLET' : 'LOB', '#ffd94a'); }
+  else lastTapAt = now;
+}, true);
 const SWIPE_HOLD = { stiff: 450, truck: 350 };   // ms the stiff arm / truck key is held after the swipe
+// The ball carrier's moves (run / kick return) are one finger: swipe up / down = juke up / down (double-tap W / S), swipe toward / away from the way he runs
+// = truck / dive, a circle drawn with the finger = spin. Two fingers swiping up = hurdle, down = stiff arm.
+const SPIN_GEST = { turn: 5.3, minPath: 150, keep: 80 };   // radians swept around the path's centre, px of path, points kept
 let swipeFrom = null;
 const swipeSet = () => (state === 'flight' && !aiOff()) ? 'flight' : ['run', 'kickoff', 'def'].includes(tuiWhich()) ? tuiWhich() : '';
-canvas.addEventListener('pointerdown', e => { const set = TUI.on && e.pointerType === 'touch' ? swipeSet() : ''; swipeFrom = set ? { id: e.pointerId, set, ...layPt(e) } : null; }, true);
+canvas.addEventListener('pointerdown', e => {
+  const set = TUI.on && e.pointerType === 'touch' ? swipeSet() : '';
+  if (!set) { swipeFrom = null; return; }
+  const p = layPt(e), s = swipeFrom;
+  if (s && s.set === set && s.fingers.size && !s.done) { s.fingers.set(e.pointerId, p); s.multi = true; return; }   // (a second finger on the screen)
+  swipeFrom = { id: e.pointerId, set, fingers: new Map([[e.pointerId, p]]), multi: false, done: false, pts: [p] };
+}, true);
+function tuiKey(code, hold = TUI.tapMs) { tkey(code, true); setTimeout(() => tkey(code, false), hold); }
+window.addEventListener('pointermove', e => {
+  const s = swipeFrom;
+  if (!s || s.done || s.multi || e.pointerId !== s.id || (s.set !== 'run' && s.set !== 'kickoff')) return;
+  const pts = s.pts; pts.push(layPt(e)); if (pts.length > SPIN_GEST.keep) pts.shift();
+  let cx = 0, cy = 0, len = 0; for (const q of pts) { cx += q.x; cy += q.y; } cx /= pts.length; cy /= pts.length;
+  let turn = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    turn += Math.atan2((a.x - cx) * (b.y - cy) - (a.y - cy) * (b.x - cx), (a.x - cx) * (b.x - cx) + (a.y - cy) * (b.y - cy));
+    len += Math.hypot(b.x - a.x, b.y - a.y);
+  }
+  if (Math.abs(turn) >= SPIN_GEST.turn && len >= SPIN_GEST.minPath) { s.done = true; tuiKey('KeyR'); }
+}, true);
 window.addEventListener('pointerup', e => {
-  const s = swipeFrom; if (!s || s.id !== e.pointerId) return;
-  swipeFrom = null;
-  const lp = layPt(e), dx = lp.x - s.x, dy = lp.y - s.y;
+  const s = swipeFrom; if (!s || !s.fingers.has(e.pointerId)) return;
+  const st = s.fingers.get(e.pointerId); s.fingers.delete(e.pointerId);
+  if (!s.fingers.size) swipeFrom = null;
+  if (s.done) return;
+  const lp = layPt(e), dx = lp.x - st.x, dy = lp.y - st.y;
   if (Math.hypot(dx, dy) < SWIPE.min || swipeSet() !== s.set) return;
+  s.done = true;
   const vertical = Math.abs(dy) > Math.abs(dx), up = dy < 0;
   const who = s.set === 'flight' ? tgt : controlledPlayer() || runner;
   const along = MIRROR * Math.sign(dx) === Math.sign((who && who.vx) || (who && who.face) || 1);   // (the field is drawn mirrored)
-  let code, hold = TUI.tapMs;
-  if (s.set === 'flight') code = vertical ? (up ? 'KeyW' : 'KeyS') : along ? 'KeyA' : 'KeyD';
-  else if (s.set === 'def') { if (vertical) { if (!up) return; code = 'KeyW'; } else code = along ? 'KeyR' : 'KeyT'; }
-  else if (vertical) { code = up ? 'KeyE' : 'KeyQ'; if (!up) hold = SWIPE_HOLD.stiff; }
-  else if (along) { code = 'KeyC'; hold = SWIPE_HOLD.truck; }
-  else code = 'KeyV';
-  tkey(code, true); setTimeout(() => tkey(code, false), hold);
+  if (s.set === 'flight') return tuiKey(vertical ? (up ? 'KeyW' : 'KeyS') : along ? 'KeyA' : 'KeyD');
+  if (s.set === 'def') { if (vertical) { if (up) tuiKey('KeyW'); } else tuiKey(along ? 'KeyR' : 'KeyT'); return; }
+  if (vertical && s.multi) return up ? tuiKey('KeyE') : tuiKey('KeyQ', SWIPE_HOLD.stiff);   // (two fingers: hurdle / stiff arm)
+  if (vertical) {   // (one finger: a juke, a double tap of the up / down key)
+    const code = up ? 'KeyW' : 'KeyS';
+    tkey(code, true); tkey(code, false); tkey(code, true); setTimeout(() => tkey(code, false), TUI.tapMs);
+    return;
+  }
+  if (along) tuiKey('KeyC', SWIPE_HOLD.truck); else tuiKey('KeyV');
 }, true);
+window.addEventListener('pointercancel', e => { if (swipeFrom) { swipeFrom.fingers.delete(e.pointerId); if (!swipeFrom.fingers.size) swipeFrom = null; } }, true);
+// pinch to zoom in a replay (two fingers on the field; the wheel does the same on a computer)
+const pinch = { pts: new Map(), d: 0 };
+window.addEventListener('pointerdown', e => { if (e.pointerType === 'touch') { pinch.pts.set(e.pointerId, layPt(e)); pinch.d = 0; } }, true);
+window.addEventListener('pointermove', e => {
+  if (!pinch.pts.has(e.pointerId)) return;
+  pinch.pts.set(e.pointerId, layPt(e));
+  if (pinch.pts.size !== 2 || !(rec && rec.replaying)) return;
+  const [a, b] = [...pinch.pts.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+  if (pinch.d > 0 && d > 0) replayZoomT = Math.max(0.7, Math.min(4, replayZoomT * d / pinch.d));
+  pinch.d = d;
+}, true);
+for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, e => { pinch.pts.delete(e.pointerId); pinch.d = 0; }, true);
 document.addEventListener('contextmenu', e => { if (TUI.on) e.preventDefault(); });
 document.addEventListener('gesturestart', e => e.preventDefault());   // (Safari's pinch zoom)
-if (IS_MOBILE) tuiSet(true);
+if (TUI.q === '1' || (TUI.q !== '0' && (SETTINGS.mobile ?? IS_MOBILE))) tuiSet(true);   // (SETTINGS.mobile: the settings toggle; unset = on for phones / tablets, off for PCs)
 // installable / offline: the service worker (sw.js) keeps what was fetched; needs http(s), so not when opened from a file
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => {});
 
