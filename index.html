@@ -20003,7 +20003,14 @@ function paperBg() {
     }
     for (let i = 0; i < 2500; i++) { g.fillStyle = `rgba(90,70,40,${r() * 0.05})`; g.fillRect(r() * W, r() * H, 2, 2); }   // grain
   }
-  ctx.drawImage(PAPER_BG, 0, 0);
+  drawBgWide(PAPER_BG);
+}
+// a menu background on a widened touch canvas (PAD): the page continues past each side with a plain strip of itself (same ruled lines)
+function drawBgWide(img) {
+  ctx.drawImage(img, 0, 0);
+  if (!PAD) return;
+  ctx.drawImage(img, 400, 0, PAD, H, -PAD, 0, PAD, H);
+  ctx.drawImage(img, 560, 0, PAD, H, W, 0, PAD, H);
 }
 function deskBg() {
   if (!DESK_BG) {
@@ -20035,7 +20042,7 @@ function deskBg() {
     g.fillStyle = '#ef8fa0'; g.fillRect(-60, -22, 120, 44); g.fillStyle = '#d97085'; g.fillRect(-60, 12, 120, 10);
     g.restore();
   }
-  ctx.drawImage(DESK_BG, 0, 0);
+  drawBgWide(DESK_BG);
 }
 // a panel with titles sitting in gaps cut into its top border (lx = null centers the title)
 // panels are notes torn out of a notebook: slightly uneven edges (seeded per box), faint ruled lines, a red margin,
@@ -23602,8 +23609,8 @@ const sndOn = () => !results && !paused && !settingsOpen && !showKeys && !(rec &
 // paused / off the tab: the rain loop, the wind and the footsteps stop dead (no fade-out) and start again from the same place
 function silenceLoops() {
   try {
-    if (wxRainEl) { wxRainEl.volume = 0; if (!wxRainEl.paused) wxRainEl.pause(); }
-    for (const el of stepEls) if (el) { el.volume = 0; if (!el.paused) el.pause(); }
+    if (wxRainEl) { wxRainEl._v = 0; wxRainEl.volume = 0; if (!wxRainEl.paused) wxRainEl.pause(); }
+    for (const el of stepEls) if (el) { el._v = 0; el.volume = 0; if (!el.paused) el.pause(); }
     if (wxAud && actx) wxAud.wg.gain.cancelScheduledValues(actx.currentTime), wxAud.wg.gain.value = 0;
   } catch (e) {}
 }
@@ -23616,8 +23623,8 @@ function wxAudio() {
   const want = on ? WXI.rain * WX_SND.rain * VOL() * duck : 0;
   if (want > 0.002 && !wxRainEl) { try { wxRainEl = new Audio('audio/rain.mp3'); wxRainEl.loop = true; wxRainEl.volume = 0; } catch (e) {} }
   if (wxRainEl) {
-    const v = wxRainEl.volume, nv = v + Math.max(-WX_SND.fade * dt, Math.min(WX_SND.fade * dt, want - v));
-    wxRainEl.volume = Math.max(0, Math.min(1, nv));
+    const v = wxRainEl._v || 0, nv = Math.max(0, Math.min(1, v + Math.max(-WX_SND.fade * dt, Math.min(WX_SND.fade * dt, want - v))));   // (tracked here: phones that ignore .volume read 1 back, so the rain never faded out or paused)
+    wxRainEl._v = nv; wxRainEl.volume = nv;
     if (nv > 0.002 && wxRainEl.paused) wxRainEl.play().catch(() => {});
     else if (nv <= 0.002 && !wxRainEl.paused) wxRainEl.pause();
   }
@@ -23669,13 +23676,14 @@ function stepAudio() {
   [[me, STEPS.vol], [other, STEPS.vol * STEPS.other]].forEach(([p, base], i) => {
     const s = spd(p), airborne = p && (p.z > 2 * S || p.action === 'dive' || p.action === 'slide' || p.action === 'down');
     const want = p && !airborne && s > STEPS.min ? base * Math.min(1, (s - STEPS.min) / 4) * VOL() * duck : 0;
-    let el = stepEls[i];
+    let el = stepEls[i];   // (the volume is tracked here, never read back off the element: phones that ignore .volume read 1, which kept the steps playing at full volume)
     if (want > 0.002 && !el) { try { el = stepEls[i] = new Audio('audio/footsteps.mp3'); el.volume = 0; el.preservesPitch = false; el.mozPreservesPitch = false; el.webkitPreservesPitch = false; } catch (e) { return; } }
     if (!el) return;
-    el.volume = Math.max(0, Math.min(1, el.volume + Math.max(-STEPS.fade / 60, Math.min(STEPS.fade / 60, want - el.volume))));
+    const ev = el._v || 0, nv = Math.max(0, Math.min(1, ev + Math.max(-STEPS.fade / 60, Math.min(STEPS.fade / 60, want - ev))));
+    el._v = nv; el.volume = nv;
     const top = WR_TOP / YD, r = STEPS.rate[0] + (STEPS.rate[1] - STEPS.rate[0]) * Math.min(1, s / top);
     try { el.playbackRate = Math.max(0.5, Math.min(STEPS.max, r)); } catch (e) {}
-    if (el.volume > 0.002) {
+    if (nv > 0.002) {
       if (el.paused) { if (el.currentTime < STEPS.from || el.currentTime > STEPS.to) el.currentTime = STEPS.from + Math.random() * (STEPS.to - STEPS.from); el.play().catch(() => {}); }
       else if (el.currentTime > STEPS.to) el.currentTime -= STEPS.to - STEPS.from;   // (the steady stretch loops)
     } else if (!el.paused) el.pause();
@@ -26069,7 +26077,9 @@ canvas.addEventListener('pointerdown', e => {
     return;
   }
   if (state === 'drop' || state === 'pocket' || canPasserThrow()) {
-    aim = { sx: p.x, sy: p.y, cx: p.x, cy: p.y };
+    if (aim && aim.pid != null && aim.pid !== e.pointerId) return;   // (another finger is already aiming: this one never takes the aim over)
+    if (TOUCH && e.pointerType !== 'mouse' && !canPasserThrow() && !inCircle(p, qb)) return;   // (touch: only a drag from the QB aims; any other finger is a swipe / the stick)
+    aim = { sx: p.x, sy: p.y, cx: p.x, cy: p.y, pid: e.pointerId };
     canvas.setPointerCapture(e.pointerId);
   }
 });
@@ -26085,7 +26095,7 @@ canvas.addEventListener('pointermove', e => {
   if (Math.hypot(p.x - b.sx, p.y - b.sy) < BACKFIELD_DRAG) return;
   backfieldPress = null;
   snap();
-  if (state === 'drop' || state === 'pocket') aim = { sx: b.sx, sy: b.sy, cx: p.x, cy: p.y };
+  if (state === 'drop' || state === 'pocket') aim = { sx: b.sx, sy: b.sy, cx: p.x, cy: p.y, pid: e.pointerId };
 });
 canvas.addEventListener('pointerup', () => { backfieldPress = null; SCHED.drag = null; });
 // the home screen's schedule: drag its scroll bar (pressed on the bar), or drag the strip itself sideways
@@ -26133,6 +26143,7 @@ canvas.addEventListener('pointermove', e => {
     return;
   }
   if (!aim || aiOff()) return;   // (the computer's aim is its own: your mouse doesn't move it)
+  if (aim.pid != null && e.pointerId !== aim.pid) return;   // (only the finger that is aiming moves the reticle)
   const p = pointerPos(e);
   aim.cx = p.x; aim.cy = p.y;
   if (e.pointerType === 'mouse' && !(e.buttons & 1) && !(rec && rec.replaying)) releaseAim();   // (left let go while the right is held)
@@ -26156,6 +26167,7 @@ canvas.addEventListener('pointerup', e => {
     if (quick && !dragged && !finalReplay()) skipReplay();   // (a left drag does nothing)
     return;
   }
+  if (aim && aim.pid != null && e.pointerId !== aim.pid) return;   // (another finger lifting never throws the pass)
   releaseAim();
 });
 // letting go of the aim drag = the throw. Also called from pointermove: with the right button still down (the bullet toggle
@@ -26191,7 +26203,7 @@ canvas.addEventListener('wheel', e => {
   if (state !== 'pre') return;
   userZoomT = Math.max(1, Math.min(3, userZoomT * k));
 }, { passive: false });
-canvas.addEventListener('pointercancel', () => { aim = null; });
+canvas.addEventListener('pointercancel', e => { if (!aim || aim.pid == null || aim.pid === e.pointerId) aim = null; });
 // Right-click toggles lob (default, white line) / bullet (orange line). The
 // contextmenu event fires exactly once per right-click, even mid-drag.
 // After a touchdown, right-click celebrates instead.
@@ -26493,8 +26505,14 @@ const tuiEl = document.getElementById('tui'), tbtns = document.getElementById('t
 function tkey(code, down) { if (MIRROR > 0 && (code === 'KeyA' || code === 'KeyD')) code = code === 'KeyA' ? 'KeyD' : 'KeyA'; window.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code, bubbles: true, cancelable: true })); }
 // touch mode: the canvas fills the whole screen (stretched to the phone's ratio) and the page is forced to landscape
 // (orientation lock where the browser allows it, else html.rot turns the page 90 deg while the phone is held upright)
+let rotNow = false, rotVotes = 0;
 function fitScreen() {
-  const de = document.documentElement, rot = TUI.on && innerHeight > innerWidth;
+  const de = document.documentElement;
+  // held upright = turned 90 deg. The screen's own orientation decides (the window's size jumps around for a moment on a page change / fullscreen / the address bar and
+  // used to flip the game), and a change has to hold for a few checks before it counts
+  const o = screen.orientation && screen.orientation.type, want = TUI.on && (o ? o.startsWith('portrait') : innerHeight > innerWidth);
+  if (want === rotNow) rotVotes = 0; else if (++rotVotes >= 3 || !TUI.on) { rotNow = want; rotVotes = 0; }
+  const rot = rotNow;
   de.classList.toggle('fill', TUI.on);
   de.classList.toggle('rot', rot);
   // a screen wider than 16:9 gets more field on each side (PAD logical px) instead of black bars: the canvas is as wide as the screen, the HUD stays in the 16:9 middle (never stretched)
@@ -26564,7 +26582,10 @@ function tuiStick(e, end) {
 const STICK_SETS = ['pocket', 'run', 'kickoff', 'def'];   // (no stick while a pass is in the air: the whole screen is swipes for the catch)
 // (nor on a kick before it's taken: kickoffs, field goals and PATs are taps for the power / aim; a field goal / PAT is the 'tap' set anyway)
 // (your own punt: no stick until their returner has it either; their punt, where you rush / block it, is the normal defense set)
-const stickOn = name => STICK_SETS.includes(name) && !(name === 'kickoff' && kick && (['enter', 'wait', 'target', 'power', 'aim'].includes(kick.phase) || (kick.userKo && kick.punt && kickoff && kickoff.phase === 'flight')));
+// (the stick is only there when a player can move: nothing before a kick is taken, on a kickoff, punt, field goal or PAT, whoever kicks)
+const KICK_SETUP = ['enter', 'wait', 'target', 'power', 'aim'];
+const preKick = () => (state === 'kickoff' || state === 'kick') && ((kick && KICK_SETUP.includes(kick.phase)) || (state === 'kickoff' && kickoff && kickoff.phase === 'ready'));
+const stickOn = name => STICK_SETS.includes(name) && !preKick() && !(name === 'kickoff' && kick && kick.userKo && kick.punt && kickoff && kickoff.phase === 'flight');
 let stickTapAt = 0;
 function tuiStickEnd(e) {
   if (tpad._id == null) return;
