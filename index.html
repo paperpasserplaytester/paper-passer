@@ -19986,22 +19986,24 @@ const PAPER_COLOR = '#FAFAF7';   // the notebook paper's base colour (near white
 let PAPER_BG = null, DESK_BG = null;
 function paperBg() {
   if (!PAPER_BG) {
-    const c = PAPER_BG = document.createElement('canvas'); c.width = W; c.height = H;
+    // (built DESK_X wider on each side, with the blotches, ruling, creases and grain spread across all of it: a widened touch screen gets the same paper to its edges)
+    const PX = DESK_X, FW2 = W + 2 * PX, c = PAPER_BG = document.createElement('canvas'); c.width = FW2; c.height = H;
     const g = c.getContext('2d'), r = seeded(7);
-    g.fillStyle = PAPER_COLOR; g.fillRect(0, 0, W, H);
+    g.translate(PX, 0);
+    g.fillStyle = PAPER_COLOR; g.fillRect(-PX, 0, FW2, H);
     for (const [fx, fy, fx2, fy2] of [[W / 3, 0, W / 3 + 6, H], [0, H / 2, W, H / 2 - 5], [2 * W / 3, 0, 2 * W / 3 - 8, H]]) {   // fold marks: a shadow beside a highlight
       for (const [col, o] of [['rgba(90,80,60,0.07)', 0], ['rgba(255,255,255,0.7)', 2.5]]) { g.strokeStyle = col; g.lineWidth = 2.5; g.beginPath(); g.moveTo(fx + o, fy + o); g.lineTo(fx2 + o, fy2 + o); g.stroke(); }
     }
     for (let i = 0; i < 9; i++) {   // soft light / shadow blotches
-      const x = r() * W, y = r() * H, rad = 150 + r() * 300, gr = g.createRadialGradient(x, y, 0, x, y, rad);
+      const x = -PX + r() * FW2, y = r() * H, rad = 150 + r() * 300, gr = g.createRadialGradient(x, y, 0, x, y, rad);
       gr.addColorStop(0, r() < 0.5 ? 'rgba(255,255,255,0.35)' : 'rgba(120,100,60,0.07)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
-      g.fillStyle = gr; g.fillRect(0, 0, W, H);
+      g.fillStyle = gr; g.fillRect(-PX, 0, FW2, H);
     }
     g.fillStyle = 'rgba(80,140,210,0.32)';   // the ruled lines and the red margin
-    for (let y = 92; y < H; y += 32) g.fillRect(0, y, W, 1.5);
+    for (let y = 92; y < H; y += 32) g.fillRect(-PX, y, FW2, 1.5);
     g.fillStyle = 'rgba(220,70,70,0.4)'; g.fillRect(84, 0, 2, H);
     for (let i = 0; i < 14; i++) {   // creases: a light edge beside a dark one, a few kinks each
-      let x = r() * W, y = r() * H; const a = r() * Math.PI, len = 120 + r() * 380, steps = 5;
+      let x = -PX + r() * FW2, y = r() * H; const a = r() * Math.PI, len = 120 + r() * 380, steps = 5;
       const pts = [[x, y]];
       for (let s = 0; s < steps; s++) { x += Math.cos(a + (r() - 0.5) * 0.5) * len / steps; y += Math.sin(a + (r() - 0.5) * 0.5) * len / steps; pts.push([x, y]); }
       for (const [col, off] of [['rgba(255,255,255,0.55)', -1.2], ['rgba(90,70,40,0.09)', 1.2]]) {
@@ -20009,16 +20011,9 @@ function paperBg() {
         pts.forEach(([px, py], j) => j ? g.lineTo(px + off, py + off) : g.moveTo(px + off, py + off)); g.stroke();
       }
     }
-    for (let i = 0; i < 2500; i++) { g.fillStyle = `rgba(90,70,40,${r() * 0.05})`; g.fillRect(r() * W, r() * H, 2, 2); }   // grain
+    for (let i = 0; i < 2500; i++) { g.fillStyle = `rgba(90,70,40,${r() * 0.05})`; g.fillRect(-PX + r() * FW2, r() * H, 2, 2); }   // grain
   }
-  drawBgWide(PAPER_BG);
-}
-// a menu background on a widened touch canvas (PAD): the page continues past each side with a plain strip of itself (same ruled lines)
-function drawBgWide(img) {
-  ctx.drawImage(img, 0, 0);
-  if (!PAD) return;
-  ctx.drawImage(img, 400, 0, PAD, H, -PAD, 0, PAD, H);
-  ctx.drawImage(img, 560, 0, PAD, H, W, 0, PAD, H);
+  ctx.drawImage(PAPER_BG, -DESK_X, 0);
 }
 const DESK_X = 240;   // px of desk built past each side of the 16:9 page (WIDE_MAX's extra width is at most 224)
 function deskBg() {
