@@ -17088,10 +17088,12 @@ function resumeGame() {
   Object.assign(game, S.pre.game, { fastRunoff: false, runoff: 0 });
   nextLos = S.pre.los; nextDown = S.pre.down; nextLtg = S.pre.ltg; patMode = S.pre.patMode;
   STATS = S.pre.stats;
+  results = null;   // (reset only clears the menu screen itself when game.over; the restored game isn't over)
   reset();
 }
 function leaveGame() {
   if (twoP && twoP.flipped) flipSides();   // (two players: back to Player 1's side first)
+  endReplay();   // (leaving mid-replay: the tape's teams / weather / players go back first)
   suspendGame();
   let record = { w: 0, l: 0, t: 0 };
   try { record = { ...record, ...JSON.parse(localStorage.getItem(RECORD_KEY) || '{}') }; } catch (e) {}
@@ -26177,7 +26179,7 @@ canvas.addEventListener('pointerdown', e => {
 canvas.addEventListener('pointermove', e => { if (PR.drag) pracSetLoad(PR.drag, pointerPos(e).x); });
 window.addEventListener('pointerup', () => { PR.drag = null; });
 canvas.addEventListener('pointermove', e => {
-  if (pressAt && !(e.buttons & 1)) { pressAt = 0; replayLeft = null; }   // (same for the left button: slow motion ends when it's up)
+  if (pressAt && !(e.buttons & 1)) pressAt = 0;   // (same for the left button: slow motion ends when it's up)
   if (replayDrag && !(e.buttons & 2)) replayDrag = null;   // (a second button pressed / released while the other is held arrives as a move, not a down / up: the right drag must end when the right button is up)
   if (keysDrag) {   // dragging the keybinds scrollbar
     const t = keysThumb();
@@ -26218,7 +26220,7 @@ canvas.addEventListener('pointerup', e => {
     }
     if (!rec.hl && !rec.intro && !rec.rewind && inBtn(pointerPos(e), replaySaveBtn())) { pressAt = 0; replayLeft = null; rec.fromClick = false; saveReplay(); return; }   // ★ SAVE: into the highlights (not a skip)
     rec.fromClick = false;   // (the click that started it never set pressAt, so it isn't a skip; a stale flag used to swallow a real click)
-    const quick = pressAt && performance.now() - pressAt < 250, dragged = replayLeft && replayLeft.moved;
+    const dragged = replayLeft && replayLeft.moved, quick = pressAt ? performance.now() - pressAt < 250 : !!replayLeft;   // (a press whose timer a stray move cleared still counts as a tap)
     pressAt = 0; replayLeft = null;
     if (quick && !dragged && !finalReplay()) skipReplay();   // (a left drag does nothing)
     return;
