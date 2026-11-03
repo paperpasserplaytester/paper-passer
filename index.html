@@ -26726,7 +26726,7 @@ function tuiStickEnd(e) {
 // offensive side is the joystick, the defensive side the swipes. Kick returns keep the old rule: away from the way the returner faces.)
 function stickSide() {
   const sw = SETTINGS.swapSides ? -1 : 1;   // (settings: SWAP SIDES)
-  if (TUI.set !== 'kickoff') return sw * (aiOff() ? -MIRROR : MIRROR);   // (on offense the stick is on the defensive side, MIRROR; on defense it is back on the offensive side, -MIRROR)   // (the defensive side of the ball is the screen side MIRROR: the stick is there on offense and, now, on defense too; the other side aims on offense and is swipes on defense)
+  if (TUI.set !== 'kickoff') return sw * MIRROR;   // (the stick is on the defensive side of the line, MIRROR, on offense and on defense; the other side aims on offense and is swipes on defense)   // (the defensive side of the ball is the screen side MIRROR: the stick is there on offense and, now, on defense too; the other side aims on offense and is swipes on defense)
   let f = 1;
   try { const m = controlledPlayer() || qb; f = (m && m.face) || 1; } catch (err) {}
   return sw * (-MIRROR * Math.sign(f) || 1);
