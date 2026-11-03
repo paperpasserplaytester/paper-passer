@@ -12369,7 +12369,12 @@ function buildCrowd() {
 }
 // the far touchline's bench and staff, standing on the line over the turf's edge
 function drawBottomSide() {
-  if (crowdImg && crowdImg.bottom) ctx.drawImage(crowdImg.bottom, CROWD.x0, FW - crowdImg.botUp);
+  if (!crowdImg || !crowdImg.bottom) return;
+  const zc = camZ(), vc = viewCenterY(), vBot = camY + (H - BOT_BAR - vc) / zc + 24;
+  if (vBot < FW - crowdImg.botUp) return;   // (the far touchline's people are below the view)
+  const img = crowdImg.bottom, vL = camX - (W / 2 + PAD) / zc - 48, vR = camX + (W / 2 + PAD) / zc + 48;
+  const sx = Math.max(0, Math.floor(vL - CROWD.x0)), sw = Math.min(img.width - sx, Math.ceil(vR - vL) + 2);
+  if (sw > 0) ctx.drawImage(img, sx, 0, sw, img.height, CROWD.x0 + sx, FW - crowdImg.botUp, sw, img.height);
 }
 
 function drawCrowd() {
@@ -12378,28 +12383,45 @@ function drawCrowd() {
   const x = CROWD.x0, y = -CROWD.depth;
   // the sideline stands and their ad walls stop where the end walls begin (the walls close into a rectangle round the field; the end stands take the corners)
   const wallEnd0 = CROWD.wall + 0.6 * YD, xl = -ENDZONE - CROWD.endGap - wallEnd0, xr = FIELD + ENDZONE + CROWD.endGap + wallEnd0;
+  // only what the camera can see is drawn: the view's world rectangle (vL..vR, vTop..vBot), the sideline stands in strips of just the visible width, and
+  // a stand, an end stand or the bowl's outer edge only when the view reaches it (the big pre-rendered stand images are the costliest thing a phone draws each frame)
+  const zc = camZ(), vc = viewCenterY(), vTop = camY - (vc - TOP_BAR) / zc - 24, vBot = camY + (H - BOT_BAR - vc) / zc + 24;
+  const vL = camX - (W / 2 + PAD) / zc - 48, vR = camX + (W / 2 + PAD) / zc + 48;
+  const topVis = vTop < 12, botVis = vBot > FW - 12;
+  const strip = (img, ix, iy) => {   // the visible columns of a wide image
+    const sx = Math.max(0, Math.floor(vL - ix)), sw = Math.min(img.width - sx, Math.ceil(vR - vL) + 2);
+    if (sw > 0) ctx.drawImage(img, sx, 0, sw, img.height, ix + sx, iy, sw, img.height);
+  };
   ctx.save();
   ctx.beginPath(); ctx.rect(xl, y - 100, xr - xl, 2 * CROWD.depth + FW + 200); ctx.clip();
-  ctx.drawImage(crowdImg.back, x, y);
   // on their feet and bouncing while the crowd is roaring
   const bounce = cheering ? -Math.abs(Math.sin(now / 95)) * (4 + 6 * crowdFx.level) : 0;
-  ctx.drawImage(cheering ? crowdImg.standing : crowdImg.seated, x, y + bounce);
-  ctx.drawImage(crowdImg.front, x, y);
+  if (topVis) {
+    strip(crowdImg.back, x, y);
+    strip(cheering ? crowdImg.standing : crowdImg.seated, x, y + bounce);
+    strip(crowdImg.front, x, y);
+  }
   // the far side: the same stands below the bottom sideline (apron, ad wall, then the rows running away from the field)
   const cw = crowdImg.bSeated.width, ch = crowdImg.bSeated.height, wallEnd = CROWD.wall + 0.6 * YD;
-  ctx.fillStyle = '#141d3a'; ctx.fillRect(x, FW + wallEnd, cw, ch - wallEnd);
-  ctx.drawImage(cheering ? crowdImg.bStanding : crowdImg.bSeated, x, FW + bounce);
-  ctx.fillStyle = '#0f1a33'; ctx.fillRect(x, FW + CROWD.wall, cw, wallEnd - CROWD.wall);
-  ctx.fillStyle = '#c9d2e6'; ctx.fillRect(x, FW + wallEnd - 5, cw, 5);
-  const panels = ['#1b4aa8', '#e9eef8', '#c8282d', '#f08a2a', '#2a2f3a'];
-  for (let px = 0, i = 0; px < cw; px += 320, i++) {
-    ctx.fillStyle = panels[i % panels.length]; ctx.fillRect(x + px + 8, FW + CROWD.wall + 9, 304, wallEnd - CROWD.wall - 14);
-    ctx.fillStyle = i % 5 === 1 ? '#1b4aa8' : '#ffffff';
-    for (let j = 0; j < 6; j++) ctx.fillRect(x + px + 30 + j * 42, FW + CROWD.wall + 12, 28, 6);
+  if (botVis) {
+    const fx = Math.max(x, vL), fw = Math.min(x + cw, vR) - fx;   // (just the visible stretch of each band)
+    if (fw > 0) {
+      ctx.fillStyle = '#141d3a'; ctx.fillRect(fx, FW + wallEnd, fw, ch - wallEnd);
+      strip(cheering ? crowdImg.bStanding : crowdImg.bSeated, x, FW + bounce);
+      ctx.fillStyle = '#0f1a33'; ctx.fillRect(fx, FW + CROWD.wall, fw, wallEnd - CROWD.wall);
+      ctx.fillStyle = '#c9d2e6'; ctx.fillRect(fx, FW + wallEnd - 5, fw, 5);
+      const panels = ['#1b4aa8', '#e9eef8', '#c8282d', '#f08a2a', '#2a2f3a'];
+      for (let px = Math.max(0, Math.floor((vL - x) / 320)) * 320, i = px / 320; px < cw && x + px < vR; px += 320, i++) {
+        ctx.fillStyle = panels[i % panels.length]; ctx.fillRect(x + px + 8, FW + CROWD.wall + 9, 304, wallEnd - CROWD.wall - 14);
+        ctx.fillStyle = i % 5 === 1 ? '#1b4aa8' : '#ffffff';
+        for (let j = 0; j < 6; j++) ctx.fillRect(x + px + 30 + j * 42, FW + CROWD.wall + 12, 28, 6);
+      }
+    }
   }
   ctx.restore();   // (end of the sideline stands' clip)
   // the end-zone stands: out from each end line (the near one mirrored so it faces the field too); they run the full height, so the corners are crowd too
   for (const [ex, dir] of [[FIELD + ENDZONE + CROWD.endGap, 1], [-ENDZONE - CROWD.endGap, -1]]) {
+    if (dir > 0 ? vR < FIELD + ENDZONE : vL > -ENDZONE) continue;   // (the view doesn't reach this end)
     ctx.save();
     ctx.translate(ex, -CROWD.depth); ctx.scale(dir, 1);
     ctx.drawImage(cheering ? crowdImg.endStanding : crowdImg.endSeated, 0, bounce);
@@ -12420,6 +12442,14 @@ function drawCrowd() {
     ctx.globalAlpha = sc * WX_LOOK.grain * 0.7; ctx.fillStyle = wxGrain(); ctx.fillRect(ecx - ea, ecy - eb, 2 * ea, 2 * eb);
     ctx.restore();
   }
+  // (the dark outside of the bowl: only when a corner of the view is outside it; a convex view with all four corners inside never sees it)
+  const inBowl = (px, py) => {
+    const dx = Math.abs(px - ecx), dy = Math.abs(py - ecy), a = ea - 10, b = eb - 10;
+    if (dx > a || dy > b) return false;
+    const qx = dx - (a - er), qy = dy - (b - er);
+    return !(qx > 0 && qy > 0 && qx * qx + qy * qy > er * er);
+  };
+  if (inBowl(vL, vTop) && inBowl(vR, vTop) && inBowl(vL, vBot) && inBowl(vR, vBot)) return;
   ctx.save();
   ctx.beginPath();
   ctx.rect(ecx - ea - 2000, ecy - eb - 1500, 2 * ea + 4000, 2 * eb + 3000);
@@ -25449,7 +25479,7 @@ const boundKey = id => {   // (a directional key reads for the way you drive: sp
   const a = BIND_ACTIONS.find(x => x[0] === (MIRROR > 0 && BIND_ACTIONS.some(y => y[0] === id + 'R') ? id + 'R' : id)), k = a && bindKeyOf(a);
   return k ? keyName(k) : '?';
 };
-const TOUCH_TUT = { up: 'swipe up', down: 'swipe down', right: 'swipe back', sprint: 'swipe forward', stiff: 'swipe back and hold', truck: 'press and hold', spin: 'a circle with a finger', dive: 'swipe forward', hurdle: 'swipe up with two fingers', protect: 'hold PROTECT', dtackle: 'swipe back', switchD: 'tap SWITCH', move: 'the stick' };
+const TOUCH_TUT = { up: 'swipe up', down: 'swipe down', right: 'swipe back', sprint: 'swipe forward', stiff: 'swipe back and hold', truck: 'press and hold', spin: 'a circle with a finger', dive: 'swipe forward', hurdle: 'double-tap', protect: 'hold PROTECT', dtackle: 'swipe back', switchD: 'tap SWITCH', move: 'the stick' };
 const TOUCH_TUT_FIX = [   // lessons whose wording changes on a phone (the removed buttons / keys become swipes and taps)
   [/Right-click \(or \{dive\}\) for a faster, flatter bullet/, 'Tap LOB / BULLET for a faster, flatter bullet'],
   [/double-tap \{up\} or \{down\}/, 'swipe up or down'],
@@ -25512,7 +25542,7 @@ const TUT_MOBILE = {
   truck: 'Hand off, then press and hold a finger on the field (not the joystick side) and run through him.',
   protect: 'Hand off, then hold PROTECT as he arrives. Slower, but almost no fumbles.',
   dive: 'Hand off, then swipe FORWARD (the way he runs) for extra yards.',
-  hurdle: 'Hand off, then swipe UP with two fingers a couple of yards before the defender. Too late and he grabs you.',
+  hurdle: 'Hand off, then double-tap the field (not the joystick side) a couple of yards before the defender. Too late and he grabs you.',
   celebrate: 'Run it in, then tap CELEBRATE and wait it out.',
   gap: 'Hand off, let the blocks set, then hit the hole. Gain 3 yards.',
   timeout: 'After a play, tap TIMEOUT before the clock runs off to save the seconds. Run a play, then call one.',
@@ -26755,7 +26785,7 @@ const SWIPE_HOLD = { stiff: 450, truck: 350, press: 220 };   // ms the stiff arm
 // The ball carrier's moves (run / kick return) are one finger: swipe up / down = juke up / down (double-tap W / S), swipe toward / away from the way he runs
 // = truck / dive, a circle drawn with the finger = spin. Two fingers swiping up = hurdle, down = stiff arm.
 const SPIN_GEST = { turn: 5.3, minPath: 150, keep: 80 };   // radians swept around the path's centre, px of path, points kept
-let swipeFrom = null;
+let swipeFrom = null, runTapAt = 0;   // runTapAt: when the last quick tap with the ball was (two in a row = hurdle)
 const lineUd = () => !!ud && !!(dl.includes(ud) || ud.blitz || ud.engaged) && (state === 'drop' || state === 'pocket' || state === 'run');   // (your defender is on the line, blitzing or locked up with a blocker: the pass-rush swipes)
 const swipeSet = () => (state === 'flight' && !aiOff()) ? 'flight' : ['run', 'kickoff', 'def', 'pocket'].includes(tuiWhich()) ? tuiWhich() : '';   // (pocket: the QB's moves, as a swipe that isn't a throw drag)
 canvas.addEventListener('pointerdown', e => {
@@ -26763,7 +26793,7 @@ canvas.addEventListener('pointerdown', e => {
   if (!set) { swipeFrom = null; return; }
   const p = layPt(e), s = swipeFrom;
   if (s && s.set === set && s.fingers.size && !s.done) { s.fingers.set(e.pointerId, p); s.multi = true; return; }   // (a second finger on the screen)
-  const ns = swipeFrom = { id: e.pointerId, set, fingers: new Map([[e.pointerId, p]]), multi: false, done: false, pts: [p], truck: false };
+  const ns = swipeFrom = { id: e.pointerId, set, fingers: new Map([[e.pointerId, p]]), multi: false, done: false, pts: [p], truck: false, t0: performance.now() };
   if (set === 'run' || set === 'kickoff') setTimeout(() => {   // a ball carrier: pressing and holding (not moving) the finger = truck, for as long as it stays down
     const q = ns.pts[ns.pts.length - 1];
     if (swipeFrom === ns && !ns.done && !ns.multi && Math.hypot(q.x - p.x, q.y - p.y) < SWIPE.min * 0.6) { ns.done = ns.truck = true; tkey('KeyC', true); }
@@ -26803,6 +26833,11 @@ window.addEventListener('pointerup', e => {
   if (s.stiff) { tkey('KeyQ', false); return; }   // (...and the stiff arm)
   if (s.done) return;
   const lp = layPt(e), dx = lp.x - st.x, dy = lp.y - st.y;
+  if (Math.hypot(dx, dy) < 14 && !s.multi && (s.set === 'run' || s.set === 'kickoff') && swipeSet() === s.set && performance.now() - s.t0 < 250) {   // a quick tap with the ball: two in a row = the hurdle
+    const now = performance.now();
+    if (now - runTapAt < 400) { runTapAt = 0; tuiKey('KeyE'); } else runTapAt = now;
+    return;
+  }
   if (Math.hypot(dx, dy) < SWIPE.min || swipeSet() !== s.set) return;
   if (s.set === 'pocket' && aim) return;   // (releasing a throw)
   s.done = true;
@@ -26824,7 +26859,7 @@ window.addEventListener('pointerup', e => {
     return;
   }
   if (s.set === 'def') { if (vertical) { if (up) tuiKey('KeyW'); } else tuiKey(along ? 'KeyR' : state === 'kick' ? 'KeyV' : 'KeyT'); return; }   // (a punt you rush: R leaps, V dives)
-  if (vertical && s.multi) return up ? tuiKey('KeyE') : tuiKey('KeyQ', SWIPE_HOLD.stiff);   // (two fingers: hurdle / stiff arm)
+  if (vertical && s.multi) { if (!up) tuiKey('KeyQ', SWIPE_HOLD.stiff); return; }   // (two fingers down: a stiff arm; the hurdle is a double tap)
   if (vertical) {   // (one finger: a juke, a double tap of the up / down key)
     const code = up ? 'KeyW' : 'KeyS';
     tkey(code, true); tkey(code, false); tkey(code, true); setTimeout(() => tkey(code, false), TUI.tapMs);
