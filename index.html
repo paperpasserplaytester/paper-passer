@@ -69,7 +69,8 @@ const touchText = t => typeof t !== 'string' ? t : t
   .replace(/,? ?or press (?:Space|Esc|Enter|[A-Z])\b/g, '').replace(/\bpress Esc\b/gi, 'tap')
   .replace(/,\s*Space to \w+/g, '').replace(/\s*\/ Space\b/g, '').replace(/\bor press Space\b/g, '')
   .replace(/^SPACE pause.*$/, 'tap = skip  |  hold = slow-mo  |  pinch = zoom')
-  .replace(/^or press Space$/, '').replace(/\s*-\s*BACKSPACE to reset the play/, '');
+  .replace(/^or press Space$/, '').replace(/\s*-\s*BACKSPACE to reset the play/, '')
+  .replace(/[▶▸]/g, '►').replace(/[◀◂]/g, '◄').replace(/▴/g, '▲').replace(/▾/g, '▼');   // (phones draw ▶ / ◀ as colour emoji: these look-alikes have no emoji form)
 {   // a widened touch canvas (PAD): anything that fills the whole 1280 width (bars, dimmers, ruled lines, banners' paper) runs on out to the screen edges
   const fr = CanvasRenderingContext2D.prototype.fillRect;
   CanvasRenderingContext2D.prototype.fillRect = function (x, y, w, h) { return PAD && x === 0 && w === 1280 ? fr.call(this, -PAD, y, w + 2 * PAD, h) : fr.call(this, x, y, w, h); };
@@ -11496,7 +11497,7 @@ function drawDefOverlay() {
     }
   }
   ctx.restore();
-  if (SETTINGS.defHints && state !== 'run') {   // (U hides this strip)
+  if (SETTINGS.defHints && state !== 'run' && !TOUCH) {   // (U hides this strip; no key tips on a phone)
     ctx.save(); ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const t = pvpDef() && !pvpRightOff() ? 'IJKL move  -  U switch player  -  Y jump for the ball  -  B dive tackle  H secure tackle  N hit stick  M audible'
                        : `${tutText('{move}')} move  -  ${tutText('{hurdle}')} / ${tutText('{switchD}')} / click: switch player  -  ${tutText('{spin}')} jump / spin  -  ${tutText('{truck}')} hit stick (or knock the ball out of a receiver)  ${tutText('{dive}')} dive  ${tutText('{protect}')} secure tackle  ${tutText('{audibleD}')} audible  -  ${tutText('{hints}')} hides this`;
@@ -23479,57 +23480,57 @@ function wxDraw() {
   if (!g || !g.on) return;
   const now = performance.now(), dt = Math.min(0.05, wxParts.t ? (now - wxParts.t) / 1000 : 0) * (paused || settingsOpen ? 0 : 1);
   wxParts.t = now;
-  const top = TOP_BAR, bot = H - BOT_BAR, hgt = bot - top;
+  const top = TOP_BAR, bot = H - BOT_BAR, hgt = bot - top, x0 = -PAD, ww = W + 2 * PAD;   // (x0 / ww: the whole width of a widened touch screen, so the weather runs to its edges)
   if (wxLive()) {
     const sx = Math.cos(g.ang) * WXI.mph, sy = Math.sin(g.ang) * WXI.mph;
-    ctx.save(); ctx.beginPath(); ctx.rect(0, top, W, hgt); ctx.clip();
+    ctx.save(); ctx.beginPath(); ctx.rect(x0, top, ww, hgt); ctx.clip();
     // rain: the whole picture darker, and a grey haze that thickens toward the edges (harder to see far off)
     if (WXI.rain > 0.01) {
       const L = WX_LOOK;
       ctx.fillStyle = `rgba(8,14,26,${WXI.rain * L.dark})`; ctx.fillRect(0, top, W, hgt);
-      const gr = ctx.createRadialGradient(W / 2, top + hgt / 2, hgt * 0.2, W / 2, top + hgt / 2, W * 0.62);
+      const gr = ctx.createRadialGradient(W / 2, top + hgt / 2, hgt * 0.2, W / 2, top + hgt / 2, ww * 0.62);
       gr.addColorStop(0, `rgba(150,160,176,${WXI.rain * L.haze * 0.35})`); gr.addColorStop(1, `rgba(150,160,176,${WXI.rain * L.haze * 1.6})`);
       ctx.fillStyle = gr; ctx.fillRect(0, top, W, hgt);
     }
     const fill =(arr, n, make) => { while (arr.length < n) arr.push(make(true)); arr.length = Math.min(arr.length, n); };
     // wind: translucent streaks blowing across
     const nW = WXI.mph > 8 ? Math.round((WXI.mph - 8) / 26 * 24 * fxK()) : 0;
-    fill(wxParts.wind, nW, () => ({ x: Math.random() * W, y: top + Math.random() * hgt, life: Math.random(), len: 60 + Math.random() * 120 }));
+    fill(wxParts.wind, nW, () => ({ x: x0 + Math.random() * ww, y: top + Math.random() * hgt, life: Math.random(), len: 60 + Math.random() * 120 }));
     const wl = Math.hypot(sx, sy) || 1, ux = sx / wl, uy = sy / wl, wsp = 380 + WXI.mph * 22;
     ctx.lineCap = 'round';
     for (const p of wxParts.wind) {
       p.life += dt * 0.7; p.x += ux * wsp * dt; p.y += uy * wsp * dt;
-      if (p.life >= 1 || p.x < -200 || p.x > W + 200 || p.y < top - 50 || p.y > bot + 50) { p.life = 0; p.x = ux > 0 ? -Math.random() * 150 : W + Math.random() * 150; p.y = top + Math.random() * hgt; p.len = 60 + Math.random() * 120; }
+      if (p.life >= 1 || p.x < x0 - 200 || p.x > x0 + ww + 200 || p.y < top - 50 || p.y > bot + 50) { p.life = 0; p.x = ux > 0 ? x0 - Math.random() * 150 : x0 + ww + Math.random() * 150; p.y = top + Math.random() * hgt; p.len = 60 + Math.random() * 120; }
       const al = Math.sin(Math.PI * p.life) * 0.22;
       ctx.strokeStyle = `rgba(255,255,255,${al})`; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x - ux * p.len, p.y - uy * p.len); ctx.stroke();
     }
     // rain
-    fill(wxParts.rain, Math.round(WXI.rain * 280 * fxK()), () => ({ x: Math.random() * W, y: top + Math.random() * hgt, v: 0.8 + Math.random() * 0.4 }));
+    fill(wxParts.rain, Math.round(WXI.rain * 280 * fxK()), () => ({ x: x0 + Math.random() * ww, y: top + Math.random() * hgt, v: 0.8 + Math.random() * 0.4 }));
     ctx.strokeStyle = 'rgba(200,215,255,0.42)'; ctx.lineWidth = 1.6;
     ctx.beginPath();
     for (const p of wxParts.rain) {
       const vx = sx * 14 * p.v, vy = 950 * p.v;
       p.x += vx * dt; p.y += vy * dt;
-      if (p.y > bot) { p.y = top - Math.random() * 40; p.x = Math.random() * W; }
-      if (p.x < -20) p.x += W + 40; else if (p.x > W + 20) p.x -= W + 40;
+      if (p.y > bot) { p.y = top - Math.random() * 40; p.x = x0 + Math.random() * ww; }
+      if (p.x < x0 - 20) p.x += ww + 40; else if (p.x > x0 + ww + 20) p.x -= ww + 40;
       ctx.moveTo(p.x, p.y); ctx.lineTo(p.x - vx * 0.025, p.y - vy * 0.025);
     }
     ctx.stroke();
     // snow
-    fill(wxParts.snow, Math.round(WXI.snow * 240 * fxK()), () => ({ x: Math.random() * W, y: top + Math.random() * hgt, r: 1.4 + Math.random() * 2.4, ph: Math.random() * 6.3 }));
+    fill(wxParts.snow, Math.round(WXI.snow * 240 * fxK()), () => ({ x: x0 + Math.random() * ww, y: top + Math.random() * hgt, r: 1.4 + Math.random() * 2.4, ph: Math.random() * 6.3 }));
     ctx.fillStyle = 'rgba(255,255,255,0.85)';
     for (const p of wxParts.snow) {
       p.ph += dt * 2;
       p.x += (sx * 7 + Math.sin(p.ph) * 18) * dt; p.y += (45 + p.r * 22 + sy * 3) * dt;
-      if (p.y > bot) { p.y = top - 5; p.x = Math.random() * W; }
-      if (p.x < -10) p.x += W + 20; else if (p.x > W + 10) p.x -= W + 20;
+      if (p.y > bot) { p.y = top - 5; p.x = x0 + Math.random() * ww; }
+      if (p.x < x0 - 10) p.x += ww + 20; else if (p.x > x0 + ww + 10) p.x -= ww + 20;
       ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
     }
     // water drops on the screen: one lands now and then (more in heavier rain), then fades away
     const drops = wxParts.drops || (wxParts.drops = []), L = WX_LOOK;
     if (dt > 0 && Math.random() < WXI.rain * L.drops * dt && drops.length < L.dropMax)
-      drops.push({ x: Math.random() * W, y: top + Math.random() * hgt, r: 5 + Math.random() * 13, t: 0, life: L.dropLife[0] + Math.random() * (L.dropLife[1] - L.dropLife[0]), sl: Math.random() < 0.35 ? 8 + Math.random() * 25 : 0 });
+      drops.push({ x: x0 + Math.random() * ww, y: top + Math.random() * hgt, r: 5 + Math.random() * 13, t: 0, life: L.dropLife[0] + Math.random() * (L.dropLife[1] - L.dropLife[0]), sl: Math.random() < 0.35 ? 8 + Math.random() * 25 : 0 });
     for (let i = drops.length - 1; i >= 0; i--) {
       const d = drops[i];
       d.t += dt;
@@ -25762,7 +25763,7 @@ let crumple = null, lastPage = null;
 const pageKey = () => (results ? results.screen + (teamPick ? ':pick' : '') : tut ? 'tutorial' : 'game') + (slotUI ? ':slots' : '') + (settingsOpen ? ':settings' : '');   // (the save / load and settings screens are pages too)
 function startCrumple() {
   crumpleSnap.getContext('2d').drawImage(canvas, PAD, 0, W, H, 0, 0, W, H);   // (just the 16:9 middle)
-  const r = seeded(Math.floor(Math.random() * 1e6) + 1), G = CRUMPLE, pts = [];
+  const r = seeded(Math.floor(Math.random() * 1e6) + 1), G = TOUCH ? { ...CRUMPLE, gx: 5, gy: 3 } : CRUMPLE, pts = [];   // (phones: fewer, bigger facets: each one is a clipped draw, a lot of them at once was a stutter)
   for (let j = 0; j <= G.gy; j++) for (let i = 0; i <= G.gx; i++) {
     const u = i / G.gx * 2 - 1, v = j / G.gy * 2 - 1;
     // the square into a disc, pulled in a random amount (the folds), plus a wobble
@@ -25864,8 +25865,13 @@ const clickedRB = p => !rb.split && inCircle(p, rb);   // any back in the backfi
 // During the drop: press anywhere to aim, release to throw. Right-click: lob/bullet.
 let replayDrag = null;   // right-mouse drag panning the replay camera
 let replayLeft = null;   // left press in a replay: { sx, sy, moved } (moved = a drag, which does nothing)
-canvas.addEventListener('pointerdown', e => { if (e.button === 0) btnPress = { ...pointerPos(e), held: true, upAt: 0 }; if (e.pointerType !== 'mouse') hoverPt = pointerPos(e); }, true);   // (a finger hovers the button it lands on, so the lift / press animation plays on a phone too)
-window.addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') setTimeout(() => { hoverPt = null; }, 160); }, true);   // (...and lets go a beat after, so the lift eases back instead of sticking)
+// a mouse presses on the way down. A finger: holding it on a button is the hover (the lift); a tap is the click (it presses in on the release, then springs back)
+canvas.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse') { if (e.button === 0) btnPress = { ...pointerPos(e), held: true, upAt: 0 }; } else hoverPt = pointerPos(e); }, true);
+window.addEventListener('pointerup', e => {
+  if (e.pointerType === 'mouse') return;
+  if (hoverPt) btnPress = { ...hoverPt, held: true, upAt: 0 };   // (the release is the click: pressed in for a moment, the bubbling handler below starts the spring back)
+  setTimeout(() => { hoverPt = null; }, 220);   // (the lift eases back instead of sticking)
+}, true);
 window.addEventListener('pointerup', () => { if (btnPress && btnPress.held) { btnPress.held = false; btnPress.upAt = performance.now(); } });
 canvas.addEventListener('pointerdown', e => {
   if (oo && !paused && e.button === 0 && ooClick(pointerPos(e))) return;   // (1v1 practice: the force-animation buttons)
@@ -26404,6 +26410,19 @@ function frame(now) {
   ioDrawToast();
   if (PAD) ctx.restore();
 }
+// the first touch (a menu, long before a play) gets everything that would otherwise be built mid-play ready: the audio context and its clip buffer (decoded on
+// first use: the hitch at the first catch / tackle / throw), the one-shot sound elements and the footstep loops (the hitch at the first snap)
+let warmed = false;
+function warmUp() {
+  if (warmed) return; warmed = true;
+  try { ac(); } catch (err) {}
+  try {
+    for (const src of Object.values(SFX)) if (typeof src === 'string' && !sfxPlaying[src]) { const a = new Audio(src); a.preload = 'auto'; try { a.load(); } catch (err) {} sfxPlaying[src] = a; }
+    for (let i = 0; i < 2; i++) if (!stepEls[i]) { const el = stepEls[i] = new Audio('audio/footsteps.mp3'); el.volume = 0; el.preload = 'auto'; el.preservesPitch = false; el.mozPreservesPitch = false; el.webkitPreservesPitch = false; try { el.load(); } catch (err) {} }
+  } catch (err) {}
+}
+window.addEventListener('pointerdown', warmUp, { capture: true, once: true });
+window.addEventListener('keydown', warmUp, { capture: true, once: true });
 let lastPaint = 0;
 const PAINT_MIN = 15;   // ms between painted frames in touch mode
 // the screen stays on in touch mode, even with no touches for a long stretch (the Wake Lock API; asked for on the first touch, taken again when the page comes back)
@@ -26509,7 +26528,7 @@ const TSETS = {
 function tuiWhich() {
   if (rec && rec.replaying) return 'replay';
   if (state === 'done' || state === 'sim') return 'next';
-  if (state === 'kick') return 'tap';
+  if (state === 'kick') return aiOff() && kick && kick.punt ? 'def' : 'tap';   // (their punt: you rush / try to block it with the normal defense controls)
   if (aiOff()) return 'def';
   if (state === 'pre') return 'pre';
   if (state === 'flight') return 'flight';
@@ -26547,7 +26566,8 @@ function tuiStick(e, end) {
 // floating joystick: hidden until a finger lands on the left half of the screen, then it appears under that finger (a throw drag from the QB keeps its own touch)
 const STICK_SETS = ['pocket', 'run', 'kickoff', 'def'];   // (no stick while a pass is in the air: the whole screen is swipes for the catch)
 // (nor on a kick before it's taken: kickoffs, field goals and PATs are taps for the power / aim; a field goal / PAT is the 'tap' set anyway)
-const stickOn = name => STICK_SETS.includes(name) && !(name === 'kickoff' && kick && ['enter', 'wait', 'target', 'power', 'aim'].includes(kick.phase));
+// (your own punt: no stick until their returner has it either; their punt, where you rush / block it, is the normal defense set)
+const stickOn = name => STICK_SETS.includes(name) && !(name === 'kickoff' && kick && (['enter', 'wait', 'target', 'power', 'aim'].includes(kick.phase) || (kick.userKo && kick.punt && kickoff && kickoff.phase === 'flight')));
 let stickTapAt = 0;
 function tuiStickEnd(e) {
   if (tpad._id == null) return;
@@ -26636,23 +26656,28 @@ window.addEventListener('pointerup', e => {
   if (now - lastTapAt < 400) { lastTapAt = 0; bulletMode = !bulletMode; popup(qb, bulletMode ? 'BULLET' : 'LOB', '#ffd94a'); }
   else lastTapAt = now;
 }, true);
-const SWIPE_HOLD = { stiff: 450, truck: 350 };   // ms the stiff arm / truck key is held after the swipe
+const SWIPE_HOLD = { stiff: 450, truck: 350, press: 220 };   // ms the stiff arm key is held after the swipe; press = ms a finger rests on the field before it counts as a hold (the truck)
 // The ball carrier's moves (run / kick return) are one finger: swipe up / down = juke up / down (double-tap W / S), swipe toward / away from the way he runs
 // = truck / dive, a circle drawn with the finger = spin. Two fingers swiping up = hurdle, down = stiff arm.
 const SPIN_GEST = { turn: 5.3, minPath: 150, keep: 80 };   // radians swept around the path's centre, px of path, points kept
 let swipeFrom = null;
+const lineUd = () => !!ud && !!(dl.includes(ud) || ud.blitz || ud.engaged) && (state === 'drop' || state === 'pocket' || state === 'run');   // (your defender is on the line, blitzing or locked up with a blocker: the pass-rush swipes)
 const swipeSet = () => (state === 'flight' && !aiOff()) ? 'flight' : ['run', 'kickoff', 'def', 'pocket'].includes(tuiWhich()) ? tuiWhich() : '';   // (pocket: the QB's moves, as a swipe that isn't a throw drag)
 canvas.addEventListener('pointerdown', e => {
   const set = TUI.on && e.pointerType === 'touch' ? swipeSet() : '';
   if (!set) { swipeFrom = null; return; }
   const p = layPt(e), s = swipeFrom;
   if (s && s.set === set && s.fingers.size && !s.done) { s.fingers.set(e.pointerId, p); s.multi = true; return; }   // (a second finger on the screen)
-  swipeFrom = { id: e.pointerId, set, fingers: new Map([[e.pointerId, p]]), multi: false, done: false, pts: [p] };
+  const ns = swipeFrom = { id: e.pointerId, set, fingers: new Map([[e.pointerId, p]]), multi: false, done: false, pts: [p], truck: false };
+  if (set === 'run' || set === 'kickoff') setTimeout(() => {   // a ball carrier: pressing and holding (not moving) the finger = truck, for as long as it stays down
+    const q = ns.pts[ns.pts.length - 1];
+    if (swipeFrom === ns && !ns.done && !ns.multi && Math.hypot(q.x - p.x, q.y - p.y) < SWIPE.min * 0.6) { ns.done = ns.truck = true; tkey('KeyC', true); }
+  }, SWIPE_HOLD.press);
 }, true);
 function tuiKey(code, hold = TUI.tapMs) { tkey(code, true); setTimeout(() => tkey(code, false), hold); }
 window.addEventListener('pointermove', e => {
   const s = swipeFrom;
-  if (!s || s.done || s.multi || e.pointerId !== s.id || (s.set !== 'run' && s.set !== 'kickoff' && s.set !== 'pocket')) return;
+  if (!s || s.done || s.multi || e.pointerId !== s.id || (s.set !== 'run' && s.set !== 'kickoff' && s.set !== 'pocket' && !(s.set === 'def' && lineUd()))) return;
   if (s.set === 'pocket' && aim) { s.done = true; return; }   // (a throw drag from the QB is not a move)
   const pts = s.pts; pts.push(layPt(e)); if (pts.length > SPIN_GEST.keep) pts.shift();
   let cx = 0, cy = 0, len = 0; for (const q of pts) { cx += q.x; cy += q.y; } cx /= pts.length; cy /= pts.length;
@@ -26668,6 +26693,7 @@ window.addEventListener('pointerup', e => {
   const s = swipeFrom; if (!s || !s.fingers.has(e.pointerId)) return;
   const st = s.fingers.get(e.pointerId); s.fingers.delete(e.pointerId);
   if (!s.fingers.size) swipeFrom = null;
+  if (s.truck) { tkey('KeyC', false); return; }   // (the held finger lifted: the truck ends)
   if (s.done) return;
   const lp = layPt(e), dx = lp.x - st.x, dy = lp.y - st.y;
   if (Math.hypot(dx, dy) < SWIPE.min || swipeSet() !== s.set) return;
@@ -26684,16 +26710,22 @@ window.addEventListener('pointerup', e => {
     if (toward) tuiKey('KeyA', SWIPE_HOLD.stiff);   // (toward the line of scrimmage)
     return;
   }
-  if (s.set === 'def') { if (vertical) { if (up) tuiKey('KeyW'); } else tuiKey(along ? 'KeyR' : 'KeyT'); return; }
+  if (s.set === 'def' && lineUd()) {   // a lineman / blitzer: toward the QB (or ball) = bull rush, across = swim, away = let go and drop. The swipe holds that direction like the stick would (userEngage reads it)
+    const goal = runner || qb, gx = MIRROR * (goal.x - ud.x), gy = goal.y - ud.y, gl = Math.hypot(gx, gy) || 1, sl = Math.hypot(dx, dy) || 1;
+    const along = (dx * gx + dy * gy) / (sl * gl), drop = along < -0.5;
+    for (const [code, on] of [['ArrowLeft', dx < -0.38 * sl], ['ArrowRight', dx > 0.38 * sl], ['ArrowUp', dy < -0.38 * sl], ['ArrowDown', dy > 0.38 * sl]]) if (on) tuiKey(code, drop ? 450 : 650);
+    return;
+  }
+  if (s.set === 'def') { if (vertical) { if (up) tuiKey('KeyW'); } else tuiKey(along ? 'KeyR' : state === 'kick' ? 'KeyV' : 'KeyT'); return; }   // (a punt you rush: R leaps, V dives)
   if (vertical && s.multi) return up ? tuiKey('KeyE') : tuiKey('KeyQ', SWIPE_HOLD.stiff);   // (two fingers: hurdle / stiff arm)
   if (vertical) {   // (one finger: a juke, a double tap of the up / down key)
     const code = up ? 'KeyW' : 'KeyS';
     tkey(code, true); tkey(code, false); tkey(code, true); setTimeout(() => tkey(code, false), TUI.tapMs);
     return;
   }
-  if (along) tuiKey('KeyC', SWIPE_HOLD.truck); else tuiKey('KeyV');
+  if (along) tuiKey('KeyV');   // (forward = dive; the truck is a press and hold)
 }, true);
-window.addEventListener('pointercancel', e => { if (swipeFrom) { swipeFrom.fingers.delete(e.pointerId); if (!swipeFrom.fingers.size) swipeFrom = null; } }, true);
+window.addEventListener('pointercancel', e => { if (swipeFrom) { if (swipeFrom.truck) tkey('KeyC', false); swipeFrom.fingers.delete(e.pointerId); if (!swipeFrom.fingers.size) swipeFrom = null; } }, true);
 // pinch to zoom in a replay (two fingers on the field; the wheel does the same on a computer)
 const pinch = { pts: new Map(), d: 0 };
 window.addEventListener('pointerdown', e => { if (e.pointerType === 'touch') { pinch.pts.set(e.pointerId, layPt(e)); pinch.d = 0; } }, true);
