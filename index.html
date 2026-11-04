@@ -580,7 +580,7 @@ const JUMP_TIMING = { lead: 0.05, window: 0.22, catch: 0.25, pbu: 0.6, contest: 
 // eyes on the ball (receivers on it, DBs playing the ball, anyone leaping for it): the helmet turns to follow it.
 // near = a receiver this many yd from the landing spot watches it too; rate = how fast the head catches up (1/s);
 // up / down = furthest the head tips up / down (rad)
-const LOOK_BALL = { tiltAfter: 0.2, near: 8, rate: 9, up: 1.57, down: 0.75, depth: 0.25 };   // depth = how much a ball nearer / farther from the camera tips the head down / up (x its sideline-to-sideline offset)
+const LOOK_BALL = { behind: 2, tiltAfter: 0.2, near: 8, rate: 9, up: 1.57, down: 0.75, depth: 0.25 };   // depth = how much a ball nearer / farther from the camera tips the head down / up (x its sideline-to-sideline offset)
 // over-the-shoulder leap: a WR / DB going up for a ball dropping in from behind him (flight going the way he faces,
 // he's running with it at speed+ yd/s, heading within align (cos) of its line, ball not more than ahead yd out in front)
 // takes it over his shoulder, head turned back, eyes on it all the way into his hands. chance = how often he does
@@ -714,7 +714,7 @@ const JAM = { chance: 0.9, dur: [0.22, 0.36], cb: 1.3, slow: 0.15, down: 0.025, 
               stickLag: 0.1, stickAccel: 2.4, stickSpeed: 1.24, stickLead: 1.1, hipGap: 0.55 * YD,
               // losing a jam: fights fight s first, then sit (shoved down) downSit of the time, else stumbles (stumDur s, +stumSlow slow, capped at stumSpeed x top);
               // trip = chance a landed jam he survived trips him up tripAt s into the route
-              fight: [0.55, 0.9], downSit: 0.55, stumDur: 0.5, stumSlow: 0.3, stumSpeed: 0.45, trip: 0.12, tripAt: [0.35, 1.0] };   // after a good jam (stick s): read lag x, accel x, speed x, lead on his route x, and he runs at the receiver's hip (that far behind / inside him)
+              fight: [0.55, 0.9], downSit: 0.55, stumDur: 0.3, stumSlow: 0.3, stumSpeed: 0.45, trip: 0.12, tripAt: [0.35, 1.0] };   // after a good jam (stick s): read lag x, accel x, speed x, lead on his route x, and he runs at the receiver's hip (that far behind / inside him)
 // coverage tightness: deep defenders keep deepCushion yards over the man they're on; underneath defenders
 // attached to a man sit attachGap yards off him; zone players shade zoneBlend of the way toward a threat;
 // man defenders aim manLead seconds ahead of their man at manSpeed x their top speed
@@ -2408,8 +2408,8 @@ function captureFrame() {
     t: rec.t,
     players: ps.map(p => ({ xfg: xfGlowLive(p), x: p.x, y: p.y, z: p.z, face: p.face, action: p.action, act: p.act ? { ...p.act } : null,
       isUd: p === ud && aiOff(), moving: p.moving, run: p.run, stride: p.stride, reach: p.reach, engaged: p.engaged, churn: !!p.stiffBy, hasBall: p.hasBall, catchMode: p.catchMode,
-      hand: p.hand, lefty: p.lefty, ballSide: p.ballSide, stiffSide: p.stiffSide, stiff: !!p.stiff, truck: p.truck, overShoulder: p.overShoulder, cradle: p.cradle, cock: p.cock, ready: p.ready, guard: p.guard, swimLeft: p.swimLeft || 0,
-      catchStyle: p.catchStyle, catchSide: p.catchSide, tipArms: p.tipArms, tipK: p.tipK, watch: watchingBall(p),
+      hand: p.hand, lefty: p.lefty, ballSide: p.ballSide, stiffSide: p.stiffSide, stiff: !!p.stiff, truck: p.truck, overShoulder: p.overShoulder, cradle: p.cradle, snapK: p.snapK, cock: p.cock, ready: p.ready, guard: p.guard, swimLeft: p.swimLeft || 0,
+      catchStyle: p.catchStyle, catchSide: p.catchSide, tipArms: p.tipArms, tipK: p.tipK, watch: watchingBall(p), yawRec: p.yaw || 0,
       kickSwing: p.kickSwing, kickK: p.kickK, kickWind: p.kickWind, fightOn: p.fightOn || null,
       // timed effects, moved onto the replay's own clock (rec.t) so they play back
       breakFx: p.breakFx ? { kind: p.breakFx.kind, t: rec.t - (clock - p.breakFx.t) } : null,
@@ -5194,6 +5194,7 @@ function snap(run = false) {
   if (preSnap && !tut && !exhibition) { preSnap.game.timeouts = game.timeouts; preSnap.play = playCfg(); }   // (the call as it stands at the snap: audibles, hot routes)
   state = 'drop';
   clock = 0;
+  qb.coast = null;
   pstSnap();
   snapFly ={ dur: shotgun ? SNAP_FLY.gun : SNAP_FLY.center };
   playMoves = {};
@@ -5559,7 +5560,8 @@ function throwBall() {
     if (d.eyes === 'ball' && d.man && d.headTo !== 'ball' && Math.random() > Math.min(1, (d.hips === 'trail' ? DB_TURN.locateTrail : DB_TURN.locate) * covOf(d))) d.eyes = 'receiver';   // (a man DB who hasn't turned his head finds the ball late: no ball-eyes bonus on PBU / picks)
     d.tipArms = false; d.tipK = 0; }   // (a ball hawk turns for it from further off)
   state = 'flight';
-  qb.cradle = false; qb.cock = false;
+  qb.cradle = false; qb.cock = false; qb.ready = false;
+  for (const q of [P, ...ols, rb, ...recs.filter(r => r.teBlock)]) { const sp = Math.hypot(q.vx || 0, q.vy || 0); q.coast = sp > QB_COAST.min * YD ? { vx: q.vx, vy: q.vy, t: 0 } : null; }   // (the QB and the blockers keep their momentum after the release: no freezing)
   P.action = 'throw';                 // follow-through: throwing arm out in front
   P.act = { t: 0, dur: 0.4 };
   // a bullet on the move is sometimes slung sidearm: lower release, the arm whipped round flat
@@ -5894,6 +5896,10 @@ function settle(p, dt) {
   if (p.celebrate) return celebrate(p, dt);
   if (p.action) {
     if (p.pendingPoint && doneLying(p)) { p.act = p.act || { angle: 0 }; getUp(p); }   // (the dive's over: up off the turf)
+    else if (doneLying(p) && !(p.act && p.act.pin) && !p.lyingKeep) {   // (the play's over: whoever is still on the turf picks himself up after a beat)
+      p.lieT = (p.lieT || 0) + dt;
+      if (p.lieT > (p.upAfter ??= 0.6 + Math.random() * 0.7)) { p.lieT = 0; p.upAfter = null; getUp(p); }
+    } else p.lieT = 0;
     updateAction(p, dt);
     if (!p.action && p.pendingPoint) startPoint(p);   // up off the turf: now the signal
     return;
@@ -6539,7 +6545,8 @@ const ballInBounds = c => {
 // hit from the side he's knocked off his line, staggers sideways with the blow and goes down on his side.
 // A heavier, faster hit takes him down quicker.
 // a runner already laid out on the turf from his own dive stays lying there when he is touched (never stood up for the fall)
-const onTurfDive = c => c.action === 'dive' && c.act && c.act.pt != null;
+const TACKLE_WET = { push: 1.1, time: 0.6 };   // a tackle's slide on a slick field: x(1 + push*P) the distance, x(1 + time*P) as long (P = rain + snow weight, wxP)
+const onTurfDive = c =>c.action === 'dive' && c.act && c.act.pt != null;
 function wrapTackle(c, d) {
   if (onTurfDive(c)) { c.vx = c.vy = 0; return; }
   const clasped = d && d.action === 'clasp';
@@ -6595,8 +6602,8 @@ function wrapTackle(c, d) {
             fallTime: Math.max(TACKLE_FALL.fast, Math.min(TACKLE_FALL.slow, TACKLE_FALL.slow - drive / (12 * YD) * (TACKLE_FALL.slow - TACKLE_FALL.fast))),
             twist: fromSide ? 0 : Math.max(-0.5, Math.min(0.5, ny / (8 * YD))) * (Math.random() < 0.5 ? 1 : 0.6),
             // a side hit carries him sideways with the tackler; otherwise he slides along the combined momentum
-            vx: nx * TACKLE_FALL.push, vy: ny * (fromSide ? TACKLE_FALL.sideCarry : TACKLE_FALL.push),
-            slide: TACKLE_FALL.slideTime, angle: Math.atan2(ny, nx || c.face) };
+            vx: nx * TACKLE_FALL.push * (1 + TACKLE_WET.push * wxP()), vy: ny * (fromSide ? TACKLE_FALL.sideCarry : TACKLE_FALL.push) * (1 + TACKLE_WET.push * wxP()),   // (rain / snow: they slide on further, more in snow, off both men's momentum)
+            slide: TACKLE_FALL.slideTime * (1 + TACKLE_WET.time * wxP()), angle: Math.atan2(ny, nx || c.face) };
   if (d && d.action === 'dive' && d.act) {
     // he dove at him: he stays laid out on the turf, riding down on the runner's legs (not popping up into a standing wrap-up)
     // (he lies behind the runner on the side he came from, helmet toward him: judged from the launch spot, since the dive can carry him past)
@@ -7208,7 +7215,7 @@ function updateAction(p, dt) {
 
 // The defensive line when the ball's let go: he stops his rush dead for a beat (freeze), then heads for the ball
 // at speed x his rush speed (the rest of the line has done its job: nobody keeps rushing a QB who's thrown it)
-const DL_BALL = { freeze: 0.4, speed: 0.7, stop: 1 * YD };
+const DL_BALL = { freeze: 0, speed: 0.7, stop: 1 * YD };
 function lineToBall(d, dt) {
   if (d.action) return idle(d, dt);
   const frozen = clock < (d.freezeUntil || 0);
@@ -7218,6 +7225,19 @@ function lineToBall(d, dt) {
   moveToward(d, ball.x, ball.y, (d.rush || d.top || 6 * YD) * DL_BALL.speed * dt);
   clampField(d); setVelocity(d, px, py, dt);
   d.face = Math.sign(ball.x - d.x) || d.face;
+}
+const QB_COAST = { min: 1.5, time: 0.9 };   // a QB who throws on the move drifts on: only above min yd/s, slowing to a stop over time s
+function idleQB(p, dt) {
+  idle(p, dt);
+  const c = p.coast;
+  if (!c) return;
+  if (p.action && p.action !== 'throw') { p.coast = null; return; }
+  c.t += dt;
+  const k = Math.max(0, 1 - c.t / QB_COAST.time);
+  if (k <= 0) { p.coast = null; return; }
+  const px = p.x, py = p.y;
+  p.x += c.vx * k * k * dt; p.y += c.vy * k * k * dt;
+  clampField(p); setVelocity(p, px, py, dt);
 }
 function idle(p, dt) {
   if (p.action) updateAction(p, dt);
@@ -7266,7 +7286,8 @@ function updateQB(dt) {
   qb.rvx = ease ? (qb.rvx || 0) + (qb.vx - (qb.rvx || 0)) * ease : 0;
   qb.rvy = ease ? (qb.rvy || 0) + (qb.vy - (qb.rvy || 0)) * ease : 0;
   qb.face = 1;
-  qb.cradle = (!!aim || state === 'drop' || state === 'pocket') && !qb.action && !qb.stiff;
+  qb.snapK = state === 'drop' && snapFly && clock < snapFly.dur && !aim ? Math.max(0.001, clock / snapFly.dur) : 0;   // (the snap is on its way: arms at his sides, then hands out to clap onto it)
+  qb.cradle = (!!aim || state === 'drop' || state === 'pocket') && !qb.action && !qb.stiff && !qb.snapK;
   qb.cock = false;   // (no more ball up over the helmet while aiming: he keeps it at his chest in both hands)
   qb.ready = qb.cradle && !!aim && runner !== qb;   // aiming: the chest hold raised just a little, ready to throw
   if (qb.cock) qb.cradle = false;   // aiming, and all through the drop and the pocket: ball up at the chest in both hands (it used to sit at his feet, hidden behind him, once the snap was in)
@@ -8383,7 +8404,8 @@ function escapeSack(r) {
   if (!chance || Math.random() >= chance) return false;
   r.missedQB = clock; qb.escapedAt = clock;
   for (const d of back7) if (!d.action) d.slow = Math.max(d.slow || 0, ESCAPE.slow);   // (a broken play: the coverage breaks down behind him, so the shot downfield is there)
-  startDive(r, r.x + (qb.x - r.x) * 2, r.y + (qb.y - r.y) * 2, 0.3, 1.5 * YD);   // flies by and goes down
+  const kind = qb.stiff ? 'stiff' : spun ? 'spin' : 'juke';
+  missReel(qb, r, kind);   // the beaten rusher reacts like a tackler beaten by a ball carrier (juke / spin / stiff-arm reels, iconic ones)
   r.recoverUntil = clock + 0.9;
   popup(r, qb.stiff ? 'STIFF ARM' : spun ? 'SPUN AWAY' : 'JUKED', '#ffd94a');
   return true;
@@ -8723,7 +8745,7 @@ function updateLine(dt) {
         .sort((a, c) => dist(a, qb) - dist(c, qb))[0];
       if (loose && !loose.shed && !blockers.some(o => o !== b && o.assign === loose)) b.assign = loose;
       const help = !loose && passHelp(b, rushers);   // nobody loose: double a neighbor who's losing
-      if (help) { b.assign = help; moveToward(b, help.x + (qb.x - help.x) * 0.3, help.y + (qb.y - help.y) * 0.3, OL_SPEED * dt); }
+      if (help) { b.assign = help; moveToward(b, help.x + (qb.x - help.x) * 0.3, help.y + (qb.y - help.y) * 0.3 + (b.y >= help.y ? 1 : -1) * 0.9 * YD, OL_SPEED * dt); }   // (a double team: shoulder to shoulder, each on his own side of the man, never stacked on one spot)
       else if (loose) {
         const k = 0.45;   // cut him off between him and the QB
         moveToward(b, loose.x + (qb.x - loose.x) * k, loose.y + (qb.y - loose.y) * k, OL_SPEED * dt);
@@ -8732,7 +8754,7 @@ function updateLine(dt) {
         const inside = Math.abs(i) <= 1;   // (the three interior men: nobody to block = double a neighbor's man, never just drop deeper with the QB)
         const dbl = inside ? rushers.filter(x => !x.action && !x.shed && x.engaged && dist(x, b) < PRO.free.range * YD && blockers.filter(o => o !== b && o.assign === x).length < 2)
           .sort((a, c) => (a.shedAt - clock) - (c.shedAt - clock) || rushRating(c) - rushRating(a))[0] : null;
-        if (dbl) { b.assign = dbl; moveToward(b, dbl.x + (qb.x - dbl.x) * 0.3, dbl.y + (qb.y - dbl.y) * 0.3, OL_SPEED * dt); }
+        if (dbl) { b.assign = dbl; moveToward(b, dbl.x + (qb.x - dbl.x) * 0.3, dbl.y + (qb.y - dbl.y) * 0.3 + (b.y >= dbl.y ? 1 : -1) * 0.9 * YD, OL_SPEED * dt); }
         else moveToward(b, Math.min(inside ? los - PRO.free.depth * YD : los, qb.x + (POCKET.cup - 0.5 * Math.abs(i)) * YD), qb.y + i * 1.1 * YD, OL_SPEED * 0.6 * dt);
       }
     }
@@ -11384,12 +11406,12 @@ const CPU_OFF = { pass: 1.15, passAdd: 0, early: 2, earlyRun: 1.2, commit: 1, cr
 // a CPU QB on a rollout / flush with nobody open: odds he tucks it and runs = base + per x his (speed + accuracy + awareness) rating
 // (clamped min..max); wait = s past his throw time before he goes;
 // edge = yd from the middle he must be out to count as on the edge; room = yd from the sideline where he bends back inside
-const ROLL_RUN = { base: 0.55, per: 0.35, min: 0.1, max: 0.75, wait: 0.25, edge: 4, room: 5, sep: 1.5 };   // sep = yd of separation under which his best man counts as covered (a forced throw)
+const ROLL_RUN = { base: 0.7, per: 0.35, min: 0.2, max: 0.85, wait: 0.25, edge: 4, room: 5, sep: 2.2 };   // sep = yd of separation under which his best man counts as covered (a forced throw)
 const CPU_QB = { misreadPow: 2.2, powPer: 0.35, noise: 1.6, rollBase: 0.22, rollPer: 0.25, rollTo: 9, runErr: 0.6, heatErr: 0.7, stepBase: 0.55, stepPer: 0.2, errUp: 1.35 };
 const DEEP_CALL = { shot: 1.8, mid: 1.3, sim: 1.5 };   // x the weight of deep / intermediate route concepts in the computer's play calls, x the odds of a deep shot in a simmed drive
 const AVG_DEPTH = 11;   // yards a simmed completion is aimed past the line on a normal down (was 8.5)
 const AI_DEEP = { per: 1.2, shortPen: 3, shortYd: 8, cap: 38, at: 15, bonus: 11, force: 0.5, forceMin: 14, forceHeat: 0.35, scr: 0.5 };   // (force was 0.9: with nobody open he nearly always forced a deep throw and never ran) // scr = base odds he's a scrambler this play (was 0.45, 0.28); mid / deep shots x1.5 (per, bonus, forced: forceMin 12 -> 8, forceHeat = pressure needed)   // the computer's QB and deep shots: open-ness points per yard downfield (up to cap yd), + bonus for a throw at least `at` yd past the line; force = share of plays where, under pressure with nobody open, he forces it to his deepest man (at least forceMin yd downfield) instead of running / throwing it away
-const AI_PAT = { shortYd: 8, shortSep: 1.5, shortWait: 0.9, flushBase: 0.55, flushPer: 0.3, flushHeat: 0.22 };   // the computer's QB patience: a throw under shortYd past the line needs shortSep more yards of separation to beat his release time, and he waits up to shortWait s past it before settling for one; flush* = odds (base + per x speed+agility steps) he escapes the pocket away from a rusher once pressure passes flushHeat
+const AI_PAT = { shortYd: 8, shortSep: 1.5, shortWait: 0.9, flushBase: 0.75, flushPer: 0.3, flushHeat: 0.15 };   // the computer's QB patience: a throw under shortYd past the line needs shortSep more yards of separation to beat his release time, and he waits up to shortWait s past it before settling for one; flush* = odds (base + per x speed+agility steps) he escapes the pocket away from a rusher once pressure passes flushHeat
 const AI_SIDE = { cross: 3.5, crossRun: 4, same: 0.7, dir: 0.5 };   // crossRun = extra cross-field penalty when he has open grass to run (a throw across the field is then ruled out until he holds it too long)
 // (   // the computer's QB, in open-ness points: the penalty for a throw all the way across the field, the pull toward a receiver on his side of the field (and the push off the other), a receiver running the way he is moving
 const AI_LEAD = { minSpd: 2, ahead: 0.3, away: 1.6, range: 5 };   // (ahead was 1.2: receivers had to dive for it; now in stride)   // the computer's QB leads a moving receiver: min speed (yd/s) to bother, extra yards ahead of him, up to this many yards sideways away from the nearest defender (within `range` yards of the spot)
@@ -11488,7 +11510,7 @@ function aiTarget(force) {
 }
 // CPU QB run vs a contested throw: sep (yd) / crowd = what counts as a contested best throw; a lane is clear when no defender is within
 // width yd (+ widen per yd ahead) of it over its first len yd; base + per x SPEED rating step = the odds he takes it (at least min)
-const AI_QBRUN = { sep: 1.8, crowd: 2, len: 7, width: 2.2, widen: 0.3, base: 0.6, per: 0.15, min: 0.3 };
+const AI_QBRUN = { sep: 2.6, crowd: 1, len: 7, width: 2.2, widen: 0.3, base: 0.8, per: 0.15, min: 0.5 };
 // the clear lane in front of the QB (the sideways shift to it, 0 = straight up), or null when there's none
 function qbRunLane() {
   for (const off of [0, -4, 4, -7, 7]) {
@@ -11547,7 +11569,8 @@ function aiPocket() {
     if (dist(rusher, qb) < 1.8 * YD && clock >= (ai.moveAt || 0)) {
       ai.moveAt = clock + 1.1;
       const r = Math.random();
-      if (r < 0.4) pocketAction('KeyR'); else if (r < 0.75) pocketAction(rusher.y > qb.y ? 'KeyW' : 'KeyS'); else ai.stiffUntil = clock + 0.7;
+      if (r < 0.12) pocketAction('KeyR'); else if (r < 0.25) pocketAction(rusher.y > qb.y ? 'KeyW' : 'KeyS'); else if (r < 0.4) ai.stiffUntil = clock + 0.7;   // (mostly he just runs away from the blitzer, below: moves are the exception)
+      else ai.flush = true;
     }
   }
   if (clock < (ai.stiffUntil || 0) || (qb.stiffLock && clock < qb.stiffLock.until)) keys.KeyQ = true;
@@ -11952,19 +11975,19 @@ function update(dt) {
     // the defense triggers on the screen; the few who stayed home keep playing their zones while he's set to throw
     for (const d of back7) if (state === 'run') { if (settingUp && d.screenStay) zoneDefend(d, dt); else pursue(d, runner, dt); }
     if (kickoffPlay && state === 'run' && runner !== qb) kickoffBlock(qb, dt, WR_BLOCK_SPEED);
-    else if (runner !== qb) { if (isRunPlay && !kickoffPlay && !qb.action && !(tut && (tutStep() || {}).still) && clock < RUN_DROP.time) runDrop(dt); else if (passCaught() && !qb.action) updateBlocker(qb, dt, QB_SPEED); else idle(qb, dt); }   // (a caught pass: the QB goes downfield to block too)
+    else if (runner !== qb) { if (isRunPlay && !kickoffPlay && !qb.action && !(tut && (tutStep() || {}).still) && clock < RUN_DROP.time) runDrop(dt); else if (passCaught() && !qb.action) updateBlocker(qb, dt, QB_SPEED); else idleQB(qb, dt); }   // (a caught pass: the QB goes downfield to block too)
   } else if (state === 'flight') {
-    for (const p of [qb, ...ols, ...recs.filter(r => r.teBlock)]) idle(p, dt);
+    for (const p of [qb, ...ols, ...recs.filter(r => r.teBlock)]) idleQB(p, dt);
     for (const d of dl) d.dropZone ? defendBall(d, dt) : lineToBall(d, dt);
-    if (!catchers().includes(rb)) idle(rb, dt);
+    if (!catchers().includes(rb)) idleQB(rb, dt);
     for (const r of catchers()) updateReceiver(r, dt);
     // (no route spacing once it's thrown: everyone who can get to it goes for it)
     for (const d of back7) defendBall(d, dt);
     updateFlight(dt);
   } else if (state === 'loose') {
-    for (const p of [qb, ...ols, ...recs.filter(r => r.teBlock)]) idle(p, dt);
+    for (const p of [qb, ...ols, ...recs.filter(r => r.teBlock)]) idleQB(p, dt);
     for (const d of dl) lineToBall(d, dt);
-    if (!catchers().includes(rb)) idle(rb, dt);
+    if (!catchers().includes(rb)) idleQB(rb, dt);
     for (const r of catchers()) updateReceiver(r, dt);
     for (const d of back7) chaseLoose(d, dt);
   } else if (state === 'fumble') {
@@ -13041,7 +13064,7 @@ const REEL_ST = {
   // juke: lunges past and falls on his face / stumbles, legs crossed / legs go out and he sits
   jukeLunge: { dur: 0.7, dist: 1.6, from: 'self', lie: true, pose: k => { const f = smooth01(rmp(k, 0.1, 0.75));
     return { R: LIE * f, ty: 2 * Math.sin(Math.PI * f), legs: [[-2, 0.3 + 0.8 * f, 0.2], [2, -0.5 * f, 0.7 * f]], arms: [[2, -10, -0.3 + 0.9 * f, 0.2], [-1, -10.5, 0.1 + 0.7 * f, 0.1]] }; } },
-  jukeStumble: { dur: 0.9, dist: 1.8, from: 'self', flat: 'jukeLunge', pose: k => { const w = Math.sin(k * Math.PI * 3) * (1 - k), g = Math.sin(k * Math.PI * 4), m = Math.sin(k * 14);
+  jukeStumble: { dur: 0.6, dist: 1.8, from: 'self', flat: 'jukeLunge', pose: k => { const w = Math.sin(k * Math.PI * 3) * (1 - k), g = Math.sin(k * Math.PI * 4), m = Math.sin(k * 14);
     return { R: 0.3 * w + 0.22 * Math.sin(Math.PI * k), ty: 1.5 * Math.abs(w), legs: [[-1.5, 0.5 * g, 0.3], [1.5, -0.5 * g, 0.3]], arms: [[2, -10, -1.1 + 0.7 * m, 0.3], [-1, -10.5, 2.3 - 0.7 * m, -0.3]] }; } },
   jukeAnkles: { dur: 1.3, dist: 0.7, from: 'self', flat: 'jukeLunge', pose: k => { const f = smooth01(Math.min(rmp(k, 0, 0.15), rmp(1 - k, 0, 0.2)));
     return { ty: 7 * f, sx: 1 + 0.1 * f, sy: 1 - 0.38 * f, R: -0.3 * f, legs: [[-2, -1.3 * f, 0.05], [2, -1.5 * f, 0.15]], arms: [[-1, -10, 1.6 + 0.7 * f, 0], [2, -10, 1.5 + 0.6 * f, 0]] }; } },
@@ -13128,9 +13151,9 @@ function postDive(p, a, dt) {
     const L = Math.hypot(a.tx - a.fx, a.ty - a.fy), sp = L / YD / Math.max(0.15, a.dur);
     if (!a.post) a.post = !(p.tackling && !p.resolved) && !p.runDive && !a.pylon && Math.random() < (sp >= POST_DIVE.fast ? POST_DIVE.rollFast : POST_DIVE.roll) ? 'roll' : 'skid';
     a.pt = 0;
-    if (a.post === 'roll' && !p.hasBall && L > 1) {
+    if (a.post === 'roll' && !p.hasBall) {   // (rolls along the way he was going; barely moving, the way he faces: never a roll on the spot)
       const go = POST_DIVE.rollYd * YD * Math.min(1.3, Math.max(0.5, sp / POST_DIVE.fast));
-      a.rdx = (a.tx - a.fx) / L * go; a.rdy = (a.ty - a.fy) / L * go;
+      a.rdx = L > 1 ? (a.tx - a.fx) / L * go : (a.face || p.face || 1) * go; a.rdy = L > 1 ? (a.ty - a.fy) / L * go : 0;
     }
     if (a.post === 'roll' && !p.hasBall) p.recoverUntil = Math.max(p.recoverUntil || 0, clock + POST_DIVE.rollDur);   // (finishes the roll before getting up)
   }
@@ -13508,6 +13531,7 @@ function watchingBall(p) {
   if (p.relLook && clock < p.relLook && !p.action && !p.hasBall && (state === 'drop' || state === 'pocket')) return true;   // head snapped round to the QB (after a break / selling a double move)
   if (p.hasBall || p.leapBat || !(state === 'flight' || state === 'loose') || !(ball.inAir || ball.loose)) return false;
   if (p.action && p.action !== 'jump') return false;
+  if (!p.action && (ball.x - p.x) * p.face < -LOOK_BALL.behind * YD) return false;   // (a ball still behind him, at the QB's hand as it's let go: no look back and down at it; he looks once it's out in front)
   if (p.team === 'def') return p.eyes === 'ball' || p.action === 'jump' || !!p.tipArms;
   return p === tgt || !!p.reach || p.action === 'jump' || ((recs.includes(p) || p === rb) && Math.hypot(ball.tx - p.x, ball.ty - p.y) < LOOK_BALL.near * YD);
 }
@@ -13610,21 +13634,24 @@ function drawPlayer(p) {
                  (!p.action && p.tipArms && ball.inAir && (state === 'flight' || state === 'loose')) ||   // a defender getting his hands up to tip it
                  false;
   const fairWave = !!p.fairSig && !p.action && !armsUp;   // the fair catch signal: ONE arm waved overhead (the other hangs)
-  const oneHand = (!p.action && p.reach && (p.catchMode === 'one' || p.catchMode === 'jumpOne' || p.catchMode === 'diveOne')) || oneHandAir;
+  // hands up for a ball that's no longer coming (it hit the turf, or sailed past behind him): they come down into the run again
+  const reachOn = !!p.reach && !((recs.includes(p) || p === rb || back7.includes(p)) && !p.hasBall && !p.action && (state === 'flight' || state === 'loose' || state === 'done') && (!ball.inAir || (ball.x - p.x) * p.face < -3 * YD));
+  const oneHand = (!p.action && reachOn && (p.catchMode === 'one' || p.catchMode === 'jumpOne' || p.catchMode === 'diveOne')) || oneHandAir;
   const stiff = !!p.stiff && !p.action;
   const overShoulder = !p.action && p.overShoulder && !oneHand && !stiff;   // (a stiff arm is one arm out: never both hands over the shoulder)
   // QB aiming / protecting it (G) / sliding (tucks it away with both arms as he goes down): ball at the chest in both hands
   const guardTuck = !!p.guard && p.hasBall && !p.action && !p.cradle;   // G: ball tucked away under both arms
   const cocked = !!p.cock && !p.action && !stiff;   // aiming: the ball up over his head in the throwing hand
-  const cradle = (!!p.cradle && !p.cock && !p.action && !stiff) ||(p.action === 'slide' && (p.hasBall || runner === p));   // (the QB tucks it with both arms as he slides)
+  const cradle = (!!p.cradle && !p.cock && !p.action && !stiff && !(p === qb && runner !== qb && !['pre', 'drop', 'pocket'].includes(state))) || (p.action === 'slide' && (p.hasBall || runner === p));   // (the QB tucks it with both arms as he slides)
   const throwing = p.action === 'throw';         // QB follow-through
+  const lf = !!p.lefty !== (p.face < 0);          // (which arm throws follows his own arm, not the way he faces / the drive runs: a flipped sprite swaps arms)
   // hands out only while actually locked up with someone: a man who's shed his block (or is just chasing)
   // runs with his arms pumping instead
   const locked = p.engaged && !p.stiffBy && !p.churn && allPlayers().some(o => o.team !== p.team && o.action !== 'down' && Math.hypot(o.x - p.x, o.y - p.y) < BLOCK_RANGE * 1.6);
   const lockO = locked ? allPlayers().filter(o => o.team !== p.team && o.action !== 'down' && Math.hypot(o.x - p.x, o.y - p.y) < BLOCK_RANGE * 1.6).sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[0] : null;
   const swim = !p.action && p.swimLeft > 0;     // D-lineman's swim: one arm whipping over the blocker's shoulder
-  const runPump = !p.hasBall && !p.action && !p.engaged && !(p.swimLeft > 0) && Math.hypot(p.vx || 0, p.vy || 0) > (recs.includes(p) || p === rb ? 1.5 : 4) * YD;   // (a receiver slowed coming off a jam / rip still pumps his arms)   // running free: the arms always pump (only the ball carrier keeps his own)
-  const armsOut = !runPump && !armsUp && !oneHand && !stiff && !overShoulder && !cradle && !swim && (locked || p.reach || (p.reachGoal && p.action === 'down') || p.action === 'toedrag' || p.action === 'wrap' || p.action === 'kneel');
+  const runPump = !p.hasBall && !p.action && !p.engaged && !(p.swimLeft > 0) && Math.hypot(p.vx || 0, p.vy || 0) > (recs.includes(p) || p === rb || (p === qb && runner !== qb) ? 1.5 : 4) * YD;   // (a receiver slowed coming off a jam / rip still pumps his arms)   // running free: the arms always pump (only the ball carrier keeps his own)
+  const armsOut = !runPump && !armsUp && !oneHand && !stiff && !overShoulder && !cradle && !swim && (locked || (p.reach && reachOn) || (p.reachGoal && p.action === 'down') || p.action === 'toedrag' || p.action === 'wrap' || p.action === 'kneel');
   // breaking: quick chatter steps (arms and feet) into a sharp cut, or one big plant on a milder one
   const ac = rec && rec.replaying ? rec.rt : clock;   // animation clock: the replay's own time during a replay
   const bf = !p.action && p.breakFx, bage = bf ? ac - bf.t : 9;
@@ -13910,8 +13937,8 @@ function drawPlayer(p) {
   } else if (p.action === 'down' && p.act && p.act.thr && p.act.t < THROW_LOOK.hitArm) {
     // hit as he lets it go: the throwing arm still whips through the release as he goes down, the other arm flung back
     const k = smooth01(p.act.t / 0.18);
-    drawArm(t, skin, p.lefty ? 2 : -2, -10 + bob, 2.2, 3.5, 0.35, 3.5, 3.5);
-    drawArm(t, skin, p.lefty ? -2 : 2, -11 + bob, -1.3 + 1.1 * k, 6, 0.6 * k, 7, 4.5);
+    drawArm(t, skin, lf ? 2 : -2, -10 + bob, 2.2, 3.5, 0.35, 3.5, 3.5);
+    drawArm(t, skin, lf ? -2 : 2, -11 + bob, -1.3 + 1.1 * k, 6, 0.6 * k, 7, 4.5);
   } else if (bringIn) {
     // the catching arm (fully extended while reaching) draws back in to the chest with the ball in the glove
     const toward = (p.hand || 1) * p.face, jumpA = -Math.PI / 2 + (toward > 0 ? 0.55 : -0.55);
@@ -14033,10 +14060,15 @@ function drawPlayer(p) {
     // one arm raised and extended downfield, the other hand on his hip
     drawArm(t, skin, -2, -10, Math.PI / 2 + 0.55, 3, -1.7, 3.5, 3);
     drawArm(t, skin, 2, -11, -0.55, 7, -0.1, 8, 5);
+  } else if (p === qb && p.snapK >= 0.4 && !p.action) {
+    // the snap arriving: hands come up from his sides, wide apart, and clap together on the ball at his chest
+    const u = smooth01((p.snapK - 0.4) / 0.6), open = 3.2 * (1 - u) * (1 - u);
+    drawArmTo(t, skin, -1, -10.5 + bob, 4 + 3 * u, -6.5 - 2.5 * u + bob + open, 3.5, 4, 1, 3.4);
+    drawArmTo(t, skin, 2, -9 + bob, 4 + 3 * u, -4 - 3 * u + bob - open, 3, 4, 1, 3.4);
   } else if (cocked) {
     // cocked to throw: the throwing hand under the ball up over his helmet (drawn over the hand), the other arm out toward the target
-    const sx = p.lefty ? 1 : -3, sy = -10 + bob;
-    drawArmTo(t, skin, p.lefty ? -1 : 3, -9.5 + bob, 10, -7 + bob, 4, 4.5, 1, 3.6);   // (the off arm out front first: the throwing arm goes over it)
+    const sx = lf ? 1 : -3, sy = -10 + bob;
+    drawArmTo(t, skin, lf ? -1 : 3, -9.5 + bob, 10, -7 + bob, 4, 4.5, 1, 3.6);   // (the off arm out front first: the throwing arm goes over it)
     drawArmTo(t, skin, sx, sy, bl.x + 1, bl.y + 3.2, 4.5, 5, 1, 4);
   } else if (cradle) {
     // elbows in, both hands up on the ball at his chest (the ball is drawn over them)
@@ -14046,17 +14078,17 @@ function drawPlayer(p) {
   } else if (throwing && p.act && p.act.cross) {
     // across his body (moving toward his off-hand side): the throwing arm comes over the top and down across the front, the other arm pulled in
     const k = smooth01(Math.min(1, p.act.t / 0.22));
-    drawArm(t, skin, p.lefty ? 2 : -2, -10 + bob, 1.6 + 0.4 * k, 3.5, -1.2, 3.5, 3.5);
-    drawArm(t, skin, p.lefty ? -2 : 2, -11 + bob, -1.4 + 2.0 * k, 6, 0.3 + 0.5 * k, 7, 4.5);
+    drawArm(t, skin, lf ? 2 : -2, -10 + bob, 1.6 + 0.4 * k, 3.5, -1.2, 3.5, 3.5);
+    drawArm(t, skin, lf ? -2 : 2, -11 + bob, -1.4 + 2.0 * k, 6, 0.3 + 0.5 * k, 7, 4.5);
   } else if (throwing && p.act && p.act.side) {
     // sidearm sling: the throwing arm whipped round flat, low, from out wide to across the front; the other arm flung back
     // (seen from the side the arm stays flat at chest height: short while it comes round from behind him, full length out front)
     const k = smooth01(Math.min(1, p.act.t / 0.16));
-    drawArm(t, skin, p.lefty ? 2 : -2, -10 + bob, 2.6, 3.5, 0.3, 3.5, 3.5);
-    drawArm(t, skin, p.lefty ? -2 : 2, -8.5 + bob, 0.3 - 0.15 * k, 2 + 4 * k, -0.2 * k, 3 + 4 * k, 4.5);
+    drawArm(t, skin, lf ? 2 : -2, -10 + bob, 2.6, 3.5, 0.3, 3.5, 3.5);
+    drawArm(t, skin, lf ? -2 : 2, -8.5 + bob, 0.3 - 0.15 * k, 2 + 4 * k, -0.2 * k, 3 + 4 * k, 4.5);
   } else if (throwing) {
     // release: throwing arm whipped out straight ahead at shoulder height, the other swept back
-    if (p.lefty) {   // a lefty throws with the other arm: it whips out from the opposite shoulder (behind the swept-back one) and the right arm swings back
+    if (lf) {   // a lefty throws with the other arm: it whips out from the opposite shoulder (behind the swept-back one) and the right arm swings back
       drawArm(t, skin, -2, -10 + bob, -1, 6, 0.6, 7, 4.5);   // (the throwing arm is up high: the ball leaves from the top of it)
       drawArm(t, skin, 2, -11 + bob, 2.4, 3.5, 0.35, 3.5, 3.5);
     } else {
@@ -14151,15 +14183,17 @@ function drawPlayer(p) {
   const look3 = { x: (lbx * p.face >= -0.5 * YD ? 1 : -1) * gd / bk, y: -(ball.z - p.z) / bk + lby * LOOK_BALL.depth / bk };
   const watchB = rec && rec.replaying ? !!p.watch : watchingBall(p);
   const hW = headLook(p, look3, hy, watchB);
-  let yaw = lying ? 0 : headYaw(p, watchB);
+  let yaw = lying ? 0 : rec && rec.replaying && p.yawRec != null ? p.yawRec : headYaw(p, watchB);   // (a replay turns the head as it was in the play, not from the live state)
   ctx.save();
   const fakeLook = !!(p.relFx && p.relFx.kind === 'shoulder' && !p.action && !p.hasBall && (ac - p.relFx.t) / p.relFx.dur <= 1);   // (a head fake turns side to side: never tipped down at the ground)
   // (no tipping at the ground the moment a pass is thrown, and a receiver merely near the landing spot only turns his head: just the target / a man reaching or leaping tips up / down, once the ball has left the QB)
   const pitchOK = !(state === 'flight' && !p.hasBall && p.team !== 'def' && ((ball.p ?? 1) < LOOK_BALL.tiltAfter || !(p === tgt || p.reach || p.action === 'jump')));
-  if (hW !== null && !fakeLook && pitchOK) {   // (tips up / down only: a ball behind him is looked at over the shoulder by the yaw, never by flipping the head round)
+  const routeLook = !p.action && !p.hasBall && p.relLook && clock < p.relLook && (state === 'drop' || state === 'pocket');   // (turning his head to find the QB on a route: side to side only, never tipped up / down at the ball)
+  if (hW !== null && !fakeLook && pitchOK && !routeLook && !(rec && rec.replaying && p.watch && (state === 'drop' || state === 'pocket'))) {   // (tips up / down only: a ball behind him is looked at over the shoulder by the yaw, never by flipping the head round)
     const sa = Math.atan2(Math.sin(hW), Math.cos(hW) * p.face), back = Math.cos(sa) < 0;
     ctx.translate(0, hy + 3);
-    ctx.rotate(Math.max(-LOOK_BALL.up, Math.min(LOOK_BALL.down, back ? wrapAngle(Math.PI - sa) : sa)));
+    const upMax = p.action === 'jump' || p.reach || p === tgt ? LOOK_BALL.up : 0.2;   // (only a man going up for the ball tips his head up; everyone else just follows it with a slight lift)
+    ctx.rotate(Math.max(-upMax, Math.min(LOOK_BALL.down, back ? wrapAngle(Math.PI - sa) : sa)));
     ctx.translate(0, -hy - 3);
   }
   // head & shoulder fake: the head swivels round toward the back shoulder and snaps back (as far as the neck goes)
@@ -14178,15 +14212,39 @@ function drawPlayer(p) {
   ctx.fillRect(3.5, hy - 1, 4, 5.5);
   if (look && look.beard) { ctx.fillStyle = look.hair; ctx.fillRect(3.5, hy + 2.8, 4, 1.7); }
   ctx.restore();
+  if (yawCam > 0.75) {   // turned toward the camera: the visor fully shows, and the face fills it (his skin behind the cage, not the shell's colour)
+    const u = Math.min(1, (yawCam - 0.75) / (NECK.max - 0.75));
+    ctx.save(); ctx.beginPath(); ctx.arc(0, hy, 7.5, 0, Math.PI * 2); ctx.clip();
+    ctx.fillStyle = skin; ctx.fillRect(3.5 - 9 * u, hy + 0.5, 4 + 9 * u, 7);
+    // the facemask seen head-on: a grid of bars across most of the face (no eyes or mouth drawn)
+    const x0 = 3.5 - 9 * u, x1 = 7.5, y0 = hy + 0.5, y1 = hy + 7.5;   // (low on the helmet like the real thing: the shell fills the top half, the mask the bottom)
+    ctx.strokeStyle = '#d0d0d0'; ctx.lineWidth = 1.2; ctx.globalAlpha = Math.min(1, u * 1.5);
+    // (like the real thing head-on: a brow bar across the top, the eye area open, a mouth bar, two uprights between the bars and a chin bar)
+    const ym = y0 + (y1 - y0) * 0.62, xm = (x0 + x1) / 2, w3 = (x1 - x0) / 3;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0); ctx.lineTo(x1, y0);                          // brow bar
+    ctx.moveTo(x0, y0); ctx.lineTo(x0 + w3 * 0.25, ym); ctx.moveTo(x1, y0); ctx.lineTo(x1 - w3 * 0.25, ym);   // the cage's sides, angled in
+    ctx.moveTo(x0 + w3 * 0.25, ym); ctx.lineTo(x1 - w3 * 0.25, ym);  // mouth bar
+    ctx.moveTo(xm - w3 * 0.4, ym); ctx.lineTo(xm - w3 * 0.4, y1);    // two uprights down to the chin
+    ctx.moveTo(xm + w3 * 0.4, ym); ctx.lineTo(xm + w3 * 0.4, y1);
+    ctx.moveTo(x0 + w3 * 0.45, y1); ctx.lineTo(x1 - w3 * 0.45, y1);  // chin bar
+    ctx.stroke();
+    ctx.restore();
+  }
   ctx.strokeStyle = t.stripe;
   ctx.lineWidth = 2;
+  // the helmet turns with the facemask: the stripe (down the middle of the shell) foreshortens and shifts with the yaw
+  ctx.save(); ctx.translate(-2.5 * Math.sin(yaw), 0); ctx.scale(Math.max(0.4, Math.cos(yaw)), 1);
   ctx.beginPath(); ctx.arc(0, hy, 6, -Math.PI * 0.95, -Math.PI * 0.25); ctx.stroke();
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.beginPath(); ctx.arc(-1.5 - 2.5 * (1 - Math.cos(yaw)) * (yawCam > 0 ? 1 : 0), hy + 1, 1.2, 0, Math.PI * 2); ctx.fill();   // (ear hole slides back as the face turns toward us)
+  ctx.restore();
+  // ...and so does the ear hole: it swings back round the head as the face turns toward us, forward as it turns away, fading at the edge
+  const earX = -1.5 - 5 * Math.sin(yaw), earA = Math.max(0, 1 - Math.max(0, -earX - 4.5) / 2.2);
+  if (earA > 0) { ctx.fillStyle = `rgba(0,0,0,${0.45 * earA})`; ctx.beginPath(); ctx.arc(earX, hy + 1, 1.2, 0, Math.PI * 2); ctx.fill(); }   // (ear hole slides back as the face turns toward us)
   // (the cage sticks out front of the shell: it foreshortens as the head turns but never fades out or shrinks inside the helmet)
   ctx.save(); ctx.translate(0, hy); ctx.scale(Math.max(NECK.cageMin, faceW), 1); ctx.translate(0, -hy);
   ctx.strokeStyle = '#d0d0d0';
   ctx.lineWidth = 1.3;
+  ctx.globalAlpha *= yawCam > 0.75 ? Math.max(0, 1 - (yawCam - 0.75) / 0.5) : yawCam < 0 ? Math.max(0.12, 1 + yawCam / NECK.max * 0.88) : 1;   // (side-on the side cage shows; head-on the front grid replaces it; turned away it's barely there)
   ctx.beginPath();
   ctx.moveTo(4, hy - 1);   ctx.lineTo(10, hy - 1);
   ctx.moveTo(4, hy + 2.5); ctx.lineTo(10, hy + 2.5);
@@ -14546,6 +14604,10 @@ function callTimeout(cpu = false, defense = false) {   // defense: two players, 
   msg = `TIMEOUT, ${nm}  -  ${left} left this half`;
 }
 const KEYS_BTN = { x: W - 112, y: H - 35, w: 100, h: 30 };
+const REPLAY_FINISH_BTN = { x: W - 112 - 108, y: H - 35, w: 100, h: 30 };   // FINISH: ends a replay / highlight like tapping it (beside CONTROLS; on touch, where CONTROLS is hidden, it takes its spot)
+const finishBtn = () => { REPLAY_FINISH_BTN.x = TOUCH ? W - 112 : W - 112 - 108; return REPLAY_FINISH_BTN; };
+const finishShowing = () => !!(rec && rec.replaying && !finalReplay() && !results);
+function finishReplay() { pressAt = 0; replayLeft = null; if (rec && rec.hl) hlClose(); else skipReplay(); }
 let showKeys = false, resetAsk = false;   // resetAsk: the pause menu's "reset this game?" confirm is up
 // Fourth down: before the snap he picks punt or go for it. A punt just ends the drive for now.
 let fourthPending = false, toast = null;
@@ -14770,10 +14832,13 @@ function drawKickReticle() {
   ctx.beginPath(); ctx.moveTo(t.x - 20, t.y); ctx.lineTo(t.x + 20, t.y); ctx.moveTo(t.x, t.y - 20); ctx.lineTo(t.x, t.y + 20); ctx.stroke();
   ctx.restore();
 }
+const KO_TIP_KEY = 'pocketPasser.koTipSeen';   // set once a game has finished: the kickoff reticle tip stops showing
 function drawKickTargetUI() {
   if (!reticleOn()) return;
   menuBtn(KICK_GO_BTN, 'SET AIM  (Space)', IN_GAME_PAPER.green, 22);
   ctx.fillStyle = '#fff'; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  let seen = false; try { seen = !!localStorage.getItem(KO_TIP_KEY); } catch (e) {}
+  if (seen) return;   // (the tip is for the first game only)
   ctx.strokeStyle = '#000'; ctx.lineWidth = 4; const s = 'click the field to move the reticle, then set power and aim  -  a better kicker lands closer to it';
   ctx.strokeText(s, W / 2, TOP_BAR + 30); ctx.fillText(s, W / 2, TOP_BAR + 30);
 }
@@ -14969,7 +15034,7 @@ function updateKick(dt) {
     if (kick.t > KICK_SNAP) {
       const s = Math.min(1, (kick.t - KICK_SNAP) / KICK_STEP);
       rb.x = kick.kickerX + 1.5 * YL * s;
-      rb.moving = true; rb.run += dt * 14; rb.face = 1;   // (about 3 steps)
+      rb.moving = true; rb.run += dt * 7; rb.face = 1;   // (about 2 steps)
       // the holder has it: down on one knee with the ball stood up on the turf under his hands
       qb.holding = true;
       ball.x = qb.x + 12 * S; ball.y = qb.y; ball.z = 2 * S; ball.rot = Math.PI / 2 - 0.15;
@@ -17161,7 +17226,7 @@ function updateKickoff(dt) {
     k.kicker.face = -1;
     setVelocity(k.kicker, px, py, dt);
     k.kicker.moving = runUp > 0 && runUp < 1;
-    if (k.kicker.moving) k.kicker.run += dt * 8;   // (a few long strides, not a shuffle)
+    if (k.kicker.moving) k.kicker.run += dt * 5;   // (two or three long strides, not a shuffle)
     k.kicker.kickWind = Math.max(0, Math.min(1, (runUp - 0.8) / 0.2));   // last strides: the kicking leg cocks back
     }
     // a punt: a rusher who got free and is on top of the punter can get a hand on it. Blocked behind the line of scrimmage it's a live ball (either team can fall on it);
@@ -17556,7 +17621,7 @@ function drawKeybinds() {
   ctx.textAlign = 'center';
   ctx.fillStyle = '#ffd94a';
   ctx.font = 'bold 40px monospace';
-  ctx.fillText('KEYBINDS', W / 2, 50);
+  ctx.fillText('CONTROLS', W / 2, 50);
   // the list, clipped to the view and shifted up by the scroll
   ctx.save();
   ctx.beginPath(); ctx.rect(0, KEYS_VIEW.top, W, KEYS_VIEW.bottom - KEYS_VIEW.top); ctx.clip();
@@ -17792,7 +17857,7 @@ function draw() {
   if (rec && rec.replaying && !rec.intro && !rec.rewind) {   // (the badge waits for the rewind to finish): a torn red paper scrap, and SAVE beside it
     ctx.save();
     const b = replayBadge();
-    menuBtn(b, rec.hl ? '▶ HIGHLIGHT' : rec.paused ? '❚❚ REPLAY PAUSED  (space)' : rec.slow ? '▶ REPLAY  SLOW-MO' : '▶ REPLAY', IN_GAME_PAPER.red, 17, null, false);
+    menuBtn(b, rec.hl ? (rec.paused ? '❚❚ HIGHLIGHT - PAUSED' : '▶ HIGHLIGHT') : rec.paused ? '❚❚ REPLAY PAUSED  (space)' : rec.slow ? '▶ REPLAY  SLOW-MO' : '▶ REPLAY', IN_GAME_PAPER.red, 17, null, false);
     if (rec.hl && hl) { const mine = hl.mode === 'saved', done = !mine && savedHighlights.includes(hl.list[hl.i]); menuBtn(replaySaveBtn(), mine ? 'DELETE' : done ? 'SAVED ✓' : '★ SAVE', mine ? IN_GAME_PAPER.red : done ? IN_GAME_PAPER.green : IN_GAME_PAPER.yellow, 16, null, mine || !done); }
     else if (!rec.hl) menuBtn(replaySaveBtn(), rec.hlKept || rec.big ? 'SAVED ✓' : '★ SAVE', rec.hlKept || rec.big ? IN_GAME_PAPER.green : IN_GAME_PAPER.yellow, 16, null, !(rec.hlKept || rec.big));   // (a big play is kept on its own: it already reads saved)
     ctx.restore();
@@ -17878,7 +17943,8 @@ function draw() {
   ctx.font = `bold ${Math.round(18 * BB)}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = '#ffd94a';
   ctx.fillText(tut ? (state !== 'pre' && tutStep() ? 'TUTORIAL  -  BACKSPACE to reset the play' : 'TUTORIAL') : (puntRetPlay || (state === 'kick' && kick && kick.punt) || (state === 'kickoff' && kickoff && kickoff.punt) || state === 'punt' || (puntRet && puntPlay && !puntPlay.ko)) ? 'PUNT' : kickoffPlay || (state === 'kick' && kick && kick.kickoff) || (puntRet && puntPlay && puntPlay.ko) ? 'KICKOFF' : patMode !== null || patNext ? 'PAT' : `${downAndDistance()}  |  ${spot(los)}`, W / 2, H - BOT_BAR * 0.33);
-  if (!TOUCH) { ctx.save(); menuBtn(KEYS_BTN, 'KEYS', IN_GAME_PAPER.green, 16); ctx.restore(); }
+  if (!TOUCH) { ctx.save(); menuBtn(KEYS_BTN, 'CONTROLS', IN_GAME_PAPER.green, 16); ctx.restore(); }
+  if (finishShowing()) { ctx.save(); menuBtn(finishBtn(), 'FINISH', IN_GAME_PAPER.red, 16); ctx.restore(); }
   if (!tut && state !== 'sim' && state !== 'kick') { drawStarHud(); drawNamesTip(); }
   if (state === 'kick' || (state === 'kickoff' && kick && kick.userKo)) drawKickMeters();
   if (state === 'sim' && !halfHold) drawSim();   // (the halftime banner shows over the plain field, the sim panel hides)
@@ -19286,7 +19352,7 @@ function genFreeAgent(group) {
   const p = { tag: tpl.tag, group: tpl.group, num: tpl.num, name, short: `${name[0]}.${parts[1]}`, at, raw: { ...at }, age, trade: 7,
     stars, potPts: Math.min(ATTR_TOTAL, score + (age <= 26 && Math.random() < 0.45 ? rint(1, 8) : age <= 29 && Math.random() < 0.3 ? rint(1, 3) : 0)), ht: tpl.ht + rint(-2, 2), wt: tpl.wt + rint(-12, 12),
     look: { skin, hair: '#17110d', style: 1 + Math.floor(Math.random() * 2), beard: Math.random() < 0.2 }, face: makeFace(Math.random) };
-  if (p.group === 'QB') p.hand = Math.random() < 0.1 ? 'L' : 'R';
+  if (p.group === 'QB') p.hand = Math.random() < 0.05 ? 'L' : 'R';
   p.potential = starsOfScore(p.potPts);
   giveAbility(p);
   const a = askOf(p);
@@ -19575,7 +19641,7 @@ function genRookie(group, u, q, used) {   // u: 0 = the best of the class, 1 = t
     look: { skin: pick(['#6b4433', '#8a5a40', '#a8714f', '#c8906e', '#e0b49a']), hair: pick(['#17110d', '#17110d', '#2b1d12', '#4a3320']), style: rint(0, 3), beard: Math.random() < 0.2 },
     face: makeFace(Math.random), rookie: true, fresh: true, signed: true, stock: 0.55 * rating + 0.45 * pts + gauss() * 2.2 };
   p.potential = starsOfScore(pts);
-  if (group === 'QB') p.hand = Math.random() < 0.1 ? 'L' : 'R';
+  if (group === 'QB') p.hand = Math.random() < 0.05 ? 'L' : 'R';
   giveAbility(p, true);
   return p;
 }
@@ -20231,6 +20297,7 @@ function approvalAfterGame(margin) {
   payToFly = pay;   // (the credits fly to the credits box when the first screen with one shows)
 }
 function openResults() {
+  try { localStorage.setItem(KO_TIP_KEY, '1'); } catch (e) {}   // (one game finished: the kickoff reticle tip is gone for good)
   suspended = null; simMode = 'none';   // (a finished game's SIM menu pick must not carry into the next game / tutorial)
   if (twoP && twoP.flipped) flipSides();   // (two players: the result is shown from Player 1's side)
   tallyScores();
@@ -26465,7 +26532,8 @@ canvas.addEventListener('pointerdown', e => {
     showKeys = false;
     return;
   }
-  if (e.button === 0 && overKeysButton(pointerPos(e))) { showKeys = true; aim = null; return; }   // (the keys menu works while paused too)
+  if (e.button === 0 && finishShowing() && inBtn(pointerPos(e), finishBtn())) { finishReplay(); return; }   // (FINISH: same as tapping the replay to continue)
+  if (e.button === 0 && overKeysButton(pointerPos(e))) { showKeys = true; aim = null; return; }   // (the controls menu works while paused too)
   if (e.button === 0 && overPauseButton(pointerPos(e))) { paused = !paused; resetAsk = false; pauseGoals = false; aim = null; return; }
   if (paused) {
     const p = pointerPos(e), hit = b => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
@@ -26996,6 +27064,7 @@ function resetWorld() {
 // a new franchise is its own league: every player's ratings and potential shift a little (FRESH.attr / FRESH.pot points), coordinators get
 // new stars (± FRESH.coach), traits and tendencies, a fresh free-agent market is rolled, and your coach gets his own leanings
 const FRESH = { attr: 0, pot: 0, coach: 0, fa: 24 };   // (attr / pot / coach = how far a new franchise's ratings, potentials and coordinator stars may drift from the stock teams: 0 = it starts with exactly the exhibition teams' rosters and stars)
+const ROOKIE_POT = { age: 22, noise: 8, lean: 4 };   // stock rookies (this age or younger) get their potential points shifted each new franchise: a random +-noise, plus a steady +-lean from the player's name
 function randomizeWorld() {
   PST = {}; LPST = {}; HOF = []; pstStash = null; try { localStorage.removeItem(LPST_KEY); localStorage.removeItem(PST_KEY); localStorage.removeItem(HOF_KEY); } catch (e) {}   // (a new career: its stat lines, and the league's simulated ones, start over)
   if (FRESH.attr || FRESH.pot) for (const p of Object.values(ROSTER).flat()) {
@@ -27004,6 +27073,13 @@ function randomizeWorld() {
     shiftAttrs(p, rint(-FRESH.attr, FRESH.attr));
     p.potPts = Math.min(ATTR_TOTAL, Math.max(scoreOf(p), (pot != null ? pot : scoreOf(p)) + rint(-FRESH.pot, FRESH.pot)));
     rate(p);
+  }
+  // every new franchise re-rolls the stock rookies' ceilings, so it's not always the same ones at five stars: a fresh random swing, plus a small steady lean per player (his name) so some are usually higher / lower
+  for (const p of Object.values(ROSTER).flat()) {
+    if (!p.raw || !p.at || !(p.rookie || (p.age || 99) <= ROOKIE_POT.age) || p.potPts == null) continue;
+    const swing = rint(-ROOKIE_POT.noise, ROOKIE_POT.noise) + Math.round((nameHash(p.name) - 0.5) * 2 * ROOKIE_POT.lean);
+    p.potPts = Math.min(ATTR_TOTAL, Math.max(scoreOf(p), p.potPts + swing));
+    p.potential = starsOfScore(p.potPts);
   }
   const traits = Object.keys(TRAIT_INFO);
   for (const k of Object.keys(STAFF)) {
