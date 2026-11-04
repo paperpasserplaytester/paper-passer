@@ -333,6 +333,7 @@ const BALL_SPEED = 31 * YD;    // lob (default)
 const DEEP_ARM = { from: 28, err: 0.05, k: 0.45, min: 0.08 };
 const RELEASE_K = 1.1;        // x the ball's release height off the QB's hand
 const COCK_BALL = { back: 9 };
+const THROW_LIFT = 0.09;   // s a throw takes to bring the ball up from the two-hand chest hold (hands stay on it) before the arm whips out and it's let go
 const SIDEARM = { run: 3, moving: 0.4, still: 0.04, low: 0.6 };   // bullets: chance of a sidearm sling when the QB is moving at least `run` yd/s / standing; release height x low   // aiming: the ball held up over his head in the throwing hand, this far (sprite units) behind his helmet
 const RELEASE_BASE = 19;     // the ball leaves from the top of the throwing arm: this high (sprite units) for an average-height QB, plus BODY.release per height step
 const CROSS_FIELD = { from: 0.22, span: 0.5, err: 0.5, time: 0.18 };   // throwing from one side of the field to the other: the sideways reach (x field width) it starts at / takes to hit full, extra throw error (x distance) at full, extra hang time (x flight) at full
@@ -624,6 +625,7 @@ const BULLET_PICK = 0.75;   // a bullet is harder to pick off: x on a defender's
 
 const DEFLECT_RANGE = 1.3 * YD;
 // a DB stretching one hand out past DEFLECT_RANGE (up to x reach): tip = chance he gets a fingertip on it, pick = he snags it
+const ONE_HAND_DROP = { base: 0.05, cover: 0.08 };   // extra drop odds on any one-handed catch (x 1 - base), and more with a defender on him (x 1 - cover)
 const ONE_HAND_DB = { reach: 1.3, tip: 0.18, pick: 0.015 };
 const STAND_TIP = { near: 0.6, mult: 0.3 };   // a DB standing flat-footed only tips a ball that comes right at him (within near x PICK_RANGE); anything else he has to jump or dive for (those tips are rolled elsewhere), so the standing odds x mult
 const standTip = dd => dd <= PICK_RANGE * STAND_TIP.near ? 1 : STAND_TIP.mult;
@@ -5539,7 +5541,7 @@ function throwBall() {
               * (1 - PRESSURE_THROW.power * heat - (hitNow ? PRESSURE_THROW.hitPower : 0));
   const relX = P.x - (P.cock ? COCK_BALL.back * S * P.face : 0);   // (it leaves from the cocked hand, never jumps to his middle)
   ball = {
-    x: relX, y: P.y, z: 0, inAir: true, loose: false, live: false, age: 0, bullet, rot: 0, spin: 0,
+    x: relX, y: P.y, z: 0, inAir: true, loose: false, live: false, age: 0, bullet, rot: 0, spin: 0, chest: !trick && P.cradle ? (7 + 3 * (P === qb || P.ready ? 1 : 0)) * S : null,
     duck: hitNow ? 1 : heat > 0.5 ? (heat - 0.5) * PRESSURE_THROW.duck * 2 : 0,   // a wounded duck
     fx: relX, fy: P.y, tx: t.x, ty: t.y,
     p: 0, T: dist / speed * (grounded ? 1 : PASS_ARC.time) * (1 + CROSS_FIELD.time * crossField), h: grounded ? 2 * S : arcHeight(dist, bullet), z0: Math.max(0, RELEASE_BASE * S + BODY.release * S * hz(P)) * RELEASE_K,
@@ -5987,6 +5989,7 @@ function tryCatch(text, kind) {
   const jq = (kind === 'jump' || kind === 'jumpOne') ? (tgt.jumpQ || 0) : 0;
   if (jq) prob = Math.min(0.99, prob * (1 + JUMP_TIMING.catch * jq));
   if (oneHanded && onHim >= 1) prob *= 0.8;
+  if (oneHanded) prob *= 1 - ONE_HAND_DROP.base - (onHim >= 1 ? ONE_HAND_DROP.cover : 0);
   if (tgt.runCatch && nearest <= OPEN_RANGE) prob *= RUN_CATCH.prob;   // running before he's secured it, in traffic
   const fightOne = tgt.fightOne;
   tgt.fightOne = false;
@@ -9930,6 +9933,7 @@ function updateFlight(dt) {
   ball.x = ball.fx + (ball.tx - ball.fx) * ball.p;
   ball.y = ball.fy + (ball.ty - ball.fy) * ball.p;
   ball.z = Math.sin(Math.PI * ball.p) * ball.h + (ball.z0 || 0) * (1 - ball.p);   // (z0: a tall QB lets it go higher)
+  if (ball.chest != null && ball.age < THROW_LIFT) ball.z = ball.chest + (ball.z - ball.chest) * smooth01(ball.age / THROW_LIFT);   // (it leaves the chest hold: pulled up to the release point, not popped there)
   // a thrown spiral: the nose follows the arc (up on the way out, tipping over and down on the way in)
   // while the ball spins about its long axis
   ball.nose = Math.atan2((ball.ty - ball.fy) - Math.PI * ball.h * Math.cos(Math.PI * ball.p), ball.tx - ball.fx);
@@ -10364,7 +10368,7 @@ function updateReturner(d, dt) {
     if (ly < Y_MIN + YD || ly > Y_MAX - YD) score -= reads ? 8 : 2;   // (the computer's returner stays in bounds unless every lane is worse)
     if (!best || score > best.score) best = { a, ux, uy, score };
   }
-  if (puntRet && !udCtl(d) && !d.stiff) cpuReturnMove(d);   // (a man closing on him: a juke, spin, truck, stiff arm or hurdle, like a computer ball carrier)
+  if (!udCtl(d) && !d.stiff) cpuReturnMove(d);   // (a man closing on him: a juke, spin, truck, stiff arm or hurdle, like a computer ball carrier; interception and scoop returns too)
   const steerDir = udCtl(d) ? defDir() : null;   // (you carry it: your keys pick his heading, no keys = the open lane)
   const wantA = steerDir ? Math.atan2(steerDir.y, -steerDir.x) : best.a, turn = Math.atan2(Math.sin(wantA - (d.laneA || 0)), Math.cos(wantA - (d.laneA || 0)));
   d.laneA = (d.laneA || 0) + turn * Math.min(1, dt * (steerDir ? 9 : 6));   // (eases into the cut)
@@ -12118,7 +12122,7 @@ function update(dt) {
       ball.x = holder.x - COCK_BALL.back * S * holder.face; ball.y = holder.y; ball.z = holder.z + Math.max(0, RELEASE_BASE * S + BODY.release * S * hz(holder)) * RELEASE_K;
     } else if (holder.cradle && !a) {
       // about to throw: held up at the chest in both hands (aiming: raised a touch, toward the throwing shoulder)
-      const rd = holder.ready ? 1 : 0;
+      const rd = holder === qb || holder.ready ? 1 : 0;   // (the QB always holds it up high on his chest, elbows in)
       ball.x = holder.x + (4 - 1.5 * rd) * S * holder.face; ball.y = holder.y; ball.z = holder.z + (7 + 3 * rd) * S;
     } else if (a === 'toedrag') {
       ball.x = holder.x + 16 * S * holder.face; ball.y = holder.y; ball.z = 9 * S;
@@ -13647,7 +13651,8 @@ function drawPlayer(p) {
   const lf = !!p.lefty !== (p.face < 0);          // (which arm throws follows his own arm, not the way he faces / the drive runs: a flipped sprite swaps arms)
   // hands out only while actually locked up with someone: a man who's shed his block (or is just chasing)
   // runs with his arms pumping instead
-  const locked = p.engaged && !p.stiffBy && !p.churn && allPlayers().some(o => o.team !== p.team && o.action !== 'down' && Math.hypot(o.x - p.x, o.y - p.y) < BLOCK_RANGE * 1.6);
+  const kickSet = state === 'kick' && kick && ['enter', 'power', 'aim', 'wait'].includes(kick.phase);   // (FG / PAT / punt before the snap: lined up, no hands on each other yet)
+  const locked = p.engaged && !kickSet && !p.stiffBy && !p.churn && allPlayers().some(o => o.team !== p.team && o.action !== 'down' && Math.hypot(o.x - p.x, o.y - p.y) < BLOCK_RANGE * 1.6);
   const lockO = locked ? allPlayers().filter(o => o.team !== p.team && o.action !== 'down' && Math.hypot(o.x - p.x, o.y - p.y) < BLOCK_RANGE * 1.6).sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[0] : null;
   const swim = !p.action && p.swimLeft > 0;     // D-lineman's swim: one arm whipping over the blocker's shoulder
   const runPump = !p.hasBall && !p.action && !p.engaged && !(p.swimLeft > 0) && Math.hypot(p.vx || 0, p.vy || 0) > (recs.includes(p) || p === rb || (p === qb && runner !== qb) ? 1.5 : 4) * YD;   // (a receiver slowed coming off a jam / rip still pumps his arms)   // running free: the arms always pump (only the ball carrier keeps his own)
@@ -14060,9 +14065,9 @@ function drawPlayer(p) {
     // one arm raised and extended downfield, the other hand on his hip
     drawArm(t, skin, -2, -10, Math.PI / 2 + 0.55, 3, -1.7, 3.5, 3);
     drawArm(t, skin, 2, -11, -0.55, 7, -0.1, 8, 5);
-  } else if (p === qb && p.snapK >= 0.4 && !p.action) {
-    // the snap arriving: hands come up from his sides, wide apart, and clap together on the ball at his chest
-    const u = smooth01((p.snapK - 0.4) / 0.6), open = 3.2 * (1 - u) * (1 - u);
+  } else if (p === qb && p.snapK > 0 && !p.action) {
+    // the snap called: a quick clap of the hands out front (hands apart, together, apart), then they open and clap together on the ball at his chest as it arrives
+    const u = smooth01((p.snapK - 0.4) / 0.6), clap = p.snapK < 0.4, open = clap ? 3.2 * (0.5 + 0.5 * Math.cos(p.snapK / 0.4 * Math.PI * 2)) : 3.2 * (1 - u) * (1 - u);
     drawArmTo(t, skin, -1, -10.5 + bob, 4 + 3 * u, -6.5 - 2.5 * u + bob + open, 3.5, 4, 1, 3.4);
     drawArmTo(t, skin, 2, -9 + bob, 4 + 3 * u, -4 - 3 * u + bob - open, 3, 4, 1, 3.4);
   } else if (cocked) {
@@ -14072,9 +14077,13 @@ function drawPlayer(p) {
     drawArmTo(t, skin, sx, sy, bl.x + 1, bl.y + 3.2, 4.5, 5, 1, 4);
   } else if (cradle) {
     // elbows in, both hands up on the ball at his chest (the ball is drawn over them)
-    const rd = p.ready && p === qb ? 1 : 0;   // (aiming: hands and ball up a little)
+    const rd = p === qb ? 1 : 0;   // (the QB: hands and ball up on his chest)
     drawArmTo(t, skin, -1, -10.5 + bob, 6 - 1.5 * rd, -9 - 3 * rd + bob, 3.5, 4, 1, 3.4);
     drawArmTo(t, skin, 2, -9 + bob, 6 - 1.5 * rd, -5.5 - 3 * rd + bob, 3, 4, 1, 3.4);
+  } else if (throwing && p === qb && p.act && p.act.t < THROW_LIFT * 0.7 && !p.act.cross) {
+    // the first instant of the throw: both hands still on the ball at his chest, pulling it up, before the arm whips out
+    drawArmTo(t, skin, -1, -10.5 + bob, 4.5, -12 + bob, 3.5, 4, 1, 3.4);
+    drawArmTo(t, skin, 2, -9 + bob, 4.5, -8.5 + bob, 3, 4, 1, 3.4);
   } else if (throwing && p.act && p.act.cross) {
     // across his body (moving toward his off-hand side): the throwing arm comes over the top and down across the front, the other arm pulled in
     const k = smooth01(Math.min(1, p.act.t / 0.22));
@@ -15335,7 +15344,7 @@ function updateKickoffKick(dt) {
       steer(R, Math.min(f.tx, endX), cy, out ? 8.8 * YD : 8 * YD, 14 * YD, dt);
     }
     clampField(R); setVelocity(R, px, py, dt); R.face = k.bounce ? (Math.sign(ball.x - R.x) || -1) : -1;
-    R.reach = !k.bounce && p > 0.7 && dist(R, ball) < 6 * YD;   // (hands up as it drops into reach)
+    R.reach = !k.bounce && p > 0.7 && dist(R, ball) < 6 * YD && f.tx <= FIELD + ENDZONE && f.ty >= Y_MIN && f.ty <= Y_MAX;   // (hands up as it drops into reach; not for one that's clearing the end line or the sideline)
   }
   // a deep one he's under before it clears the end line: he catches it in the end zone (then the knee-or-return call below)
   const fieldedDeep = !k.bounce && p > 0.5 && p < 1 && f.tx > FIELD && ball.x <= FIELD + ENDZONE && ball.z < KOK_DEEP.reachZ * S && Math.hypot(ball.x - R.x, ball.y - R.y) < KOK_DEEP.reach * YD;
@@ -17355,7 +17364,7 @@ function updateKickoff(dt) {
     clampField(rb); setVelocity(rb, px, py, dt);
     // eyes on the ball the whole way (backpedaling if he has to), hands up to field it as it comes down
     rb.face = Math.sign(f.fx - rb.x) || 1;   // the ball's coming from the kicker's end
-    rb.reach = p > 0.75 && ball.z < 55 * S;   // hands go up only as it drops into reach, not while it's still high
+    rb.reach = !outKick && p > 0.75 && ball.z < 55 * S;   // hands go up only as it drops into reach, not while it's still high (and never for one sailing out the back)
   }
   if (outKick && p >= 1) {   // (nothing is announced until it has actually come down outside the end zone: a knee can't end it early)
     // it sailed out of the back of the end zone (the whole flight is shown): touchback, no return. It lands, hops and rolls on out of the picture
