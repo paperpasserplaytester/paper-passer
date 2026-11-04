@@ -2926,8 +2926,9 @@ function popup(p, text, color = '#ffffff', fav, quiet = false) {   // fav: whose
 // settings (the SETTINGS overlay, from the start screen, the home screen and the pause menu), saved in localStorage
 const SETTINGS_KEY = 'pocketPasser.settings';
 const REPLAY_MODES = ['EVERY PLAY', 'BIG PLAYS', 'TOUCHDOWNS', 'NONE'];   // (a red REPLAY button after every play replays it on request)
-const SETTINGS = { weather: true, simDefense: false, autoSwitch: false, defHints: true, injuries: true, difficulty: 'NORMAL', volume: 1, replays: 'BIG PLAYS', starHud: true, hideNames: false, quarterMin: 2, binds: {} };   // quarterMin = minutes per quarter (1-8); binds = { action: key code } overrides (see BIND_ACTIONS)   // starHud = the Star Factor tips panel (H toggles; stays hidden in every game until H)
+const SETTINGS = { weather: true, simDefense: false, autoSwitch: false, defHints: true, injuries: true, difficulty: 'NORMAL', volume: 1, replays: 'BIG PLAYS', starHud: true, hideNames: false, hitboxes: false, quarterMin: 2, binds: {} };   // quarterMin = minutes per quarter (1-8); binds = { action: key code } overrides (see BIND_ACTIONS)   // starHud = the Star Factor tips panel (H toggles; stays hidden in every game until H)
 try { Object.assign(SETTINGS, JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}); } catch (e) {}
+COLLIDE.show = !!SETTINGS.hitboxes;   // (settings toggle HITBOXES; the ` key flips it too)
 if (SETTINGS.namesV !== 1) { SETTINGS.hideNames = false; SETTINGS.namesV = 1; }   // (names are shown by default: a name setting saved before this goes back to shown)
 SETTINGS.difficulty = 'NORMAL';   // (every launch starts on NORMAL, whatever was saved last)
 if (!SETTINGS.v) { SETTINGS.injuries = true; SETTINGS.v = 2; }   // (injuries now default on: older saved settings get them turned on once)
@@ -11938,7 +11939,7 @@ function update(dt) {
       // going down stretching the ball out ahead of him toward the goal line
       const k = smooth01(Math.min(1, holder.act.t / 0.2));
       ball.x = holder.x + (4 + 12 * k) * S; ball.y = holder.y; ball.z = holder.z + (9 + 5 * k) * S;
-    } else if (holder.hasBall && (!a || goingDown || moving) && holder !== qb || (holder === qb && runner === qb && (!a || moving || goingDown)) || (holder === qb && holder.hasBall && (a === 'spin' || a === 'juke')) || (holder === qb && sackPlay && a === 'down')) {   // (a sacked QB pulls it in and tucks it as he goes down)
+    } else if (holder.hasBall && (!a || a === 'getup' || goingDown || moving) && holder !== qb || (holder === qb && runner === qb && (!a || moving || goingDown)) || (holder === qb && holder.hasBall && (a === 'spin' || a === 'juke')) || (holder === qb && sackPlay && a === 'down')) {   // (a sacked QB pulls it in and tucks it as he goes down)
       ball.tucked = true;
       holder.cradle = holder.cock = false;   // (tucked away: never the two-hand chest hold drawn over a hidden ball)
       ball.x = holder.x; ball.y = holder.y; ball.z = holder.z;
@@ -12186,7 +12187,8 @@ let fixedMirror = null;   // the last drawn direction of a fixed DRIVE setting
 function mirrorFor() {
   const d = SETTINGS.driveDir || 'both';
   if (rec && rec.replaying && rec.kits) return rec.kits.mirror;   // (a replay keeps the play's own direction)
-  if (tut || !MATCH) return -1;
+  if (tut) return (d === 'right' ? 1 : -1) * ((tut.defOn || (twoP && twoP.flipped)) ? -1 : 1);   // (the tutorial follows the DRIVE setting, BOTH = left; the practice squad's drives go the opposite way)
+  if (!MATCH) return -1;
   // a fixed direction is YOUR drive's: the other team (their ball on the flipped sides) drives the opposite way
   if (d === 'left' || d === 'right') {
     if (state === 'sim' && fixedMirror != null) return fixedMirror;   // (the sim box keeps the field as it was: sim's side flip no longer shows for a frame)
@@ -14116,9 +14118,10 @@ function drawStarMarks() {
   }
   ctx.restore();
 }
+const NAME_SIZE = 0.8;   // player name tags: font size in YD
 function drawNameTags() {
   ctx.save();
-  ctx.font = `bold ${0.6 * YD}px monospace`;
+  ctx.font = `bold ${NAME_SIZE * YD}px monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   ctx.lineWidth = 4;
@@ -14128,7 +14131,7 @@ function drawNameTags() {
     ctx.save();
     ctx.translate(p.x, p.y + FOOT + 0.25 * YD);
     ctx.scale(MIRROR, 1);                   // undo the world mirror for text
-    drawTextCached(p.name, 0.6 * YD, 'bold', 'monospace', 0, 0.5 * 0.6 * YD, p.team === 'off' ? '#bfe8ff' : '#ffc4bd', 'rgba(0,0,0,0.7)', 4, 2);
+    drawTextCached(p.name, NAME_SIZE * YD, 'bold', 'monospace', 0, 0.5 * NAME_SIZE * YD, p.team === 'off' ? '#bfe8ff' : '#ffc4bd', 'rgba(0,0,0,0.7)', 4, 2);
     // a Star Factor star: a small gold star right beside his name, text-sized
     if (!tut && p.src && p.src.tier === 'X' && XF_RULES[p.src.ability]) {
       const r = 0.3 * YD;
@@ -24907,9 +24910,10 @@ const SET_BTNS = {
   inj: { x: SET_X, y: 90, w: 210, h: 54 }, dir: { x: SET_X + 230, y: 90, w: 210, h: 54 }, diff: { x: SET_X, y: 158, w: 210, h: 54 }, wx: { x: SET_X + 230, y: 158, w: 210, h: 54 },
   volDn: { x: SET_X, y: 226, w: 76, h: 54 }, volUp: { x: SET_X + 364, y: 226, w: 76, h: 54 },
   rep: { x: SET_X, y: 294, w: 440, h: 54 }, qtr: { x: SET_X, y: 362, w: 440, h: 64 },
-  save: { x: SET_X, y: 440, w: 210, h: 54 }, load: { x: SET_X + 230, y: 440, w: 210, h: 54 },
-  simDef: { x: SET_X, y: 504, w: 210, h: 54 }, autoSw: { x: SET_X + 230, y: 504, w: 210, h: 54 },
-  back: { x: SET_X, y: 618, w: 210, h: 48 }, mobile: { x: SET_X + 230, y: 618, w: 210, h: 48 }, swap: { x: 665, y: 580, w: 540, h: 56 },   // (swap: touch only, in the controls panel)
+  save: { x: SET_X, y: 436, w: 210, h: 46 }, load: { x: SET_X + 230, y: 436, w: 210, h: 46 },
+  simDef: { x: SET_X, y: 490, w: 210, h: 46 }, autoSw: { x: SET_X + 230, y: 490, w: 210, h: 46 },
+  hit: { x: SET_X, y: 574, w: 440, h: 36 },
+  back: { x: SET_X, y: 622, w: 210, h: 44 }, mobile: { x: SET_X + 230, y: 622, w: 210, h: 44 }, swap: { x: 665, y: 580, w: 540, h: 56 },   // (swap: touch only, in the controls panel)
 };
 const KEY_BTNS = BIND_ACTIONS.map((a, i) => ({ x: 665, y: 78 + i * 37, w: 540, h: 33 }));
 const KEY_RESET = { x: 840, y: 626, w: 190, h: 36 };
@@ -24973,12 +24977,13 @@ function drawSettings() {
   ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';   // (a tip right under each of the two buttons: same font, same size)
   ctx.fillStyle = RES.dim;
   const sdx = B.simDef.x + B.simDef.w / 2, sdy = B.simDef.y + B.simDef.h;
-  ctx.fillText(SETTINGS.simDefense ? 'their drives' : 'you play defense', sdx, sdy + 14);
-  ctx.fillText(SETTINGS.simDefense ? 'are simulated' : 'on their drives', sdx, sdy + 30);
-  ctx.fillText('on a pass, jump to the', B.autoSw.x + B.autoSw.w / 2, B.autoSw.y + B.autoSw.h + 14);
-  ctx.fillText('defender closest to ball', B.autoSw.x + B.autoSw.w / 2, B.autoSw.y + B.autoSw.h + 30);
+  ctx.fillText(SETTINGS.simDefense ? 'their drives' : 'you play defense', sdx, sdy + 12);
+  ctx.fillText(SETTINGS.simDefense ? 'are simulated' : 'on their drives', sdx, sdy + 28);
+  ctx.fillText('on a pass, jump to the', B.autoSw.x + B.autoSw.w / 2, B.autoSw.y + B.autoSw.h + 12);
+  ctx.fillText('defender closest to ball', B.autoSw.x + B.autoSw.w / 2, B.autoSw.y + B.autoSw.h + 28);
+  menuBtn(B.hit, `HITBOXES: ${SETTINGS.hitboxes ? 'ON' : 'OFF'}  (debug)`, Y, 17);
   ctx.font = 'bold 17px monospace';
-  if (settingsNote && performance.now() - settingsNote.t0 < 2500) { ctx.fillStyle = RES.gold; ctx.fillText(settingsNote.text, SET_X + 220, 606); }
+  if (settingsNote && performance.now() - settingsNote.t0 < 2500) { ctx.fillStyle = RES.gold; ctx.fillText(settingsNote.text, SET_X + 220, 614); }
   menuBtn(B.back, 'BACK', Y, 24);
   menuBtn(B.mobile, `MOBILE MODE: ${TUI.on ? 'ON' : 'OFF'}`, Y, 17);
   if (TUI.on) {   // phones / tablets: no keys to rebind, the touch controls instead
@@ -25026,6 +25031,7 @@ function settingsClick(p) {
     if (!twoP || (twoP.ai && !twoP.flipped)) twoP = SETTINGS.simDefense || tut ? null : { flipped: false, to: 3, ai: true };   // (takes effect at their next drive)
     else if (!twoP.ai) twoP.def = !SETTINGS.simDefense;   // (two players: the defender plays live, or not)
   }
+  else if (inBtn(p, B.hit)) { SETTINGS.hitboxes = !SETTINGS.hitboxes; COLLIDE.show = SETTINGS.hitboxes; }
   else if (inBtn(p, B.autoSw)) SETTINGS.autoSwitch = !SETTINGS.autoSwitch;   // (on defense, a pass in the air switches you to the closest man)
   else if (inBtn(p, B.save) && canSave()) slotUI = { mode: 'save', scroll: 0, confirm: null };
   else if (inBtn(p, B.load) && hasSave() && !tut) slotUI = { mode: 'load', scroll: 0, confirm: null };
@@ -25034,11 +25040,19 @@ function settingsClick(p) {
   else if (inBtn(p, B.mobile)) { SETTINGS.mobile = !TUI.on; tuiSet(SETTINGS.mobile); }   // (touch controls: on by default on a phone / tablet, off on a PC; this overrides that)
   saveSettings();
 }
+// a franchise's "you" is always the season's team: a save made while the sides were flipped (their drive, played on defense) would otherwise write the opponent as you
+function matchFixed(m, sn = season) {
+  if (!sn || !m || m.you === sn.team) return m;
+  const f = { ...m };
+  if (f.opp === sn.team) { [f.you, f.opp] = [f.opp, f.you]; [f.youKit, f.oppKit] = [f.oppKit, f.youKit]; f.home = f.home === 'you' ? 'opp' : 'you'; }
+  else f.you = sn.team;
+  return f;
+}
 function buildSave() {
   syncPre();
-  const stars = {};
-  (ROSTER[MATCH.you] || []).forEach((s, i) => { stars[i] = { cond: s.cond, mood: s.mood, inj: s.inj, benchNext: s.benchNext, outGame: s.outGame, missed: s.missed }; });
-  const data = { v: 1, diff: SETTINGS.difficulty, season, match: { ...MATCH }, career: { ...career, focus: null },   // (diff: this save's own difficulty, back on load)
+  const stars = {}, mt = matchFixed({ ...MATCH });
+  (ROSTER[mt.you] || []).forEach((s, i) => { stars[i] = { cond: s.cond, mood: s.mood, inj: s.inj, benchNext: s.benchNext, outGame: s.outGame, missed: s.missed }; });
+  const data = { v: 1, diff: SETTINGS.difficulty, season, match: mt, career: { ...career, focus: null },   // (diff: this save's own difficulty, back on load)
                  league: Object.fromEntries(Object.entries(Object.getOwnPropertyDescriptors(LEAGUE)).filter(([, p]) => 'value' in p).map(([k, p]) => [k, p.value])), po, stars,   // (every stored league number: morale, fans, credits, cap hits, approval...)
                  // everything else the franchise is made of: settings, every roster (contracts, ratings, ages), free agents, coaches, team stars, tendencies, honors, return tags
                  world: { settings: SETTINGS, roster: ROSTER, fa: FA_POOL, staff: STAFF, teamStars: TEAM_STARS, teamEdge: TEAM_EDGE, tend: TEND, honors: HONORS, kr: krTags },
@@ -25152,7 +25166,7 @@ function loadFromSlot(i) {
   if (!d || !d.season) { note('NO SAVED GAME'); return; }
   curSlot = i; slotUI = null; suspended = null; resumeRoster = null; pstLoadSlot(i);
   { const sd = d.diff || (d.world && d.world.settings && d.world.settings.difficulty); if (DIFFS.includes(sd)) SETTINGS.difficulty = sd; }   // (the save keeps its difficulty until it's changed again)
-  Object.assign(MATCH, d.match); Object.assign(career, d.career); Object.assign(LEAGUE, { picks: {}, tradeNews: [], upgNew: [], fo: null, rb: null, lean: null }, d.league);
+  Object.assign(MATCH, d.match); if (d.season) Object.assign(MATCH, matchFixed({ ...MATCH }, d.season)); Object.assign(career, d.career); Object.assign(LEAGUE, { picks: {}, tradeNews: [], upgNew: [], fo: null, rb: null, lean: null }, d.league);
   season = d.season; exhibition = null; teamPick = null; tutPrompt = null;
   if (d.world) {   // (a save from before the full save only brings back the franchise numbers and your stars)
     const w = d.world, fill = (to, from) => { for (const k of Object.keys(to)) delete to[k]; Object.assign(to, from); };
@@ -25653,73 +25667,73 @@ const TOUCH_TUT_FIX = [   // lessons whose wording changes on a phone (the remov
 ];
 const tutText = s => TOUCH ? TOUCH_TUT_FIX.reduce((t, [re, to]) => t.replace(re, to), s).replace(/\{(\w+)\}/g, (m, id) => TOUCH_TUT[id] || m).replace(/\b(?:press|hold) (swipe|tap)/g, '$1') : s.replace(/\{(\w+)\}/g, (m, id) => id === 'move' ? (['up', 'left', 'down', 'right'].some(k => SETTINGS.binds && SETTINGS.binds[k]) ? ['up', 'left', 'down', 'right'].map(boundKey).join(' ') : 'WASD') : BIND_ACTIONS.some(a => a[0] === id) ? boundKey(id) : m);
 const TUT_STEPS = [
-  { id: 'pass',    title: 'PASSING',      text: 'Drag from the QB to aim, release to throw. Hit the fade.', def: 'none', route: 'fade' },
-  { id: 'bullet',   title: 'BULLET PASS',  text: 'Right-click (or {dive}) for a faster, flatter bullet. Hit the slant.', def: 'none', route: 'slant' },
-  { id: 'jumpcatch', title: 'JUMPING CATCH', text: 'Throw, then press {up} in the air so he leaps. Catch it at the top.', def: 'none', route: 'fade' },
-  { id: 'divecatch', title: 'DIVING CATCH', text: 'Throw it out in front, then press {down} in the air to lay out.', def: 'none', route: 'slant' },
-  { id: 'onehand',  title: 'ONE-HANDER',   text: 'Press {right} while the ball is in the air. Make a one-handed catch.', def: 'none', route: 'slant' },
-  { id: 'runcatch', title: 'CATCH AND RUN', text: 'Throw, then hold {sprint} in the air to catch in stride. Catch one on the run.', def: 'none', route: 'slant' },
-  { id: 'pocket',   title: 'MOVING IN THE POCKET', text: 'After the snap, move the QB with {move}. Slide a few yards, then throw.', def: 'none', route: 'fade' },
-  { id: 'scramble', title: 'SCRAMBLING',   text: 'Throw straight back or cross the line to run with the QB. Run past the line with {move}.', def: 'solo', recs: true },
+  { id: 'pass',    title: 'PASSING',      text: 'Drag from the QB, release to throw. Hit the fade.', def: 'none', route: 'fade' },
+  { id: 'bullet',   title: 'BULLET PASS',  text: 'Right-click (or {dive}) for a bullet. Hit the slant.', def: 'none', route: 'slant' },
+  { id: 'jumpcatch', title: 'JUMPING CATCH', text: 'Throw, then press {up} in the air to leap.', def: 'none', route: 'fade' },
+  { id: 'divecatch', title: 'DIVING CATCH', text: 'Throw low, then press {down} in the air to dive.', def: 'none', route: 'slant' },
+  { id: 'onehand',  title: 'ONE-HANDER',   text: 'Press {right} in the air for a one-hand catch.', def: 'none', route: 'slant' },
+  { id: 'runcatch', title: 'CATCH AND RUN', text: 'Throw, then hold {sprint} in the air to catch in stride.', def: 'none', route: 'slant' },
+  { id: 'pocket',   title: 'MOVING IN THE POCKET', text: 'After the snap, slide the QB with {move}, then throw.', def: 'none', route: 'fade' },
+  { id: 'scramble', title: 'SCRAMBLING',   text: 'Run past the line with {move}.', def: 'solo', recs: true },
   { id: 'run',      title: 'RUN PLAY',     text: 'Click the RB to hand off. Steer with {move}. Gain 5 yards.', def: 'solo' },
-  { id: 'sprint',   title: 'SPRINTING',    text: 'Hand off, then hold {sprint} for a second or two. Looser ball, harder to break tackles.', def: 'solo' },
-  { id: 'juke',     title: 'JUKE',         text: 'Hand off, then double-tap {up} or {down} as the defender closes.', def: 'solo' },
-  { id: 'spin',     title: 'SPIN MOVE',    text: 'Hand off, then press {spin} as the defender closes.', def: 'solo' },
+  { id: 'sprint',   title: 'SPRINTING',    text: 'Hand off, then hold {sprint}. Faster, but a looser ball.', def: 'solo' },
+  { id: 'juke',     title: 'JUKE',         text: 'Hand off, then double-tap {up} or {down} at the defender.', def: 'solo' },
+  { id: 'spin',     title: 'SPIN MOVE',    text: 'Hand off, then press {spin} at the defender.', def: 'solo' },
   { id: 'stiff',    title: 'STIFF ARM',    text: 'Hand off, then hold {stiff} as he arrives.', def: 'solo' },
   { id: 'truck',    title: 'TRUCK',        text: 'Hand off, then hold {truck} and run through him.', def: 'solo' },
-  { id: 'protect',  title: 'PROTECT THE BALL', text: 'Hand off, then hold {protect} as he arrives. Slower, but almost no fumbles.', def: 'solo' },
+  { id: 'protect',  title: 'PROTECT THE BALL', text: 'Hand off, then hold {protect}. Slower, fewer fumbles.', def: 'solo' },
   { id: 'dive',     title: 'DIVE',        text: 'Hand off, then press {dive} for extra yards.', def: 'solo' },
-  { id: 'hurdle',   title: 'HURDLE',      text: 'Hand off, then press {hurdle} a couple of yards before the defender. Too late and he grabs you.', def: 'solo' },
-  { id: 'celebrate', title: 'CELEBRATING', text: 'Run it in, then right-click to celebrate and wait it out.', def: 'solo', free: true, yd: 92 },
-  { id: 'gap',      title: 'FINDING GAPS', text: 'Hand off, let the blocks set, then hit the hole. Gain 3 yards.', def: 'front' },
-  { id: 'timeout',  title: 'TIMEOUTS', text: 'After a play, press {timeout} (or click TIMEOUT) before the clock runs off to save the seconds. Run a play, then call one.', def: 'solo' },
-  { id: 'audible',title: 'OFFENSIVE AUDIBLES',    text: 'Before the snap, press {stiff} or click AUDIBLE to change the play. Two per play.', def: 'full', recs: true },
-  { id: 'hot',      title: 'HOT ROUTES', text: 'Before the snap, click a receiver to cycle his route. Change one.', def: 'full', recs: true },
-  { id: 'fg',       title: 'KICKING: FIELD GOALS', text: 'Click to stop the power bar in the green, then click again to aim. Kick it through.', def: 'full', kick: 'fg', yd: 88 },
-  { id: 'punt',     title: 'KICKING: PUNTING', text: 'First click sets power, second sets aim. Steer the ringed coverage man with {move}. Punt it away.', def: 'full', kick: 'punt' },
-  { id: 'kickoff',  title: 'KICKING: KICKOFFS', text: 'Click for power, then aim. ONSIDE switches to an onside kick. Kick it off.', def: 'full', kick: 'kickoff' },
-  { id: 'dswitch',  title: 'DEFENSE: SWITCHING', text: 'You drive one defender. Press {hurdle} or {switchD} to switch to the one nearest the ball, or click a player. Switch defenders.', def: 'ofull', side: 'def', play: 'pass', ud: 'cbB' },
-  { id: 'dtackle',  title: 'DEFENSE: TACKLING', text: 'Switch to the defender nearest the runner and chase him with {move}. Make a tackle.', def: 'ofull', side: 'def', play: 'run', ud: 'lbM', alone: true },
-  { id: 'ddive',   title: 'DEFENSE: DIVE TACKLE', text: 'Press {dive} from a few yards off to dive at him. Bring him down with a dive.', def: 'ofull', side: 'def', play: 'run', ud: 'lbM', alone: true },
-  { id: 'dstick',  title: 'DEFENSE: HIT STICK', text: 'Press {truck} as you close in for a big hit that can knock the ball loose. Lay one on him.', def: 'ofull', side: 'def', play: 'run', ud: 'lbM', alone: true },
-  { id: 'dpick',   title: 'DEFENSE: INTERCEPTING', text: 'Get under the pass and press {spin} as the ball arrives. Pick it off.', def: 'ofull', side: 'def', play: 'pass', target: 'ud', ud: 'cbT', alone: true, oneOnOne: true },
-  { id: 'dline',    title: 'DEFENSE: THE LINE', text: 'While blocked: A or D toward the blocker and QB to bull rush, {up} or {down} to swim. Hold a move until you win.', def: 'ofull', side: 'def', play: 'pass', ud: 'de', alone: true, hold: 7, lineLesson: true, still: true },
-  { id: 'dblitz',   title: 'DEFENSE: BLITZING', text: 'Run your linebacker through the line at the QB with {move}. Sack the QB.', def: 'ofull', side: 'def', play: 'pass', ud: 'lbM', alone: true, hold: 7, blitzLesson: true, still: true },
+  { id: 'hurdle',   title: 'HURDLE',      text: 'Hand off, then press {hurdle} just before the defender.', def: 'solo' },
+  { id: 'celebrate', title: 'CELEBRATING', text: 'Score, then right-click to celebrate.', def: 'solo', free: true, yd: 92 },
+  { id: 'gap',      title: 'FINDING GAPS', text: 'Hand off, wait for the blocks, hit the hole. Gain 3 yards.', def: 'front' },
+  { id: 'timeout',  title: 'TIMEOUTS', text: 'After a play, press {timeout} to stop the clock.', def: 'solo' },
+  { id: 'audible',title: 'OFFENSIVE AUDIBLES',    text: 'Before the snap, press {stiff} or click AUDIBLE.', def: 'full', recs: true },
+  { id: 'hot',      title: 'HOT ROUTES', text: 'Before the snap, click a receiver to change his route.', def: 'full', recs: true },
+  { id: 'fg',       title: 'KICKING: FIELD GOALS', text: 'Click to stop the power bar in the green, click again to aim.', def: 'full', kick: 'fg', yd: 88 },
+  { id: 'punt',     title: 'KICKING: PUNTING', text: 'Click for power, click for aim. Steer the ringed man with {move}.', def: 'full', kick: 'punt' },
+  { id: 'kickoff',  title: 'KICKING: KICKOFFS', text: 'Click to stop the power bar, move the aiming reticle where you want it, then click KICK.', def: 'full', kick: 'kickoff' },
+  { id: 'dswitch',  title: 'DEFENSE: SWITCHING', text: 'Press {hurdle} or {switchD}, or click a player, to switch defenders.', def: 'ofull', side: 'def', play: 'pass', ud: 'cbB' },
+  { id: 'dtackle',  title: 'DEFENSE: TACKLING', text: 'Chase the runner with {move}. Make a tackle.', def: 'ofull', side: 'def', play: 'run', ud: 'lbM', alone: true },
+  { id: 'ddive',   title: 'DEFENSE: DIVE TACKLE', text: 'Press {dive} a few yards off to dive tackle.', def: 'ofull', side: 'def', play: 'run', ud: 'lbM', alone: true },
+  { id: 'dstick',  title: 'DEFENSE: HIT STICK', text: 'Press {truck} as you close in for a hit stick.', def: 'ofull', side: 'def', play: 'run', ud: 'lbM', alone: true },
+  { id: 'dpick',   title: 'DEFENSE: INTERCEPTING', text: 'Get under the pass and press {spin} as it arrives.', def: 'ofull', side: 'def', play: 'pass', target: 'ud', ud: 'cbT', alone: true, oneOnOne: true },
+  { id: 'dline',    title: 'DEFENSE: THE LINE', text: 'While blocked: A or D toward the blocker and QB to bull rush, {up} or {down} to swim.', def: 'ofull', side: 'def', play: 'pass', ud: 'de', alone: true, hold: 7, lineLesson: true, still: true },
+  { id: 'dblitz',   title: 'DEFENSE: BLITZING', text: 'Run your linebacker at the QB with {move}. Sack him.', def: 'ofull', side: 'def', play: 'pass', ud: 'lbM', alone: true, hold: 7, blitzLesson: true, still: true },
 ];
 // the same steps with touch wording (shown instead of a step's text on a phone / tablet): swipes and the on-screen buttons only
 const TUT_MOBILE = {
-  pass: 'Drag from the QB to aim, lift your finger to throw. Hit the fade.',
-  bullet: 'Tap the joystick side of the screen to switch to a faster, flatter bullet. Hit the slant.',
-  jumpcatch: 'Throw, then swipe UP on the field while the ball is in the air so he leaps. Catch it at the top.',
-  divecatch: 'Throw it out in front, then swipe DOWN in the air to lay out.',
-  onehand: 'While the ball is in the air, swipe BACKWARD. Make a one-handed catch.',
-  runcatch: 'Throw, then swipe FORWARD while the ball is in the air to catch in stride. Catch one on the run.',
-  pocket: 'After the snap, move the QB with the joystick (touch the side of the screen past the line). Slide a few yards, then throw.',
-  scramble: 'Throw straight back or cross the line to run with the QB. Run past the line with the joystick.',
+  pass: 'Drag from the QB to aim, lift to throw. Hit the fade.',
+  bullet: 'Tap the joystick side for a bullet. Hit the slant.',
+  jumpcatch: 'Throw, then swipe UP in the air to leap.',
+  divecatch: 'Throw low, then swipe DOWN in the air to dive.',
+  onehand: 'In the air, swipe BACKWARD for a one-hander.',
+  runcatch: 'In the air, swipe FORWARD to catch in stride.',
+  pocket: 'Slide the QB with the joystick, then throw.',
+  scramble: 'Run past the line with the joystick.',
   run: 'Tap the RB to hand off. Steer with the joystick. Gain 5 yards.',
-  sprint: 'Hand off and run: you sprint on your own. Looser ball, harder to break tackles.',
-  juke: 'Hand off, then swipe UP or DOWN (off the joystick) as the defender closes.',
-  spin: 'Hand off, then draw a circle with a finger as the defender closes.',
-  stiff: 'Hand off, then swipe BACK (against the way he runs) as he arrives and keep your finger down to hold him off.',
-  truck: 'Hand off, then press and hold a finger on the field (not the joystick side) and run through him.',
-  protect: 'Hand off, then hold PROTECT as he arrives. Slower, but almost no fumbles.',
-  dive: 'Hand off, then swipe FORWARD (the way he runs) for extra yards.',
-  hurdle: 'Hand off, then double-tap the field (not the joystick side) a couple of yards before the defender. Too late and he grabs you.',
-  celebrate: 'Run it in, then tap CELEBRATE and wait it out.',
-  gap: 'Hand off, let the blocks set, then hit the hole. Gain 3 yards.',
-  timeout: 'After a play, tap TIMEOUT before the clock runs off to save the seconds. Run a play, then call one.',
-  audible: 'Before the snap, tap AUDIBLE to change the play. Two per play.',
-  hot: 'Before the snap, tap a receiver to cycle his route. Change one.',
-  fg: 'Tap to stop the power bar in the green, then tap again to aim. Kick it through.',
-  punt: 'First tap sets power, second sets aim. Steer the ringed coverage man with the joystick. Punt it away.',
-  kickoff: 'Tap for power, then aim. ONSIDE switches to an onside kick. Kick it off.',
-  dswitch: 'You drive one defender. Tap the player you want to switch to. Switch defenders.',
-  dtackle: 'Tap the defender nearest the runner and chase him with the joystick. Make a tackle.',
-  ddive: 'Swipe AGAINST the way you are running, a few yards off, to dive at him. Bring him down with a dive.',
-  dstick: 'Swipe the way you are running as you close in for a big hit that can knock the ball loose. Lay one on him.',
-  dpick: 'Get under the pass and swipe UP as the ball arrives. Pick it off.',
-  dline: 'While blocked: swipe toward the QB to bull rush, across to swim, away to drop out, or draw a circle to spin. Repeat until you win.',
-  dblitz: 'Run your linebacker through the line at the QB with the joystick. Sack the QB.',
+  sprint: 'Hand off and run. You sprint on your own.',
+  juke: 'Hand off, then swipe UP or DOWN at the defender.',
+  spin: 'Hand off, then draw a circle at the defender.',
+  stiff: 'Hand off, then swipe BACK and hold as he arrives.',
+  truck: 'Hand off, then press and hold the field and run through him.',
+  protect: 'Hand off, then hold PROTECT as he arrives.',
+  dive: 'Hand off, then swipe FORWARD for extra yards.',
+  hurdle: 'Hand off, then double-tap the field before the defender.',
+  celebrate: 'Score, then tap CELEBRATE.',
+  gap: 'Hand off, wait for the blocks, hit the hole. Gain 3 yards.',
+  timeout: 'After a play, tap TIMEOUT to stop the clock.',
+  audible: 'Before the snap, tap AUDIBLE.',
+  hot: 'Before the snap, tap a receiver to change his route.',
+  fg: 'Tap to stop the power bar in the green, tap again to aim.',
+  punt: 'Tap for power, tap for aim. Steer the ringed man with the joystick.',
+  kickoff: 'Tap to stop the power bar, move the aiming reticle where you want it, then tap KICK.',
+  dswitch: 'Tap a player, or tap the joystick, to switch defenders.',
+  dtackle: 'Chase the runner with the joystick. Make a tackle.',
+  ddive: 'Swipe DOWN a few yards off to dive tackle.',
+  dstick: 'Swipe toward the runner as you close in for a hit stick.',
+  dpick: 'Get under the pass, then swipe UP as it arrives.',
+  dline: 'While blocked: joystick at the QB to bull rush, away to drop, swipe up or down to swim, circle to spin.',
+  dblitz: 'Run your linebacker at the QB with the joystick. Sack him.',
 };
 const TUT_FLASH = { secs: 2.4, rate: 2.5 };   // the audible button's attention flash: for secs, rate flashes per second
 const TUT_POPUPS = { 'ONE-HANDER': 'onehand', 'ONE-HANDED GRAB': 'onehand', 'JUKED': 'juke', 'SPIN MOVE': 'spin', 'SPUN AWAY': 'spin', 'TRUCKED': 'truck',
@@ -25780,7 +25794,7 @@ function tutSetup() {
   tut.bench = []; tut.sprintT = 0;
   applyKits();
   if (st.side === 'def') { Object.assign(TEAMS.def, TEAMS.off); Object.assign(TEAMS.off, TUT_KIT); }   // (defense lessons: your team's defense against the practice squad's offense)
-  else Object.assign(TEAMS.def, TUT_KIT);
+  else Object.assign(twoP && twoP.flipped ? TEAMS.off : TEAMS.def, TUT_KIT);   // (a kickoff lesson plays flipped: the practice squad is the returning team, you keep your own colours)
   for (const p of [...dl, ...back7]) p.sucker = false;
   if (st.def === 'none') {   // passing: no defense, one receiver, the QB alone
     const r = recs[0];
@@ -25855,17 +25869,18 @@ function tutAfterPlay() {
   msg = (tut.i >= TUT_STEPS.length ? 'Tutorial complete!' : 'Click for the next play');
 }
 // the instruction card: a paper note pinned under the scoreboard
-const TUT_TIP_SCALE = 0.8;   // the tip card is drawn this much of its size
+const TUT_TIP_SCALE = 1;   // the tip card is drawn this much of its size
 const tipK = () => TOUCH ? 1 : TUT_TIP_SCALE;   // (phones: full size, with taller lines: the lesson text is much easier to read)
-const tipLH = () => TOUCH ? 26 : 20;
+const tipLH = () => 30;
+const TIP_FONT = 22;   // the lesson text's size
 const TUT_KICK_DROP = 92;    // px the card moves down in the kicking lessons, clear of the power / aim meters
 let tutResetBtn = null;      // (touch) the RESET button's screen rect, next to SKIP
 let tutSkipBtn = null;       // the SKIP button's screen rect (set while the card shows a step)
 function drawTutorial() {
-  const st = tutStep(), w = 760, x = W / 2 - w / 2, y = TOP_BAR + 8 + (st && st.kick && kick && (state === 'kick' || (state === 'kickoff' && kick.userKo)) ? TUT_KICK_DROP : 0);   // (the kicking lessons: under the kick meters)
-  ctx.save(); ctx.translate(W / 2, y); ctx.scale(tipK(), tipK()); ctx.translate(-W / 2, -y);
+  const st = tutStep(), w = 900, x = W / 2 - w / 2;
+  let y = 0;   // (set below once the height is known: the card sits at the bottom of the screen)
   tutSkipBtn = tutResetBtn = null;
-  ctx.font = 'bold 16px monospace';   // (one size throughout: long lines wrap onto the next line)
+  ctx.font = 'bold ' + TIP_FONT + 'px monospace';   // (one size throughout: long lines wrap onto the next line)
   const lines = [];
   if (st) for (const para of tutText(TUI.on && TUT_MOBILE[st.id] || st.text).split('\n')) {
     let cur = '';
@@ -25874,12 +25889,15 @@ function drawTutorial() {
     }
     lines.push(cur);
   }
-  const h = st ? 72 + tipLH() * lines.length : 150;
+  const h = st ? 80 + tipLH() * lines.length : 150;
+  y = H - BOT_BAR - 8 - h * tipK();
+  if (st && st.kick === 'kickoff') y = Math.min(y, KICK_GO_BTN.y - 10 - h * tipK());   // (the kickoff lesson: above the KICK / ONSIDE buttons, never on them)
+  ctx.save(); ctx.translate(W / 2, y); ctx.scale(tipK(), tipK()); ctx.translate(-W / 2, -y);
   if (st && state !== 'pre' && !TOUCH) {   // how to redo the step: right under the card, never behind it (a phone has the RESET button instead)
     ctx.save(); ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const tip = 'BACKSPACE to reset the play', tw = ctx.measureText(tip).width + 20;
-    ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(W / 2 - tw / 2, y + h + 8, tw, 22);
-    ctx.fillStyle = '#ffd94a'; ctx.fillText(tip, W / 2, y + h + 19); ctx.restore();
+    ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(W / 2 - tw / 2, y - 30, tw, 22);
+    ctx.fillStyle = '#ffd94a'; ctx.fillText(tip, W / 2, y - 19); ctx.restore();
   }
   ctx.save();
   const card = { x, y, w, h };
@@ -25898,16 +25916,16 @@ function drawTutorial() {
     tutSkipBtn = { x: W / 2 + (sk.x - W / 2) * tipK(), y: y + (sk.y - y) * tipK(), w: sk.w * tipK(), h: sk.h * tipK() };
     tutResetBtn = null;
     if (TOUCH) {   // phones: RESET sits next to SKIP (the keyboard's Backspace starts the step over)
-      const rs = { x: x + w - 102, y: y + h - 38, w: 86, h: sk.h };   // (the card's bottom right corner)
+      const rs = { x: sk.x - 98, y: sk.y, w: 86, h: sk.h };   // (left of SKIP, in the top row: the lesson text never reaches it)
       ctx.fillStyle = '#e8e2cc'; ctx.fillRect(rs.x, rs.y, rs.w, rs.h); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(rs.x, rs.y, rs.w, rs.h);
       ctx.fillStyle = RES.line; ctx.font = 'bold 15px monospace'; ctx.fillText('RESET', rs.x + rs.w / 2, rs.y + rs.h / 2 + 1);
       tutResetBtn = { x: W / 2 + (rs.x - W / 2) * tipK(), y: y + (rs.y - y) * tipK(), w: rs.w * tipK(), h: rs.h * tipK() };
     }
-    ctx.fillStyle = ok ? '#2f8f3a' : RES.line; ctx.font = 'bold 26px monospace';
+    ctx.fillStyle = ok ? '#2f8f3a' : RES.line; ctx.font = 'bold 28px monospace';
     ctx.fillText(ok ? `✓ ${st.title}  -  NICE!` : st.title, x + w / 2, y + 30);
-    ctx.fillStyle = RES.line; ctx.font = 'bold 16px monospace';
-    if (ok) ctx.fillText('Click for the next play.', x + w / 2, y + 66);
-    else lines.forEach((l, i) => ctx.fillText(l, x + w / 2, y + 66 + i * tipLH()));
+    ctx.fillStyle = RES.line; ctx.font = 'bold ' + TIP_FONT + 'px monospace';
+    if (ok) ctx.fillText(TOUCH ? 'Tap for the next play.' : 'Click for the next play.', x + w / 2, y + 74);
+    else lines.forEach((l, i) => ctx.fillText(l, x + w / 2, y + 74 + i * tipLH()));
   } else {
     ctx.fillStyle = '#2f8f3a'; ctx.font = 'bold 30px monospace';
     ctx.fillText('TUTORIAL COMPLETE!', x + w / 2, y + 36);
@@ -26138,6 +26156,40 @@ window.addEventListener('pointerup', e => {
   setTimeout(() => { hoverPt = null; }, 220);   // (the lift eases back instead of sticking)
 }, true);
 window.addEventListener('pointerup', () => { if (btnPress && btnPress.held) { btnPress.held = false; btnPress.upAt = performance.now(); } });
+// A finger on a menu / canvas button: holding it is the mouse's hover (the lift), and the tap is the click, which now happens on the RELEASE (the button
+// presses in for a moment, then the click goes through and it springs back). A finger that drags (a slider, a scrolling list) gets its press at once, at the spot it landed.
+const TAP_DEFER = { move: 12, press: 130 };   // px a tap may drift, ms the button stays pressed in before the click goes through
+let tapHold = null;
+const menuTouch = p => !!((results && !hl) || settingsOpen || slotUI || paused || showKeys || (tut && tut.defAsk) || overUiBtn(p));
+function sendMouse(type, pt, target) {
+  const r = layRect(canvas), cx = r.left + (pt.x + PAD) * r.width / (W + 2 * PAD), cy = r.top + pt.y * r.height / H;
+  const o = { pointerType: 'mouse', pointerId: 1, button: 0, buttons: type === 'pointerup' ? 0 : 1, bubbles: true, cancelable: true };
+  const rot = document.documentElement.classList.contains('rot');   // (layPt's inverse: layout point -> client point)
+  target.dispatchEvent(new PointerEvent(type, { ...o, clientX: rot ? innerWidth - cy : cx, clientY: rot ? cx : cy }));
+}
+canvas.addEventListener('pointerdown', e => {
+  if (!TUI.on || e.pointerType !== 'touch' || !e.isTrusted || tapHold) return;
+  const p = pointerPos(e);
+  if (!menuTouch(p)) return;
+  e.stopImmediatePropagation();
+  tapHold = { id: e.pointerId, p, lp: layPt(e), moved: false };
+}, true);
+window.addEventListener('pointermove', e => {
+  const h = tapHold; if (!h || e.pointerId !== h.id) return;
+  hoverPt = pointerPos(e);
+  if (!h.moved && Math.hypot(layPt(e).x - h.lp.x, layPt(e).y - h.lp.y) > TAP_DEFER.move) {   // a drag: the press happens now, where it began
+    h.moved = true; tapHold = null; sendMouse('pointerdown', h.p, canvas);
+  }
+}, true);
+window.addEventListener('pointerup', e => {
+  const h = tapHold; if (!h || e.pointerId !== h.id) return;
+  tapHold = null;
+  const pt = pointerPos(e), onIt = Math.hypot(layPt(e).x - h.lp.x, layPt(e).y - h.lp.y) <= TAP_DEFER.move;
+  if (!onIt) return;
+  setTimeout(() => { btnPress = { ...h.p, held: true, upAt: 0 }; }, 0);   // (pressed in...)
+  setTimeout(() => { sendMouse('pointerdown', h.p, canvas); sendMouse('pointerup', h.p, window); }, TAP_DEFER.press);   // (...then the click, and the spring back)
+}, true);
+window.addEventListener('pointercancel', e => { if (tapHold && tapHold.id === e.pointerId) tapHold = null; }, true);
 canvas.addEventListener('pointerdown', e => {
   if (oo && !paused && e.button === 0 && ooClick(pointerPos(e))) return;   // (1v1 practice: the force-animation buttons)
   if (slotUI) { if (e.button === 0) slotClick(pointerPos(e)); return; }
@@ -26528,7 +26580,7 @@ window.addEventListener('keydown', e => {
 });
 const heldKeys = {};   // (what each physical key was read as when it went down: it is let go as that, whatever has changed since (the snap, the drive direction))
 function onKeyDown(e) {
-  if (e.code === 'Backquote' && !e.repeat && !settingsOpen) { COLLIDE.show = !COLLIDE.show; return; }   // (debug: hitbox outlines)
+  if (e.code === 'Backquote' && !e.repeat && !settingsOpen) { COLLIDE.show = !COLLIDE.show; SETTINGS.hitboxes = COLLIDE.show; saveSettings(); return; }   // (debug: hitbox outlines)
   if (tour && results) {   // a tutorial is up: Esc skips, Enter / Space / right arrow go on, left arrow goes back
     e.preventDefault();
     if (e.repeat) return;
@@ -26865,17 +26917,27 @@ function tuiStick(e, end) {
   for (const k in want) if (!!TUI.held[k] !== want[k]) { TUI.held[k] = want[k]; tkey(k, want[k]); }
 }
 // floating joystick: hidden until a finger lands on the left half of the screen, then it appears under that finger (a throw drag from the QB keeps its own touch)
+const TUT_STICK_FLASH = { ids: ['pocket', 'dswitch'], ms: 5000 };   // tutorial steps that flash the joystick, and for how long
 const STICK_SETS = ['pocket', 'run', 'kickoff', 'def'];   // (no stick while a pass is in the air: the whole screen is swipes for the catch)
 // (nor on a kick before it's taken: kickoffs, field goals and PATs are taps for the power / aim; a field goal / PAT is the 'tap' set anyway)
 // (your own punt: no stick until their returner has it either; their punt, where you rush / block it, is the normal defense set)
 // (the stick is only there when a player can move: nothing before a kick is taken, on a kickoff, punt, field goal or PAT, whoever kicks)
 const KICK_SETUP = ['enter', 'wait', 'target', 'power', 'aim'];
 const preKick = () => (state === 'kickoff' || state === 'kick') && ((kick && KICK_SETUP.includes(kick.phase)) || (state === 'kickoff' && kickoff && kickoff.phase === 'ready'));
-const stickOn = name => STICK_SETS.includes(name) && !preKick() && !(name === 'kickoff' && kick && kick.userKo && kick.punt && kickoff && kickoff.phase === 'flight');
+// a touch on one of the canvas buttons (pause, keys, tutorial SKIP / RESET, audible, timeout, replay, kick buttons) is the button's, never the stick's
+const overUiBtn = p => {
+  const pad = 14, near = b => !!b && p.x >= b.x - pad && p.x <= b.x + b.w + pad && p.y >= b.y - pad && p.y <= b.y + b.h + pad;
+  try { return overPauseButton(p) || overKeysButton(p) || near(tutSkipBtn) || near(tutResetBtn) || ((state === 'pre' || state === 'done') && (near(AUDIBLE_BTN) || near(TIMEOUT_BTN))) || (replayBtnShowing() && near(REPLAY_BTN)) || (patSwitch() && near(PAT_SWITCH_BTN)); } catch (err) { return false; }
+};
+const stickOn = name => STICK_SETS.includes(name) && !preKick() && !(tut && tut.passed) &&   // (the tutorial's "tap for the next play": any tap goes on, the stick is off)
+ !(name === 'kickoff' && kick && kick.userKo && kick.punt && kickoff && kickoff.phase === 'flight');
 let stickTapAt = 0;
 function tuiStickEnd(e) {
   if (tpad._id == null) return;
   // a quick double tap on the stick side (no drag) in the pocket flips lob / bullet
+  if (e.pointerId === tpad._id && aiOff() && state !== 'pre' && e.type === 'pointerup' && performance.now() - tpad._t0 < 300 && Math.hypot(layPt(e).x - tpad._p0.x, layPt(e).y - tpad._p0.y) < 14) {
+    defKeyDown({ code: 'KeyO' });   // (defense: a quick tap on the stick switches to the defender nearest the ball)
+  }
   if (e.pointerId === tpad._id && (state === 'pocket' || state === 'drop') && e.type === 'pointerup' && performance.now() - tpad._t0 < 300) {
     const lp = layPt(e), now = performance.now();
     if (Math.hypot(lp.x - tpad._p0.x, lp.y - tpad._p0.y) < 14) {
@@ -26904,9 +26966,11 @@ function touchHalf(e) {
 window.addEventListener('pointerdown', e => {
   if (!TUI.on || (e.pointerType !== 'touch' && e.button !== 0) || tpad._id != null || !stickOn(TUI.set) || (e.target.closest && e.target.closest('#tbtns'))) return;
   const lp = layPt(e), py = pointerPos(e).y;
+  if (overUiBtn(pointerPos(e))) return;
   if (py < TOP_BAR || py > H - BOT_BAR) return;   // (the top / bottom bars hold the pause, audible and timeout buttons: a touch there is theirs, never the stick)
   if (touchHalf(e) !== stickSide()) return;
   e.stopImmediatePropagation();   // (this finger is the stick: the canvas never sees it, so it can't start a throw drag or a swipe)
+  tpad._pts = []; tpad._flash = false; tpad.style.opacity = ''; if (tut) tut.flashUntil = 0;
   tpad._id = e.pointerId; swipeFrom = null; bulletTap = null; tpad._t0 = performance.now(); tpad._p0 = lp;
   tpad.style.display = 'block';
   const R = tpad.offsetWidth / 2;
@@ -26914,7 +26978,14 @@ window.addEventListener('pointerdown', e => {
   tuiStick(e);
 }, true);
 // (capture + stopImmediatePropagation: the stick finger's moves and release never reach the aim / throw code, so steering can't move the reticle or let go of a throw)
-window.addEventListener('pointermove', e => { if (tpad._id === e.pointerId) { tuiStick(e); e.stopImmediatePropagation(); } }, true);
+// a circle drawn with the stick finger (either way round) is a spin: the ball carrier's, the QB's, a blocked lineman's, an interception returner's
+const spinOK = () => !aiOff() ? ['run', 'kickoff', 'pocket', 'drop'].includes(state) : (lineUd() || state === 'picked');
+window.addEventListener('pointermove', e => {
+  if (tpad._id !== e.pointerId) return;
+  tuiStick(e); e.stopImmediatePropagation();
+  const pts = tpad._pts || (tpad._pts = []); pts.push(layPt(e)); if (pts.length > SPIN_GEST.keep) pts.shift();
+  if (spinOK() && circleSwept(pts)) { pts.length = 0; tuiKey('KeyR'); }
+}, true);
 for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, e => { if (tpad._id === e.pointerId) { tuiStickEnd(e); e.stopImmediatePropagation(); } }, true);
 const tpause = document.getElementById('tpause');   // (the real pause button is the one on the canvas: this one stays hidden)
 // every frame-ish: which buttons, whether the layer shows at all (not on menus / results / the pause menu), the rotate-me notice
@@ -26930,6 +27001,20 @@ setInterval(() => {
   const sprint = live && (['run', 'kickoff'].includes(name) || (name === 'def' && state === 'picked'));
   if (sprint !== !!TUI.held.KeyA) { TUI.held.KeyA = sprint; tkey('KeyA', sprint); }
   if (live && name !== TUI.set) { TUI.set = name; tuiBuild(name); }
+  // the tutorial's first stick lessons (the offense's pocket, the defense's switching): the joystick flashes where it will appear, so the player knows where to touch
+  try {
+    const sid = tut && tutStep() && tutStep().id, now = performance.now();
+    if (sid && tut.flashId !== sid) { tut.flashId = sid; tut.flashUntil = TUT_STICK_FLASH.ids.includes(sid) ? now + TUT_STICK_FLASH.ms : 0; }
+    if (tpad._id == null) {
+      if (live && tut && now < (tut.flashUntil || 0)) {
+        const lw = document.documentElement.classList.contains('rot') ? innerHeight : innerWidth, lh = document.documentElement.classList.contains('rot') ? innerWidth : innerHeight;
+        tpad.style.display = 'block'; tpad._flash = true;
+        const R = tpad.offsetWidth / 2;
+        tpad.style.left = (lw * (stickSide() > 0 ? 0.78 : 0.22) - R) + 'px'; tpad.style.top = (lh * 0.62 - R) + 'px'; tpad.style.bottom = 'auto';
+        tpad.style.opacity = String(0.35 + 0.65 * Math.abs(Math.sin(now / 260)));
+      } else if (tpad._flash) { tpad._flash = false; tpad.style.display = 'none'; tpad.style.opacity = ''; }
+    }
+  } catch (err) {}
   if (!live) { TUI.set = ''; for (const k in TUI.held) if (TUI.held[k]) { TUI.held[k] = false; tkey(k, false); } }
 }, 100);
 // a finger on the page: touch mode on (even on a laptop with a screen), long-press is not a right-click; the first tap goes fullscreen + landscape
@@ -26966,9 +27051,19 @@ const SWIPE_HOLD = { stiff: 450, truck: 350, press: 340 };   // ms the stiff arm
 // The ball carrier's moves (run / kick return) are one finger: swipe up / down = juke up / down (double-tap W / S), swipe toward / away from the way he runs
 // = truck / dive, a circle drawn with the finger = spin. Two fingers swiping up = hurdle, down = stiff arm.
 const SPIN_GEST = { turn: 5.3, minPath: 150, keep: 80 };   // radians swept around the path's centre, px of path, points kept
+function circleSwept(pts) {   // a circle in either direction: the path turns a full ~300 degrees around its own centre
+  if (pts.length < 8) return false;
+  let cx = 0, cy = 0, len = 0, turn = 0; for (const q of pts) { cx += q.x; cy += q.y; } cx /= pts.length; cy /= pts.length;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    turn += Math.atan2((a.x - cx) * (b.y - cy) - (a.y - cy) * (b.x - cx), (a.x - cx) * (b.x - cx) + (a.y - cy) * (b.y - cy));
+    len += Math.hypot(b.x - a.x, b.y - a.y);
+  }
+  return Math.abs(turn) >= SPIN_GEST.turn && len >= SPIN_GEST.minPath;
+}
 let swipeFrom = null, runTapAt = 0;   // runTapAt: when the last quick tap with the ball was (two in a row = hurdle)
 const lineUd = () => !!ud && !!(dl.includes(ud) || ud.blitz || ud.engaged) && (state === 'drop' || state === 'pocket' || state === 'run');   // (your defender is on the line, blitzing or locked up with a blocker: the pass-rush swipes)
-const swipeSet = () => (state === 'flight' && !aiOff()) ? 'flight' : ['run', 'kickoff', 'def', 'pocket'].includes(tuiWhich()) ? tuiWhich() : '';   // (pocket: the QB's moves, as a swipe that isn't a throw drag)
+const swipeSet = () => (tut && tut.passed) ? '' : (state === 'flight' && !aiOff()) ? 'flight' : ['run', 'kickoff', 'def', 'pocket'].includes(tuiWhich()) ? tuiWhich() : '';   // (pocket: the QB's moves, as a swipe that isn't a throw drag)
 canvas.addEventListener('pointerdown', e => {
   const set = TUI.on && e.pointerType === 'touch' ? swipeSet() : '';
   if (!set) { swipeFrom = null; return; }
@@ -26986,14 +27081,7 @@ window.addEventListener('pointermove', e => {
   if (!s || s.done || s.multi || e.pointerId !== s.id || (s.set !== 'run' && s.set !== 'kickoff' && s.set !== 'pocket' && !(s.set === 'def' && lineUd()))) return;
   if (s.set === 'pocket' && aim) { s.done = true; return; }   // (a throw drag from the QB is not a move)
   const pts = s.pts; pts.push(layPt(e)); if (pts.length > SPIN_GEST.keep) pts.shift();
-  let cx = 0, cy = 0, len = 0; for (const q of pts) { cx += q.x; cy += q.y; } cx /= pts.length; cy /= pts.length;
-  let turn = 0;
-  for (let i = 1; i < pts.length; i++) {
-    const a = pts[i - 1], b = pts[i];
-    turn += Math.atan2((a.x - cx) * (b.y - cy) - (a.y - cy) * (b.x - cx), (a.x - cx) * (b.x - cx) + (a.y - cy) * (b.y - cy));
-    len += Math.hypot(b.x - a.x, b.y - a.y);
-  }
-  if (Math.abs(turn) >= SPIN_GEST.turn && len >= SPIN_GEST.minPath) { s.done = true; tuiKey('KeyR'); return; }
+  if (circleSwept(pts)) { s.done = true; tuiKey('KeyR'); return; }
   // a swipe BACK (against the way he's running; for the QB, away from the line) is the stiff arm, and it stays on for as long as the finger stays down
   if (s.set === 'run' || s.set === 'kickoff' || s.set === 'pocket') {
     const st = s.fingers.get(s.id), cur = pts[pts.length - 1];
@@ -27033,13 +27121,17 @@ window.addEventListener('pointerup', e => {
     if (toward) tuiKey('KeyA', SWIPE_HOLD.stiff);   // (toward the line of scrimmage)
     return;
   }
-  if (s.set === 'def' && lineUd()) {   // a lineman / blitzer: toward the QB (or ball) = bull rush, across = swim, away = let go and drop. The swipe holds that direction like the stick would (userEngage reads it)
-    const goal = runner || qb, gx = MIRROR * (goal.x - ud.x), gy = goal.y - ud.y, gl = Math.hypot(gx, gy) || 1, sl = Math.hypot(dx, dy) || 1;
-    const along = (dx * gx + dy * gy) / (sl * gl), drop = along < -0.5;
-    for (const [code, on] of [['ArrowLeft', dx < -0.38 * sl], ['ArrowRight', dx > 0.38 * sl], ['ArrowUp', dy < -0.38 * sl], ['ArrowDown', dy > 0.38 * sl]]) if (on) tuiKey(code, drop ? 450 : 650);
+  if (s.set === 'def' && lineUd()) {   // a lineman / blitzer: bull rush and dropping back are the joystick; a swipe up / down is the swim (userEngage reads it like the stick)
+    if (vertical) tuiKey(up ? 'ArrowUp' : 'ArrowDown', 650);
     return;
   }
-  if (s.set === 'def') { if (vertical) { if (up) tuiKey('KeyW'); } else tuiKey(along ? 'KeyR' : state === 'kick' ? 'KeyV' : 'KeyT'); return; }   // (a punt you rush: R leaps, V dives)
+  if (s.set === 'def') {   // up = leap / pick (R), down = dive tackle (V), toward the runner (or the ball) = hit stick (C)
+    if (vertical) { tuiKey(up ? 'KeyR' : 'KeyV'); return; }
+    if (state === 'kick') { tuiKey('KeyV'); return; }   // (a punt you rush: R leaps, V dives)
+    const at = state === 'flight' ? { x: ball.tx, y: ball.ty } : runner || ball, tw = ud ? at.x - ud.x : 0;
+    if (!ud || MIRROR * Math.sign(dx) === Math.sign(tw || 1)) tuiKey('KeyC');
+    return;
+  }
   if (vertical && s.multi) { if (!up) tuiKey('KeyQ', SWIPE_HOLD.stiff); return; }   // (two fingers down: a stiff arm; the hurdle is a double tap)
   if (vertical) {   // (one finger: a juke, a double tap of the up / down key)
     const code = up ? 'KeyW' : 'KeyS';
