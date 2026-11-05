@@ -18115,7 +18115,7 @@ function draw() {
   ctx.scale(MIRROR * camZ(), camZ());
   ctx.translate(-camX, -camY);
   drawField();
-  if (!aiOff() && state === 'pre' && !fourthPending && patMode !== 'choose' && !(rec && rec.replaying)) {   // (no art while you choose punt / kick / go for it; on defense you don't see their play; the art is gone the moment the ball's snapped; nor does the next play's art show over a replay)
+  if (!aiOff() && state === 'pre' && !fourthPending && patMode !== 'choose' && !(rec && rec.replaying) && (!ONL.on || onlIAmOff())) {   // (online: only the offense sees its own routes)   // (no art while you choose punt / kick / go for it; on defense you don't see their play; the art is gone the moment the ball's snapped; nor does the next play's art show over a replay)
     catchers().filter(r => !(r === rb && rb.passBlock)).forEach(drawRoute);
     // pass blockers: a short stem ending in a T
     if (rb.passBlock && !rb.split) drawBlockArt(rb, rb.x + 1.2 * YD, rb.y + (Math.sign(rb.y - MID) || rb.side || 1) * 2 * YD);
@@ -18132,7 +18132,7 @@ function draw() {
     ctx.beginPath(); ctx.ellipse(carrierNow.x, carrierNow.y + FOOT, PICK_R * 0.85 * pulse, PICK_R * 0.42 * pulse, 0, 0, Math.PI * 2);
     ctx.fill(); ctx.stroke();
   }
-  if (state === 'pre' && !aiOff() && !fourthPending && patMode !== 'choose' && !(rec && rec.replaying)) {   // (not over a replay of the last play, nor while choosing punt / kick / go for it or the try)
+  if (state === 'pre' && !aiOff() && !fourthPending && patMode !== 'choose' && !(rec && rec.replaying) && (!ONL.on || onlIAmOff())) {   // (not over a replay of the last play, nor while choosing punt / kick / go for it or the try)
     // pick the play: drag from the QB to pass, click the RB to run
     drawPickCircle(qb, '#ffffff', 'PASS');
     if (!rb.split) drawPickCircle(rb, RB_COLOR, 'RUN');
@@ -18194,8 +18194,8 @@ function draw() {
   if (state === 'pre' && !inReplay && aiOff() && !tut && !bannerUp() && !paused) drawIconButton(AUDIBLE_BTN, defAudLeft ? IN_GAME_PAPER.yellow : IN_GAME_PAPER.off, `AUDIBLE (${defAudLeft}) Q`, 'audible', defAudLeft > 0);
   if (state === 'pre' && !inReplay && pvpDef() && !bannerUp() && !paused) {   // two players: both audibles, each on its side, each with its own count
     const A = pvpAud(), c = audiblesLeft ? IN_GAME_PAPER.yellow : IN_GAME_PAPER.off, cd = defAudLeft ? IN_GAME_PAPER.yellow : IN_GAME_PAPER.off;
-    drawIconButton(A.off, c, `OFF AUDIBLE (${audiblesLeft})`, 'audible', audiblesLeft > 0);
-    drawIconButton(A.def, cd, `DEF AUDIBLE (${defAudLeft})`, 'audible', defAudLeft > 0);
+    if (!ONL.on || onlIAmOff()) drawIconButton(A.off, c, `OFF AUDIBLE (${audiblesLeft})`, 'audible', audiblesLeft > 0);   // (online: only your own side's buttons)
+    if (!ONL.on || !onlIAmOff()) drawIconButton(A.def, cd, `DEF AUDIBLE (${defAudLeft})`, 'audible', defAudLeft > 0);
   }
   if (state === 'pre' && !inReplay && !audibleLocked() && !aiOff() && !pvpDef()) {
     const b = AUDIBLE_BTN;
@@ -18209,13 +18209,13 @@ function draw() {
       }
     }
   }
-  if (iceOpen()) drawIconButton(pvpTO().def, IN_GAME_PAPER.white, `ICE KICKER (${twoP.to})`, 'timeout', true);   // (two players: a big kick, the defense can call timeout)
+  if (iceOpen() && (!ONL.on || !onlIAmOff())) drawIconButton(pvpTO().def, IN_GAME_PAPER.white, `ICE KICKER (${twoP.to})`, 'timeout', true);   // (two players: a big kick, the defense can call timeout)
   if ((state === 'pre' || state === 'done') && !(rec && rec.replaying) && (!tut || (tutStep() && tutStep().id === 'timeout'))) {   // (no timeouts in the tutorial, except its timeout lesson)
     const stops = !game.over && ((state === 'done' && game.runoff > 0 && game.secs > 0) || (state === 'pre' && patMode === null) || !!(tut && tutStep() && tutStep().id === 'timeout'));
     if (pvpOn()) {   // two players: each side has its own button (the offense's on its side)
       const P = pvpTO();
-      drawIconButton(P.off, game.timeouts > 0 && stops ? IN_GAME_PAPER.white : IN_GAME_PAPER.off, `OFF TIMEOUT (${game.timeouts})`, 'timeout', game.timeouts > 0 && stops);
-      drawIconButton(P.def, twoP.to > 0 && stops ? IN_GAME_PAPER.white : IN_GAME_PAPER.off, `DEF TIMEOUT (${twoP.to})`, 'timeout', twoP.to > 0 && stops);
+      if (!ONL.on || onlIAmOff()) drawIconButton(P.off, game.timeouts > 0 && stops ? IN_GAME_PAPER.white : IN_GAME_PAPER.off, `OFF TIMEOUT (${game.timeouts})`, 'timeout', game.timeouts > 0 && stops);
+      if (!ONL.on || !onlIAmOff()) drawIconButton(P.def, twoP.to > 0 && stops ? IN_GAME_PAPER.white : IN_GAME_PAPER.off, `DEF TIMEOUT (${twoP.to})`, 'timeout', twoP.to > 0 && stops);
     }
     const b = TIMEOUT_BTN, usable = userTimeouts() > 0 && stops;
     if (!pvpOn()) drawIconButton(b, usable ? IN_GAME_PAPER.white : IN_GAME_PAPER.off, `TIMEOUT (${userTimeouts()}) T`, 'timeout', usable);
@@ -18287,7 +18287,7 @@ function draw() {
   const sw = patSwitch();
   if (sw && !paused && !showKeys) { ctx.save(); menuBtn(PAT_SWITCH_BTN, sw.label, sw.fill, 16); ctx.restore(); }
   if (DB_TURN.debug && !paused) drawDbDebug();
-  if (defLive() && !paused && !(pvpDef() && fourthPending)) drawDefOverlay();   // (two players: no play art while the offense picks punt / kick / go for it)
+  if (defLive() && !paused && !(pvpDef() && fourthPending) && (!ONL.on || !onlIAmOff())) drawDefOverlay();   // (online: only the defender sees his assignment)   // (two players: no play art while the offense picks punt / kick / go for it)
   if (kcuOn() && !paused && !bannerUp() && !(rec && rec.replaying)) {   // your cover man on a live kick return: a yellow ring under him
     const z = camZ(), sx = W / 2 + MIRROR * (kcu.x - camX) * z, sy = viewCenterY() + (kcu.y - camY) * z + FOOT * z;
     ctx.save(); ctx.strokeStyle = '#ffd94a'; ctx.lineWidth = 3;
@@ -18566,6 +18566,7 @@ const MENU_NEXT = { x: 1040, y: 620, w: 220, h: 80 };
 const MENU_SCREENS = ['result', 'week', 'home', 'matchup'];
 const nextBtn = () => results.screen === 'result' ? RESULT_BTN : MENU_NEXT;
 function advanceResults() {
+  if (onlLobbyActive() && results.screen === 'exhibition' && !teamPick) { onlPlayClick(); return; }   // (the online lobby: only the host's PLAY starts it)
   if (teamPick || results.screen === 'start' || results.screen === 'franchise' || results.screen === 'test' || results.screen === 'coach' || results.screen === 'online' || results.screen === 'onresult') return;   // (the team picker / start / test screens have their own buttons)
   if (offPop) { if (offPop.btns && offPop.btns.length === 1) offPopClick({ x: offPop.btns[0].x + 1, y: offPop.btns[0].y + 1 }); return; }   // (Space takes an OK popup)
   if (OFF_SCREENS.includes(results.screen) || ['trade', 'tradeb', 'toffers', 'staff', 'roster', 'hof', 'practice', 'hire', 'board'].includes(results.screen)) return;   // (the offseason and trade screens have their own buttons)
@@ -23379,7 +23380,7 @@ function drawMatchup(ex = false) {
       menuBtn(SIM_ALL_BTN, 'SIM GAME', RES.bright, 20); menuBtn(SIM_O_BTN, 'SIM OFFENSE', RES.bright, 20); menuBtn(SIM_D_BTN, 'SIM DEFENSE', RES.bright, 20);
     }
   }
-  else CTRL_BTNS.forEach((b, side) => {   // who plays each side: one PLAYER, one CPU
+  else if (!(exhibition && exhibition.online)) CTRL_BTNS.forEach((b, side) => {   // who plays each side: one PLAYER, one CPU (online: both are players, no buttons)
     const me = roles[side] === 'you' || exhibition.two;   // (both PLAYER = two players: the other takes the second team's drives)
     menuBtn(b, me ? 'PLAYER' : 'CPU', me ? SEL : RES.bright, 26);
   });
@@ -23388,7 +23389,7 @@ function drawMatchup(ex = false) {
   // The dashes under each are that kit's colours (main, secondary)
   resPanel(500, 108, 280, 130, [['UNIFORMS', null]], RES.bright);
   roles.map((role, side) => [UNI_BTNS[side], MATCH[role], MATCH[role + 'Kit']]).forEach(([b, team, kit]) => {
-    menuBtn(b, kit === 'alt' ? 'ALT' : kit.toUpperCase(), RES.bright, 22);
+    menuBtn(b, kit === 'alt' ? 'ALT' : kit.toUpperCase(), RES.bright, 22, undefined, onlMineSide(UNI_BTNS.indexOf(b)));
     const [m, s] = kitColors(team, kit);
     for (let i = 0; i < 4; i++) {
       ctx.fillStyle = '#0b1a3a'; ctx.fillRect(b.x + 16 + i * 22 - 1, 217, 16, 7);
@@ -23401,7 +23402,7 @@ function drawMatchup(ex = false) {
     ctx.save(); ctx.translate(b.x + b.w / 2, b.y + b.h / 2); ctx.rotate(-0.12);
     drawFootball(34, 17, 1, -5);
     ctx.restore();
-  });
+  }, onlHostOnly());
 
   // left: the home team; right: the road team
   roles.forEach((role, side) => drawBigHelmet(side ? 980 : 300, 290, 92, role === 'you' ? TEAMS.off : TEAMS.def, !!side, MATCH[role]));
@@ -23409,6 +23410,7 @@ function drawMatchup(ex = false) {
   // which side is hosting: HOME on the left, AWAY on the right
   ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 34px monospace';
   ctx.fillText('HOME', 300, 160); ctx.fillText('AWAY', 980, 160);
+  if (onlLobbyActive()) { ctx.font = 'bold 18px monospace'; ctx.fillStyle = RES.dim; roles.forEach((role, side) => ctx.fillText(role === exhibition.myRole ? '(YOU)' : '(OPPONENT)', side ? 980 : 300, 190)); ctx.font = 'bold 34px monospace'; ctx.fillStyle = RES.line; }
   ctx.textAlign = 'center'; ctx.font = 'bold 50px monospace';
   ctx.fillText('AT', W / 2, ex ? 462 : 470);
   roles.map((role, side) => role === 'you'
@@ -23418,8 +23420,8 @@ function drawMatchup(ex = false) {
     ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.font = 'bold 50px monospace';
     if (ex) {   // the name is the button to swap in another team (swap sign on its outer side); its division and stars
       const key = me ? MATCH.you : MATCH.opp, st = teamStars(key), nb = NAME_BTNS[side];
-      menuBtn(nb, name, RES.bright, 44);
-      menuBtn(SWAP_BTNS[side], '', RES.bright, 22, b => drawSwapIcon(b.x + b.w / 2, b.y + b.h / 2));   // (the random-team button: a paper button like the rest)
+      menuBtn(nb, name, RES.bright, 44, undefined, onlMineSide(side));
+      menuBtn(SWAP_BTNS[side], '', RES.bright, 22, b => drawSwapIcon(b.x + b.w / 2, b.y + b.h / 2), onlMineSide(side));   // (the random-team button: a paper button like the rest)
       ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.font = 'bold 22px monospace'; ctx.fillText(NFL[key].conf, x, 518);
       [['OFFENSE', st.off, false], ['DEFENSE', st.def, true]].forEach(([lab, n, def], i) => {
@@ -23456,7 +23458,10 @@ function drawMatchup(ex = false) {
   if (!ex && diffMode() === 'dynamic') { const dy = DIFFV.dyn, h = dy.history, tr = h.length > 1 ? Math.sign(Math.round((h[h.length - 1].D - h[h.length - 2].D) * 1000)) : 0;   // (the dynamic difficulty, in the open: level, years, skill score, trend)
     ctx.save(); ctx.fillStyle = RES.dim; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(`${diffTag()}  -  year ${dy.years + 1}, skill ${Math.round(dy.S * 100)}%, ${tr > 0 ? 'rising' : tr < 0 ? 'easing' : 'steady'}`, W / 2, 704); ctx.restore(); }
-  menuBtn(MENU_NEXT, suspended && !ex ? 'RESUME ▸' : 'PLAY ▸', RES.bright);
+  if (onlLobbyActive()) menuBtn(MENU_NEXT, exhibition.myRole === 'you' ? 'PLAY ▸' : 'WAITING FOR HOST', RES.bright, exhibition.myRole === 'you' ? 24 : 15, undefined, exhibition.myRole === 'you');
+  else menuBtn(MENU_NEXT, suspended && !ex ? 'RESUME ▸' : 'PLAY ▸', RES.bright);
+  if (onlLobbyActive() && ol.note) { ctx.save(); ctx.fillStyle = '#c0392b'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(ol.note, W / 2, 692); ctx.restore(); }
+  if (ex && exhibition && !exhibition.online && !exhibition.test) menuBtn(ONLINE_BTN, 'ONLINE', IN_GAME_PAPER.green, 24);   // (two devices, one game: see "online")
   if (!ex && season && goalsEnsure()) menuBtn(GOALS_BTN, 'GOALS', RES.bright, 24);   // (this week's goals, right beside PLAY)
 }
 // a team's stars on the matchup screen: always on the outside of the OFFENSE / DEFENSE label (left team's run left, right team's run right).
@@ -23913,7 +23918,13 @@ function teamPickClick(p) {
   const tab = Object.keys(PICK_TABS).find(c => inBtn(p, PICK_TABS[c]));
   if (tab) { pickConf = tab; return; }
   const b = PICK_BTNS.find(b => b.conf === pickConf && inBtn(p, b));
-  if (b && teamPick === 'online') {
+  if (b && onlLobbyActive() && (teamPick === 'you' || teamPick === 'opp')) {   // (the online lobby: his own team only, never the opponent's)
+    const o = teamPick === 'you' ? 'opp' : 'you';
+    if (b.key === MATCH[o]) ol.note = 'THAT TEAM IS TAKEN';
+    else { MATCH[teamPick] = b.key; applyKits(); onlSendSel(); }
+    teamPick = null;
+  }
+  else if (b && teamPick === 'online') {
     if (b.key === ol.peerTeam) ol.note = 'THAT TEAM IS TAKEN: THE OTHER PLAYER HAS IT';
     else { ol.team = b.key; ol.note = ''; NET.send({ t: 'team', team: b.key }); }
     teamPick = null;
@@ -23932,8 +23943,13 @@ function teamPickClick(p) {
   } else if (inBtn(p, PICK_CANCEL)) teamPick = null;
 }
 // matchup-screen clicks: true if one of its buttons took it
+// online lobby: is this side of the screen mine (team, uniform), and am I the host (ball, weather)? Offline: everything is.
+const onlMineSide = side => !onlLobbyActive() || sideRoles()[side] === exhibition.myRole;
+const onlHostOnly = () => !onlLobbyActive() || exhibition.myRole === 'you';
 function matchupClick(p) {
   const ex = results.screen === 'exhibition';
+  if (ex && onlLobbyActive()) return onlLobbyClick(p);
+  if (ex && exhibition && !exhibition.test && inBtn(p, ONLINE_BTN)) { olOpen(); return true; }
   if (!ex && season && inBtn(p, GOALS_BTN) && goalsEnsure()) { goalsShow('WEEKLY GOALS'); return true; }
   if (!ex && inBtn(p, SIM_GAME_BTN)) { simMenu = !simMenu; return true; }
   if (!ex && simMenu && inBtn(p, SIM_ALL_BTN)) { simMenu = false; simMode = 'none'; suspended = null; startSimGame(); return true; }
@@ -24503,7 +24519,7 @@ function drawWxCard(ex) {
     ctx.font = 'bold 19px monospace'; ctx.fillText(lab, b.x + b.w / 2 + 14, b.y + (sub ? 40 : 46));
     if (sub) { ctx.font = 'bold 13px monospace'; ctx.fillText(sub, b.x + b.w / 2 + 14, b.y + 60); }
   };
-  if (ex) menuBtn(WX_BTN, '', RES.bright, 20, draw);
+  if (ex) menuBtn(WX_BTN, '', RES.bright, 20, draw, onlHostOnly());
   else {
     const b = WX_BTN;
     ctx.fillStyle = RES.bright; ctx.fillRect(b.x, b.y, b.w, b.h);
@@ -26217,7 +26233,6 @@ function drawStart() {
   menuBtn(START_BTNS.tut, 'TUTORIAL', IN_GAME_PAPER.green, 32);
   menuBtn(START_BTNS.diff, '', RES.bright, 24, gearIcon);
   menuBtn(TEST_BTN, 'TEST MODE', RES.bright, 24);
-  menuBtn(ONLINE_BTN, 'ONLINE', IN_GAME_PAPER.green, 24);
   menuBtn(ANIM_BTN, 'ANIMATION LIBRARY', RES.bright, 18);
   menuBtn(MENU_HL_BTN, savedHighlights.length ? `HIGHLIGHTS (${savedHighlights.length})` : 'HIGHLIGHTS', IN_GAME_PAPER.yellow, 22);
   menuBtn(MENU_HL_IMP, 'IMPORT', IN_GAME_PAPER.yellow, 18);   // (highlights from a file: works with none saved yet)
@@ -26232,8 +26247,7 @@ let hlFlash = -1e9;   // when the main menu's HIGHLIGHT button was last clicked
 function startClick(p) {
   if (inBtn(p, MENU_HL_IMP)) { ioImport('highlights', hlImportData); return; }
   if (inBtn(p, MENU_HL_BTN)) { if (savedHighlights.length) hlOpen(savedHighlights, 'saved'); else hlFlash = performance.now(); return; }
-  if (inBtn(p, ONLINE_BTN)) olOpen();
-  else if (inBtn(p, ANIM_BTN)) openAnimLib();
+  if (inBtn(p, ANIM_BTN)) openAnimLib();
   else if (inBtn(p, TEST_BTN)) startTestMode();
   else if (inBtn(p, START_BTNS.ex)) startExhibition('start');
   else if (inBtn(p, START_BTNS.fr)) { if (!slotMetas().some(m => m)) newCareerScreen(); else slotUI = { mode: 'franchise', scroll: 0, confirm: null }; }   // FRANCHISE: pick a saved team (or NEW CAREER); no saves at all = straight to a new career
@@ -26348,12 +26362,13 @@ const OL_ERR = {
   VER: 'UPDATE REQUIRED\nBOTH DEVICES MUST RUN THE SAME VERSION: RELOAD THE PAGE',
   DROP: 'OPPONENT DISCONNECTED',
 };
-const ONLINE_BTN = { x: 30, y: 460, w: 210, h: 70 };
+const ONLINE_BTN = { x: 530, y: 606, w: 220, h: 64 };   // (on the exhibition screen, beneath the weather card)
 const OL = {
   host: { x: 470, y: 290, w: 340, h: 88 }, join: { x: 470, y: 400, w: 340, h: 88 },
   copy: { x: 330, y: 470, w: 280, h: 64 }, link: { x: 670, y: 470, w: 280, h: 64 }, cancel: { x: 520, y: 620, w: 240, h: 72 },
-  go: { x: 530, y: 590, w: 220, h: 70 }, start: { x: 490, y: 470, w: 300, h: 70 }, team: { x: 930, y: 328, w: 230, h: 64 }, leave: { x: 520, y: 620, w: 240, h: 72 },
-  keys: [...NET_CFG.alphabet, '<'].map((ch, i) => ({ ch, x: 285 + (i % 8) * 90, y: 280 + Math.floor(i / 8) * 74, w: 80, h: 64 })),
+  go: { x: 530, y: 590, w: 220, h: 70 }, paste: { x: 770, y: 590, w: 170, h: 70 }, start: { x: 490, y: 470, w: 300, h: 70 }, team: { x: 930, y: 328, w: 230, h: 64 }, leave: { x: 520, y: 620, w: 240, h: 72 },
+  // (QWERTY order, 8 a row: digits, then the letter rows without I, L, O)
+  keys: [...'23456789QWERTYUPASDFGHJKZXCVBNM', '<'].map((ch, i) => ({ ch, x: 285 + (i % 8) * 90, y: 280 + Math.floor(i / 8) * 74, w: 80, h: 64 })),
 };
 const olLink = () => location.origin + location.pathname + '?join=' + NET.code;
 function olOpen() {
@@ -26367,25 +26382,75 @@ NET.onerror = code => { if (ONL.on) { ONL.joinBusy = false; return; }   // (a re
   ol.joining = false; ol.hostCode = ''; ol.err = OL_ERR[code] || OL_ERR.TIMEOUT; ol.view = NET.role === 'host' || ol.view === 'host' ? 'menu' : 'join'; };
 NET.onopen = () => {
   if (ONL.on) { if (ONL.guest) { ONL.joinBusy = false; ONL.lost = null; NET.send({ t: 'rejoin' }); } return; }   // (a guest coming back to the room: the host sends the whole cast again)
-  ol.err = ''; ol.joining = false; ol.view = 'lobby'; olHello(); };
-NET.onclose = () => { if (ONL.on) { onlLinkDown(); return; } ol.err = OL_ERR.DROP; ol.view = 'menu'; ol.peerTeam = null; NET.close(); };
+  ol.err = ''; ol.joining = false; olHello(); };
+NET.onclose = () => { if (ONL.on) { onlLinkDown(); return; } if (onlLobbyActive()) { onlLobbyLeave(OL_ERR.DROP, true); return; } ol.err = OL_ERR.DROP; ol.view = 'menu'; ol.peerTeam = null; NET.close(); };
 NET.onmsg = d => {
   if (onlMsg(d) || onlMsg2(d)) return;
   if (d.t === 'hello') {
     if (d.ver !== BUILD_STAMP) { NET.send({ t: 'bye', why: 'ver' }); const e = OL_ERR.VER; olBack(); ol.err = e; ol.view = 'menu'; return; }
     ol.peerTeam = d.team;
-    if (ol.team === d.team && NET.role === 'guest') { const ks = Object.keys(NFL).filter(k => k !== d.team); ol.team = ks[Math.floor(Math.random() * ks.length)]; NET.send({ t: 'team', team: ol.team }); }   // (the guest takes another team)
-  } else if (d.t === 'team') ol.peerTeam = d.team;
-  else if (d.t === 'bye') { if (ONL.on) { onlMsg2({ t: 'leave' }); return; } const why = d.why; NET.close(); ol.view = 'menu'; ol.err = why === 'ver' ? OL_ERR.VER : OL_ERR.DROP; ol.peerTeam = null; }
+    if (!onlLobbyActive()) onlEnterLobby();   // (connected: the exhibition screen, with the other player on the other side)
+  } else if (d.t === 'sel') onlGotSel(d);
+  else if (d.t === 'rej') { if (onlLobbyActive()) { MATCH[exhibition.myRole] = d.team; applyKits(); } }
+  else if (d.t === 'cfg') { if (onlLobbyActive() && exhibition.myRole !== 'you') { MATCH.ball = d.ball; exhibition.wx = d.wx; } }
+  else if (d.t === 'bye') { if (ONL.on) { onlMsg2({ t: 'leave' }); return; } if (onlLobbyActive()) { onlLobbyLeave(d.why === 'ver' ? OL_ERR.VER : OL_ERR.DROP, true); return; } const why = d.why; NET.close(); ol.view = 'menu'; ol.err = why === 'ver' ? OL_ERR.VER : OL_ERR.DROP; ol.peerTeam = null; }
   else console.warn('net: unknown message', d);
 };
+// --- the online lobby IS the exhibition screen: each player picks his own team and uniform, the host picks the ball and the weather, the host presses PLAY
+const onlLobbyActive = () => !!(exhibition && exhibition.online && !ONL.on);
+const onlOther = () => exhibition.myRole === 'you' ? 'opp' : 'you';
+function onlEnterLobby() {
+  const host = NET.role === 'host', mine = ol.team, theirs = ol.peerTeam;
+  if (!exhibition) startExhibition('start'); else if (!exhibition.world) useDefaultWorld();   // (the stock league: both devices have the same rosters)
+  exhibition.two = true; exhibition.online = true; exhibition.myRole = host ? 'you' : 'opp'; exhibition.wx = exhibition.wx != null ? exhibition.wx : 'AUTO';
+  const keys = Object.keys(NFL), other = except => keys.filter(k => k !== except)[Math.floor(Math.random() * (keys.length - 1))];
+  MATCH.home = 'you';
+  if (host) { MATCH.you = mine; MATCH.opp = theirs === mine ? other(mine) : theirs; }
+  else { MATCH.you = theirs; MATCH.opp = mine === theirs ? other(theirs) : mine; }
+  MATCH.youKit = 'home'; MATCH.oppKit = NFL[MATCH.you].home[0] === W_ ? 'home' : 'away'; applyKits();
+  results.screen = 'exhibition'; teamPick = null;
+  if (!host) onlSendSel();   // (the guest's team may have changed to avoid the host's)
+}
+const onlSendSel = () => { ol.note = ''; NET.send({ t: 'sel', team: MATCH[exhibition.myRole], kit: MATCH[exhibition.myRole + 'Kit'] }); };
+const onlSendCfg = () => NET.send({ t: 'cfg', ball: MATCH.ball, wx: exhibition.wx });
+function onlGotSel(d) {
+  if (!onlLobbyActive() || !NFL[d.team]) return;
+  const o = onlOther(), me = exhibition.myRole;
+  if (d.team === MATCH[me]) { if (me === 'you') NET.send({ t: 'rej', team: MATCH[o] }); return; }   // (the same team on both sides: the host's stays, the guest is sent back)
+  MATCH[o] = d.team; if (KITS.includes(d.kit)) MATCH[o + 'Kit'] = d.kit; applyKits();
+}
+function onlLobbyLeave(err, quiet) {
+  if (!quiet) NET.send({ t: 'bye' });
+  NET.close(); teamPick = null; ol.peerTeam = null; ol.joining = false; ol.hostCode = '';
+  if (exhibition) endExhibition('online'); else results.screen = 'online';
+  ol.view = 'menu'; ol.err = err || '';
+}
+function onlLobbyClick(p) {   // matchupClick for the online lobby (true: the click was handled)
+  const roles = sideRoles(), me = exhibition.myRole, host = me === 'you', mine = role => role === me;
+  const r = SWAP_BTNS.findIndex(b => inBtn(p, b));
+  if (r >= 0) { if (mine(roles[r])) { const kits = [MATCH.youKit, MATCH.oppKit]; randomTeam(roles[r]); [MATCH.youKit, MATCH.oppKit] = kits; applyKits(); onlSendSel(); } return true; }
+  const s = NAME_BTNS.findIndex(b => inBtn(p, b));
+  if (s >= 0) { if (mine(roles[s])) { teamPick = roles[s]; pickConf = 'AFC'; } return true; }
+  const u = UNI_BTNS.findIndex(b => inBtn(p, b));
+  if (u >= 0) { if (mine(roles[u])) { const k = roles[u] + 'Kit'; MATCH[k] = KITS[(KITS.indexOf(MATCH[k]) + 1) % KITS.length]; applyKits(); onlSendSel(); } return true; }
+  if (inBtn(p, BALL_BTN)) { if (host) { MATCH.ball = (MATCH.ball + 1) % BALLS.length; onlSendCfg(); } return true; }
+  if (SETTINGS.weather !== false && inBtn(p, WX_BTN)) { if (host) { wxPickNext(); onlSendCfg(); } return true; }
+  if (inBtn(p, BACK_BTN)) { onlLobbyLeave(''); return true; }
+  if (inBtn(p, EX_SET_BTN)) { settingsOpen = true; return true; }
+  return false;
+}
+function onlPlayClick() {   // PLAY on the online lobby: only the host starts it
+  if (!onlLobbyActive() || exhibition.myRole !== 'you') return;
+  const cfg = { you: MATCH.you, opp: MATCH.opp, yk: MATCH.youKit, ok: MATCH.oppKit, ball: MATCH.ball, wx: exhibition.wx };
+  NET.send({ t: 'start', ...cfg }); onlBeginMatch(cfg, true);
+}
 function olJoin() {
   if (ol.input.length < 4 || ol.joining) return;
   ol.err = ''; ol.joining = true; NET.join(ol.input);
 }
 function olClick(p) {
   if (inBtn(p, BACK_BTN)) {
-    if (ol.view === 'menu') { olBack(); results.screen = 'start'; }
+    if (ol.view === 'menu') { olBack(); results.screen = exhibition ? 'exhibition' : 'start'; }
     else if (ol.view === 'join' || ol.view === 'host') { olBack(); ol.view = 'menu'; ol.err = ''; }
     else { olBack(); ol.view = 'menu'; }
     return;
@@ -26402,6 +26467,7 @@ function olClick(p) {
     const k = OL.keys.find(k => inBtn(p, k));
     if (k) { if (k.ch === '<') ol.input = ol.input.slice(0, -1); else if (ol.input.length < 4) ol.input += k.ch; ol.err = ''; }
     else if (inBtn(p, OL.go)) olJoin();
+    else if (inBtn(p, OL.paste)) { try { navigator.clipboard.readText().then(olPaste).catch(() => {}); } catch (e) {} }   // (a phone has no Ctrl+V)
   } else if (ol.view === 'lobby') {
     if (inBtn(p, OL.team)) { teamPick = 'online'; pickConf = NFL[ol.team].conf.slice(0, 3); }
     else if (inBtn(p, OL.leave)) { olBack(); ol.view = 'menu'; }
@@ -26409,6 +26475,13 @@ function olClick(p) {
   }
 }
 function olCopy(text) { ol.copied = performance.now(); try { navigator.clipboard.writeText(text); } catch (e) {} }
+function olPaste(text) {   // a pasted code, or a pasted share link (?join=CODE): the code's characters only
+  if (!results || results.screen !== 'online' || ol.view !== 'join' || ol.joining) return;
+  const s = String(text || ''), m = s.match(/[?&]join=([A-Za-z0-9]{4})/), raw = (m ? m[1] : s).toUpperCase();
+  const code = [...raw].filter(ch => NET_CFG.alphabet.includes(ch)).join('').slice(0, 4);
+  if (code) { ol.input = code; ol.err = ''; }
+}
+window.addEventListener('paste', e => { if (results && results.screen === 'online' && ol.view === 'join') { olPaste(e.clipboardData && e.clipboardData.getData('text')); e.preventDefault(); } });
 function olKey(e) {   // the join code from a physical keyboard
   if (!results || results.screen !== 'online' || teamPick || ol.view !== 'join' || ol.joining) return false;
   if (e.key === 'Backspace') ol.input = ol.input.slice(0, -1);
@@ -26668,17 +26741,18 @@ window.addEventListener('contextmenu', e => {
   if (!ONL.on || !ONL.guest || !e.isTrusted || results) return;
   e.preventDefault(); e.stopImmediatePropagation(); NET.send({ t: 'in', k: 'cm' });
 }, true);
-function onlStartExhibition(hostTeam, guestTeam) {
+function onlBeginMatch(c, asHost) {   // c: what the lobby settled on (teams, uniforms, ball, weather); both devices run this on PLAY
+  if (ONL.on || !onlLobbyActive()) return;
+  ONL.host = !!asHost; ONL.guest = !asHost;
   ONL.on = true; ONL.buf = []; ONL.full = []; ONL.castKey = ''; ONL.hold = {}; ONL.gHeld = {}; ONL.gDown = false; ONL.seq = 0;
   ONL.savedSimDef = SETTINGS.simDefense; SETTINGS.simDefense = false;   // (defense is always played: the saved setting is ignored, and never written back)
-  startExhibition('start');   // (the stock league: both devices have the same rosters)
-  exhibition.two = true; exhibition.online = true;
-  MATCH.you = hostTeam; MATCH.opp = guestTeam; MATCH.home = 'you'; defaultKits();
-  onlMatchInit(hostTeam, guestTeam);
+  teamPick = null;
+  Object.assign(MATCH, { you: c.you, opp: c.opp, youKit: c.yk, oppKit: c.ok, ball: c.ball, home: 'you' }); applyKits();
+  exhibition.wx = c.wx;
+  onlMatchInit(c.you, c.opp);
   simMode = 'none'; reset();
 }
-function onlStartHost() { if (!ol.peerTeam || NET.role !== 'host') return; ONL.host = true; ONL.guest = false; onlStartExhibition(ol.team, ol.peerTeam); NET.send({ t: 'start', host: ol.team, guest: ol.peerTeam }); }
-function onlStartGuest(m) { if (ONL.on) return; ONL.guest = true; ONL.host = false; onlStartExhibition(m.host, m.guest); }
+function onlStartGuest(m) { if (!ONL.on) onlBeginMatch(m, false); }
 function onlEnd(err) {   // back to the lobby menu (world, settings and sides put back)
   if (!ONL.on) return;
   ONL.on = ONL.host = ONL.guest = false; ONL.buf = []; ONL.full = [];
@@ -26858,7 +26932,7 @@ function onlRematchCheck() {
   onlMatchInit(t.host, t.guest);
   if (twoP && twoP.flipped) flipSides();
   Object.assign(ONL, { buf: [], full: [], castKey: '', hold: {}, gHeld: {}, gDown: false, seq: 0 });
-  MATCH.you = t.host; MATCH.opp = t.guest; MATCH.home = 'you'; defaultKits();
+  MATCH.you = t.host; MATCH.opp = t.guest; MATCH.home = 'you'; applyKits();   // (the lobby's uniforms stay)
   game.over = true; paused = false; kick = null; kickoff = null; aim = null; simMode = 'none';
   reset();   // (results stays set until reset sees game.over: a new game, a new coin toss)
 }
@@ -26976,8 +27050,11 @@ function drawOnline() {
     const shown = (ol.input + (ol.joining ? '' : '_')).padEnd(4, ' ').slice(0, 4);
     olText(shown.split('').join(' '), W / 2, 200, 100, RES.line);
     for (const k of OL.keys) menuBtn(k, k.ch === '<' ? 'DEL' : k.ch, RES.bright, k.ch === '<' ? 20 : 30, undefined, !ol.joining);
-    if (ol.joining) { olText('CONNECTING' + dots, W / 2, 620, 30, RES.line); menuBtn(OL.cancel, 'CANCEL', RES.bright, 24); }
-    else menuBtn(OL.go, 'JOIN', ol.input.length === 4 ? IN_GAME_PAPER.green : RES.bright, 32, undefined, ol.input.length === 4);
+    if (ol.joining) { olText('CONNECTING' + dots, W / 2, 262, 24, RES.line); menuBtn(OL.cancel, 'CANCEL', RES.bright, 24); }   // (right under the code)
+    else {
+      menuBtn(OL.go, 'JOIN', ol.input.length === 4 ? IN_GAME_PAPER.green : RES.bright, 32, undefined, ol.input.length === 4);
+      menuBtn(OL.paste, 'PASTE', RES.bright, 22);
+    }
   } else if (ol.view === 'lobby') {
     resPanel(120, 130, 1040, 150, [['CONNECTED', null]], RES.bright);
     olText(`${NET.role === 'host' ? 'YOU ARE THE HOST' : 'YOU ARE THE GUEST'}   ·   CODE ${NET.code}   ·   PING ${Math.round(NET.ping)} ms${NET.ping > NET_CFG.unstableRtt ? '  (UNSTABLE)' : ''}`, W / 2, 215, 24, RES.line);
@@ -28283,7 +28360,7 @@ const PAINT_MIN = 15, PAINT_MIN_SLOW = 31, PAINT_SLOW = 15;   // ms: between pai
 // the screen stays on in touch mode, even with no touches for a long stretch (the Wake Lock API; asked for on the first touch, taken again when the page comes back)
 let wakeLock = null;
 async function keepAwake() {
-  if (!TUI.on || !navigator.wakeLock || document.visibilityState !== 'visible' || (wakeLock && !wakeLock.released)) return;
+  if (!(TUI.on || NET.conn) || !navigator.wakeLock || document.visibilityState !== 'visible' || (wakeLock && !wakeLock.released)) return;
   try { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } catch (err) {}
 }
 document.addEventListener('visibilitychange', keepAwake);
