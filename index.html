@@ -6160,7 +6160,7 @@ const SCHEME_ODDS = { inside: [['insideZone', 0.4], ['duo', 0.15], ['power', 0.2
 const pickScheme = outside => { let r = Math.random(); for (const [k, w] of SCHEME_ODDS[outside ? 'outside' : 'inside']) if ((r -= w) < 0) return k; return outside ? 'outsideZone' : 'insideZone'; };
 // rating = the lineman's run blocking (linemen: rbk); skill players use their strength
 const blockLogic = (o, a = 'rbk') => Math.max(0, Math.min(1, ocSkill() * RBL.oc + (0.5 + ((a === 'rbk' ? rmo(o, a, 'runHole') : rm(o, a, 'block')) - 1) * RBL.rate) * (1 - RBL.oc)));
-const RUN_HELP ='WASD / IJKL / arrows run (hold A sprint)  2xW/2xS juke  V dive  R spin  hold Q stiff arm  hold C truck  hold G protect';
+const RUN_HELP ='WASD / IJKL / arrows run  2xW/2xS juke  V dive  R spin  hold Q stiff arm  hold C truck  hold G protect';
 
 // --- passing ----------------------------------------------------------------------
 
@@ -8821,7 +8821,7 @@ function updateCarrier(c, top, dt) {
   if (!c.stiff) c.stiffSide = 0;   // (a new hold picks the arm again)
   ballArm(c);   // the ball rides in his outside arm (nearest the sideline), so the free arm is on the field side
   c.truck = !setUp && keys.KeyC && !c.action && !c.guard;
-  c.sprint = !setUp && (keys.KeyA || (pvpDef() && pvpRightOff() && keys.ArrowLeft)) && !c.truck;   // (two players: the right side sprints by holding the forward key, J or L)
+  c.sprint = false;   // (no sprint any more, on any device: a held key / the phone's automatic one made runners and returners drift. The carrier's speed has BURST built in instead: see below)
   if (c.stiffLock && updateStiffLock(c)) return;   // the stiff arm ended in a tackle
   if (state === 'run' && stumbleCheck(c)) return;   // a stumble can take him down (balance)
   if (c.falterUntil && clock >= c.falterUntil) {   // the stumble is over: gather (STUMBLE.recover, a low driving lean) and accelerate back up
@@ -8853,7 +8853,7 @@ function updateCarrier(c, top, dt) {
   }
   const px = c.x, py = c.y;
   let cap = effTop(c, top) * CARRY_BASE * runFade(c);
-  if (c.sprint) cap *= BURST;
+  cap *= BURST;   // (the old sprint speed, now everyone's)
   if (tut && c.sprint && Math.hypot(c.vx, c.vy) > 3 * YD && (tut.sprintT = (tut.sprintT || 0) + dt) > 1.2) tutEvent('sprint');   // (tutorial: sprint for a second)
   if (c.truck) cap *= TRUCK_SLOW;
   if (c.stiff) cap *= 0.92;
@@ -11313,8 +11313,8 @@ function updateReturner(d, dt) {
   d.laneA = (d.laneA || 0) + turn * Math.min(1, dt * (steerDir ? 9 : 6));   // (eases into the cut)
   retReverse(d, Math.cos(d.laneA), dt);   // (heading back toward his own goal, then upfield again: a big loss of speed and legs)
   d.slow = Math.max(0, (d.slow || 0) - BREAK_RECOVER * dt);
-  d.sprint = udCtl(d) && !!(dkeys.ShiftLeft || dkeys.ShiftRight);   // (your return: hold Shift to sprint)
-  d.speed = Math.min(d.top * (d.sprint ? BURST : 1) * runFade(d) * (1 - d.slow) * (d.stiff ? 0.92 : 1),(d.speed || 0) + RUN_ACCEL * rm(d, 'spd', 'accel') * dt);   // an ankle grab slows him
+  d.sprint = false;   // (no sprint key: the speed it gave is built in)
+  d.speed = Math.min(d.top * BURST * runFade(d) * (1 - d.slow) * (d.stiff ? 0.92 : 1),(d.speed || 0) + RUN_ACCEL * rm(d, 'spd', 'accel') * dt);   // an ankle grab slows him
   d.x -= Math.cos(d.laneA) * d.speed * dt; d.y += Math.sin(d.laneA) * d.speed * dt;
   clampField(d);
   setVelocity(d, px, py, dt);
@@ -12761,17 +12761,21 @@ function drawDbDebug() {
 }
 
 // the circle under the player you control, who he's covering / rushing, and the line to his man
+// every player gets at most ONE control / carrier circle a frame, whichever part of the drawing code asks first (the overlay, the kick-return ring, the carrier's flashing ring, the online
+// rings, the replay marker): ringFree(p) is true the first time a player is asked about
+const ringSeen = new Set();
+const ringFree = p => { if (!p || ringSeen.has(p)) return false; ringSeen.add(p); return true; };
 function drawDefOverlay() {
   if (rec && rec.replaying && aiOff()) {   // in the replay: a yellow circle under the defender you were playing at that moment
     const me = defenders().find(p => p.isUd);
-    if (me) {
+    if (me && ringFree(me)) {
       const z = camZ(), sx = W / 2 + MIRROR * (me.x - camX) * z, sy = viewCenterY() + (me.y - camY) * z + FOOT * z;
       ctx.save(); ctx.strokeStyle = '#ffd94a'; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.ellipse(sx, sy, 1.3 * YD * z, 0.55 * YD * z, 0, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
     }
     return;
   }
-  if (state === 'kick' && kick && kick.me && defLive() && !bannerUp() && !(rec && rec.replaying)) {   // their kick: a yellow ring under the rusher you steer
+  if (state === 'kick' && kick && kick.me && defLive() && !bannerUp() && !(rec && rec.replaying) && ringFree(kick.me)) {   // their kick: a yellow ring under the rusher you steer
     const z = camZ(), sx = W / 2 + MIRROR * (kick.me.x - camX) * z, sy = viewCenterY() + (kick.me.y - camY) * z + FOOT * z;
     ctx.save(); ctx.strokeStyle = '#ffd94a'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.ellipse(sx, sy, 1.3 * YD * z, 0.55 * YD * z, 0, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
@@ -12819,7 +12823,7 @@ function drawDefOverlay() {
   const [sx, sy] = sp(ud), fy = sy + FOOT * z;
   ctx.save();
   ctx.strokeStyle = '#ffd94a'; ctx.lineWidth = 3;
-  if (!(ud.hasBall && (state === 'picked' || state === 'run'))) { ctx.beginPath(); ctx.ellipse(sx, fy, 1.3 * YD * z, 0.55 * YD * z, 0, 0, Math.PI * 2); ctx.stroke(); }   // (the ball carrier already has the flashing ring: no second one under your returner)
+  if (!(ud.hasBall && (state === 'picked' || state === 'run')) && ringFree(ud)) { ctx.beginPath(); ctx.ellipse(sx, fy, 1.3 * YD * z, 0.55 * YD * z, 0, 0, Math.PI * 2); ctx.stroke(); }   // (the ball carrier already has the flashing ring: no second one under your returner)
   // during the play: a line from your defender to each assignment, no text. Man: his man. Zone: the receivers inside it (and the zone itself)
   ctx.lineWidth = 2; ctx.setLineDash([6, 6]); ctx.globalAlpha = 0.8;
   const line = (px, py) => { ctx.beginPath(); ctx.moveTo(sx, fy); ctx.lineTo(px, py); ctx.stroke(); };
@@ -17656,7 +17660,7 @@ function startSim(startYd, preface = [], team = 'RED') {
   if (twoP && twoP.simO && simGame && team === 'RED') { simGame = false; if (twoP.simOnce) twoP.simO = twoP.simOnce = false; return twoPlayerBall(startYd, preface); }
   if (twoP && twoP.simO && team === 'BLUE') simGame = true;
   if (twoP && !simGame && team === 'RED') {
-    if (twoP.simD) twoP.simD = false;   // (a drive they were set to simulate: it falls through to the sim box)
+    if (twoP.simD) { twoP.simD = false; if (twoP.flipped) flipSides(); }   // (a drive they were set to simulate: it falls through to the sim box; if the sides were still flipped from your punt / kickoff, back to your side first or their points land on your score)
     else return twoPlayerBall(startYd, preface);   // (two players: their drive is played live; online too: this is how the ball changes sides)
   }
   if (ONL.on) { console.error('online: the sim box must never run (defense is always played)'); throw new Error('online: startSim'); }   // (only a real drive simulation is refused)
@@ -18726,7 +18730,6 @@ const KEYBINDS_MOBILE = [
   ['Joystick', 'Steer the receiver'],
   ['WITH THE BALL', ''],
   ['Joystick', 'Run: downfield by default'],
-  ['SPRINT (hold)', 'Sprint (looser ball, fewer broken tackles)'],
   ['JUKE UP / DOWN', 'Juke up / down'],
   ['DIVE', 'Dive forward (QB: slide)'],
   ['HURDLE', 'Leap over a defender who is a couple of yards ahead (too close and he hits you in the air)'],
@@ -19005,6 +19008,7 @@ function drawTurnoverBanner() {
 }
 
 function draw() {
+  ringSeen.clear();
   ctx.fillStyle = '#3f5f39';
   ctx.fillRect(0, 0, W, H);
 
@@ -19028,6 +19032,7 @@ function draw() {
   // (any man holding it, the QB in the pocket included: yellow for you, white for the computer; two players: both yellow)
   const carrierNow = (state === 'run' || state === 'picked' || state === 'drop' || state === 'pocket' || state === 'kickoff') &&
     (allPlayers().find(p => p.hasBall) || (runner === qb ? qb : null) || ((state === 'drop' || state === 'pocket') && qb.cradle && !ball.inAir ? qb : null));
+  if (carrierNow) ringFree(carrierNow);   // (the carrier's flashing ring is his one circle, even in its blink-off beat)
   if (carrierNow && Math.floor(animNow() / 180) % 3 !== 2) {
     const pulse = 1 + Math.sin(animNow() / 120) * 0.08;
     const cpuHas = ONL.on ? carrierNow.team === 'off' : !(twoP && !twoP.ai) && (carrierNow.team === 'off' ? aiOff() : !aiOff());   // (online: white = the offense's carrier, yellow = the defense's, like the control rings)
@@ -19039,7 +19044,7 @@ function draw() {
   }
   if (state === 'pre' && !aiOff() && !fourthPending && patMode !== 'choose' && !(rec && rec.replaying) && (!ONL.on || onlIAmOff())) {   // (not over a replay of the last play, nor while choosing punt / kick / go for it or the try)
     // pick the play: drag from the QB to pass, click the RB to run
-    drawPickCircle(qb, '#ffffff', 'PASS');
+    ringFree(qb); drawPickCircle(qb, '#ffffff', 'PASS');   // (the QB's PASS circle is his one ring before the snap)
     if (!rb.split) drawPickCircle(rb, RB_COLOR, 'RUN');
   }
   if (aim && (!ONL.on || onlIAmOff())) drawAim();   // (online: only the thrower sees his aim)
@@ -19203,7 +19208,7 @@ function draw() {
   }   // (online: only the defender sees his assignment)   // (two players: no play art while the offense picks punt / kick / go for it)
   if (ONL.on && !paused && !bannerUp() && !fourthPending && patMode !== 'choose' && !(rec && rec.replaying) && ['pre', 'drop', 'pocket', 'flight', 'run', 'picked', 'loose', 'fumble'].includes(state)) {   // online: a white circle under the offense's player, a yellow one under the defense's, on both screens
     const z = camZ(), ring = (p, col) => {
-      if (!p) return;
+      if (!p || !ringFree(p)) return;
       const sx = W / 2 + MIRROR * (p.x - camX) * z, sy = viewCenterY() + (p.y - camY) * z + FOOT * z;
       ctx.save(); ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.globalAlpha = 0.95;
       ctx.beginPath(); ctx.ellipse(sx, sy, 1.3 * YD * z, 0.55 * YD * z, 0, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
@@ -19214,7 +19219,7 @@ function draw() {
     if (state === 'pre' ? !onlIAmOff() : !carry) ring(state === 'pre' ? qb : (controlledPlayer() || qb), '#ffffff');
     if (ud && state !== 'done' && onlIAmOff() && !ud.hasBall && !kcuOn()) ring(ud, '#ffd94a');
   }
-  if (kcuOn() && !paused && !bannerUp() && !(rec && rec.replaying)) {   // your cover man on a live kick return: a yellow ring under him
+  if (kcuOn() && !paused && !bannerUp() && !(rec && rec.replaying) && ringFree(kcu)) {   // your cover man on a live kick return: a yellow ring under him
     const z = camZ(), sx = W / 2 + MIRROR * (kcu.x - camX) * z, sy = viewCenterY() + (kcu.y - camY) * z + FOOT * z;
     ctx.save(); ctx.strokeStyle = '#ffd94a'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.ellipse(sx, sy, 1.3 * YD * z, 0.55 * YD * z, 0, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
@@ -21977,7 +21982,7 @@ function menuBtn(b, label, bg, size = 24, face, on = true) {
     }
     if (up > 0.01) { ctx.fillStyle = `rgba(255,226,90,${0.35 * up})`; ctx.fill(); }
     if (d > 0.01) { ctx.fillStyle = `rgba(90,70,30,${0.12 * d})`; ctx.fill(); }   // a touch of pencil-grey while held
-    ctx.fillStyle = on ? b.ink : 'rgba(255,255,255,0.55)'; ctx.font = `bold ${size}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = on ? b.ink : (paper === '#fffdf4' || paper === '#fff3a0') ? 'rgba(70,55,30,0.6)' : 'rgba(255,255,255,0.55)'; ctx.font = `bold ${size}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const lines = label.split('\n');
     lines.forEach((l, i) => ctx.fillText(l, b.x + b.w / 2, b.y + b.h / 2 + 2 + (i - (lines.length - 1) / 2) * (size + 6)));
     if (face) face(b);
@@ -24843,7 +24848,7 @@ function drawMatchup(ex = false) {
   if (!ex && diffMode() === 'dynamic') { const dy = DIFFV.dyn, h = dy.history, tr = h.length > 1 ? Math.sign(Math.round((h[h.length - 1].D - h[h.length - 2].D) * 1000)) : 0;   // (the dynamic difficulty, in the open: level, years, skill score, trend)
     ctx.save(); ctx.fillStyle = RES.dim; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(`${diffTag()}  -  year ${dy.years + 1}, skill ${Math.round(dy.S * 100)}%, ${tr > 0 ? 'rising' : tr < 0 ? 'easing' : 'steady'}`, W / 2, 704); ctx.restore(); }
-  if (onlLobbyActive()) menuBtn(MENU_NEXT, exhibition.myRole === 'you' ? 'PLAY ▸' : 'WAITING FOR HOST', RES.bright, exhibition.myRole === 'you' ? 24 : 15, undefined, exhibition.myRole === 'you');
+  if (onlLobbyActive()) menuBtn(MENU_NEXT, exhibition.myRole === 'you' ? 'PLAY ▸' : 'WAITING\nON HOST', RES.bright, exhibition.myRole === 'you' ? 24 : 18, undefined, exhibition.myRole === 'you');
   else menuBtn(MENU_NEXT, suspended && !ex ? 'RESUME ▸' : 'PLAY ▸', RES.bright);
   if (onlLobbyActive() && ol.note) { ctx.save(); ctx.fillStyle = '#c0392b'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(ol.note, W / 2, 692); ctx.restore(); }
   if (ex && exhibition && !exhibition.online && !exhibition.test) menuBtn(ONLINE_BTN, 'ONLINE', IN_GAME_PAPER.green, 24);   // (two devices, one game: see "online")
@@ -25457,6 +25462,8 @@ function wxForecast() {
     const roof = (WX_CLIMATE[team] || [])[7] || null;
     wxFc = { key, team, month, roof, code: roof === 'dome' ? 0 : wxCode(wxRoll(team, month)) };
   }
+  // online lobby: the guest shows the HOST's forecast (each device used to roll its own, so the two screens said different things)
+  if (exhibition && exhibition.online && exhibition.myRole !== 'you' && exhibition.fcCode != null && wxFc.roof !== 'dome') wxFc.code = exhibition.fcCode;
   return wxFc;
 }
 function wxNewGame() {
@@ -27871,7 +27878,7 @@ NET.onmsg = d => {
     if (!onlLobbyActive()) onlEnterLobby();   // (connected: the exhibition screen, with the other player on the other side)
   } else if (d.t === 'sel') onlGotSel(d);
   else if (d.t === 'rej') { if (onlLobbyActive()) { MATCH[exhibition.myRole] = d.team; applyKits(); } }
-  else if (d.t === 'cfg') { if (onlLobbyActive() && exhibition.myRole !== 'you') { MATCH.ball = d.ball; exhibition.wx = d.wx; } }
+  else if (d.t === 'cfg') { if (onlLobbyActive() && exhibition.myRole !== 'you') { MATCH.ball = d.ball; exhibition.wx = d.wx; if (d.fc != null) exhibition.fcCode = d.fc; } }
   else if (d.t === 'bye') { NET.closeWhy = 'other side left'; if (ONL.on) { onlMsg2({ t: 'leave' }); return; } if (onlLobbyActive()) { onlLobbyLeave(d.why === 'ver' ? OL_ERR.VER : OL_ERR.DROP, true); return; } const why = d.why; NET.close(); ol.view = 'menu'; ol.err = why === 'ver' ? OL_ERR.VER : OL_ERR.DROP; ol.peerTeam = null; }
   else console.warn('net: unknown message', d);
 };
@@ -27891,7 +27898,8 @@ function onlEnterLobby() {
   if (!host) onlSendSel();   // (the guest's team may have changed to avoid the host's)
 }
 const onlSendSel = () => { ol.note = ''; NET.send({ t: 'sel', team: MATCH[exhibition.myRole], kit: MATCH[exhibition.myRole + 'Kit'] }); };
-const onlSendCfg = () => NET.send({ t: 'cfg', ball: MATCH.ball, wx: exhibition.wx });
+const onlSendCfg = () => NET.send({ t: 'cfg', ball: MATCH.ball, wx: exhibition.wx, fc: wxForecast().code });
+setInterval(() => { if (onlLobbyActive() && exhibition.myRole === 'you' && NET.conn) onlSendCfg(); }, 700);   // (the host's ball / weather / forecast keep both lobby screens the same, whatever changed: teams too)
 function onlGotSel(d) {
   if (!onlLobbyActive() || !NFL[d.team]) return;
   const o = onlOther(), me = exhibition.myRole;
@@ -28771,7 +28779,6 @@ const TUT_STEPS = [
   { id: 'pocket',   title: 'MOVING IN THE POCKET', text: 'After the snap, slide the QB with {move}, then throw.', def: 'none', route: 'fade' },
   { id: 'scramble', title: 'SCRAMBLING',   text: 'Run past the line with {move}.', def: 'solo', recs: true },
   { id: 'run',      title: 'RUN PLAY',     text: 'Click the RB to hand off. Steer with {move}. Gain 5 yards.', def: 'solo' },
-  { id: 'sprint',   title: 'SPRINTING',    text: 'Hand off, then hold {sprint}. Faster, but a looser ball.', def: 'solo' },
   { id: 'juke',     title: 'JUKE',         text: 'Hand off, then double-tap {up} or {down} at the defender.', def: 'solo' },
   { id: 'spin',     title: 'SPIN MOVE',    text: 'Hand off, then press {spin} at the defender.', def: 'solo' },
   { id: 'stiff',    title: 'STIFF ARM',    text: 'Hand off, then hold {stiff} as he arrives.', def: 'solo' },
@@ -29585,6 +29592,7 @@ canvas.addEventListener('pointerup', e => {
     if (quick && !dragged && !finalReplay()) skipReplay();   // (a left drag does nothing)
     return;
   }
+  if (ONL.on && ONL.guest) return;   // (online guest: the host throws; a local throw here only made a ghost pass on this phone)
   if (aim && aim.pid != null && e.pointerId !== aim.pid) return;   // (another finger lifting never throws the pass)
   releaseAim();
 });
@@ -29966,7 +29974,7 @@ const tuiEl = document.getElementById('tui'), tbtns = document.getElementById('t
 // (the A / D swap follows the drive's direction. A key's RELEASE must be the very code its press sent: the direction can flip in between (a quarter break
 // mid-run), and a release with the new mapping left the other key stuck down, so the player ran the opposite way)
 const tkeySent = {};
-let tuiLastMirror = MIRROR, tuiRetOn = false, tuiRetFlash = 0;   // (tuiRetFlash: until when the stick flashes at the start of a kickoff / punt return)
+let tuiLastMirror = MIRROR, tuiRetOn = false, tuiRetFlash = 0, tuiRetSide = 0;   // (tuiRetFlash: until when the stick flashes at the start of a kickoff / punt return)
 function tkey(code, down) {
   if (down) { const logical = code; if (MIRROR > 0 && (code === 'KeyA' || code === 'KeyD')) code = code === 'KeyA' ? 'KeyD' : 'KeyA'; tkeySent[logical] = code; }
   else { const s = tkeySent[code]; delete tkeySent[code]; code = s || (MIRROR > 0 && (code === 'KeyA' || code === 'KeyD') ? (code === 'KeyA' ? 'KeyD' : 'KeyA') : code); }
@@ -30091,9 +30099,10 @@ function stickSide() {
   let carrying = false;   // (a returner who has the ball: the stick goes where it will be on the following drive from the very first frame, not after the play switches over)
   try { const m = controlledPlayer(); carrying = !!(m && m.hasBall && !aiOff()); } catch (err) {}
   if (TUI.set !== 'kickoff' || carrying) return sw * (aiOff() || onlDefSide() ? -MIRROR : MIRROR);   // (on offense the stick is on the defensive side, MIRROR; on defense it is on the offensive side, -MIRROR, and the swipes are on the defensive side)   // (the defensive side of the ball is the screen side MIRROR: the stick is there on offense and, now, on defense too; the other side aims on offense and is swipes on defense)
-  let f = 1;
-  try { const m = controlledPlayer() || qb; f = (m && m.face) || 1; } catch (err) {}
-  return sw * (-MIRROR * Math.sign(f) || 1);
+  // a kick return before he has the ball: the very side he will have it on once he does (the same rule as above; the returner's facing used to decide it and was often wrong
+  // in the moment, so the stick, and the flash that shows where it is, jumped sides at the catch)
+  const ret = ONL.on ? onlIAmOff() : !aiOff();
+  return sw * (ret ? MIRROR : -MIRROR);
 }
 // which half of the screen (+1 right, -1 left) a finger is on: split at the line of scrimmage (the middle of the screen for a kick return)
 function touchHalf(e) {
@@ -30143,7 +30152,8 @@ setInterval(() => {
   tbtns.style.display = live ? '' : 'none';
   tuiEl.classList.toggle('flip', live && stickOn(name) && stickSide() > 0);   // (stick on the right: the buttons go left)
   // (sprint is always on there: no button. Not on defense, where the held A key would read as "steering": it ran him toward the line and kept the computer from taking an idle defender over; only a pick return sprints)
-  const sprint = live && !preKick() && (['run', 'kickoff'].includes(name) || (name === 'def' && state === 'picked'));   // (not while a kick is being set up: a held A / D moves its reticle)
+  const sprint = false;   // (no automatic sprint: the phone used to hold A for you, which pushed runners and interception returners the wrong way)
+  void name;   // (not while a kick is being set up: a held A / D moves its reticle)
   if (sprint !== !!TUI.held.KeyA) { TUI.held.KeyA = sprint; tkey('KeyA', sprint); }
   if (live && name !== TUI.set) { TUI.set = name; tuiBuild(name); }
   // the tutorial's first stick lessons (the offense's pocket, the defense's switching): the joystick flashes where it will appear, so the player knows where to touch
@@ -30153,7 +30163,9 @@ setInterval(() => {
     if (tpad._id == null) {
       // a kickoff / punt return starts: the stick flashes a few times where it will appear, once per return
       const inRet = live && stickOn(name) && (name === 'kickoff' || ((kickoffPlay || puntRet) && !aiOff() && !onlDefSide() && (state === 'run' || state === 'picked')));
-      if (inRet && !tuiRetOn) { tuiRetOn = true; tuiRetFlash = now + 2800; } else if (!inRet) tuiRetOn = false;
+      const sideNow = inRet ? stickSide() : 0;
+      if (inRet && (!tuiRetOn || sideNow !== tuiRetSide)) { tuiRetOn = true; tuiRetFlash = now + 2800; } else if (!inRet) tuiRetOn = false;   // (a new return, or the stick's side changed under it: flash again, where it really is)
+      tuiRetSide = sideNow;
       if (live && ((tut && now < (tut.flashUntil || 0)) || now < tuiRetFlash)) {
         const lw = document.documentElement.classList.contains('rot') ? innerHeight : innerWidth, lh = document.documentElement.classList.contains('rot') ? innerWidth : innerHeight;
         tpad.style.display = 'block'; tpad._flash = true;
