@@ -27695,6 +27695,14 @@ const NET_CFG = {
     { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
     { urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turn:openrelay.metered.ca:443?transport=tcp', 'turns:openrelay.metered.ca:443?transport=tcp'], username: 'openrelayproject', credential: 'openrelayproject' },
   ] },
+  // YOUR OWN TURN RELAY (what makes two different networks work: phone on cellular, laptop on wi-fi). Either fill in `turn` with the servers your provider gives you,
+  // e.g. [{ urls: ['turn:HOST:80', 'turn:HOST:443?transport=tcp', 'turns:HOST:443?transport=tcp'], username: '...', credential: '...' }],
+  // or set `meteredUrl` to the provider's credentials URL (Metered: https://YOURAPP.metered.live/api/v1/turn/credentials?apiKey=YOURKEY), fetched fresh at every connect.
+  turn: [
+    { urls: 'stun:stun.relay.metered.ca:80' },
+    { urls: ['turn:global.relay.metered.ca:80', 'turn:global.relay.metered.ca:80?transport=tcp', 'turn:global.relay.metered.ca:443', 'turns:global.relay.metered.ca:443?transport=tcp'], username: 'a88cb724dd35e4542320d6ee', credential: '6nitypfuwfcvl+IE' },
+  ],
+  meteredUrl: '',
   pingMs: 2000,       // heartbeat: ping / pong this often
   unstableRtt: 250,   // ms: above this the ping badge says "unstable connection"
   chunk: 12000,       // characters: bigger messages are split in parts (the JSON data channel limit is ~16 KB)
@@ -27708,12 +27716,17 @@ const NET = {
     if (window.Peer) return ok();
     const s = document.createElement('script'); s.src = NET_CFG.peerSrc; s.onload = ok; s.onerror = () => bad('LOAD'); document.head.appendChild(s);
   },
+  _ice(cb) {   // the ICE config: the built-in STUN / relays plus your own TURN (NET_CFG.turn / meteredUrl)
+    const done = more => { const m = Array.isArray(more) ? more : []; cb({ ...NET_CFG.ice, iceServers: [...NET_CFG.ice.iceServers, ...NET_CFG.turn, ...m] }); };
+    if (!NET_CFG.meteredUrl) return done([]);
+    try { fetch(NET_CFG.meteredUrl).then(r => r.json()).then(done).catch(() => done([])); } catch (e) { done([]); }
+  },
   newCode() { let c = ''; for (let i = 0; i < 4; i++) c += NET_CFG.alphabet[Math.floor(Math.random() * NET_CFG.alphabet.length)]; return c; },
   host(onready) {   // opens a room; onready(code) when its id is registered (a taken id is re-rolled)
     NET.close(); NET.role = 'host';
-    NET._load(() => {
+    NET._load(() => NET._ice(cfg => {
       const open = n => {
-        const code = NET.newCode(), peer = NET.peer = new Peer(NET_CFG.prefix + code, { config: NET_CFG.ice });
+        const code = NET.newCode(), peer = NET.peer = new Peer(NET_CFG.prefix + code, { config: cfg });
         peer.on('open', () => { NET.code = code; onready(code); });
         peer.on('disconnected', () => { try { if (!peer.destroyed) peer.reconnect(); } catch (e) {} });   // (the signaling link dropped: the room keeps its code)
         peer.on('error', err => {
@@ -27727,13 +27740,14 @@ const NET = {
         });
       };
       open(0);
-    }, NET._fail);
+    }), NET._fail);
   },
   join(code) {
     NET.close(); NET.role = 'guest'; NET.code = code;
-    NET._load(() => {
+    NET._load(() => NET._ice(cfg => {
+      if (NET.role !== 'guest') return;   // (cancelled while the relay list was loading)
       NET._timer = setTimeout(() => NET._fail('TIMEOUT'), NET_CFG.connectMs);
-      const peer = NET.peer = new Peer({ config: NET_CFG.ice });
+      const peer = NET.peer = new Peer({ config: cfg });
       NET.why = 'no signaling';   // (replaced as the link gets further: shown under CAN'T CONNECT to tell where it stopped)
       peer.on('open', () => {
         NET.why = 'no answer from host';
@@ -27742,7 +27756,7 @@ const NET = {
         NET._attach(c);
       });
       peer.on('error', err => { NET.why = 'peer ' + err.type; NET._fail(err.type === 'peer-unavailable' ? 'NOTFOUND' : 'TIMEOUT'); });
-    }, NET._fail);
+    }), NET._fail);
   },
   send(msg) {   // (the JSON channel refuses ~16 KB messages: big ones (a cast) go as numbered parts, put back together by _attach)
     try {
@@ -27772,9 +27786,10 @@ const NET = {
         if (NET.onmsg) NET.onmsg(d);
       } catch (err) { console.warn('net message dropped', err); }   // (never crashes the game loop)
     });
-    const gone = () => { if (NET.conn !== c) return; NET.conn = null; clearInterval(NET._tick); NET.ping = 0; if (NET.onclose) NET.onclose(); };
-    c.on('close', gone); c.on('error', gone);
-    NET._gone = gone;
+    const gone = why => { if (NET.conn !== c) return; NET.conn = null; NET.closeWhy = typeof why === 'string' ? why : 'closed'; clearInterval(NET._tick); NET.ping = 0; if (NET.onclose) NET.onclose(); };   // (closeWhy: shown after OPPONENT DISCONNECTED, to tell a dead link from a closed one)
+    c.on('close', () => gone('closed ' + (NET.ice || ''))); c.on('error', e => gone('error ' + ((e && e.type) || '')));
+    c.on('iceStateChanged', s => { NET.ice = s; });
+    NET._gone = () => gone('silent ' + Math.round((performance.now() - NET._rx) / 1000) + 's');
   },
   _beat() {
     clearInterval(NET._tick);
@@ -27821,7 +27836,8 @@ NET.onerror = code => { if (ONL.on) { ONL.joinBusy = false; return; }   // (a re
 NET.onopen = () => {
   if (ONL.on) { if (ONL.guest) { ONL.joinBusy = false; ONL.lost = null; NET.send({ t: 'rejoin' }); } return; }   // (a guest coming back to the room: the host sends the whole cast again)
   ol.err = ''; ol.joining = false; olHello(); };
-NET.onclose = () => { if (ONL.on) { onlLinkDown(); return; } if (onlLobbyActive()) { onlLobbyLeave(OL_ERR.DROP, true); return; } ol.err = OL_ERR.DROP; ol.view = 'menu'; ol.peerTeam = null; NET.close(); };
+const dropWhy = () => OL_ERR.DROP + (NET.closeWhy ? ' [' + NET.closeWhy.toUpperCase() + ']' : '');
+NET.onclose = () => { if (ONL.on) { onlLinkDown(); return; } if (onlLobbyActive()) { onlLobbyLeave(dropWhy(), true); return; } ol.err = dropWhy(); ol.view = 'menu'; ol.peerTeam = null; NET.close(); };
 NET.onmsg = d => {
   if (onlMsg(d) || onlMsg2(d)) return;
   if (d.t === 'hello') {
@@ -27831,7 +27847,7 @@ NET.onmsg = d => {
   } else if (d.t === 'sel') onlGotSel(d);
   else if (d.t === 'rej') { if (onlLobbyActive()) { MATCH[exhibition.myRole] = d.team; applyKits(); } }
   else if (d.t === 'cfg') { if (onlLobbyActive() && exhibition.myRole !== 'you') { MATCH.ball = d.ball; exhibition.wx = d.wx; } }
-  else if (d.t === 'bye') { if (ONL.on) { onlMsg2({ t: 'leave' }); return; } if (onlLobbyActive()) { onlLobbyLeave(d.why === 'ver' ? OL_ERR.VER : OL_ERR.DROP, true); return; } const why = d.why; NET.close(); ol.view = 'menu'; ol.err = why === 'ver' ? OL_ERR.VER : OL_ERR.DROP; ol.peerTeam = null; }
+  else if (d.t === 'bye') { NET.closeWhy = 'other side left'; if (ONL.on) { onlMsg2({ t: 'leave' }); return; } if (onlLobbyActive()) { onlLobbyLeave(d.why === 'ver' ? OL_ERR.VER : OL_ERR.DROP, true); return; } const why = d.why; NET.close(); ol.view = 'menu'; ol.err = why === 'ver' ? OL_ERR.VER : OL_ERR.DROP; ol.peerTeam = null; }
   else console.warn('net: unknown message', d);
 };
 // --- the online lobby IS the exhibition screen: each player picks his own team and uniform, the host picks the ball and the weather, the host presses PLAY
@@ -27939,7 +27955,8 @@ function olAutoJoin() {   // ?join=CODE opens JOIN with the code filled in
 // Guest: never steps the game (frame() skips update / AI / injuries); it plays the snapshots 100 ms late, interpolated, through the normal draw().
 // Colors: the side with the ball is always BLUE (flipSides does it on both devices: the guest has the same mirror), so nothing is swapped when drawing.
 const ONL_BACKLOG = 48000;   // bytes waiting in the data channel above which the host skips snapshots
-const SNAP_HZ = 20;      // snapshots a second, host -> guest
+const SNAP_HZ_FAST = 40;   // snapshots a second while a kick meter or the aiming reticle is up
+const SNAP_HZ = 20;     // snapshots a second, host -> guest
 const SNAP_DELAY = 100;   // ms the guest draws behind the newest snapshot (it interpolates between two)
 const SNAP_JUMP = 8 * YD; // a player / ball move bigger than this between two snapshots is a cut (a new play), not interpolated
 const ONL = { on: false, host: false, guest: false, nid: 0, castKey: '', sent: [], snapAt: 0, seq: 0, buf: [], full: [], savedSimDef: null, hold: {}, depth: 0, orig: {}, hostDown: false, ptrAt: 0, gHeld: {} };
@@ -28009,7 +28026,7 @@ function onlHostCast(ps, key) {
 }
 function onlHostTick() {
   const now = performance.now();
-  if (now - ONL.snapAt < 1000 / SNAP_HZ) return;
+  if (now - ONL.snapAt < 1000 / (onlKickerSets() || aim ? SNAP_HZ_FAST : SNAP_HZ)) return;   // (a kick meter / aim in progress: faster, so it stays smooth)
   ONL.snapAt = now;
   // (a backed-up channel (weak phone link) only gets later and later: skip this tick instead of piling on. Snapshots are deltas against what was last
   // BUILT, so a skipped one is simply folded into the next. Input and sound events still go through)
@@ -28076,7 +28093,8 @@ function onlGuestStep() {
   popups = g.po.filter(q => q.i >= 0).map(q => ({ p: ps[q.i], text: q.text, color: q.color, t: q.t }));
   impacts = g.im.map(q => unslim(q, ps));
   g.py.forEach((q, i) => Object.assign(pylons[i], q));
-  aim = g.aim ? unslim(g.aim, ps) : null; kick = g.kick ? unslim(g.kick, ps) : null; kickoff = g.kof ? unslim(g.kof, ps) : null; puntPlay = g.pp ? unslim(g.pp, ps) : null;
+  const gn = buf[buf.length - 1].g;   // (the reticle and the kick meters follow your own finger / taps: the newest snapshot, not the 100 ms-late picture)
+  aim = gn.aim ? unslim(gn.aim, ps) : null; kick = gn.kick ? unslim(gn.kick, ps) : null; kickoff = gn.kof ? unslim(gn.kof, ps) : null; puntPlay = g.pp ? unslim(g.pp, ps) : null;
 }
 // one-shot events: the host forwards these calls (outermost call only), the guest plays them through the original functions
 for (const name of ['showBanner', 'playSfx', 'clipSfx', 'impactSfx', 'throwSfx', 'crowdCheer', 'endWhistle']) {
@@ -29347,7 +29365,8 @@ canvas.addEventListener('pointerdown', e => {
     const w = screenToWorld(pointerPos(e)), best = kick.rush.filter(o => !o.action).sort((a, b) => Math.hypot(a.x - w.x, a.y - w.y) - Math.hypot(b.x - w.x, b.y - w.y))[0];
     if (best && Math.hypot(best.x - w.x, best.y - w.y) < (pvpOn() ? 1 : 3) * YD) { kick.me = best; return; }   // (two players: only a click right on a rusher; anywhere else is the kicker's meter click)
   }
-  if (pvpDef() && e.button === 0 && !(rec && rec.replaying) && (['pre', 'run', 'flight', 'loose', 'fumble', 'picked'].includes(state) || (ONL.on && ONL.host && (state === 'drop' || state === 'pocket') && (e.isTrusted ? !onlHostIsOff() : onlHostIsOff())))) {   // (online, in the pocket: the defender's tap only, never the quarterback's own aiming drag)   // (two players: click a defender to take him over, unless it's the offense's own click on the QB / back)
+  const defOwner = !ONL.on || (e.isTrusted ? !onlHostIsOff() : onlHostIsOff());   // (online: only the player on defense picks defenders; the offense's taps never switch them)
+  if (pvpDef() && defOwner && e.button === 0 && !(rec && rec.replaying) && (['pre', 'run', 'flight', 'loose', 'fumble', 'picked'].includes(state) || (ONL.on && ONL.host && (state === 'drop' || state === 'pocket')))) {   // (online, in the pocket: the defender's tap only, never the quarterback's own aiming drag)   // (two players: click a defender to take him over, unless it's the offense's own click on the QB / back)
     const p = pointerPos(e), w = screenToWorld(p), best = defenders().filter(d => d.action !== 'down').sort((a, b) => Math.hypot(a.x - w.x, a.y - w.y) - Math.hypot(b.x - w.x, b.y - w.y))[0];
     if (best && Math.hypot(best.x - w.x, best.y - w.y) < 2.5 * YD && !(state === 'pre' && (inCircle(p, qb) || clickedRB(p)))) { if (udFlight) udFlight.manual = true; pickUd(best); return; }
   }
@@ -30064,7 +30083,7 @@ setInterval(() => {
   tbtns.style.display = live ? '' : 'none';
   tuiEl.classList.toggle('flip', live && stickOn(name) && stickSide() > 0);   // (stick on the right: the buttons go left)
   // (sprint is always on there: no button. Not on defense, where the held A key would read as "steering": it ran him toward the line and kept the computer from taking an idle defender over; only a pick return sprints)
-  const sprint = live && (['run', 'kickoff'].includes(name) || (name === 'def' && state === 'picked'));
+  const sprint = live && !preKick() && (['run', 'kickoff'].includes(name) || (name === 'def' && state === 'picked'));   // (not while a kick is being set up: a held A / D moves its reticle)
   if (sprint !== !!TUI.held.KeyA) { TUI.held.KeyA = sprint; tkey('KeyA', sprint); }
   if (live && name !== TUI.set) { TUI.set = name; tuiBuild(name); }
   // the tutorial's first stick lessons (the offense's pocket, the defense's switching): the joystick flashes where it will appear, so the player knows where to touch
@@ -30234,7 +30253,7 @@ for (const [type, k] of [['pointerdown', 'pd'], ['pointermove', 'pm'], ['pointer
   if (k === 'pd') {
     if (onlOverlayPointer(e, p)) { e.stopImmediatePropagation(); return; }   // (the online pause menu / connection overlay)
     if (mouse && e.button !== 0) return;
-    if (ONL.gPid != null && ONL.gPid !== e.pointerId && performance.now() - ONL.gPidAt < 4000) return;   // (a second finger: not forwarded)
+    if (ONL.gPid != null && ONL.gPid !== e.pointerId && performance.now() - ONL.gPidAt < 1500) return;   // (a second finger: not forwarded)
     ONL.gPid = e.pointerId; ONL.gPidAt = performance.now();
   } else {
     if (ONL.gPid !== e.pointerId) { if (mouse && k === 'pm') e.stopImmediatePropagation(); return; }
