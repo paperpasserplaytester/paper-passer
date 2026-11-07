@@ -15993,6 +15993,10 @@ function kickClick() {
     msg = 'click to stop the power on the marker';
     return;
   }
+  if (ONL.on && ONL.host && ONL.km) {   // online: the guest stopped the meter on the value HE saw
+    const km = ONL.km; ONL.km = null;
+    if (performance.now() - km.at < 700 && km.ph === kick.phase && Number.isFinite(km.v)) { if (km.ph === 'power') kick.meter = Math.max(0, Math.min(1, km.v)); else kick.pos = Math.max(-1, Math.min(1, km.v)); }
+  }
   if (kick.phase === 'power') {
     if (!kick.punt && !kick.kickoff && !kick.userKo && !aiOff()) {   // your field goal / PAT: a big kick gets the nerves, and the computer may ice you
       if (kick.nv == null) kick.nv = bigKick() ? 1 : 0;
@@ -19024,7 +19028,7 @@ function draw() {
     (allPlayers().find(p => p.hasBall) || (runner === qb ? qb : null) || ((state === 'drop' || state === 'pocket') && qb.cradle && !ball.inAir ? qb : null));
   if (carrierNow && Math.floor(animNow() / 180) % 3 !== 2) {
     const pulse = 1 + Math.sin(animNow() / 120) * 0.08;
-    const cpuHas = !(twoP && !twoP.ai) && (carrierNow.team === 'off' ? aiOff() : !aiOff());
+    const cpuHas = ONL.on ? carrierNow.team === 'off' : !(twoP && !twoP.ai) && (carrierNow.team === 'off' ? aiOff() : !aiOff());   // (online: white = the offense's carrier, yellow = the defense's, like the control rings)
     ctx.strokeStyle = cpuHas ? '#ffffff' : '#ffd94a';
     ctx.fillStyle = cpuHas ? 'rgba(255,255,255,0.18)' : 'rgba(255,217,74,0.18)';
     ctx.lineWidth = 6;
@@ -19195,15 +19199,18 @@ function draw() {
     for (const b of UI_BTNS) if (b && b.w) ctx.rect(b.x - 4, b.y - 4, b.w + 8, b.h + 8);
     ctx.clip('evenodd'); drawDefOverlay(); ctx.restore();
   }   // (online: only the defender sees his assignment)   // (two players: no play art while the offense picks punt / kick / go for it)
-  if (ONL.on && !paused && !bannerUp() && !(rec && rec.replaying) && ['pre', 'drop', 'pocket', 'flight', 'run', 'picked', 'loose', 'fumble'].includes(state)) {   // online: a white circle under the offense's player, a yellow one under the defense's, on both screens
+  if (ONL.on && !paused && !bannerUp() && !fourthPending && patMode !== 'choose' && !(rec && rec.replaying) && ['pre', 'drop', 'pocket', 'flight', 'run', 'picked', 'loose', 'fumble'].includes(state)) {   // online: a white circle under the offense's player, a yellow one under the defense's, on both screens
     const z = camZ(), ring = (p, col) => {
       if (!p) return;
       const sx = W / 2 + MIRROR * (p.x - camX) * z, sy = viewCenterY() + (p.y - camY) * z + FOOT * z;
       ctx.save(); ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.globalAlpha = 0.95;
       ctx.beginPath(); ctx.ellipse(sx, sy, 1.3 * YD * z, 0.55 * YD * z, 0, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
     };
-    ring(state === 'pre' ? qb : (controlledPlayer() || qb), '#ffffff');
-    if (ud && state !== 'done') ring(ud, '#ffd94a');
+    // (never a second ring where the game already draws one: the offense's own pick circles before the snap, the flashing ring under the ball carrier, the defender's own
+    // assignment ring, your cover man's kick-return ring)
+    const carry = ['run', 'picked', 'drop', 'pocket', 'kickoff'].includes(state) && (allPlayers().some(p => p.hasBall) || (qb.cradle && !ball.inAir));
+    if (state === 'pre' ? !onlIAmOff() : !carry) ring(state === 'pre' ? qb : (controlledPlayer() || qb), '#ffffff');
+    if (ud && state !== 'done' && onlIAmOff() && !ud.hasBall && !kcuOn()) ring(ud, '#ffd94a');
   }
   if (kcuOn() && !paused && !bannerUp() && !(rec && rec.replaying)) {   // your cover man on a live kick return: a yellow ring under him
     const z = camZ(), sx = W / 2 + MIRROR * (kcu.x - camX) * z, sy = viewCenterY() + (kcu.y - camY) * z + FOOT * z;
@@ -27806,10 +27813,13 @@ const NET = {
   },
   _beat() {
     clearInterval(NET._tick);
-    NET._tick = setInterval(() => {
-      NET.send({ t: 'ping', ts: performance.now() });
-      if (NET.conn && performance.now() - NET._rx > NET_CFG.deadMs && NET._gone) { const c = NET.conn; try { c.close(); } catch (e) {} NET._gone(); }
-    }, NET_CFG.pingMs);
+    NET._tick = setInterval(NET._hb, NET_CFG.pingMs);
+  },
+  _hbAt: 0,
+  _hb() {   // one heartbeat (also called by the background ticker, so a hidden laptop tab keeps its link alive)
+    const now = performance.now(); if (now - NET._hbAt < NET_CFG.pingMs * 0.8) return; NET._hbAt = now;
+    NET.send({ t: 'ping', ts: now });
+    if (NET.conn && now - NET._rx > NET_CFG.deadMs && NET._gone) { const c = NET.conn; try { c.close(); } catch (e) {} NET._gone(); }
   },
   _fail(code) { clearTimeout(NET._timer); NET.close(); if (NET.onerror) NET.onerror(code); },
   close() {   // tears the link down (the handlers stay)
@@ -28110,7 +28120,25 @@ function onlGuestStep() {
   g.py.forEach((q, i) => Object.assign(pylons[i], q));
   const gn = buf[buf.length - 1].g;   // (the reticle and the kick meters follow your own finger / taps: the newest snapshot, not the 100 ms-late picture)
   aim = gn.aim ? unslim(gn.aim, ps) : null; kick = gn.kick ? unslim(gn.kick, ps) : null; kickoff = gn.kof ? unslim(gn.kof, ps) : null; puntPlay = g.pp ? unslim(g.pp, ps) : null;
+  onlKickAnchor(); { const L = onlKickLocal(); if (L) { if (L.ph === 'power') kick.meter = L.v; else kick.pos = L.v; } }
 }
+// the kick's power / aim meters are drawn by the guest itself, from the host's clock for the phase (anchored when the phase starts), so they run smooth whatever the
+// connection does. The guest's click sends the value it SAW ('km'), and the host's kickClick uses it: what you stopped it on is what you get.
+const ONL_K = { ph: '', t: 0, at: 0, ht: 0 };
+function onlKickAnchor() {
+  if (!kick || (kick.phase !== 'power' && kick.phase !== 'aim')) { ONL_K.ph = ''; return; }
+  const now = performance.now(), ht = kick.t || 0;
+  if (ONL_K.ph !== kick.phase || ht < ONL_K.ht - 0.05) { ONL_K.ph = kick.phase; ONL_K.t = ht; ONL_K.at = now; }
+  else if (Math.abs(ht - (ONL_K.t + (now - ONL_K.at) / 1000)) > 0.4) { ONL_K.t = ht; ONL_K.at = now; }   // (far off: the host's clock moved, e.g. a hitch: follow it)
+  ONL_K.ht = ht;
+}
+function onlKickLocal() {   // { ph, v }: the meter value this guest is showing right now
+  if (!ONL.guest || !kick || !ONL_K.ph || ONL_K.ph !== kick.phase) return null;
+  const t = ONL_K.t + (performance.now() - ONL_K.at) / 1000;
+  if (kick.phase === 'power') return { ph: 'power', v: tri(t / (FG.powerPeriod * fgSpeedK() * (kick.powSlow || 1))) };
+  return { ph: 'aim', v: Math.sin(t / (FG.aimPeriod * fgSpeedK() * (kick.aimSlow || 1) / (kick.userKo ? 1 : aimPowK(kick))) * Math.PI * 2) };
+}
+function onlSendKm() { const L = onlKickLocal(); if (L) NET.send({ t: 'in', k: 'km', ph: L.ph, v: Math.round(L.v * 10000) / 10000 }); }
 // one-shot events: the host forwards these calls (outermost call only), the guest plays them through the original functions
 for (const name of ['showBanner', 'playSfx', 'clipSfx', 'impactSfx', 'throwSfx', 'crowdCheer', 'endWhistle']) {
   const orig = window[name]; if (typeof orig !== 'function') continue;
@@ -28181,6 +28209,7 @@ function onlHandleInput(m) {
   if (m.k === 'kd' || m.k === 'ku') onlGuestKey(m.c, m.k === 'kd');
   else if (m.k === 'cm') { if (!results) { const r = layRect(canvas); touchLong = false; canvas.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 10, clientY: r.top + 10 })); } }
   else if (m.k === 'cl') { for (const c of Object.keys(ONL.hold)) onlGuestKey(c, false); }
+  else if (m.k === 'km') ONL.km = { ph: m.ph, v: m.v, at: performance.now() };   // (the guest's meter value, used by the very next kick click)
   else onlGuestPtr(m);
 }
 function onlMsg(d) {   // NET.onmsg's game messages (true: handled)
@@ -28199,7 +28228,7 @@ window.addEventListener('keydown', e => {
   if (ONL.guest) {
     if (!onlKeyOk(e)) return;
     e.preventDefault(); e.stopImmediatePropagation();
-    if (!ONL.gHeld[e.code]) { ONL.gHeld[e.code] = 1; NET.send({ t: 'in', k: 'kd', c: e.code }); }
+    if (!ONL.gHeld[e.code]) { ONL.gHeld[e.code] = 1; onlSendKm(); NET.send({ t: 'in', k: 'kd', c: e.code }); }
   } else if (ONL.host) {
     if (e.isTrusted) ONL.inputAt.host = performance.now();
     if (e.code === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); if (!e.repeat) onlPauseToggle('host'); }   // (the pause key: the online pause menu, not the offline one)
@@ -28215,14 +28244,9 @@ for (const [type, k] of [['pointerdown', 'pd'], ['pointermove', 'pm'], ['pointer
   if (!ONL.on || results || !e.isTrusted || (onlLocalUi() && !ONL.lost)) return;
   const p = pointerPos(e);
   if (k === 'pd' && onlOverlayPointer(e, p)) { e.stopImmediatePropagation(); return; }   // (the online pause menu / connection overlay)
-  if (ONL.lost || (ONL.view && ONL.view.pz)) { e.stopImmediatePropagation(); return; }
+  if (ONL.lost || (ONL.view && ONL.view.pz)) { if (k !== 'pd' && typeof tpad !== 'undefined' && tpad._id === e.pointerId) return; e.stopImmediatePropagation(); return; }   // (a finger already on the stick still gets its release, or the stick stays stuck)
   if (k === 'pd' && ONL.host) ONL.inputAt.host = performance.now();
-  if (ONL.guest) return;   // (the guest's pointer forwarding is onlGuestPointer, registered after the touch stick so a stick finger is never sent)
-  if (ONL.host) {
-    if (k === 'pd') ONL.hostDown = onlMayPoint(false, p);
-    if (!ONL.hostDown) e.stopImmediatePropagation();
-    if (k === 'pu') ONL.hostDown = false;
-  }
+  // (the host's "may this finger act" gate is onlHostGate, registered after the touch stick: the stick's own fingers never pass through it, so a gated tap can't strand the stick)
 }, true);
 window.addEventListener('contextmenu', e => {
   if (!ONL.on || !ONL.guest || !e.isTrusted || results) return;
@@ -28385,7 +28409,7 @@ function onlObs() {   // what both devices draw over the game
   return { pz: ONL.pz ? { by: ONL.pz.by, left: Math.max(0, Math.round((ONL.pz.until - now) / 1000)), conf: ONL.pz.conf } : null, al, pc: [PAUSE_MAX - ONL.pauses.host, PAUSE_MAX - ONL.pauses.guest] };
 }
 document.addEventListener('visibilitychange', () => {
-  if (!ONL.on || results) return;
+  if (!ONL.on || results || !TOUCH) return;   // (a laptop tab hidden is not "away": only a phone that really stops, or leaving / closing the game, counts. AFK still applies)
   NET.send({ t: document.visibilityState === 'hidden' ? 'away' : 'back' });
 });
 addEventListener('offline', () => { if (ONL.on && !results && !ONL.lost) ONL.lost = { since: performance.now(), net: true }; });
@@ -29761,7 +29785,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) {   // (off the tab: everything goes quiet, in a game or on a menu)
     silenceLoops();
     try { for (const k in sfxPlaying) sfxPlaying[k].pause(); if (crowdAmb) crowdAmb.forEach(a => a.pause()); if (actx) actx.suspend(); } catch (e) {}
-    if (!results && !game.over) { paused = true; aim = null; for (const k in keys) keys[k] = false; }
+    if (!results && !game.over && !(ONL.on && !TOUCH)) { paused = true; aim = null; for (const k in keys) keys[k] = false; }   // (an online game on a laptop keeps running off the tab: see the background ticker)
   } else { try { if (actx) actx.resume(); } catch (e) {} }
 });   // (switching tabs pauses a game in progress)
 
@@ -29783,11 +29807,11 @@ function replayTick(dt) {   // one frame of a replay or highlight
     camX = rec.camBase[0] + replayPan.x; camY = rec.camBase[1] + replayPan.y; zoom = replayZoom() * replayUserZoom / userZoom;
   }
 }
-function frame(now) {
+function frame(now, bg) {   // bg: stepped by the background ticker (a hidden online tab), which must not start a second rAF chain
   UI_BTNS_PREV = UI_BTNS; UI_BTNS = [];
   { const s = inSave(); if (s !== setScope) { setScope = s; if (!s) { useDefaults(); QUARTER_SECS = SETTINGS.quarterMin * 60; } } }   // (back to the menu / an exhibition / franchise setup: the defaults apply)
   if (pstStash && !exhibition) pstExhibitionOff();   // (left the exhibition: the franchise's stats come back)
-  requestAnimationFrame(frame);   // (first, so a bug thrown below shows up in the console but can't stop the loop and freeze the whole game)
+  if (!bg) requestAnimationFrame(frame);   // (first, so a bug thrown below shows up in the console but can't stop the loop and freeze the whole game)
   const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));   // (never negative: a timestamp older than the last one would stall the game step)
   last = now;
   if (!paused) pauseSim = false;   // (the pause menu always opens on its main screen)
@@ -29984,7 +30008,7 @@ function tuiWhich() {
   if (state === 'kick') return aiOff() && kick && kick.punt ? 'def' : 'tap';   // (their punt: you rush / try to block it with the normal defense controls)
   if (aiOff()) return 'def';
   if (ONL.on && preKick() && !onlKickOwner()) return 'wait';   // (online: the other player's kick set-up: no kick buttons for you)
-  if (state === 'pre' && ONL.on && !onlIAmOff()) return 'def';   // (online defense: the stick moves your defender before the snap too)
+  if (ONL.on && !onlIAmOff() && ['pre', 'drop', 'pocket', 'flight', 'run', 'loose', 'fumble', 'picked'].includes(state)) return 'def';   // (online defense: the defense's controls, before the snap too: the stick on the offense's side, taps / swipes on his own)
   if (state === 'pre') return 'pre';
   if (state === 'flight') return 'flight';
   if (state === 'pocket' || state === 'drop') return 'pocket';
@@ -30037,8 +30061,8 @@ let stickTapAt = 0;
 function tuiStickEnd(e) {
   if (tpad._id == null) return;
   // a quick double tap on the stick side (no drag) in the pocket flips lob / bullet
-  if (e.pointerId === tpad._id && aiOff() && state !== 'pre' && e.type === 'pointerup' && performance.now() - tpad._t0 < 300 && Math.hypot(layPt(e).x - tpad._p0.x, layPt(e).y - tpad._p0.y) < 14) {
-    defKeyDown({ code: 'KeyO' });   // (defense: a quick tap on the stick switches to the defender nearest the ball)
+  if (e.pointerId === tpad._id && (aiOff() || onlDefSide()) && state !== 'pre' && e.type === 'pointerup' && performance.now() - tpad._t0 < 300 && Math.hypot(layPt(e).x - tpad._p0.x, layPt(e).y - tpad._p0.y) < 14) {
+    if (ONL.on) tuiKey('KeyO'); else defKeyDown({ code: 'KeyO' });   // (online: the key goes to the host like any other)   // (defense: a quick tap on the stick switches to the defender nearest the ball)
   }
   if (e.pointerId === tpad._id && (state === 'pocket' || state === 'drop') && e.type === 'pointerup' && performance.now() - tpad._t0 < 300) {
     const lp = layPt(e), now = performance.now();
@@ -30051,18 +30075,19 @@ function tuiStickEnd(e) {
 // (+1 = right half of the screen; the field is drawn mirrored). The buttons take the other side.
 // (the screen splits at the line of scrimmage. On offense: the offensive side aims / throws, the defensive side is the joystick. On defense: the
 // offensive side is the joystick, the defensive side the swipes. Kick returns keep the old rule: away from the way the returner faces.)
+const onlDefSide = () => !!(ONL.on && !onlIAmOff() && ['pre', 'drop', 'pocket', 'flight', 'run', 'loose', 'fumble', 'picked'].includes(state));   // (this device's player is the online defense in a live play)
 function stickSide() {
   const sw = SETTINGS.swapSides ? -1 : 1;   // (settings: SWAP SIDES)
   let carrying = false;   // (a returner who has the ball: the stick goes where it will be on the following drive from the very first frame, not after the play switches over)
   try { const m = controlledPlayer(); carrying = !!(m && m.hasBall && !aiOff()); } catch (err) {}
-  if (TUI.set !== 'kickoff' || carrying) return sw * (aiOff() ? -MIRROR : MIRROR);   // (on offense the stick is on the defensive side, MIRROR; on defense it is on the offensive side, -MIRROR, and the swipes are on the defensive side)   // (the defensive side of the ball is the screen side MIRROR: the stick is there on offense and, now, on defense too; the other side aims on offense and is swipes on defense)
+  if (TUI.set !== 'kickoff' || carrying) return sw * (aiOff() || onlDefSide() ? -MIRROR : MIRROR);   // (on offense the stick is on the defensive side, MIRROR; on defense it is on the offensive side, -MIRROR, and the swipes are on the defensive side)   // (the defensive side of the ball is the screen side MIRROR: the stick is there on offense and, now, on defense too; the other side aims on offense and is swipes on defense)
   let f = 1;
   try { const m = controlledPlayer() || qb; f = (m && m.face) || 1; } catch (err) {}
   return sw * (-MIRROR * Math.sign(f) || 1);
 }
 // which half of the screen (+1 right, -1 left) a finger is on: split at the line of scrimmage (the middle of the screen for a kick return)
 function touchHalf(e) {
-  if (TUI.set === 'kickoff' || TUI.set === 'flight' || (TUI.set === 'run' && !aiOff()))   // (a ball carrier / a catch: the screen splits down the middle, the stick keeps the side it had and the other half is swipes)
+  if (TUI.set === 'kickoff' || TUI.set === 'flight' || (TUI.set === 'run' && !aiOff() && !onlDefSide()))   // (a ball carrier / a catch: the screen splits down the middle, the stick keeps the side it had and the other half is swipes)
     return (layPt(e).x >= (document.documentElement.classList.contains('rot') ? innerHeight : innerWidth) / 2) ? 1 : -1;
   const z = camZ(), losX = W / 2 + MIRROR * z * (los - camX);
   return pointerPos(e).x >= losX ? 1 : -1;
@@ -30083,7 +30108,7 @@ window.addEventListener('pointerdown', e => {
 }, true);
 // (capture + stopImmediatePropagation: the stick finger's moves and release never reach the aim / throw code, so steering can't move the reticle or let go of a throw)
 // a circle drawn with the stick finger (either way round) is a spin: the ball carrier's, the QB's, a blocked lineman's, an interception returner's
-const spinOK = () => !aiOff() ? ['run', 'kickoff', 'pocket', 'drop'].includes(state) : (lineUd() || state === 'picked');
+const spinOK = () => !(aiOff() || onlDefSide()) ? ['run', 'kickoff', 'pocket', 'drop'].includes(state) : (lineUd() || state === 'picked');
 window.addEventListener('pointermove', e => {
   if (tpad._id !== e.pointerId) return;
   tuiStick(e); e.stopImmediatePropagation();
@@ -30097,7 +30122,7 @@ setInterval(() => {
   fitScreen();
   if (!TUI.on) return;
   let live = false, name = 'run';
-  try { live = !results && !showKeys && !settingsOpen && !slotUI && !hl && !paused; if (live) name = tuiWhich(); } catch (err) { live = false; }
+  try { live = !results && !showKeys && !settingsOpen && !slotUI && !hl && !paused && !(ONL.on && (ONL.lost || (ONL.view && ONL.view.pz))); if (live) name = tuiWhich(); } catch (err) { live = false; }   // (online pause / lost link: the stick lets go)
   if (tpad._id != null && (!live || !stickOn(name))) tuiStickEnd({ clientX: 0, clientY: 0 });   // (the play ended under his thumb)
   tbtns.style.display = live ? '' : 'none';
   tuiEl.classList.toggle('flip', live && stickOn(name) && stickSide() > 0);   // (stick on the right: the buttons go left)
@@ -30140,7 +30165,7 @@ const SWIPE = { min: 36 };   // px a finger must travel to count as a swipe
 // a double tap on the field before the throw flips lob / bullet. (A touch in the pocket starts the throw drag, so a tap that doesn't move is
 // cancelled here before its release throws, and two of them in a row switch the pass.)
 let bulletTap = null, lastTapAt = 0;
-window.addEventListener('pointerdown', e => { bulletTap = TUI.on && e.pointerType === 'touch' && (state === 'pocket' || state === 'drop') && tpad._id == null ? { id: e.pointerId, ...layPt(e), t: performance.now() } : null; }, true);
+window.addEventListener('pointerdown', e => { bulletTap = TUI.on && e.pointerType === 'touch' && (state === 'pocket' || state === 'drop') && tpad._id == null && (!ONL.on || onlIAmOff()) ? { id: e.pointerId, ...layPt(e), t: performance.now() } : null; }, true);
 window.addEventListener('pointerup', e => {
   const s = bulletTap; if (!s || s.id !== e.pointerId) return;
   bulletTap = null;
@@ -30167,7 +30192,7 @@ function circleSwept(pts) {   // a circle in either direction: the path turns a 
 }
 let swipeFrom = null, runTapAt = 0;   // runTapAt: when the last quick tap with the ball was (two in a row = hurdle)
 const lineUd = () => !!ud && !!(dl.includes(ud) || ud.blitz || ud.engaged) && (state === 'drop' || state === 'pocket' || state === 'run');   // (your defender is on the line, blitzing or locked up with a blocker: the pass-rush swipes)
-const swipeSet = () => (tut && tut.passed) ? '' : (state === 'flight' && !aiOff()) ? 'flight' : ['run', 'kickoff', 'def', 'pocket'].includes(tuiWhich()) ? tuiWhich() : '';   // (pocket: the QB's moves, as a swipe that isn't a throw drag)
+const swipeSet = () => (tut && tut.passed) ? '' : (state === 'flight' && !aiOff() && !onlDefSide()) ? 'flight' : ['run', 'kickoff', 'def', 'pocket'].includes(tuiWhich()) ? tuiWhich() : '';   // (pocket: the QB's moves, as a swipe that isn't a throw drag)
 canvas.addEventListener('pointerdown', e => {
   const set = TUI.on && e.pointerType === 'touch' ? swipeSet() : '';
   if (!set) { swipeFrom = null; return; }
@@ -30282,13 +30307,38 @@ for (const [type, k] of [['pointerdown', 'pd'], ['pointermove', 'pm'], ['pointer
       ONL.gPidAt = now;
     } else ONL.gPid = null;
   }
+  if (k === 'pd') onlSendKm();   // (a tap can be the kick's click: the meter value this guest saw goes first)
   NET.send({ t: 'in', k, x: Math.round(p.x), y: Math.round(p.y) });
-  ONL.gLastP = { x: Math.round(p.x), y: Math.round(p.y) };
+  ONL.gLastP = { x: Math.round(p.x), y: Math.round(p.y) }; ONL.gClient = { x: e.clientX, y: e.clientY };
   if (k === 'pu') setTimeout(() => { if (ONL.gLastP && ONL.gPid == null) NET.send({ t: 'in', k: 'pu', x: ONL.gLastP.x, y: ONL.gLastP.y }); }, 150);   // (the release is sent twice: the host ignores the second one, a lost first one no longer leaves the aim stuck)
   if (mouse) e.stopImmediatePropagation();
 }, true);
+// a second way to see the aiming finger lift, for phones where its pointerup never arrives (the browser swallowed it): the touch events. The lifted touch nearest
+// the last forwarded spot is the aiming finger's.
+for (const type of ['touchend', 'touchcancel']) window.addEventListener(type, e => {
+  if (!ONL.on || !ONL.guest || ONL.gPid == null || !ONL.gClient || !ONL.gLastP) return;
+  const g = ONL.gClient, hit = [...e.changedTouches].some(t => Math.hypot(t.clientX - g.x, t.clientY - g.y) < 90) || e.touches.length === 0;
+  if (!hit) return;
+  ONL.gPid = null; NET.send({ t: 'in', k: 'pu', x: ONL.gLastP.x, y: ONL.gLastP.y });
+  setTimeout(() => { if (ONL.gPid == null) NET.send({ t: 'in', k: 'pu', x: ONL.gLastP.x, y: ONL.gLastP.y }); }, 150);
+}, true);
+// online host: which of his own fingers may act on the field (a click that belongs to the other side is swallowed). Per finger: a refused second finger never cuts off the first.
+ONL.hostIds = new Set();
+for (const [type, k] of [['pointerdown', 'pd'], ['pointermove', 'pm'], ['pointerup', 'pu'], ['pointercancel', 'pu']]) window.addEventListener(type, e => {
+  if (!ONL.on || !ONL.host || !e.isTrusted) { if (k === 'pu') ONL.hostIds.delete(e.pointerId); return; }
+  if (results || (onlLocalUi() && !ONL.lost) || ONL.lost || (ONL.view && ONL.view.pz)) return;
+  if (k === 'pd') { if (onlMayPoint(false, pointerPos(e))) ONL.hostIds.add(e.pointerId); else e.stopImmediatePropagation(); return; }
+  if (!ONL.hostIds.has(e.pointerId)) { e.stopImmediatePropagation(); return; }
+  if (k === 'pu') ONL.hostIds.delete(e.pointerId);
+}, true);
 // while a finger is held on the field its spot is repeated a few times a second, so the host can tell "held still" from "the release got lost"
 setInterval(() => { if (ONL.on && ONL.guest && ONL.gPid != null && ONL.gLastP && !document.hidden) NET.send({ t: 'in', k: 'pm', x: ONL.gLastP.x, y: ONL.gLastP.y }); }, 300);
+// online on a laptop: switching tabs must not stop the match. A hidden tab gets no animation frames and slow timers, so a worker's timer (not throttled like the
+// page's) steps the game and the heartbeat instead.
+try {
+  const bgw = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 25)'], { type: 'text/javascript' })));
+  bgw.onmessage = () => { if (document.hidden && ONL.on && !TOUCH) { try { frame(performance.now(), true); NET._hb(); onlWatch(); } catch (e) {} } };
+} catch (e) { /* no worker: a hidden tab just runs slowly */ }
 requestAnimationFrame(frame);
 </script>
 </body>
