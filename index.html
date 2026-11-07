@@ -28026,6 +28026,8 @@ function onlHostCast(ps, key) {
 }
 function onlHostTick() {
   const now = performance.now();
+  // the guest's finger has been "down" but silent: its release got lost (the guest keeps sending its spot while held), so let go for him
+  if (ONL.gDown && ONL.gLast && now - (ONL.gAt || 0) > 1500) { ONL.gDown = false; try { sendMouse('pointermove', ONL.gLast, canvas); sendMouse('pointerup', ONL.gLast, canvas); } catch (e) {} }
   if (now - ONL.snapAt < 1000 / (onlKickerSets() || aim ? SNAP_HZ_FAST : SNAP_HZ)) return;   // (a kick meter / aim in progress: faster, so it stays smooth)
   ONL.snapAt = now;
   // (a backed-up channel (weak phone link) only gets later and later: skip this tick instead of piling on. Snapshots are deltas against what was last
@@ -28154,9 +28156,10 @@ function onlMayPoint(guestSide, pt) {   // may this player's pointer act here?  
 function onlGuestPtr(m) {
   if (results || m.x == null) return;
   const pt = { x: m.x, y: m.y };
+  ONL.gAt = performance.now(); ONL.gLast = pt;
   if (m.k === 'pd') { if (!onlMayPoint(true, pt)) { ONL.gDown = false; return; } ONL.gDown = true; sendMouse('pointerdown', pt, canvas); }
   else if (m.k === 'pm') { if (ONL.gDown) sendMouse('pointermove', pt, canvas); }   // (canvas: the drag handlers sit on it; the event bubbles up to the window's)
-  else if (m.k === 'pu') { if (ONL.gDown) sendMouse('pointerup', pt, canvas); ONL.gDown = false; }
+  else if (m.k === 'pu') { if (ONL.gDown) { sendMouse('pointermove', pt, canvas); sendMouse('pointerup', pt, canvas); } ONL.gDown = false; }   // (the last move first: the release's own spot, which the throttled moves may have skipped, is the throw's end point)
 }
 function onlHandleInput(m) {
   if (!ONL.host || !ONL.on) return;
@@ -30264,8 +30267,12 @@ for (const [type, k] of [['pointerdown', 'pd'], ['pointermove', 'pm'], ['pointer
     } else ONL.gPid = null;
   }
   NET.send({ t: 'in', k, x: Math.round(p.x), y: Math.round(p.y) });
+  ONL.gLastP = { x: Math.round(p.x), y: Math.round(p.y) };
+  if (k === 'pu') setTimeout(() => { if (ONL.gLastP && ONL.gPid == null) NET.send({ t: 'in', k: 'pu', x: ONL.gLastP.x, y: ONL.gLastP.y }); }, 150);   // (the release is sent twice: the host ignores the second one, a lost first one no longer leaves the aim stuck)
   if (mouse) e.stopImmediatePropagation();
 }, true);
+// while a finger is held on the field its spot is repeated a few times a second, so the host can tell "held still" from "the release got lost"
+setInterval(() => { if (ONL.on && ONL.guest && ONL.gPid != null && ONL.gLastP && !document.hidden) NET.send({ t: 'in', k: 'pm', x: ONL.gLastP.x, y: ONL.gLastP.y }); }, 300);
 requestAnimationFrame(frame);
 </script>
 </body>
