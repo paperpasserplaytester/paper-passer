@@ -5120,7 +5120,7 @@ function reset() {
   state = 'pre';
   // (SAVE GAME mid-game keeps the game as of this snap)
   if (!tut && !exhibition && !game.over) preSnap = { game: JSON.parse(JSON.stringify(game)), los, down, ltg: lineToGain, patMode, stats: JSON.parse(JSON.stringify(STATS)) };
-  noPlayLines = false;
+  noPlayLines = false; kickoffPlay = false;   // (a fresh snap setup: a kickoff's flags must not outlive it, or the lines stayed hidden for the whole next play when it was advanced quickly)
   ballFar = -Infinity;
   fourthPending = down === 4 || fgOption() || patMode === 'choose';
   if (aiOff() && down === 4 && patMode === null && !tut) showBanner('4TH DOWN', '#ffffff', '#3a1b1b', downAndDistance());   // (their 4th down, on defense: you see it coming)
@@ -5839,6 +5839,8 @@ const audibleLocked = () => !!tut && (tutStep() || {}).id !== 'audible';
 // replace jogs off.
 const FM = { chance: 0.7, speed: 8 * YD };
 const fmBusy = () => state === 'pre' && allPlayers().some(p => p.fmTo);
+let fmWait = 0;
+const FM_MAX_WAIT = 4;   // seconds the snap may wait for the formation to settle before everyone is put in place
 // the offense's own sideline: the home team's bench is the top one (the visitors' the bottom), so everyone running on or off goes that way
 const offHomeTop = () => MATCH.home === 'you';   // (flipSides already swaps MATCH.home with the ball, so 'you' is always the offense on the field: no second flip)
 const ownEdge = () => offHomeTop() ? Y_MIN - 3 * YD : Y_MAX + 3 * YD;
@@ -13066,7 +13068,15 @@ function update(dt) {
     for (const p of allPlayers()) idle(p, dt);
   }
 
-  if (state === 'pre') stepFormation(dt);
+  if (state === 'pre') {
+    stepFormation(dt);
+    // safety net: nobody may hold the snap forever. A man whose formation jog never finished (a stuck target, a lost frame) used to block the play for the rest of the game
+    // ("cannot start a play"): after FM_MAX_WAIT seconds every one of them is simply put where he was going
+    if (allPlayers().some(p => p.fmTo)) {
+      fmWait += dt;
+      if (fmWait > FM_MAX_WAIT) { for (const p of allPlayers()) if (p.fmTo) { const t = p.fmTo; p.x = t.x; p.y = t.y; p.fmTo = null; p.vx = p.vy = 0; p.moving = false; if (t.leave) fgExit = fgExit.filter(g => g !== p); } fmWait = 0; }
+    } else fmWait = 0;
+  } else fmWait = 0;
   separatePlayers(dt);
   faceOffPairs();
   sideLock();
@@ -14091,7 +14101,7 @@ function drawFieldNumbers() {
 }
 // the line of scrimmage and the first-down line (drawField: last, on top of any snow)
 function drawPlayLines() {
-  if (state === 'kickoff' || kickoffPlay || noPlayLines || (state === 'kick' && kick && kick.kickoff) || (rec && rec.replaying)) return;   // no line of scrimmage (nor in any replay: they belong to the next play) or first-down line on a kickoff (nor in its replay)
+  if (state === 'pre' ? (rec && rec.replaying) : (state === 'kickoff' || kickoffPlay || noPlayLines || (state === 'kick' && kick && kick.kickoff) || (rec && rec.replaying))) return;   // (before a snap the lines are always there: a stale kickoff flag from a quickly skipped play must not hide them)   // no line of scrimmage (nor in any replay: they belong to the next play) or first-down line on a kickoff (nor in its replay)
   ctx.lineWidth = 6;
   ctx.strokeStyle = '#4a8cff';
   ctx.beginPath(); ctx.moveTo(los, 0); ctx.lineTo(los, FW); ctx.stroke();
@@ -29535,6 +29545,7 @@ canvas.addEventListener('pointermove', e => {
   const p = pointerPos(e), b = backfieldPress;
   if (state !== 'pre' || paused) { backfieldPress = null; return; }
   if (Math.hypot(p.x - b.sx, p.y - b.sy) < BACKFIELD_DRAG) return;
+  if (fmBusy()) return;   // (the formation is still settling: the drag waits for it, it isn't thrown away)
   backfieldPress = null;
   snap();
   if (state === 'drop' || state === 'pocket') aim = { sx: b.sx, sy: b.sy, cx: p.x, cy: p.y, pid: e.pointerId };
