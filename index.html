@@ -27734,8 +27734,14 @@ const NET = {
     NET._load(() => {
       NET._timer = setTimeout(() => NET._fail('TIMEOUT'), NET_CFG.connectMs);
       const peer = NET.peer = new Peer({ config: NET_CFG.ice });
-      peer.on('open', () => NET._attach(peer.connect(NET_CFG.prefix + code, { reliable: true, serialization: 'json' })));
-      peer.on('error', err => NET._fail(err.type === 'peer-unavailable' ? 'NOTFOUND' : 'TIMEOUT'));
+      NET.why = 'no signaling';   // (replaced as the link gets further: shown under CAN'T CONNECT to tell where it stopped)
+      peer.on('open', () => {
+        NET.why = 'no answer from host';
+        const c = peer.connect(NET_CFG.prefix + code, { reliable: true, serialization: 'json' });
+        c.on('iceStateChanged', s => { NET.why = 'ice ' + s; });
+        NET._attach(c);
+      });
+      peer.on('error', err => { NET.why = 'peer ' + err.type; NET._fail(err.type === 'peer-unavailable' ? 'NOTFOUND' : 'TIMEOUT'); });
     }, NET._fail);
   },
   send(msg) {   // (the JSON channel refuses ~16 KB messages: big ones (a cast) go as numbered parts, put back together by _attach)
@@ -27811,7 +27817,7 @@ function olOpen() {
 function olBack() { NET.send({ t: 'bye' }); NET.close(); ol.peerTeam = null; ol.joining = false; ol.hostCode = ''; ol.note = ''; }
 function olHello() { NET.send({ t: 'hello', ver: BUILD_STAMP, team: ol.team }); }
 NET.onerror = code => { if (ONL.on) { ONL.joinBusy = false; return; }   // (a rejoin that failed: the watchdog tries again)
-  ol.joining = false; ol.hostCode = ''; ol.err = OL_ERR[code] || OL_ERR.TIMEOUT; ol.view = NET.role === 'host' || ol.view === 'host' ? 'menu' : 'join'; };
+  ol.joining = false; ol.hostCode = ''; ol.err = (OL_ERR[code] || OL_ERR.TIMEOUT).replace('\n', code === 'TIMEOUT' && NET.why ? ' [' + NET.why.toUpperCase() + ']\n' : '\n');   /* the reason rides on the title line: the box has only two */ ol.view = NET.role === 'host' || ol.view === 'host' ? 'menu' : 'join'; };
 NET.onopen = () => {
   if (ONL.on) { if (ONL.guest) { ONL.joinBusy = false; ONL.lost = null; NET.send({ t: 'rejoin' }); } return; }   // (a guest coming back to the room: the host sends the whole cast again)
   ol.err = ''; ol.joining = false; olHello(); };
@@ -27932,7 +27938,8 @@ function olAutoJoin() {   // ?join=CODE opens JOIN with the code filled in
 // deltas (cast = everything, sent whenever the cast changes), the play's globals, the ball, camera and popups. Sounds / banners are one-shot events.
 // Guest: never steps the game (frame() skips update / AI / injuries); it plays the snapshots 100 ms late, interpolated, through the normal draw().
 // Colors: the side with the ball is always BLUE (flipSides does it on both devices: the guest has the same mirror), so nothing is swapped when drawing.
-const SNAP_HZ = 20;       // snapshots a second, host -> guest
+const ONL_BACKLOG = 48000;   // bytes waiting in the data channel above which the host skips snapshots
+const SNAP_HZ = 20;      // snapshots a second, host -> guest
 const SNAP_DELAY = 100;   // ms the guest draws behind the newest snapshot (it interpolates between two)
 const SNAP_JUMP = 8 * YD; // a player / ball move bigger than this between two snapshots is a cut (a new play), not interpolated
 const ONL = { on: false, host: false, guest: false, nid: 0, castKey: '', sent: [], snapAt: 0, seq: 0, buf: [], full: [], savedSimDef: null, hold: {}, depth: 0, orig: {}, hostDown: false, ptrAt: 0, gHeld: {} };
@@ -28004,6 +28011,9 @@ function onlHostTick() {
   const now = performance.now();
   if (now - ONL.snapAt < 1000 / SNAP_HZ) return;
   ONL.snapAt = now;
+  // (a backed-up channel (weak phone link) only gets later and later: skip this tick instead of piling on. Snapshots are deltas against what was last
+  // BUILT, so a skipped one is simply folded into the next. Input and sound events still go through)
+  try { const dc = NET.conn && NET.conn.dataChannel; if (dc && dc.bufferedAmount > ONL_BACKLOG) return; } catch (e) {}
   const ps = allPlayers(), key = ps.map(p => p.__id || (p.__id = ++ONL.nid)).join(',');
   if (key !== ONL.castKey) onlHostCast(ps, key);
   const d = [], x = [];
@@ -28078,7 +28088,17 @@ for (const name of ['showBanner', 'playSfx', 'clipSfx', 'impactSfx', 'throwSfx',
     ONL.depth++; try { return orig.apply(this, a); } finally { ONL.depth--; }
   };
 }
-function onlGotEvent(m) { const f = ONL.orig[m.f]; if (f && ONL.guest) f.apply(null, m.a || []); }
+// (the guest draws SNAP_DELAY behind the host: sounds are held the same time so they land with the picture, and a burst after a network stall
+// (everything arrives at once) is thinned: stale or repeated events are dropped instead of stacking up into a stutter)
+const ONL_EV = { maxLate: 600, dupMs: 70, seen: {}, lastIn: 0 };
+function onlGotEvent(m) {
+  const f = ONL.orig[m.f]; if (!f || !ONL.guest || document.hidden) return;
+  const now = performance.now(), key = m.f + JSON.stringify(m.a || []), gap = now - ONL_EV.lastIn; ONL_EV.lastIn = now;
+  if (ONL_EV.seen[key] && now - ONL_EV.seen[key] < ONL_EV.dupMs) return;   // (the same sound twice at once)
+  ONL_EV.seen[key] = now;
+  const wait = gap > ONL_EV.maxLate ? 0 : SNAP_DELAY;   // (after a stall the picture catches up at once: no extra wait)
+  setTimeout(() => { if (ONL.guest && ONL.on) { try { f.apply(null, m.a || []); } catch (e) {} } }, wait);
+}
 // inputs. The guest sends key down / up (codes), pointer down / move / up (logical canvas coordinates) and right-clicks, only when they change.
 // The host turns them into the keys / pointer events a second player on the same screen would make: Player 2's keys steer the side without the ball.
 function onlPvpKey(e) {   // pvpKey's online version: the host's keys are Player 1's, the guest's (fromGuest) Player 2's, both on the usual left-hand keys
@@ -28107,6 +28127,10 @@ function onlMayPoint(guestSide, pt) {   // may this player's pointer act here?  
   if (hit(T.off) || hit(A.off)) return off;
   if (hit(PAUSE_BTN) || hit(KEYS_BTN)) return true;
   if (onlKickerSets()) return !off;
+  if (!off && ['pre', 'drop', 'pocket'].includes(state) && patMode === null && !fourthPending) {   // (the defender's tap on one of his men: switching defenders before / just after the snap)
+    const w = screenToWorld(pt);
+    if (defenders().some(d => d.action !== 'down' && Math.hypot(d.x - w.x, d.y - w.y) < 2.5 * YD)) return true;
+  }
   return off || !(['pre', 'drop', 'pocket', 'kick', 'punt', 'kickoff'].includes(state) || patMode !== null || fourthPending);
 }
 function onlGuestPtr(m) {
@@ -28158,12 +28182,8 @@ for (const [type, k] of [['pointerdown', 'pd'], ['pointermove', 'pm'], ['pointer
   if (k === 'pd' && onlOverlayPointer(e, p)) { e.stopImmediatePropagation(); return; }   // (the online pause menu / connection overlay)
   if (ONL.lost || (ONL.view && ONL.view.pz)) { e.stopImmediatePropagation(); return; }
   if (k === 'pd' && ONL.host) ONL.inputAt.host = performance.now();
-  if (ONL.guest) {
-    if (k === 'pm') { const now = performance.now(); if (now - ONL.ptrAt < 33) { if (e.pointerType === 'mouse') e.stopImmediatePropagation(); return; } ONL.ptrAt = now; if (!e.buttons && e.pointerType === 'mouse') { e.stopImmediatePropagation(); return; } }
-    if (k === 'pd' && e.button !== 0 && e.pointerType === 'mouse') return;
-    NET.send({ t: 'in', k, x: Math.round(p.x), y: Math.round(p.y) });
-    if (e.pointerType === 'mouse') e.stopImmediatePropagation();
-  } else if (ONL.host) {
+  if (ONL.guest) return;   // (the guest's pointer forwarding is onlGuestPointer, registered after the touch stick so a stick finger is never sent)
+  if (ONL.host) {
     if (k === 'pd') ONL.hostDown = onlMayPoint(false, p);
     if (!ONL.hostDown) e.stopImmediatePropagation();
     if (k === 'pu') ONL.hostDown = false;
@@ -29327,7 +29347,7 @@ canvas.addEventListener('pointerdown', e => {
     const w = screenToWorld(pointerPos(e)), best = kick.rush.filter(o => !o.action).sort((a, b) => Math.hypot(a.x - w.x, a.y - w.y) - Math.hypot(b.x - w.x, b.y - w.y))[0];
     if (best && Math.hypot(best.x - w.x, best.y - w.y) < (pvpOn() ? 1 : 3) * YD) { kick.me = best; return; }   // (two players: only a click right on a rusher; anywhere else is the kicker's meter click)
   }
-  if (pvpDef() && e.button === 0 && !(rec && rec.replaying) && ['pre', 'run', 'flight', 'loose', 'fumble', 'picked'].includes(state)) {   // (two players: click a defender to take him over, unless it's the offense's own click on the QB / back)
+  if (pvpDef() && e.button === 0 && !(rec && rec.replaying) && (['pre', 'run', 'flight', 'loose', 'fumble', 'picked'].includes(state) || (ONL.on && ONL.host && (state === 'drop' || state === 'pocket') && (e.isTrusted ? !onlHostIsOff() : onlHostIsOff())))) {   // (online, in the pocket: the defender's tap only, never the quarterback's own aiming drag)   // (two players: click a defender to take him over, unless it's the offense's own click on the QB / back)
     const p = pointerPos(e), w = screenToWorld(p), best = defenders().filter(d => d.action !== 'down').sort((a, b) => Math.hypot(a.x - w.x, a.y - w.y) - Math.hypot(b.x - w.x, b.y - w.y))[0];
     if (best && Math.hypot(best.x - w.x, best.y - w.y) < 2.5 * YD && !(state === 'pre' && (inCircle(p, qb) || clickedRB(p)))) { if (udFlight) udFlight.manual = true; pickUd(best); return; }
   }
@@ -30205,6 +30225,28 @@ if (TUI.q === '1' || (TUI.q !== '0' && (SETTINGS.mobile ?? IS_MOBILE))) tuiSet(t
 // installable / offline: the service worker (sw.js) keeps what was fetched; needs http(s), so not when opened from a file
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => {});
 
+// online guest: pointer events go to the host. Registered LAST on purpose: the stick finger's events are stopped by the touch stick's own capture handlers
+// before they get here, so steering never moves the host's reticle or releases a throw. Only one finger (the first down) is forwarded at a time.
+for (const [type, k] of [['pointerdown', 'pd'], ['pointermove', 'pm'], ['pointerup', 'pu'], ['pointercancel', 'pu']]) window.addEventListener(type, e => {
+  if (!ONL.on || !ONL.guest || results || !e.isTrusted || (onlLocalUi() && !ONL.lost)) return;
+  if (ONL.lost || (ONL.view && ONL.view.pz)) return;
+  const mouse = e.pointerType === 'mouse', p = pointerPos(e);
+  if (k === 'pd') {
+    if (onlOverlayPointer(e, p)) { e.stopImmediatePropagation(); return; }   // (the online pause menu / connection overlay)
+    if (mouse && e.button !== 0) return;
+    if (ONL.gPid != null && ONL.gPid !== e.pointerId && performance.now() - ONL.gPidAt < 4000) return;   // (a second finger: not forwarded)
+    ONL.gPid = e.pointerId; ONL.gPidAt = performance.now();
+  } else {
+    if (ONL.gPid !== e.pointerId) { if (mouse && k === 'pm') e.stopImmediatePropagation(); return; }
+    if (k === 'pm') {
+      const now = performance.now(); if (now - ONL.ptrAt < 33) { if (mouse) e.stopImmediatePropagation(); return; } ONL.ptrAt = now;   // (~30 a second)
+      if (!e.buttons && mouse) { e.stopImmediatePropagation(); return; }
+      ONL.gPidAt = now;
+    } else ONL.gPid = null;
+  }
+  NET.send({ t: 'in', k, x: Math.round(p.x), y: Math.round(p.y) });
+  if (mouse) e.stopImmediatePropagation();
+}, true);
 requestAnimationFrame(frame);
 </script>
 </body>
