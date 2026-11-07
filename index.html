@@ -28185,14 +28185,21 @@ function onlGuestKey(code, down) {
   if (code === 'Escape') { if (down) onlPauseToggle('guest'); return; }   // (the guest's pause key)
   if (ONL.pz) return;
   const ev = { code, key: code, repeat: false, fromGuest: true, preventDefault() {} };
+  ONL.pendUp = ONL.pendUp || {}; ONL.downAt = ONL.downAt || {};
+  const release = () => { const a = ONL.hold[code] || aliasKey(ev); delete ONL.hold[code]; if (a.def !== true) keys[a.code] = false; if (a.def !== false) dkeys[a.code] = false; };
   if (down) {
     if ((code === 'Space' || code === 'Enter') && !onlMaySpace(true)) return;
-    const a = aliasKey(ev); ONL.hold[code] = a; onKeyDown(a);
+    if (ONL.pendUp[code]) { clearTimeout(ONL.pendUp[code]); ONL.pendUp[code] = 0; release(); }   // (a new press before the held-back release ran: let go first)
+    const a = aliasKey(ev); ONL.hold[code] = a; ONL.downAt[code] = performance.now(); onKeyDown(a);
   } else {
-    const a = ONL.hold[code] || aliasKey(ev); delete ONL.hold[code];
-    if (a.def !== true) keys[a.code] = false; if (a.def !== false) dkeys[a.code] = false;
+    // a quick tap (a swipe's jump / dive / catch key) can arrive with its release in the same breath: the game reads held keys once a frame and never saw it. Every
+    // press stays down at least ONL_MIN_HOLD ms on the host, as a tap on the host's own keyboard would.
+    const wait = ONL_MIN_HOLD - (performance.now() - (ONL.downAt[code] || 0));
+    if (wait > 4) { clearTimeout(ONL.pendUp[code]); ONL.pendUp[code] = setTimeout(() => { ONL.pendUp[code] = 0; release(); }, wait); }
+    else release();
   }
 }
+const ONL_MIN_HOLD = 110;   // ms a guest's key stays down on the host at least (a few game frames)
 function onlMayPoint(guestSide, pt) {   // may this player's pointer act here?  Buttons belong to a side; the play call and kicks to the offense
   const off = guestSide ? !onlHostIsOff() : onlHostIsOff(), hit = b => b && inBtn(pt, b), T = pvpTO(), A = pvpAud();
   if (hit(T.def) || hit(A.def)) return !off;
@@ -30098,7 +30105,7 @@ function stickSide() {
   const sw = SETTINGS.swapSides ? -1 : 1;   // (settings: SWAP SIDES)
   let carrying = false;   // (a returner who has the ball: the stick goes where it will be on the following drive from the very first frame, not after the play switches over)
   try { const m = controlledPlayer(); carrying = !!(m && m.hasBall && !aiOff()); } catch (err) {}
-  if (TUI.set !== 'kickoff' || carrying) return sw * (aiOff() || onlDefSide() ? -MIRROR : MIRROR);   // (on offense the stick is on the defensive side, MIRROR; on defense it is on the offensive side, -MIRROR, and the swipes are on the defensive side)   // (the defensive side of the ball is the screen side MIRROR: the stick is there on offense and, now, on defense too; the other side aims on offense and is swipes on defense)
+  if (TUI.set !== 'kickoff' || carrying) return sw * (aiOff() || onlDefSide() || TUI.set === 'def' ? -MIRROR : MIRROR);   // (the set is the role: 'def' = the defense's controls, whatever the state; the stick always sits on the offense's side for the defender)   // (on offense the stick is on the defensive side, MIRROR; on defense it is on the offensive side, -MIRROR, and the swipes are on the defensive side)   // (the defensive side of the ball is the screen side MIRROR: the stick is there on offense and, now, on defense too; the other side aims on offense and is swipes on defense)
   // a kick return before he has the ball: the very side he will have it on once he does (the same rule as above; the returner's facing used to decide it and was often wrong
   // in the moment, so the stick, and the flash that shows where it is, jumped sides at the catch)
   const ret = ONL.on ? onlIAmOff() : !aiOff();
