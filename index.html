@@ -29287,6 +29287,7 @@ window.addEventListener('pointerup', e => {
 }, true);
 window.addEventListener('pointercancel', e => { if (tapHold && tapHold.id === e.pointerId) tapHold = null; }, true);
 canvas.addEventListener('pointerdown', e => {
+  if (ONL.on && ONL.guest && !results) return;   // (online guest: the host plays every tap, aim and click. Running them here too started a second, local throw / snap on the phone that fought the host's)
   if (oo && !paused && e.button === 0 && ooClick(pointerPos(e))) return;   // (1v1 practice: the force-animation buttons)
   if (slotUI) { if (e.button === 0) slotClick(pointerPos(e)); return; }
   if (settingsOpen) { if (e.button === 0) settingsClick(pointerPos(e)); return; }
@@ -29559,7 +29560,7 @@ canvas.addEventListener('pointermove', e => {
     replayPan.y = replayDrag.py - (p.y - replayDrag.sy) / z;
     return;
   }
-  if (!aim || aiOff()) return;   // (the computer's aim is its own: your mouse doesn't move it)
+  if (!aim || aiOff() || (ONL.on && ONL.guest)) return;   // (the computer's aim is its own: your mouse doesn't move it; online guest: the aim is the host's)
   if (aim.pid != null && e.pointerId !== aim.pid) return;   // (only the finger that is aiming moves the reticle)
   const p = pointerPos(e);
   aim.cx = p.x; aim.cy = p.y;
