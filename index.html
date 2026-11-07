@@ -13345,6 +13345,8 @@ function updateCamera(dt) {
     (patMode === 'two' || (los > FIELD - 12 * YL && !scorer) || (runner && runner.x > FIELD - 6 * YL));
   if (goalZoom && !(state === 'pre' || state === 'drop' || state === 'pocket' || state === 'flight')) wide = false;   // (in the red zone the passing view stays wide: every receiver is in the shot)
   if (state === 'kickoff' && kick && kick.userKo && kick.kickoff && ['wait', 'target', 'power', 'aim'].includes(kick.phase)) pts.push({ x: -ENDZONE - YD, y: MID }, kick.target || { x: 0, y: MID });   // (your kick: the field out to the back of the end zone stays in the shot, so you can aim it out)
+  if (state === 'kickoff' && kick && kick.userKo && kick.punt && kick.tLos != null && ['wait', 'target', 'power', 'aim'].includes(kick.phase))   // (your punt: the reticle, and as far out as THIS punter can reach, stay in the shot: a stronger leg zooms the camera out further)
+    pts.push(kick.target || { x: kick.tLos - PUNT.min * YL, y: MID }, { x: kick.tLos - (PUNT.min + PUNT.span * Math.min(1, kick.pow || 1)) * YL, y: MID });
   if ((state === 'kickoff' || kickoffPlay) && typeof kcuOn === 'function' && kcuOn() && kcu) pts.push(kcu);   // (a kickoff: the man you steer is always in the shot)
   pts = pts.filter(Boolean);   // (no target yet when the QB fumbles before throwing; no ball carrier found)
   if (!pts.length) pts = [ball];
@@ -17799,7 +17801,7 @@ function simAdvance() {
 function drawSim() {
   if (!simReady()) return;
   ctx.fillStyle = 'rgba(0,0,0,0.62)';
-  ctx.fillRect(0, TOP_BAR, W, H - TOP_BAR - BOT_BAR);
+  ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
   const pw = 860, ph = 380, x = W / 2 - pw / 2, y = TOP_BAR + (H - TOP_BAR - BOT_BAR) / 2 - ph / 2 - 30;
   const col = teamColor(sim.team);   // the box takes the colour of whoever has the ball
   ctx.fillStyle = '#0f1a14'; ctx.fillRect(x, y, pw, ph);
@@ -19134,7 +19136,7 @@ function draw() {
   }
   if (rec && rec.replaying && rec.rewind) {   // the tape rewinding: a dim wash and the label
     const fade = 1 - smooth01(Math.max(0, (rec.rewind.t / rec.rewind.dur - 0.55) / 0.45));   // (the wash and label fade out over the last of the rewind)
-    ctx.save(); ctx.globalAlpha = fade; ctx.fillStyle = 'rgba(20,30,50,0.18)'; ctx.fillRect(0, TOP_BAR, W, H - TOP_BAR - BOT_BAR);
+    ctx.save(); ctx.globalAlpha = fade; ctx.fillStyle = 'rgba(20,30,50,0.18)'; ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
     ctx.font = 'bold 34px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#ffffff';
     ctx.fillText('◂◂ REWIND', 40, TOP_BAR + 50); ctx.restore();
   }
@@ -19177,11 +19179,11 @@ function draw() {
     }
   }
   if (state === 'pre' && fourthPending && !paused && !aiOff() && ONL.on && !onlIAmOff()) {   // online: the offense decides; the defense just waits (no buttons it can't press)
-    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, TOP_BAR, W, H - TOP_BAR - BOT_BAR);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
     ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = 'bold 28px monospace'; ctx.fillText('OFFENSE IS CHOOSING...', W / 2, H / 2);
   } else if (state === 'pre' && fourthPending && !paused && !aiOff()) {
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(0, TOP_BAR, W, H - TOP_BAR - BOT_BAR);
+    ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
     ctx.fillStyle = '#fff';
     ctx.textAlign = 'center';
     ctx.font = 'bold 34px monospace';
@@ -19195,7 +19197,7 @@ function draw() {
   if (sw && !paused && !showKeys && onlKickOwner()) { ctx.save(); menuBtn(PAT_SWITCH_BTN, sw.label, sw.fill, 16); ctx.restore(); }
   if (DB_TURN.debug && !paused) drawDbDebug();
   if (defLive() && !paused && !(pvpDef() && fourthPending) && (!ONL.on || !onlIAmOff())) {   // (the assignment art never draws over the top / bottom banner or any button)
-    ctx.save(); ctx.beginPath(); ctx.rect(0, TOP_BAR, W, H - TOP_BAR - BOT_BAR);
+    ctx.save(); ctx.beginPath(); ctx.rect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);   // (the whole screen: the field is wider than W on a phone, the lines must reach its ends)
     for (const b of UI_BTNS) if (b && b.w) ctx.rect(b.x - 4, b.y - 4, b.w + 8, b.h + 8);
     ctx.clip('evenodd'); drawDefOverlay(); ctx.restore();
   }   // (online: only the defender sees his assignment)   // (two players: no play art while the offense picks punt / kick / go for it)
@@ -19237,7 +19239,7 @@ function draw() {
   if (injuryShowing() && !paused) drawInjuryCall();
   if (paused && !ONL.on) {   // (online: drawOnlineOverlay's pause menu)
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(0, TOP_BAR, W, H - TOP_BAR - BOT_BAR);
+    ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
     ctx.fillStyle = '#fff';
     ctx.textAlign = 'center';
     ctx.font = 'bold 56px monospace';
@@ -26824,7 +26826,7 @@ function drawPractice() {
 const INJ_BTNS = { keep: { x: W / 2 - 290, y: 440, w: 270, h: 66 }, bench: { x: W / 2 + 20, y: 440, w: 270, h: 66 }, ok: { x: W / 2 - 135, y: 440, w: 270, h: 66 } };
 function drawInjuryCall() {
   const { s, re } = injuryCall, sev = s.inj.sev, [lo, hi] = INJURY.weeks[sev];
-  ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0, TOP_BAR, W, H - TOP_BAR - BOT_BAR);
+  ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
   resPanel(W / 2 - 340, 210, 680, 320, [['INJURY TIMEOUT', null]], RES.bright);
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillStyle = RES.line; ctx.font = 'bold 32px monospace'; ctx.fillText(`${s.name}  ${s.tag}`, W / 2, 262);
@@ -28482,7 +28484,7 @@ function drawOnlineOverlay() {
   const v = ONL.view || {}, me = onlMe();
   ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   if (v.pz) {
-    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, TOP_BAR, W, H - TOP_BAR - BOT_BAR);
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
     if (v.pz.by === me && !(ONL.guest && settingsOpen) && !settingsOpen) {
       olText('PAUSED', W / 2, 190, 56, '#fff');
       if (v.pz.conf) {
@@ -28502,7 +28504,7 @@ function drawOnlineOverlay() {
     olText(al.text, W / 2, y + 26, 28, '#fff'); if (al.sub) olText(al.sub, W / 2, y + 54, 18, '#ffd94a');
   }
   if (ONL.lost) {
-    ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(0, TOP_BAR, W, H - TOP_BAR - BOT_BAR);
+    ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
     olText('CONNECTION LOST, RECONNECTING...', W / 2, 300, 38, '#fff');
     if (ONL.lost.expired) { olText('COULD NOT RECONNECT', W / 2, 360, 20, '#ffd94a'); menuBtn(OPM.menu, 'BACK TO MENU', IN_GAME_PAPER.red, 24); }
     else olText(`${Math.max(0, Math.ceil(RECONNECT_SECS - (performance.now() - ONL.lost.since) / 1000))}s`, W / 2, 360, 22, '#cfd8d2');
@@ -29960,7 +29962,14 @@ const IS_MOBILE = TUI.q === '1' || (TUI.q !== '0' && (/Android|iPhone|iPad|iPod|
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) || (matchMedia('(pointer: coarse)').matches && matchMedia('(hover: none)').matches)));
 const tuiEl = document.getElementById('tui'), tbtns = document.getElementById('tbtns'), tpad = document.getElementById('tpad'), tknob = document.getElementById('tknob'), trot = document.getElementById('trot');
 // (the touch buttons / swipes name the game's own forward (A) and back (D) keys; a keyboard A / D is flipped by the drive direction in aliasKey, so name the physical one that flips to it)
-function tkey(code, down) { if (MIRROR > 0 && (code === 'KeyA' || code === 'KeyD')) code = code === 'KeyA' ? 'KeyD' : 'KeyA'; window.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code, bubbles: true, cancelable: true })); }
+// (the A / D swap follows the drive's direction. A key's RELEASE must be the very code its press sent: the direction can flip in between (a quarter break
+// mid-run), and a release with the new mapping left the other key stuck down, so the player ran the opposite way)
+const tkeySent = {};
+let tuiLastMirror = MIRROR, tuiRetOn = false, tuiRetFlash = 0;   // (tuiRetFlash: until when the stick flashes at the start of a kickoff / punt return)
+function tkey(code, down) {
+  if (down) { const logical = code; if (MIRROR > 0 && (code === 'KeyA' || code === 'KeyD')) code = code === 'KeyA' ? 'KeyD' : 'KeyA'; tkeySent[logical] = code; }
+  else { const s = tkeySent[code]; delete tkeySent[code]; code = s || (MIRROR > 0 && (code === 'KeyA' || code === 'KeyD') ? (code === 'KeyA' ? 'KeyD' : 'KeyA') : code); }
+  window.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code, bubbles: true, cancelable: true })); }
 // touch mode: the canvas fills the whole screen (stretched to the phone's ratio) and the page is forced to landscape
 // (orientation lock where the browser allows it, else html.rot turns the page 90 deg while the phone is held upright)
 let rotNow = false, rotVotes = 0, rotInit = false;
@@ -30093,7 +30102,7 @@ function touchHalf(e) {
   return pointerPos(e).x >= losX ? 1 : -1;
 }
 window.addEventListener('pointerdown', e => {
-  if (!TUI.on || (e.pointerType !== 'touch' && e.button !== 0) || tpad._id != null || !stickOn(TUI.set) || (e.target.closest && e.target.closest('#tbtns'))) return;
+  if (!TUI.on || !e.isTrusted || (e.pointerType !== 'touch' && e.button !== 0) || tpad._id != null || !stickOn(TUI.set) ||   /* (!isTrusted: the other player's presses, replayed here by the online host as mouse events, are never this finger) */ (e.target.closest && e.target.closest('#tbtns'))) return;
   const lp = layPt(e), py = pointerPos(e).y;
   if (overUiBtn(pointerPos(e))) return;
   if (py < TOP_BAR || py > H - BOT_BAR) return;   // (the top / bottom bars hold the pause, audible and timeout buttons: a touch there is theirs, never the stick)
@@ -30121,6 +30130,12 @@ const tpause = document.getElementById('tpause');   // (the real pause button is
 setInterval(() => {
   fitScreen();
   if (!TUI.on) return;
+  if (MIRROR !== tuiLastMirror) {   // the drive switched ends (a quarter break): nothing stays held from the old direction, and the stick starts over
+    tuiLastMirror = MIRROR;
+    for (const k in TUI.held) if (TUI.held[k]) { TUI.held[k] = false; tkey(k, false); }
+    if (tpad._id != null) tuiStickEnd({ clientX: 0, clientY: 0 });
+    swipeFrom = null;
+  }
   let live = false, name = 'run';
   try { live = !results && !showKeys && !settingsOpen && !slotUI && !hl && !paused && !(ONL.on && (ONL.lost || (ONL.view && ONL.view.pz))); if (live) name = tuiWhich(); } catch (err) { live = false; }   // (online pause / lost link: the stick lets go)
   if (tpad._id != null && (!live || !stickOn(name))) tuiStickEnd({ clientX: 0, clientY: 0 });   // (the play ended under his thumb)
@@ -30135,7 +30150,10 @@ setInterval(() => {
     const sid = tut && tutStep() && !tutDefHold() && tutStep().id, now = performance.now();
     if (sid && tut.flashId !== sid) { tut.flashId = sid; tut.flashUntil = TUT_STICK_FLASH.ids.includes(sid) ? now + TUT_STICK_FLASH.ms : 0; }
     if (tpad._id == null) {
-      if (live && tut && now < (tut.flashUntil || 0)) {
+      // a kickoff / punt return starts: the stick flashes a few times where it will appear, once per return
+      const inRet = live && stickOn(name) && (name === 'kickoff' || ((kickoffPlay || puntRet) && !aiOff() && !onlDefSide() && (state === 'run' || state === 'picked')));
+      if (inRet && !tuiRetOn) { tuiRetOn = true; tuiRetFlash = now + 2800; } else if (!inRet) tuiRetOn = false;
+      if (live && ((tut && now < (tut.flashUntil || 0)) || now < tuiRetFlash)) {
         const lw = document.documentElement.classList.contains('rot') ? innerHeight : innerWidth, lh = document.documentElement.classList.contains('rot') ? innerWidth : innerHeight;
         tpad.style.display = 'block'; tpad._flash = true;
         const R = tpad.offsetWidth / 2;
