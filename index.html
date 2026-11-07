@@ -16662,7 +16662,7 @@ function resolveOnside(k, got) {
   endPlay(out ? 'Onside kick goes out of bounds  -  their ball' : `Onside kick recovered by ${other}`, (out ? spot : at) * YL, 'punt');   // (their drive starts at the spot)
 }
 function drawKickMeters() {
-  if (!kick || kick.phase === 'enter' || kick.phase === 'wait' || kick.phase === 'tbCatch' || kick.cpuKo || (aiOff() && !kick.userKo)) return;   // (the computer's kicks don't show the bars)
+  if (!kick || kick.phase === 'enter' || kick.phase === 'wait' || kick.phase === 'tbCatch' || kick.cpuKo || (aiOff() && !kick.userKo) || !onlKickOwner()) return;   // (the computer's kicks don't show the bars)
   if (reticleOn()) return drawKickTargetUI();   // (your kickoff / punt: placing the reticle; then the meters, with the marker for the range it needs)
   const bw = 520, x0 = W / 2 - bw / 2, y0 = TOP_BAR + 12;
   ctx.save(); ctx.globalAlpha = kickFade();   // (a big kick: after the first click both bars fade in and out; see ICE)
@@ -19036,8 +19036,8 @@ function draw() {
     drawPickCircle(qb, '#ffffff', 'PASS');
     if (!rb.split) drawPickCircle(rb, RB_COLOR, 'RUN');
   }
-  if (aim) drawAim();
-  if (kick && kick.userKo && kick.target && !kick.onside && ['target', 'power', 'aim'].includes(kick.phase)) drawKickReticle();
+  if (aim && (!ONL.on || onlIAmOff())) drawAim();   // (online: only the thrower sees his aim)
+  if (kick && kick.userKo && kick.target && !kick.onside && ['target', 'power', 'aim'].includes(kick.phase) && onlKickOwner()) drawKickReticle();
   if (ball.inAir) {
     ctx.strokeStyle = 'rgba(255,255,255,0.6)';
     ctx.lineWidth = 6;
@@ -19172,7 +19172,10 @@ function draw() {
       drawSimButton(FINAL_BTN, true);
     }
   }
-  if (state === 'pre' && fourthPending && !paused && !aiOff()) {
+  if (state === 'pre' && fourthPending && !paused && !aiOff() && ONL.on && !onlIAmOff()) {   // online: the offense decides; the defense just waits (no buttons it can't press)
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, TOP_BAR, W, H - TOP_BAR - BOT_BAR);
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = 'bold 28px monospace'; ctx.fillText('OFFENSE IS CHOOSING...', W / 2, H / 2);
+  } else if (state === 'pre' && fourthPending && !paused && !aiOff()) {
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(0, TOP_BAR, W, H - TOP_BAR - BOT_BAR);
     ctx.fillStyle = '#fff';
@@ -19185,7 +19188,7 @@ function draw() {
     for (const b of decisionButtons()) { ctx.save(); menuBtn(b, b.label, b.fill, 18); ctx.restore(); }
   }
   const sw = patSwitch();
-  if (sw && !paused && !showKeys) { ctx.save(); menuBtn(PAT_SWITCH_BTN, sw.label, sw.fill, 16); ctx.restore(); }
+  if (sw && !paused && !showKeys && onlKickOwner()) { ctx.save(); menuBtn(PAT_SWITCH_BTN, sw.label, sw.fill, 16); ctx.restore(); }
   if (DB_TURN.debug && !paused) drawDbDebug();
   if (defLive() && !paused && !(pvpDef() && fourthPending) && (!ONL.on || !onlIAmOff())) {   // (the assignment art never draws over the top / bottom banner or any button)
     ctx.save(); ctx.beginPath(); ctx.rect(0, TOP_BAR, W, H - TOP_BAR - BOT_BAR);
@@ -28137,7 +28140,8 @@ function onlPvpKey(e) {   // pvpKey's online version: the host's keys are Player
   return GAME_KEYS.includes(c) ? { code: c, def: e.fromGuest ? onlHostIsOff() : !onlHostIsOff() } : null;   // (def: he is the side without the ball)
 }
 // your own kickoff / punt is mirrored (see mirrorFlip): the kicker's side is the DEFENSE while he sets power and aim, the returning side is BLUE
-const onlKickerSets = () => !!(kick && kick.userKo && ['target', 'power', 'aim'].includes(kick.phase));
+const onlKickOwner = () => !ONL.on || (onlKickerSets() ? !onlIAmOff() : onlIAmOff());   // online: is this device's player the one who sets the kick? (the kick UI shows for him only)
+const onlKickerSets = () =>!!(kick && kick.userKo && ['target', 'power', 'aim'].includes(kick.phase));
 function onlMaySpace(guestSide) { const off = guestSide ? !onlHostIsOff() : onlHostIsOff(); return state === 'done' || (onlKickerSets() ? !off : off); }
 function onlGuestKey(code, down) {
   if (code === 'Escape') { if (down) onlPauseToggle('guest'); return; }   // (the guest's pause key)
@@ -29979,6 +29983,7 @@ function tuiWhich() {
   if (state === 'done' || state === 'sim') return 'next';
   if (state === 'kick') return aiOff() && kick && kick.punt ? 'def' : 'tap';   // (their punt: you rush / try to block it with the normal defense controls)
   if (aiOff()) return 'def';
+  if (ONL.on && preKick() && !onlKickOwner()) return 'wait';   // (online: the other player's kick set-up: no kick buttons for you)
   if (state === 'pre' && ONL.on && !onlIAmOff()) return 'def';   // (online defense: the stick moves your defender before the snap too)
   if (state === 'pre') return 'pre';
   if (state === 'flight') return 'flight';
