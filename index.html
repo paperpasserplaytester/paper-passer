@@ -13451,7 +13451,10 @@ function mirrorFor() {
   // a fixed direction is YOUR drive's: the other team (their ball on the flipped sides) drives the opposite way
   if (d === 'left' || d === 'right') {
     if (state === 'sim' && fixedMirror != null) return fixedMirror;   // (the sim box keeps the field as it was: sim's side flip no longer shows for a frame)
-    return fixedMirror = (d === 'left' ? -1 : 1) * (twoP && twoP.flipped ? -1 : 1);
+    // (online: each player's DRIVE setting is for HIS drive. twoP.flipped is "the guest has the ball", so on the guest's device his own drive is the unflipped one: each screen can be
+    // mirrored its own way, the host translates the guest's taps / keys into its own frame, see onlFlip)
+    const mineFlip = ONL.on && ONL.guest ? !(twoP && twoP.flipped) : !!(twoP && twoP.flipped);
+    return fixedMirror = (d === 'left' ? -1 : 1) * (mineFlip ? -1 : 1);
   }
   const m = MATCH.home === 'you' ? -1 : 1;
   return game.quarter === 2 || game.quarter === 3 ? -m : m;
@@ -28041,7 +28044,7 @@ function onlGlobals(ps) {
     tp: twoP ? { fl: twoP.flipped, to: twoP.to } : null,
     mt: { you: MATCH.you, opp: MATCH.opp, yk: MATCH.youKit, ok: MATCH.oppKit, home: MATCH.home },
     bm: bulletMode, pm: patMode, fp: fourthPending, hh: halfHold, pz: paused, ko: !!kickoffPlay, pr: puntRet, prp: puntRetPlay,
-    ud: ix(ud), tg: ix(tgt), rn: ix(runner),
+    ud: ix(ud), tg: ix(tgt), rn: ix(runner), mi: MIRROR,   // (mi: the host's screen direction: the guest translates his taps / keys when his own differs)
     nm: { cbT: ix(cbT), cbB: ix(cbB), sT: ix(sT), sB: ix(sB), lbW: ix(lbW), lbM: ix(lbM), lbS: ix(lbS) },
     ball: slim(ball, ps), cam: [Math.round(camX), Math.round(camY), Math.round(zoom * passPull * 1000) / 1000], sh: Math.round(shake * 10) / 10,
     wx: game.wx ? slim(game.wx) : null, wxi: { rain: WXI.rain, snow: WXI.snow, mph: WXI.mph },
@@ -28130,10 +28133,17 @@ function onlGuestStep() {
   g.py.forEach((q, i) => Object.assign(pylons[i], q));
   const gn = buf[buf.length - 1].g;   // (the reticle and the kick meters follow your own finger / taps: the newest snapshot, not the 100 ms-late picture)
   aim = gn.aim ? unslim(gn.aim, ps) : null; kick = gn.kick ? unslim(gn.kick, ps) : null; kickoff = gn.kof ? unslim(gn.kof, ps) : null; puntPlay = g.pp ? unslim(g.pp, ps) : null;
+  ONL.hostMirror = gn.mi;
+  if (aim && onlFlip()) { aim.sx = W - aim.sx; aim.cx = W - aim.cx; }   // (the host's aim is in the host's screen frame: into this one)
   onlKickAnchor(); { const L = onlKickLocal(); if (L) { if (L.ph === 'power') kick.meter = L.v; else kick.pos = L.v; } }
 }
 // the kick's power / aim meters are drawn by the guest itself, from the host's clock for the phase (anchored when the phase starts), so they run smooth whatever the
 // connection does. The guest's click sends the value it SAW ('km'), and the host's kickClick uses it: what you stopped it on is what you get.
+// two players can drive different ways on their own screens (each has his own DRIVE setting): is this guest's screen mirrored against the host's?
+const onlFlip = () => !!(ONL.on && ONL.guest && ONL.hostMirror != null && MIRROR !== ONL.hostMirror);
+const ONL_SWAP = { ArrowLeft: 'ArrowRight', ArrowRight: 'ArrowLeft', KeyA: 'KeyD', KeyD: 'KeyA', KeyJ: 'KeyL', KeyL: 'KeyJ' };
+const onlKeyOut = code => onlFlip() && ONL_SWAP[code] ? ONL_SWAP[code] : code;   // (left / right in the host's frame)
+const onlPtX = p => (onlFlip() && !(overPauseButton(p) || overKeysButton(p))) ? W - p.x : p.x;   // (the field and the centred buttons mirror; the fixed pause / controls buttons stay where they are)
 const ONL_K = { ph: '', t: 0, at: 0, ht: 0 };
 function onlKickAnchor() {
   if (!kick || (kick.phase !== 'power' && kick.phase !== 'aim')) { ONL_K.ph = ''; return; }
@@ -28245,7 +28255,7 @@ window.addEventListener('keydown', e => {
   if (ONL.guest) {
     if (!onlKeyOk(e)) return;
     e.preventDefault(); e.stopImmediatePropagation();
-    if (!ONL.gHeld[e.code]) { ONL.gHeld[e.code] = 1; onlSendKm(); NET.send({ t: 'in', k: 'kd', c: e.code }); }
+    if (!ONL.gHeld[e.code]) { const mc = onlKeyOut(e.code); ONL.gHeld[e.code] = mc; onlSendKm(); NET.send({ t: 'in', k: 'kd', c: mc }); }   // (mc: left / right as the host's screen has them)
   } else if (ONL.host) {
     if (e.isTrusted) ONL.inputAt.host = performance.now();
     if (e.code === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); if (!e.repeat) onlPauseToggle('host'); }   // (the pause key: the online pause menu, not the offline one)
@@ -28254,7 +28264,7 @@ window.addEventListener('keydown', e => {
 }, true);
 window.addEventListener('keyup', e => {
   if (!ONL.on || !ONL.guest || results || onlLocalUi()) return;
-  if (ONL.gHeld[e.code]) { delete ONL.gHeld[e.code]; NET.send({ t: 'in', k: 'ku', c: e.code }); e.stopImmediatePropagation(); }
+  if (ONL.gHeld[e.code]) { const mc = ONL.gHeld[e.code]; delete ONL.gHeld[e.code]; NET.send({ t: 'in', k: 'ku', c: mc }); e.stopImmediatePropagation(); }
 }, true);
 window.addEventListener('blur', () => { if (ONL.on && ONL.guest) { ONL.gHeld = {}; NET.send({ t: 'in', k: 'cl' }); } });
 for (const [type, k] of [['pointerdown', 'pd'], ['pointermove', 'pm'], ['pointerup', 'pu']]) window.addEventListener(type, e => {
@@ -28604,7 +28614,7 @@ function drawOnline() {
   }
 }
 function drawNetBadge() {   // the ping badge in a corner during play
-  if (!NET.conn || !NET.conn.open || !NET.ping || (results && results.screen === 'online')) return;
+  if (!NET.conn || !NET.conn.open || !NET.ping || results || !ONL.on || !(ONL.pz || (ONL.view && ONL.view.pz))) return;   // (only while the online game is paused: not on the matchup / lobby screen, not mid-play)
   const bad = NET.ping > NET_CFG.unstableRtt, t = Math.round(NET.ping) + ' ms' + (bad ? '  UNSTABLE CONNECTION' : '');
   ctx.save(); ctx.font = 'bold 14px monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   const w = ctx.measureText(t).width + 16;
@@ -30346,8 +30356,9 @@ for (const [type, k] of [['pointerdown', 'pd'], ['pointermove', 'pm'], ['pointer
     } else ONL.gPid = null;
   }
   if (k === 'pd') onlSendKm();   // (a tap can be the kick's click: the meter value this guest saw goes first)
-  NET.send({ t: 'in', k, x: Math.round(p.x), y: Math.round(p.y) });
-  ONL.gLastP = { x: Math.round(p.x), y: Math.round(p.y) }; ONL.gClient = { x: e.clientX, y: e.clientY };
+  const hx = Math.round(onlPtX(p));   // (the host's frame)
+  NET.send({ t: 'in', k, x: hx, y: Math.round(p.y) });
+  ONL.gLastP = { x: hx, y: Math.round(p.y) }; ONL.gClient = { x: e.clientX, y: e.clientY };
   if (k === 'pu') setTimeout(() => { if (ONL.gLastP && ONL.gPid == null) NET.send({ t: 'in', k: 'pu', x: ONL.gLastP.x, y: ONL.gLastP.y }); }, 150);   // (the release is sent twice: the host ignores the second one, a lost first one no longer leaves the aim stuck)
   if (mouse) e.stopImmediatePropagation();
 }, true);
