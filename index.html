@@ -14010,10 +14010,16 @@ function drawEndZoneName(cx, dir) {
   }
 }
 
+// LIGHT GRAPHICS (online guest on a phone): when drawing a frame takes too long (smoothed over ~10 frames), the optional decoration is dropped (the crowd, the star HUD) until
+// the frames are quick again. Never on the host or offline, and never changes anything about the play itself.
+const LIGHT = { on: 24, off: 14 };   // ms per drawn frame: above `on` the light mode starts, below `off` it ends
+let drawMs = 8, lightOn = false;
+function lightTick(ms) { drawMs = drawMs * 0.9 + ms * 0.1; if (drawMs > LIGHT.on) lightOn = true; else if (drawMs < LIGHT.off) lightOn = false; }
+const lightGfx = () => lightOn && ONL.on && ONL.guest && TOUCH;
 function drawField() {
   ctx.fillStyle = '#4c6e45';
   ctx.fillRect(-ENDZONE - 60 * YD, -40 * YD, FIELD + 2 * ENDZONE + 120 * YD, FW + 80 * YD);
-  drawCrowd();
+  if (!lightGfx()) drawCrowd();   // (a slow guest phone: no stands, the flat colour above shows instead)
   ctx.fillStyle = '#2f8f3a';
   ctx.fillRect(-ENDZONE, 0, FIELD + 2 * ENDZONE, FW);
 
@@ -15733,7 +15739,7 @@ function withPress(b, draw, hover = true) {
   ctx.fillStyle = 'rgba(0,0,0,0.4)';
   ctx.fillRect(b.x + 1, b.y + dep, b.w, b.h);          // the shadow the face sits on
   ctx.translate(0, dep * d - 3 * h);
-  draw();
+  { const t0 = performance.now(); draw(); lightTick(performance.now() - t0); }
   if (h > 0.01) {
     ctx.fillStyle = `rgba(255,255,255,${0.14 * h})`; ctx.fillRect(b.x, b.y, b.w, b.h);
     ctx.strokeStyle = `rgba(255,217,74,${0.9 * h})`; ctx.lineWidth = 3;
@@ -19180,7 +19186,7 @@ function draw() {
   ctx.fillText(tut ? (state !== 'pre' && tutStep() ? 'TUTORIAL  -  BACKSPACE to reset the play' : 'TUTORIAL') : (puntRetPlay || (state === 'kick' && kick && kick.punt) || (state === 'kickoff' && kickoff && kickoff.punt) || state === 'punt' || (puntRet && puntPlay && !puntPlay.ko)) ? 'PUNT' : kickoffPlay || (state === 'kick' && kick && kick.kickoff) || (puntRet && puntPlay && puntPlay.ko) ? 'KICKOFF' : patMode !== null || patNext ? 'PAT' : `${downAndDistance()}  |  ${spot(los)}`, W / 2, H - BOT_BAR * 0.33);
   if (!TOUCH) { ctx.save(); menuBtn(KEYS_BTN, 'CONTROLS', IN_GAME_PAPER.green, 16); ctx.restore(); }
   if (finishShowing()) { ctx.save(); menuBtn(finishBtn(), 'FINISH', IN_GAME_PAPER.red, 16); ctx.restore(); }
-  if (!tut && state !== 'sim' && state !== 'kick') { drawStarHud(); drawNamesTip(); }
+  if (!tut && state !== 'sim' && state !== 'kick' && !lightGfx()) { drawStarHud(); drawNamesTip(); }
   if (state === 'kick' || (state === 'kickoff' && kick && kick.userKo)) drawKickMeters();
   if (state === 'sim' && !halfHold) drawSim();   // (the halftime banner shows over the plain field, the sim panel hides)
   // the game's over: FINAL with the score, and FINISH GAME, once the last play's replay is rolling
@@ -28001,7 +28007,8 @@ function olAutoJoin() {   // ?join=CODE opens JOIN with the code filled in
 // Guest: never steps the game (frame() skips update / AI / injuries); it plays the snapshots 100 ms late, interpolated, through the normal draw().
 // Colors: the side with the ball is always BLUE (flipSides does it on both devices: the guest has the same mirror), so nothing is swapped when drawing.
 const ONL_BACKLOG = 48000;   // bytes waiting in the data channel above which the host skips snapshots
-const SNAP_HZ_FAST = 40;   // snapshots a second while a kick meter or the aiming reticle is up
+const SNAP_JITTER_MAX = 150;   // ms of extra draw delay the guest may add on an uneven link
+const SNAP_HZ_FAST = 40;  // snapshots a second while a kick meter or the aiming reticle is up
 const SNAP_HZ = 20;     // snapshots a second, host -> guest
 const SNAP_DELAY = 100;   // ms the guest draws behind the newest snapshot (it interpolates between two)
 const SNAP_JUMP = 8 * YD; // a player / ball move bigger than this between two snapshots is a cut (a new play), not interpolated
@@ -28010,7 +28017,7 @@ const ONL = { on: false, host: false, guest: false, nid: 0, castKey: '', sent: [
 function slim(v, ps, depth = 0) {
   if (v === null || v === undefined) return v;
   const t = typeof v;
-  if (t === 'number') return v === v && Math.abs(v) !== Infinity ? Math.round(v * 100) / 100 : null;
+  if (t === 'number') return v === v && Math.abs(v) !== Infinity ? (Math.abs(v) >= 10 ? Math.round(v * 10) / 10 : Math.round(v * 100) / 100) : null;
   if (t === 'string' || t === 'boolean') return v;
   if (t === 'function' || t === 'symbol' || depth > 3) return undefined;
   if (v instanceof Node) return undefined;
@@ -28027,17 +28034,22 @@ function unslim(v, ps) {
   const o = {}; for (const k of Object.keys(v)) o[k] = unslim(v[k], ps); return o;
 }
 // what changed on a player since the last send: { set: {prop: value}, del: [props that went away] }
+// properties only the host's own simulation reads (measured: drawing a whole game never touches them), so they are never sent: steering targets, last-frame
+// movement, run yardage, shed / break timers...
+const ONL_HOST_ONLY = new Set(['cx', 'cy', 'sx', 'sy', 'mpx', 'mpy', 'mvx', 'mvy', 'ranYd', 'gs', 'rel', 'hipT', 'brkT', 'shedAt', 'sealK', 'rushV', 'wk']);   // (rvx / rvy stay: the guest's own aim line reads them in maxThrow)
+const onlRound = v => Math.abs(v) >= 10 ? Math.round(v * 10) / 10 : Math.round(v * 100) / 100;   // (a tenth of a unit is far finer than the eye: 2-3 characters a number less)
 function onlDelta(p, ps, sent) {
   const set = {}, del = [], seen = {};
   for (const k of Object.keys(p)) {
     if (k[0] === '_' && k[1] === '_') continue;
+    if (ONL_HOST_ONLY.has(k)) continue;
     const v = p[k];
     if (v !== null && typeof v === 'object') {
       const s = slim(v, ps); if (s === undefined) continue;
       const j = JSON.stringify(s); seen[k] = 1; if (sent[k] !== j) { sent[k] = j; set[k] = s; }
     } else {
       if (typeof v === 'function' || v === undefined) continue;
-      const r = typeof v === 'number' ? (v === v && Math.abs(v) !== Infinity ? Math.round(v * 100) / 100 : null) : v;
+      const r = typeof v === 'number' ? (v === v && Math.abs(v) !== Infinity ? onlRound(v) : null) : v;
       seen[k] = 1; if (sent[k] !== r) { sent[k] = r; set[k] = r; }
     }
   }
@@ -28066,7 +28078,7 @@ function onlGlobals(ps) {
   };
 }
 function onlHostCast(ps, key) {
-  ONL.castKey = key; ONL.sent = ps.map(() => ({}));
+  ONL.castKey = key; ONL.sent = ps.map(() => ({})); ONL.gSent = {};   // (gSent: the globals sent so far; a new cast sends them all again)
   const full = ps.map((p, i) => onlDelta(p, ps, ONL.sent[i]).set);
   NET.send({ t: 'cast', full, sizes: [ols.length, recs.length, dl.length, back7.length, fgExit.length] });
 }
@@ -28084,7 +28096,10 @@ function onlHostTick() {
   const d = [], x = [];
   ps.forEach((p, i) => { const r = onlDelta(p, ps, ONL.sent[i]); d[i] = r.set; x[i] = r.del.length ? r.del : 0; });
   const g = onlGlobals(ps); ONL.view = g.ob;
-  NET.send({ t: 'snap', n: ++ONL.seq, c: Math.round(clock * 1000) / 1000, d, x, g });
+  // the play's globals go as a delta too: the pylons, score card, weather, names... barely change, and were 1 KB of every snapshot
+  const gd = {}; ONL.gSent = ONL.gSent || {};
+  for (const k of Object.keys(g)) { const j = JSON.stringify(g[k]); if (ONL.gSent[k] !== j) { ONL.gSent[k] = j; gd[k] = g[k]; } }
+  NET.send({ t: 'snap', n: ++ONL.seq, c: Math.round(clock * 1000) / 1000, d, x, g: gd });
 }
 // guest: the cast arrives whole (everyone's properties), after which snapshots are deltas on it
 function onlGotCast(m) {
@@ -28104,21 +28119,29 @@ function onlGotSnap(m) {
     return o;
   });
   ONL.full = full;
-  ONL.buf.push({ at: performance.now(), c: m.c, g: m.g, full });
+  const now = performance.now();
+  if (ONL.lastArr) { const iv = now - ONL.lastArr; ONL.ivAvg = ONL.ivAvg ? ONL.ivAvg * 0.9 + iv * 0.1 : iv; ONL.jit = (ONL.jit || 0) * 0.9 + Math.abs(iv - ONL.ivAvg) * 0.1; }   // (how unevenly the snapshots arrive)
+  ONL.lastArr = now;
+  const gFull = Object.assign({}, ONL.gPrev || {}, m.g); ONL.gPrev = gFull;   // (the globals arrive as a delta: put back together)
+  ONL.buf.push({ at: now, c: m.c, g: gFull, full });
   if (ONL.buf.length > 40) ONL.buf.shift();
 }
 // guest, every frame: the state as of SNAP_DELAY ms ago, positions eased toward the next snapshot
 function onlGuestStep() {
   const buf = ONL.buf; if (!buf.length) return;
-  const rt = performance.now() - SNAP_DELAY;
+  const rt = performance.now() - SNAP_DELAY - Math.min(SNAP_JITTER_MAX, 2.5 * (ONL.jit || 0));   // (a shaky link: draw a little further behind, so there is always a next snapshot to ease toward instead of freezing and jumping)
   while (buf.length > 2 && buf[1].at <= rt) buf.shift();
   const a = buf[0], b = buf[1], span = b ? b.at - a.at : 0, t = b && span > 0 ? Math.max(0, Math.min(1, (rt - a.at) / span)) : 0;
   const ps = allPlayers(), g = a.g, L = (p, q, k) => p + (q - p) * k;
+  const fresh = ONL.applied !== a;   // (the same snapshot for the next frames: its properties are already on the players, only the easing between two snapshots moves)
+  ONL.applied = a;
   ps.forEach((p, i) => {
     const f = a.full[i]; if (!f) return;
-    for (const k of Object.keys(f)) p[k] = unslim(f[k], ps);
-    if (p.__ap) for (const k of p.__ap) if (!(k in f)) p[k] = undefined;   // (a property the host dropped)
-    p.__ap = Object.keys(f);
+    if (fresh) {
+      for (const k of Object.keys(f)) p[k] = unslim(f[k], ps);
+      if (p.__ap) for (const k of p.__ap) if (!(k in f)) p[k] = undefined;   // (a property the host dropped)
+      p.__ap = Object.keys(f);
+    }
     const q = b && b.full[i];
     if (q && Math.abs(q.x - f.x) < SNAP_JUMP && Math.abs(q.y - f.y) < SNAP_JUMP) { p.x = L(f.x, q.x, t); p.y = L(f.y, q.y, t); p.z = L(f.z || 0, q.z || 0, t); }
   });
@@ -28292,7 +28315,7 @@ window.addEventListener('contextmenu', e => {
 function onlBeginMatch(c, asHost) {   // c: what the lobby settled on (teams, uniforms, ball, weather); both devices run this on PLAY
   if (ONL.on || !onlLobbyActive()) return;
   ONL.host = !!asHost; ONL.guest = !asHost;
-  ONL.on = true; ONL.buf = []; ONL.full = []; ONL.castKey = ''; ONL.hold = {}; ONL.gHeld = {}; ONL.gDown = false; ONL.seq = 0;
+  ONL.on = true; ONL.buf = []; ONL.full = []; ONL.gPrev = null; ONL.applied = null; ONL.castKey = ''; ONL.hold = {}; ONL.gHeld = {}; ONL.gDown = false; ONL.seq = 0;
   ONL.savedSimDef = SETTINGS.simDefense; SETTINGS.simDefense = false;   // (defense is always played: the saved setting is ignored, and never written back)
   teamPick = null;
   Object.assign(MATCH, { you: c.you, opp: c.opp, youKit: c.yk, oppKit: c.ok, ball: c.ball, home: 'you' }); applyKits();
