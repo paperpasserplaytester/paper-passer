@@ -5119,6 +5119,7 @@ function newGame() {
   highlights = []; lastRec = null;   // (a new game's tapes)
   HTS.clips = []; HTS.cards = []; HT = null; pgPending = true;   // (and no halftime reel left from the old game; the pregame show comes up once the game screen does)
   kick = null; kickoff = null; aim = null;   // (a restart: no reticle or meters left over from the old game's kick)
+  patNext = false; patMode = null; tryFlip = null; pendingSim = null; kickoffNext = false; kickoffPlay = false; fourthPending = false;   // (left right after a score: the old game's try / kickoff must not carry into this one)
   Object.assign(game, { blue: 0, red: 0, quarter: 1, secs: QUARTER_SECS, over: false, pendingQuarter: false, runoff: 0, runoffTotal: 0,
                         timeouts: diffTO(), lastRunoff: 0, qs: { blue: [0, 0, 0, 0], red: [0, 0, 0, 0] }, log: [], ot: null, simTO: null,
                         defSimmed: false, ty: { you: { rush: 0, pass: 0 }, opp: { rush: 0, pass: 0 } } });   // ty = team rushing / passing yards this game (live plays)
@@ -13391,6 +13392,7 @@ function update(dt) {
     if (p.engaged && v > STRIDE.freeRun * YD && !p.stiffBy && !p.action) p.engaged = false;
     const churn = !!p.stiffBy;   // held off by a stiff arm: feet still driving, churning to get to the ball carrier
     if (p.engaged && !churn && !p.action && v < 0.8 * YD) {   // (locked up and going nowhere: the hands stay on, the feet keep chopping in place)
+      if (clock < LOCK_FEET.settle) { p.stride = null; continue; }   // (right off the snap: set feet, no running in place)
       p.run += dt * LOCK_FEET.rate; p.stride = p.stride == null ? LOCK_FEET.amp : p.stride + (LOCK_FEET.amp - p.stride) * Math.min(1, dt * STRIDE.smooth);
       continue;
     }
@@ -13616,7 +13618,7 @@ const TACKLE_EASE = 0.4;  // a tackle attempt snaps to head-first at the carrier
 const RUSH_STILL = { qbSpeed: 0.3, range: 7 };   // a free rusher within range yd of a QB moving under qbSpeed x QB_SPEED goes straight at him
 const DIVE_EASE_MIN = 0.16;   // s: the shortest a dive / tackle may take to go from upright to laid out
 const TACKLE_LEAN = { range: 4.5 * YD, tilt: 0.3 };   // a defender closing on the carrier leans into it (radians) inside this range
-const LOCK_FEET = { rate: 14, amp: 0.5 };   // feet chopping while locked up with a blocker: cycle speed, leg swing
+const LOCK_FEET = { rate: 8, amp: 0.18, settle: 0.35 };   // (settle = s after the snap before a locked-up man starts chopping: he fires out of his stance first)   // feet chopping while locked up with a blocker: cycle speed, leg swing
 const DIVE_SMOOTH ={ min: 0.8, max: 2.8 };   // dive launch speed (path-lengths per dive) kept from his stride: never under min / over max
 const DIVE_AIR = 0.8;     // a dive is in the air for this fraction of it, then slides out on the turf
 const smooth01 = k => { k = Math.max(0, Math.min(1, k || 0)); return k * k * (3 - 2 * k); };
