@@ -161,6 +161,14 @@ const fromTop = yd => yd * WS * YD, fromBot = yd => FW - yd * WS * YD;
 const NUMBERS_IN = fromTop(10);            // yard numbers, measured from each sideline
 const HASH_IN = (NUMBERS_IN + MID) / 2;    // hashes sit halfway between the numbers and mid-field
 const FOOT = 14 * S;           // a player's feet are drawn this far below his y
+// player figure (looks only: hitboxes, reach and the ball's heights in play are unchanged). grow = overall sprite size, tall = extra height
+// (the body is stretched up from the feet in drawPlayer; the helmet is drawn round again), torso / pads / trim = jersey half-width,
+// shoulder-pad half-width and where the pad trim starts (sprite units: slimmer than the old 7 / 11 / 8)
+const FIGURE = { grow: 1.2, tall: 1.1, torso: 6, pads: 9.5, trim: 6.5 };
+const figK = p => ((p && p.size) || 1) * FIGURE.grow;                 // his sprite scale against the old figure
+const figX = (p, x) => x * figK(p);                                    // a sideways offset tied to a spot on the old body -> that spot now
+const figZ = (p, z) => (FOOT + z) * figK(p) * FIGURE.tall - FOOT;      // same for a height (z) on his body (scaled up from his feet)
+const figReach = (p, r) => S * figK(p) * (FIGURE.tall * (r / S + 14) - 14);   // a reach along a laid-out body (dives: stretched from the feet end)
 const Y_MIN = -FOOT, Y_MAX = FW - FOOT;   // feet on the sidelines
 
 // Speeds are roughly NFL-real. OFF_K / DEF_K scale every offensive / defensive speed and acceleration (the
@@ -179,6 +187,8 @@ const ACCEL_SPD = { k: 5, min: 0.6, max: 1.8 };
 // a faster player also gets off the line faster: the speed he starts with from a standstill (and an extra push while he's still slow)
 const START = { speed: 1.2 * YD, k: 6, launch: 0.35, push: 4, def: 1.2 };   // def = defenders change direction / accelerate this much quicker
 const startSpeed = p => Math.max(0, START.speed * (1 + START.k * ((p.spdRel ?? p.spdMult ?? 1) - 1)));
+const RB_SLOW_ACCEL = { per: 2.5, max: 1.4 };   // a back with a low SPEED rating gets this much more burst: +per for every 1.0 his speed is under average, up to x max (he reaches his top speed sooner, not a higher one)
+const rbSlowAccel = p => p === rb ? Math.min(RB_SLOW_ACCEL.max, 1 + RB_SLOW_ACCEL.per * Math.max(0, 1 - (p.spdRel ?? p.spdMult ?? 1))) : 1;
 const accelK = p =>Math.max(ACCEL_SPD.min, Math.min(ACCEL_SPD.max, 1 + ACCEL_SPD.k * ((p.spdRel ?? p.spdMult ?? 1) - 1)));
 // One speed scale for QBs, RBs, WRs, CBs and safeties: a SPEED rating means the same top speed at any of those
 // spots (15 = at15, each point under it perPt slower). Other positions keep their within-position scale.
@@ -308,6 +318,8 @@ const DE_CONTAIN = { width: 4.8, after: 0.8, slow: 0.7, edgeSpeed: 1.5, lead: 0.
 const DL_DIVE = { range: 3.0, rate: 2.2, hit: 1.2, lunge: 3.2, dur: 0.3, cool: 1.4 };
 const DUCK_DROP = 0.4;       // x of his catch odds lost on a full wobbler (a throw by a QB who got hit)
 const ONE_HAND_PICK = 0.04;   // chance an interception is a one-handed grab (animated)
+// a leaping pick at a ball near the top of his reach (ball height / his hand height over `at`): up to `tip` of them become a tip instead, up to `one` more one-handed (scaled 0-1 from `at` to full reach)
+const HIGH_PICK = { at: 0.7, tip: 0.4, one: 0.45 };
 const DL_SHED = 1.12;     // linemen take x this long to beat their blocks
 const QUICK_WIN = 0.11;    // chance a lineman beats his man right away (pressure / TFL)
 const WEAK_RUSH = { shed: 0.82, quick: 1.4 };   // bad / average pass rushers: x time to beat the block, x instant-win odds
@@ -509,6 +521,10 @@ const PROTECT = { slow: 0.82, fumble: 0.1 };
 const DL_SWIM = { pass: 0.8, run: 0.6, runShed: 0.3, anim: 0.4 };
 // fumble on the turf: the first man there scoops it with open - perOpp x (opponents within traffic) chance, else
 // he dives on it; a scoop comes up clean x clean (bobbled = the ball squirts and he can't try again for retry s)
+// loose ball on the ground: everyone near it sprints at it (accel = x his acceleration), and at `at` yd he either dives on it or runs through to scoop it (picked for him).
+// Dive odds = base + perOpp x opponents within FUMBLE_SCOOP.traffic (always for linemen / the QB / special plays); a diver gets it if it's within reach yd of his hands
+// (pulled in with one arm). On the turf with it: an opponent within touch yd downs him; untouched he gets up and runs (maxHold s at most).
+const LOOSE_DIVE = { range: 15, accel: 1.8, at: 2.6, base: 0.15, perOpp: 0.45, dur: 0.45, reach: 1.1, body: 0.8, touch: 1.1, maxHold: 3 };
 const FUMBLE_SCOOP = { open: 0.85, perOpp: 0.3, traffic: 4 * YD, clean: 0.7, retry: 0.6, diveWeight: 1, diveMax: 2 };   // diveWeight = extra traffic per opponent already diving on it; diveMax = this many diving and he falls on it too
 // Inside runs: each play the line either opens a big crease, a normal one, or gets stuffed (no hole).
 // drive = how far linemen block their men away from the hole; push = the DL's give (negative = driven back);
@@ -650,7 +666,7 @@ const CONTEST_RANGE = 1.3 * YD;
 // pass breakups: contest = chance the defender on the receiver at the catch knocks it away; lob / bullet = chance a
 // defender who gets to the ball in flight gets a hand on it; slack = how much farther from the ball than the
 // receiver he can be and still play it (yards)
-const PBU = { contest: 0.44, lob: 0.55, bullet: 0.58, slack: 0.7 * YD };
+const PBU = { contest: 0.4, lob: 0.5, bullet: 0.53, slack: 0.7 * YD };   // (a little worse in the air overall)
 const BULLET_PICK = 0.75;   // a bullet is harder to pick off: x on a defender's interception odds
 
 const DEFLECT_RANGE = 1.3 * YD;
@@ -2453,6 +2469,7 @@ let qb, rb, ols, recs, dl, back7, cbT, cbB, sT, sB, lbW, lbM, lbS;
 let defAudLeft = 2;   // the defense's own audibles (separate from the offense's audiblesLeft)
 let sides, formation, coverage, audiblesLeft, tgt, runner, snaps, runStart, bulletMode = false;
 let runBlock = 'normal', runPatience = 0;   // this play's inside-run blocking roll, seconds the back stayed patient
+const SHAKE_RANGE = 5.5;   // yards from the QB at which a free rusher starts shaking the screen
 let isRunPlay = false, impatient = false, popups = [], shake = 0, shakeKick = 0, impacts = [];
 // the visual clock (ms): stops while the game is paused (pause menu, keybinds page, settings) so banners, glows, crowd and
 // turning animations freeze with it; frame() feeds it
@@ -2482,9 +2499,9 @@ function captureFrame() {
       relFx: p.relFx ? { ...p.relFx, t: rec.t - (clock - p.relFx.t) } : null,
       headTop: p.headTop ? { ...p.headTop, t: rec.t - (clock - p.headTop.t) } : null,
       catchFx: p.catchFx ? { style: p.catchFx.style, t: rec.t - (clock - p.catchFx.t) } : null,
-      flex: p.flex ? { ...p.flex } : null, oneHanded: p.oneHanded, oneAt: p.oneAt, guard: p.guard,
+      flex: p.flex ? { ...p.flex } : null, oneHanded: p.oneHanded, oneAt: p.oneAt,
       falterUntil: rec.t + ((p.falterUntil || 0) - clock), stumbleRec: p.stumbleRec != null ? rec.t - (clock - p.stumbleRec) : null })),
-    ball: { x: ball.x, y: ball.y, z: ball.z, rot: ball.rot, nose: ball.nose, spiral: ball.spiral, tucked: ball.tucked, inAir: ball.inAir, tx: ball.tx, ty: ball.ty, live: ball.live },
+    ball: { x: ball.x, y: ball.y, z: ball.z, lift: ballLift(), rot: ball.rot, nose: ball.nose, spiral: ball.spiral, tucked: ball.tucked, inAir: ball.inAir, tx: ball.tx, ty: ball.ty, live: ball.live },
     cam: [camX, camY, zoom * passPull],
     sb: { blue: game.blue, red: game.red, secs: game.secs, quarter: game.quarter },   // (the scoreboard as it was this frame: replays / highlights show the clock running and a touchdown's 6 landing)
     popups: popups.map(q => ({ i: ps.indexOf(q.p), text: q.text, color: q.color, t: q.t })),
@@ -2508,10 +2525,10 @@ function applyFrame(f) {
 // the replay starts when you click to call the play over, or by itself once RUNOFF_SECS have passed (and the
 // runoff's off the clock); it keeps REPLAY_TAIL s after the whistle (longer for a celebration)
 const REPLAY_TAIL = 2.2;
-const REPLAY_PRE = 0.9;   // a play's tape opens with this many seconds of the pre-snap look (everyone in his stance) before the ball is snapped
+const REPLAY_PRE = 0.25;   // a play's tape opens with this many seconds of the pre-snap look (everyone in his stance) before the ball is snapped
 // the replays setting: every play, big plays (rec.big: a highlight callout, a 20+ yard gain, a big first down, a score
 // or a turnover), touchdowns only (rec.td) or none (the game's last play still gets its replay)
-const replayWanted = () => !!rec && !tut && !ONL.on && SETTINGS.replays !== 'NONE' && (SETTINGS.replays === 'EVERY PLAY' || !!rec.td || (SETTINGS.replays === 'BIG PLAYS' && !!rec.big));
+const replayWanted = () => !!rec && !tut && !ONL.on && SETTINGS.replays !== 'NONE' && (SETTINGS.replays === 'EVERY PLAY' || !!rec.td || !!rec.int || (SETTINGS.replays === 'BIG PLAYS' && !!rec.big));
 function recordFrame(dt) {
   if (!rec || rec.replaying) return;
   rec.t += dt;
@@ -2702,6 +2719,16 @@ function stepReplay(dt, scrub = 0) {
   if (replayPan.lockX != null) { rec.camBase[0] = replayPan.lockX; rec.loopPan = null; }   // right-dragged: you steer the camera now
   replayPanClamp();
   camX = rec.camBase[0] + replayPan.x; camY = rec.camBase[1] + replayPan.y; zoom = replayZoom() * replayUserZoom / userZoom; passPull = 1;
+  if (hl && hl.mode === 'half') {   // the halftime reel: tighter than a replay, the camera follows the ball (sideways too) and slowly pushes in
+    const kk = last ? 0 : Math.min(1, Math.max(0, (rec.rt - a.t) / (b.t - a.t))), bx = last ? a.ball.x : a.ball.x + (b.ball.x - a.ball.x) * kk, by = last ? a.ball.y : a.ball.y + (b.ball.y - a.ball.y) * kk;
+    const span = Math.max(0.1, fr[fr.length - 1].t - fr[0].t), prog = Math.min(1, Math.max(0, (rec.rt - fr[0].t) / span));
+    rec.hsCam = rec.hsCam || { x: bx, y: by };
+    if (prog < 0.02) { rec.hsCam.x = bx; rec.hsCam.y = by; }
+    const ease = Math.min(1, dt * 6 * HLREEL.pan + 0.02);
+    rec.hsCam.x += (bx - rec.hsCam.x) * ease; rec.hsCam.y += (by - rec.hsCam.y) * ease;
+    camX = rec.hsCam.x; camY = rec.hsCam.y;
+    zoom *= HLREEL.zoom * (1 + 0.22 * smooth01(prog));
+  }
   // blend toward the next recorded frame so slow motion (and any display rate) stays smooth
   if (last) return;
   const k = Math.min(1, Math.max(0, (rec.rt - a.t) / (b.t - a.t)));
@@ -2712,7 +2739,7 @@ function stepReplay(dt, scrub = 0) {
     p.x = lerp(pa.x, pb.x); p.y = lerp(pa.y, pb.y); p.z = lerp(pa.z, pb.z); p.run = lerp(pa.run, pb.run);
     if (p.act && pb.act && pa.act && pa.action === pb.action && typeof pa.act.t === 'number') p.act.t = lerp(pa.act.t, pb.act.t);
   });
-  ball.x = lerp(a.ball.x, b.ball.x); ball.y = lerp(a.ball.y, b.ball.y); ball.z = lerp(a.ball.z, b.ball.z);
+  ball.x = lerp(a.ball.x, b.ball.x); ball.y = lerp(a.ball.y, b.ball.y); ball.z = lerp(a.ball.z, b.ball.z); ball.liftR = lerp(a.ball.lift || 0, b.ball.lift || 0);
   ball.rot = lerp(a.ball.rot || 0, b.ball.rot || 0);
   for (const q of popups) q.t += (b.t - a.t) * k;
 }
@@ -2905,10 +2932,10 @@ function hlClose() {
 const HLREEL = {
   max: 4, minScore: 30,                                         // clips kept; a play needs this score to count
   yd: 0.5, td: 40, longTd: 0.4, turnover: 35, iconic: 25, spectacular: 20, hit: 15, fg: 0.8, fgBase: 15, fgFrom: 35,   // weights: per yard gained, a touchdown (+ per yard over 20), a turnover, big moments, a field goal (per yard over fgFrom)
-  win: { td: [3.2, 1.2], pick: [1.2, 3.4], pickTd: [0.8, 1.2], fumble: [1.5, 2.2], hit: [1.5, 1.8], gain: [4, 0.6], fg: [3.5, 1] },   // seconds kept before / after the anchor (the whistle, or the moment itself)
-  maxSecs: 8, skip: 2, maxFrames: 260,                          // a clip's longest window; keep every n-th frame; most frames a clip holds
+  win: { td: [2.2, 0.8], pick: [0.9, 2.2], pickTd: [0.6, 0.8], fumble: [1.0, 1.4], hit: [1.0, 1.2], gain: [2.6, 0.4], fg: [2.5, 0.8] },   // seconds kept before / after the anchor (the whistle, or the moment itself)
+  maxSecs: 5, skip: 2, maxFrames: 200, zoom: 1.35, pan: 0.5,   // zoom = extra zoom on the reel, pan = camera follow ease (how fast it tracks the ball)                      // a clip's longest window; keep every n-th frame; most frames a clip holds
 };
-const HALFTIME = { preSecs: 3, cardSecs: 14, leagueMax: 4, pace: 2, gapW: 10 };   // a card stays this long unless NEXT; league cards; first-half stat x pace = on pace for a high; rating gap weight in the matchup pick
+const HALFTIME = { preSecs: 6, cardSecs: 14, leagueMax: 4, pace: 2, gapW: 10 };   // a card stays this long unless NEXT; league cards; first-half stat x pace = on pace for a high; rating gap weight in the matchup pick
 const HTS = { clips: [], cards: [] };   // the reel so far: clips (tapes or, with replays off, titles only) and simulated-drive cards
 let HT = null;                          // the show playing: { segs, i, t0, after, skip }
 const LGHL_KEY = 'pocketPasser.lgHL';   // per franchise slot: one best-stat-line per simulated league game, last 2 weeks
@@ -2989,6 +3016,7 @@ function lgHLAdd(g, wk, lines) {
 function hsBegin(after) {
   if (HT) return true;
   const quiet = () => { HTS.clips = []; HTS.cards = []; return false; };
+  if (hsSkipNext) { hsSkipNext = false; return quiet(); }
   if (!hsOn() || game.over || game.quarter !== 2 || SETTINGS.halftime === false) return quiet();
   try { hsCollect(rec); } catch (e) {}
   let segs = [];
@@ -3018,7 +3046,8 @@ function hsAdvance() {
 }
 function hsEnd() { const a = HT && HT.after; if (HT && performance.now() - showEscAt < 600) paused = false; HT = null; HTS.clips = []; HTS.cards = []; if (a) a(); }   // (the clips are let go here: the tapes are the biggest thing the show holds)
 function hsNext() { if (!HT) return; if (hl && hl.mode === 'half') hlClose(); else hsAdvance(); }
-let showEscAt = -1e9;   // when Esc last skipped a pregame / halftime show
+let hsSkipNext = false;   // Esc on the halftime banner / card: the show is skipped before it starts
+let showEscAt = -1e9;  // when Esc last skipped a pregame / halftime show
 function hsSkip() { if (!HT) return; showEscAt = performance.now(); HT.skip = true; hsNext(); }
 function hsTick() { if (HT && !hl && performance.now() - HT.t0 > (HT.pre ? HALFTIME.preSecs : HALFTIME.cardSecs) * 1000) hsAdvance(); }   // (the pregame cards move on by themselves after preSecs; a click anywhere skips one)
 const HS_BAR = { next: { x: W - 340, y: H - 36, w: 190, h: 32 }, skip: { x: W - 140, y: H - 36, w: 120, h: 32 } };
@@ -3030,7 +3059,7 @@ function drawHsBar() {
   if (!HT.pre) menuBtn(HS_BAR.next, HT.i < HT.segs.length - 1 ? 'NEXT ▸' : 'FINISH', IN_GAME_PAPER.blue, 16);
   menuBtn(HS_BAR.skip, 'SKIP', IN_GAME_PAPER.red, 16);
   ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#e8e8e8';
-  ctx.fillText(`${HT.pre ? 'PREGAME' : 'HALFTIME'} SHOW ${HT.i + 1} / ${HT.segs.length}     ${HT.pre ? 'CLICK ANYWHERE TO SKIP THIS SCREEN' : 'ENTER next'}     ESC skip`, W / 2 - 120, H - BOT_BAR / 2);
+  ctx.fillText(`${HT.pre ? 'PREGAME' : 'HALFTIME'} SHOW ${HT.i + 1} / ${HT.segs.length}     CLICK ANYWHERE FOR THE NEXT SCREEN     ESC skip`, W / 2 - 120, H - BOT_BAR / 2);
   ctx.restore();
 }
 function drawHsClipUI() {   // over a clip: the bar and its title card
@@ -3491,8 +3520,8 @@ let setScope = false;
 // pick = x their DBs' interception tries, pbu = x their pass breakups / balls knocked out on the catch, punch = x their strip / punch-out tries
 const DIFFICULTY = {
   BABY:    { def: 0.62, rz: -4,   sim: -5,   hit: 0.12, fum: 0.15, shed: 2.6,  cover: 0.45, drop: 3.5,  run: 0.55, stars: 0.5, brk: 2.6, pick: 0.12, pbu: 0.25, punch: 0.12 },   // (much much easier)
-  EASY:    { def: 0.93, rz: -0.5, sim: -1.4, hit: 0.55, fum: 0.65, shed: 1.28, cover: 0.8,  drop: 1.5,  run: 0.85, brk: 1.4,  pick: 0.6,  pbu: 0.7,  punch: 0.6 },
-  NORMAL:  { def: 0.98, rz: -0.4, sim: -0.9, hit: 0.55, fum: 0.72, shed: 1.2, cover: 0.85, drop: 1.35,  run: 0.88, brk: 1.25, pick: 0.7, pbu: 0.78, punch: 0.72 },   // (easier again: their defense covers, picks, hits and strips noticeably less)
+  EASY:    { def: 0.9,  rz: -0.7, sim: -1.7, hit: 0.5,  fum: 0.6,  shed: 1.35, cover: 0.66, drop: 1.7,  run: 0.8,  brk: 1.55, pick: 0.5,  pbu: 0.58, punch: 0.52 },
+  NORMAL:  { def: 0.95, rz: -0.7, sim: -1.3, hit: 0.48, fum: 0.62, shed: 1.32, cover: 0.76, drop: 1.55,  run: 0.82, brk: 1.42, pick: 0.6, pbu: 0.66, punch: 0.62 },   // (easier again, twice: their defense covers, picks, hits and strips noticeably less)
   HARD:    { def: 1.09, rz: 0.7,  sim: 1.05, hit: 1.3,  fum: 1.1,  shed: 0.85, cover: 1.24, drop: 0.68, run: 1.14, brk: 0.78, pick: 1.25, pbu: 1.15, punch: 1.2 },
   EXTREME: { def: 1.16, rz: 1.5,  sim: 2.2,  hit: 1.8,  fum: 1.2,  shed: 0.7,  cover: 1.5,  drop: 0.42, run: 1.26, brk: 0.62, pick: 1.5,  pbu: 1.3,  punch: 1.45 },
   UNFAIR:  { def: 1.28, rz: 2.8,  sim: 4,    hit: 2.3,  fum: 1.4,  shed: 0.5,  cover: 1.6,  drop: 0.25, run: 1.4, stars: 6, brk: 0.45, pick: 1.8, pbu: 1.5, punch: 1.7 },
@@ -5866,7 +5895,9 @@ const fmEdge = y => ownEdge();
 const leaveEdge = () => ownEdge() + (offHomeTop() ? -1 : 1) * 16 * YD;   // (a man subbed out runs fully off screen before he's removed)
 // who ends up where: put the players back where they were and have them run to the new spots
 function fmRun(snap) {
-  for (const s of snap) { const to = { x: s.p.x, y: s.p.y }; if (Math.hypot(to.x - s.x, to.y - s.y) < 0.3 * YD) continue; s.p.fmTo = to; s.p.x = s.x; s.p.y = s.y; }
+  for (const s of snap) {
+    if (s.p.team === 'def' && typeof udCtl === 'function' && udCtl(s.p) && DEF_INPUT.slice(0, 8).some(k => dkeys[k])) { s.p.x = s.x; s.p.y = s.y; continue; }   // (an audible never drags your defender back to his spot while you're steering him)
+    const to = { x: s.p.x, y: s.p.y }; if (Math.hypot(to.x - s.x, to.y - s.y) < 0.3 * YD) continue; s.p.fmTo = to; s.p.x = s.x; s.p.y = s.y; }
 }
 const recBase = r => r.isTE ? { pos: 'TE', topBase: 7.9 * YD, cut: 0.5, jamMult: 0.7, big: true, catchMult: 0.97, jumpMult: 1, size: 1.03 }
                  : r.pos === 'WR' ? { pos: 'WR', topBase: 9.8 * YD, cut: 0.6, jamMult: 1, catchMult: 1.03, jumpMult: 1.3, size: 1.02 }
@@ -7264,14 +7295,24 @@ function intercept(d, diving = false) {
   // a pick only counts once the ball is in his hands: out past his reach it isn't his; already being hit by the offense before it gets there = broken up
   if (!diving && (ball.inAir || state === 'flight') && Math.hypot(ball.x - d.x, ball.y - d.y) > PICK_HANDS.reach * YD) return;
   if ((ball.inAir || state === 'flight') && [qb, rb, ...recs].some(o => o && o.tackling && !o.resolved && dist(o, d) <= CONTACT)) return breakUp(d);
-  d.pickSafe = clock + CATCH_GLIDE + 0.03; d.pickSafePid = runPid;   // (nobody can tackle him until the ball has reached his hands)
+  if (clock - (d.highTipT ?? -9) < 0.4) return;   // (just tipped it at the top of his leap: it's gone off his fingertips)
+  // a ball at the very top of his leap: often only his fingertips get there (a tip), or he snags it with one hand
+  const handTop = (d.z || 0) > 2 * S ? (d.z || 0) + PICK_HANDS.air : PICK_HANDS.stand;
+  const highK = !diving && d.action === 'jump' && (ball.inAir || state === 'flight') ? Math.max(0, Math.min(1, (ball.z / handTop - HIGH_PICK.at) / (1 - HIGH_PICK.at))) : 0;
+  if (highK > 0 && !tut && !(udCtl(d) && d.userJump && d.userJump.q >= DEF.jump.perfect) && Math.random() < HIGH_PICK.tip * highK) {
+    d.highTipT = clock;
+    if (d.act) d.act.one = Math.random() < 0.6;   // (one arm stretched up for it, or both)
+    if (Math.random() < (ball.bullet ? 0.5 : BAT_DOWN)) batDown(d); else { popLoose(d, 'Tipped!', 100 * S, 3.5 * YD); knockAway(d); }
+    return;
+  }
+  d.pickSafe =clock + CATCH_GLIDE + 0.03; d.pickSafePid = runPid;   // (nobody can tackle him until the ball has reached his hands)
   d.hasBall = true;
   d.catchFrom = { x: ball.x, y: ball.y, z: ball.z, t: clock };   // (and into a defender's hands on a pick)
   if (tut && udCtl(d)) tutEvent('dpick');
   // the catch look (catchAnim, as for a receiver: base poses, iconic one-handers / over the top of his man): a leaping pick stays a leap,
   // a standing one is a quick grab (swat + pick), a diving one finishes the dive, then he gets up and runs
   const leap = !diving && d.action === 'jump';
-  const one = diving ? !!(d.act && d.act.tipOne) : Math.random() < ONE_HAND_PICK * (leap ? PICK_LOOK.jumpOne : 1);   // the rare one-handed pick
+  const one = diving ? !!(d.act && d.act.tipOne) : Math.random() < ONE_HAND_PICK * (leap ? PICK_LOOK.jumpOne : 1) + HIGH_PICK.one * highK;   // the rare one-handed pick (more often at the top of a leap)
   d.oneHanded = one && (leap || diving); d.oneAt = d.act ? d.act.t : 0; d.diveCaught = diving ? clock : 0; d.jumpCaught = leap ? clock : 0;   // (a pick in the air is tucked in like a catch)
   if (!diving && !leap) { d.action = 'swat'; d.act = one ? { t: 0, dur: 0.5, one: true, pick: true } : { t: 0, dur: 0.3, pick: true }; }
   const pst = catchAnim(one ? (diving ? 'diveOne' : leap ? 'jumpOne' : 'one') : diving ? 'dive' : 'normal', false, d, catchers());
@@ -7290,7 +7331,7 @@ function intercept(d, diving = false) {
   for (const p of allPlayers()) { p.pickHeldUntil = p.pickBlockReady = 0; p.pickBlocker = null; }
   if (patMode === null && statOf(qb)) statOf(qb).int++;
   showBanner('INTERCEPTION!');
-  if (rec) rec.big = true;
+  if (rec) rec.big = rec.int = true;   // (rec.int: an interception is replayed whenever replays are on)
   pickThrown = true;   // (counts as an incompletion for the star factors)
   crowdCheer(0.9, 'opp', false, true, true);
   // overtime: a pick on your possession ends it the moment it's thrown when they've already had the ball and lead
@@ -7727,7 +7768,8 @@ function startDive(p, tx, ty, dur, lunge, arrive) {
 // LAND: awk = extra chance he comes down off his feet after that catch style (recent = s the catch counts; over = an over-the-shoulder leap),
 // how = the way that style comes down; else still = yd/s under which he sits down on his back, backK = drifting backward (share of speed
 // against his facing) = on his back, sideK = carried sideways (vy over vx) = rolls; max = cap on the total odds
-const LAND = { max: 0.9, recent: 1.2, over: 0.1, still: 1, backK: 0.3, sideK: 1.5,
+const LAND = { fallVk: 0.7, oddsK: 1.6, stumbleV: 3, stumbleSpan: 5, stumbleSlow: 0.4,   // fallVk = x the speed (yd/s) a leap can land at before he falls; oddsK = x the fall odds; above stumbleV yd/s he stumbles (loses up to stumbleSlow of his speed)
+  max: 0.9, recent: 1.2, over: 0.1, still: 1, backK: 0.3, sideK: 1.5,
   awk: { oneBack: 0.5, mossBack: 0.4, sideOneLeap: 0.4, oneSpin: 0.35, mossOver: 0.3, mossKnee: 0.25, jumpOne: 0.18, crowd: 0.18, oneHigh: 0.12 },
   how: { oneBack: 'back', mossBack: 'back', oneSpin: 'roll', sideOneLeap: 'roll', mossOver: 'roll' } };
 // down on the turf out of a leap, sliding on with his momentum: how = 'back' | 'roll' | null (on his chest). Returns the slide's s
@@ -7746,12 +7788,15 @@ function jumpLand(p) {
   const vx = p.vx || 0, vy = p.vy || 0, v = Math.hypot(vx, vy) / YD;
   const agiK = Math.max(0.75, Math.min(1.3, rm(p, 'agi', 0.3)));
   const wet = wxP();   // (rain / snow: slick landings go down more, and from slower)
-  const fallV = DIVE_PACE.fall / (1 + WXF.jumpFallV * wet);
+  const fallV = DIVE_PACE.fall * LAND.fallVk / (1 + WXF.jumpFallV * wet);
   // (a contorted leap - reaching back, twisting, over a man - can put him on the turf even coming down slow: LAND)
   const sty = p.hasBall && p.catchFx && clock >= p.catchFx.t && clock - p.catchFx.t < LAND.recent ? p.catchFx.style : null;   // (clock restarts every play)
   const awk = ((sty && LAND.awk[sty]) || (p.act && p.act.over ? LAND.over : 0)) * (1 + WXF.jumpFall * wet);
-  const fast = v > fallV ? Math.min(Math.min(0.9, DIVE_PACE.fallMax * (1 + WXF.jumpFall * wet)), (v - fallV) * DIVE_PACE.fallOdds * (1 + WXF.jumpFall * wet)) : 0;
-  if (Math.random() >= Math.min(LAND.max, fast + awk) / agiK) return;
+  const fast = v > fallV ? Math.min(Math.min(0.9, DIVE_PACE.fallMax * (1 + WXF.jumpFall * wet)), (v - fallV) * DIVE_PACE.fallOdds * LAND.oddsK * (1 + WXF.jumpFall * wet)) : 0;
+  if (Math.random() >= Math.min(LAND.max, fast + awk) / agiK) {   // (kept his feet, but a leap at speed still costs him: he stumbles on the landing, more the faster he's moving)
+    if (v > LAND.stumbleV && !p.action) { const k = Math.min(1, (v - LAND.stumbleV) / LAND.stumbleSpan); p.slow = Math.max(p.slow || 0, LAND.stumbleSlow * k); p.stumbleRec = clock; p.speed = (p.speed || 0) * (1 - LAND.stumbleSlow * k); }
+    return;
+  }
   // how he comes down: on his back (drifting the way his back faces, or barely moving), rolling (carried sideways / twisted), else on his chest
   const how = (sty && LAND.how[sty]) || (v < LAND.still || vx * p.face < -LAND.backK * Math.hypot(vx, vy) ? 'back' : Math.abs(vy) > LAND.sideK * Math.abs(vx) ? 'roll' : null);
   const dur = landOffFeet(p, how, vx, vy, wet);
@@ -8191,7 +8236,7 @@ const lookingAt = d => d.eyes || (d.man ? 'receiver' : 'qb');
 const lagOf = d => d.lag * (lookingAt(d) === 'receiver' ? 0.6 : lookingAt(d) === 'qb' ? 1.15 : 1) / covOf(d);   // (better cover men read it sooner)
 // coverage quality x: the difficulty, how good the whole defense is, star cover men (star linebackers most of all),
 // and a corner who won his jam at the line (d.cov is set per play in rateDefense)
-const DEEP_COV = { bonus: 0.55, between: 0.7 };   // better cover men stay with deep routes: extra speed x (covOf - 1) on a deep route; between = how much of the way (x skill) he gets between the receiver and a ball in the air
+const DEEP_COV = { bonus: 0.55, between: 0.7, trailK: 0.15 };   // trailK = x the "get between" step for a DB who trailed his man the whole route;   // better cover men stay with deep routes: extra speed x (covOf - 1) on a deep route; between = how much of the way (x skill) he gets between the receiver and a ball in the air
 const COVER_SKILL = { team: 0.035, star: 0.06, lb: 1.8, jam: 2.1, speed: 0.5 };   // (jam: a won jam makes him much better in coverage the rest of the play)
 const ROUTE_END = { after: 0.8, deep: 0.5 };   // a receiver who has run his whole route (not a stop route) while the QB still holds it: after `after` s he goes deep (odds `deep`) or works toward the QB's side
 const COVER_FADE = { after: 2.5, per: 0.07, min: 0.55 };   // coverage skill x (1 - per) for every second a play runs past `after` s (floor min): the longer a play lasts, the worse the coverage
@@ -8895,7 +8940,7 @@ function updateCarrier(c, top, dt) {
     runPatience += dt;
     for (const r of dl) if (!r.shed) r.shedAt += RUN_PATIENCE.hold * dt;
   }
-  c.speed = Math.min(cap, c.speed + RUN_ACCEL * accelK(c) * (clock - (c.catchAt ?? -9) < CATCH_REACCEL.time ? CATCH_REACCEL.accel : 1) * dt);
+  c.speed = Math.min(cap, c.speed + RUN_ACCEL * accelK(c) * rbSlowAccel(c) * (clock - (c.catchAt ?? -9) < CATCH_REACCEL.time ? CATCH_REACCEL.accel : 1) * dt);
   if (c.speed > cap) c.speed = Math.max(cap, c.speed - RUN_ACCEL * 2 * dt);
   // carrying the ball: he runs downfield by default (left arrow / J too); D backs up; A is sprint, not a direction
   const kD = keys.KeyD && !ignoreD;   // (a D pressed for a one-hander in the air isn't "back up" once he has the ball)
@@ -10213,14 +10258,14 @@ function defendBall(d, dt) {
   // comes within his reach on the way, the bat/pick rolls in updateFlight still happen.
   const covering = tgt && dist(d, tgt) < 6 * YD;
   const near = Math.hypot(d.x - ball.tx, d.y - ball.ty) < 22 * YD;
-  const onMan = { x: tgt.x + tgt.vx * 0.25 + (d.zone.deep ? 0.8 * YD : 0), y: tgt.y + tgt.vy * 0.25 };
+  const onMan = { x: tgt.x + tgt.vx * 0.25 + (d.zone.deep && !(d.trailAll && d.fightPid === runPid) ? 0.8 * YD : 0), y: tgt.y + tgt.vy * 0.25 };
   // with the ball in the air he fights to get between the receiver and the ball (a better cover man gets there more often, and further)
   if (d.man || covering) {
     const bx = ball.tx - tgt.x, by = ball.ty - tgt.y, bl = Math.hypot(bx, by);
     if (bl > 0.8 * YD) {
-      if (d.fightPid !== runPid) { d.fightPid = runPid; d.fightRoll = 0.35 + Math.random() * 0.65; }
+      if (d.fightPid !== runPid) { d.fightPid = runPid; d.fightRoll = 0.35 + Math.random() * 0.65; d.trailAll = dist(d, tgt) < 6 * YD && dist(d, qb) < dist(tgt, qb) - 0.3 * YD; }   // (trailAll: he was behind his man when the ball came out)
       const skill = Math.max(0, Math.min(1, (covOf(d) - 0.7) * 1.4 * d.fightRoll));   // (a per-play roll: he won't always win the spot)
-      const step = Math.min(bl, 1.6 * YD) * DEEP_COV.between * skill;
+      const step = Math.min(bl, 1.6 * YD) * DEEP_COV.between * skill * (d.trailAll ? DEEP_COV.trailK : 1);   // (a DB who trailed the whole route fights for position but doesn't get on top of the receiver)
       onMan.x += bx / bl * step; onMan.y += by / bl * step;
     }
   }
@@ -11557,21 +11602,68 @@ function returnBlock(b, picker, dt) {
 }
 
 // A fumble: everyone nearby goes after it; first to get on it keeps it.
+// can he pick it up and run with it? (linemen, the QB, blocked kicks, kick plays, tries and fumbled pick returns: always fall on it)
+const looseCanRun = p => !ball.blocked && !ball.returnFumble && !kickoffPlay && patMode === null && (p.team === 'def' || (p !== qb && !ols.includes(p)));
+const looseTouch = (h, players) => players.some(o => o.team !== h.team && dist(o, h) < LOOSE_DIVE.touch * YD);
+// a diver reached it: one arm sweeps it in from where it lay (the dive catch's one-handed pull-in, no extra arm)
+function looseGrab(p, players) {
+  p.catchFrom = { x: ball.x, y: ball.y, z: ball.z, t: clock };
+  p.hasBall = true; p.diveCaught = clock; p.oneHanded = true; p.oneAt = p.act ? p.act.t : 0;
+  ball.vx = ball.vy = ball.vz = 0;
+  if (!looseCanRun(p) || looseTouch(p, players)) return fallOnBall(p, true);   // (touched on the turf: down right there)
+  ball.loose = ball.live = ball.fumble = false;
+  ball.groundBy = p; ball.groundAt = clock;
+  popup(p, 'ON IT', p.team === 'def' ? '#ff6b6b' : '#7dff8a');
+}
+// on the turf holding it: the other team races to touch him down; untouched, he's up and running when his get-up ends
+function groundHold(dt, players) {
+  const h = ball.groundBy;
+  for (const p of players) {
+    if (p.action) { updateAction(p, dt); continue; }
+    const px = p.x, py = p.y;
+    if (p.team !== h.team && dist(p, h) < LOOSE_DIVE.range * YD) steer(p, h.x, h.y, p.top || 8 * YD, (p.accel || 12 * YD) * LOOSE_DIVE.accel, dt);
+    clampField(p);
+    setVelocity(p, px, py, dt);
+  }
+  if (looseTouch(h, players) || clock - ball.groundAt > LOOSE_DIVE.maxHold) { ball.groundBy = null; return fallOnBall(h, true); }
+  if (!h.action) { ball.groundBy = null; scoop(h, true); }
+}
 function updateFumble(dt) {
   const players = allPlayers();
+  if (ball.groundBy) return groundHold(dt, players);
   // safety net: a loose ball nobody can reach (or a bad position) never hangs the game; the offense falls on it where it lies
   if (clock - fumbleT > 7 || !isFinite(ball.x + ball.y + ball.z)) {
     if (!isFinite(ball.x + ball.y + ball.z)) { ball.x = Number.isFinite(los) ? los : 25 * YL; ball.y = MID; ball.z = 0; }
     ball.loose = ball.live = ball.fumble = false; ball.vx = ball.vy = ball.vz = 0; ball.blocked = false; ball.returnFumble = false;
     return endPlay(`Fumble, offense recovers  ${yardsFrom(ball.x)} yds`, Math.max(YL, Math.min(FIELD - 1, ball.x)));
   }
+  let grab = null;
   for (const p of players) {
-    if (p.action) { updateAction(p, dt); continue; }
+    if (p.action) {
+      updateAction(p, dt);
+      // diving on it: his hands (or body) got to it, low enough to cover
+      if (!grab && p.action === 'dive' && p.looseDive === fumbleT && ball.z < 10 * S) {
+        const hd = diveHands(p, figReach(p, 22 * S));
+        if (Math.hypot(ball.x - hd.x, ball.y - hd.y) < LOOSE_DIVE.reach * YD || dist(p, ball) < LOOSE_DIVE.body * YD) grab = p;
+      }
+      continue;
+    }
     const px = p.x, py = p.y;
-    if (dist(p, ball) < 15 * YD) { const lv = p === rb ? rbVis(RB_VISION.loose) : 1; steer(p, ball.x, ball.y, (p.top || 8 * YD) * lv, (p.accel || 12 * YD) * lv, dt); }   // (the back's vision: first to the loose ball)
+    if (dist(p, ball) < LOOSE_DIVE.range * YD) { const lv = p === rb ? rbVis(RB_VISION.loose) : 1; steer(p, ball.x, ball.y, (p.top || 8 * YD) * lv, (p.accel || 12 * YD) * lv * LOOSE_DIVE.accel, dt); }   // (flat out for it; the back's vision: first to the loose ball)
     clampField(p);
     setVelocity(p, px, py, dt);
+    // close to it on the ground: dive on it (traffic) or run through and scoop it (open field). Chosen for him, once a fumble.
+    if (p.looseDecT !== fumbleT && ball.z < 12 * S && dist(p, ball) < LOOSE_DIVE.at * YD) {
+      p.looseDecT = fumbleT;
+      const opps = players.filter(o => o.team !== p.team && dist(o, ball) < FUMBLE_SCOOP.traffic).length;
+      if (!looseCanRun(p) || Math.random() < LOOSE_DIVE.base + LOOSE_DIVE.perOpp * opps) {
+        const lead = 0.2;   // (aims a step ahead of a rolling ball)
+        startDive(p, ball.x + ball.vx * lead, ball.y + ball.vy * lead, LOOSE_DIVE.dur, dist(p, ball) + 0.6 * YD);
+        p.looseDive = fumbleT; p.recoverUntil = clock + p.act.dur + 0.3;
+      }
+    }
   }
+  if (grab) return looseGrab(grab, players);
   // squirted over a sideline: dead there, the offense keeps it (a forward fumble comes back to where it came out)
   if (!ball.blocked && !ball.returnFumble && !kickoffPlay && patMode === null && ball.z < 8 * S &&
       (ball.y + 4 * S < 0 || ball.y + 4 * S > FW)) {
@@ -11586,8 +11678,7 @@ function updateFumble(dt) {
   if (near && ((dist(near, ball) <= 0.9 * YD && ball.z < 12 * S) || timeUp)) {
     // scoop and run, or fall on it? In the open he picks it up; in traffic he usually just dives on it.
     // A scoop can be bobbled: the ball squirts away and the scramble goes on. (Linemen and the QB always fall on it.)
-    const canScoop = !timeUp && !ball.blocked && !ball.returnFumble && !kickoffPlay && patMode === null &&
-                     (near.team === 'def' || (near !== qb && !ols.includes(near)));
+    const canScoop = !timeUp && looseCanRun(near);
     const opps = players.filter(p => p.team !== near.team && dist(p, ball) < FUMBLE_SCOOP.traffic);
     const diving = opps.filter(p => p.action === 'dive' || p.action === 'down').length;   // (defenders already going to the turf for it)
     const traffic = opps.filter(p => p.action !== 'down').length + diving * FUMBLE_SCOOP.diveWeight;
@@ -11600,12 +11691,19 @@ function updateFumble(dt) {
       }
       return scoop(near);
     }
+    fallOnBall(near);
+  }
+}
+// he has it on the turf (fell on it, or laid = already down on it from a dive): the play ends with his recovery
+function fallOnBall(near, laid = false) {
+  {
     ball.loose = ball.live = ball.fumble = false;
     near.hasBall = true;
+    const fall = () => { if (!(laid && near.action)) { near.action = 'down'; near.act = { t: 0, fall: true, vx: 0, vy: 0, angle: near.face > 0 ? 0 : Math.PI }; } };
     if (ball.returnFumble) {
       // an interception return fumbled: whoever falls on it has it (the offense gets it back with a fresh set of downs)
       ball.returnFumble = false;
-      near.action = 'down'; near.act = { t: 0, fall: true, vx: 0, vy: 0, angle: near.face > 0 ? 0 : Math.PI };
+      fall();
       if (near.team === 'def') return endPlay('INTERCEPTED!  Fumbled on the return, but the defense recovers', 0, 'turnover');
       showBanner('BALL IS BACK!', '#7dff8a', '#00300a');
       lineToGain = Math.min(lineToGain, near.x);   // counts as a first down at the spot
@@ -11613,9 +11711,8 @@ function updateFumble(dt) {
     }
     pstRecover(near);
     if (near.team !== 'def') popup(near, 'RECOVERED', '#7dff8a');   // (a defensive recovery gets the banner instead)
-    // falls on it and cradles it: drawn tucked away between his arms
-    near.action = 'down';
-    near.act = { t: 0, fall: true, vx: 0, vy: 0, angle: near.face > 0 ? 0 : Math.PI };
+    // falls on it and cradles it: drawn tucked away between his arms (a diver keeps his dive)
+    fall();
     const wasBlock = ball.blocked;
     ball.blocked = false;
     if (near.team === 'def') showBanner(wasBlock ? 'BLOCKED KICK!' : 'TURNOVER!');
@@ -11626,10 +11723,16 @@ function updateFumble(dt) {
 }
 
 // Picked up clean on the run: the offense keeps playing (you run it), the defense returns it like a pick.
-function scoop(p) {
+// (risen = he fell on it untouched and got up with it: no scoop look, he already has it tucked)
+function scoop(p, risen = false) {
+  if (!risen) {   // bent low on the run, both hands sweep it up off the turf (CATCH_ST.scoop + the ball gliding up into them); his momentum carries on
+    p.catchFrom = { x: ball.x, y: ball.y, z: ball.z, t: clock };
+    p.catchFx = { style: 'scoop', t: clock };
+    p.oneHanded = false; p.diveCaught = 0;
+  }
   ball.loose = ball.live = ball.fumble = false;
   p.hasBall = true; p.action = null; p.act = null; p.tackling = false;
-  popup(p, 'SCOOPED', p.team === 'def' ? '#ff6b6b' : '#7dff8a');
+  popup(p, risen ? 'UP WITH IT' : 'SCOOPED', p.team === 'def' ? '#ff6b6b' : '#7dff8a');
   if (p.team === 'def') {
     state = 'picked';
     ball.scoopReturn = true;
@@ -12894,7 +12997,9 @@ function colSkip(a, b) {
   if (air(a) || air(b) || a.tackling || b.tackling || a.stiffBy === b || b.stiffBy === a) return true;
   for (const p of [a, b]) if (p.action === 'dive' || p.action === 'hurdle' || p.action === 'hurdled' || p.action === 'wrap' || p.action === 'clasp') return true;   // (a tackler riding the runner down is pinned to him: pushing them apart every frame slid the pair across the turf)
   const low = p => p.action === 'down' || p.action === 'getup' || p.helpTarget;
-  if ((low(a) && (low(b) || a.hasBall || b.hasBall)) || (low(b) && a.hasBall)) return true;   // (a pile getting up, or a man being helped up: no bodies shoving each other off in the middle of it)
+  if ((low(a) && (low(b) || a.hasBall || b.hasBall)) || (low(b) && a.hasBall)) return true;
+  if (a.action === 'getup' || b.action === 'getup') return true;   // (getting up: clip through whoever is standing on him, never shoved aside / teleported off)
+  if (state === 'done' && (low(a) || low(b) || a === runner || b === runner || a.hasBall || b.hasBall)) return true;   // (the play is over: the ballcarrier and the men around him pass through each other as they get up)   // (a pile getting up, or a man being helped up: no bodies shoving each other off in the middle of it)
   if (((a === qb && b === rb) || (a === rb && b === qb)) && a.x < los && b.x < los && !kickoffPlay && state !== 'kickoff' && state !== 'punt') return true;   // (the one exception: the QB and the back clip through each other in the backfield)
   return a.team !== b.team && a.engaged && b.engaged;
 }
@@ -13140,16 +13245,16 @@ function update(dt) {
     const cen = ols && ols[2], snapping = holder === qb && !qb.hasBall && cen && !kickoffPlay && !tut && !(oo && oo.cfg) &&   // (1v1: no center, the QB starts with the ball)
       (state === 'pre' || (snapFly && clock < snapFly.dur && (state === 'drop' || state === 'pocket' || state === 'run')));
     if (snapping) {
-      if (state === 'pre') { ball.x = cen.x + 0.45 * YD; ball.y = cen.y; ball.z = 3 * S; }
+      if (state === 'pre') { ball.x = cen.x + figX(cen, 0.45 * YD); ball.y = cen.y; ball.z = figZ(cen, 3 * S); }
       else {
-        const k = clock / snapFly.dur, sx = cen.x + 0.45 * YD, tx = qb.x + 4 * S * qb.face;
-        ball.x = sx + (tx - sx) * k; ball.y = cen.y + (qb.y - cen.y) * k; ball.z = 3 * S + (qb.z + 8 * S - 3 * S) * k + Math.sin(Math.PI * k) * (shotgun ? 10 : 3) * S;
+        const k = clock / snapFly.dur, sx = cen.x + figX(cen, 0.45 * YD), tx = qb.x + figX(qb, 4 * S) * qb.face, z0 = figZ(cen, 3 * S);
+        ball.x = sx + (tx - sx) * k; ball.y = cen.y + (qb.y - cen.y) * k; ball.z = z0 + (qb.z + figZ(qb, 8 * S) - z0) * k + Math.sin(Math.PI * k) * (shotgun ? 10 : 3) * S;
       }
       ball.rot = Math.PI / 2;
     } else if (holder.ripFrom && holder.ripFrom.pid === runPid && holder.hasBall && clock - holder.ripFrom.t < MOSS_RIP.hold + MOSS_RIP.dur && clock >= holder.ripFrom.t && (!a || a === 'jump')) {
       // Moss rip-away: in the DB's hands (a tug of war), then yanked out and into the receiver's chest
       const rf = holder.ripFrom, d = rf.d, e = clock - rf.t;
-      const sx = d.x + 9 * S * (d.face || 1), sz = (d.z || 0) + 22 * S, ex = holder.x + 12 * S * holder.face, ez = holder.z + 9 * S;
+      const sx = d.x + figX(d, 9 * S) * (d.face || 1), sz = (d.z || 0) + figZ(d, 22 * S), ex = holder.x + figX(holder, 12 * S) * holder.face, ez = holder.z + figZ(holder, 9 * S);
       if (e < MOSS_RIP.hold) { ball.x = sx + Math.sin(e * 70) * 1.5 * S; ball.y = d.y; ball.z = sz; }
       else {
         const k = smooth01((e - MOSS_RIP.hold) / MOSS_RIP.dur);
@@ -13159,15 +13264,15 @@ function update(dt) {
     } else if (ht && holder.hasBall && he < HEAD_TOP.dur + HEAD_TOP.hold && (!a || a === 'jump')) {
       // head top: caught up over the defender's helmet, then pulled down and in to his chest
       const k = smooth01(Math.min(1, Math.max(0, he - HEAD_TOP.hold) / HEAD_TOP.dur));
-      const sx = holder.x + ht.ox, sy = holder.y + ht.oy, sz = holder.z + HEAD_TOP.high;
-      const ex = holder.x + 12 * S * holder.face, ez = holder.z + 9 * S;
+      const sx = holder.x + ht.ox, sy = holder.y + ht.oy, sz = holder.z + figZ(holder, HEAD_TOP.high);
+      const ex = holder.x + figX(holder, 12 * S) * holder.face, ez = holder.z + figZ(holder, 9 * S);
       ball.x = sx + (ex - sx) * k; ball.y = sy + (holder.y - sy) * k; ball.z = sz + (ez - sz) * k + Math.sin(Math.PI * k) * 4 * S;
     } else if (holder.hasBall && holder.catchFx && holder.catchFx.style === 'helmetPin' && clock >= holder.catchFx.t && clock - holder.catchFx.t < HELMET_PIN.hold && (!a || a === 'jump')) {
       // helmet catch: pinned against his helmet with one hand
-      ball.tucked = false; ball.x = holder.x + HELMET_PIN.x * holder.face; ball.y = holder.y; ball.z = holder.z + HELMET_PIN.z;
+      ball.tucked = false; ball.x = holder.x + figX(holder, HELMET_PIN.x) * holder.face; ball.y = holder.y; ball.z = holder.z + figZ(holder, HELMET_PIN.z);
     } else if (clasp) {
       // just caught: still out in front of his chest in both hands
-      ball.x = holder.x + 12 * S * holder.face; ball.y = holder.y; ball.z = holder.z + 9 * S;
+      ball.x = holder.x + figX(holder, 12 * S) * holder.face; ball.y = holder.y; ball.z = holder.z + figZ(holder, 9 * S);
     } else if (holder.guard && holder.hasBall && !a) {
       // protecting it (G): tucked away inside both arms, tight against his chest (drawn under the arms, not out front)
       ball.tucked = true;
@@ -13175,11 +13280,11 @@ function update(dt) {
     } else if (a === 'slide' && holder.hasBall) {
       // sliding: pulled in tight to his chest with both arms, rising from the carry into the lean back
       const k = smooth01(holder.act.t / (holder.act.dur * DIVE_EASE));
-      ball.x = holder.x + 3 * (1 - k) * S * holder.face; ball.y = holder.y; ball.z = holder.z + (7 - 3 * k) * S;
+      ball.x = holder.x + figX(holder, 3 * (1 - k) * S) * holder.face; ball.y = holder.y; ball.z = holder.z + figZ(holder, (7 - 3 * k) * S);
     } else if ((a === 'slide' && holder === qb) || (holder.guard && holder.hasBall && !a)) {
       // the QB sliding / a carrier protecting it (G) wraps both arms around it: the ball sits at his chest between the hands
       ball.tucked = false;
-      ball.x = holder.x + 4 * S * holder.face; ball.y = holder.y; ball.z = holder.z + (a ? 5 : 7) * S;
+      ball.x = holder.x + figX(holder, 4 * S) * holder.face; ball.y = holder.y; ball.z = holder.z + figZ(holder, (a ? 5 : 7) * S);
     } else if (holder.hasBall && ((holder.oneHanded && (a === 'jump' || a === 'dive')) || (a === 'dive' && (holder.diveCaught || holder.jumpCaught || (holder.act && holder.act.pt != null))) || (a === 'jump' && holder.jumpCaught))) {
       // a catch / pick in the air (or a leap that came down off his feet, or a dive that has landed): the ball comes in from full reach to the chest
       const k = a === 'dive' && !holder.diveCaught && !holder.oneHanded ? 1 : airTuckK(holder);   // (landed with it / came down off his feet: already in his arms, never out at the fingertips)
@@ -13187,15 +13292,15 @@ function update(dt) {
         ball.tucked = true; holder.cradle = holder.cock = false;
         ball.x = holder.x; ball.y = holder.y; ball.z = holder.z;
       } else if (a === 'dive') {   // laid out: the ball starts at the outstretched fingertips (as on a two-handed dive) and is drawn in along the dive, not up by a standing player's head
-        const h = diveHands(holder, (22 - 17 * k) * S);
-        ball.x = h.x; ball.y = h.y; ball.z = holder.z + (2 + 3 * k) * S;
+        const h = diveHands(holder, figReach(holder, (22 - 17 * k) * S));
+        ball.x = h.x; ball.y = h.y; ball.z = holder.z + figX(holder, (2 + 3 * k) * S);
       } else {
-        ball.x = holder.x + (10 - 6 * k) * S * holder.face; ball.y = holder.y; ball.z = holder.z + (18 - 11 * k) * S;
+        ball.x = holder.x + figX(holder, (10 - 6 * k) * S) * holder.face; ball.y = holder.y; ball.z = holder.z + figZ(holder, (18 - 11 * k) * S);
       }
     } else if (holder.reachGoal && goingDown) {
       // going down stretching the ball out ahead of him toward the goal line
       const k = smooth01(Math.min(1, holder.act.t / 0.2));
-      ball.x = holder.x + (4 + 12 * k) * S; ball.y = holder.y; ball.z = holder.z + (9 + 5 * k) * S;
+      ball.x = holder.x + figX(holder, (4 + 12 * k) * S); ball.y = holder.y; ball.z = holder.z + figZ(holder, (9 + 5 * k) * S);
     } else if (holder.hasBall && (!a || a === 'getup' || goingDown || moving) && holder !== qb || (holder === qb && runner === qb && (!a || moving || goingDown)) || (holder === qb && holder.hasBall && (a === 'spin' || a === 'juke')) || (holder === qb && sackPlay && a === 'down')) {   // (a sacked QB pulls it in and tucks it as he goes down)
       ball.tucked = true;
       holder.cradle = holder.cock = false;   // (tucked away: never the two-hand chest hold drawn over a hidden ball)
@@ -13205,22 +13310,22 @@ function update(dt) {
       // (on a dive: where his hands are DRAWN - a dive up / down the screen is laid flat toward his facing - so the ball is in them, not floating beside him)
       // (a diving catch: once it's in his hands he pulls it in to his chest during the dive (DIVE_TUCK), and keeps it there on the turf)
       const tk = holder.hasBall && holder.diveCaught ? smooth01(Math.max(0, Math.min(1, (clock - holder.diveCaught - DIVE_TUCK.wait) / DIVE_TUCK.dur))) : 0;
-      if (a === 'dive') { const h = diveHands(holder, (28 - DIVE_TUCK.in * tk) * S); ball.x = h.x; ball.y = h.y; ball.z = holder.z + (2 + 2 * tk) * S; }
-      else { const ang = a === 'slide' ? 0 : holder.act.angle, reach = (14 - (holder.hasBall && holder.diveCaught ? 9 * tk : 0)) * S;
+      if (a === 'dive') { const h = diveHands(holder, figReach(holder, (28 - DIVE_TUCK.in * tk) * S)); ball.x = h.x; ball.y = h.y; ball.z = holder.z + figX(holder, (2 + 2 * tk) * S); }
+      else { const ang = a === 'slide' ? 0 : holder.act.angle, reach = figReach(holder, (14 - (holder.hasBall && holder.diveCaught ? 9 * tk : 0)) * S);
         ball.x = holder.x + Math.cos(ang) * reach; ball.y = holder.y + Math.sin(ang) * reach; ball.z = holder.z; }
     } else if (holder.cock && !a) {
       // aiming: cocked up over his head in one hand, at the height it's released from
-      ball.x = holder.x - COCK_BALL.back * S * holder.face; ball.y = holder.y; ball.z = holder.z + Math.max(0, RELEASE_BASE * S + BODY.release * S * hz(holder)) * RELEASE_K;
+      ball.x = holder.x - figX(holder, COCK_BALL.back * S) * holder.face; ball.y = holder.y; ball.z = holder.z + figZ(holder, Math.max(0, RELEASE_BASE * S + BODY.release * S * hz(holder)) * RELEASE_K);
     } else if (holder.cradle && !a) {
       // about to throw: held up at the chest in both hands (aiming: raised a touch, toward the throwing shoulder)
       const rd = holder === qb || holder.ready ? 1 : 0;   // (the QB always holds it up high on his chest, elbows in)
-      ball.x = holder.x + (4 - 1.5 * rd) * S * holder.face; ball.y = holder.y; ball.z = holder.z + (7 + 3 * rd) * S;
+      ball.x = holder.x + figX(holder, (4 - 1.5 * rd) * S) * holder.face; ball.y = holder.y; ball.z = holder.z + figZ(holder, (7 + 3 * rd) * S);
     } else if (a === 'toedrag') {
-      ball.x = holder.x + 16 * S * holder.face; ball.y = holder.y; ball.z = 9 * S;
+      ball.x = holder.x + figX(holder, 16 * S) * holder.face; ball.y = holder.y; ball.z = figZ(holder, 9 * S);
     } else {
       const armsUp = a === 'jump' || a === 'swat' || a === 'toetap';
       const side = holder.stiff ? -1 : 1;        // stiff arm: ball tucked on the far side
-      ball.x = holder.x + 6 * S * holder.face * side; ball.y = holder.y; ball.z = holder.z + (armsUp ? 24 * S : 0);
+      ball.x = holder.x + figX(holder, 6 * S) * holder.face * side; ball.y = holder.y; ball.z = holder.z + figZ(holder, armsUp ? 24 * S : 0);
     }
     // a catch or a pick: the ball travels the last bit into his hands (it never jumps from where it was in the air to his chest)
     const cf = holder.catchFrom;
@@ -13302,7 +13407,7 @@ function update(dt) {
   if (state === 'drop' || state === 'pocket') {
     for (const r of [...dl, ...back7.filter(d => d.blitz)]) {
       if (r.engaged || r.action) continue;
-      threat = Math.max(threat, 1 - dist(r, qb) / (3 * YD));
+      threat = Math.max(threat, 1 - dist(r, qb) / (SHAKE_RANGE * YD));   // (the shake starts earlier: a rusher this far off already shakes the screen)
     }
   }
   shakeKick *= Math.exp(-6 * dt);
@@ -14376,7 +14481,7 @@ function drawToeFx(p) {
     ctx.fillRect(x - 1.5 * S, y - z - 1.5 * S, 3 * S, 3 * S);
   }
 }
-const MISS_CARRY = { k: 0.32, max: 3.2, dive: 0.7 };   // a beaten tackler's extra slide along his own momentum: k yd per yd/s of his speed, capped at max yd; dive = x top speed for a dive with no velocity
+const MISS_CARRY = { k: 0.18, max: 1.8, dive: 0.5 };   // a beaten tackler's extra slide along his own momentum: k yd per yd/s of his speed, capped at max yd; dive = x top speed for a dive with no velocity
 let reelQuiet = false;   // a reaction that isn't a missed tackle (a blocker who whiffed): no stat
 function startReel(d, style, c, ts = 1) {   // ts = time scale (2 = the whole stumble in half the time)
   let st = REEL_ST[style]; if (!st || !d || !c) return;
@@ -14827,7 +14932,7 @@ function drawPlayer(p) {
   const inNear = p.y < (ball ? ball.y : MID) - 0.3 * YD;   // the ball is on his near (screen-bottom) side
 
   if (xfGlow(p)) {   // X-Factor in the zone: a pulsing yellow glow around him
-    const pulse = 0.8 + 0.2 * Math.sin(animNow() / 160), gy = p.y + FOOT - 15 * S, gr = 46 * S * pulse;
+    const pulse = 0.8 + 0.2 * Math.sin(animNow() / 160), gy = p.y + FOOT - 15 * S * figK(p) * FIGURE.tall, gr = 46 * S * FIGURE.grow * pulse;
     if (TUI.on) ctx.fillStyle = 'rgba(255,215,40,0.3)';   // (phones: a flat glow, no gradient per frame)
     else {
       const g = ctx.createRadialGradient(p.x, gy, 4 * S, p.x, gy, gr);
@@ -14837,19 +14942,19 @@ function drawPlayer(p) {
  ctx.beginPath(); ctx.arc(p.x, gy, gr, 0, Math.PI * 2); ctx.fill();
     if (!(p === ud && defLive())) {   // (the defender you steer already has his own yellow ring: no second one)
       ctx.strokeStyle = `rgba(255,222,70,${0.55 * pulse})`; ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.ellipse(p.x, p.y + FOOT, 16 * S * pulse, 5.5 * S * pulse, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(p.x, p.y + FOOT, 16 * S * FIGURE.grow * pulse, 5.5 * S * FIGURE.grow * pulse, 0, 0, Math.PI * 2); ctx.stroke();
     }
   }
   // shadow: smaller and fainter the higher he is (a leap reads as height); a diver's stretches out along his body (a dive reads as laid out)
   const shLift = 1 / (1 + Math.max(0, p.z || 0) / (DIVE_LOOK.shadowLift * S));
   const shDive = p.action === 'dive' && p.act && p.act.dur ? smooth01(p.act.t / (p.act.dur * 0.4)) : 0;
   ctx.fillStyle = `rgba(0,0,0,${0.25 * (0.5 + 0.5 * shLift)})`;
-  ctx.beginPath(); ctx.ellipse(p.x, p.y + FOOT, Math.max((12 + (p.big ? 2 * bulkOf(p) : 0)) * shLift, DIVE_LOOK.shadowLen * shDive) * S, 4 * S * (0.6 + 0.4 * shLift), 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(p.x, p.y + FOOT, Math.max((12 + (p.big ? 2 * bulkOf(p) : 0)) * shLift, DIVE_LOOK.shadowLen * shDive) * S * FIGURE.grow, 4 * S * FIGURE.grow * (0.6 + 0.4 * shLift), 0, 0, Math.PI * 2); ctx.fill();
   drawToeFx(p);
   drawDiveSpray(p);
 
   ctx.save();
-  const sz = p.size || 1;
+  const sz = figK(p);   // (his size x FIGURE.grow)
   ctx.translate(p.x, p.y - p.z + FOOT * (1 - sz));   // feet stay on the same spot whatever his size
   ctx.scale(S * sz, S * sz);
   let kneelK = 0;
@@ -14979,13 +15084,17 @@ function drawPlayer(p) {
   // break-tackle reaction / catch pose (see break-tackle & catch animations)
   const fx = poseFx(p, ac) || relPose(p, ac), fxTw = fx && fx.tw != null ? (Math.abs(fx.tw) < 0.25 ? 0.25 * (Math.sign(fx.tw) || 1) : fx.tw) : 1;
   if (fx) { ctx.translate(fx.tx || 0, fx.ty || 0); ctx.rotate(fx.R || 0); ctx.scale(fxTw * (fx.sx || 1), fx.sy || 1); }
+  // taller figure: everything from here on is stretched up from his feet (sprite y 14) by FIGURE.tall (the helmet is drawn round again)
+  ctx.translate(0, 14); ctx.scale(1, FIGURE.tall); ctx.translate(0, -14);
   // where the ball is in his sprite space (+x = the way he faces), for hands that go to it
-  const bk = S * (p.size || 1);
-  const bl = { x: (ball.x - p.x) * p.face / bk, y: (ball.y - ball.z - (p.y - p.z)) / bk };
+  // (bk = world px per sprite unit across, bkY = up and down with the stretch; another player's spot: (his y - ours) / bkY + the spot on his body)
+  const bk = S * sz, bkY = bk * FIGURE.tall;
+  const bl = { x: (ball.x - p.x) * p.face / bk, y: 14 + (ball.y - ball.z - (p.y - p.z) - FOOT) / bk };
   if (fx) {   // (into the posed frame, so hands still find the ball)
     const x0 = bl.x - (fx.tx || 0), y0 = bl.y - (fx.ty || 0), c = Math.cos(fx.R || 0), sn = Math.sin(fx.R || 0);
     bl.x = (x0 * c + y0 * sn) / (fxTw * (fx.sx || 1)); bl.y = (-x0 * sn + y0 * c) / (fx.sy || 1);
   }
+  bl.y = 14 + (bl.y - 14) / FIGURE.tall;   // (into the stretched frame)
   const nearBall = Math.hypot(bl.x - 2, bl.y + 10) < CLASP_REACH;
   // a fresh catch still held out in front in both hands (before he tucks it)
   // head top: both hands on the ball as he takes it over the defender's helmet and brings it down
@@ -15034,7 +15143,7 @@ function drawPlayer(p) {
     legs = sl.map(l => { const b = base[l[0] < 0 ? 0 : base.length - 1]; return [b[0] + (l[0] - b[0]) * stk, b[1] + (l[1] - b[1]) * stk, b[2] + (l[2] - b[2]) * stk, stk > 0.5 && l[3]]; });
   }
   if (st) ctx.translate(0, st.sink);   // (stance: hips down, the bent legs still reach the turf)
-  if (st && state === 'pre' && dl.includes(p)) ctx.translate(-Math.max(0, Math.sin(st.lean) * 22 + 5 - 0.7 * YD / S), 0);   // (a lineman leaning in keeps his helmet on his side of the line of scrimmage: back by what the lean pushes past his spot)
+  if (st && (stK === 'two' || stK === 'three' || stK === 'four')) ctx.translate(-Math.max(0, Math.sin(st.lean) * 22 + 5 - 0.7 * YD / bk), 0);   // (a lineman leaning in keeps his helmet on his side of the line of scrimmage: back by what the lean pushes past his spot)
   for (const [hx, a, bend, up] of legs) drawLeg(t, hx, 2, a, bend, tip || !!up);
   if (st) { ctx.translate(0, 2); ctx.rotate(st.lean); ctx.translate(0, -2); }   // upper body tipped forward from the hips
 
@@ -15042,10 +15151,11 @@ function drawPlayer(p) {
     // far arm, swinging opposite the near one, half hidden behind the body
     drawArm(t, '#a8734b', -1, -9 + bob, Math.PI / 2 - s * pump, 2.5, -1.1 + s * 0.3, 3.5, 3);
   }
+  const tw = FIGURE.torso, pw = FIGURE.pads, trx = FIGURE.trim;   // (jersey / pad half-widths)
   ctx.fillStyle = t.jersey;
-  ctx.fillRect(-7, -9 + bob, 14, 12);
+  ctx.fillRect(-tw, -9 + bob, tw * 2, 12);
   ctx.fillStyle = 'rgba(0,0,0,0.35)';
-  ctx.fillRect(-7, 1.5 + bob, 14, 1.5);
+  ctx.fillRect(-tw, 1.5 + bob, tw * 2, 1.5);
 
   // ball tucked between the pads and the carrying arm. In the far arm (toward the top sideline) it's drawn under the torso, so only a sliver
   // shows; in the near arm (ballSide > 0) it's drawn over the torso, under the arm wrapped round it (drawTuck, after the jersey)
@@ -15065,15 +15175,15 @@ function drawPlayer(p) {
   ctx.restore();
 
   ctx.fillStyle = t.jersey;
-  ctx.beginPath(); ctx.ellipse(0, -9.5 + bob, 11, 4.5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(0, -9.5 + bob, pw, 4.5, 0, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = 'rgba(0,0,0,0.35)';
   ctx.lineWidth = 1;
   ctx.stroke();
   ctx.fillStyle = 'rgba(255,255,255,0.25)';
-  ctx.fillRect(-7, -13 + bob, 14, 1.2);
+  ctx.fillRect(-tw, -13 + bob, tw * 2, 1.2);
   ctx.fillStyle = t.trim;
-  ctx.fillRect(-11, -8 + bob, 3, 1.5);
-  ctx.fillRect(8, -8 + bob, 3, 1.5);
+  ctx.fillRect(-pw, -8 + bob, pw - trx, 1.5);
+  ctx.fillRect(trx, -8 + bob, pw - trx, 1.5);
 
   ctx.fillStyle = skin;
   ctx.fillRect(-2, -15 + bob, 4, 3);
@@ -15180,14 +15290,14 @@ function drawPlayer(p) {
     drawArm(t, skin, -1, -11 + bob, -0.9 - 1.9 * k, 5, -0.5 + 0.3 * k, 6, 4.8);
   } else if (p.hipOn && !p.action && p.team === 'def') {
     // running alongside: one hand reaches out and rests on his hip, the other pumps
-    const o = p.hipOn, bk2 = S * (p.size || 1);
-    const ox = (o.x - p.x) * p.face / bk2, oy = (o.y - o.z - (p.y - p.z)) / bk2 - 4 + Math.sin(ac * 9) * 0.6;
+    const o = p.hipOn, bk2 = bk;
+    const ox = (o.x - p.x) * p.face / bk2, oy = (o.y - o.z - (p.y - p.z)) / bkY - 4 + Math.sin(ac * 9) * 0.6;
     drawArmTo(t, skin, 2, -9 + bob, ox * 0.9, oy, 4.5, 5);
     drawArm(t, skin, -1, -10.5 + bob, 0.5, 6, 0.4, 6);
   } else if ((p.fightOn && p.engaged && !p.action && p.team === 'def') || (p.jamFightOn && !p.action && p.team === 'off')) {
     // hand-fighting the receiver (or the receiver fighting the jam): hands on his chest and shoulder, jabbing and re-gripping in turn
-    const o = p.fightOn || p.jamFightOn, bk2 = S * (p.size || 1);
-    const ox = (o.x - p.x) * p.face / bk2, oy = (o.y - o.z - (p.y - p.z)) / bk2 - 10;
+    const o = p.fightOn || p.jamFightOn, bk2 = bk;
+    const ox = (o.x - p.x) * p.face / bk2, oy = (o.y - o.z - (p.y - p.z)) / bkY - 10;
     const jab = Math.sin(ac * 13);
     if (p.team === 'off') {   // a jammed receiver swipes the jammer's arms aside, one hand then the other, sweeping across them (not both hands shoving him back)
       const sw = Math.sin(ac * 11);
@@ -15227,7 +15337,7 @@ function drawPlayer(p) {
         drawArmTo(t, skin, 3, -8.5 + bob, 12.5, -8.7 + bob, 5, 6, 1);
       } else if (lockO && Math.abs(lockO.x - p.x) < SIDE_LOCK * YD) {
         // side by side with the man he's locked up with: both arms reach across to him (his chest and shoulder), whichever way he faces
-        const bk2 = S * (p.size || 1), ox = (lockO.x - p.x) * p.face / bk2, oy = (lockO.y - lockO.z - (p.y - p.z)) / bk2 - 5;
+        const bk2 = bk, ox = (lockO.x - p.x) * p.face / bk2, oy = (lockO.y - lockO.z - (p.y - p.z)) / bkY - 5;
         drawArmTo(t, skin, 1, -10.5 + bob, ox + 3, oy - 1.5, 5, 6, -1);
         drawArmTo(t, skin, 3, -8.5 + bob, ox + 3.5, oy + 1.5, 5, 6, 1);
       } else for (const [sx, sy, side] of [[1, -10.5, -1], [3, -8.5, 1]]) drawArm(t, skin, sx, sy + bob, side * 0.08, 5, -side * 0.12, 5.5);
@@ -15294,7 +15404,7 @@ function drawPlayer(p) {
   } else if (p.stiffBy && !p.action && p.stiffBy.stiffLock) {
     // held off by a stiff arm: one hand swatting at the runner's arm (a quick chop back and forth), the other arm pumping with the churning feet
     const r = p.stiffBy, w = Math.sin(ac * 20), dx = r.x - p.x, dy = r.y - p.y, dd = Math.hypot(dx, dy) || 1, ph = Math.max(0, dd - 7 * S) / dd;
-    const hx = (dx * ph) * p.face / bk + 1.5 * w, hy = (dy * ph) / bk - 10.5 - 1.2 * Math.abs(w);
+    const hx = (dx * ph) * p.face / bk + 1.5 * w, hy = (dy * ph) / bkY - 10.5 - 1.2 * Math.abs(w);
     drawArmTo(t, skin, 2, -10.5 + bob, Math.max(3, hx), hy, 6, 7, -1, 5);
     drawArm(t, skin, 0.5, -9.5 + bob, Math.PI / 2 + s * pump, 2.5, -1 - s * 0.3, 3.5, 3);
   } else if (stiff) {
@@ -15303,7 +15413,7 @@ function drawPlayer(p) {
     const sd = p.stiffLock ? p.stiffLock.d : p.stiffTgt || [...back7, ...dl, ...(p.team === 'def' ? [qb, rb, ...ols, ...recs] : [])].filter(o => o !== p && o.action !== 'down' && Math.hypot(o.x - p.x, o.y - p.y) < 5 * YD)
       .sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[0];
     if (sd) {
-      const sx = p.stiffSide < 0 ? -1.5 : 2, sy = -10.5 + bob, hx = Math.max(sx + 1, (sd.x - p.x) * p.face / bk), hy = (sd.y - (sd.z || 0) - (p.y - (p.z || 0))) / bk - 16 + Math.sin(ac * 26) * 0.8;
+      const sx = p.stiffSide < 0 ? -1.5 : 2, sy = -10.5 + bob, hx = Math.max(sx + 1, (sd.x - p.x) * p.face / bk), hy = (sd.y - (sd.z || 0) - (p.y - (p.z || 0))) / bkY - 16 + Math.sin(ac * 26) * 0.8;
       const hd = Math.hypot(hx - sx, hy - sy) || 1, k = hd > 5 ? 1 - 4.5 / hd : 1;   // (stop at the front of the helmet)
       drawArmTo(t, skin, sx, sy, sx + (hx - sx) * k, sy + (hy - sy) * k, 6.5, 7.5, -1, 5.5);
     } else drawArm(t, skin, 2, -10.5 + bob, -0.05, 6.5, 0, 7.5, 5.5);
@@ -15376,11 +15486,12 @@ function drawPlayer(p) {
   // (aimed in 3D, not at where the ball is drawn: up or down by its height over his helmet against its distance along the ground,
   //  so a high ball that happens to sit lower on the screen, nearer the camera, is still looked UP at; depth only tips it a little)
   const lbx = ball.x - p.x, lby = ball.y - p.y, gd = Math.hypot(lbx, lby);
-  const look3 = { x: (lbx * p.face >= -0.5 * YD ? 1 : -1) * gd / bk, y: -(ball.z - p.z) / bk + lby * LOOK_BALL.depth / bk };
+  const look3 = { x: (lbx * p.face >= -0.5 * YD ? 1 : -1) * gd / bk, y: -(ball.z - p.z) / bkY + lby * LOOK_BALL.depth / bkY };
   const watchB = rec && rec.replaying ? !!p.watch : watchingBall(p);
   const hW = headLook(p, look3, hy, watchB);
   let yaw = lying ? 0 : rec && rec.replaying && p.yawRec != null ? p.yawRec : headYaw(p, watchB);   // (a replay turns the head as it was in the play, not from the live state)
   ctx.save();
+  ctx.translate(0, hy); ctx.scale(1, 1 / FIGURE.tall); ctx.translate(0, -hy);   // (the helmet stays round: undoes the body's FIGURE.tall stretch around its centre)
   const fakeLook = !!(p.relFx && p.relFx.kind === 'shoulder' && !p.action && !p.hasBall && (ac - p.relFx.t) / p.relFx.dur <= 1);   // (a head fake turns side to side: never tipped down at the ground)
   // (no tipping at the ground the moment a pass is thrown, and a receiver merely near the landing spot only turns his head: just the target / a man reaching or leaping tips up / down, once the ball has left the QB)
   const pitchOK = !(state === 'flight' && !p.hasBall && p.team !== 'def' && (ball.p ?? 1) < LOOK_BALL.tiltAfter);
@@ -15461,7 +15572,7 @@ function drawPlayer(p) {
     drawArm(t, skin, 2, -10.5 + bob, 0.9 - 1.05 * k, 5, 1.2 - 1.3 * k, 5.5, 5);
   } else if (p.action === 'swat' && p.act && TIP_ST[p.act.tipSt] && TIP_ST[p.act.tipSt].one) {
     // a styled one-arm tip (lunge / backhand / chop / rake): see TIP_ST
-    const tg = tgt && tgt !== p ? { x: (tgt.x - p.x) * p.face / bk, y: (tgt.y - (tgt.z || 0) - (p.y - (p.z || 0))) / bk } : null;
+    const tg = tgt && tgt !== p ? { x: (tgt.x - p.x) * p.face / bk, y: (tgt.y - (tgt.z || 0) - (p.y - (p.z || 0))) / bkY } : null;
     drawTipArm(t, skin, p.act.tipSt, Math.min(1, p.act.t / p.act.dur), bl, bob, tg);
   } else if (p.action === 'swat' && p.act && p.act.one) {
     // stretched out one-handed: a single arm at full reach to get a fingertip on it (a tip / a pick: the hand goes right to the ball)
@@ -15564,7 +15675,7 @@ function drawPopups() {
     if (pp.t < 0.3 && Math.floor(pp.t * 10) % 2 === 1) continue;   // a quick flash, then fade
     ctx.save();
     ctx.globalAlpha = Math.min(1, 2.5 * (1 - k));
-    ctx.translate(pp.p.x, pp.p.y - 52 * S - k * 1.2 * YD);
+    ctx.translate(pp.p.x, pp.p.y - 62 * S - k * 1.2 * YD);
     ctx.scale(MIRROR, 1);                   // undo the world mirror for text
     ctx.font = `bold ${0.7 * YD}px monospace`;
     ctx.textAlign = 'center';
@@ -15580,7 +15691,7 @@ function drawPopups() {
     const y = yardsTag, k = y.t / YARDS_TAG_LIFE;
     ctx.save();
     ctx.globalAlpha = Math.min(1, 3 * (1 - k), y.t * 6);
-    ctx.translate(y.p.x, y.p.y - 52 * S - 1.1 * YD - Math.min(1, y.t * 3) * 0.5 * YD);
+    ctx.translate(y.p.x, y.p.y - 62 * S - 1.1 * YD - Math.min(1, y.t * 3) * 0.5 * YD);
     ctx.scale(MIRROR, 1);
     ctx.font = `bold ${0.8 * YD}px monospace`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -15636,6 +15747,8 @@ function drawFootball(l, h, lace = 1, laceY = -h * 0.35, st = ballStyle()) {
     ctx.restore();
   }
 }
+// a pass just off his hand: drawn up where the bigger figure's hand is (FIGURE), easing down onto its real flight path (looks only)
+const ballLift = () => state === 'flight' && ball.inAir && !ball.loose && ball.z0 > 0 && ball.p < 1 ? (FIGURE.grow * FIGURE.tall - 1) * (FOOT + Math.min(ball.z, ball.z0)) * (1 - ball.p) : 0;
 const qbHoldsBall = () => ((state === 'drop' || state === 'pocket') && !ball.loose && !tossing() || !!(rec && rec.replaying)) && qb.cradle && !qb.cock && !qb.action && !qb.stiff && !ball.inAir && !ball.tucked;   // (a replay: the taped frame's cradle / ball, not the live state)
 function drawBall() {
   if (qbHoldsBall()) return;   // (in his hands at his chest: drawn with the QB, between his hands)
@@ -15652,7 +15765,7 @@ function drawBallBody() {
     ctx.beginPath(); ctx.ellipse(ball.x, ball.y + 12 * S, 6 * S, 3 * S, 0, 0, Math.PI * 2); ctx.fill();
   }
   ctx.save();
-  ctx.translate(ball.x, ball.y - ball.z);
+  ctx.translate(ball.x, ball.y - ball.z - (rec && rec.replaying ? ball.liftR || 0 : ballLift()));
   ctx.scale(S, S);
   if (ball.inAir && ball.nose != null) {
     // spiral: nose along the flight path; the laces roll around the ball (in front, then out of sight behind)
@@ -15916,7 +16029,8 @@ function startFieldGoal(prev) {   // prev = where everyone stood before the line
   keepHighlight(rec); if (rec && !rec.st && rec.frames && rec.frames.length > 5 && !rec.replaying) lastRec = rec; rec = { frames: [], t: 0, doneT: 0, replaying: false, st: true };
   // (their kick: where everyone stood, so the field-goal unit can run on and the offense off)
   const swap = !tut ? prev || [qb, rb, ...ols, ...recs, ...dl, ...back7].map(p => ({ p, x: p.x, y: p.y })) : null;
-  const gone = swap ? [qb, rb, ...recs.filter(r => !r.isTE)].map(p => { const o = swap.find(s => s.p === p) || p; return Object.assign({}, p, { x: o.x, y: o.y, hasBall: false }); }) : [];
+  const unitMen = [recs[0], recs[1], recs[2], recs[3]].filter(Boolean);   // (the wings: receivers already on the field who are on the unit too just walk to their spot; no clone jogs off while he runs on)
+  const gone = swap ? [qb, rb, ...recs.filter(r => !r.isTE && !unitMen.includes(r))].map(p => { const o = swap.find(s => s.p === p) || p; return Object.assign({}, p, { x: o.x, y: o.y, hasBall: false }); }) : [];
   for (const p of [qb, rb, ...ols, ...recs]) {
     Object.assign(p, { action: null, act: null, route: null, path: [], teBlock: false, hasBall: false, engaged: false,
                        cradle: false, svx: 0, svy: 0, vx: 0, vy: 0, face: 1, assign: null, moving: false });
@@ -15959,7 +16073,7 @@ function startFieldGoal(prev) {   // prev = where everyone stood before the line
       // and even the edges are usually held until the kick is away
       const edgeMan = i <= 1 || i >= lineUp.length - 2;
       r.kickBeat = Math.random() < (edgeMan ? 0.08 : 0.03) ? Math.random() * 0.2
-                 : (edgeMan ? 0.7 : 1.05) + Math.random() * 1.4;   // (rush moves win more often: more men get through and can leap at the kick)
+                 : ((edgeMan ? 0.7 : 1.05) + Math.random() * 1.4) * ST_RUSH_WIN.beat;   // (rush moves win more often: more men get through and can leap at the kick)
       r.reblockChance = edgeMan ? 0.42 : 0.55;
     } else {
       // the two from the back: right behind the line over the middle; the guards and snapper pick them up
@@ -15983,7 +16097,7 @@ function startFieldGoal(prev) {   // prev = where everyone stood before the line
   }
   Object.assign(ball, { inAir: false, loose: false, live: false, fumble: false, blocked: false, rot: 0, spin: 0, pitch: null });
   if (swap) {   // the unit change: linemen, tight ends and the defense shift into place; the kicker, holder and wings run on from the sideline, the skill players off
-    const edge = y => ownEdge(), fresh = new Set([qb, rb, ...recs.filter(r => !r.isTE)]);
+    const edge = y => ownEdge(), fresh = new Set([qb, rb, ...recs.filter(r => !r.isTE && !unitMen.includes(r))]);
     for (const s of swap) {
       s.p.fgTo = { x: s.p.x, y: s.p.y, fast: fresh.has(s.p) };
       if (fresh.has(s.p)) { s.p.x = Math.max(-ENDZONE, s.p.fgTo.x - 6 * YL); s.p.y = edge(s.p.fgTo.y); } else { s.p.x = s.x; s.p.y = s.y; }
@@ -16080,6 +16194,7 @@ const KICK_SNAP = 0.4, KICK_STEP = 0.75;
 // field goals / PATs, the punt's way: the protection kick-slides back for depth (setBack yd for the end men, inK of that inside), and a rusher who gets
 // free goes for the spot the ball is kicked from and times a leap at it (leapAt of the kicker's step, within PUNT.leap yd, leapOdds; a timed
 // leap blocks it leapBlock x how close he got)
+const ST_RUSH_WIN = { add: 0.2, reblock: 0.7, beat: 0.8 };   // special teams rushers beat their blockers more: added to the punt rush's win odds, x on the blocker's chance to recover after a rusher gets by, x on the seconds before a rusher gets through (FG / punt)
 const KICK_LINE = { off: 1.0, sway: 0.3, gap: 0.95 };   // FG / PAT / punt: rushers sit this far (YL) past the line before the snap (their leaning helmets never cross it, like the defensive line); protectors sway on their rusher's moves (sway yd/s) and keep gap yd between neighbours
 const FG_RUSH = { setBack: 1.1, inK: 0.35, leapAt: 0.45, leapOdds: 0.9, diveTry: 0.6, leapBlock: 0.22, diveMult: 1.35, diveLunge: 5 };   // diveTry = chance a rusher who didn't leap dives at the kick instead;   // (diveMult / diveLunge: your rusher's dive: how much closer it counts, yards of lunge)
 
@@ -16286,7 +16401,7 @@ function updateKick(dt) {
     // he's beaten his man with a move: the blocker gets one try to recover and wall him off again
     if (free && kick.phase === 'snap' && r.kickBlocker && !r.reblocked) {
       r.reblocked = true;
-      if (Math.random() < (r.reblockChance || 0.5)) { r.kickBeat = kick.t + 0.35 + Math.random() * 0.5; free = false; }
+      if (Math.random() < (r.reblockChance || 0.5) * ST_RUSH_WIN.reblock) { r.kickBeat = kick.t + 0.35 + Math.random() * 0.5; free = false; }
     }
     // a punt: the personal protector (qb) picks up a rusher who gets through (one at a time, each man once), walling him off for a beat
     if (free && kick.phase === 'snap' && kick.punt && !r.ppTried && r.kickBlocker !== qb) {
@@ -16480,10 +16595,10 @@ function updateKickoffKick(dt) {
       const px = R.x, py = R.y;
       steer(R, k.tbBall.x, k.tbBall.y, 6 * YD, 16 * YD, dt); clampField(R); setVelocity(R, px, py, dt); R.face = -1; R.reach = true;
       const u = k.tbT / T.catchT;
-      ball.x += (R.x - 4 * S - ball.x) * Math.min(1, dt * 12); ball.y += (R.y - ball.y) * Math.min(1, dt * 12); ball.z = 40 * S * (1 - u) + 14 * S * u; ball.tumbling = null;
+      ball.x += (R.x - figX(R, 4 * S) - ball.x) * Math.min(1, dt * 12); ball.y += (R.y - ball.y) * Math.min(1, dt * 12); ball.z = 40 * S * (1 - u) + figZ(R, 14 * S) * u; ball.tumbling = null;
     } else {
       if (!R.hasBall) { R.hasBall = true; R.reach = false; R.moving = false; R.vx = R.vy = 0; catchSfx(); popup(R, 'CAUGHT', '#ff9a8a'); }
-      ball.x = R.x - 3 * S; ball.y = R.y; ball.z = (R.action === 'kneel' ? 8 : 12) * S;
+      ball.x = R.x - figX(R, 3 * S); ball.y = R.y; ball.z = figZ(R, (R.action === 'kneel' ? 8 : 12) * S);
       if (k.tbT >= T.kneelT && R.action !== 'kneel') { R.action = 'kneel'; R.act = { t: 0 }; R.svx = R.svy = R.vx = R.vy = 0; popup(R, 'TOUCHBACK', '#7fe3ff'); }
       if (k.tbT >= T.doneT) {
         showBanner('TOUCHBACK', '#ffffff', '#1b2a3a', `${teamName('RED')} ball at the 30`);
@@ -16862,7 +16977,7 @@ function startPunt(prev) {
     const sp = SPOT[k], [gy, gx, gb] = GAPS[sp], edge = sp <= 1 || sp >= 6;
     clean(r);
     Object.assign(r, { x: los + Math.max(gx, KICK_LINE.off) * YL, y: MID + gy * YD, engaged: false, kickBlocker: gb, reblockChance: edge ? 0.52 : 0.64 });
-    r.kickBeat = (edge ? 0.8 : 1.15) + Math.random() * 1.4;   // (the protection is good: nobody is through before the kick)
+    r.kickBeat = ((edge ? 0.8 : 1.15) + Math.random() * 1.4) * ST_RUSH_WIN.beat;   // (the protection is good: nobody is through before the kick)
     return r;
   });
   if (Math.random() < PUNT.blockChance) {   // now and then one comes clean off the edge and gets there as the kick does
@@ -16919,14 +17034,14 @@ function gunnerRelease(gunners, jam, tx, dir, dt) {
 function puntSnap(dt) {
   if (kick.t < PUNT.snapT) {
     const k = kick.t / PUNT.snapT;
-    ball.x = kick0.x + (rb.x + 12 * S - kick0.x) * k; ball.y = kick0.y + (rb.y - kick0.y) * k;
-    ball.z = 3 * S + 6 * S * k + Math.sin(Math.PI * k) * 6 * S; ball.rot += dt * 18;   // (lands in his hands at chest height)
+    ball.x = kick0.x + (rb.x + figX(rb, 12 * S) - kick0.x) * k; ball.y = kick0.y + (rb.y - kick0.y) * k;
+    ball.z = 3 * S + (figZ(rb, 9 * S) - 3 * S) * k + Math.sin(Math.PI * k) * 6 * S; ball.rot += dt * 18;   // (lands in his hands at chest height)
     return;
   }
   const s = Math.min(1, (kick.t - PUNT.snapT) / PUNT.stepT);
   rb.x = kick.kickerX + PUNT.walk * YL * s;
   rb.moving = true; rb.run += dt * 12; rb.face = 1; rb.vx = PUNT.walk * YL / PUNT.stepT * 0.5;   // (he walks up a few steps with it, then drops it onto the foot)
-  ball.x = rb.x + 12 * S * (1 - 0.3 * s); ball.y = rb.y; ball.z = (9 - 6 * s) * S; ball.rot = 0.5;   // held out in front of him, then dropped onto the foot
+  ball.x = rb.x + figX(rb, 12 * S * (1 - 0.3 * s)); ball.y = rb.y; ball.z = figZ(rb, (9 - 6 * s) * S); ball.rot = 0.5;   // held out in front of him, then dropped onto the foot
   kickLeg(rb, s, 0.81, 0.55, dt);   // (cocks the leg back, then swings it through as the ball drops onto the foot)
 }
 
@@ -17595,7 +17710,8 @@ function simTargetQ(id) {
 }
 const simAnyOK = () => PAUSE_MENU.sims.some(b => simAvailable(b.id));
 function simAvailable(id) {
-  if (game.over || patMode !== null || (twoP && !twoP.ai)) return false;   // (two players: no sim ahead)
+  if (game.over || (patMode !== null && patMode !== 'choose') || (twoP && !twoP.ai)) return false;   // (two players: no sim ahead; before a try (choose) is fine: it's auto-kicked)
+  if (state === 'kickoff' && kickoff && !kickoff.punt && kickoff.phase === 'ready' && !tut && (id === 'offdrive' || id === 'defdrive')) return id === 'defdrive' ? (!!kickoff.user || (!!twoP && !aiOff())) : !kickoff.user;   // (before a kickoff: the drive that follows it)
   const koWait = state === 'kickoff' && kickoff && !kickoff.punt && kickoff.phase === 'ready' && !tut && id !== 'defdrive' && id !== 'offdrive';   // (a kickoff nobody has kicked yet: sim it)
   if (state !== 'pre' && state !== 'done' && state !== 'sim' && !koWait) return false;   // (no simming in the middle of a play)
   // any time but mid-play. NEXT OFFENSE DRIVE = the one after this stretch of defense (sim box: while their drive is up);
@@ -17613,18 +17729,31 @@ function simAvailable(id) {
 // quarter endQ. Then a simmed game carries on at its usual pace; otherwise you're handed the ball back (or Red's
 // drive plays out in the box as usual). At the final whistle the box waits on FINISH GAME.
 const SIM_FAST = 0.05;
+const SIM_XP = 0.94;   // a try nobody played (simmed ahead from a touchdown): odds the extra point is good
 let simFast = null;   // { endQ, keep: was this already a simmed game }
 function simAhead(id) {
   if (!simAvailable(id)) return;
-  if (id === 'defdrive') {   // their next drive is simulated; the rest plays live
+  if (patNext || patMode === 'choose') {   // a touchdown's try that nobody has played: it's auto-kicked, then the kickoff follows
+    patNext = false; patMode = null;
+    if (Math.random() < SIM_XP) { game.blue += 1; if (STATS && STATS[7]) { STATS[7].xpa++; STATS[7].xp++; } } else if (STATS && STATS[7]) STATS[7].xpa++;
+    pendingSim = pendingSim || { how: 'kickoff' };
+    if (id === 'defdrive') {   // their drive after the kickoff, in the sim box, then you're back on offense
+      const k = kickoffPreface('BLUE', true); pendingSim = null; paused = false; rec = null; aim = null; fourthPending = false; simFast = null; simGame = false;
+      if (twoP) twoP.simD = true;
+      startSim(k.yd, k.lines, k.keep ? 'BLUE' : undefined);
+      if (sim) { sim.quick = true; sim.timer = 0; sim.readyAt = 0; }
+      return;
+    }
+  }
+  if (id === 'defdrive' && !(state === 'kickoff' && kickoff)) {   // their next drive is simulated; the rest plays live
     paused = false; aim = null; fourthPending = false;
     if (state === 'sim' && sim) { sim.quick = true; sim.timer = 0; sim.readyAt = 0; return; }   // (sim box, your drive up: it speeds up, then theirs plays out in the box)
-    twoP.simD = true;   // (the next time they get the ball, startSim simulates it)
+    twoP.simD = twoP.simDQuick = true;   // (the next time they get the ball, startSim simulates it, at the sim box's fast pace)
     return;
   }
   if (id === 'offdrive' && aiOff()) {   // on defense: the rest of their drive is simulated, then your offense takes over
     paused = false; aim = null; fourthPending = false; rec = null;
-    const yd = Math.round(los / YL); flipSides(); twoP.simD = true;
+    const yd = Math.round(los / YL); flipSides(); twoP.simD = twoP.simDQuick = true;
     return startSim(yd, [`${teamName('RED')} drive, simulated.`], 'RED');
   }
   if (id === 'offdrive' && twoP && state !== 'sim') {   // your drive is simulated, then theirs plays live
@@ -17635,6 +17764,18 @@ function simAhead(id) {
     const yd = Math.round(Math.max(1, Math.min(99, los / YL)));
     pendingSim = null; kickoffNext = false; kickoffPlay = false; patNext = false; patMode = null; game.kickPending = null;
     startSim(yd, [], 'BLUE'); sim.timer = 0; sim.quick = true;
+    return;
+  }
+  if (state === 'kickoff' && kickoff && (id === 'offdrive' || id === 'defdrive')) {   // before a kickoff: just the drive that follows it, in the sim box
+    const mine = !!kickoff.user;
+    if (mine) { flipSides(); if (twoP && twoP.koOnly) twoP = null; }
+    kickoff = null; kick = null;
+    const pf = kickoffPreface(mine ? 'BLUE' : 'RED', true);
+    paused = false; rec = null; aim = null; fourthPending = false;
+    pendingSim = null; kickoffNext = false; kickoffPlay = false; patNext = false; patMode = null; game.kickPending = null;
+    simFast = null; simGame = false;
+    if (twoP && !mine) { /* (their drive after your sim'd one plays live) */ } else if (twoP) twoP.simD = true;
+    startSim(pf.yd, pf.lines, pf.keep ? (mine ? 'BLUE' : 'RED') : (mine ? 'RED' : 'BLUE')); sim.timer = 0; sim.quick = true; sim.readyAt = 0;
     return;
   }
   if (state === 'kickoff' && kickoff) {   // before the first click: the kickoff is simulated, then the game sims on from the return
@@ -17656,7 +17797,8 @@ function simAhead(id) {
   if (state === 'sim' && sim) { sim.timer = 0; sim.readyAt = 0; return; }   // already in the box: just speed it up
   // otherwise start from where things stand: Red's drive if it's up, else Blue's ball from the current spot
   let team = 'BLUE', yd = Math.round(Math.max(1, Math.min(99, (state === 'pre' ? los : nextLos) / YL))), preface = [];
-  if (pendingSim) { team = 'RED'; yd = pendingSim.startYd; pendingSim = null; }
+  if (pendingSim && pendingSim.how === 'kickoff') { const k = kickoffPreface('BLUE', true); yd = k.yd; preface = k.lines; team = k.keep ? 'BLUE' : 'RED'; pendingSim = null; }   // (after a score: red takes the kickoff back)
+  else if (pendingSim) { team = 'RED'; yd = pendingSim.startYd; pendingSim = null; }
   else if (kickoffNext) { const k = kickoffPreface('RED', true); yd = k.yd; preface = k.lines; if (k.keep) team = 'RED'; }
   kickoffNext = false; kickoffPlay = false; patNext = false; patMode = null;
   if (game.pendingQuarter) {
@@ -17752,6 +17894,7 @@ function startSim(startYd, preface = [], team = 'RED') {
   // (the box waits SIM_DELAY s before it pops up over the field, unless it's fast-forwarding or a simmed game)
   sim = { ...r, startYd, lines, pre: preface.length, shown: [lines[0]], i: 1, timer: SIM_AUTO, readyAt: simFast || simGame ? 0 : performance.now() + SIM_DELAY * 1000 };
   state = 'sim';
+  if (twoP && twoP.simDQuick) { twoP.simDQuick = false; sim.quick = true; sim.timer = 0; sim.readyAt = 0; }   // (picked from the pause menu: same as the sim box's own button, no waiting)
   rec = null;
   aim = null;
   fourthPending = false;
@@ -18433,14 +18576,14 @@ function updateKickoff(dt) {
       const px = K.x, py = K.y;
       if (k.t < T0) { runUp = 0; ball.x = ps.los + 0.2 * YL; ball.y = MID; ball.z = 3 * S; }
       else if (k.t < T0 + PUNT.snapT) {
-        const u = (k.t - T0) / PUNT.snapT, hx = K.x - 12 * S;
+        const u = (k.t - T0) / PUNT.snapT, hx = K.x - figX(K, 12 * S);
         runUp = 0; ball.x = ps.los + 0.2 * YL + (hx - ps.los - 0.2 * YL) * u; ball.y = MID;
-        ball.z = 3 * S + 6 * S * u + Math.sin(Math.PI * u) * 6 * S; ball.rot += dt * 18;   // (lands in his hands at chest height)
+        ball.z = 3 * S + (figZ(K, 9 * S) - 3 * S) * u + Math.sin(Math.PI * u) * 6 * S; ball.rot += dt * 18;   // (lands in his hands at chest height)
       } else {
         runUp = Math.min(1, (k.t - T0 - PUNT.snapT) / PUNT.stepT);
         K.x = k.kickerX0 - PUNT.walk * YL * runUp; K.y = MID; K.face = -1;
         setVelocity(K, px, py, dt); K.moving = runUp < 1; K.run += dt * 12;   // (about 4 steps)
-        ball.x = K.x - 12 * S * (1 - 0.3 * runUp); ball.y = K.y; ball.z = (9 - 6 * runUp) * S; ball.rot = 0.5;   // held out in front of him, then dropped onto the foot
+        ball.x = K.x - figX(K, 12 * S * (1 - 0.3 * runUp)); ball.y = K.y; ball.z = figZ(K, (9 - 6 * runUp) * S); ball.rot = 0.5;   // held out in front of him, then dropped onto the foot
         kickLeg(K, runUp, 0.81, 0.55, dt);
       }
       if (k.t >= T0) {
@@ -18452,7 +18595,7 @@ function updateKickoff(dt) {
           let b = null, bd = Infinity;
           for (const c of blockers) { const d = Math.abs(c.y - q.y); if (d < bd) { bd = d; b = c; } }
           const qx = q.x, qy = q.y, tx = b ? b.x - 0.9 * YD : q.x, ty = b ? b.y : q.y;
-          if (q.rushBeat == null) { q.rushBeat = T0 + 0.35 + Math.random() * 0.9; q.rushWin = Math.random() < (Math.abs(q.y - MID) > 3 * YD ? 0.6 : 0.45); }   // (when he beats his man with a swim / rip and breaks free at the punter, if he does at all)
+          if (q.rushBeat == null) { q.rushBeat = T0 + 0.35 + Math.random() * 0.9; q.rushWin = Math.random() < (Math.abs(q.y - MID) > 3 * YD ? 0.6 : 0.45) + ST_RUSH_WIN.add; }   // (when he beats his man with a swim / rip and breaks free at the punter, if he does at all)
           q.face = 1;   // (the return team rushes up the field at the punt team: the two lines face each other)
           if (b && !b.action) {   // the punt team's blocker works like a lineman: locked on while he holds, then chasing the man who got by
             if (q.rushFree) { if (b.puntX0 == null || b.puntTag !== k) { b.puntX0 = b.x; b.puntTag = k; } moveToward(b, q.x + 0.9 * YD, q.y, 7 * YD * dt); if (b.x > b.puntX0) b.x = b.puntX0; b.moving = true; b.face = Math.sign(q.x - b.x) || -1; b.engaged = false;
@@ -18463,6 +18606,7 @@ function updateKickoff(dt) {
               if (b.puntX0 == null || b.puntTag !== k) { b.puntX0 = b.x; b.puntTag = k; }
               const sb = Math.min(1, Math.max(0, (k.t - T0) / (PUNT.snapT + PUNT.stepT))), btx = b.puntX0 - PUNT.setBack * YL * (Math.abs(b.y - MID) > 3 * YD ? 1 : 0.5) * sb;
               if (b.x > btx) { b.x = Math.max(btx, b.x - 9 * YD * dt); b.moving = true; b.run = (b.run || 0) + dt * 12; }
+              if (b.x > b.puntX0) b.x = b.puntX0;   // (protection only ever gives ground: no one steps up past where he set)
               if (q.x > b.x + 1.1 * YD) q.x = Math.max(b.x + 0.9 * YD, q.x - 11 * YD * dt);
             }
           }
@@ -18767,6 +18911,8 @@ function resumeGame() {
   nextLos = S.pre.los; nextDown = S.pre.down; nextLtg = S.pre.ltg; patMode = S.pre.patMode;
   STATS = S.pre.stats;
   results = null;   // (reset only clears the menu screen itself when game.over; the restored game isn't over)
+  pgPending = false;   // (a resumed game never replays the pregame show)
+  pendingSim = null; patNext = false; kickoffNext = false; kickoffPlay = false; patMode = S.pre.patMode;   // (no leftover "score just happened" flags from before you left)
   reset();
   applyPlayCfg(S.pre.play);
 }
@@ -18837,7 +18983,7 @@ const KEYBINDS = [
   ['Q / AUDIBLE button', 'Audible: new route combos (2-4 per play, by QB awareness)'],
   ['Click a receiver', 'Before the snap: hot route (cycles his route; 1-3 men a play, by QB awareness)'],
   ['Right-click / V', 'Toggle lob (white) / bullet (orange) - any time'],
-  ['Space', 'Snap / next play (after the 5-second runoff) / pause the replay'],
+  ['Space', 'Next play (after the 5-second runoff) / pause the replay (no longer snaps)'],
   ['T', 'Timeout once the play is over (stops the runoff)'],
   ['Esc', 'Pause menu (resume, reset, sim ahead)'],
   ['Enter / Space, Esc', 'Halftime show: next segment, skip the whole show (SETTINGS > HALFTIME SHOW turns segments on / off)'],
@@ -19152,12 +19298,12 @@ function draw() {
   if (!ballDrawn) drawBall();
   if (COLLIDE.show) drawHitboxes();
   drawImpacts();
-  if ((state === 'pre' || (rec && rec.replaying)) && !tossing() && !SETTINGS.hideNames) drawNameTags();   // (Y hides / shows them in a replay too)
+  if ((state === 'pre' || (rec && rec.replaying)) && !tossing() && !SETTINGS.hideNames && !(hl && hl.mode === 'half')) drawNameTags();   // (Y hides / shows them in a replay too)
   if (!tossing()) drawStarMarks();
   drawPopups();
   ctx.restore();
   wxDraw();
-  if (rec && rec.replaying && !rec.intro && !rec.rewind) {   // (the badge waits for the rewind to finish): a torn red paper scrap, and SAVE beside it
+  if (rec && rec.replaying && !rec.intro && !rec.rewind && !(hl && hl.mode === 'half')) {   // (the badge waits for the rewind to finish; none on the halftime reel): a torn red paper scrap, and SAVE beside it
     ctx.save();
     const b = replayBadge();
     menuBtn(b, rec.hl ? (rec.paused ? '❚❚ HIGHLIGHT - PAUSED' : '► HIGHLIGHT') : rec.paused ? '❚❚ REPLAY PAUSED  (space)' : rec.slow ? '► REPLAY  SLOW-MO' : '► REPLAY', IN_GAME_PAPER.red, 17, null, false);
@@ -19173,7 +19319,7 @@ function draw() {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
   drawScoreboard();
-  if (rec && rec.replaying) {   // replay controls, just under the scoreboard
+  if (rec && rec.replaying && !(hl && hl.mode === 'half')) {   // replay controls, just under the scoreboard (not on the halftime reel)
     const tip = rec.hl ? 'SPACE pause  |  A/D scrub  |  arrows pan  |  hold click slow-mo  |  wheel zoom  |  right-drag pan' : 'SPACE pause  |  A/D scrub  |  arrows pan  |  hold click slow-mo  |  click skip  |  wheel zoom  |  right-drag pan';
     ctx.save();
     ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -19849,7 +19995,7 @@ function awardsWeek(wk, myG) {
   const n = [ent.off, ent.def].filter(w => w && w.mine).length;
   if (n) { LEAGUE.coins += AWARD.pay * n; payToFly += AWARD.pay * n; autosaveSoon(); }
 }
-const potwNow = p => { const A = LEAGUE.awards, e = A && A[A.length - 1]; return !!e && ((e.off && e.off.name === p.name) || (e.def && e.def.name === p.name)); };   // won Player of the Week this week: the computer never drops him
+const potwNow = p => { const A = LEAGUE.awards, e = A && A[A.length - 1]; return !!e && e.yr === LEAGUE.year && ((e.off && e.off.name === p.name) || (e.def && e.def.name === p.name)); };   // won Player of the Week this week: the computer never drops him
 function awardCount(name) { let o = 0, d = 0; for (const e of LEAGUE.awards || []) { if (e.off && e.off.name === name) o++; if (e.def && e.def.name === name) d++; } return { o, d }; }
 const awdText = (t, w) => `${t}: ${w.name} ${w.tag} (${String(w.team).toUpperCase()}) ${w.line}`;
 function awardsStrip(x, y) {   // the week screen: this week's two winners (gold + credits when yours)
@@ -19977,7 +20123,7 @@ const AWH_BOX = { x: 800, y: 90, w: 460, h: 286 };
 const AWH = { scroll: 0, drag: null, btns: {}, idx: 0, hit: null, arrow: 38 };   // idx = which winner (newest first: a week's OFF, DEF, then older weeks); hit = clickable rects from the last draw
 const AWH_ENTRY = () => 1;
 function awhMax() { return 0; }
-function awhList() { const out = [], e = (LEAGUE.awards || []).slice(-1)[0]; if (e) { out.push({ e, t: 'OFFENSE', w: e.off }); out.push({ e, t: 'DEFENSE', w: e.def }); } return out.filter(x => x.w); }   // (only the latest week's two winners)
+function awhList() { const out = [], e = (LEAGUE.awards || []).slice(-1)[0]; if (e && e.yr === LEAGUE.year) { /* a new season starts with no winners showing; last year's stay in the history */ out.push({ e, t: 'OFFENSE', w: e.off }); out.push({ e, t: 'DEFENSE', w: e.def }); } return out.filter(x => x.w); }   // (only the latest week's two winners)
 function drawHomeAwards() {
   const A = AWH_BOX, list = awhList();
   thinPanel(A.x, A.y, A.w, A.h);
@@ -20309,6 +20455,7 @@ const wrapLines = (text, n) => {
 const offPopShow = p => { if (offPop) popQ.push(p); else offPop = p; };
 const offPopClose = () => { offPop = popQ.shift() || null; };
 function offPopClick(pt) {
+  if (offPop.custom) { offPop.custom.click(pt); return; }   // (a category popup: its own tabs, arrows, cards)
   if (offPop.hide && offPop.hideBtn && inBtn(pt, offPop.hideBtn)) { SETTINGS.hideGoalsTip = true; saveSettings(); offPopClose(); return; }   // (HIDE THIS TIP: the new-goals popup stays away from now on)
   const b = (offPop.btns || []).find(x => inBtn(pt, x));
   if (!b) {   // (a suggestion's player card opens his page)
@@ -20321,7 +20468,9 @@ function offPopClick(pt) {
   offPopClose(); if (b.on) b.on();
 }
 function drawOffPop() {
-  const P = offPop; if (!P.btns) P.btns = [{ label: 'OK' }];
+  const P = offPop;
+  if (P.custom) { P.custom.draw(); return; }
+  if (!P.btns) P.btns = [{ label: 'OK' }];
   if (P.log) { drawChangelog(P); return; }   // (the changelog: its own scrolling card)
   ctx.save();
   ctx.fillStyle = 'rgba(30,25,10,0.5)'; ctx.fillRect(0, 0, W, H);
@@ -20888,20 +21037,39 @@ function moveMood(p, dir) {
 function buyCap() { if (LEAGUE.coins >= CAP.cost && (LEAGUE.cap || CAP.start) < CAP.max) { const was = LEAGUE.cap || CAP.start; LEAGUE.coins -= CAP.cost; LEAGUE.cap = was + CAP.step; upgradeSfx(); capBought(was, LEAGUE.cap); autosaveSoon(); } }
 const OFF_ROSTER_BTN = { x: 700, y: 640, w: 310, h: 58 };
 // (on the re-sign screen the cap leaves out the contracts still to decide: they count again at their new price once re-signed)
-const offCapBar = () => { drawCapBar(season.team, 150, 636, 520, results.screen === 'resign' && OFF ? OFF.expiring : []); menuBtn(OFF_ROSTER_BTN, 'ROSTER', RES.bright, 22); };
+const offCapBar = () => { drawCapBar(season.team, 150, 636, 520, results.screen === 'resign' && OFF ? OFF.expiring : [], false, results.screen === 'resign' && OFF && OFF.rs.plus ? OFF.rs.plus : []); menuBtn(OFF_ROSTER_BTN, 'ROSTER', RES.bright, 22); };
 let rosterReturn = null;   // the offseason screen the roster was opened from (BACK goes there)
 function offOpenRoster() { rosterReturn = results.screen; rosterView.team = null; rosterView.sel = null; rosterView.page = 0; if (rosterView.side === 'upg') rosterView.side = 'off'; results.screen = 'roster'; }
 
 // --- your expiring contracts: RE-SIGN at his ask or LET GO (a rookie takes the spot, he goes to free agency)
 let RS_BTNS = null;   // (made on first use: ROSTER_CARDS is defined further down)
 const rsBtns = () => RS_BTNS || (RS_BTNS = ROSTER_CARDS.map(b => ({ yes: { x: b.x + 10, y: b.y + b.h - 46, w: 120, h: 36 }, no: { x: b.x + b.w - 130, y: b.y + b.h - 46, w: 120, h: 36 } })));
+// ticked cards: RE-SIGN / LET GO act on all of them at once (OFF.rs.chk = the players); their asks, and a hovered RE-SIGN's, preview on the cap bar (OFF.rs.plus)
+const RS_ALL = { x: 250, y: 10, w: 160, h: 50 }, RS_MASS_YES = { x: 940, y: 10, w: 160, h: 50 }, RS_MASS_NO = { x: 1110, y: 10, w: 160, h: 50 };
+const rsChkBtn = i => ({ x: ROSTER_CARDS[i].x + 10, y: ROSTER_CARDS[i].y + 10, w: 34, h: 34 });
+const rsTicked = () => (OFF.rs.chk = (OFF.rs.chk || []).filter(p => OFF.expiring.includes(p)));
+function rsSign(me, p) {
+  p.salary = p.ask.salary; p.years = p.ask.years; p.signed = true; delete p.ask;
+  p.signStars = p.stars; p.perfXP = 0; p.perfG = 0;   // (the next ask is measured from this deal, as for a free-agent signing)
+  OFF.expiring.splice(OFF.expiring.indexOf(p), 1); moveMood(p, 1);
+}
+function rsLet(me, p) { moveMood(p, -1); delete p.ask; faRelease(p, me); vacate(me, p); OFF.expiring.splice(OFF.expiring.indexOf(p), 1); }
 function drawResign() {
   if (!OFF || !season) { results.screen = 'home'; return; }
   const me = season.team, list = OFF.expiring, pages = Math.ceil(list.length / OFFSEASON.perPage) || 1;
   paperBg();
   if (OFF.rs.sel && list.includes(OFF.rs.sel)) { drawPlayerPage(me, OFF.rs.sel, null); return; }   // (a card opened)
   OFF.rs.sel = null;
+  const ticked = rsTicked();
+  OFF.rs.plus = ticked.filter(p => p.ask);
+  list.slice(OFF.rs.page * OFFSEASON.perPage, (OFF.rs.page + 1) * OFFSEASON.perPage).forEach((p, i) => { if (p.ask && hoverPt && !offPop && inBtn(hoverPt, rsBtns()[i].yes) && resignRoom(me, p) >= 0) OFF.rs.plus = [p]; });   // (hovering a RE-SIGN shows that deal on the cap until the mouse leaves)
+  if (ticked.length && hoverPt && !offPop && inBtn(hoverPt, RS_MASS_NO)) OFF.rs.plus = [];
   coinBox(20, 16, LEAGUE.coins, RES.bright);
+  if (list.length) {
+    menuBtn(RS_ALL, ticked.length === list.length ? 'CLEAR ALL' : 'SELECT ALL', RES.bright, 17);
+    menuBtn(RS_MASS_YES, `RE-SIGN (${ticked.length})`, ticked.length ? IN_GAME_PAPER.green : CARD_GRAY, 17, null, !!ticked.length);
+    menuBtn(RS_MASS_NO, `LET GO (${ticked.length})`, ticked.length ? RES.bright : CARD_GRAY, 17, null, !!ticked.length);
+  }
   ctx.fillStyle = RES.line; ctx.font = 'bold 40px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('CONTRACTS EXPIRING', W / 2, 36);
   ctx.font = 'bold 16px monospace'; ctx.fillStyle = RES.dim;
@@ -20913,6 +21081,7 @@ function drawResign() {
       ctx.fillStyle = mixHex(main, 0.72, 255); ctx.fillRect(px, py, pw, ph);
       ctx.save(); ctx.beginPath(); ctx.rect(px, py, pw, ph); ctx.clip(); drawPortrait(p, b.x + b.w / 2, py + ph, 3.1, me); ctx.restore();
       ctx.strokeStyle = RES.line; ctx.lineWidth = 2.5; ctx.strokeRect(px, py, pw, ph);
+      ctx.fillStyle = '#fffdf4'; ctx.fillRect(px + 6, py + 6, 28, 28); checkBox(px + 8, py + 20, 26, rsTicked().includes(p), RES.line);   // (tick him for RE-SIGN / LET GO on several at once)
       ctx.font = 'bold 18px monospace'; const tw = ctx.measureText(p.group || p.tag).width + 12;   // (the corner shows the position group; the page shows the exact position)
       ctx.fillStyle = '#fffdf4'; ctx.fillRect(px + pw - tw - 5, py + 5, tw, 24); ctx.strokeRect(px + pw - tw - 5, py + 5, tw, 24);
       ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(p.group || p.tag, px + pw - tw / 2 - 5, py + 17);
@@ -20942,21 +21111,25 @@ function resignClick(pt) {
   }
   if (inBtn(pt, OFF_ROSTER_BTN)) { offOpenRoster(); return; }
   if (!list.length) { if (inBtn(pt, MENU_NEXT)) offToFA(); return; }
+  const tk = rsTicked();
+  if (inBtn(pt, RS_ALL)) { OFF.rs.chk = tk.length === list.length ? [] : list.slice(); return; }
+  if (tk.length && inBtn(pt, RS_MASS_YES)) {   // everyone ticked is re-signed at his ask, in order, as long as the cap has room for him
+    let skipped = 0;
+    for (const p of tk) { if (p.ask && resignRoom(me, p) >= 0) rsSign(me, p); else skipped++; }
+    OFF.rs.chk = []; OFF.rs.plus = [];
+    if (skipped) offPopShow({ title: 'NOT ENOUGH CAP', lines: wrapLines(`${skipped} of them could not be re-signed: there was no room under the salary cap for their asking price.`, 54) });
+    if (OFF.rs.page * OFFSEASON.perPage >= list.length && OFF.rs.page > 0) OFF.rs.page--;
+    return;
+  }
+  if (tk.length && inBtn(pt, RS_MASS_NO)) { for (const p of tk) rsLet(me, p); OFF.rs.chk = []; OFF.rs.plus = []; if (OFF.rs.page * OFFSEASON.perPage >= list.length && OFF.rs.page > 0) OFF.rs.page--; return; }
   const a = ROSTER_ARROWS.findIndex(b => inBtn(pt, b));
   if (a >= 0 && pages > 1) { OFF.rs.page = (OFF.rs.page + (a ? 1 : -1) + pages) % pages; return; }
   const base = OFF.rs.page * OFFSEASON.perPage;
   for (let i = 0; i < OFFSEASON.perPage; i++) {
     const p = list[base + i]; if (!p) break;
-    if (inBtn(pt, rsBtns()[i].yes) && resignRoom(me, p) >= 0) {
-      p.salary = p.ask.salary; p.years = p.ask.years; p.signed = true; delete p.ask;
-      p.signStars = p.stars; p.perfXP = 0; p.perfG = 0;   // (the next ask is measured from this deal, as for a free-agent signing)
-      list.splice(base + i, 1); moveMood(p, 1); break;
-    }
-    if (inBtn(pt, rsBtns()[i].no)) {
-      moveMood(p, -1);
-      delete p.ask; faRelease(p, me); vacate(me, p);
-      list.splice(base + i, 1); break;
-    }
+    if (inBtn(pt, rsChkBtn(i))) { const at = tk.indexOf(p); if (at >= 0) tk.splice(at, 1); else tk.push(p); return; }   // (tick / untick)
+    if (inBtn(pt, rsBtns()[i].yes) && resignRoom(me, p) >= 0) { rsSign(me, p); break; }
+    if (inBtn(pt, rsBtns()[i].no)) { rsLet(me, p); break; }
     if (inBtn(pt, ROSTER_CARDS[i])) { OFF.rs.sel = p; return; }   // (the card itself: his page)
   }
   if (OFF.rs.page * OFFSEASON.perPage >= list.length && OFF.rs.page > 0) OFF.rs.page--;
@@ -21643,7 +21816,12 @@ function offFinishFA() {
   const swaps = LEAGUE.tradeNews.splice(0).slice(0, 3);
   if (star.length || swaps.length) { lines.push('AROUND THE LEAGUE:'); star.forEach(t => lines.push(`  ${t}.`)); swaps.forEach(t => lines.push(`  ${t}`)); }
   offTip('newyear');
-  offPopShow({ title: `NEW SEASON  ${nflYear()}`, lines: lines.slice(0, 11), btns: [{ label: 'OK', on: () => { results.screen = 'offers'; offTip('offers'); } }] });
+  const lg = OFF.retiredLg.filter(r => r.p.stars >= 4).slice(0, 6), cats = [
+    { name: 'YOUR RETIREMENTS', lines: OFF.retiredYou.length ? [] : ['Nobody retired.'], cards: OFF.retiredYou.map(r => ({ p: r.p, team: me, sub: `AGE ${r.p.age}  RETIRED` })) },
+    { name: 'COORDINATORS', lines: staff.length ? staff.flatMap(t => wrapLines(t, 90)) : ['No changes on your staff.'], cards: [] },
+    { name: 'AROUND THE LEAGUE', lines: lg.length ? ['Stars who retired around the league.'] : ['No stars retired.'], cards: lg.map(r => ({ p: r.p, team: r.k, sub: `${r.k}  RETIRED` })) },
+    { name: 'LEAGUE TRADES', lines: swaps.length ? swaps.flatMap(t => wrapLines(t, 90)) : ['No big trades.'], cards: [] }];
+  catPopShow({ title: `NEW SEASON  ${nflYear()}`, cats, noOpen: true, done: () => { results.screen = 'offers'; offTip('offers'); } });
 }
 function offFinish(team) {
   if (team !== season.team) {
@@ -22832,18 +23010,19 @@ function gsKeyStats(p, line) {
   return statCols(p.group, 'basic').filter(c => !GS_SKIP.has(c[0])).map(([lab, f]) => [lab, statStr(typeof f === 'function' ? f(line) : line[f])]).filter(([, v]) => !/^[\s0\/.%-]*$/.test(v));
 }
 function gsBack(p, bb, team, line) {   // the back of a card: his name, then only the stats he actually recorded
-  const { main } = sideKit(team, p), rows = gsKeyStats(p, line).slice(0, 9);
+  const { main, trim } = sideKit(team, p), rows = gsKeyStats(p, line).slice(0, 9);
+  const bgL = 0.5 * lum(main) + 0.5, ink = [main, trim].filter(c => /^#[0-9a-f]{6}$/i.test(c)).sort((a, c) => Math.abs(lum(c) - bgL) - Math.abs(lum(a) - bgL))[0], INK = ink && Math.abs(lum(ink) - bgL) > 0.3 ? ink : RES.line;   // (the stats are inked in the team's main or secondary colour, whichever stands out from the card's background)
   menuBtn(bb, '', mixHex(main, 0.5, 255), 20, b => {
     let fs = 22; ctx.font = `bold ${fs}px monospace`;
     while (fs > 12 && ctx.measureText(p.name).width > b.w - 24) ctx.font = `bold ${--fs}px monospace`;
-    ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(p.name, b.x + b.w / 2, b.y + 28);
-    ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(b.x + 20, b.y + 46); ctx.lineTo(b.x + b.w - 20, b.y + 46); ctx.stroke();
+    ctx.fillStyle = INK; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(p.name, b.x + b.w / 2, b.y + 28);
+    ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(b.x + 20, b.y + 46); ctx.lineTo(b.x + b.w - 20, b.y + 46); ctx.stroke();
     if (!rows.length) { ctx.fillStyle = RES.dim; ctx.font = 'bold 20px monospace'; ctx.fillText('NO STATS', b.x + b.w / 2, b.y + b.h / 2 + 10); return; }
     const step = rows.length > 7 ? 21 : 26;
     rows.forEach(([lab, v], i) => {
       const y = b.y + 66 + i * step;
-      ctx.font = 'bold 16px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'left'; ctx.fillText(lab, b.x + 20, y, b.w - 100);
-      ctx.fillStyle = RES.line; ctx.textAlign = 'right'; ctx.fillText(v, b.x + b.w - 20, y, 90);
+      ctx.font = 'bold 16px monospace'; ctx.fillStyle = INK; ctx.globalAlpha = 0.8; ctx.textAlign = 'left'; ctx.fillText(lab, b.x + 20, y, b.w - 100); ctx.globalAlpha = 1;
+      ctx.fillStyle = INK; ctx.textAlign = 'right'; ctx.fillText(v, b.x + b.w - 20, y, 90);
     });
   });
 }
@@ -23285,17 +23464,20 @@ function drawCapFx() {   // over the front office screen: coins into the button,
     ctx.strokeRect(b.x - 2, b.y - 2, b.w + 4, b.h + 4); ctx.fillStyle = `rgba(255,230,120,${0.25 * g})`; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.restore();
   }
 }
-function drawCapBar(team, x, y, w, skip = [], low = false) {   // low: the space / over note goes on the first line under the bar (a narrow bar)   // skip = players whose deals don't count (undecided expiring contracts)
+function drawCapBar(team, x, y, w, skip = [], low = false, plus = []) {   // low: the space / over note goes on the first line under the bar (a narrow bar)   // skip = players whose deals don't count (undecided expiring contracts)   // plus = expiring players whose new ask is previewed on the bar (a hovered RE-SIGN, the ticked cards)
   const skipPay = side => skip.filter(p => side == null || OFF_GROUPS.includes(p.group) === (side === 'off')).reduce((t, p) => t + payOf(p), 0);
-  const used = payroll(team) - skipPay(), cap = capShownOf(team), over = used > cap;
+  const plusPay = side => plus.filter(p => side == null || OFF_GROUPS.includes(p.group) === (side === 'off')).reduce((t, p) => t + (p.ask ? p.ask.salary : 0), 0);
+  const used = payroll(team) - skipPay() + plusPay(), cap = capShownOf(team), over = used > cap;
   ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.font = 'bold 20px monospace'; ctx.fillStyle = RES.line;
   ctx.fillText(`SALARY CAP: ${fmtM(used)} / ${fmtM(cap)}`, x, y);
+  if (plus.length) { const pulse = 0.55 + 0.45 * Math.sin(performance.now() / 160); ctx.fillStyle = `rgba(30,140,60,${pulse})`; ctx.fillText(`+${fmtM(plusPay())}`, x + ctx.measureText(`SALARY CAP: ${fmtM(used)} / ${fmtM(cap)}`).width + 12, y); }   // (the amount flashes beside the total until the mouse leaves it)
   ctx.textAlign = 'right'; ctx.font = 'bold 16px monospace'; ctx.fillStyle = over ? '#c81b1b' : RES.dim;
   ctx.fillText(over ? `${fmtM(used - cap)} OVER` : `${fmtM(cap - used)} SPACE`, x + w, low ? y + 48 : y);   // (above the bar, level with the title)
   ctx.fillStyle = '#fffdf4'; ctx.fillRect(x, y + 14, w, 18);
-  const off = payroll(team, 'off') - skipPay('off'), def = used - off, sc = w / Math.max(CAP.max, used);
+  const off = payroll(team, 'off') - skipPay('off') + plusPay('off'), def = used - off, sc = w / Math.max(CAP.max, used);
   ctx.fillStyle = 'rgba(120,150,120,0.25)'; ctx.fillRect(x, y + 14, cap * sc, 18);   // (the cap itself: it grows when more is bought)
   penHatch(x, y + 14, off * sc, 18, '#2a62b0', 11); penHatch(x + off * sc, y + 14, def * sc, 18, '#b82a30', 12);
+  if (plus.length) { const pw = plusPay() * sc, pulse = 0.25 + 0.3 * (0.5 + 0.5 * Math.sin(performance.now() / 160)); ctx.fillStyle = `rgba(255,235,90,${pulse})`; ctx.fillRect(x + (off + def) * sc - pw, y + 14, pw, 18); }   // (the previewed part pulses)
   penOutline(x, y + 14, w, 18, 13, RES.line, 2.5); ctx.strokeStyle = RES.line; ctx.lineWidth = 2.5;
   ctx.beginPath(); ctx.moveTo(x + cap * sc, y + 10); ctx.lineTo(x + cap * sc, y + 36); ctx.stroke();
   ctx.textAlign = 'left'; ctx.font = 'bold 14px monospace'; ctx.fillStyle = RES.dim;
@@ -24757,6 +24939,107 @@ function sugPage(i, L) {
   return { title: `SUGGESTION  ${k + 1}/${n}`, player: { p, k: s.k, open: () => { TR.sel = { p, k: s.k }; } }, lines: [`${s.k}${p.tag}  ${p.short || p.name}  ${p.stars} STARS  ${p.age}Y`, `Your weakest ${p.group}: ${s.nd.weak ? s.nd.weak + ' stars' : 'empty spot'} (+${+(p.stars - s.nd.weak).toFixed(1)})`, `Pay: ${t} for ${p.years}Y   ${s.cap ? 'FITS UNDER YOUR CAP' : 'SEND SALARY BACK (CAP)'}`, `They value him at about ${Math.round(s.cost)} TV`],
     btns: [nav[0], { label: 'PROPOSE TRADE', green: true, on: () => tradeStart(s.k, p) }, nav[2]] };
 }
+// --- category popups: a paper card with optional tabs (OFFENSE / DEFENSE), ◂ ▸ arrows between categories and a scrollable body of player cards (and text lines).
+// Used by the home screen's "what's missing" ? and the new-season news. catPopShow({ title, tabs: [{ label, cats }] | cats, tab, noOpen, done }); a category is
+// { name, lines: [text], cards: [{ p, team, sub } | { empty: 'WR' } | { staff, team }] }. A click on a player card opens his page (unless noOpen).
+const CPOP = { x: 70, y: 36, w: 1140, h: 648, top: 176, cols: 3, cw: 270, ch: 248, gap: 24, row: 272, line: 26 };
+const cpTabBtn = i => ({ x: CPOP.x + 40 + i * 190, y: CPOP.y + 62, w: 176, h: 40 });
+const cpArrow = d => ({ x: d ? CPOP.x + CPOP.w - 120 : CPOP.x + 40, y: CPOP.y + 112, w: 80, h: 44 });
+const cpOK = () => ({ x: CPOP.x + CPOP.w / 2 - 90, y: CPOP.y + CPOP.h - 66, w: 180, h: 52 });
+const cpView = () => ({ x: CPOP.x + 20, y: CPOP.y + CPOP.top, w: CPOP.w - 40, h: CPOP.h - CPOP.top - 78 });
+const cpScrollBtn = d => ({ x: CPOP.x + CPOP.w - 66, y: d ? CPOP.y + CPOP.h - 140 : CPOP.y + CPOP.top + 4, w: 46, h: 46 });
+function catPopShow(o) { offPopShow({ title: o.title, custom: catPopCtl(o) }); }
+function catPopCtl(o) {
+  const S = { tab: o.tab || 0, cat: 0, scroll: 0 };
+  const cats = () => (o.tabs ? o.tabs[S.tab].cats : o.cats);
+  const layout = () => {
+    const c = cats()[S.cat], V = cpView(), items = [], list = c.cards || []; let y = 0;
+    for (const t of c.lines || []) { items.push({ kind: 'line', y, t }); y += CPOP.line; }
+    if ((c.lines || []).length) y += 10;
+    let i = 0;
+    while (i < list.length) {
+      if (list[i].staff) { items.push({ kind: 'card', d: list[i], x: (V.w - 360) / 2, y, w: 360, h: 480 }); y += 500; i++; continue; }
+      let n = 0; while (i + n < list.length && !list[i + n].staff && n < CPOP.cols) n++;
+      const x0 = (V.w - (n * CPOP.cw + (n - 1) * CPOP.gap)) / 2;
+      for (let j = 0; j < n; j++) items.push({ kind: 'card', d: list[i + j], x: x0 + j * (CPOP.cw + CPOP.gap), y, w: CPOP.cw, h: CPOP.ch });
+      y += CPOP.row; i += n;
+    }
+    return { items, h: y, V, max: Math.max(0, y - V.h) };
+  };
+  return {
+    draw() {
+      const L = layout(), V = L.V;
+      S.scroll = Math.max(0, Math.min(L.max, S.scroll));
+      ctx.save(); ctx.fillStyle = 'rgba(30,25,10,0.55)'; ctx.fillRect(0, 0, W, H); ctx.restore();
+      resPanel(CPOP.x, CPOP.y, CPOP.w, CPOP.h, [[o.title, null]], RES.bright);
+      popBtnDraw = true;
+      if (o.tabs) o.tabs.forEach((t, i) => menuBtn(cpTabBtn(i), t.label, S.tab === i ? SEL : RES.bright, 20));
+      const cs = cats(), c = cs[S.cat];
+      if (cs.length > 1) { menuBtn(cpArrow(0), '◂', RES.bright, 28); menuBtn(cpArrow(1), '▸', RES.bright, 28); }
+      popBtnDraw = false;
+      ctx.fillStyle = RES.line; ctx.font = 'bold 26px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(`${c.name}   ${S.cat + 1}/${cs.length}`, CPOP.x + CPOP.w / 2, CPOP.y + 134, 760);
+      ctx.save(); ctx.beginPath(); ctx.rect(V.x, V.y, V.w, V.h); ctx.clip();
+      popBtnDraw = true;
+      for (const it of L.items) {
+        const y = V.y + it.y - S.scroll;
+        if (it.kind === 'line') { if (y > V.y - 30 && y < V.y + V.h) { ctx.fillStyle = RES.line; ctx.font = 'bold 17px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(it.t, V.x + 24, y + CPOP.line / 2, V.w - 100); } continue; }
+        if (y + it.h < V.y || y > V.y + V.h) continue;
+        const bb = { x: V.x + it.x, y, w: it.w, h: it.h }, d = it.d;
+        if (d.staff) menuBtn(bb, '', RES.bright, 20, b => drawStaffCard(b, d.staff, d.team));
+        else if (d.empty) menuBtn(bb, '', CARD_GRAY, 20, b => {
+          ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.font = 'bold 54px monospace'; ctx.fillText(d.empty, b.x + b.w / 2, b.y + 96);
+          ctx.font = 'bold 22px monospace'; ctx.fillText('EMPTY SPOT', b.x + b.w / 2, b.y + 160);
+          ctx.font = '14px monospace'; ctx.fillText('an unnamed backup plays here', b.x + b.w / 2, b.y + 196, b.w - 20);
+        });
+        else if (d.p) {
+          rosterCard(d.p, bb, d.team, null, null);
+          if (d.sub) { ctx.font = 'bold 14px monospace'; ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(d.sub, bb.x + bb.w / 2, bb.y + 241, bb.w - 16); }
+        }
+      }
+      popBtnDraw = false;
+      ctx.restore();
+      if (L.max > 0) { popBtnDraw = true; menuBtn(cpScrollBtn(0), '▲', RES.bright, 20, undefined, S.scroll > 0); menuBtn(cpScrollBtn(1), '▼', RES.bright, 20, undefined, S.scroll < L.max); popBtnDraw = false; }
+      popBtnDraw = true; menuBtn(cpOK(), 'OK', IN_GAME_PAPER.green, 24); popBtnDraw = false;
+    },
+    click(pt) {
+      if (inBtn(pt, cpOK())) { offPopClose(); if (o.done) o.done(); return; }
+      if (o.tabs) for (let i = 0; i < o.tabs.length; i++) if (inBtn(pt, cpTabBtn(i))) { S.tab = i; S.cat = 0; S.scroll = 0; return; }
+      const n = cats().length;
+      if (n > 1) for (const d of [0, 1]) if (inBtn(pt, cpArrow(d))) { S.cat = (S.cat + (d ? 1 : -1) + n) % n; S.scroll = 0; return; }
+      const L = layout();
+      for (const d of [0, 1]) if (L.max > 0 && inBtn(pt, cpScrollBtn(d))) { S.scroll += (d ? 1 : -1) * CPOP.row; return; }
+      const V = L.V;
+      if (!inBtn(pt, V) || o.noOpen) return;
+      const it = L.items.find(i => i.kind === 'card' && i.d.p && inBtn(pt, { x: V.x + i.x, y: V.y + i.y - S.scroll, w: i.w, h: i.h }));
+      if (it && season && !exhibition) { offPopClose(); tradeOpen(results.screen); TR.sel = { p: it.d.p, k: it.d.team }; TR.awSel = TR.sel; }
+    },
+    wheel(dy) { S.scroll += dy; },
+    arrows(d) { const n = cats().length; if (n > 1) { S.cat = (S.cat + d + n) % n; S.scroll = 0; } },
+  };
+}
+// the home screen's ? on OFFENSE / DEFENSE: what's holding each side's rating back, as player cards
+function needsCats(side) {
+  const me = season.team, off = side === 'off', R = (ROSTER[me] || []).filter(p => !isOut(p) && !p.benchNext);
+  const groups = SIDE_SLOTS[side].filter(g => g !== 'P'), empty = [], starters = [];
+  for (const g of groups) {
+    const ps = R.filter(p => p.group === g).sort((a, b) => b.stars - a.stars), n = SIDE_W[g].length;
+    for (let i = ps.length; i < n; i++) empty.push({ empty: g });
+    starters.push(...ps.slice(0, n));
+  }
+  const weak = starters.filter(p => p.group !== 'K').sort((a, b) => a.stars - b.stars).slice(0, 6), co = (STAFF[me] || {})[off ? 'oc' : 'dc'], xf = starters.filter(p => p.tier === 'X');
+  const note = !formulaOn() ? wrapLines('This season the ratings are the league\'s preseason ranks. From your second season on they come from your starters, coordinator and depth.', 90) : [];
+  return [
+    { name: 'EMPTY STARTING SPOTS', lines: empty.length ? ['An unnamed backup plays each of these and drags the rating down a lot.'] : ['Every starting spot is filled.'], cards: empty },
+    { name: 'WEAKEST STARTERS', lines: ['Your lowest rated starters: upgrading them lifts the side the most.'], cards: weak.map(p => ({ p, team: me, sub: `${p.group}  ${p.stars} STARS` })) },
+    { name: off ? 'OFFENSIVE COORDINATOR' : 'DEFENSIVE COORDINATOR', lines: co ? [`${co.name}: ${co.stars} stars. ${co.stars < SIDE_TIP.coach ? 'A better one (FRONT OFFICE) lifts the whole side.' : 'A solid coordinator.'}`] : ['No coordinator.'], cards: co ? [{ staff: co, team: me }] : [] },
+    { name: 'STAR FACTOR (X-FACTOR)', lines: xf.length ? ['Your X-Factor starters: each one adds a little to the rating.'] : ['NO X-FACTOR STARTER: each one adds a little to the rating.', ...note], cards: xf.map(p => ({ p, team: me, sub: `${p.group}  ${p.stars} STARS` })) },
+  ];
+}
+function needsPop(side) {
+  catPopShow({ title: 'WHAT\'S MISSING', tabs: [{ label: 'OFFENSE', cats: needsCats('off') }, { label: 'DEFENSE', cats: needsCats('def') }], tab: side === 'off' ? 0 : 1 });
+}
 function modeMix(X) {   // a rebuilding team is between 'neutral' and full 'rebuild' by how far in it is (at least 40%)
   if (X.mode !== 'rebuild') return TRADE.mode[X.mode];
   const t = Math.max(0.4, X.rb || 0), N = TRADE.mode.neutral, R = TRADE.mode.rebuild, o = {};
@@ -24813,6 +25096,7 @@ function tradeClosed() {   // why trades are shut right now (null = open)
   if (season.week > TRADE.deadline) return 'DEADLINE PASSED (AFTER WEEK 9)';
   return null;
 }
+const bonusSpot = t => [...String(t)].reduce((s, c) => s + c.charCodeAt(0), 0) % 3 === 0;   // some computer teams carry an extra roster spot in a trade (a third of them, fixed per team)
 function tradeLegal(me, k, giveA, getA) {   // me sends giveA to k and gets getA: the cap and the rosters have to work out for both
   const pl = l => l.filter(a => a.kind === 'player').map(a => a.p), gp = pl(giveA), tp = pl(getA), tn = t => t === season.team ? 'YOUR TEAM' : `THE ${NFL[t].nick.toUpperCase()}`;
   for (const [t, out, inn] of [[me, gp, tp], [k, tp, gp]]) {
@@ -24820,7 +25104,7 @@ function tradeLegal(me, k, giveA, getA) {   // me sends giveA to k and gets getA
     if (now > capOf(t) && now > was) return `${tn(t)} WOULD BE OVER THE SALARY CAP.`;
     for (const side of [true, false]) {
       const n = ROSTER[t].filter(q => OFF_GROUPS.includes(q.group) === side).length, after = n - out.filter(p => OFF_GROUPS.includes(p.group) === side).length + inn.filter(p => OFF_GROUPS.includes(p.group) === side).length;
-      if (after > spotsOf(t, side ? 'off' : 'def') && after > n) return `${tn(t)} HAVE NO ROSTER SPOT ON ${side ? 'OFFENSE' : 'DEFENSE'}. DROP SOMEONE FIRST.`;
+      if (after > spotsOf(t, side ? 'off' : 'def') + (t !== season.team && bonusSpot(t) ? 1 : 0) && after > n) return `${tn(t)} HAVE NO ROSTER SPOT ON ${side ? 'OFFENSE' : 'DEFENSE'}. DROP SOMEONE FIRST.`;
     }
     if (t !== season.team) for (const g of Object.keys(STARTERS)) {   // (a computer team keeps at least one named player at every position)
       const c = ROSTER[t].filter(q => q.group === g).length, after = c - out.filter(p => p.group === g).length + inn.filter(p => p.group === g).length;
@@ -24854,6 +25138,16 @@ function tradeCapFix(me, k, giveA, getA) {
   const pool = R.filter(p => !out.has(p) && !keep.has(p) && p.group !== 'K').sort((a, b) => (a.stars - 0.5) / payOf(a) - (b.stars - 0.5) / payOf(b)), cuts = [];
   for (const p of pool) { if (pay <= capOf(k)) break; cuts.push(p); pay -= payOf(p); }
   if (pay <= capOf(k) && cuts.length <= 3) return { cuts };
+  return add ? { add } : null;
+}
+// team k likes a deal but has no roster spot for what it takes in: { add } = one of their non-starters goes to you too (if your side has room), else { cuts } = their least valuable non-starter on that side is released
+function tradeSpotFix(me, k, giveA, getA, off) {
+  const inDeal = new Set([...giveA, ...getA].filter(a => a.kind === 'player').map(a => a.p));
+  const R = ROSTER[k], keep = new Set(Object.keys(STARTERS).flatMap(g => R.filter(q => q.group === g).sort((a, b) => b.stars - a.stars).slice(0, STARTERS[g])));
+  const pool = playersOf(k).filter(a => !inDeal.has(a.p) && !keep.has(a.p) && a.p.group !== 'K' && OFF_GROUPS.includes(a.p.group) === off).sort((a, b) => assetTV(a) - assetTV(b));
+  const add = pool.find(a => !tradeLegal(me, k, giveA, [...getA, a]) && tradeSide(k, giveA, [...getA, a]).ratio >= TRADE.accept);
+  if (add && Math.random() < 0.5) return { add };
+  if (pool.length) return { cuts: [pool[0].p] };
   return add ? { add } : null;
 }
 // the smallest thing of yours that would make the computer team say yes
@@ -25096,6 +25390,7 @@ function drawTrade() {
   }
   menuBtn(OFF_ROSTER_BTN, 'ROSTER', RES.bright, 22);   // (no cap bar here: SUGGESTIONS sat on top of it; the trade builder shows the cap)
   menuBtn(TR_SUG_BTN, 'SUGGESTIONS', RES.bright, 20);
+  menuBtn(TR_SAVED_BTN, `SAVED (${(LEAGUE.savedTrades || []).length})`, (LEAGUE.savedTrades || []).length ? IN_GAME_PAPER.green : RES.bright, 20);
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
   tourQDraw();
   if (TR.dd) trDDItems().forEach(it => menuBtn(it.b, it.label, TR.pos === it.pos ? SEL : RES.bright, 20));
@@ -25143,8 +25438,31 @@ function drawTradeB() {
   ctx.fillStyle = closed ? '#c81b1b' : '#2e8b57'; ctx.fillText(closed ? `TRADES CLOSED: ${closed}` : `CLICK ASSETS TO ADD THEM, THEN PROPOSE.  COSTS ${tcost} ¤ (YOU HAVE ${LEAGUE.coins} ¤).`, 140, 658);
   drawTradeMeter(k);
   menuBtn(MENU_NEXT, 'PROPOSE ▸', closed ? CARD_GRAY : IN_GAME_PAPER.green, 24, null, !closed);
+  menuBtn(TR_SAVE_BTN, 'SAVE TRADE', RES.bright, 20);
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
   tourQDraw();
+}
+// SAVE TRADE: keeps the trade you are building (who with, what each side gives) in LEAGUE.savedTrades; SAVED on the trade list brings one back
+const TR_SAVE_BTN = { x: 800, y: 612, w: 220, h: 54 }, TR_SAVED_BTN = { x: 150, y: 640, w: 270, h: 58 }, TR_SAVED_MAX = 8;
+const trRef = a => a.kind === 'pick' ? { kind: 'pick', year: a.year, round: a.round, orig: a.orig } : { kind: 'player', name: a.p.name };
+const trFind = (ref, team) => (ref.kind === 'pick' ? picksOf(team).find(a => a.year === ref.year && a.round === ref.round && a.orig === ref.orig) : playersOf(team).find(a => a.p.name === ref.name)) || null;
+function trSave() {
+  if (!TR.give.length && !TR.get.length) { offPopShow({ title: 'NOTHING TO SAVE', lines: ['Add something to the trade first.'] }); return; }
+  const list = LEAGUE.savedTrades || (LEAGUE.savedTrades = []);
+  if (list.length >= TR_SAVED_MAX) list.shift();
+  list.push({ k: TR.partner, give: TR.give.map(trRef), get: TR.get.map(trRef) });
+  autosaveSoon();
+  offPopShow({ title: 'TRADE SAVED', lines: ['Find it under SAVED on the trade list.'] });
+}
+function trSavedPage(i) {
+  const list = LEAGUE.savedTrades || [];
+  if (!list.length) return { title: 'SAVED TRADES', lines: ['No saved trades.'] };
+  const n = list.length, k = (i % n + n) % n, S = list[k];
+  const side = (refs, team) => refs.map(r => trFind(r, team)).filter(Boolean), me = season.team;
+  const give = side(S.give, me), get = side(S.get, S.k), gone = S.give.length + S.get.length - give.length - get.length;
+  return { title: `SAVED TRADE  ${k + 1}/${n}`, lines: [`WITH THE ${NFL[S.k].nick.toUpperCase()}`, `YOU GIVE: ${give.map(assetName).join(', ') || '-'}`, `YOU GET: ${get.map(assetName).join(', ') || '-'}`, ...(gone ? [`${gone} asset(s) no longer available.`] : [])].flatMap(l => wrapLines(l, 54)),
+    btns: [{ label: '◂', keep: true, on: () => { offPop = trSavedPage(k - 1); } }, { label: 'DELETE', keep: true, on: () => { list.splice(k, 1); autosaveSoon(); offPop = trSavedPage(Math.min(k, list.length - 1)); } },
+      { label: 'LOAD', green: true, on: () => { if (tradeClosed()) return; TR.partner = S.k; TR.give = give; TR.get = get; TR.tab = [0, 0]; TR.pg = [0, 0]; teamPick = null; results.screen = 'tradeb'; } }, { label: '▸', keep: true, on: () => { offPop = trSavedPage(k + 1); } }] };
 }
 function tradePropose() {
   const me = season.team, k = TR.partner, why = tradeClosed(), nick = NFL[k].nick.toUpperCase();
@@ -25155,9 +25473,10 @@ function tradePropose() {
   let capCuts = null;
   if (ill) {
     // (they like it but it puts THEM over the cap: they counter with salary coming back to you, or take it and cut players to fit)
-    const fix = ill.includes('SALARY CAP') && !ill.startsWith('YOUR') && tradeDecide(k, TR.give, TR.get).ok ? tradeCapFix(me, k, TR.give, TR.get) : null;
+    const theirs = !ill.startsWith('YOUR'), spotIssue = /NO ROSTER SPOT/.test(ill);
+    const fix = theirs && tradeDecide(k, TR.give, TR.get).ok ? (ill.includes('SALARY CAP') ? tradeCapFix(me, k, TR.give, TR.get) : spotIssue ? tradeSpotFix(me, k, TR.give, TR.get, /OFFENSE/.test(ill)) : null) : null;   // (they like it but can't fit it: they drop someone or add a player to the deal)
     if (!fix) { say('CAN\'T DO THAT', [ill]); return; }
-    if (fix.add) { say('CAP COUNTER', [`The ${nick} like it, but it puts them over the salary cap.`, `They'll do it if you also take: ${assetName(fix.add)}.`], [{ label: 'NO THANKS' }, { label: 'ADD IT', green: true, on: () => { TR.get.push(fix.add); } }]); return; }
+    if (fix.add) { say(spotIssue ? 'ROSTER COUNTER' : 'CAP COUNTER', [`The ${nick} like it, but it ${spotIssue ? 'leaves them without a roster spot' : 'puts them over the salary cap'}.`, `They'll do it if you also take: ${assetName(fix.add)}.`], [{ label: 'NO THANKS' }, { label: 'ADD IT', green: true, on: () => { TR.get.push(fix.add); } }]); return; }
     capCuts = fix.cuts;
   }
   const cost = tradeCost(TR.get);
@@ -25170,11 +25489,11 @@ function tradePropose() {
     if (capCuts && capCuts.length) { for (const p of capCuts) { const R = ROSTER[k], i = R.indexOf(p); if (i >= 0) { faRelease(p, k); vacate(k, p); } } recalcTeamStars(); }   // (to fit under their cap)
     gp.forEach(a => { if (a.kind === 'player') moveMood(a.p, -1); }); tp.forEach(a => { if (a.kind === 'player') moveMood(a.p, 1); });
     recalcTeamStars(); TR.give = []; TR.get = []; TR.v++; autosaveSoon();
-    say('TRADE ACCEPTED', [`You send: ${names(gp)}`, `You get: ${names(tp)}`, `It cost ${cost} ¤.`, ...(capCuts && capCuts.length ? [`To fit under the cap they released: ${capCuts.map(p => `${p.short || p.name} ${p.tag}`).join(', ')}.`] : []), ...(D.roll ? [`It was close: they rolled a ${D.roll}.`] : [])], [{ label: 'TO ROSTER', green: true, on: () => { offOpenRoster(); rosterReturn = TR.ret && OFF_SCREENS.includes(TR.ret) ? TR.ret : null; } }]);   // (leaving the roster goes to the home screen, or back into the offseason step the trade started in: never to the roster / front office / trade screen it came through)
+    say('TRADE ACCEPTED', [`You send: ${names(gp)}`, `You get: ${names(tp)}`, `It cost ${cost} ¤.`, ...(capCuts && capCuts.length ? [`To make room they released: ${capCuts.map(p => `${p.short || p.name} ${p.tag}`).join(', ')}.`] : [])], [{ label: 'TO ROSTER', green: true, on: () => { offOpenRoster(); rosterReturn = TR.ret && OFF_SCREENS.includes(TR.ret) ? TR.ret : null; } }]);   // (leaving the roster goes to the home screen, or back into the offseason step the trade started in: never to the roster / front office / trade screen it came through)
     return;
   }
   const c = D.lock ? null : tradeCounter(me, k, TR.give, TR.get);
-  const lines = [D.lock ? `THE ${nick} WON'T MOVE A 4 OR 5 STAR QB WITHOUT A BIG WIN.` : D.roll ? `So close: they rolled a ${D.roll} and needed ${TRADE.dice}.` : 'They want more for this.'];
+  const lines = [D.lock ? `THE ${nick} WON'T MOVE A 4 OR 5 STAR QB WITHOUT A BIG WIN.` : D.roll ? 'So close, but they want a little more for this.' : 'They want more for this.'];
   if (c) lines.push(`They would do it if you added: ${assetName(c)}.`);
   say('REJECTED', lines, c ? [{ label: 'NO THANKS' }, { label: 'ADD IT', green: true, on: () => { TR.give.push(c); } }] : undefined);
 }
@@ -25184,6 +25503,7 @@ function tradeClick(pt) {
   if (results.screen === 'tradeb') {
     if (inBtn(pt, BACK_BTN)) { results.screen = 'trade'; return; }
     if (inBtn(pt, MENU_NEXT)) { tradePropose(); return; }
+    if (inBtn(pt, TR_SAVE_BTN)) { trSave(); return; }
     for (const s of [0, 1]) {
       const t = [0, 1].find(tb => inBtn(pt, tbTabBtn(s, tb)));
       if (t !== undefined) { TR.tab[s] = t; TR.pg[s] = 0; return; }
@@ -25214,6 +25534,7 @@ function tradeClick(pt) {
   }
   if (inBtn(pt, TR_OFFERS_BTN)) { offersOpen(); return; }
   if (inBtn(pt, TR_SUG_BTN)) { offPopShow(sugPage(0, tradeSuggestions(season.team))); return; }
+  if (inBtn(pt, TR_SAVED_BTN)) { offPopShow(trSavedPage(0)); return; }
   if (inBtn(pt, TR_TEAM_BTN)) { teamPick = 'tradeTeam'; pickConf = TR.team ? NFL[TR.team].conf.slice(0, 3) : 'AFC'; return; }
   if (inBtn(pt, TR_NEW_BTN)) {
     const why = tradeClosed();
@@ -25477,7 +25798,7 @@ function testClick(p) {
 const ANIM_BTN = { x: 30, y: 460, w: 210, h: 70 };
 const ANIM_CATS = ['MOVES', 'REACTIONS', 'CATCHES', 'TACKLES', 'EXTRAS'];
 const ANIM_TABS = ANIM_CATS.map((c, i) => ({ cat: c, x: 20 + i * 156, y: 64, w: 150, h: 46 }));
-const ANIM_STAGE = { x: 650, y: 130, w: 610, h: 480, zoom: 2.4 };
+const ANIM_STAGE = { x: 650, y: 130, w: 610, h: 480, zoom: 2.1 };   // (2.4 before the FIGURE size-up)
 const ANIM_LEN = 2.8;   // seconds a clip plays before it restarts
 const ANIM_ROWS = 10, ANIM_COLW = 196, ANIM_ROWH = 46;
 const ANIM_PREV = { x: 650, y: 625, w: 140, h: 56 }, ANIM_NEXT = { x: 1120, y: 625, w: 140, h: 56 }, ANIM_REPLAY = { x: 885, y: 625, w: 140, h: 56 };
@@ -27268,7 +27589,7 @@ function drawTradeMeter(k) {
   const S = tradeSide(k, TR.give, TR.get), r = Math.min(hi, S.ratio);
   const vs = TR.give.map(a => tvFor(a, k, true)).sort((p, q) => q - p), recv = Math.round(vs.reduce((t, v, i) => t + (i ? v * TRADE.depth : v), 0)), sent = Math.round(TR.get.reduce((t, a) => t + tvFor(a, k, false), 0));
   const mx = at(r); ctx.fillStyle = RES.line; ctx.beginPath(); ctx.moveTo(mx, y - 1); ctx.lineTo(mx - 7, y - 10); ctx.lineTo(mx + 7, y - 10); ctx.closePath(); ctx.fill();
-  const verdict = S.locked ? 'WON\'T MOVE A STAR QB' : S.ratio >= TRADE.accept ? (S.ratio >= 1.3 ? 'WILL ACCEPT (YOU OVERPAY)' : 'WILL ACCEPT') : S.ratio >= TRADE.maybe ? 'BALANCED: A COIN FLIP' : 'LIKELY REJECTED';
+  const verdict = S.locked ? 'WON\'T MOVE A STAR QB' : S.ratio >= TRADE.accept ? (S.ratio >= 1.3 ? 'WILL ACCEPT (YOU OVERPAY)' : 'WILL ACCEPT') : S.ratio >= TRADE.maybe ? 'CLOSE CALL' : 'LIKELY REJECTED';
   ctx.fillText(`${verdict}  ~${recv} IN / ~${sent} OUT`, x + w + 16, y + h / 2, 440);
 }
 
@@ -28016,6 +28337,7 @@ function loadFromSlot(i) {
     Object.assign(game, d.live.game, { fastRunoff: false, runoff: 0 });
     nextLos = d.live.los; nextDown = d.live.down; nextLtg = d.live.ltg; patMode = d.live.patMode;
     STATS = d.live.stats;
+    pgPending = false;
     reset();
     applyPlayCfg(d.live.play);
   } else {
@@ -28293,12 +28615,44 @@ const CAR = { first: { x: 560, y: 160, w: 400, h: 48 }, last: { x: 560, y: 228, 
   change: { x: 730, y: 400, w: 230, h: 80 }, check: { x: 870, y: 500, w: 40, h: 40 }, random: { x: 510, y: 615, w: 260, h: 90 },
   diff: { x: 790, y: 615, w: 230, h: 90 } };
 
-const GAME_VERSION = 'v1.5';
+const GAME_VERSION = 'v0.9';   // (pre-release: v0.1, v0.2, v0.3 ... one step per update; v1.0 = the full release)
 // --- changelog: click the version at the top left of the main screen. One paged popup (offPop); a page = one section of one version (long ones split at CHANGELOG_LINES).
-// Newest version first. Add a new entry at the top of CHANGELOG with every update and bump GAME_VERSION.
+// Newest version first. Add a new entry at the top of CHANGELOG with every update and bump GAME_VERSION by 0.1 (pre-release numbering: v0.9 -> v0.10 -> v0.11 ...; v1.0 only for the full release).
 const CHANGELOG_LINES = 13, CHANGELOG_WRAP = 56;   // (lines a page holds / characters a line holds)
 const CHANGELOG = [
-  { v: 'v1.5', secs: [
+  { v: 'v0.9', secs: [
+    ['FUMBLES', [
+      'Everyone near a loose ball sprints flat out for it.',
+      'In traffic a player dives on it: if it is in reach his arm sweeps it in. Touched on the turf = down there; untouched he gets up and runs.',
+      'In the open he runs through it and scoops it with both hands, keeping his speed. Riskier: a scoop can be bobbled.',
+      'Dive or scoop is chosen for the player, not by you.',
+    ]],
+    ['INTERCEPTIONS', [
+      'A pass at the very top of a defender\'s leap is often only tipped, or picked off one-handed.',
+    ]],
+  ] },
+  { v: 'v0.8', secs: [
+    ['PLAYERS', [
+      'New player figure: slimmer jersey and shoulder pads, every player drawn 20% bigger and then 10% taller (the helmet stays round).',
+      'The ball sits in the bigger hands: snaps, catches, carries, the QB\'s hold and a pass leaving his hand, punter and returner holds. Clicking a player, callouts and rings follow the new size.',
+      'Looks only: speeds, reach, catch and tackle ranges are unchanged.',
+    ]],
+  ] },
+  { v: 'v0.7', secs: [
+    ['FRANCHISE', [
+      'WHAT\'S MISSING (the ? on OFFENSE / DEFENSE) is now a card popup: tabs for each side, arrows between empty spots, weakest starters, coordinator and star factor, scrollable, with player cards.',
+      'The new-season news is a paged card popup too. Contracts expiring: tick cards to RE-SIGN / LET GO several at once; hovering RE-SIGN or ticking cards previews the amount on the salary cap.',
+      'Trades: SAVE TRADE / SAVED list. Some computer teams carry an extra roster spot, and a team that likes a deal but has no spot or cap room drops a player or adds one to the deal. No more roll hints.',
+      'Resuming a game skips the pregame show and no longer carries a stale touchdown into the next play. Weekly award winners reset each season. Pregame cards stay 6 seconds.',
+    ]],
+    ['GAMEPLAY', [
+      'Space no longer snaps the ball. Esc during the halftime break skips the show instead of pausing. Halftime highlights are shorter, zoomed in, follow the ball, with no replay controls or names; click anywhere for the next card.',
+      'Sim ahead works before a kickoff and after a touchdown (the try is auto-kicked); NEXT OFF / DEF DRIVE from the pause menu run like the sim box buttons. An audible no longer drags your defender while you steer him.',
+      'Interceptions are always replayed (replays on); replays start closer to the snap. Leaps for a catch or tip stumble or fall on the landing by speed. DBs reel less far after a missed tackle and no longer get on top of a receiver they trailed all route.',
+      'Coverage in the air is a bit worse (more so on easier levels), NORMAL is easier. Special teams rushers win more. Slow backs accelerate faster. The QB screen shake starts earlier. Linemen\'s leaning helmets stay on their side of the line.',
+    ]],
+  ] },
+  { v: 'v0.6', secs: [
     ['MENUS & FRANCHISE', [
       'Click the year (top right of the home screen) to switch between YEAR n and the calendar year. Credits sit beside it. Title reads WEEK n - TEAM.',
       'Each save has its own EXPORT button under its trash can. Leaving a franchise game saves it so you can resume. No leaving in the middle of a play.',
@@ -28310,13 +28664,13 @@ const CHANGELOG = [
       'Your simmed drives use your players: line vs pass rush, QB and receivers vs the secondary, back vs the front seven. No star factors in 1v1. Kick meters use grey hatching.',
     ]],
   ] },
-  { v: 'v1.4', secs: [
+  { v: 'v0.5', secs: [
     ['PLAYERS OF THE WEEK', [
       'After every week the league names one Offensive and one Defensive Player of the Week (every team counts). Your player winning pays 2 credits.',
       'Winners show on the week screen and in a home screen popup. AWARDS on the week screen opens the history and the most-awards list; player pages show their award count.',
     ]],
   ] },
-  { v: 'v1.3', secs: [
+  { v: 'v0.4', secs: [
     ['QUICK PLAY & 1V1', [
       'The main menu\'s EXHIBITION button is now QUICK PLAY, a drop down (arrow on the button) that replaces FRANCHISE, CAREER and TUTORIAL with EXHIBITION, 1V1 and ONLINE.',
       'ONLINE goes straight to host / join, and it is no longer on the exhibition screen.',
@@ -28326,7 +28680,7 @@ const CHANGELOG = [
       'Pick the QB and the two men facing off: click a card, choose a team, then choose a player from its roster. They can all be from different teams.',
     ]],
   ] },
-  { v: 'v1.2', secs: [
+  { v: 'v0.3', secs: [
     ['NEW FEATURES', [
       'Records: a RECORDS button on the Hall of Fame screen. Tabs: Single Play, Single Game, Season and Career, with League and My Team toggles.',
       'Top 5 per category, "New Record!" popups, and highlights for records held by your roster. Records persist in the franchise save, and players who leave keep theirs.',
@@ -28365,7 +28719,7 @@ const CHANGELOG = [
       'Fixed a flash of the receiver standing before a tackle after a dive.',
     ]],
   ] },
-  { v: 'v1.1', secs: [
+  { v: 'v0.2', secs: [
     ['NEW LOOK', [
       'Wrinkled notebook-paper backgrounds with a handwriting font.',
       'Ruled panels with a red margin, notebook-strip banners and graphite-hatched bars.',
@@ -28392,7 +28746,7 @@ const CHANGELOG = [
       'The load screen\'s New Career button is smaller. Scout buttons and all remaining buttons are animated.',
     ]],
   ] },
-  { v: 'v1.0', secs: [
+  { v: 'v0.1', secs: [
     ['LAUNCH', [
       'Mobile release: now available on mobile.',
       'Coaches: you start a franchise career as a half-star head coach and level up in half-star steps, twice as slowly as players. Stars come from team stats and record.',
@@ -30110,7 +30464,7 @@ function screenToWorld(p) {
 const inCircle = (p, who) => {
   const w = screenToWorld(p);
   return Math.hypot(w.x - who.x, w.y - (who.y + FOOT)) <= pickR(who) * 1.1 ||
-         Math.hypot(w.x - who.x, w.y - (who.y - 8 * S)) <= 1.4 * YD;
+         Math.hypot(w.x - who.x, w.y - (who.y - figZ(who, 8 * S))) <= 1.4 * YD * FIGURE.grow;
 };
 const rbCloser = p => { const w = screenToWorld(p); return Math.hypot(w.x - rb.x, w.y - rb.y) <= Math.hypot(w.x - qb.x, w.y - qb.y) + 0.25 * YD; };   // (overlapping rings: the RB gets the tie)
 const clickedRB = p => !rb.split && inCircle(p, rb);   // any back in the backfield can carry it
@@ -30166,11 +30520,11 @@ canvas.addEventListener('pointerdown', e => {
   if (oo && !paused && e.button === 0 && ooClick(pointerPos(e))) return;   // (1v1 practice: the force-animation buttons)
   if (slotUI) { if (e.button === 0) slotClick(pointerPos(e)); return; }
   if (settingsOpen) { if (e.button === 0) settingsClick(pointerPos(e)); return; }
-  if (HT && !hl) { if (e.button === 0) { if (HT.pre && !inBtn(pointerPos(e), HS_BAR.skip)) hsNext(); else hsBarHit(pointerPos(e)) && hsBarClick(pointerPos(e)); } return; }   // (a halftime card: NEXT / SKIP)
+  if (HT && !hl) { if (e.button === 0) { if (!inBtn(pointerPos(e), HS_BAR.skip)) hsNext(); else hsBarHit(pointerPos(e)) && hsBarClick(pointerPos(e)); } return; }   // (a halftime card: NEXT / SKIP)
   if (hl) {   // watching the highlights: the bar's buttons, else the replay's own mouse controls (hold = slow motion, right-drag = look around)
     const p = pointerPos(e);
     if (hlDel) { if (e.button === 0) hlDelClick(p); return; }   // (the delete card is up)
-    if (e.button === 0) { if (tipClick(p)) return; if (hlBarHit(p)) hlClick(p); else { pressAt = performance.now(); replayLeft = { sx: p.x, sy: p.y, moved: false }; } }
+    if (e.button === 0) { if (hl.mode === 'half') { if (hlBarHit(p)) hlClick(p); else hsNext(); return; } if (tipClick(p)) return; if (hlBarHit(p)) hlClick(p); else { pressAt = performance.now(); replayLeft = { sx: p.x, sy: p.y, moved: false }; } }
     else if (e.button === 2) { replayDrag = { sx: p.x, sy: p.y, px: replayPan.x, py: replayPan.y, moved: false }; canvas.setPointerCapture(e.pointerId); }
     return;
   }
@@ -30205,7 +30559,7 @@ canvas.addEventListener('pointerdown', e => {
     if (e.button === 0 && results.screen === 'home' && inBtn(pointerPos(e), HOME_BACK)) { homeLeave = true; return; }
     if (e.button === 0 && results.screen === 'home' && season && !exhibition) {
       const sd = ['off', 'def'].find(s => inBtn(pointerPos(e), HOME_HELP[s]));
-      if (sd) { offPopShow({ title: `${sd === 'off' ? 'OFFENSE' : 'DEFENSE'}: WHAT'S MISSING`, lines: sideTip(sd) }); return; }
+      if (sd) { needsPop(sd); return; }
     }
     if (e.button === 0 && results.screen === 'home' && inBtn(pointerPos(e), STANDINGS_PANEL)) { showSeeds = !showSeeds; return; }
     if (results.screen === 'playoffs') { if (e.button === 0) poClick(pointerPos(e)); return; }
@@ -30489,6 +30843,7 @@ function releaseAim() {
 // scroll wheel zooms the view in and out (live or in the replay)
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
+  if (offPop && offPop.custom) { offPop.custom.wheel(e.deltaY * (e.deltaMode === 1 ? 38 : 1)); return; }   // (a category popup scrolls)
   if (offPop && offPop.log) { clScroll(e.deltaY * (e.deltaMode === 1 ? 38 : 1)); return; }   // (the changelog scrolls)
   if (slotUI) { if (!slotUI.confirm) slotUI.scroll = Math.max(0, Math.min(slotMax(), slotUI.scroll + e.deltaY * (e.deltaMode === 1 ? 38 : 1))); return; }   // scrolls the save slots
   if (showKeys) { scrollKeys(keysScroll + e.deltaY * (e.deltaMode === 1 ? 38 : 1)); return; }   // scrolls the keybinds
@@ -30606,6 +30961,7 @@ function onKeyDown(e) {
     if (btnPress && btnPress.held) { btnPress.held = false; btnPress.upAt = performance.now(); }   // (release it, or whatever button sits there on the next screen draws as still pressed)
     return;
   }
+  if (results && offPop && offPop.custom) { if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') { e.preventDefault(); offPop.custom.arrows(e.code === 'ArrowRight' ? 1 : -1); } else if (e.code === 'Enter' || e.code === 'Escape') { e.preventDefault(); offPopClick({ x: cpOK().x + 1, y: cpOK().y + 1 }); } return; }
   if (results) { if ((e.code === 'Space' || e.code === 'Enter') && !e.repeat) { e.preventDefault(); if (results.injAlert) results.injAlert = null; else advanceResults(); } return; }
   if (showKeys) {
     const step = { ArrowDown: 60, ArrowUp: -60, PageDown: 400, PageUp: -400, KeyS: 60, KeyW: -60 }[e.code];
@@ -30615,6 +30971,11 @@ function onKeyDown(e) {
     return;
   }
   if (e.code === 'Escape' && (e.repeat || performance.now() - showEscAt < 600)) { e.preventDefault(); return; }   // (the Esc that skipped the pregame / halftime show must not also pause)
+  if (e.code === 'Escape' && (HT || hl || halfShown() || (halfHold && state === 'done'))) {   // (anywhere in the halftime break Esc never pauses: it skips the show)
+    e.preventDefault(); showEscAt = performance.now();
+    if (HT) hsSkip(); else if (!hl && !HT && (halfShown() || halfHold)) { hsSkipNext = true; halfOK(); }
+    return;
+  }
   if (e.code === 'Escape') { e.preventDefault(); paused = !paused; resetAsk = false; pauseGoals = false; aim = null; return; }
   if (paused) return;
   if (e.def && !(rec && rec.replaying)) { e.preventDefault(); dkeys[e.code] = true; if (!e.repeat) defKeyDown({ code: e.code }); return; }   // (two players: the defender's keys; the offense's fall through as the usual codes)
@@ -30633,14 +30994,15 @@ function onKeyDown(e) {
   if (e.code === 'KeyV' && !(state === 'run' && !passerMode)) { if (!(rec && rec.replaying)) bulletMode = !bulletMode; return; }   // same as right-click (running with the ball, V dives instead)
   if (e.code === 'Space') {
     if (rec && rec.replaying) rec.paused = !rec.paused;   // Space pauses / resumes the replay
-    else if (state === 'pre') { if (!(tut && tutStep() && tutStep().def !== 'none' && !tutStep().recs)) snap(); }   // (not on the tutorial's run steps)
+    else if (state === 'pre') { /* Space no longer snaps the ball (click the QB / RB or use the SNAP button) */ }
     else if (state === 'done') { if (!playSettled()) return; if (!finalReplay()) proceed(); else if (rec && rec.frames.length) startReplay(); }
     else if (state === 'sim') simAdvance();
     else if (state === 'kick') kickClick();
   } else if (e.code === 'KeyQ') {
     if (state === 'pre') audible();   // while running, Q is read as held (stiff arm)
+    else if (kcuOn()) { const rt = allPlayers().find(p => p.hasBall) || (puntPlay && puntPlay.ret); if (rt) kcuPick(rt, kcu); }   // (kick coverage: Q switches the man too)
   } else if (state === 'flight') flightAction(e.code);
-  else if (kcuOn()) { if (['KeyE', 'KeyO', 'KeyQ'].includes(e.code) && picker) kcuPick(picker, kcu); }   // your kick coverage: switch to the man nearest the returner
+  else if (kcuOn()) { const rt = allPlayers().find(p => p.hasBall) || (puntPlay && puntPlay.ret); if (['KeyE', 'KeyO'].includes(e.code) && rt) kcuPick(rt, kcu); }   // your kick coverage: switch to the man nearest the returner
   else if (state === 'pocket' || state === 'drop' || (state === 'run' && passerMode && runner === passer)) {   // (a set-up screen passer: same keys)
     if (e.code === 'KeyR') pocketAction('KeyR');
     else if (e.code === 'KeyW' || e.code === 'KeyS') {
