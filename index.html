@@ -29592,6 +29592,250 @@ function ioImport(kind, done) {
   inp.click();
 }
 
+// --- cloud sync (ACCOUNT button, start screen) ------------------------------------------------
+// One encrypted file per account in a PRIVATE GitHub repo (SYNC.owner / repo, folder SYNC.dir), read and written with the GitHub contents API.
+// It holds every localStorage key starting with 'pocketPasser.' (franchise slots, highlights, stats, HOF, settings, online record, tags, tutorial
+// flags: anything added later is picked up too) except this device's sign-in (SYNC_KEY). Gzipped, then AES-GCM encrypted with a key made from
+// username + password (PBKDF2), so the token in the page can't read anyone's save and a wrong password just fails to decrypt. No password reset.
+// File name = hash of the username (CREATE fails if taken). Every write sends the file sha it last saw: GitHub refuses it if another device wrote
+// since -> the USE CLOUD / UPLOAD THIS DEVICE choice. A newer cloud save is applied (then the page reloads) only on the main menu.
+// Set up with set-sync.ps1 (writes owner / repo / tok). Token = fine-grained, Contents read + write on that one repo only: it ships inside the page.
+const SYNC = { owner: 'paperpasserplaytester', repo: 'paper-passer-saves', branch: 'main', dir: 'accounts', tok: 'Q2cycDFrc3dBTExHTVdXSlZCWjB4NWRSZHBadE5JalQwOXZkMWQ3YjRkOUxDb2dwenk5WWN5angyY0JfVDU0M2R1d3FFYmY1MFk2Mk5ZVEMxMV90YXBfYnVodGln',   // tok = the token reversed, then base64 (keeps GitHub's leak scanner from revoking it)
+  iters: 150000,                // PBKDF2 rounds (slower = harder to guess a password from a stolen file)
+  every: 60,                    // seconds between auto syncs while the page is visible (push if this device changed, else check for a newer cloud save)
+  user: /^[a-z0-9_]{3,16}$/, minPass: 6,
+  light: ['pocketPasser.settings', 'pocketPasser.koTipSeen', 'pocketPasser.offTut', 'pocketPasser.draftTut', 'pocketPasser.coach'] };   // keys that don't count as "this device has data" when signing in
+const SYNC_KEY = 'pocketPasser.account';   // this device's sign-in (never synced)
+let acct = null;    // { user, key (raw AES key, base64: the password itself is never stored), sha (cloud file sha last seen), hash (this device's data hash then), at (last sync) }
+let acctUI = null;  // the DOM popup (real inputs, so phones get their keyboard and password managers work)
+const sync = { busy: false, err: '', wait: null, etag: null };   // wait = { kind: 'pull' | 'choose', ... } held until the main menu
+try { acct = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null'); } catch (e) {}
+const syncOn = () => !!(SYNC.owner && SYNC.repo && SYNC.tok && window.crypto && crypto.subtle && window.fetch);
+function acctStore() { try { if (acct) localStorage.setItem(SYNC_KEY, JSON.stringify(acct)); else localStorage.removeItem(SYNC_KEY); } catch (e) {} }
+const u8 = s => new TextEncoder().encode(s);
+function b64(a) { let s = ''; for (let i = 0; i < a.length; i += 0x8000) s += String.fromCharCode.apply(null, a.subarray(i, i + 0x8000)); return btoa(s); }
+function unb64(s) { const b = atob(s), a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a; }
+async function hexHash(algo, a) { return [...new Uint8Array(await crypto.subtle.digest(algo, a))].map(x => x.toString(16).padStart(2, '0')).join(''); }
+async function squeeze(a, zip) { return new Uint8Array(await new Response(new Blob([a]).stream().pipeThrough(zip ? new CompressionStream('gzip') : new DecompressionStream('gzip'))).arrayBuffer()); }
+function syncBundle() {   // this device's data as one string (keys sorted, so the same data always hashes the same)
+  const ks = [], o = {};
+  for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith('pocketPasser.') && k !== SYNC_KEY) ks.push(k); }
+  ks.sort().forEach(k => o[k] = localStorage.getItem(k));
+  return JSON.stringify(o);
+}
+const bundleHash = s => hexHash('SHA-256', u8(s));
+function bundleInfo(s) {   // short summary for the choice screen
+  try { const o = JSON.parse(s), n = Object.keys(o).filter(k => /^pocketPasser\.save\.\d+$/.test(k)).length; return `${n} FRANCHISE SAVE${n === 1 ? '' : 'S'}`; } catch (e) { return '?'; }
+}
+const bundleEmpty = s => { try { return Object.keys(JSON.parse(s)).every(k => SYNC.light.includes(k)); } catch (e) { return true; } };
+async function acctPath(user) { return `${SYNC.dir}/${(await hexHash('SHA-256', u8('paper-passer-user:' + user))).slice(0, 32)}.json`; }
+async function acctKey(user, pass) {
+  const base = await crypto.subtle.importKey('raw', u8(pass), 'PBKDF2', false, ['deriveKey']);
+  const k = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: u8('paper-passer:' + user), iterations: SYNC.iters, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+  return b64(new Uint8Array(await crypto.subtle.exportKey('raw', k)));
+}
+const aesKey = raw => crypto.subtle.importKey('raw', unb64(raw), 'AES-GCM', false, ['encrypt', 'decrypt']);
+async function seal(raw, user, data) {
+  const iv = crypto.getRandomValues(new Uint8Array(12)), z = !!window.CompressionStream, plain = u8(JSON.stringify({ user, data }));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await aesKey(raw), z ? await squeeze(plain, true) : plain));
+  return JSON.stringify({ app: 'paper-passer', v: 1, z, iv: b64(iv), ct: b64(ct), t: Date.now(), ver: GAME_VERSION });
+}
+async function unseal(raw, text) {   // -> { user, data, t }; throws 'pass' on a wrong password
+  const f = JSON.parse(text);
+  let plain;
+  try { plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(f.iv) }, await aesKey(raw), unb64(f.ct))); } catch (e) { throw new Error('pass'); }
+  if (f.z) { if (!window.DecompressionStream) throw new Error('old'); plain = await squeeze(plain, false); }
+  const o = JSON.parse(new TextDecoder().decode(plain));
+  return { user: o.user, data: o.data, t: f.t };
+}
+// GitHub contents API
+const ghTok = () => atob(SYNC.tok).split('').reverse().join('');
+const ghUrl = path => `https://api.github.com/repos/${SYNC.owner}/${SYNC.repo}/contents/${path}`;
+async function ghGet(path, etag) {   // -> { text, sha, etag } | null (no file) | 'same' (unchanged since etag: doesn't count against the rate limit)
+  const h = { Authorization: `Bearer ${ghTok()}`, Accept: 'application/vnd.github.raw+json' };
+  if (etag) h['If-None-Match'] = etag;
+  const r = await fetch(`${ghUrl(path)}?ref=${SYNC.branch}`, { cache: 'no-store', headers: h });
+  if (r.status === 304) return 'same';
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error('net' + r.status);
+  const bytes = new Uint8Array(await r.arrayBuffer()), head = u8(`blob ${bytes.length}\0`), all = new Uint8Array(head.length + bytes.length);
+  all.set(head); all.set(bytes, head.length);   // (git's blob sha, the one a PUT has to quote)
+  return { text: new TextDecoder().decode(bytes), sha: await hexHash('SHA-1', all), etag: r.headers.get('ETag') };
+}
+async function ghPut(path, text, sha) {   // -> the new sha; throws 'conflict' if the file changed since `sha` (or exists, when sha is null)
+  const body = { message: `sync ${path.split('/').pop().slice(0, 8)}`, content: b64(u8(text)), branch: SYNC.branch };
+  if (sha) body.sha = sha;
+  const r = await fetch(ghUrl(path), { method: 'PUT', cache: 'no-store', headers: { Authorization: `Bearer ${ghTok()}`, Accept: 'application/vnd.github+json' }, body: JSON.stringify(body) });
+  if (r.status === 409 || r.status === 422) throw new Error('conflict');
+  if (!r.ok) throw new Error('net' + r.status);
+  sync.etag = null;
+  return (await r.json()).content.sha;
+}
+function syncErrText(e) {
+  const m = (e && e.message) || '';
+  return m === 'pass' ? 'WRONG USERNAME OR PASSWORD' : m === 'nouser' ? 'WRONG USERNAME OR PASSWORD' : m === 'taken' ? 'THAT USERNAME IS TAKEN'
+    : m === 'space' ? 'NOT ENOUGH SPACE ON THIS DEVICE' : m === 'old' ? 'THIS BROWSER IS TOO OLD TO SYNC' : m === 'net401' || m === 'net403' ? 'SYNC IS MISCONFIGURED (TOKEN REFUSED)'
+    : m.startsWith('net') ? 'SYNC SERVER ERROR, TRY AGAIN' : "CAN'T REACH THE SYNC SERVER";
+}
+function syncApply(data) {   // replace this device's data with the cloud's (all or nothing)
+  const o = JSON.parse(data), old = JSON.parse(syncBundle());
+  const wipe = () => Object.keys(JSON.parse(syncBundle())).forEach(k => localStorage.removeItem(k));
+  try { wipe(); for (const k in o) localStorage.setItem(k, o[k]); }
+  catch (e) { try { wipe(); for (const k in old) localStorage.setItem(k, old[k]); } catch (e2) {} throw new Error('space'); }
+}
+async function syncTake(data, sha) {   // apply a cloud save, remember it as synced, restart the page so every screen reads it
+  syncApply(data);
+  acct.sha = sha; acct.hash = await bundleHash(syncBundle()); acct.at = Date.now(); acctStore();
+  location.reload();
+}
+async function syncUpload(sha) {   // overwrite the cloud with this device
+  const local = syncBundle(), path = await acctPath(acct.user);
+  acct.sha = await ghPut(path, await seal(acct.key, acct.user, local), sha);
+  acct.hash = await bundleHash(local); acct.at = Date.now(); acctStore();
+}
+const syncMenu = () => typeof results !== 'undefined' && results && results.screen === 'start' && !settingsOpen && !slotUI && !teamPick && !offPop && !(typeof ONL !== 'undefined' && ONL.on);
+async function syncNow() {   // the auto / SYNC NOW step
+  if (!acct || !syncOn() || sync.busy || sync.wait) return;
+  sync.busy = true; sync.err = ''; acctRender();
+  try {
+    const path = await acctPath(acct.user), local = syncBundle(), h = await bundleHash(local);
+    if (h !== acct.hash) {   // changed here: push (refused if another device wrote since)
+      try { await syncUpload(acct.sha); }
+      catch (e) {
+        if (e.message !== 'conflict') throw e;
+        const f = await ghGet(path);
+        if (!f) await syncUpload(null);   // (the file is gone: write it again)
+        else { const c = await unseal(acct.key, f.text); if (c.data === local) { acct.sha = f.sha; acct.hash = h; acct.at = Date.now(); acctStore(); } else sync.wait = { kind: 'choose', data: c.data, t: c.t, sha: f.sha }; }
+      }
+    } else {   // unchanged here: is there a newer cloud save?
+      const f = await ghGet(path, sync.etag);
+      if (f === 'same') { acct.at = Date.now(); acctStore(); }
+      else if (!f) await syncUpload(null);
+      else {
+        sync.etag = f.etag;
+        if (f.sha !== acct.sha) { const c = await unseal(acct.key, f.text); sync.wait = { kind: 'pull', data: c.data, sha: f.sha }; }
+        else { acct.at = Date.now(); acctStore(); }
+      }
+    }
+  } catch (e) { sync.err = syncErrText(e); }
+  sync.busy = false; syncGate(); acctRender();
+}
+async function syncGate() {   // a pull / choice waits for the main menu (never mid-game)
+  const w = sync.wait;
+  if (!w || sync.busy || !acct || !syncMenu()) return;
+  if (w.kind === 'pull') {
+    sync.wait = null;
+    if (await bundleHash(syncBundle()) !== acct.hash) return;   // (changed here meanwhile: the next sync turns it into a choice)
+    try { await syncTake(w.data, w.sha); } catch (e) { sync.err = syncErrText(e); }
+  } else if (!acctUI) { acctOpen(); acctUI.view = 'choose'; acctUI.choose = { data: w.data, t: w.t, sha: w.sha, local: syncBundle() }; sync.wait = null; acctRender(); }
+}
+async function acctSignIn(create) {
+  const U = acctUI, user = String(U.u || '').trim().toLowerCase(), pass = String(U.p || '');
+  if (!SYNC.user.test(user)) { U.note = 'USERNAME: 3-16 LETTERS, NUMBERS OR _'; acctRender(); return; }
+  if (pass.length < SYNC.minPass) { U.note = `PASSWORD: AT LEAST ${SYNC.minPass} CHARACTERS`; acctRender(); return; }
+  if (create && pass !== U.p2) { U.note = "PASSWORDS DON'T MATCH"; acctRender(); return; }
+  sync.busy = true; U.note = create ? 'CREATING ACCOUNT...' : 'SIGNING IN...'; acctRender();
+  try {
+    const key = await acctKey(user, pass), path = await acctPath(user), f = await ghGet(path), local = syncBundle(), h = await bundleHash(local);
+    if (create) {
+      if (f) throw new Error('taken');
+      const sha = await ghPut(path, await seal(key, user, local), null);
+      acct = { user, key, sha, hash: h, at: Date.now() }; acctStore(); U.p = U.p2 = ''; U.note = 'ACCOUNT CREATED. THIS DEVICE IS SYNCED.';
+    } else {
+      if (!f) throw new Error('nouser');
+      const c = await unseal(key, f.text);
+      U.p = '';
+      if (c.data === local) { acct = { user, key, sha: f.sha, hash: h, at: Date.now() }; acctStore(); U.note = 'SIGNED IN. ALREADY UP TO DATE.'; }
+      else if (bundleEmpty(local)) { acct = { user, key, sha: null, hash: null, at: 0 }; sync.busy = false; await syncTake(c.data, f.sha); return; }
+      else { U.view = 'choose'; U.choose = { data: c.data, t: c.t, sha: f.sha, local, pending: { user, key } }; U.note = ''; }   // (not signed in until he picks)
+    }
+  } catch (e) { U.note = syncErrText(e); }
+  sync.busy = false; acctRender();
+}
+async function acctChoose(useCloud) {
+  const U = acctUI, c = U.choose;
+  if (c.pending) acct = { user: c.pending.user, key: c.pending.key, sha: c.sha, hash: null, at: 0 };
+  sync.busy = true; U.note = useCloud ? 'LOADING CLOUD SAVE...' : 'UPLOADING...'; acctRender();
+  try {
+    if (useCloud) { await syncTake(c.data, c.sha); return; }
+    await syncUpload(c.sha); U.view = 'in'; U.choose = null; U.note = 'UPLOADED. THIS DEVICE IS THE CLOUD SAVE NOW.';
+  } catch (e) { U.note = syncErrText(e); if (c.pending) { acct = null; } else { sync.err = U.note; } }
+  sync.busy = false; acctStore(); acctRender();
+}
+function syncAgo(t) {
+  if (!t) return 'NEVER';
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  return s < 60 ? 'JUST NOW' : s < 3600 ? `${Math.floor(s / 60)} MIN AGO` : s < 86400 ? `${Math.floor(s / 3600)} H AGO` : new Date(t).toLocaleDateString();
+}
+// the popup
+function acctOpen() {
+  if (acctUI) return;
+  const el = document.createElement('div');
+  acctUI = { el, view: 'main', mode: 'in', u: acct ? acct.user : '', p: '', p2: '', note: '', choose: null };
+  el.style.cssText = 'position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);font-family:monospace;';
+  ['pointerdown', 'pointerup', 'pointermove', 'mousedown', 'mouseup', 'mousemove', 'touchstart', 'touchmove', 'touchend', 'click', 'wheel', 'keydown', 'keyup', 'contextmenu'].forEach(t => el.addEventListener(t, e => {
+    e.stopPropagation();   // (the game never sees typing or taps meant for the popup)
+    if (t === 'keydown' && e.key === 'Escape' && !sync.busy && acctUI.view !== 'choose') acctClose();
+    if (t === 'click' && e.target === el && !sync.busy && acctUI.view !== 'choose') acctClose();
+  }));
+  document.body.appendChild(el);
+  acctRender();
+}
+function acctClose() { if (!acctUI) return; acctUI.el.remove(); acctUI = null; }
+function acctRender() {
+  const U = acctUI; if (!U) return;
+  const dark = !!SETTINGS.darkMode, bg = dark ? '#3b3d40' : '#fffdf4', ink = dark ? '#f0ece0' : RES.line, sub = dark ? '#b8b8b0' : '#5b6688';
+  const esc = s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`), dis = sync.busy ? ' disabled' : '';
+  const btn = (a, label, col, txt = '#fff') => `<button type="button" data-a="${a}"${dis} style="flex:1;min-width:120px;margin:5px;padding:12px 8px;font:bold 17px monospace;color:${txt};background:${col};border:3px solid ${ink};cursor:pointer;opacity:${sync.busy ? 0.55 : 1}">${label}</button>`;
+  const row = (...b) => `<div style="display:flex;flex-wrap:wrap;margin:8px -5px 0">${b.join('')}</div>`;
+  const p = (t, c = sub, size = 15) => `<div style="color:${c};font-size:${size}px;line-height:1.35;margin:6px 0">${t}</div>`;
+  const field = (name, label, type, ac) => `<label style="display:block;margin-top:10px;font-size:14px;color:${sub}">${label}<input name="${name}" type="${type}" value="${esc(U[name] || '')}" autocomplete="${ac}" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="${name === 'u' ? 16 : 64}"${dis} style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:10px;font:bold 18px monospace;color:${ink};background:${dark ? '#2a2c2e' : '#fff'};border:3px solid ${ink}"></label>`;
+  const note = U.note || (!U.choose && sync.err) || '';
+  let h = `<div style="background:${bg};color:${ink};border:4px solid ${ink};box-shadow:6px 8px 0 rgba(0,0,0,0.35);width:min(440px,92vw);max-height:92vh;overflow:auto;padding:20px 22px;box-sizing:border-box;font-weight:bold">`;
+  h += `<div style="font-size:30px;letter-spacing:1px">ACCOUNT</div>`;
+  if (!syncOn()) h += p('Cloud sync is not set up in this build yet.') + row(btn('close', 'CLOSE', IN_GAME_PAPER.off));
+  else if (U.view === 'choose') {
+    const c = U.choose;
+    h += p('This device and your cloud save are different. Which one do you want to keep? The other is replaced.', ink, 16);
+    h += p(`CLOUD (saved ${syncAgo(c.t)}): ${bundleInfo(c.data)}`) + p(`THIS DEVICE: ${bundleInfo(c.local)}`);
+    h += row(btn('cloud', 'USE CLOUD SAVE', IN_GAME_PAPER.blue), btn('upload', 'KEEP THIS DEVICE', IN_GAME_PAPER.green));
+    if (c.pending) h += row(btn('cancel', 'CANCEL', IN_GAME_PAPER.off));
+  } else if (acct) {
+    h += p(`SIGNED IN AS <span style="color:${ink}">${esc(acct.user.toUpperCase())}</span>`, sub, 17) + p(`LAST SYNCED: ${sync.busy ? 'SYNCING...' : syncAgo(acct.at)}`);
+    h += p('Franchise saves, highlights, stats, Hall of Fame, settings and your online record sync on their own every minute and when you leave the game.', sub, 13);
+    h += row(btn('sync', 'SYNC NOW', IN_GAME_PAPER.green), btn('out', 'SIGN OUT', IN_GAME_PAPER.red)) + row(btn('close', 'CLOSE', IN_GAME_PAPER.off));
+  } else {
+    const nu = U.mode === 'new';
+    h += p(nu ? 'Make an account, then sign in with it on your other devices.' : 'Sign in to sync your saves, highlights, stats and settings across devices.', sub, 14);
+    h += `<form onsubmit="return false">${field('u', 'USERNAME', 'text', 'username')}${field('p', 'PASSWORD', 'password', nu ? 'new-password' : 'current-password')}${nu ? field('p2', 'CONFIRM PASSWORD', 'password', 'new-password') : ''}</form>`;
+    if (nu) h += p("No password reset: if you forget it, that cloud save can't be opened. Write it down.", '#c0453a', 13);
+    h += row(nu ? btn('create', 'CREATE ACCOUNT', IN_GAME_PAPER.green) : btn('signin', 'SIGN IN', IN_GAME_PAPER.green), btn('close', 'CLOSE', IN_GAME_PAPER.off));
+    h += `<div style="text-align:center;margin-top:10px"><a href="#" data-a="mode" style="color:${ink};font-size:15px">${nu ? 'HAVE AN ACCOUNT? SIGN IN' : 'NEW? CREATE AN ACCOUNT'}</a></div>`;
+  }
+  if (note) h += p(note, /\.\.\.$|CREATED|SIGNED IN|UPLOADED|UP TO DATE/.test(note) ? (dark ? '#9be7a0' : '#2f7a4a') : '#c0453a', 15);
+  h += '</div>';
+  U.el.innerHTML = h;
+  U.el.querySelectorAll('[data-a]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); if (!sync.busy) acctAct(b.dataset.a); }));
+  U.el.querySelectorAll('input').forEach(i => {
+    i.addEventListener('input', () => { U[i.name] = i.value; });
+    i.addEventListener('keydown', e => { if (e.key === 'Enter' && !sync.busy) { e.preventDefault(); acctAct(U.mode === 'new' ? 'create' : 'signin'); } });
+  });
+}
+function acctAct(a) {
+  const U = acctUI;
+  U.note = a === 'mode' || a === 'out' || a === 'sync' ? '' : U.note;
+  if (a === 'close') acctClose();
+  else if (a === 'mode') { U.mode = U.mode === 'new' ? 'in' : 'new'; U.p = U.p2 = ''; acctRender(); }
+  else if (a === 'signin' || a === 'create') acctSignIn(a === 'create');
+  else if (a === 'sync') syncNow();
+  else if (a === 'out') { acct = null; sync.wait = null; sync.err = ''; sync.etag = null; acctStore(); U.u = ''; U.note = 'SIGNED OUT. YOUR DATA STAYS ON THIS DEVICE.'; acctRender(); }
+  else if (a === 'cloud' || a === 'upload') acctChoose(a === 'cloud');
+  else if (a === 'cancel') { U.view = 'main'; U.choose = null; acctRender(); }
+}
+// auto sync: shortly after load, every SYNC.every s while visible, when the page is hidden (phone app switch / tab close) and when it comes back
+setTimeout(() => { syncNow(); setInterval(() => { if (document.visibilityState === 'visible') syncNow(); }, SYNC.every * 1000); setInterval(syncGate, 1000); }, 2500);
+document.addEventListener('visibilitychange', () => syncNow());
+
 // --- save slots ---------------------------------------------------------------------------
 // SLOTS franchise saves ('pocketPasser.save.0'...), each with a small summary (SLOT_META) for the save / load screens: the head
 // coach's face, team, offense / defense stars, the year and how many years he has coached. A franchise is assigned a slot (curSlot)
@@ -30624,11 +30868,18 @@ function postHomeBtn(b) {
 const HOME_POST = { x: 108, y: 14, w: 96, h: 66 };   // home screen: THE POST (newspaper) beside the settings gear
 function postSettingsOk() { return SETTINGS.post !== false; }
 
-const GAME_VERSION = 'v0.21';   // (pre-release: v0.1, v0.2, v0.3 ... one step per update; v1.0 = the full release)
+const GAME_VERSION = 'v0.22';   // (pre-release: v0.1, v0.2, v0.3 ... one step per update; v1.0 = the full release)
 // --- changelog: click the version at the top left of the main screen. One paged popup (offPop); a page = one section of one version (long ones split at CHANGELOG_LINES).
 // Newest version first. Add a new entry at the top of CHANGELOG with every update and bump GAME_VERSION by 0.1 (pre-release numbering: v0.9 -> v0.10 -> v0.11 ...; v1.0 only for the full release).
 const CHANGELOG_LINES = 13, CHANGELOG_WRAP = 56;   // (lines a page holds / characters a line holds)
 const CHANGELOG = [
+  { v: 'v0.22', secs: [
+    ['ACCOUNTS & CLOUD SAVES', [
+      'The ACCOUNT button on the main menu works: make a username and password, then sign in on your phone or another computer.',
+      'Franchise saves, highlights, stats, Hall of Fame, settings and your online record sync on their own (every minute and when you leave). Saves are encrypted with your password.',
+      'If two devices both changed, you pick which one to keep.',
+    ]],
+  ]},
   { v: 'v0.21', secs: [
     ['DIFFICULTY', [
       'Levels renamed: Doodle, Rookie, Pro (was Normal), Veteran, All-Pro, Playbook Legend. Same names everywhere they show up.',
@@ -31004,7 +31255,7 @@ function drawStart() {
   else { menuBtn(START_BTNS.fr, 'FRANCHISE', RES.bright, 32); menuBtn(START_BTNS.car, 'CAREER', RES.bright, 32); menuBtn(START_BTNS.tut, 'TUTORIAL', IN_GAME_PAPER.green, 32); }   // (CAREER: not built yet)
   menuBtn(START_BTNS.diff, '', '#8b8e90', 24, gearIcon);
   if (!SETTINGS.hideTools) { menuBtn(TEST_BTN, 'TEST MODE', RES.bright, 24); menuBtn(ANIM_BTN, 'ANIMATION LIBRARY', RES.bright, 18); }   // (hidden by default: DEBUG > HIDE EXTRA TOOLS)
-  menuBtn(ACCT_BTN, 'ACCOUNT', IN_GAME_PAPER.red, 24);   // (no function yet)
+  menuBtn(ACCT_BTN, acct ? `ACCOUNT\n${acct.user.toUpperCase()}` : 'ACCOUNT', IN_GAME_PAPER.red, acct ? 20 : 24);   // (cloud sync popup: acctOpen)
   menuBtn(MENU_HL_BTN, savedHighlights.length ? `HIGHLIGHTS (${savedHighlights.length})` : 'IMPORT\nHIGHLIGHTS', IN_GAME_PAPER.yellow, 22);   // (none saved: the button imports a file)
   if (performance.now() - hlFlash < 4000) {   // (nothing saved yet)
     ctx.save(); ctx.fillStyle = '#fffdf4'; ctx.fillRect(W - 420, H - 140, 390, 40); ctx.strokeStyle = RES.line; ctx.lineWidth = 3; ctx.strokeRect(W - 420, H - 140, 390, 40);
@@ -31025,6 +31276,7 @@ function startClick(p) {
   }
   else if (inBtn(p, START_BTNS.ex)) { quickMenu = true; return; }
   if (inBtn(p, VER_BTN)) { offPopShow(changelogPage(0)); return; }   // the version number: the changelog
+  if (inBtn(p, ACCT_BTN)) { acctOpen(); return; }   // cloud sync (// --- cloud sync)
   if (inBtn(p, MENU_HL_BTN)) { if (savedHighlights.length) hlOpen(savedHighlights, 'saved'); else ioImport('highlights', hlImportData); return; }
   if (!SETTINGS.hideTools && inBtn(p, ANIM_BTN)) openAnimLib();
   else if (!SETTINGS.hideTools && inBtn(p, TEST_BTN)) startTestMode();
