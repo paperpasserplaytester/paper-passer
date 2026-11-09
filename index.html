@@ -3707,6 +3707,11 @@ if (!REPLAY_MODES.includes(SETTINGS.replays)) SETTINGS.replays = 'BIG PLAYS';   
 // Settings scopes: SETTINGS_DEF = the defaults (main menu / exhibitions / a new franchise, kept in localStorage); SETTINGS = the working copy.
 // Inside a franchise save (inSave) the working copy is that save's own (stored in its world.settings); only GLOBAL_SET (volume, replays) is shared by all.
 const GLOBAL_SET = ['volume', 'replays', 'hideTools', 'darkMode'];
+// per-device settings: their own key, never in SETTINGS / franchise saves, and cloud sync skips it. mobile = the MOBILE MODE override (unset = on for phones / tablets, off for PCs)
+const DEVICE_KEY = 'pocketPasser.device';
+const DEVICE = (() => { try { return JSON.parse(localStorage.getItem(DEVICE_KEY) || '{}') || {}; } catch (e) { return {}; } })();
+const saveDevice = () => { try { localStorage.setItem(DEVICE_KEY, JSON.stringify(DEVICE)); } catch (e) {} };
+delete SETTINGS.mobile;   // (older settings kept it here, where it synced to every device)
 const SETTINGS_DEF = JSON.parse(JSON.stringify(SETTINGS));
 const inSave = () => !!season && !exhibition && !(results && ['start', 'franchise', 'coach', 'test'].includes(results.screen));
 const useDefaults = () => { for (const k of Object.keys(SETTINGS_DEF)) if (k !== 'difficulty' && k !== 'hitboxes') SETTINGS[k] = JSON.parse(JSON.stringify(SETTINGS_DEF[k])); };   // (a franchise's own settings out, the defaults back)
@@ -29251,7 +29256,7 @@ function drawDebug() {
 function debugClick(p) {
   if (inBtn(p, DBG_BTNS.hit)) { SETTINGS.hitboxes = !SETTINGS.hitboxes; COLLIDE.show = SETTINGS.hitboxes; }
   else if (inBtn(p, DBG_BTNS.tools)) SETTINGS.hideTools = !SETTINGS.hideTools;
-  else if (inBtn(p, DBG_BTNS.mobile)) { SETTINGS.mobile = !TUI.on; tuiSet(SETTINGS.mobile); }   // (touch controls: on by default on a phone / tablet, off on a PC; this overrides that)
+  else if (inBtn(p, DBG_BTNS.mobile)) { DEVICE.mobile = !TUI.on; saveDevice(); tuiSet(DEVICE.mobile); }   // (touch controls: on by default on a phone / tablet, off on a PC; this overrides that)
   else if (inBtn(p, DBG_BTNS.back) || !inBtn(p, DBG_PANEL)) dbgUI = false;
   saveSettings();
 }
@@ -29619,7 +29624,7 @@ async function hexHash(algo, a) { return [...new Uint8Array(await crypto.subtle.
 async function squeeze(a, zip) { return new Uint8Array(await new Response(new Blob([a]).stream().pipeThrough(zip ? new CompressionStream('gzip') : new DecompressionStream('gzip'))).arrayBuffer()); }
 function syncBundle() {   // this device's data as one string (keys sorted, so the same data always hashes the same)
   const ks = [], o = {};
-  for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith('pocketPasser.') && k !== SYNC_KEY) ks.push(k); }
+  for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith('pocketPasser.') && k !== SYNC_KEY && k !== DEVICE_KEY) ks.push(k); }
   ks.sort().forEach(k => o[k] = localStorage.getItem(k));
   return JSON.stringify(o);
 }
@@ -30877,7 +30882,7 @@ const CHANGELOG = [
     ['ACCOUNTS & CLOUD SAVES', [
       'The ACCOUNT button on the main menu works: make a username and password, then sign in on your phone or another computer.',
       'Franchise saves, highlights, stats, Hall of Fame, settings and your online record sync on their own (every minute and when you leave). Saves are encrypted with your password.',
-      'If two devices both changed, you pick which one to keep.',
+      'If two devices both changed, you pick which one to keep. Mobile mode stays per device (on for phones, off for computers) and never syncs.',
     ]],
   ]},
   { v: 'v0.21', secs: [
@@ -34022,7 +34027,7 @@ setInterval(() => {
 // a finger on the page: touch mode on (even on a laptop with a screen), long-press is not a right-click; the first tap goes fullscreen + landscape
 window.addEventListener('pointerdown', e => {
   touchLong = e.pointerType === 'touch';
-  if (touchLong && TUI.q !== '0' && !TUI.on && SETTINGS.mobile !== false) tuiSet(true);   // (unless MOBILE MODE was turned off in settings)
+  if (touchLong && TUI.q !== '0' && !TUI.on && DEVICE.mobile !== false) tuiSet(true);   // (unless MOBILE MODE was turned off in settings)
 }, true);
 window.addEventListener('pointerup', e => {
   if (e.pointerType !== 'touch' || TUI.fs || !TUI.on) return;
@@ -34157,7 +34162,7 @@ window.addEventListener('pointermove', e => {
 for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, e => { pinch.pts.delete(e.pointerId); pinch.d = 0; }, true);
 document.addEventListener('contextmenu', e => { if (TUI.on) e.preventDefault(); });
 document.addEventListener('gesturestart', e => e.preventDefault());   // (Safari's pinch zoom)
-if (TUI.q === '1' || (TUI.q !== '0' && (SETTINGS.mobile ?? IS_MOBILE))) tuiSet(true);   // (SETTINGS.mobile: the settings toggle; unset = on for phones / tablets, off for PCs)
+if (TUI.q === '1' || (TUI.q !== '0' && (DEVICE.mobile ?? IS_MOBILE))) tuiSet(true);   // (SETTINGS.mobile: the settings toggle; unset = on for phones / tablets, off for PCs)
 // installable / offline: the service worker (sw.js) keeps what was fetched; needs http(s), so not when opened from a file
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => {});
 
