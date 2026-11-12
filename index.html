@@ -5249,6 +5249,41 @@ const tossing = () => !tut && performance.now() < tossUntil;
 // PST[name] = { pos, group, games: [ one line per game: counters below + yr, wk, opp, res ] }; seasons and careers are sums of games.
 // Counters: pa pc py pt pi sq (QB: attempts, completions, yards, TDs, INTs thrown, times sacked), ca cy ct (carries, rush yds, rush TD),
 // tg rc ry rt (targets, catches, rec yds, rec TD), tk sk ic (defense: tackles, sacks, INTs caught), fg fa xp xa (kicker).
+// packed storage: LZW over the UTF-8 bytes, one code per character (0x100.. well below the surrogates, so cloud sync / JSON keep it
+// intact), marked by LZ_MARK. The league's simulated stat lines (~1.4 MB a franchise as plain JSON) shrink ~6-8x; three franchises
+// used to fill localStorage (~5M characters) so no new save fit. lsJson reads both packed and plain values.
+const LZ_MARK = '\u0001Z', LZ_OFF = 0x100, LZ_MAX = 0xD000, LZ_CLEAR = LZ_MAX;   // (codes 0-255 = bytes, 256.. = dictionary, LZ_CLEAR = start a new dictionary)
+function lzPack(str) {
+  const b = new TextEncoder().encode(str), dict = new Map(), out = [];
+  let next = 256, w = '';
+  const code = s => s.length === 1 ? s.charCodeAt(0) : dict.get(s);
+  for (let i = 0; i < b.length; i++) {
+    const c = String.fromCharCode(b[i]), wc = w + c;
+    if (!w || dict.has(wc)) { w = wc; continue; }
+    out.push(code(w));
+    if (next < LZ_MAX) dict.set(wc, next++); else { out.push(LZ_CLEAR); dict.clear(); next = 256; }
+    w = c;
+  }
+  if (w) out.push(code(w));
+  let s = LZ_MARK;
+  for (let i = 0; i < out.length; i += 0x4000) s += String.fromCharCode.apply(null, out.slice(i, i + 0x4000).map(x => x + LZ_OFF));
+  return s;
+}
+function lzUnpack(s) {
+  const bytes = [], dict = [];
+  let next = 256, prev = null;
+  for (let i = LZ_MARK.length; i < s.length; i++) {
+    const k = s.charCodeAt(i) - LZ_OFF;
+    if (k === LZ_CLEAR) { dict.length = 0; next = 256; prev = null; continue; }
+    const cur = k < 256 ? String.fromCharCode(k) : k < next ? dict[k] : prev + prev[0];
+    if (prev !== null) dict[next++] = prev + cur[0];
+    for (let j = 0; j < cur.length; j++) bytes.push(cur.charCodeAt(j));
+    prev = cur;
+  }
+  return new TextDecoder().decode(new Uint8Array(bytes));
+}
+const lsJson = v => v == null ? null : JSON.parse(v.startsWith(LZ_MARK) ? lzUnpack(v) : v);
+const lsPacked = o => lzPack(JSON.stringify(o));
 const PST_KEY = 'pocketPasser.pstats', HOF_KEY = 'pocketPasser.hof';
 let PST = {}, HOF = [];   // HOF: [{ team, p: { name, tag, group, stars, face, num, age } }]
 const CHOF_KEY = 'pocketPasser.coachHof';
@@ -5272,14 +5307,14 @@ function pstExhibitionOn() { if (!pstStash) pstStash = { PST, LPST, RECS }; PST 
 function pstExhibitionOff() { if (pstStash) { PST = pstStash.PST; LPST = pstStash.LPST; RECS = pstStash.RECS || recBlank(); pstStash = null; } }
 function pstLoadSlot(i) {
   pstStash = null;
-  const rd = (base, legacy) => { let v = null; try { v = localStorage.getItem(`${base}.${i}`); if (v == null && legacy) { v = localStorage.getItem(base); if (v != null) localStorage.removeItem(base); } } catch (e) {} try { return JSON.parse(v) || {}; } catch (e) { return {}; } };   // (stats from before the slots go to the first save loaded)
+  const rd = (base, legacy) => { let v = null; try { v = localStorage.getItem(`${base}.${i}`); if (v == null && legacy) { v = localStorage.getItem(base); if (v != null) localStorage.removeItem(base); } } catch (e) {} try { return lsJson(v) || {}; } catch (e) { return {}; } };   // (stats from before the slots go to the first save loaded)
   PST = rd(PST_KEY, true); LPST = rd(LPST_KEY, true);
   RECS = Object.assign(recBlank(), rd(REC_KEY));   // (old saves have none: it fills in from here on)
   { const l = rd(LGHL_KEY); LGHL = Array.isArray(l) ? l : []; }
   const h = rd(HOF_KEY, true); HOF = Array.isArray(h) ? h : [];   // (each franchise has its own Hall of Fame)
   const c = rd(CHOF_KEY); CHOF = Array.isArray(c) ? c : [];
 }
-function pstSaveSlot(i) { try { localStorage.setItem(`${CHOF_KEY}.${i}`, JSON.stringify(CHOF)); } catch (e) {} try { localStorage.setItem(`${HOF_KEY}.${i}`, JSON.stringify(HOF)); } catch (e) {} try { localStorage.setItem(`${PST_KEY}.${i}`, JSON.stringify(PST)); localStorage.setItem(`${LPST_KEY}.${i}`, JSON.stringify(LPST)); localStorage.setItem(`${REC_KEY}.${i}`, JSON.stringify(RECS)); } catch (e) {} }
+function pstSaveSlot(i) { try { localStorage.setItem(`${CHOF_KEY}.${i}`, JSON.stringify(CHOF)); } catch (e) {} try { localStorage.setItem(`${HOF_KEY}.${i}`, JSON.stringify(HOF)); } catch (e) {} try { localStorage.setItem(`${PST_KEY}.${i}`, JSON.stringify(PST)); localStorage.setItem(`${LPST_KEY}.${i}`, lsPacked(LPST)); localStorage.setItem(`${REC_KEY}.${i}`, JSON.stringify(RECS)); } catch (e) {} }
 function pstInit() { if (exhibition) pstExhibitionOn(); const fl = twoP && twoP.flipped, a = fl ? MATCH.opp : MATCH.you, b = fl ? MATCH.you : MATCH.opp; pstGame = { id: Date.now(), yr: exhibition || !season ? 0 : LEAGUE.year, wk: exhibition || !season ? 0 : MATCH.playoff ? 'PO' : season.week, rd: !exhibition && season && MATCH.playoff && po ? po.round : null, opp: b, a, b }; }
 // this game's stat line for a roster player (null in the tutorial or for a nobody)
 function pstRec(s) {
@@ -5730,7 +5765,7 @@ function xAV(g, grp) {   // approximate value: a weighted blend of the productio
 const LPST_KEY = 'pocketPasser.pstatsL';
 const LSIM = { plays: 62, yBase: 170, yPerPt: 7.5, yNoise: 45, pass: 0.6, pa: 33, cmp: 0.6, cmpStar: 0.03, int: 0.85, sack: 2.2, tackles: 50 };
 let LPST = {};
-try { LPST = JSON.parse(localStorage.getItem(LPST_KEY)) || {}; } catch (e) {}
+try { LPST = lsJson(localStorage.getItem(LPST_KEY)) || {}; } catch (e) {}
 const pois = l => { let n = 0, t = Math.exp(-Math.max(0, l)), p = Math.random(); while (p > t && n < 20) { n++; p *= Math.random(); } return n; };
 const nz = o => { const r = {}; for (const k in o) if (o[k]) r[k] = o[k] % 1 ? Math.round(o[k] * 100) / 100 : o[k]; return r; };
 function pstGames(name) {
@@ -5748,7 +5783,7 @@ function lpstSave() {
     for (const g of old) { const s = by[g.yr] || (by[g.yr] = { yr: g.yr, gp: 0 }); s.gp++; for (const k in g) if (typeof g[k] === 'number' && k !== 'yr') s[k] = PST_MAX.has(k) ? Math.max(s[k] || 0, g[k]) : (s[k] || 0) + g[k]; }
     e.games = [...Object.values(by), ...e.games.filter(g => g.gp || g.yr >= yr)];
   }
-  try { if (!pstStash) localStorage.setItem(pstKey(LPST_KEY), JSON.stringify(LPST)); } catch (e) {}
+  try { if (!pstStash) localStorage.setItem(pstKey(LPST_KEY), lsPacked(LPST)); } catch (e) {}
 }
 function pstSimGame(g, wk) {
   if (!season || exhibition || tut || !LEAGUE || g.hs == null) return;
@@ -32945,16 +32980,32 @@ function slotOrder() {
   const m = slotMetas();
   return Array.from({ length: SLOTS }, (_, i) => i).sort((a, b) => (m[b] ? m[b].t || 0 : -1) - (m[a] ? m[a].t || 0 : -1) || a - b);
 }
+// storage clean-up: the per-franchise stat keys without a slot number (written while a new career has no slot yet; the league's
+// simulated lines alone are ~1.4 MB) and the leftovers of slots that hold no save. They used to pile up (and sync to every device)
+// until localStorage was full and new franchises could no longer save. keepBase: a franchise without a slot is still using them.
+const SLOT_DATA_KEYS = [PST_KEY, LPST_KEY, REC_KEY, LGHL_KEY, HOF_KEY, CHOF_KEY];
+function storeTidy(keepBase) {
+  try {
+    if (!keepBase) for (const b of SLOT_DATA_KEYS) localStorage.removeItem(b);
+    const m = slotMetas();
+    for (let k = 0; k < SLOTS; k++) if (!m[k] && k !== curSlot && !localStorage.getItem(SLOT_KEY(k))) { for (const b of SLOT_DATA_KEYS) localStorage.removeItem(`${b}.${k}`); }
+  } catch (e) {}
+  for (let k = -1; k < SLOTS; k++) {   // (league stats still stored as plain JSON by an older build: packed in place)
+    try { const key = k < 0 ? LPST_KEY : `${LPST_KEY}.${k}`, v = localStorage.getItem(key); if (v && v.length > 2000 && !v.startsWith(LZ_MARK)) localStorage.setItem(key, lzPack(v)); } catch (e) {}
+  }
+}
+try { storeTidy(true); } catch (e) {}   // (once at load: packs old saves' league stats, frees space before anything tries to save)
 function saveToSlot(i, auto, imported) {   // imported: a save file's data (written as it is; the current franchise and its slot stay as they were)
   if (ONL.on) { console.warn('online: saving is disabled'); return; }
   try {
-    const data = imported || buildSave(), m = slotMetas().slice();
-    localStorage.setItem(SLOT_KEY(i), JSON.stringify(data));
+    const data = imported || buildSave(), m = slotMetas().slice(), txt = JSON.stringify(data);
+    try { localStorage.setItem(SLOT_KEY(i), txt); }
+    catch (e) { storeTidy(curSlot === null); localStorage.setItem(SLOT_KEY(i), txt); }   // (full: clear the leftovers and try once more)
     m[i] = metaOfData(data); localStorage.setItem(SLOT_META, JSON.stringify(m)); slotMetaCache = m;
     if (imported) return;
-    curSlot = i; if (!pstStash) pstSaveSlot(i);
+    curSlot = i; if (!pstStash) { storeTidy(false); pstSaveSlot(i); }   // (the stats are in memory and now go under the slot: drop the slot-less copies first)
     note(auto ? 'AUTOSAVED' : data.live ? 'GAME SAVED (at the last snap)' : 'GAME SAVED');
-  } catch (e) { if (imported) throw e; note('COULD NOT SAVE'); }
+  } catch (e) { if (imported) throw e; console.warn('save failed', e); note('COULD NOT SAVE (STORAGE FULL?)'); }
 }
 function importSave(d) {   // a save file's data: checked, then into the first empty slot (none: asks before replacing the oldest)
   const ok = d && d.v === 1 && d.season && d.match && NFL[d.match.you] && d.career && d.world && d.world.roster && d.world.roster[d.match.you];
@@ -34113,6 +34164,9 @@ const CHANGELOG = [
       "More icons: a stick of butter for drops, a small impact for jams, a broken bone over an injured player, a pancake for pancake blocks, a paper lunch bag over a sacked QB. Your defender's leaps outline his hands: green for perfect timing, yellow a bit early / late, red way off.",
       "Banners: FIRST DOWN! (yellow yours, red theirs); TOUCHBACK; every fumble; RECOVERED! (naming the team) on every recovery; BLOCKED! on blocked field goals, extra points and punts (green when you block it, red when they do); OUT OF BOUNDS stays in the top callout.",
       "Fewer callouts: no more BOOM!, shoved down, loose ball, bobbled, kneel, new record, broke free, chip / stunt / slide / drops / engages, forward progress, pylon dive, spike, the griddy, pick six / return touchdowns, or kick and return calls (fair catch, muffed, downed, leaps, dives, good / no good...).",
+    ]],
+    ["BUG FIXES", [
+      "New franchises save and autosave again: each franchise's league-wide simulated stats took ~1.4 MB, so three franchises filled the browser's storage. They're now stored compressed (about 8x smaller; old saves are packed automatically on load), leftover copies and data from empty slots are cleared, and a save retries once if storage is full.",
     ]],
   ]},
   { v: "v0.19", secs: [
