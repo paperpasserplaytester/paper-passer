@@ -96,8 +96,16 @@ function offClick(pt) {
   const s = results.screen;
   if (!OFF && !(moveMode && s === 'offers')) { results.screen = 'home'; return; }
   if (s === 'awards') {
-    if (OFF.allPro) { if (inBtn(pt, BACK_BTN)) OFF.allPro = false; return; }
-    if (inBtn(pt, ALLPRO_BTN)) OFF.allPro = true;
+    if (OFF.awSel) { if (helpClick(pt, OFF.awSel.p)) return; if (inBtn(pt, BACK_BTN)) OFF.awSel = null; return; }   // (a winner's player card: BACK returns to the awards)
+    if (OFF.allPro) {
+      if (inBtn(pt, BACK_BTN)) { OFF.allPro = false; return; }
+      const ap = season.allPro || { off: [], def: [] };   // (a row = his player card)
+      [[ap.off, 60], [ap.def, 680]].forEach(([list, x0]) => list.forEach((e, i) => { if (inBtn(pt, { x: x0, y: 112 + i * 40, w: 540, h: 36 })) OFF.awSel = { p: e.p, k: e.k }; }));
+      return;
+    }
+    const aw = season.awards.find(a => a.id !== 'COTY' && AW_BOX[a.id] && inBtn(pt, AW_BOX[a.id])), awP = aw && (ROSTER[aw.team] || []).find(x => x.name === aw.name);
+    if (awP) OFF.awSel = { p: awP, k: aw.team };   // (an award card = the winner's player card)
+    else if (inBtn(pt, ALLPRO_BTN)) OFF.allPro = true;
     else if (inBtn(pt, MENU_NEXT)) { results.screen = 'pbowl'; OFF.pb.sel = null; offTip('pbowl'); }
   }
   else if (s === 'pbowl') pbClick(pt);
@@ -222,6 +230,7 @@ function openResults() {
     if (condStart != null && condStart !== LEAGUE.condition) barAnims.cond = { from: condStart, t0: null };
   }
   results = { record, screen: 'result', injAlert: !exhibition && SETTINGS.injuries && LEAGUE.injNotes.length ? [...LEAGUE.injNotes] : null };
+  hsEndReel();   // (the game's best plays run behind the result screen)
   if (!exhibition && !tut) { try { results.pay = payOverlayInfo(); } catch (e) { results.pay = null; } }
   if (!exhibition && !tut && season) { try { if (curSlot === null) autoAssignSlot(); else saveToSlot(curSlot, true); } catch (e) {} }   // (every finished game autosaves to the franchise's slot; one without a slot yet gets the first free one)
 }
@@ -707,12 +716,81 @@ function drawFace(cx, cy, r, fill = '#ffd23a', mood = null) {   // the morale sm
   else ctx.arc(cx, cy + r * (0.75 + 0.15 * curve), r * (0.3 - 0.2 * curve), 1.2 * Math.PI, 1.8 * Math.PI);
   ctx.stroke(); ctx.lineCap = 'butt';
 }
-function coinBox(x, y, n, bg) {
+// --- XP bank: spare XP from your players who are at their potential (tunables XPC). career.xpBank is saved with the career (it follows you to a
+// new team; old saves = 0). The credits box flips to show it (click the box; flyXP flips it by itself). LEAGUE.xpNew / xpSim = banked since the
+// last home screen in played / simulated games (homeNews flies or reports them).
+const xpcBox = { xp: false, t0: -1e9, back: null, doneAt: null };   // xp = the face showing; back = the face to go back to after an XP flight
+let xpPending = 0;   // bank XP still in the air (the box counts up as the tokens land)
+const xpcOn = () => !!season && !exhibition && !tut && !(typeof ONL !== 'undefined' && ONL.on);   // your franchise only
+const xpBank = () => career.xpBank || 0;
+function xpBankAdd(xp) {   // spare XP -> the bank (x XPC.rate); returns what went in
+  if (!xpcOn() || !(xp > 0)) return 0;
+  const add = Math.max(0, Math.min(xp * XPC.rate, (XPC.cap || Infinity) - xpBank()));
+  career.xpBank = xpBank() + add;
+  const k = game && game.simAll ? 'xpSim' : 'xpNew';   // (a simulated game banks it quietly: a line on the home screen instead of the flight)
+  LEAGUE[k] = (LEAGUE[k] || 0) + add;
+  return add;
+}
+function xpSpend(n) {   // pay from the bank: false if it can't
+  if (!xpcOn() || !(n > 0) || xpBank() < n) return false;
+  career.xpBank = xpBank() - n; xpcFlip(true); xpcBox.back = null;   // (the box turns to XP so you see it go)
+  if (xpcBoxSeen() && spendClick) {   // (the tokens fly out of the XP box into the button that was clicked, like credits do)
+    const pt = spendClick, all = [...UI_BTNS, ...UI_BTNS_PREV].filter(r => r && r.w && inBtn(pt, r)).sort((a, b) => a.w * a.h - b.w * b.h);
+    spendFx(all[0] || { x: pt.x - 40, y: pt.y - 20, w: 80, h: 40 }, Math.max(1, Math.round(n / XPC.perToken)), true);
+  }
+  return true;
+}
+function xpcFlip(to) { if (xpcBox.xp !== to) { xpcBox.xp = to; xpcBox.t0 = performance.now(); } }   // (one box, two faces: credits and the XP bank)
+// a click on the credits box / the XP box opens where that currency is spent: credits = TEAM UPGRADES (cap room, roster spots) on the roster
+// screen, XP = your players' cards (the upgrades list when one is waiting). Only from the menu screens in COIN_GO (never mid-flow pages).
+const COIN_SPOT = { x: 1120, y: 16 };   // the credits / XP box (every screen but home, which keeps HOME_COIN)
+const COIN_GO = ['home', 'roster', 'staff', 'hire', 'board', 'practice', 'fa', 'resign', 'playoffs', 'awards'];
+const coinGoOk = () => !!results && COIN_GO.includes(results.screen) && !offPop && !tour && !settingsOpen && !rosterView.tu && !dcg && !teamPick;
+function coinGo(xp) {
+  if (results.screen !== 'roster') { rosterReturn = results.screen; results.screen = 'roster'; }
+  rosterView.team = null; rosterView.sel = null; rosterView.page = 0; rosterView.statsOnly = false; rosterView.pos = null; statsView = null; FVS.dd = null; FVS.pick = false; FVS.autoDD = false;
+  if (xp) { rosterView.side = upgTotal(MATCH.you) > 0 ? 'upg' : rosterUI.side; rosterUI.view = 'simple'; }
+  else { if (rosterView.side === 'upg') rosterView.side = rosterUI.side; rosterView.tu = true; }   // (TEAM UPGRADES: from the front office's button and the 100-credit popup)
+}
+const xpcBoxSeen = () => !!coinAt && typeof spendFrame === 'number' && spendFrame - coinAt.frame <= 2;   // (a credits box was drawn on this page)
+function xpcBoxClick(pt) {   // a click on the box: credits <-> XP bank
+  if (!xpcOn() || !xpcBoxSeen() || !inBtn(pt, { x: coinAt.bx, y: coinAt.by, w: 130, h: 58 })) return false;
+  xpcBox.back = null; xpcFlip(!xpcBox.xp);
+  return true;
+}
+// the XP token: a blue six-sided badge with a double chevron (level up); r = its radius
+function xpIcon(cx, cy, r, rot = 0, g = ctx) {
+  g.save(); g.translate(cx, cy); g.rotate(rot);
+  g.beginPath(); for (let i = 0; i < 6; i++) { const a = Math.PI / 6 + i * Math.PI / 3; g[i ? 'lineTo' : 'moveTo'](Math.cos(a) * r * 1.15, Math.sin(a) * r * 1.15); } g.closePath();
+  g.fillStyle = XPC.col; g.fill(); g.strokeStyle = XPC.edge; g.lineWidth = Math.max(1, r * 0.16); g.stroke();
+  g.strokeStyle = '#fffdf4'; g.lineWidth = Math.max(1.2, r * 0.24); g.lineCap = 'round'; g.lineJoin = 'round';
+  for (const dy of [-0.3, 0.3]) { g.beginPath(); g.moveTo(-r * 0.5, (dy + 0.22) * r); g.lineTo(0, (dy - 0.22) * r); g.lineTo(r * 0.5, (dy + 0.22) * r); g.stroke(); }
+  g.restore();
+}
+function coinBox(x, y, n, bg) {   // ONE box, top right on every screen that shows it: credits on one face, the XP bank on the other (a click flips it)
+  if (x < 900) { x = COIN_SPOT.x; y = COIN_SPOT.y; }
+  const B = xpcBox, on = n === LEAGUE.coins && xpcOn(), k = on ? Math.min(1, (performance.now() - B.t0) / (XPC.flip * 1000)) : 1;
+  const xp = on && (k < 0.5 ? !B.xp : B.xp), sx = k < 1 ? Math.max(0.05, Math.abs(Math.cos(Math.PI * k))) : 1;   // (the flip: the box closes on the old face and opens on the new one)
+  ctx.save();
+  if (sx < 1) { ctx.translate(x + 65, 0); ctx.scale(sx, 1); ctx.translate(-(x + 65), 0); }
   resPanel(x, y, 130, 42, [], bg);
-  ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-  ctx.fillText(String(n === LEAGUE.coins ? Math.max(0, n - coinPending) : n), x + 85, y + 23);   // (counts up as each flying credit lands)
-  eraserIcon(x + 105, y + 21, 8);   // (20% smaller than the icon elsewhere)
-  coinAt = { x: x + 105, y: y + 21, frame: typeof spendFrame === 'number' ? spendFrame : 0 };   // (credits fly to / from the box actually on this page)
+  ctx.font = 'bold 22px monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  if (xp) { ctx.fillStyle = XPC.col; ctx.fillText(String(Math.max(0, Math.floor(xpBank() - xpPending))), x + 85, y + 23); xpIcon(x + 105, y + 21, 9); }   // (the XP bank: counts up as each flying token lands)
+  else {
+    ctx.fillStyle = RES.line; ctx.fillText(String(n === LEAGUE.coins ? Math.max(0, n - coinPending) : n), x + 85, y + 23);   // (counts up as each flying credit lands)
+    eraserIcon(x + 105, y + 21, 8);   // (20% smaller than the icon elsewhere)
+  }
+  ctx.restore();
+  if (on) {   // the tip under it: what a click brings up (the OTHER currency's icon)
+    const tip = (TOUCH ? 'tap' : 'click') + ' for';
+    ctx.save(); ctx.font = 'bold 11px monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.dim;
+    const tw = ctx.measureText(tip).width, cx = x + 65 + tw / 2 - 8;
+    ctx.fillText(tip, cx, y + 51);
+    if (xp) eraserIcon(cx + 13, y + 50, 5); else xpIcon(cx + 12, y + 50, 5.5);
+    ctx.restore();
+    UI_BTNS.push({ x, y, w: 130, h: 42 });
+  }
+  coinAt = { x: x + 105, y: y + 21, xx: x + 105, bx: x, by: y, frame: typeof spendFrame === 'number' ? spendFrame : 0 };   // (credits / XP fly to and from the box actually on this page)
 }
 let coinAt = null;
 function coinTarget() {   // where the credits box is on the page being drawn (falls back to the per-screen guess)
@@ -897,7 +975,8 @@ function drawSeasonTiles(x, y, w, h) {
     ctx.fillText(`${S.streak[0] === 'W' ? 'WON' : S.streak[0] === 'L' ? 'LOST' : 'TIED'} ${S.streak.slice(1)} STRAIGHT`.replace(' 1 STRAIGHT', ' LAST GAME'), x + w - 20, y + h - 18); }
 }
 function drawResults() {
-  paperBg();
+  if (hl && hl.bg) { ctx.save(); ctx.globalAlpha = HLREEL.bgPaper; paperBg(); ctx.restore(); }   // (the game's reel is playing behind this screen: the paper lets it through)
+  else paperBg();
   coinBox(1120, 16, LEAGUE.coins, RES.bright);   // (the credits: top right)
   const blueWon = game.blue > game.red, tie = game.blue === game.red, U = RES_UI, pg = poGame(), lostPO = pg && game.blue < game.red;
   if (pg) poFrame(lostPO);   // (a playoff game: gold-trimmed paper, quiet grey after a loss)
@@ -1047,10 +1126,67 @@ function drawMenus() {
   if (payToFly > 0 && (results.screen === 'week' || results.screen === 'home' || results.screen === 'playoffs' || results.screen === 'awards')) { flyCoins(payToFly); payToFly = 0; }
   drawCoinFly();
   drawSpendFx();   // (credits spent: out of the box into the button, on any screen)
+  drawCardShows();   // (a player just drafted / signed / traded for: his card, crumpled, tossed to the roster button)
+}
+// --- card shows: a player who just joined your team (draft pick, free-agent signing, trade) is shown as his roster card, crumpled into a
+// paper ball and tossed to the ROSTER button of the screen you are on. Several = one after another; a click skips the one showing. Looks only.
+const CARD_SHOW = { pop: 0.22, hold: 0.85, crumple: 0.32, fly: 0.5, scale: 1.3, ball: 24, dim: 0.45, arc: 150 };   // seconds per phase, card scale, ball radius, backdrop, toss height
+let cardShows = [];   // queue of { p, team, tag, t0 }
+function cardShowAdd(p, team, tag) { if (p && season && !exhibition && !tut && team === season.team) cardShows.push({ p, team, tag, t0: null, bb: { x: -135, y: -124, w: 270, h: 248 } }); }
+function cardShowSkip() {   // a click: on to the toss (true = the click is taken)
+  const c = cardShows[0]; if (!c || c.t0 == null) return false;
+  const S = CARD_SHOW, at = S.pop + S.hold;
+  if ((performance.now() - c.t0) / 1000 < at) c.t0 = performance.now() - at * 1000;
+  return true;
+}
+function cardShowTarget() {   // the roster button on this screen (off the bottom of the page when it has none)
+  const s = results && results.screen, b = s === 'home' ? HOME_BTNS[2] : s === 'fa' || s === 'resign' || s === 'draft' ? OFF_ROSTER_BTN : null;
+  return b ? [b.x + b.w / 2, b.y + b.h / 2] : [W / 2, H + 60];
+}
+function paperBall(x, y, r, col, rot, seed) {   // a crumpled card: a jagged ball with creases
+  const rnd = i => { const v = Math.sin(seed * 12.9898 + i * 78.233) * 43758.5453; return v - Math.floor(v); };
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+  ctx.beginPath(); for (let i = 0; i < 11; i++) { const a = i / 11 * Math.PI * 2, rr = r * (0.78 + 0.3 * rnd(i)); ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * rr, Math.sin(a) * rr); } ctx.closePath();
+  ctx.fillStyle = col; ctx.fill(); ctx.strokeStyle = '#3b3320'; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
+  ctx.strokeStyle = 'rgba(59,51,32,0.45)'; ctx.lineWidth = 1.3; ctx.beginPath();
+  for (let i = 0; i < 5; i++) { const a = rnd(20 + i) * Math.PI * 2, b = a + 1.6 + rnd(30 + i); ctx.moveTo(Math.cos(a) * r * 0.75, Math.sin(a) * r * 0.75); ctx.lineTo(Math.cos(b) * r * 0.3 * rnd(40 + i), Math.sin(b) * r * 0.3); }
+  ctx.stroke(); ctx.restore();
+}
+function drawCardShows() {
+  if (!cardShows.length) return;
+  if (!results || !season || exhibition) { cardShows = []; return; }
+  if (offPop || tour || settingsOpen) return;   // (a popup first: the show waits for it)
+  const c = cardShows[0], now = performance.now(), S = CARD_SHOW;
+  if (c.t0 == null) c.t0 = now;
+  const t = (now - c.t0) / 1000, T1 = S.pop + S.hold, T2 = T1 + S.crumple, T3 = T2 + S.fly, cx = W / 2, cy = H / 2 - 10;
+  if (t >= T3) { cardShows.shift(); if (cardShows.length) drawCardShows(); return; }
+  const col = mixHex(sideKit(c.team, c.p).main, 0.5, 255), seed = deskHash(c.p.name) % 97;
+  ctx.save();
+  ctx.fillStyle = `rgba(30,25,10,${S.dim * Math.min(1, t / S.pop) * (t > T2 ? 1 - (t - T2) / S.fly : 1)})`; ctx.fillRect(0, 0, W, H);
+  if (t < T2) {
+    const q = t < T1 ? 0 : (t - T1) / S.crumple, pk = Math.min(1, t / S.pop), pop = 1 + 0.12 * Math.sin(Math.PI * pk) * (1 - pk);   // (pops in with a small overshoot)
+    const sc = S.scale * (t < T1 ? (0.5 + 0.5 * pk * (2 - pk)) * pop : 1 - q * q * (1 - (S.ball * 2) / (270 * S.scale)));
+    if (q < 0.7) {
+      ctx.save(); ctx.translate(cx, cy); ctx.rotate(q * q * 1.4 + (t < T1 ? (1 - pk) * -0.12 : 0)); ctx.scale(sc * (1 - 0.25 * Math.sin(q * 9) * q), sc * (1 - 0.2 * Math.cos(q * 11) * q));
+      ctx.globalAlpha = q < 0.4 ? 1 : 1 - (q - 0.4) / 0.3;
+      try { rosterCard(c.p, c.bb, c.team, null, null); } catch (e) {}
+      ctx.restore();
+    }
+    if (q > 0.35) { ctx.globalAlpha = Math.min(1, (q - 0.35) / 0.3); paperBall(cx, cy, S.ball + (1 - q) * 60, col, q * 3, seed); ctx.globalAlpha = 1; }
+    if (t < T1 && c.tag) {
+      ctx.globalAlpha = pk; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineWidth = 6; ctx.strokeStyle = '#3b3320'; ctx.lineJoin = 'round';
+      ctx.strokeText(c.tag, cx, cy - 124 * S.scale - 34); ctx.fillStyle = '#fff3a0'; ctx.fillText(c.tag, cx, cy - 124 * S.scale - 34); ctx.globalAlpha = 1;
+    }
+  } else {
+    const q = (t - T2) / S.fly, e = q * q * (3 - 2 * q), to = cardShowTarget();
+    paperBall(cx + (to[0] - cx) * e, cy + (to[1] - cy) * e - Math.sin(Math.PI * q) * S.arc, S.ball * (1 - 0.45 * e), col, 3 + q * 9, seed);
+  }
+  ctx.restore();
 }
 // the credits animation: each credit rises from the middle of the screen and arcs into the top-left credits box
 const COIN_FLY = { time: 0.9, gap: 0.2, delay: 0.4, to: [128, 40], from: [W / 2, H / 2 + 60] };
-const COIN_TO = { home: [1085, 44], other: [128, 40], right: [1228, 40] };   // right = the box top right on the result / end of week screens   // the credits box sits beside the year on the home screen, top left elsewhere
+const COIN_TO = { home: [1085, 44], other: [1225, 37], right: [1228, 40] };   // right = the box top right on the result / end of week screens   // the credits box sits beside the year on the home screen, top left elsewhere
+const HOME_COIN = { x: 1010, y: 22, w: 130, h: 42 }, ROSTER_COIN = { x: 240, y: 22 }, CARD_COIN = { x: 54, y: 16 }, STAFF_COIN = { x: 26, y: 22 };   // the credits / XP box on the home screen, the roster list, a player's card and the staff pages
 let payToFly = 0, coinPending = 0, coinFly = [], payFrom = null;   // payFrom = [x, y] where the credits come from (callers set it; default mid-screen)
 function flyCoins(n, pre, from) {   // pre = the box was already holding them back (the post-game credits screen)
   const now = performance.now(), src = from || payFrom || COIN_FLY.from;
@@ -1061,27 +1197,51 @@ function flyCoins(n, pre, from) {   // pre = the box was already holding them ba
     coinFly.push({ t0: now + (COIN_FLY.delay + Math.min(i, 12) * 0.05) * 1000, done: false, sx: src[0], sy: src[1], mx: src[0] + Math.cos(a) * d, my: src[1] + Math.sin(a) * d * 0.7 });
   }
 }
+function flyXP(amt, from) {   // banked XP flies to the box as tokens (it is already in the bank: this is only the show). After any credits in the air
+  if (!(amt >= 1) || !xpcOn()) return;
+  const now = performance.now(), src = from || COIN_FLY.from, n = Math.max(1, Math.min(XPC.tokens, Math.round(amt / XPC.perToken)));
+  xpPending += amt;
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, d = 50 + Math.random() * 90, off = (COIN_FLY.delay + i * 0.05) * 1000;
+    coinFly.push({ xp: amt / n, off, t0: now + off, done: false, sx: src[0], sy: src[1], mx: src[0] + Math.cos(a) * d, my: src[1] + Math.sin(a) * d * 0.7 });
+  }
+}
+function xpFlyTick(now) {   // the box around an XP flight: it flips to XP as the first token leaves and back once the last has landed; no box on the page = no show
+  const B = xpcBox, xs = coinFly.filter(c => c.xp);
+  if (!xs.length) {
+    xpPending = 0;
+    if (B.back != null) { if (B.doneAt == null) B.doneAt = now; if (now - B.doneAt > XPC.hold * 1000) { xpcFlip(B.back === 'xp'); B.back = null; B.doneAt = null; } }
+    return;
+  }
+  B.doneAt = null;
+  if (!xs.some(c => now >= c.t0)) return;   // (still waiting: behind the credits, or its own short delay)
+  if (!xpcOn() || !xpcBoxSeen()) { coinFly = coinFly.filter(c => !c.xp); xpPending = 0; return; }   // (nowhere to land: skipped, it's banked already)
+  if (B.back == null) { B.back = B.xp ? 'xp' : 'cr'; xpcFlip(true); }
+}
 function drawCoinFly() {
   COIN_FLY.to = coinTarget();
+  const now = performance.now(), busy = coinFly.some(c => !c.xp);   // (credits first: the XP tokens wait until the last credit has landed)
+  if (busy) for (const c of coinFly) if (c.xp) c.t0 = now + c.off;
+  xpFlyTick(now);
   if (!coinFly.length) return;
-  const now = performance.now();
   ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   for (const c of coinFly) {
-    const k = (now - c.t0) / (COIN_FLY.time * 1000 * 1.5);
+    const k = (now - c.t0) / (COIN_FLY.time * 1000 * 1.5), icon = c.xp ? xpIcon : eraserIcon, R = c.xp ? 13 : 16;
     if (k < 0) {   // waiting its turn: hovering where they come from
-      eraserIcon(c.sx, c.sy, 16);
+      if (!(c.xp && busy)) icon(c.sx, c.sy, R);
       continue;
     }
-    if (k >= 1) { if (!c.done) { c.done = true; coinPending = Math.max(0, coinPending - 1); } continue; }
+    if (k >= 1) { if (!c.done) { c.done = true; if (c.xp) xpPending = Math.max(0, xpPending - c.xp); else coinPending = Math.max(0, coinPending - 1); } continue; }
     const SPL = 0.3;   // first 30%: split out from the source; the rest: arc into the box
     if (k < SPL) {
       const s = k / SPL, e = s * s * (3 - 2 * s);
-      eraserIcon(c.sx + (c.mx - c.sx) * e, c.sy + (c.my - c.sy) * e, 16, k * 8);
+      icon(c.sx + (c.mx - c.sx) * e, c.sy + (c.my - c.sy) * e, R, k * 8);
       continue;
     }
-    const q = (k - SPL) / (1 - SPL), e = q * q * (3 - 2 * q), x = c.mx + (COIN_FLY.to[0] - c.mx) * e,
-          y = c.my + (COIN_FLY.to[1] - c.my) * e - Math.sin(Math.PI * q) * 60, r = 16 - 6 * e;
-    eraserIcon(x, y, r, -0.5 + q * 6);
+    const to = c.xp && coinAt ? [coinAt.xx, coinAt.y] : COIN_FLY.to;   // (XP tokens land in the XP box)
+    const q = (k - SPL) / (1 - SPL), e = q * q * (3 - 2 * q), x = c.mx + (to[0] - c.mx) * e,
+          y = c.my + (to[1] - c.my) * e - Math.sin(Math.PI * q) * 60, r = R - R * 0.375 * e;
+    icon(x, y, r, -0.5 + q * 6);
   }
   ctx.restore();
   coinFly = coinFly.filter(c => !c.done);
@@ -1438,6 +1598,8 @@ function drawWeekEnd() {
   [['MOOD', 732, (cx, cy) => {
     ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center';
     ctx.fillText(`${LEAGUE.morale}%`, cx - 16, cy); drawFace(cx + 36, cy - 1, 11, '#ffd23a', LEAGUE.morale);
+    const md = LEAGUE.moraleD || 0;   // (this game's change)
+    if (md) { ctx.fillStyle = md > 0 ? MORALE.gain : MORALE.hit; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'left'; ctx.fillText(`${md > 0 ? '▲ +' : '▼ '}${md}`, cx + 54, cy); }
   }], ['OFFENSE', 937, (cx, cy) => starRow(cx, cy, LEAGUE.offense, offStarFill(), 14, offStarRim())],
   ['DEFENSE', 1142, (cx, cy) => starRow(cx, cy, LEAGUE.defense, defStarFill(), 14, defStarRim())]].forEach(([t, cx, draw], i) => {
     ctx.fillStyle = RES.dim; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(t, cx, 112);
@@ -1601,7 +1763,7 @@ function weekClick(pt) {
 }
 
 // After an exhibition: every tracked player's line from that game (no condition / XP: it doesn't count). BACK = result.
-const EX_STATS_BTN = { x: 40, y: 400, w: 560, h: 80 };
+const EX_STATS_BTN = { x: 40, y: RES_UI.tiles.y, w: 560, h: 80 };   // (y = where drawResults draws it: the click used to test a spot 52 px higher, so most of the button did nothing)
 // one team a side: every player of that team who played (offense, then defense, then the kicker) with his line from this game
 function boxSummary(p, g) {
   const o = [];
@@ -1616,6 +1778,20 @@ function boxSummary(p, g) {
   if (p.group === 'K') o.push(`FG ${g.fg || 0}/${g.fa || 0} XP ${g.xp || 0}/${g.xa || 0}`);
   return o.join('  ') || '-';
 }
+// the schedule's click (home screen): a played game's result (what is saved: the final score + every player's stat line) with a STATS button
+// that opens the game stats screen on that week. Unplayed games do nothing new.
+function schedGameClick(w) {
+  const g = season && gameOf(w); if (!g || g.hs == null) return false;
+  const me = season.team, mine = g.h === me ? g.hs : g.as, theirs = g.h === me ? g.as : g.hs, opp = g.h === me ? g.a : g.h;
+  gsOpen('home', w);
+  const G = GS.games[0], top = team => [...gsLines(G, team)].map(([p, l]) => [p, l, (l.py || 0) / 25 + (l.cy || 0) / 10 + (l.ry || 0) / 10 + 6 * ((l.pt || 0) + (l.ct || 0) + (l.rt || 0)) + (l.tk || 0) + 4 * (l.sk || 0) + 6 * (l.ic || 0)])
+    .filter(x => x[2] > 0).sort((a, b) => b[2] - a[2]).slice(0, 3).map(([p, l]) => `  ${p.group} ${p.short || p.name}: ${boxSummary(p, l)}`);
+  const tm = top(me), to = top(opp);
+  offPopShow({ title: `WEEK ${w}  -  FINAL`, lines: [`${NFL[g.a].city.toUpperCase()} ${g.as}   at   ${NFL[g.h].city.toUpperCase()} ${g.hs}`, mine > theirs ? 'WIN' : mine < theirs ? 'LOSS' : 'TIE', '',
+    ...(tm.length ? [NFL[me].nick.toUpperCase(), ...tm] : []), ...(to.length ? [NFL[opp].nick.toUpperCase(), ...to] : [])],
+    btns: [{ label: 'BACK' }, { label: 'STATS', green: true, on: () => { gsOpen('home', w); results.screen = 'exstats'; } }] });
+  return true;
+}
 // --- the game stats screen (end of week STATS / end of exhibition PLAYER STATS): HOME (left tab) or AWAY (right tab) team, every player on a
 // roster card (offense first, then defense, best stars first); click a card to flip it over to his key stats from this game (nothing at 0 shown).
 // The title (franchise weeks only) drops down every game played that week. results.screen 'exstats'; GS.ret = where BACK goes.
@@ -1626,8 +1802,9 @@ const GS_TABS = { home: { x: 20, y: 12, w: 200, h: 60 }, away: { x: W - 220, y: 
 const GS_DD = Array.from({ length: 16 }, (_, k) => ({ x: 190 + (k % 2) * 450, y: 96 + Math.floor(k / 2) * 52, w: 440, h: 46 }));
 // (derived rates, longs and counts a quick box score doesn't need)
 const GS_SKIP = new Set(['GP', 'GS', 'SOLO', 'ASSISTS', 'CMP %', 'Y/A', 'YDS/CARRY', 'YDS/REC', 'CATCH %', 'FG %', 'XP %', 'LONG', 'LONG RUN', 'LONG FG', 'GROSS AVG', 'NET AVG', 'LONG PUNT', 'TARGETS']);
-function gsOpen(ret) {
-  const ex = !!exhibition || !season, po = !ex && season.lastPO != null, wk = !ex && !po ? (season.last || gamesPlayed()) : null;
+function gsOpen(ret, pastWk = null) {   // pastWk = an earlier week of this season (the schedule's click): its saved lines, not the live tape
+  const ex = !pastWk && (!!exhibition || !season), po = !pastWk && !ex && season.lastPO != null, wk = pastWk || (!ex && !po ? (season.last || gamesPlayed()) : null);
+  GS.past = !!pastWk;
   let games;
   if (ex || po) games = [{ h: MATCH.you, a: MATCH.opp, hs: game.blue, as: game.red, mine: true }];
   else {
@@ -1639,9 +1816,10 @@ function gsOpen(ret) {
 const gsRoster = team => [...(ROSTER[team] || [])].sort((a, b) => (OFF_GROUPS.includes(b.group) - OFF_GROUPS.includes(a.group)) || (b.stars - a.stars) || scoreOf(b) - scoreOf(a));
 function gsLines(G, team) {   // player -> his line from this game (your own game: the live tape; the rest of the league: the simulated box scores)
   const out = new Map();
-  if (G.mine) { for (const [p, g] of boxLines(team)) out.set(p, { ...PST_BLANK(), ...g }); }
+  if (G.mine && !GS.past) { for (const [p, g] of boxLines(team)) out.set(p, { ...PST_BLANK(), ...g }); }
   else for (const p of ROSTER[team] || []) {
-    const e = LPST[p.name], g = e && e.games.find(x => !x.gp && x.yr === LEAGUE.year && x.wk === GS.wk);
+    const at = x => !x.gp && x.yr === LEAGUE.year && x.wk === GS.wk;
+    const e = LPST[p.name], m = G.mine && PST[p.name], g = (m && m.games.find(at)) || (e && e.games.find(at));   // (a past game of yours: the lines you played, kept in PST)
     if (g) out.set(p, { ...PST_BLANK(), ...g });
   }
   return out;
@@ -1733,7 +1911,7 @@ function drawHome() {
   paperBg();
   menuBtn(HOME_BTNS[0], "", '#8b8e90', HOME_FS, gearIcon);   // settings
   if (postOn()) postHomeBtn(HOME_POST);
-  coinBox(1010, 22, LEAGUE.coins, RES.bright);
+  coinBox(HOME_COIN.x, HOME_COIN.y, LEAGUE.coins, RES.bright);
   resPanel(1150, 22, 110, 42, [], RES.bright);
   ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(`${nflYear()}`, 1205, 44);   // (click the box: coaching year <-> calendar year)
@@ -1875,7 +2053,7 @@ function drawHome() {
     ink(); ctx.fillText('DEFENSE', Tm.x + 6, ry(1)); starRow(Tm.x + 250, ry(1), LEAGUE.defense, defStarFill(), 12, defStarRim());
     ink(); ctx.fillText('CONDITION', Tm.x + 6, ry(2)); pencilBar(Tm.x + 168, ry(2) - 13, 200, 26, cnd / 100, condTone(cnd), 10, 5);
     ink(toneInk(cnd)); ctx.fillText(`${Math.round(cnd)}%`, Tm.x + 384, ry(2));
-    ink(); ctx.fillText('MORALE', Tm.x + 6, ry(3)); ink(toneInk(LEAGUE.morale)); ctx.fillText(`${LEAGUE.morale}%`, Tm.x + 168, ry(3)); drawFace(Tm.x + 262, ry(3) - 1, 12, '#ffd23a', LEAGUE.morale);
+    ink(); ctx.fillText('MORALE', Tm.x + 6, ry(3)); ink(toneInk(LEAGUE.morale)); ctx.fillText(`${LEAGUE.morale}%`, Tm.x + 168, ry(3)); drawFace(Tm.x + 246, ry(3) - 1, 12, '#ffd23a', LEAGUE.morale); moraleGauge(Tm.x + 272, ry(3) - 9, 96, 18, LEAGUE.morale);
     ctx.fillStyle = RES.line; ctx.textAlign = 'center';
   }
   if (season && !exhibition) { drawHelpIcon(HOME_HELP.off); }   // what each side is missing; what condition / morale do
@@ -1938,6 +2116,7 @@ try { Object.assign(rosterUI, JSON.parse(localStorage.getItem(RUI_KEY)) || {}); 
 rosterView.side = rosterUI.side === 'def' ? 'def' : 'off';
 const rosterUISave = () => { try { localStorage.setItem(RUI_KEY, JSON.stringify({ side: rosterUI.side, view: rosterUI.view })); } catch (e) {} };
 const posList = side => [null, ...new Set((SIDE_SLOTS[side] || []).filter(g => g !== 'P'))];
+const ROSTER_VIEW_TAB = { x: 228, y: 12, w: 160, h: 60 };   // the roster's FORMATION / SIMPLE toggle: beside OFFENSE (top right belongs to the credits / XP boxes)
 const ROSTER_TABS = { off: { x: 20, y: 12, w: 200, h: 60 }, def: { x: W - 220, y: 12, w: 200, h: 60 } };
 const ROSTER_CARDS = Array.from({ length: 8 }, (_, i) => ({ x: 61 + (i % 4) * 296, y: 96 + Math.floor(i / 4) * 264, w: 270, h: 248 }));
 const ROSTER_ARROWS = [{ x: 4, y: 300, w: 46, h: 90 }, { x: W - 50, y: 300, w: 46, h: 90 }];
@@ -2055,12 +2234,31 @@ function moraleEvent(p, ev) {
   moraleSync();
 }
 function moraleDecayPlay() { moraleDecay(MORALE.decayPlay); }
-function moraleDecay(k) { if (!moraleOn()) return; for (const s of ROSTER[MATCH.you] || []) s.morale = moraleRaw(s) + (MORALE.neutral - moraleRaw(s)) * k; moraleSync(); }
-function moraleAfterGame(margin) {   // the game's over: a win lifts everyone who played, a loss sinks them; then it drifts toward 50
+// (v0.30, the Player Lounge: morale rests at moraleBase(), above 50 with lounge levels, and climbs back to it faster from below)
+const moraleBase = () => MORALE.neutral + FAC_FX.lounge.base * facLvl('lounge');
+function moraleDecay(k) {
   if (!moraleOn()) return;
-  const d = margin > 0 ? MORALE.ev.win : margin < 0 ? MORALE.ev.loss : 0;
+  const b = moraleBase(), up = 1 + FAC_FX.lounge.back * facLvl('lounge');
+  for (const s of ROSTER[MATCH.you] || []) { const m = moraleRaw(s); s.morale = m + (b - m) * Math.min(1, k * (m < b ? up : 1)); }
+  moraleSync();
+}
+function moraleAfterGame(margin) {   // the game's over: a win lifts everyone who played, a loss sinks them (more in a blowout, more on a streak); then it drifts toward the resting point
+  if (!moraleOn()) return;
+  const T = MORALE_TEAM, was = LEAGUE.morale, big = Math.abs(margin) >= T.blowoutBy ? T.blowout : 0;
+  LEAGUE.mStreak = margin > 0 ? (LEAGUE.mStreak || 0) + 1 : 0;
+  const d = margin > 0 ? MORALE.ev.win + big + (LEAGUE.mStreak >= T.streakAt ? T.streak : 0) : margin < 0 ? MORALE.ev.loss - big : 0;
   for (const s of ROSTER[MATCH.you] || []) if (!s.missed) s.morale = Math.max(MORALE.lo, Math.min(MORALE.hi, moraleRaw(s) + d));
   moraleDecay(MORALE.decayGame);
+  LEAGUE.moraleD = LEAGUE.morale - (was == null ? LEAGUE.morale : was);   // (the week screen's arrow)
+}
+// team-wide Lounge-era events (MORALE_TEAM): a key starter lost for weeks, a star traded / cut, the Paper Bowl
+function moraleKeyInjury(s) { const T = MORALE_TEAM; if (yoursEntry(s) && s.inj && s.inj.weeks >= T.injWeeks && s.stars >= T.injStars && startersOf(MATCH.you).has(s)) moraleShiftAll(T.injury); }
+function moraleStarGone(p) { if (p && p.stars >= MORALE_TEAM.goneStars && season && !exhibition) moraleShiftAll(MORALE_TEAM.starGone); }
+// a 0-100 morale gauge (red under 35, green over 65; the tick = the resting point)
+const MORALE_GAUGE = { lo: 35, hi: 65 };
+function moraleGauge(x, y, w, h, m) {
+  pencilBar(x, y, w, h, m / 100, m < MORALE_GAUGE.lo ? 'red' : m > MORALE_GAUGE.hi ? 'green' : null, 10, 5);   // (pencilBar's own tones)
+  const bx = x + w * moraleBase() / 100; ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(bx, y - 4); ctx.lineTo(bx, y + h + 4); ctx.stroke();
 }
 const moodAfterGame = moraleAfterGame;
 // old saves and new rosters: every entry gets the morale / rehab fields (the fill5 pattern)
@@ -2105,7 +2303,7 @@ const limitedWearP = p => p && p.src && isLimited(p.src) ? RECOVERY.limited.wear
 const unitSide = s => OFF_GROUPS.includes(s.group) ? 'off' : 'def';
 const trainerStars = side => (typeof career !== 'undefined' && career && career.prac && career.prac.tr && career.prac.tr[side] ? career.prac.tr[side].stars : RECOVERY.trainerBase);   // (franchise: your trainer's stars; otherwise average)
 const trainerK = side => 1 + RECOVERY.trainerPerStar * (trainerStars(side) - RECOVERY.trainerBase);
-const recoveryK = k => k && typeof k === 'object' && yoursEntry(k) ? trainerK(unitSide(k)) * moraleMul(k) : 1;   // (x the wear shed per possession change: your named players only)
+const recoveryK = k => k && typeof k === 'object' && yoursEntry(k) ? trainerK(unitSide(k)) * moraleMul(k) * (1 + FAC_FX.rec.rest * facLvl('rec')) : 1;   // (x the wear shed per possession change: your named players only)
 function timeoutRecover() {   // your timeout: a breather (wear) and a steadier locker room (morale pulled toward 50)
   for (const [k, v] of WEAR_MAP) if (k && typeof k === 'object' && yoursEntry(k)) WEAR_MAP.set(k, Math.max(0, v - RECOVERY.timeoutWear));
   moraleDecay(RECOVERY.timeoutSteady);
@@ -2122,7 +2320,9 @@ function injuryReturn(s, sev, notes) {   // the layoff is over: a bad / severe o
 }
 const contractStr = p => p.salary == null ? 'NOT LISTED' : `$${p.salary}M (${p.years}Y)`;
 // --- salary cap: payroll = every contract on the team (a player with no listed contract counts as the minimum)
-const CAP = { start: 250, step: 25, cost: 100, minPay: 0.8, max: 450, penalty: 0.75 };   // $M; +step $M of cap costs `cost` credits (front office)
+const CAP = { start: 250, step: 25, cost: 100, minPay: 0.8, max: 450, penalty: 0.75, nudge: 100, firstOff: 0.5 };   // nudge = credits at which the home screen points you to TEAM UPGRADES (once a franchise); firstOff = x the price of the cap bought after it
+const capCost = () => Math.round(CAP.cost * (LEAGUE.capSale ? CAP.firstOff : 1));   // (LEAGUE.capSale: the first-time discount, gone once used)
+// CAP (kept on one line above):   // $M; +step $M of cap costs `cost` credits (front office)
 const payOf = p => p.salary == null ? CAP.minPay : p.salary;
 const payroll = (team, side) => (side ? ROSTER[team].filter(p => OFF_GROUPS.includes(p.group) === (side === 'off')) : ROSTER[team]).reduce((t, p) => t + payOf(p), 0);
 const CAP_LEAGUE_SHARE = 0.5;   // for every $M you add to your own cap, the rest of the league adds this much to theirs (50M -> 25M)
@@ -2263,7 +2463,7 @@ const backArrow = back => {
 };
 // the roster's team name is a button: it opens the swap screen to look at any team (their potential stays hidden)
 const viewTeam = () => rosterView.team || MATCH.you;
-const UPG_ALL_BTN = { x: 898, y: 14, w: 154, h: 56 };   // roster list, top right: spends one ready upgrade (random attribute) for every player who has one
+const UPG_ALL_BTN = { x: 20, y: 14, w: 154, h: 56 };   // roster list, top left (the credits / XP boxes are top right): spends one ready upgrade (random attribute) for every player who has one
 const ROSTER_TITLE_BTN = { x: W / 2 - 250, y: 8, w: 500, h: 72 };
 const CARD_GRAY = '#c9ccd2';   // benched / backup players
 const POS_COL = { QB: '#c0392b', RB: '#d9822b', WR: '#1f9a8a', TE: '#7e57c2', OL: '#7a6a4f', DL: '#a3232a', LB: '#c2185b', CB: '#2a62b0', S: '#1f8a5b', K: '#6b6f78' };   // roster cards: one colour per position (tab, badge, strip under the photo)
@@ -2308,8 +2508,12 @@ function drawRoster() {
   if (rosterView.sel != null && statsView && statsView.from === 'roster') return drawStatsPage();
   if (rosterView.sel != null) return drawPlayerPage(team, ps[rosterView.sel], kr);
   const poR = season && season.lastPO != null ? PO_ROUNDS[season.lastPO] : null, wkStats = rosterView.statsOnly ? (poR ? `${poR} STATS` : `WEEK ${season && season.last ? season.last : gamesPlayed()} STATS`) : null;   // (the post-game stats list: titled by the game, not the team)
-  const title = wkStats || `${NFL[team].city.toUpperCase()} ROSTER`;
-  menuBtn(ROSTER_TITLE_BTN, '', RES.bright, 20, b => {
+  const title = wkStats || (dcg ? 'DEPTH CHART' : `${NFL[team].city.toUpperCase()} ROSTER`);
+  if (dcg && !wkStats) {   // (the in-game depth chart: a plain title, your team only; the roster screen's title is a button that looks at any team)
+    const b = ROSTER_TITLE_BTN;
+    ctx.fillStyle = RES.line; ctx.font = 'bold 38px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(title, b.x + b.w / 2, b.y + b.h / 2);
+    drawLogo(team, b.x + 40, b.y + b.h / 2, 46); drawLogo(team, b.x + b.w - 40, b.y + b.h / 2, 46);
+  } else menuBtn(ROSTER_TITLE_BTN, '', RES.bright, 20, b => {
     ctx.fillStyle = RES.line; ctx.font = 'bold 36px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     let fs = 36; while (fs > 20 && ctx.measureText(title).width > b.w - 150) ctx.font = `bold ${--fs}px monospace`;
     ctx.fillText(title, b.x + b.w / 2, b.y + 30);
@@ -2319,12 +2523,13 @@ function drawRoster() {
   if (rosterView.side !== 'upg') {   // (the upgrades list shows both sides together: no tabs) left = OFFENSE / DEFENSE toggle, right = FORMATION / SIMPLE view (defense: simple only)
     menuBtn(ROSTER_TABS.off, rosterView.side === 'off' ? 'OFFENSE' : 'DEFENSE', dcg ? CARD_GRAY : SEL, 26, undefined, !dcg);
     const canForm = rosterView.side === 'off' && !rosterView.statsOnly && !(dcg && dcg.st);
-    menuBtn(ROSTER_TABS.def, canForm && rosterUI.view === 'form' ? 'FORMATION' : 'SIMPLE', RES.bright, 24, undefined, canForm);
+    menuBtn(ROSTER_VIEW_TAB, canForm && rosterUI.view === 'form' ? 'FORMATION' : 'SIMPLE', RES.bright, 22, undefined, canForm);
     const tipUnder = (b, s) => { ctx.font = 'bold 12px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(s, b.x + b.w / 2, b.y + b.h + 10); };   // (what a click on the toggle brings up)
     const verb = TOUCH ? 'tap' : 'click';
     if (!dcg) tipUnder(ROSTER_TABS.off, `${verb} for ${rosterView.side === 'off' ? 'defense' : 'offense'}`);
-    if (canForm) tipUnder(ROSTER_TABS.def, `${verb} for ${rosterUI.view === 'form' ? 'simple' : 'formation'}`);
+    if (canForm) tipUnder(ROSTER_VIEW_TAB, `${verb} for ${rosterUI.view === 'form' ? 'simple' : 'formation'}`);
   }
+  if (team === MATCH.you && xpcOn() && !dcg) coinBox(ROSTER_COIN.x, ROSTER_COIN.y, LEAGUE.coins, RES.bright);   // (credits / XP bank, top right)
   const starting = dcg && dcg.field ? dcg.field : startersOf(team);   // (in-game depth chart: the men on the field this play)
   for (const p of ps) p.backup = !starting.has(p);
   const pages = rosterPages(ps, rosterView.side, team), pg = Math.min(rosterView.page || 0, pages - 1);
@@ -2346,11 +2551,11 @@ function drawRoster() {
   if (!rosterView.statsOnly && (nUpg > 0 || (upgView && team === MATCH.you))) menuBtn(UPG_BTN, upgView ? 'BACK TO\nROSTER' : `${nUpg} UPGRADE${nUpg === 1 ? '' : 'S'}`, '#7fd48f', upgView ? 22 : 21);
   if (!rosterView.statsOnly && team === MATCH.you && upgView && nUpg > 0) menuBtn(UPG_ALL_BTN, 'UPGRADE\nALL', '#7fd48f', 16);
   ROSTER_ARROWS.forEach((b, i) => menuBtn(b, i ? '▸' : '◂', RES.bright, 30));   // (formation view: they flip formation / special-teams pages)
-  drawCapBar(team, 150, 636, 480, [], true);
-  if (!rosterView.statsOnly && team === MATCH.you && !exhibition && season && !upgView) menuBtn(BUY_SPOT_BTN, 'TEAM\nUPGRADES', RES.bright, 20);   // (opens the popup: more cap room / another roster spot)
-  menuBtn(HOF_ROSTER_BTN, 'HOF', RES.bright, 26);
+  const autoOn = rosterAutoOn(team);   // (no cap bar, TEAM UPGRADES or HOF here: the credits box opens TEAM UPGRADES, the Hall of Fame is on the home screen)
+  if (autoOn) menuBtn(FV_AUTO_BTN, FVS.autoDD ? 'AUTO ▴' : 'AUTO ▾', FVS.autoDD ? SEL : RES.bright, 26);
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
   if (formView()) fvOverlay(team);   // (the page quick-pick list, over everything)
+  else if (FVS.autoDD && autoOn) fvAutoItems().forEach(it => menuBtn(it.b, it.label, RES.bright, 16));
   if (rosterView.tu) drawTeamUpg(team, spots);
 }
 // TEAM UPGRADES popup (roster screen): +CAP.step $M of cap room, or one more roster spot on the side shown
@@ -2361,7 +2566,7 @@ function drawTeamUpg(team, spots) {
   ctx.fillStyle = RES.bg; ctx.fillRect(B.x, B.y, B.w, B.h); penOutline(B.x, B.y, B.w, B.h, 41, RES.line, 3);
   ctx.fillStyle = RES.line; ctx.font = 'bold 28px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('TEAM UPGRADES', B.x + B.w / 2, B.y + 40);
   ctx.font = 'bold 15px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(`${LEAGUE.coins} ¤ TO SPEND`, B.x + B.w / 2, B.y + 70);
-  const capNow = LEAGUE.cap || CAP.start, capMax = capNow >= CAP.max, capCan = !capMax && LEAGUE.coins >= CAP.cost;
+  const capNow = LEAGUE.cap || CAP.start, capMax = capNow >= CAP.max, capCan = !capMax && LEAGUE.coins >= capCost();
   const spMax = spots >= SPOT.max, spCan = !spMax && LEAGUE.coins >= SPOT.cost;
   const card = (b, can, l1, l2, l3, cost) => menuBtn(b, '', RES.bright, 18, bb => {
     ctx.fillStyle = can ? bb.ink : 'rgba(70,55,30,0.55)'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -2369,7 +2574,7 @@ function drawTeamUpg(team, spots) {
     ctx.font = 'bold 15px monospace'; ctx.fillText(l2, bb.x + bb.w / 2, bb.y + 74); ctx.fillText(l3, bb.x + bb.w / 2, bb.y + 98);
     if (cost != null) { ctx.font = 'bold 24px monospace'; ctx.fillText(`${cost} ¤`, bb.x + bb.w / 2, bb.y + 145); }
   }, can);
-  card(TU.cap, capCan, 'SALARY CAP', capMax ? 'MAXED OUT' : `+${fmtM(CAP.step)}`, `NOW ${fmtM(capNow)}`, capMax ? null : CAP.cost);
+  card(TU.cap, capCan, 'SALARY CAP', capMax ? 'MAXED OUT' : `+${fmtM(CAP.step)}`, `NOW ${fmtM(capNow)}`, capMax ? null : capCost());
   card(TU.spot, spCan, 'ROSTER SPOT', spMax ? 'MAXED OUT' : `+1 ON ${side}`, `${spots} / ${SPOT.max} SPOTS`, spMax ? null : SPOT.cost);
   menuBtn(TU.close, 'CLOSE', RES.bright, 22);
 }
@@ -2566,18 +2771,15 @@ function fvCands(team, pg, i, cur, holder) {   // the slot's list: the man in it
   const busy = p => holder && holder.has(p) && holder.get(p) !== k;
   return [cur, ...L.filter(p => !busy(p)).sort(by), ...L.filter(busy).sort(by)];
 }
-const FV_AUTO_BTN = { x: FV.box.x + 10, y: FV.box.y + FV.box.h - 50, w: 118, h: 40 };   // AUTO: pinned to the view's bottom left (screen px, never zoomed / panned); your franchise only
+const FV_AUTO_BTN = { x: 1050, y: 620, w: 200, h: 80 };   // AUTO: the roster screen's bottom right button (where HOF was); your franchise only
 const FV_AUTO_B = [{}, {}];
-const fvAutoItems = () => ['AUTO THIS PAGE', 'AUTO ALL'].map((label, i) => ({ i, label, b: Object.assign(FV_AUTO_B[i], { x: FV_AUTO_BTN.x, y: FV_AUTO_BTN.y - (2 - i) * 40, w: 210, h: 36 }) }));
-function fvAuto(team, all) {
-  const pg = fvPages()[FVS.page];
-  if (all) depthAutoFull(team);
-  else if (LEAGUE.depth) {   // this page only: its own lineup cleared (formations: plus the shared chart's slots it uses), its groups re-sorted
-    if (pg.kind === 'form') { delete LEAGUE.depth[fUnit(pg.f)]; const u = LEAGUE.depth.off; if (u) for (const k of chartSlotsOf(pg.f)) if (k) delete u[k]; depthAuto(team, chartSlotsOf(pg.f).filter(Boolean)); }
-    else delete LEAGUE.depth[pg.unit];
-    autosaveSoon();
-  }
-  FVS.cyc = {}; ST_HOLD.t = 0;
+const rosterAutoOn = team => depthOwn(team) && !rosterView.statsOnly && rosterView.side !== 'upg';
+const fvAutoItems = () => ['AUTO THIS PAGE', 'AUTO ALL'].map((label, i) => ({ i, label, b: Object.assign(FV_AUTO_B[i], { x: FV_AUTO_BTN.x - 10, y: FV_AUTO_BTN.y - (2 - i) * 42, w: 210, h: 38 }) })).filter(it => it.i === 1 || formView());   // (the simple list has no page: AUTO ALL only)
+function fvAuto(team, all) {   // AUTO: every slot gets its best-fit named man, written as locks (depthFill); ALL = every formation and special-teams page
+  if (all) { depthAutoFull(team); for (const pg of fvPages()) depthFill(team, pg); }
+  else depthFill(team, fvPages()[FVS.page]);
+  for (const q of ROSTER[team] || []) delete q.backup;
+  autosaveSoon(); FVS.cyc = {}; ST_HOLD.t = 0;
 }
 // a dropdown pick: he starts there at once. The page's lineup is frozen first (everyone shown keeps his slot), so only the man he
 // replaces leaves; if he was already in another slot of this page, they swap. Formations: that formation only (its own unit).
@@ -2693,7 +2895,6 @@ function drawFormView(team) {
   } finally { hoverPt = hp0; btnPress = bp0; }
   FVS.hits.push(...ctl);   // (buttons over cards: checked first)
   ctx.restore();
-  if (own) menuBtn(FV_AUTO_BTN, FVS.autoDD ? 'AUTO ▴' : 'AUTO ▾', FVS.autoDD ? SEL : RES.bright, 17);
   {   // how to move around (bottom right, across from AUTO)
     const tip = TUI.on || IS_MOBILE ? 'PINCH TO ZOOM  ·  DRAG TO PAN' : 'SCROLL TO ZOOM  ·  LEFT CLICK TO PAN';
     ctx.font = 'bold 14px monospace'; const tw = ctx.measureText(tip).width + 20, tb = { x: B.x + B.w - tw - 10, y: B.y + B.h - 40, w: tw, h: 30 };
@@ -2713,8 +2914,8 @@ const fvPickItems = () => {
   return out;
 };
 function fvOverlay(team) {
-  if (FVS.autoDD) fvAutoItems().forEach(it => menuBtn(it.b, it.label, RES.bright, 16));
   fvDrawDD();
+  if (FVS.autoDD) fvAutoItems().forEach(it => menuBtn(it.b, it.label, RES.bright, 16));
   if (!FVS.pick) return;
   const L = fvPickItems(), P = fvPages(), last = L[L.length - 1], top = 112, bot = (last.b ? last.b.y + last.b.h : last.y) + 12;
   ctx.fillStyle = 'rgba(20,16,8,0.35)'; ctx.fillRect(0, 0, W, H);
@@ -2775,8 +2976,6 @@ function fvClick(pt, team, ps) {
     return true;
   }   // (the slot dropdown: a row shows him on the card; anywhere else closes it)
   if (FVS.pick) { const it = fvPickItems().find(q => q.b && inBtn(pt, q.b)); FVS.pick = false; if (it) fvEnter(team, it.i); return true; }
-  if (FVS.autoDD) { const it = fvAutoItems().find(q => inBtn(pt, q.b)); FVS.autoDD = false; if (it) fvAuto(team, it.i === 1); return true; }
-  if (depthOwn(team) && inBtn(pt, FV_AUTO_BTN)) { FVS.autoDD = true; return true; }
   if (dcg && dcg.st && (inBtn(pt, FV.name) || ROSTER_ARROWS.some(b => inBtn(pt, b)))) return true;   // (in-game special teams: this unit's page only)
   if (inBtn(pt, FV.name)) { FVS.pick = true; return true; }
   const pg = fvPages()[FVS.page];
@@ -2966,6 +3165,81 @@ function depthAutoFull(team) {   // AUTO ALL: every formation and special-teams 
   for (const q of R) delete q.backup;
   recalcTeamStars(); autosaveSoon();
 }
+// --- depth chart AUTO fits ---------------------------------------------------------------------------------
+// AUTO picks by what a slot needs, not by stars: depthTraits turns any roster entry into common traits (all on the 0-20 rating scale,
+// speed on the one absolute scale), DEPTH_FIT weighs them per slot kind. Named, healthy men only; a slot stays empty (an unnamed
+// player) only when nobody eligible is left. It writes locks only (LEAGUE.depth[unit], like depthSet): unlocked picks are untouched.
+const DEPTH_FIT = {
+  spdOff: { OL: 7, DL: 4.5, K: 6 },                     // rating points taken off a relative-scale group's SPEED to put it on the absolute scale
+  wt: [175, 330],                                        // weight (lb) that reads as size 0 / 20
+  noSt: ['QB', 'K'],                                     // never on a special-teams unit (but the kicker / punter slots, and a QB may hold)
+  krNo: ['OL', 'DL', 'QB', 'K'],                         // never returns kicks
+  order: [['QB'], ['RB'], ['LT', 'LG', 'C', 'RG', 'RT'], ['WR1'], ['WR2'], ['TE1'], ['WR3'], ['FB'], ['TE2'], ['WR4']],   // formation pages: who is filled first (each wave best pair first)
+  w: {   // slot kind -> weights over the traits
+    QB:   { thr: 3, awr: 1, spd: 0.4 },
+    RB:   { spd: 1.5, agi: 1, str: 0.5, hands: 0.4 },
+    FB:   { blk: 1.6, str: 1.2, size: 0.8, hands: 0.3, spd: 0.3 },
+    TE:   { blk: 1, hands: 1, size: 0.6, spd: 0.6, str: 0.5 },
+    WR:   { spd: 1.4, hands: 1.4, agi: 0.6, size: 0.2 },
+    SLOT: { agi: 1.2, hands: 1.3, spd: 1 },
+    OL:   { blk: 2, str: 1.2, size: 0.8 },
+    cover: { spd: 1.5, tkl: 1.5, str: 0.6 },             // kickoff team: strong, fast tacklers
+    gun:  { spd: 2, tkl: 1, agi: 0.5 },                  // punt gunners
+    punt: { blk: 1, str: 1, tkl: 1, spd: 0.6 },          // punt line / wings: blockers who can cover
+    LS:   { blk: 1.2, str: 1, size: 0.8, tkl: 0.4 },     // long snapper
+    PP:   { blk: 1, str: 0.8, awr: 1, tkl: 0.8, spd: 0.4 },   // personal protector
+    ret:  { blk: 1, str: 1, spd: 0.8 },                  // kick-return wall
+    KR:   { spd: 2, agi: 1, hands: 1 },
+    K:    { kick: 3, awr: 0.3 }, P: { kick: 3 },
+    fgL:  { blk: 1.5, str: 1.5, size: 1 },               // PAT / FG line
+    fgW:  { blk: 1.2, str: 1.2, size: 0.8, spd: 0.2 },   // PAT / FG ends and wings
+    fgH:  { hands: 2, awr: 1 },                          // holder
+  },
+};
+function depthTraits(p) {   // ONE place that turns any player into the traits the fits weigh
+  const a = p.at || {}, g = p.group, v = (k, d) => (a[k] != null ? a[k] : d), F = DEPTH_FIT;
+  const str = v('str', g === 'K' ? 4 : 8), size = Math.max(0, Math.min(20, (((p.wt || 220) - F.wt[0]) / (F.wt[1] - F.wt[0])) * 20));
+  const spd = Math.max(0, v('spd', 8) - (F.spdOff[g] || 0));
+  return {
+    spd, size, str,
+    tkl: v('tck', 2 + 0.4 * str), cov: v('cov', 4),
+    blk: g === 'OL' ? (v('blk', 8) + v('rbk', 8)) / 2 : 0.55 * str + 0.25 * size,
+    hands: v('ctc', g === 'QB' ? 9 : g === 'K' ? 7 : 4), agi: v('agi', v('bal', 0.8 * spd)),
+    kick: g === 'K' ? (v('kpw', 8) + v('kac', 8)) / 2 : 0, thr: g === 'QB' ? (v('acc', 8) + v('pow', 8)) / 2 : 0, awr: v('awr', 8),
+  };
+}
+const fitKind = (pg, k) => pg.kind === 'form' ? (OL_KEYS.includes(k) ? 'OL' : /^TE/.test(k) ? 'TE' : k === 'WR3' || k === 'WR4' ? 'SLOT' : /^WR/.test(k) ? 'WR' : k)
+  : (s => !s ? null : s.rule === 'punt' ? (k === 'LS' || k === 'PP' ? k : 'punt') : s.rule)(stSlot(pg, k));
+function autoFit(pg, k, p, T) {   // 0-20: how well he fits the slot (T = his traits)
+  const kind = fitKind(pg, k), w = DEPTH_FIT.w[kind]; if (!w) return 0;
+  let s = 0, n = 0; for (const t of Object.keys(w)) { s += w[t] * (T[t] || 0); n += w[t]; }
+  s /= n || 1;
+  if (pg.kind === 'form') { if (!depthNat(k, p)) s *= DEPTH.oop; if (kind === 'OL' && p.tag !== k) s *= DEPTH.olTag; }
+  else if (kind === 'fgL' && p.tag !== ST_OL_TAG[k]) s *= DEPTH.olTag;
+  return s;
+}
+function autoCan(pg, k, p) {   // may AUTO put him there?
+  if (pg.kind === 'form') return (DEPTH.grp[k] || []).includes(p.group);
+  const r = (stSlot(pg, k) || {}).rule;
+  if (r === 'K' || r === 'P') return p.group === 'K';
+  if (r === 'KR') return !DEPTH_FIT.krNo.includes(p.group);
+  if (r === 'fgH') return p.group !== 'OL' && p.group !== 'DL';
+  return !DEPTH_FIT.noSt.includes(p.group);
+}
+function depthFill(team, pg) {   // AUTO for one page: best pair first until the slots or the men run out
+  if (!depthOwn(team) || !pg) return;
+  const men = (ROSTER[team] || []).filter(p => p.name && !isOut(p) && !hurtOut(p)).map(p => [p, depthTraits(p)]);
+  const keys = pg.slots.map((s, i) => fvKey(pg, i)).filter(Boolean), pairs = [];
+  for (const k of keys) for (const [p, T] of men) if (autoCan(pg, k, p)) pairs.push([autoFit(pg, k, p, T), k, p]);
+  pairs.sort((a, b) => b[0] - a[0]);
+  const unit = pg.kind === 'form' ? fUnit(pg.f) : pg.unit, U = {}, used = new Set();
+  // formations fill the every-down spots first (DEPTH_FIT.order: a third receiver never takes a man the second one needs); special teams: one pool
+  const waves = pg.kind === 'form' ? [...DEPTH_FIT.order, keys] : [keys];
+  for (const wave of waves) for (const [, k, p] of pairs) if (wave.includes(k) && !U[k] && !used.has(p)) { U[k] = p.name; used.add(p); }
+  LEAGUE.depth = LEAGUE.depth || {};
+  if (unit === 'kr') { const kr = (ROSTER[team] || []).find(p => p.name === U.KR); delete U.KR; LEAGUE.depth.kr = U; if (kr) depthSet('kr', 'KR', kr); }
+  else LEAGUE.depth[unit] = U;
+}
 function depthAuto(team, slots = DEPTH.off) {
   if (!depthOwn(team)) return;
   const R = ROSTER[team], lk = depthLocks(team), gs = new Set();
@@ -3005,6 +3279,7 @@ function depthSimK(key, f) {   // simulated play: gain x from who fills the form
 // KR = kickReturner, an ST_RULES key = stPick through that rule (bi = the body it takes in stUnit), fgH / fgL / fgW = stFgApply's bodies.
 // Unlocked slots are always filled by fit, the way the game picks them; a man holds one slot per unit, but may be on several units.
 const STP = (k, x, d, rule, o = {}) => ({ k, x, d, on: d === 0, rule, w: x, role: rule, ...o });
+// (PAT / FG: W1 / W2 = the tight ends on the line, E1 / E2 = the wings a yard back outside them: the kick protection unit; the keys are kept for saves)
 const ST_PAGES = [
   { kind: 'st', unit: 'ko', name: 'KICKOFF', losText: 'KICKOFF LINE',
     slots: [...Array.from({ length: 10 }, (_, i) => STP(`C${i + 1}`, (i - 4.5) * 3, 0, 'cover')), STP('K', 0, 2, 'K')] },
@@ -3015,8 +3290,8 @@ const ST_PAGES = [
   { kind: 'st', unit: 'kr', name: 'KICK RETURN', losText: 'RETURN WALL',
     slots: [...Array.from({ length: 10 }, (_, i) => STP(`W${i + 1}`, (i - 4.5) * 3, 0, 'ret')), STP('KR', 0, 6, 'KR')] },
   { kind: 'st', unit: 'fg', name: 'PAT / FIELD GOAL', losText: 'LINE OF SCRIMMAGE',
-    slots: [STP('E1', -12, 0, 'fgW'), STP('W1', -9, 0, 'fgW'), STP('LT', -6, 0, 'fgL'), STP('LG', -3, 0, 'fgL'), STP('LS', 0, 0, 'fgL'), STP('RG', 3, 0, 'fgL'),
-            STP('RT', 6, 0, 'fgL'), STP('W2', 9, 0, 'fgW'), STP('E2', 12, 0, 'fgW'), STP('H', 0, 3, 'fgH'), STP('K', -3, 5, 'K')] },
+    slots: [STP('E1', -11, 1, 'fgW'), STP('W1', -9, 0, 'fgW'), STP('LT', -6, 0, 'fgL'), STP('LG', -3, 0, 'fgL'), STP('LS', 0, 0, 'fgL'), STP('RG', 3, 0, 'fgL'),
+            STP('RT', 6, 0, 'fgL'), STP('W2', 9, 0, 'fgW'), STP('E2', 11, 1, 'fgW'), STP('H', 0, 3, 'fgH'), STP('K', -3, 5, 'K')] },
 ];
 const ST_RULE_UNIT = { cover: 'ko', gun: 'punt', punt: 'punt', ret: 'kr' };
 const ST_NAT = { K: ['K'], P: ['K'], KR: ['RB', 'WR', 'CB', 'S'], fgH: ['QB', 'K', 'WR'], fgL: ['OL'], fgW: ['TE', 'OL'] };   // natural groups (others: out-of-position tag)

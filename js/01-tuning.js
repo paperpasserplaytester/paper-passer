@@ -17,15 +17,17 @@ const W = canvas.width, H = canvas.height;
 // Every number drawn as text shows at most 2 decimals (float noise like 50.400000000000006 -> 50.4).
 const round2Text = t => typeof t === 'number' ? String(Math.round(t * 100) / 100)
   : typeof t === 'string' && /\d\.\d{3}/.test(t) ? t.replace(/\d+\.\d{3,}/g, m => String(Math.round(+m * 100) / 100)) : t;
-// Touch mode (set by tuiSet): no mention of keys anywhere in drawn text ("(Space)", "press Esc", WASD, right-click to celebrate...).
+// Touch mode (set by tuiSet): no mention of keys anywhere in drawn text ("(Space)", "press Esc", WASD...).
 let TOUCH = false;
-let RK_HI = false;   // (the roster formation view: the canvas renders at the screen's own pixel density, see fitScreen / FV.resMax)
+let RK_HI = 0;   // 2 = the roster formation view: the canvas renders at the screen's own pixel density (fitScreen / FV.resMax); 1 = in a game: up to GAME_RES.max
+// in a game the canvas is drawn with up to this many pixels per game pixel (never more than the screen really has): sharp name tags, down-and-distance band
+// and every other text on big screens. Costs fill rate (max^2 x the pixels); performance mode ignores it and keeps its own caps (LITE.rk / LITE.slowRk)
+const GAME_RES = { max: 1.5, name: 3 };   // name = name tags' cached image px per world px (they are zoomed with the camera)
 let RK = 1;   // touch mode: the canvas has this share of the pixels (RENDER_K), drawn through a scale of RK: fewer pixels to fill each frame
 const RENDER_K = 1.1;   // (phones: was 0.75; the crowd has its own canvases and keeps its resolution)
 let PAD = 0;   // touch mode on a screen wider than 16:9: logical px of extra view on each side of the 1280-wide game (see fitScreen); everything is drawn shifted by it
 const WIDE_MAX = 2.4;   // the widest screen shape used (width / height); past that the sides stay black
 const touchText = t => typeof t !== 'string' ? t : t
-  .replace(/\s*-\s*right-click to celebrate/g, '').replace(/^right-click to celebrate$/, '')
   .replace(/\s*-\s*WASD[^-]*/g, '').replace(/\s*-\s*right-click toggles lob\/bullet/g, '')
   .replace(/\s*\((?:Space|Esc|Tab|Enter|[A-Z])\)/g, '').replace(/\)\s+[A-Z]$/, ')')
   .replace(/,? ?or press (?:Space|Esc|Enter|[A-Z])\b/g, '').replace(/\bpress Esc\b/gi, 'tap')
@@ -149,9 +151,10 @@ const startSpeed = p => Math.max(0, START.speed * (1 + START.k * ((p.spdRel ?? p
 const RB_SLOW_ACCEL = { per: 2.5, max: 1.4 };   // a back with a low SPEED rating gets this much more burst: +per for every 1.0 his speed is under average, up to x max (he reaches his top speed sooner, not a higher one)
 const rbSlowAccel = p => p === rb ? Math.min(RB_SLOW_ACCEL.max, 1 + RB_SLOW_ACCEL.per * Math.max(0, 1 - (p.spdRel ?? p.spdMult ?? 1))) : 1;
 const accelK = p => { const r = (p.spdRel ?? p.spdMult ?? 1) - 1; return Math.max(ACCEL_SPD.min, Math.min(ACCEL_SPD.max, 1 + ACCEL_SPD.k * r + ACCEL_SPD.hi * Math.max(0, r) ** 2)); };
-// One speed scale for QBs, RBs, WRs, CBs and safeties: a SPEED rating means the same top speed at any of those
-// spots (15 = at15, each point under it perPt slower). Other positions keep their within-position scale.
-const SPEED_ABS = { at15: 10.1 * YD, perPt: 0.03, rbBoost: 1.035, groups: ['QB', 'RB', 'WR', 'TE', 'CB', 'S', 'LB'] };
+// One speed scale for QBs, RBs, WRs, TEs, LBs, CBs and safeties: a SPEED rating means the same top speed at any of those
+// spots (15 = at15, each point under it perPt slower), wherever the man lines up (a TE at fullback, a corner returning a kick, a
+// linebacker covering one). Linemen (OL / DL) and kickers keep their within-position scale. rbBoost = x for backs (1 = the same as everyone)
+const SPEED_ABS = { at15: 10.1 * YD, perPt: 0.03, rbBoost: 1, groups: ['QB', 'RB', 'WR', 'TE', 'CB', 'S', 'LB'] };
 const WR_RECOVER = 0.6;        // per second: a receiver's jam slowdown wears off this fast once he's free
 const CUT_SLOW = 0.5;          // speed kept through a hard cut
 const CUT_REACCEL = { accel: 0.65, base: 0.15, sharp: 0.35 };   // after a cut: accel multiplier, and seconds of it (sharper = longer)
@@ -346,7 +349,8 @@ const BACKFIELD_CLICK = 20;    // yd behind the line: pressing anywhere in there
 const DROP_TIME = 0.7;
 // shotgun snaps (chance of a passing down's formation): lined up depth behind the line, a step back to set in time s
 const SHOTGUN = { chance: 0.5, depth: 4.5 * YD, step: 1 * YD, time: 0.35 };
-const UC_DEPTH = 2.6 * YD;   // QB under center: this far behind the line (the center is at 1 yd), so he stands clear behind the center (no clipping)
+const UC_DEPTH = 3.2 * YD;   // QB under center: his feet this far behind the line. The center's spot is 1 yd back and his drawn hips (three-point lean) about 1.8, so the QB sets up right behind his seat with his hands reaching under it: clear of the line, no clipping
+const UC_OLD = 2.6 * YD;     // (where he stood before: the run drop still ends as deep as it did from there, RUN_DROP)
 let shotgun = false, qbDepth = UC_DEPTH, liveForm = null;   // (qbDepth: how far back the QB sets, set in reset; liveForm = this play's FORMS id, null = the old looks)
 const AIM_POWER = 0.18 * YD;   // throw distance per screen pixel of drag (lower = less touchy)
 const MAX_THROW = 70 * YD;     // (scaled up with the longer field: about 47 field yards)
@@ -423,6 +427,21 @@ const RECOVERY = {
   limitedFrom: 1,                                // an injury this severe or worse (0 mild, 1 bad, 2 severe) returns LIMITED until rehab is full
   limited: { ratings: 0.95, speed: 0.93, wearK: 1.5 },   // LIMITED: ratings x, top speed x, wear builds this x faster
   weekMorale: -3, returnMorale: 6,               // morale lost per week out / one-time boost on coming back
+};
+// FACILITIES (v0.30): what Medical / Recovery Center / Player Lounge do per level ABOVE 1 (facLvl: yours only, 0 outside your franchise)
+const FAC_FX = {
+  med:    { out: 0.08, hit: 0.05, again: 0.20, pot: 0.10 },   // games missed, injury chance, share of the playing-hurt extra risk removed, potential lost
+  rec:    { rest: 0.06, reset: 0.05, late: 0.03 },            // sideline wear recovery, condition a game costs, 4th quarter / OT run fade
+  lounge: { base: 3, back: 0.10 },                            // morale resting point (points over MORALE.neutral), drift speed while below it
+  report: { exact: 3, rows: 4 },                              // injury report: exact return from this many levels above 1 (a range below), rows shown
+};
+// team-wide morale events on top of MORALE.ev (every player on your roster moves by this much)
+const MORALE_TEAM = {
+  blowout: 3, blowoutBy: 17,     // extra either way when the margin is 17+
+  streak: 2, streakAt: 3,        // extra per win from the 3rd straight
+  injury: -4, injStars: 4, injWeeks: 2,   // a 4+ star starter goes out for 2+ games
+  starGone: -6, goneStars: 4.5,  // you trade or cut a 4.5+ star player
+  bowl: 15,                      // winning the Paper Bowl
 };
 // X-Factor effects while active (Superstar / Fit abilities are always active)
 const XFX = {
@@ -528,7 +547,7 @@ const RUN_HOLE = { big: 0.44, stuffed: 0.075, quickWin: 0.075, blowUp: 0.04,   /
 // the toss is in the air pitchT seconds, and the back only gathers (pitchStep of his speed) until it's in his hands
 // lead = s he runs his path in the backfield (at leadStep x speed) before the QB pitches it; pitchT = the pitch's flight time
 const PITCH_PICK = { range: 1.7, bat: 0 };   // a defender within range (yd) of the pitch: chance he bats it down (x his hands rating); never batted or intercepted (run plays are safe)
-const OUTSIDE_RUN = { hold: 1.35, drive: 3.6 * YD, pitchT: 0.25, pitchStep: 0.9, lead: 0.4, leadStep: 0.85 };   // (he catches it in stride: no stop)
+const OUTSIDE_RUN = { hold: 1.35, drive: 3.6 * YD, pitchT: 0.25, pitchStep: 0.9, lead: 0.34, leadStep: 0.85 };   // (he catches it in stride: no stop)
 // Patience: every second the back waits behind the line without sprinting (Shift) adds this much DL block time,
 // widens the drive (up to +drive at 1s) and makes second-level blocks hold longer (up to +level2 at 1s)
 const RUN_PATIENCE = { hold: 0.5, drive: 0.5, level2: 0.4 };
@@ -624,7 +643,7 @@ const LOOK_BALL = { behind: 2, tiltAfter: 0.2, near: 8, rate: 9, up: 1.57, upNea
 // takes it over his shoulder, head turned back, eyes on it all the way into his hands. chance = how often he does
 const OVER_JUMP = { chance: 0.85, align: 0.5, speed: 3, ahead: 1 };
 const DIVE_NEED = 1.1;         // auto-dives only when running flat out leaves him this x his catch radius short
-const DIVE_LUNGE = 2.8 * YD;     // (a longer reach, but a slower, floatier dive: DIVE_FEEL.slow)
+const DIVE_LUNGE = 2.8 * YD;     // (the reach of a dive for the ball; its speed and flight are the one dive physics, DIVE in 04-passing)
 const DIVE_ATTEMPT = 4.5 * YD;
 // diving for a pass / loose ball (both sides): reach = extra lunge at full speed; he gets to the spot as the ball does, then his momentum
 // carries him on: lands and slides out slide s of his launch speed (at least slideMin yd); air = how long after the grab he's still airborne.
@@ -794,6 +813,21 @@ const HANDFIGHT = { slow: 0.92, slot: 0.96, catch: 0.85, swat: 0.45 };
 const PUSH_OFF = { rate: 1.2, every: 0.8, stun: 0, shove: 0.06 * YD, upset: 1.2, range: 1.5, near: 3.5 * YD };   // (subtle: a tiny shove, no freeze on the defender's feet, only close to the catch point (near))
 // the push-off only counts while they're still tangled up (within range x hand-fight range); once he's clear it's gone
 const pushedOff = d => clock < (d.pushedUntil || 0) && !!tgt && dist(d, tgt) <= HANDFIGHT_RANGE * PUSH_OFF.range;
+// XP bank (your franchise only, never scrimmage / 1v1 / online / test mode / tutorial): players at their potential bank their spare XP, and the bank
+// buys development. Bank + display: xpBankAdd / coinBox / flyXP (10-screens); spending: xpc* in the player upgrades block (11-cards-trades).
+const XPC = {
+  rate: 0.5,                                 // bank XP per point of spare XP a player at his potential earns
+  cap: 0,                                    // most the bank can hold (0 = no cap)
+  quick: 2,                                  // quick upgrade: one waiting +1 costs this x upgCost(p) (so it rises with his rating and years, like upgCost)
+  pot: { base: 50, grow: 1.25, again: 0.5, max: 5 },   // potential boost (+ half a star): price at 1 star of potential, x grow per half star above that, + again x that price per boost he already bought; max = stars it stops at
+  coach: { chunk: 250, co: 80, hc: 240, grow: 0.1 },   // coach training: coach XP one buy adds (through coachXP), its price for a coordinator / the head coach, + grow x the price per star he has
+  tier: { S: 300, X: 900, again: 0.5, needS: 3, needX: 4, perSeason: 1, max: 2 },   // his ability up a tier: price FIT -> ABILITY / ABILITY -> STAR FACTOR, + again x that per Star Factor you ever bought; stars he needs for each; bought Star Factors per season, and the most of them on your roster at once
+  confirm: 150,                              // a buy at or above this price asks first
+  flip: 0.35,                                // seconds the credits box takes to flip to XP and back
+  hold: 1.1,                                 // seconds the box stays on XP after the last flying token has landed
+  tokens: 14, perToken: 4,                   // flying tokens: the most in one flight, and the bank XP each stands for
+  col: '#2a62b0', edge: '#173d73',           // the XP colour (number + token) and the token's outline
+};
 // in-game HUD. The top bar is TOP_BAR_K x its old height (TOP_BAR_FULL): the scoreboard, the depth chart button and the pause / play icon (top left) scale with it
 // (HUD_K; TOP_PAD = px between the bar's edge and what sits in it). There is no bottom bar: the field runs to the bottom of the screen (FIELD_BOT = px kept clear
 // there, 0 = none). BOT_BAR is only the height of the band the yellow down-and-distance text and the difficulty sit in (and the shows' own bottom bar): bigger on a
@@ -1077,7 +1111,13 @@ const redZone = () => patMode === 'two' || los >= FIELD - REDZONE_D.yards * YL;
 // pursuit-angle prediction: sim step/horizon s, sideline margin, runner-velocity smoothing per frame, angle error on non-runs;
 // chase / lastLine = pursuit speed x top speed (the last man back finds an extra gear)
 const PURSUIT = { step: 0.05, horizon: 3.5, edge: 0.6 * YD, smooth: 0.2, passAngle: [1, 1.06], chase: 1, lastLine: 1.05, through: 0.45, runAngle: [0.97, 1.1],   // through = s of running he aims past the meeting point (never eases up on arrival); runAngle = the angle range on designed runs (>= ~1: they cut him off, never trail)
-                  dbHorizon: 5, dbErr: 0.1, boost: 1.05, accel: 1.15 };   // boost = x speed chasing a ball carrier (after a catch / on a run), accel = x their accel (sharper angles)   // DBs: look-ahead s, and how much of the usual angle error they make (0.15 = 15%: they take sharp angles)
+                  dbHorizon: 5, dbErr: 0.1, boost: 1.05, accel: 1.15,
+                  // the angle itself (pursuitPoint): lag = share of the ground he loses getting up to speed TOWARD the meeting point that the math allows for (0 = the old
+                  // angle: it assumed full speed at once, so a man who had to turn round arrived behind the carrier); leadMax = the most yd ahead of the carrier anyone aims;
+                  // lev = yd to his own side of the meeting point a man in front of the carrier comes in at (his near hip: never across his face, so the cutback behind
+                  // him stays shut), from levAhead yd in front; late / lateT = a kick-coverage man's lane / contain / vise shade is dropped for the plain meeting point once
+                  // getting to it would take more than late x the carrier's time + lateT s (he has lost that angle)
+                  lag: 0.85, leadMax: 22, lev: 0.5, levAhead: 2, late: 1.1, lateT: 0.15 };   // boost = x speed chasing a ball carrier (after a catch / on a run), accel = x their accel (sharper angles)   // DBs: look-ahead s, and how much of the usual angle error they make (0.15 = 15%: they take sharp angles)
 const BREAKDOWN = { range: 4.5 * YD, k: 0.72 };   // special-teams coverage: inside range yd of the returner, a man slows to k x his speed (breaks down to tackle)
 // wrap-up tackles: he falls along runner x his velocity + tackler x the tackler's; met head-on he goes over
 // backwards unless his own forward momentum beats backBias x his speed; falls take fast..slow seconds (harder = faster)
@@ -1190,7 +1230,7 @@ function dcCheck() {
   if (options.length) { coverage = pick(options); if (!patMode && state !== 'kick') popup(qb, 'DEFENSE CHECKS', '#ffd94a'); }   // (no call-out on a try or a field goal)
 }
 const ROUTE_COLORS = ['#ffffff', '#ffd94a', '#7fe3ff', '#ff9ed2'];
-const RB_COLOR = '#b7ff7a';
+const RB_COLOR = '#b7ff7a';   // every back's route art and pick circle: the halfback, the fullback, both split backs
 
 // Each position sees the play differently: lag = how stale his read of the
 // receivers is, react = how long before he breaks on a throw.
@@ -2185,6 +2225,7 @@ function xfEvent(s, e, v = 0) {
       if ((x.c[i] || 0) < Math.max(1, Math.round(c.n / ease))) return;
       if (diffX('xfMax') < 1 && (ROSTER[xfTeam(s)] || []).filter(q => q.xf && q.xf.on).length >= Math.max(1, Math.round(XF_CAP_BASE * diffX('xfMax')))) return;   // (difficulty: fewer at once per team)
       x.on = true; x.c = []; x.o = {}; x.life = R.once ? 1 : 0;
+      if (state !== 'sim' && ols && ols.length) celebNote('xf', allPlayers().find(p => p.src === s));   // (he celebrates it at the next whistle: see celebrations)
       XF_NOTES.push({ s, on: true });
       if (xfTeam(s) === meK() && !xfSimming) goalEvent('xf');   // (lit in a simulated drive: no goal credit)
       if (R.once) for (const q of ROSTER[xfTeam(s) === MATCH.you ? MATCH.opp : MATCH.you] || []) xfOff(q);
@@ -2383,6 +2424,13 @@ const absTop = p => {
   const pts = RATING_AVG[p.grp].spd + (rz(p, 'spd') - (p.team === 'def' && !tut ? diffFor(p).rz : 0)) * RATING.spread;   // (the difficulty's rating shift never moves top speed: every level runs at scrimmage speed)
   return SPEED_ABS.at15 * Math.max(0.5, 1 - SPEED_ABS.perPt * (15 - pts)) * (p.grp === 'RB' ? SPEED_ABS.rbBoost : 1);
 };
+// what base speed his spdMult is measured against right now: the QB / the back off their run speeds, everyone else off his spot's topBase
+// (effTop(p, speedRef(p)) = his real top speed). setAbsSpeed re-reads it: call it again whenever a man changes spots (fbCarry)
+const speedRef = p => p === qb ? QB_RUN : p === rb ? RB_RUN : p.topBase;
+function setAbsSpeed(p) { const abs = absTop(p), ref = speedRef(p); if (abs && ref) p.spdMult = abs / ref; return abs; }
+const ownTop = p => { const ref = speedRef(p); return ref && absTop(p) ? effTop(p, ref) : Infinity; };   // (Infinity: not on the shared scale)
+// a SPEED rating step with the difficulty's rating shift taken out: nothing about how fast a man runs or gets going moves with the difficulty preset
+const rmSpd = (p, k) => Math.max(0.2, rm(p, 'spd', k) - (typeof k === 'number' ? k : RATE_K[k]) * (p && p.team === 'def' && p.grp && !tut ? diffFor(p).rz : 0));
 // the rate multiplier from that: 1 + k * steps (k from RATE_K by name, or a number); never below 0.2
 // (named rates also get the body-weight nudge from BODY.weightK: heavier = stronger, lighter = quicker)
 const rm = (p, a, k) => Math.max(0.2, 1 + (typeof k === 'number' ? k : RATE_K[k]) * rz(p, a) + (BODY.weightK[k] || 0) * wz(p));

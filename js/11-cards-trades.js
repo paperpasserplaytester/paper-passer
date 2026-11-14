@@ -100,9 +100,11 @@ function cardNote(b, tilt, body) {   // a yellow sticky note taped on at the top
   ctx.fillStyle = 'rgba(225,215,175,0.8)'; ctx.fillRect(b.w / 2 - 36, -10, 72, 22); ctx.strokeStyle = 'rgba(120,100,70,0.35)'; ctx.strokeRect(b.w / 2 - 36, -10, 72, 22);   // tape
   ctx.restore();
 }
+let cardStatsOnly = false;   // a retired player's card (the new-season popup): nothing but STATS and BACK
+const RETIRE_FX = { gap: 0.16, drop: 0.38, stamp: 0.2, from: 260 };   // retirement cards: seconds between cards, the drop, the RETIRED stamp; px they fall from
 function drawPlayerCard(team, p, kr) {
   const od = offDetail();   // (offseason screens: the same card for draft / FA / re-sign / trade / Paper Bowl players, their action buttons sit in the right column)
-  const C = CARD, own = team === MATCH.you && !od, g = p.group, at = ATTRS[g], { main, trim } = sideKit(team, p), INK = '#3b3320', DIM = 'rgba(59,51,32,0.6)';
+  const C = CARD, own = team === MATCH.you && !od && !cardStatsOnly, g = p.group, at = ATTRS[g], { main, trim } = sideKit(team, p), INK = '#3b3320', DIM = 'rgba(59,51,32,0.6)';
   if (od) {
     Object.assign(SIGN_BTN, { x: 990, y: 560, w: 236, h: 66 }); Object.assign(DRAFT_SCOUT_BTN, { x: 990, y: 520, w: 236, h: 62 }); Object.assign(DRAFT_PICK_BTN, { x: 990, y: 594, w: 236, h: 66 });
     Object.assign(TR_STATS_BTN, { x: 990, y: 520, w: 236, h: 62 }); Object.assign(TR_GO_BTN, { x: 990, y: 594, w: 236, h: 68 }); Object.assign(PB_STATS_BTN, { x: 60, y: 600, w: 200, h: 70 });
@@ -246,6 +248,7 @@ function drawPlayerCard(team, p, kr) {
   if (p.ability) { Object.assign(HELP_ABIL_BTN, { x: C.noteR.x + C.noteR.w - 44, y: C.noteR.y + 12, w: 28, h: 28 }); HELP_BTNS.ability = HELP_ABIL_BTN; drawHelpIcon(HELP_BTNS.ability); } else HELP_BTNS.ability = null;
   Object.assign(HELP_BTNS.attrs, { x: C.x + C.w - 50, y: C.y + 100, w: 28, h: 28 }); drawHelpIcon(HELP_BTNS.attrs);   // (what each attribute does, all five)
   if (own) { drawUpgradeBar(p, C.noteR.x + 8, C.noteR.y + C.noteR.h + 60, C.noteR.w - 16, 26, cardMaxed); drawCardPops(p); }   // (under the right note)
+  if (own && results && results.screen === 'roster' && xpcCanBuy()) { coinBox(CARD_COIN.x, CARD_COIN.y, LEAGUE.coins, RES.bright); drawXpcCard(p); }   // (the credits / XP box, and what the XP bank buys him)
 
   if (cardHitOn) {   // the attribute-hit table: button in the corner (shows his total hit), the panel when open
     const hit = attrHitTotals(attrHit(p)).hit;
@@ -268,7 +271,7 @@ function drawPlayerCard(team, p, kr) {
   HELP_BTNS.bench = HELP_BENCH_BTN;
   drawHelpIcon(HELP_BTNS.bench);
   tipCtx = { team, p, own, bench: own && benchable(p), drop: own && !exhibition };
-  if (!od) ROSTER_ARROWS.forEach((b, i) => menuBtn(b, i ? '▸' : '◂', RES.bright, 30));
+  if (!od && !cardStatsOnly) ROSTER_ARROWS.forEach((b, i) => menuBtn(b, i ? '▸' : '◂', RES.bright, 30));
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
 }
 function drawCardPops(p) {   // an upgrade just spent: a flash on the spoke's label and a floating +1
@@ -611,7 +614,7 @@ const BENCH_BTN = { x: 660, y: 614, w: 176, h: 68 }, PROMOTE_BTN = { x: 0, y: -9
 const DROP_BTN = { x: 852, y: 614, w: 176, h: 68 };
 const TRADE_BTN = { x: 1044, y: 614, w: 176, h: 68 };
 // the little ? buttons on a player page: what his ability does, what benching does (click = a popup)
-const HELP_ABIL_BTN = {}, HELP_BENCH_BTN = { x: 1214, y: 16, w: 32, h: 32 };
+const HELP_ABIL_BTN = {}, HELP_BENCH_BTN = { x: 54, y: 16, w: 32, h: 32 };   // (top left: the credits / XP boxes are top right)
 const HELP_BTNS = { ability: null, bench: null, attrs: { x: 1184, y: 562, w: 28, h: 28 } };
 // what each rating does, by position group (the ? in the corner of the ATTRIBUTES box)
 const ATTR_HELP = {
@@ -702,7 +705,7 @@ function tipsPage(i) {
 function dropPlayer(team, p) {
   const short = ROSTER[team].filter(q => q.group === p.group).length <= (STARTERS[p.group] || 0);   // (anybody can go: a short position gets a worse backup)
   offPopShow({ title: 'DROP HIM?', lines: [`${p.name} (${p.tag}, ${p.stars} stars)`, short ? 'An unnamed backup plays his spot.' : `Frees ${fmtM(payOf(p))} of cap and a roster spot.`, 'He goes to free agency.'],
-    btns: [{ label: 'CANCEL' }, { label: 'OK', green: true, on: () => { delete p.benchNext; faRelease(p, team); vacate(team, p); rosterView.sel = null; moveMood(p, -1); recalcTeamStars(); autosaveSoon(); } }] });
+    btns: [{ label: 'CANCEL' }, { label: 'OK', green: true, on: () => { delete p.benchNext; faRelease(p, team); vacate(team, p); if (season && team === season.team) moraleStarGone(p); rosterView.sel = null; moveMood(p, -1); recalcTeamStars(); autosaveSoon(); } }] });
 }
 // PROMOTE: a backup takes the spot of the last starter at his position (that starter becomes the backup)
 function promoteStarter(team, b) {
@@ -753,15 +756,17 @@ function rosterClick(pt) {
   }
   if (rosterView.sel == null) {
     if (teamUpgClick(pt)) return;   // (TEAM UPGRADES popup open: it takes every click)
-    if (formView() && fvClick(pt, team, ps)) return;   // (formation view: quick-pick list, page name, arrows, AUTO, presses in the view)
+    if (FVS.autoDD) { const it = fvAutoItems().find(q => inBtn(pt, q.b)); FVS.autoDD = false; if (it) fvAuto(team, it.i === 1); return; }   // (AUTO's two choices)
+    if (rosterAutoOn(team) && !FVS.dd && !FVS.pick && inBtn(pt, FV_AUTO_BTN)) { FVS.autoDD = true; return; }
+    if (formView() && fvClick(pt, team, ps)) return;   // (formation view: quick-pick list, page name, arrows, presses in the view)
     if (dcg) {   // (the in-game depth chart: your team only, its side / view / page are set by the game situation)
       if (inBtn(pt, BACK_BTN)) { dcClose(); return; }
       if (inBtn(pt, ROSTER_TITLE_BTN) || inBtn(pt, ROSTER_TABS.off) || inBtn(pt, HOF_ROSTER_BTN) || inBtn(pt, BUY_SPOT_BTN) || inBtn(pt, UPG_BTN) || inBtn(pt, UPG_ALL_BTN)) return;
-      if (inBtn(pt, ROSTER_TABS.def) && (dcg.st || rosterView.side !== 'off')) return;
+      if (inBtn(pt, ROSTER_VIEW_TAB) && (dcg.st || rosterView.side !== 'off')) return;
     }
-    if (inBtn(pt, ROSTER_TITLE_BTN)) { teamPick = 'roster'; pickConf = NFL[team].conf.slice(0, 3); return; }
+    if (inBtn(pt, ROSTER_TITLE_BTN)) { teamPick = 'roster'; pickConf = NFL[team].conf.slice(0, 3); return; }   // (the title: look at any team's roster)
     if (rosterView.side !== 'upg' && inBtn(pt, ROSTER_TABS.off)) { rosterView.side = rosterUI.side = rosterView.side === 'off' ? 'def' : 'off'; rosterView.pos = null; rosterView.page = 0; rosterUISave(); return; }   // OFFENSE <-> DEFENSE
-    if (rosterView.side === 'off' && !rosterView.statsOnly && inBtn(pt, ROSTER_TABS.def)) { rosterUI.view = rosterUI.view === 'form' ? 'simple' : 'form'; rosterView.page = 0; rosterUISave(); return; }   // FORMATION <-> SIMPLE
+    if (rosterView.side === 'off' && !rosterView.statsOnly && inBtn(pt, ROSTER_VIEW_TAB)) { rosterUI.view = rosterUI.view === 'form' ? 'simple' : 'form'; rosterView.page = 0; rosterUISave(); return; }   // FORMATION <-> SIMPLE
     if (own && !rosterView.statsOnly && rosterView.side === 'upg' && upgTotal(team) > 0 && inBtn(pt, UPG_ALL_BTN)) {   // UPGRADE ALL: one random attribute for every player with an upgrade ready
       let n = 0;
       for (const p of [...(ROSTER[team] || [])]) {   // (a copy: upgradeAttr re-sorts the group, which used to make the loop skip players)
@@ -774,9 +779,7 @@ function rosterClick(pt) {
       if (n) upgradeSfx();
       return;
     }
-    if (inBtn(pt, HOF_ROSTER_BTN)) { hofReturn = 'roster'; results.screen = 'hof'; hofView.page = 0; statsView = null; rosterView.statsOnly = false; return; }
     if (own && !rosterView.statsOnly && (upgTotal(team) > 0 || rosterView.side === 'upg') && inBtn(pt, UPG_BTN)) { rosterView.side = rosterView.side === 'upg' ? 'off' : 'upg'; rosterView.page = 0; return; }
-    if (own && !exhibition && season && !rosterView.statsOnly && rosterView.side !== 'upg' && inBtn(pt, BUY_SPOT_BTN)) { rosterView.tu = true; return; }   // TEAM UPGRADES popup
     const pages = rosterPages(ps, rosterView.side, team), a = formView() ? -1 : ROSTER_ARROWS.findIndex(b => inBtn(pt, b));
     if (a >= 0) { rosterView.page = ((rosterView.page || 0) + (a ? 1 : -1) + pages) % pages; return; }
     const i = formView() ? -1 : ROSTER_CARDS.findIndex((b, k) => (rosterView.page || 0) * ROSTER_CARDS.length + k < ps.length && inBtn(pt, b));
@@ -787,6 +790,7 @@ function rosterClick(pt) {
   if (helpClick(pt, ps[rosterView.sel])) return;
   if (inBtn(pt, STATS_BTN)) { statsOpen(ps[rosterView.sel], team, 'roster'); return; }
   if (own && inBtn(pt, CARD_HOF)) { hofToggle(team, ps[rosterView.sel]); return; }
+  if (own && xpcCardClick(pt, ps[rosterView.sel])) return;   // (XP bank: boost his potential / buy an upgrade)
   if (own) {   // +1 beside an attribute: spend an upgrade (he may move in the list when his rating changes: keep following him)
     const q = ps[rosterView.sel], i = ATTRS[q.group].findIndex((a, k) => upgOpen(q, a) && inBtn(pt, upgBtn(k)));
     if (i >= 0 && upgradeAttr(team, q, ATTRS[q.group][i])) {
@@ -1001,6 +1005,7 @@ function drawStaffFolder(team, staff) {
   ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.stroke();
   ctx.fillStyle = INK; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.fillText(max ? 'MAX RANK' : `XP ${Math.floor(X)} / ${need}`, tb.x, tb.y + tb.h + 18);
   ctx.font = '13px monospace'; wrapLines(staffNext(c, role), 28).slice(0, 3).forEach((l, i) => ctx.fillText(l, tb.x, tb.y + tb.h + 38 + i * 16));
+  if (mine && xpcCanBuy()) { const mx = xpcCoachMax(c, role); xpcBtn(XPC_COACH_BTN, mx ? 'MAX RANK' : `TRAIN +${XPC.coach.chunk} XP`, xpcCoachPrice(c, role), !mx); ctx.textAlign = 'left'; }   // (XP bank -> coach XP)
   // top right: rating, role stamp, trait stamp
   ctx.fillStyle = 'rgba(59,51,32,0.6)'; ctx.font = 'bold 13px monospace'; ctx.fillText('RATING', STAFF_X, 152);
   starsRow(STAFF_X + 8, 184, c.stars, 15);
@@ -1152,6 +1157,7 @@ function drawStaff() {
   ctx.fillText(title, W / 2, 44);
   const tw = ctx.measureText(title).width / 2;
   drawLogo(team, W / 2 - tw - 40, 44, 50); drawLogo(team, W / 2 + tw + 40, 44, 50);
+  if (xpcOn()) coinBox(STAFF_COIN.x, STAFF_COIN.y, LEAGUE.coins, RES.bright);   // (credits / XP bank: click to flip)
   if (staffView.sel == null) {
     drawStaffRoom(team);
     staff.forEach((c, i) => {
@@ -1165,8 +1171,8 @@ function drawStaff() {
     Object.assign(FO_TR_BTN, { x: 130, y: 636, w: 270, h: 64 }); Object.assign(FO_FA_BTN, { x: 416, y: 636, w: 270, h: 64 });
     Object.assign(FO_HIRE_BTN, { x: 702, y: 636, w: 270, h: 64 }); Object.assign(CAP_UP_BTN, { x: 988, y: 636, w: 262, h: 64 });
     if (season && !exhibition && team === MATCH.you) menuBtn(FO_HIRE_BTN, 'HIRING BOARD', RES.bright, 20);
-    const atMax = (LEAGUE.cap || CAP.start) >= CAP.max, can = LEAGUE.coins >= CAP.cost && !atMax;
-    menuBtn(CAP_UP_BTN, atMax ? `CAP MAXED\n(${CAP.max}M)` : can ? `+${CAP.step}M CAP\nCOSTS ${CAP.cost} ¤` : `+${CAP.step}M CAP\nNEED ${CAP.cost} ¤ (HAVE ${LEAGUE.coins})`, can ? RES.bright : CARD_GRAY, 16, null, can);   // (locked: the label says why; greyed and still without the credits)
+    const atMax = (LEAGUE.cap || CAP.start) >= CAP.max, can = LEAGUE.coins >= capCost() && !atMax;
+    menuBtn(CAP_UP_BTN, 'TEAM UPGRADES' + String.fromCharCode(10) + '(CAP ROOM, ROSTER SPOTS)', RES.bright, 16);   // (opens the TEAM UPGRADES popup: +cap room or one more roster spot)
     menuBtn(FO_FA_BTN, 'FREE AGENTS', RES.bright, 20);
     menuBtn(FO_TR_BTN, 'TRADES', RES.bright, 20);
     if (team === MATCH.you) redDot(FO_TR_BTN, offersNew());
@@ -1236,6 +1242,7 @@ function staffClick(pt) {
   if (staffView.sel === 0 && season && !exhibition && inBtn(pt, HC_MAIN_BTN)) {   // your head coach's page: the main ability button cycles NONE -> each ability -> NONE
     hcMainCycle(); return;
   }
+  if (staffView.sel != null && xpcCanBuy() && inBtn(pt, XPC_COACH_BTN)) { const c = staffOf(MATCH.you)[staffView.sel]; if (c) xpcTrain(c, c.hc ? 'hc' : c.role[0] === 'O' ? 'oc' : 'dc'); return; }   // TRAIN: bank XP -> his coach XP
   if (staffView.sel >= 1 && season && !exhibition && inBtn(pt, STAFF_HIRE_BTN)) { HB.role = staffView.sel === 1 ? 'oc' : 'dc'; HB.sel = null; HB.cand = null; HB.back = 'staff'; results.screen = 'board'; return; }
   if (staffView.sel >= 1) {   // a coordinator's page: upgrade his trait (3 stars) / equip a second one (5 stars)
     const c = (STAFF[MATCH.you] || {})[staffView.sel === 1 ? 'oc' : 'dc'];
@@ -1243,7 +1250,7 @@ function staffClick(pt) {
     else if (c && c.stars >= 3 && (c.tlvl || 1) < 2 && inBtn(pt, TRAIT_UP_BTN)) { c.tlvl = 2; upgradeSfx(); autosaveSoon(); return; }
   }
   if (staffView.sel == null && inBtn(pt, CAP_UP_BTN)) {   // buy more cap space (asks first)
-    if (LEAGUE.coins >= CAP.cost && (LEAGUE.cap || CAP.start) < CAP.max) offPopShow({ title: `BUY +${CAP.step}M CAP?`, lines: [`Costs ${CAP.cost} credits.`, `Your cap goes from ${LEAGUE.cap || CAP.start}M to ${(LEAGUE.cap || CAP.start) + CAP.step}M.`], btns: [{ label: 'CANCEL' }, { label: 'BUY', green: true, on: buyCap }] });
+    coinGo(false);   // (the roster screen with the TEAM UPGRADES popup open; BACK returns here)
     return;
   }
   if (staffView.sel == null) {
@@ -1424,7 +1431,7 @@ function coachBar(x, y, w, role, c) {   // XP toward the next star under a coach
 // Every starter earns XP in each game you play (half from his stat line where the stat sheet has one, else a flat share). Enough XP =
 // one upgrade: +1 to an attribute of your choice on his page, never past his potential. A 3-star needs about a full season of average
 // games to climb to 4 stars; the better a player already is, the more XP each point costs.
-const UPG = { potChange: 0, base: 4.5, grow: 1.06, mid: 40, flat: 1, stat: 0.5, statK: 1.2, bench: 0.2, xpK: 0.4, maxedCredits: 2, rookieK: 0.6, perYr: 0.12, maxK: 2 };   // base = average games' XP one point costs at a 40 rating; grow = x per rating point; flat = x average XP for a starter with no stat line; stat = share of a stat line's XP; bench = x average XP for a healthy backup who sat (passive); rookieK / perYr / maxK = cost x for a rookie, + per year in the league (age past 22), capped
+const UPG = { potChange: 0, base: 4.5, grow: 1.06, mid: 40, flat: 1, stat: 0.5, statK: 1.2, bench: 0.2, xpK: 0.4, rookieK: 0.6, perYr: 0.12, maxK: 2 };   // base = average games' XP one point costs at a 40 rating; grow = x per rating point; flat = x average XP for a starter with no stat line; stat = share of a stat line's XP; bench = x average XP for a healthy backup who sat (passive); rookieK / perYr / maxK = cost x for a rookie, + per year in the league (age past 22), capped
 const yrsPro = p => p.rookie ? 0 : Math.max(0, (p.age || 22) - 22);   // (years in the league: no draft year on file, so age stands in)
 const upgCost = p => MARKET.avgXP * UPG.base * Math.pow(UPG.grow, scoreOf(p) - UPG.mid) * Math.min(UPG.maxK, UPG.rookieK + UPG.perYr * yrsPro(p));
 const upgRoom = p => Math.max(0, ptsOf(p) - scoreOf(p) - (p.upg || 0));   // (attribute points left under his potential, past the upgrades already waiting)
@@ -1463,15 +1470,15 @@ function drawUpgPops(p) {   // just-spent upgrades on this page: the new box pop
   }
 }
 const upgOpen = (p, a) => !(results && rosterReturn === 'draft' && results.screen !== 'home') && (p.upg || 0) > 0 && (p.upgAttr == null || p.upgAttr === a) && p.raw[a] < 15 && scoreOf(p) < ptsOf(p) && potAttrs(p, ptsOf(p))[a] > Math.round(p.raw[a]);   // (only where his potential leaves an empty box)
-function upgCash(p) {   // a waiting upgrade he has no potential left to spend on: 2 credits instead
-  while ((p.upg || 0) > 0 && !upgSpendable(p)) { p.upg--; p.upgAttr = null; LEAGUE.coins += UPG.maxedCredits; LEAGUE.upgCoins = (LEAGUE.upgCoins || 0) + UPG.maxedCredits; }
+function upgCash(p) {   // a waiting upgrade he has no potential left to spend on: its XP goes to the XP bank instead
+  while ((p.upg || 0) > 0 && !upgSpendable(p)) { p.upg--; p.upgAttr = null; xpBankAdd(upgCost(p)); }
 }
 function upgGain(p, xp) {   // true if this earned him a new upgrade
   upgCash(p);
   const had = p.upg || 0;
   p.xp = (p.xp || 0) + xp * UPG.xpK;   // (xpK: 60% less XP per game)
   for (let g = 0; g < 20 && upgRoom(p) > 0 && p.xp >= upgCost(p); g++) { p.xp -= upgCost(p); p.upg = (p.upg || 0) + 1; }
-  for (let g = 0; g < 20 && upgRoom(p) <= 0 && p.xp >= upgCost(p); g++) { p.xp -= upgCost(p); LEAGUE.coins += UPG.maxedCredits; p.gameCredits = (p.gameCredits || 0) + UPG.maxedCredits; LEAGUE.upgCoins = (LEAGUE.upgCoins || 0) + UPG.maxedCredits; }   // (at his ceiling: an upgrade's worth of XP pays credits instead)
+  if (upgRoom(p) <= 0 && p.xp > 0 && xpcOn()) { xpBankAdd(p.xp); p.xp = 0; }   // (at his ceiling: his spare XP goes to the team's XP bank, x XPC.rate)
   return (p.upg || 0) > had;
 }
 function upgradeGame() {   // one of your games is over: XP for every starter who played
@@ -1501,10 +1508,101 @@ function upgradeAttr(team, p, a) {
   resortGroup(team, p.group); recalcTeamStars(); autosaveSoon();
   return true;
 }
+// XP bank spending (prices and rules in XPC; your franchise only). On a player's card: POTENTIAL (+ half a star through potPts, the way the offseason
+// trainer raises it; counted in p.potBuys, saved on the roster entry) and UPGRADE (one waiting +1, spent with the normal +1 buttons = upgradeAttr, so
+// never past his potential). On a coach's page: TRAIN (bank XP -> coachXP, the stars / traits / abilities come from the progression that was there).
+const XPC_POT_BTN = { x: 990, y: 586, w: 114, h: 36 }, XPC_UPG_BTN = { x: 1112, y: 586, w: 114, h: 36 }, XPC_COACH_BTN = { x: 100, y: 566, w: 220, h: 46 };
+const xpcCanBuy = () => xpcOn() && !dcg && !(results && rosterReturn === 'draft' && results.screen !== 'home');
+const xpcPotOpen = p => starsOfScore(ptsOf(p)) < XPC.pot.max && ptsOf(p) < ATTR_TOTAL;
+const xpcPotPrice = p => Math.ceil(XPC.pot.base * Math.pow(XPC.pot.grow, (starsOfScore(ptsOf(p)) - 1) * 2) * (1 + XPC.pot.again * (p.potBuys || 0)));
+const xpcBoxes = p => { const caps = potAttrs(p, ptsOf(p)); return (ATTRS[p.group] || []).reduce((n, a) => n + Math.max(0, caps[a] - Math.round(p.raw[a])), 0); };   // empty boxes left under his potential
+const xpcUpgOpen = p => xpcBoxes(p) > (p.upg || 0);   // (a box must be left for it once his waiting upgrades are spent)
+const xpcUpgPrice = p => Math.ceil(XPC.quick * upgCost(p));
+const xpcCoachStars = (c, role) => role === 'hc' ? hcStars(MATCH.you) : c.stars;
+const xpcCoachMax = (c, role) => xpcCoachStars(c, role) >= (role === 'hc' ? career.hcCeil || 5 : 5);
+const xpcCoachPrice = (c, role) => Math.ceil((role === 'hc' ? XPC.coach.hc : XPC.coach.co) * (1 + XPC.coach.grow * xpcCoachStars(c, role)));
+function xpcBuy(price, title, lines, go) {   // pay `price` from the bank, then `go`; a large buy asks first
+  if (!xpcCanBuy() || xpBank() < price) return;
+  const run = () => { if (!xpSpend(price)) return; go(); upgradeSfx(); autosaveSoon(); };
+  if (price >= XPC.confirm) offPopShow({ title, lines: [...lines, `Costs ${price} XP from the bank (you have ${Math.floor(xpBank())}).`], btns: [{ label: 'CANCEL' }, { label: 'BUY', green: true, on: run }] });
+  else run();
+}
+function xpcBoostPot(p) {
+  if (!xpcPotOpen(p)) return;
+  const to = Math.min(ATTR_TOTAL, ptsOf(p) + STAR_HALF);
+  xpcBuy(xpcPotPrice(p), 'BOOST HIS POTENTIAL?', wrapLines(`${p.name}: potential ${starsOfScore(ptsOf(p))} to ${starsOfScore(to)} stars.`, 50), () => {
+    p.potPts = to; p.potFixed = true; p.potCaps = null; p.potential = starsOfScore(to); p.potBuys = (p.potBuys || 0) + 1;   // (potFixed: ptsOf keeps the ceiling exactly here; an injury can still take potential away, injuryPotential)
+    if (p.ask != null) p.ask = askOf(p);   // (an expiring contract's ask; trade value and the ask are worked out live everywhere else)
+    recalcTeamStars();
+  });
+}
+function xpcQuickUpg(p) {
+  if (!xpcUpgOpen(p)) return;
+  xpcBuy(xpcUpgPrice(p), 'BUY AN UPGRADE?', wrapLines(`${p.name} gets one upgrade: press +1 on an attribute to spend it.`, 50), () => { p.upg = (p.upg || 0) + 1; });
+}
+function xpcTrain(c, role) {
+  if (xpcCoachMax(c, role)) return;
+  xpcBuy(xpcCoachPrice(c, role), 'TRAIN YOUR COACH?', wrapLines(`${role === 'hc' ? 'Your head coach' : c.name} gets ${XPC.coach.chunk} coach XP toward his next star.`, 50), () => { coachXP({ [role]: XPC.coach.chunk }); recalcTeamStars(); });
+}
+// His ability up a tier (FIT -> ABILITY -> STAR FACTOR; the button sits on the STATUS note, under the ability). Goes through tierGive, like the red
+// star: the tier is on the roster entry (p.tier; p.xfBought = the year a Star Factor was bought), never in the generated SIGS data. Limits in XPC.tier;
+// career.xfBuys = Star Factors ever bought (price), career.xfYear / xfYearN = this season's count.
+const XPC_TIER_BTN = { x: 1000, y: 436, w: 216, h: 32 };
+const xpcTierTo = p => !p.ability ? null : p.tier === 'F' ? 'S' : p.tier === 'S' ? 'X' : null;
+const xpcTierPrice = p => Math.ceil(xpcTierTo(p) === 'X' ? XPC.tier.X * (1 + XPC.tier.again * (career.xfBuys || 0)) : XPC.tier.S);
+function xpcTierWhy(p) {   // '' when the next tier can be bought for him, else what's in the way (the greyed button says it)
+  const T = XPC.tier;
+  if (xpcTierTo(p) === 'S') return p.stars >= T.needS ? '' : `NEEDS ${T.needS} STARS`;
+  if (p.stars < T.needX) return `NEEDS ${T.needX} STARS`;
+  if (career.xfYear === LEAGUE.year && (career.xfYearN || 0) >= T.perSeason) return `${T.perSeason} STAR FACTOR A SEASON`;
+  if ((ROSTER[MATCH.you] || []).filter(q => q.xfBought).length >= T.max) return `${T.max} BOUGHT ALREADY`;
+  return '';
+}
+function xpcTierUp(p) {
+  const to = xpcTierTo(p);
+  if (!to || xpcTierWhy(p)) return;
+  xpcBuy(xpcTierPrice(p), to === 'X' ? 'BUY A STAR FACTOR?' : 'BUY AN ABILITY?', wrapLines(`${p.name}: ${abilName(p.ability)} becomes ${to === 'X' ? 'a STAR FACTOR (a bigger boost, and he can get in the zone in games)' : 'an ABILITY (a bigger boost, always on)'}.`, 50), () => {
+    tierGive(p, to);
+    if (to === 'X') {
+      p.xfBought = LEAGUE.year; career.xfBuys = (career.xfBuys || 0) + 1;
+      if (career.xfYear !== LEAGUE.year) { career.xfYear = LEAGUE.year; career.xfYearN = 0; }
+      career.xfYearN++;
+    }
+    if (p.ask != null) p.ask = askOf(p);
+    recalcTeamStars();
+  });
+}
+function xpcBtn(b, title, price, ok, star) {   // a bank button: what it buys, then the price with the XP token (greyed when it's closed or you can't afford it); star = the gold star factor star before the title
+  const can = ok && xpBank() >= price, big = b.h > 40, fs = big ? 15 : 12;
+  menuBtn(b, '', can ? RES.bright : CARD_GRAY, fs, bb => {
+    ctx.fillStyle = can ? RES.line : 'rgba(70,55,30,0.6)'; ctx.font = `bold ${fs}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const ty = bb.y + bb.h / 2 - (ok ? fs * 0.55 : 0), sw = star ? 9 : 0;
+    ctx.fillText(title, bb.x + bb.w / 2 + sw, ty, bb.w - 8 - sw * 2);
+    if (star) { ctx.save(); if (!can) ctx.globalAlpha = 0.5; drawStar(bb.x + bb.w / 2 + sw - Math.min(bb.w - 8 - sw * 2, ctx.measureText(title).width) / 2 - 10, ty - 1, 6.5, '#ffd23f', '#8a5a00', 1.2); ctx.restore(); }
+    if (!ok) return;
+    const s = String(price), tw = ctx.measureText(s).width, r = big ? 7 : 6, y = bb.y + bb.h / 2 + fs * 0.65;
+    ctx.fillStyle = can ? XPC.col : 'rgba(70,55,30,0.6)'; ctx.fillText(s, bb.x + bb.w / 2 - r - 2, y);
+    ctx.save(); if (!can) ctx.globalAlpha = 0.5; xpIcon(bb.x + bb.w / 2 + tw / 2 + r, y - 1, r); ctx.restore();
+  }, can);
+}
+function drawXpcCard(p) {   // the two bank buttons under a player's upgrade bar
+  if (!xpcCanBuy()) return;
+  xpcBtn(XPC_POT_BTN, xpcPotOpen(p) ? 'POTENTIAL +½★' : 'POTENTIAL MAX', xpcPotPrice(p), xpcPotOpen(p));
+  xpcBtn(XPC_UPG_BTN, xpcUpgOpen(p) ? 'UPGRADE +1' : 'NO ROOM', xpcUpgPrice(p), xpcUpgOpen(p));
+  const to = xpcTierTo(p), why = to ? xpcTierWhy(p) : '';
+  if (to) xpcBtn(XPC_TIER_BTN, why || (to === 'X' ? 'MAKE IT A STAR FACTOR' : 'MAKE IT AN ABILITY'), xpcTierPrice(p), !why, to === 'X');
+}
+function xpcCardClick(pt, p) {   // true if a bank button took the click
+  if (!xpcCanBuy()) return false;
+  if (inBtn(pt, XPC_POT_BTN)) { xpcBoostPot(p); return true; }
+  if (inBtn(pt, XPC_UPG_BTN)) { xpcQuickUpg(p); return true; }
+  if (xpcTierTo(p) && inBtn(pt, XPC_TIER_BTN)) { xpcTierUp(p); return true; }
+  return false;
+}
 function drawUpgradeBar(p, x = 690, y = 570, w = 480, wrap = 0, noText = false) {   // under the attributes (or on the card): his XP toward the next upgrade; wrap = characters a line holds (0 = one line)
   const need = upgCost(p), xp = p.xp || 0, rdy = p.upg || 0, room = upgRoom(p) > 0 || rdy > 0;
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = `bold ${wrap ? 13 : 15}px monospace`; ctx.fillStyle = rdy ? '#2e8b57' : RES.dim;
-  const txt = rdy ? `${rdy} UPGRADE${rdy > 1 ? 'S' : ''} READY: PRESS +1 ON AN ATTRIBUTE` : room ? `XP ${Math.floor(xp)} / ${Math.ceil(need)} TO THE NEXT UPGRADE` : 'AT HIS POTENTIAL: NOTHING LEFT TO UPGRADE';
+  const txt = rdy ? `${rdy} UPGRADE${rdy > 1 ? 'S' : ''} READY: PRESS +1 ON AN ATTRIBUTE` : room ? `XP ${Math.floor(xp)} / ${Math.ceil(need)} TO THE NEXT UPGRADE` : 'AT HIS POTENTIAL: SPARE XP GOES TO THE XP BANK';
   const ls = wrap ? wrapLines(txt, wrap) : [txt];
   if (!noText) ls.forEach((l, i) => ctx.fillText(l, x, y + i * 16, w - 10));
   const by = y + 12 + (ls.length - 1) * 16;
@@ -1520,12 +1618,21 @@ function homeNews() {
     if (!LEAGUE.maxedTipSeen) { LEAGUE.maxedTipSeen = 1; offPopShow({ title: 'MAXED-OUT PLAYERS', lines: wrapLines(`Players with no potential left turned their XP into ${n} credits.`, 54) }); }
     flyCoins(n, false, [HOME_BTNS[2].x + HOME_BTNS[2].w / 2, HOME_BTNS[2].y + HOME_BTNS[2].h / 2]);
   }
+  const rb = [HOME_BTNS[2].x + HOME_BTNS[2].w / 2, HOME_BTNS[2].y + HOME_BTNS[2].h / 2];
+  if (LEAGUE.xpSim >= 1) { offPopShow({ title: 'XP BANK', lines: wrapLines(`Your players at their potential banked ${Math.round(LEAGUE.xpSim)} XP in the simulated game.`, 54) }); LEAGUE.xpSim = 0; }   // (simulated: banked quietly, one line here)
+  if (LEAGUE.xpNew >= 1) {   // XP banked by players at their potential: tokens fly from the ROSTER button to the credits box (after any credits)
+    if (false && !LEAGUE.xpTipSeen) { LEAGUE.xpTipSeen = 1; offPopShow({ title: 'XP BANK', lines: wrapLines(`Players with no potential left now bank their spare XP (${Math.round(LEAGUE.xpNew)} XP so far). Click the credits box to see the bank. Spend it on a player's card (more potential, a quick upgrade) or on your coaches in the front office.`, 54) }); }
+    flyXP(LEAGUE.xpNew, rb); LEAGUE.xpNew = 0;
+  }
   if (up.length && !LEAGUE.upgTipSeen) { LEAGUE.upgTipSeen = 1; offPopShow({ title: 'UPGRADES READY', lines: [...wrapLines(up.slice(0, 8).join(', ') + (up.length > 8 ? ` +${up.length - 8} more` : ''), 54), '', 'Open the player on your ROSTER and press +1.'] }); }
   if (tr.length) offPopShow({ title: 'AROUND THE LEAGUE', lines: tr.slice(0, 5).flatMap(t => wrapLines(t, 54)) });
   LEAGUE.upgNew = []; LEAGUE.tradeNews = []; if (season && !season.offseason) LEAGUE.tradeCards = [];   // (in-season deals were told here: the new-season popup shows the offseason ones)
   const pn = LEAGUE.pracNews || [];
   if (pn.length) offPopShow({ title: 'PRACTICE BATTLES', lines: pn.slice(0, 4).flatMap(t => wrapLines(t, 54)) });
   LEAGUE.pracNews = [];
+  const fn = LEAGUE.facNews || [];
+  if (fn.length) offPopShow({ title: 'FACILITIES', lines: fn.flatMap(t => wrapLines(t, 54)) });
+  LEAGUE.facNews = [];
   const dn = LEAGUE.diffNews || [];
   if (dn.length) offPopShow({ title: 'ADAPTIVE DIFFICULTY', lines: dn.flatMap(t => wrapLines(t, 54)) });
   LEAGUE.diffNews = [];
@@ -1547,6 +1654,11 @@ function homeNews() {
       LEAGUE.ddAlert = tag;
       offPopShow({ title: 'TRADE DEADLINE', lines: wrapLines(left === 1 ? 'This is the last week to make a trade. After this week\'s game the window closes until after the draft.' : `The trade deadline is ${left} weeks away: trades close after week ${TRADE.deadline - 1}.`, 54) });
     }
+  }
+  if (xpcOn() && !LEAGUE.cap100 && LEAGUE.coins >= CAP.nudge && (LEAGUE.cap || CAP.start) < CAP.max) {   // 100 credits for the first time in this franchise: off to TEAM UPGRADES, the first cap purchase at a discount
+    LEAGUE.cap100 = 1; LEAGUE.capSale = 1; autosaveSoon();
+    offPopShow({ title: `${CAP.nudge} CREDITS!`, lines: [...wrapLines(`You have enough credits for a TEAM UPGRADE. More SALARY CAP (+${fmtM(CAP.step)}) is the best first buy: it lets you keep your stars and sign better players.`, 54), '', `FIRST TIME: ${Math.round((1 - CAP.firstOff) * 100)}% OFF (${capCost()} credits instead of ${capCost()}).`],
+      btns: [{ label: 'LATER' }, { label: 'TEAM UPGRADES', green: true, on: () => coinGo(false) }] });
   }
   try { postEventShow(); } catch (e) { console.warn('post', e); }   // (a midweek event from the Post)
   offersShow();   // (other teams' offers for your players)
@@ -1716,7 +1828,7 @@ const cpView = () => ({ x: CPOP.x + 20, y: CPOP.y + CPOP.top, w: CPOP.w - 40, h:
 const cpScrollBtn = d => ({ x: CPOP.x + CPOP.w - 66, y: d ? CPOP.y + CPOP.h - 140 : CPOP.y + CPOP.top + 4, w: 46, h: 46 });
 function catPopShow(o) { offPopShow({ title: o.title, custom: catPopCtl(o) }); }
 function catPopCtl(o) {
-  const S = { tab: o.tab || 0, cat: 0, scroll: 0 };
+  const S = { tab: o.tab || 0, cat: 0, scroll: 0, t0: performance.now(), view: null };   // (t0 = when this category opened: retirement cards deal in; view = a retired player's page)
   const cats = () => (o.tabs ? o.tabs[S.tab].cats : o.cats);
   const layout = () => {
     const c = cats()[S.cat], V = cpView(), items = [], list = c.cards || []; let y = 0;
@@ -1734,6 +1846,12 @@ function catPopCtl(o) {
   };
   return {
     draw() {
+      if (S.view) {   // a retirement card was clicked: his player page, only STATS and BACK
+        popBtnDraw = true; cardStatsOnly = true;
+        try { paperBg(); if (statsView && statsView.from === 'retire') drawStatsPage(); else drawPlayerCard(S.view.team, S.view.p, null); } catch (e) { S.view = null; statsView = null; }
+        cardStatsOnly = false; popBtnDraw = false;
+        return;
+      }
       const L = layout(), V = L.V;
       S.scroll = Math.max(0, Math.min(L.max, S.scroll));
       ctx.save(); ctx.fillStyle = 'rgba(30,25,10,0.55)'; ctx.fillRect(0, 0, W, H); ctx.restore();
@@ -1759,6 +1877,21 @@ function catPopCtl(o) {
           ctx.font = 'bold 22px monospace'; ctx.fillText('EMPTY SPOT', b.x + b.w / 2, b.y + 160);
           ctx.font = '14px monospace'; ctx.fillText('an unnamed backup plays here', b.x + b.w / 2, b.y + 196, b.w - 20);
         });
+        else if (d.retire) {   // a retirement: the card drops in (one after another), then the RETIRED stamp lands on it
+          const n = L.items.filter(q => q.kind === 'card').indexOf(it), F = RETIRE_FX, tt = (performance.now() - S.t0) / 1000 - n * F.gap, k = Math.max(0, Math.min(1, tt / F.drop));
+          if (tt < 0) continue;
+          const e = 1 - (1 - k) * (1 - k), tilt = ((deskHash(d.p.name) % 100) / 100 - 0.5) * 0.08, cxx = bb.x + bb.w / 2, cyy = bb.y + bb.h / 2;
+          ctx.save(); ctx.translate(cxx, cyy - (1 - e) * F.from); ctx.rotate(tilt + (1 - e) * 0.5); ctx.translate(-cxx, -cyy); ctx.globalAlpha = Math.min(1, k * 2);
+          rosterCard(d.p, bb, d.team, null, null);
+          const sk = Math.max(0, Math.min(1, (tt - F.drop) / F.stamp));
+          if (sk > 0) {
+            ctx.translate(cxx, bb.y + 84); ctx.rotate(-0.22); ctx.scale(2.2 - 1.2 * sk, 2.2 - 1.2 * sk); ctx.globalAlpha = sk;
+            ctx.font = 'bold 30px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.strokeStyle = '#c81b1b'; ctx.lineWidth = 3; ctx.strokeRect(-84, -22, 168, 44);
+            ctx.fillStyle = 'rgba(255,253,244,0.75)'; ctx.fillRect(-82, -20, 164, 40); ctx.fillStyle = '#c81b1b'; ctx.fillText('RETIRED', 0, 2);
+          }
+          ctx.restore();
+          if (d.sub && k >= 1) { ctx.font = 'bold 14px monospace'; ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(d.sub, bb.x + bb.w / 2, bb.y + bb.h + 12, bb.w - 16); }
+        }
         else if (d.p) {
           rosterCard(d.p, bb, d.team, null, null);
           if (d.sub) { ctx.font = 'bold 14px monospace'; ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(d.sub, bb.x + bb.w / 2, bb.y + bb.h + 12, bb.w - 16); }   // (under the card, in the row gap: it used to sit on the stars)
@@ -1770,19 +1903,27 @@ function catPopCtl(o) {
       popBtnDraw = true; menuBtn(cpOK(), 'OK', IN_GAME_PAPER.green, 24); popBtnDraw = false;
     },
     click(pt) {
+      if (S.view) {   // (his page: STATS opens the stats page, BACK returns to the cards)
+        if (statsView && statsView.from === 'retire') { statsClick(pt); return; }
+        if (inBtn(pt, STATS_BTN)) { statsOpen(S.view.p, S.view.team, 'retire'); return; }
+        if (inBtn(pt, BACK_BTN)) { S.view = null; statsView = null; }
+        return;
+      }
       if (inBtn(pt, cpOK())) { offPopClose(); if (o.done) o.done(); return; }
-      if (o.tabs) for (let i = 0; i < o.tabs.length; i++) if (inBtn(pt, cpTabBtn(i))) { S.tab = i; S.cat = 0; S.scroll = 0; return; }
+      if (o.tabs) for (let i = 0; i < o.tabs.length; i++) if (inBtn(pt, cpTabBtn(i))) { S.tab = i; S.cat = 0; S.scroll = 0; S.t0 = performance.now(); return; }
       const n = cats().length;
-      if (n > 1) for (const d of [0, 1]) if (inBtn(pt, cpArrow(d))) { S.cat = (S.cat + (d ? 1 : -1) + n) % n; S.scroll = 0; return; }
+      if (n > 1) for (const d of [0, 1]) if (inBtn(pt, cpArrow(d))) { S.cat = (S.cat + (d ? 1 : -1) + n) % n; S.scroll = 0; S.t0 = performance.now(); return; }
       const L = layout();
       for (const d of [0, 1]) if (L.max > 0 && inBtn(pt, cpScrollBtn(d))) { S.scroll += (d ? 1 : -1) * CPOP.row; return; }
       const V = L.V;
+      const rt = inBtn(pt, V) && L.items.find(i => i.kind === 'card' && i.d.retire && inBtn(pt, { x: V.x + i.x, y: V.y + i.y - S.scroll, w: i.w, h: i.h }));
+      if (rt) { S.view = { p: rt.d.p, team: rt.d.team }; return; }   // (a retirement card: his page)
       if (!inBtn(pt, V) || o.noOpen) return;
       const it = L.items.find(i => i.kind === 'card' && i.d.p && inBtn(pt, { x: V.x + i.x, y: V.y + i.y - S.scroll, w: i.w, h: i.h }));
       if (it && season && !exhibition) { offPopClose(); tradeOpen(results.screen); TR.sel = { p: it.d.p, k: it.d.team }; TR.awSel = TR.sel; }
     },
     wheel(dy) { S.scroll += dy; },
-    arrows(d) { const n = cats().length; if (n > 1) { S.cat = (S.cat + d + n) % n; S.scroll = 0; } },
+    arrows(d) { const n = cats().length; if (n > 1 && !S.view) { S.cat = (S.cat + d + n) % n; S.scroll = 0; S.t0 = performance.now(); } },
   };
 }
 // the home screen's ? on OFFENSE / DEFENSE: what's holding each side's rating back, as player cards
@@ -1891,9 +2032,11 @@ function tradeMove(list, from, to) {
     const R = ROSTER[from], p = a.p, i = R.indexOf(p);
     if (i < 0) continue;
     R.splice(i, 1); delete p.benchNext; if (krTags[from] === p.name) delete krTags[from];
+    if (season && from === season.team) moraleStarGone(p);   // (you sent a star away: the locker room feels it)
     if (typeof OFF !== 'undefined' && OFF && OFF.expiring) { const ex = OFF.expiring.indexOf(p); if (ex >= 0) { OFF.expiring.splice(ex, 1); delete p.ask; if (OFF.rs) { OFF.rs.chk = (OFF.rs.chk || []).filter(q => q !== p); if (OFF.rs.sel === p) OFF.rs.sel = null; } } }   // (traded away with an expiring deal: gone from the contracts page too; his new team has his deal)
     uniqueNum(ROSTER[to], p); ROSTER[to].splice(depthAt(ROSTER[to], p), 0, p);
     p.newWk = season && to === season.team ? 2 : 0;   // (a player new to your team shows a NEW tag for two weeks)
+    if (season && to === season.team) cardShowAdd(p, to, 'TRADED FOR');
   }
   TCX = null;
 }
@@ -2829,7 +2972,7 @@ function drawMatchupEx() {
     ctx.lineTo(back.x + 64, back.y + 32); ctx.lineTo(back.x + 64, back.y + 48); ctx.lineTo(back.x + 42, back.y + 48);
     ctx.lineTo(back.x + 42, back.y + 60); ctx.closePath(); ctx.fill();
   });
-  if (exhibition) menuBtn(EX_SET_BTN, '', '#8b8e90', 24, gearIcon);   // (this exhibition's difficulty, next to BACK)
+  if (exhibition) menuBtn(EX_SET_BTN, '', '#8b8e90', 24, gearIcon);   // (this exhibition's settings, top left)
   const host = !lobby || exhibition.myRole === 'you';
   menuBtn(MENU_NEXT, host ? '' : 'WAITING\nON HOST', host ? '#c0392b' : RES.bright, 18, host ? stampFace : undefined, host);
   if (lobby && ol.note) { ctx.save(); ctx.fillStyle = '#c0392b'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(ol.note, W / 2, 712); ctx.restore(); }
@@ -3127,7 +3270,7 @@ function matchStars(side, x, y, n, col, other) {
     ctx.restore();
   }
 }
-const EX_SET_BTN = { x: 126, y: 625, w: 84, h: 80 };   // (the settings gear)
+const EX_SET_BTN = { x: 20, y: 14, w: 76, h: 72 };   // (the settings gear: top left of the scrimmage screen)
 const UNI_BTNS = F_UNI, BALL_BTN = F_BALL;   // (the scrimmage screen's bottom strip uses the franchise matchup's buttons)
 const BACK_BTN = { x: 30, y: 625, w: 84, h: 80 };
 const EXHIB_BTN = { x: 20, y: 18, w: 240, h: 62 };

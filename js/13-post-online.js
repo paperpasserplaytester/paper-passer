@@ -920,7 +920,7 @@ function drawStart() {
     ctx.fillStyle = RES.line; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('NO HIGHLIGHTS SAVED YET', W - 225, H - 120); ctx.restore();
   }
 }
-const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-13 STEP-65';
+const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-14 STEP-69';
 let hlFlash = -1e9;   // when the main menu's HIGHLIGHT button was last clicked
 let quickMenu = false;   // QUICK PLAY (START_BTNS.ex) drop down: EXHIBITION / 1V1 / ONLINE take the place of FRANCHISE / CAREER / TUTORIAL (same buttons, same size)
 function startClick(p) {
@@ -1314,7 +1314,7 @@ function unslim(v, ps) {
 // what changed on a player since the last send: { set: {prop: value}, del: [props that went away] }
 // properties only the host's own simulation reads (measured: drawing a whole game never touches them), so they are never sent: steering targets, last-frame
 // movement, run yardage, shed / break timers...
-const ONL_HOST_ONLY = new Set(['cx', 'cy', 'sx', 'sy', 'mpx', 'mpy', 'mvx', 'mvy', 'ranYd', 'gs', 'rel', 'hipT', 'brkT', 'shedAt', 'sealK', 'rushV', 'wk',   // (rvx / rvy stay: the guest's own aim line reads them in maxThrow)
+const ONL_HOST_ONLY = new Set(['kp', 'kpB', 'kpRide', 'kpRideT', 'cx', 'cy', 'sx', 'sy', 'mpx', 'mpy', 'mvx', 'mvy', 'ranYd', 'gs', 'rel', 'hipT', 'brkT', 'shedAt', 'sealK', 'rushV', 'wk',   // (rvx / rvy stay: the guest's own aim line reads them in maxThrow)
   // what drawPlayer itself eases and stamps every drawn frame (neck, eyes, stance, turn, kick arms, the tackle pose): the guest's own drawing keeps its own. They were
   // over half of every snapshot, and the host's clock stamps kept resetting the guest's easing
   'yawAt', 'yaw', 'headAt', 'headW', 'stAt', 'stKey', 'stB', 'ezT', 'hkE', 'kaE', 'knE', 'faceAt', 'faceShow', 'gPose', 'gPoseT', 'gLegs',

@@ -264,6 +264,109 @@ const TUT_STEPS = [
 // --- changelog entries (CHANGELOG_LINES, the renumbering, GAME_VERSION and the popup are in js/13-post-online.js)
 // Newest version first. Add a new entry at the top of CHANGELOG with every update and bump GAME_VERSION by 0.1 (pre-release numbering: v0.9 -> v0.10 -> v0.11 ...; v1.0 only for the full release).
 const CHANGELOG = [
+  { v: "v0.30", secs: [
+    ["FACILITIES", [
+      "MEDICAL / REHAB is about injuries now. Each level = less time out, fewer injuries, less extra risk when playing hurt and less potential lost (on top of the practice injury cut and faster rehab it already gave). Select it for the INJURY REPORT beside the campus: who is out and for how long (a range, exact from LV 4).",
+      "RECOVERY CENTER (new): faster stamina recovery on the sideline, a game costs less condition, and fresher legs late in games (4th quarter and overtime). The weekly condition boost Medical used to give lives here now.",
+      "PLAYER LOUNGE (new): raises the point morale settles at and speeds the climb back after a slump. Morale also moves with blowouts, win streaks (from the 3rd straight), a key starter going down, trading or cutting a star, and winning the Paper Bowl. Morale gauge on the home screen and the lounge panel, and the week screen shows the game's change.",
+      "The campus is 2 rows of 3 now, and the home screen tells you when a building opens.",
+    ]],
+    ["ON THE FIELD", [
+      "SACK! is a banner again, after every sack (the lunch bag stays over the QB), and the crowd treats a sack as a big play for the team that got it. Missed field goals and extra points get a MISSED! banner: red for yours, green for theirs. The computer's onside kick is announced, and the scrimmage and first-down lines are gone during it.",
+      "Icons: the hurdle wings show on every hurdle, kick and punt returns included, and the broken-ankle icon shows on a juke that fools a diving tackler (it almost never did). The spin tornado is a little smaller and only shows after a spin that works. RE-ENGAGED is no longer called out. Every back's route is the same green, the fullback and split backs too.",
+      "Camera: it glides instead of lurching when its target changes (the snap, the throw, the catch, a turnover, the whistle). After an incompletion or an interception it stays on the ball: it used to zoom back to a QB who threw on the move. The zoom no longer changes after the whistle or pumps with the sprint key, hit zooms are gentler, and the computer's audibles never move the camera. Players jogging to a new spot before the snap ease in and out and stay squared up.",
+      "Kicks: the kickoff flies higher and the aiming arc traces the ball's real path (punts too), drawn thinner and over the players. The marks on the power and aim bars are bigger and outlined.",
+      "The wall in front of the stands is three times as tall, with the stands on top of it, and a loose ball below its top bounces back off it.",
+      "Sharper text in games on big screens (name tags, the down and distance, everything else): the game is drawn at up to 1.5x the pixels. Performance mode keeps its own limits.",
+      "A knockout hit on a receiver has its own sound: the big hit, a sharp crack and a deep thud.",
+      "Celebrations are led into and out of (he gathers himself, then eases back to standing and holds a beat), so they run longer and flow. A ball he has put down stays where he left it instead of sliding along with him. The hurdle wings sit on the body, not round the helmet.",
+      "The crowd erupts at the plays that decide a game: a late stop or turnover that seals it, a go-ahead score in the last minute, and the final whistle of a one-score game or any overtime win.",
+      "Fixed: after a play the camera could pan to an unrelated player (the scorer of an earlier touchdown, by then lined up somewhere else). It now stays with the ball, the ball carrier or the celebration.",
+      "Adaptive difficulty now moves week to week on how you actually played (the result and margin, turnovers, your yards per play and completion rate, the points you allowed) measured against how good the opponent was. A big day against a strong team raises it, a poor one against a weak team eases it, and years played count for less.",
+    ]],
+    ["SPEED, ANGLES AND BLOCKING", [
+      "One speed scale: a SPEED rating now means the same top speed for QBs, backs, receivers, tight ends, linebackers, corners and safeties, wherever they line up. Running backs lost their small extra boost, kick returners and special-teams units run at their own real speed, and a blocker never runs faster than his own top speed. Fixed: a tight end at fullback who took the handoff ran about 20% too fast.",
+      "Difficulty presets no longer change how fast anyone runs or accelerates: only the PLAYER SPEED and CPU SPEED sliders do.",
+      "Better pursuit: defenders plan their angle on the speed they really have (tired legs, the time it takes to turn round), so they meet the runner where he is going instead of arriving behind him. A man in front of the runner comes in on his near hip so he cannot cut back, and a kick-coverage man who has lost his lane goes straight to the meeting point. Both teams, kicks and punts included.",
+      "Run blocking looks like blocking: a blocker driving his man stays locked on with his hands on him (they were drawn as two men jogging side by side), a blocker who reaches a linebacker engages him at once, even while he is still reading the play, and a block can be made from the side as well as from dead in front.",
+      "Kick and punt returners take every catch at the chest in a basket catch, and the ball comes into the hands instead of jumping to the tuck.",
+    ]],
+    ["DIVES", [
+      "One set of rules for every dive in the game (a runner's dive, the pylon, diving catches, tackles, hit sticks, loose balls, tips, picks and kick blocks): a player leaves the ground at the speed he was running plus the push of his jump, keeps that speed in the air under the same gravity as a leap, then lands and slides to a stop. A dive from a standstill is slow and short; a dive at a sprint is fast and flat.",
+      "How far a dive can reach has not changed, with one exception: a diving catch can no longer fly faster than the receiver could launch (it used to cover up to 15 yards a second, even standing still), so a ball too far away for his speed is out of reach. If the ball is still a moment off he gathers on his feet first, then lays out.",
+      "Fixed: receivers floating through one- and two-second slow-motion dives, standing players lurching into a dive at full speed, dives stopping dead in mid-air, a tipping defender's dive fast-forwarding, and dives straight back against a player's own momentum going the full distance.",
+      "Six dive looks picked by the kind of dive (layout, superman, scissor kick, spear, one-arm reach, tuck and roll), with their own legs, arms and body angle, and three landings: a chest skid, a roll, or down onto a hip. Every dive is laid out by the middle of its flight. All of them are in the animation library, under EXTRAS.",
+    ]],
+    ["SCREENS AND FRANCHISE", [
+      "The roster screen has no cap bar any more and one AUTO button bottom right (where HOF was; the Hall of Fame is on the home screen, TEAM UPGRADES is in the FRONT OFFICE). Its title still opens any team's roster; the in-game depth chart is titled DEPTH CHART. AUTO now really fills the chart: every slot on every formation and special-teams page gets its best-fit named player, picked by what the spot needs (speed, size, strength, tackling, blocking, hands, kicking) instead of by stars, so the kickoff team is fast tacklers and the field-goal line is your biggest blockers. Hurt and benched players are skipped, and an unnamed player only fills a slot when nobody named is left. It used to only clear your locks.",
+      "The credits / XP box is top right on every screen. It is one box: click it to flip between credits and the XP bank, and the tip under it shows the icon a click brings up. Buttons that were in that corner moved to the top left. Credits now show on the free agent list, spent credits always fly out of the box (not the top left corner), the page waits for them to land, and spent XP flies the same way.",
+      "Click a played game on the schedule for its final score and top performers, with a STATS button for every player's line from that game.",
+      "Award winners and All-Pro rows open that player's card. A player you draft, sign or trade for is shown as his card, crumpled up and tossed to the roster button. Retirement cards are dealt in and stamped, and clicking one opens his page with his career stats.",
+      "The first time a franchise reaches 100 credits the home screen points you to TEAM UPGRADES, and the first salary cap purchase after that is half price. The XP bank has a short tutorial the first time a player banks XP. PRACTICE now opens in week 2 of your second season, after FACILITIES (a franchise that already used it keeps it).",
+      "Fixed: after a Paper Bowl you played, its box score, scoring summary and MVP were made up instead of taken from the game. Fixed: bought cap room and roster spots, the XP bank, coach progress, practice and seen-once tips carried over from the franchise that was open before into a new career or another save slot.",
+    ]],
+    ["HIGHLIGHTS", [
+      "The halftime highlights play straight through: no pause on the last frame and no page turn between clips, the next play is already running under a short fade. Nothing is drawn over a clip any more: no scoreboard, title card, name strip, pips, ticker, icons or buttons (click or Enter for the next clip, Esc to skip).",
+      "A clip that shows two parts of one play moves between them with a camera pan when they are close together and a fade when they are not, each part from its own angle. Long completions now include the throw: the shot widens and follows the ball from the release into the receiver's hands.",
+      "The crowd reacts to each moment as it goes by, the way it would live: a roar for a touchdown or a turnover, an ooh for a big hit or a move, boos or groans when it goes against the home team.",
+      "The defense gets its share: picks, forced fumbles, big hits, sacks and pass break-ups are scored higher, and the two best defensive plays always make the reel. A reel is at most 10 clips at halftime.",
+      "At the end of the game the whole game's best plays (up to 14) loop behind the result screen, played by the same reel as halftime. Off in performance mode and online.",
+      "Memory: the reels keep at most 12 first-half and 14 whole-game clips (trimmed, shared between the two) and free them when the show ends or the result screen is left; the HIGHLIGHTS button keeps at most 24 full plays a game.",
+    ]],
+    ["KICK PROTECTION", [
+      "Field goals and extra points have a real protection and a real rush, the same for both teams. The kicking unit is a snapper, two guards, two tackles and two tight ends foot to foot, with two wings a yard back. Every lineman steps down, owns the gap inside him and never chases; the wings punch the inside man, then widen anyone outside.",
+      "The rush is eight in the gaps and three behind, with a call: MIDDLE (two men drive a guard back and a jumper goes up behind them), EDGE (an extra man outside the wing) or SAFE (a token rush). Extra points mostly get SAFE, long field goals mostly get MIDDLE.",
+      "Each rusher against the blocker who owns his gap is decided by their ratings: a stalemate, the blocker walked back, or (rarely) beaten clean. A free man runs at a point just in front of the ball and lays out for it. Nobody runs into the kicker or the holder any more.",
+      "A block is no longer a dice roll: it only happens when a rusher's hands are where the ball passes while it is still low enough to reach, and the ball comes off his hands. Long kicks leave lower, so they are easier to get. Now and then the snap and hold are slow, and that is when an overload gets home.",
+      "Punts run on the same engine. The punt team kick-slides back and half a man outward, punches the rusher in its zone and leaves for its lanes after about 1.2 seconds; the personal protector, now 5 yards deep, takes the most dangerous free man. The return team calls RETURN (five or six rush and ride their blockers so they get downfield late, the rest drop to block) or BLOCK (all eight, one more than the line can take). A punt is only blocked by hands on the ball as it leaves the foot, and nobody runs into the punter.",
+      "About 2 field goals in 100, 1 extra point in 100 and fewer than 1 punt in 100 are blocked (all three measured 0 before: the rush could never get there). Simulated kicks are blocked at the same rates. Rushers put their arms up as the ball is kicked.",
+    ]],
+  ] },
+  { v: "v0.29", secs: [
+    ["NEW CELEBRATIONS", [
+      "The old touchdown and first-down celebrations are gone (the right-click spike, the dances, the first-down point). Celebrations now come after the whistle: the other team's play by themselves, yours when you press X (CELEBRATE on a phone; the key can be changed in the keybinds). Any other key or tap skips one. They never change the score, the clock or the spot.",
+      "A scorer's momentum carries him deeper into the end zone before he pulls up, and everyone stands a beat before celebrating. The backflip is one smooth motion: one arc up and down, one steady turn.",
+      "The scorer pulls up in the end zone, turns back to the field and celebrates: a spike (the ball bounces high and away), spinning the ball like a top, a flex, a backflip, a headstand or the Paper Shuffle. Big men flex and spike, quick players flip, and nobody repeats his last move.",
+      "The QB celebrates his touchdown pass at the same time (a double fist pump, or a point at his receiver). Two-point tries, extra points and field goals have their own (a golf swing, counting out bills), and a late kick that ties or wins it gets a knee slide. So does a safety.",
+      "Smaller ones after the whistle, some of the time: a first down, a gain of 20 or more, a contested, one-handed or diving catch, a move that put a defender on the turf, a pancake block.",
+      "The defense has its own: buckling up, handcuffs or a little shadow boxing after an interception, a bow and arrow or a ground pound after a sack, the ball held high after a fumble recovery (the man who knocked it out celebrates too), a point the other way after a fourth-down stop or a goal-line stand, and sometimes a reaction to a big hit, a tackle for loss or a pass breakup.",
+      "Special teams: a blocked kick, their missed field goal, an onside kick recovery, and a punt killed inside the 10 (the man who downed it points at the spot, or the punter pumps a fist).",
+      "Teammates join in: a chest bump (a belly bump for the big men), a high five, a dunk through a teammate's arms, a lineman hoisting the scorer overhead. With three or more teammates close by a touchdown can turn into a team celebration: warming their hands round the spinning ball, lounging along the goal line, a row of folded arms. A first down can end in a bowling roll, and a game-winning kick with the kicker carried off.",
+      "Near the goal post the scorer may dunk the ball over the crossbar (it wobbles) or hug the pad.",
+      "Winning the game: at the final whistle the winners celebrate before the result screen. A helmet held high, a group jump or a cooler tipped over the head coach; a dogpile after an overtime win; the coach carried off after a playoff win; and after the Paper Bowl the trophy raised under falling confetti, or confetti angels.",
+      "A player whose Star Factor has just come on shows it at the next whistle, and the winner of each 1v1 rep lets the other man know.",
+      "Moves are drawn pose to pose with squash and stretch and a smear on fast arms and on the ball. Replays show them, and so does the other player online (this build does not connect to older ones).",
+      "Every move can be previewed in the animation library, under CELEBRATE.",
+    ]],
+  ] },
+  { v: "v0.28", secs: [
+    ["THE XP BANK", [
+      "A player at his potential no longer turns spare XP into 2 credits: it goes into your team's XP bank (half of what he earns), from games and from practice. The bank belongs to your coach, so it comes along if you change teams. Franchise only.",
+      "Click the credits box to flip it to the XP bank, and again to flip back. Banked XP flies from the ROSTER button into the box after a game (after any credits), and a simulated game just reports the amount. The roster, player cards and the front office now show the box too.",
+      "Spend it on a player's card: POTENTIAL raises his potential by half a star (up to 5 stars; the price climbs with his potential and with every boost he has had), and UPGRADE buys one +1 right away for a player still under his potential, at twice the usual XP.",
+      "Spend it on his ability, under it on the STATUS note: a FIT can be made an ABILITY (3+ stars), and an ABILITY a STAR FACTOR (4+ stars). One bought Star Factor a season, two on the roster at a time, and each one costs more than the last.",
+      "Spend it on your coaches: TRAIN on a coordinator's or the head coach's page adds coach XP toward his next star (the head coach costs three times as much). Larger buys ask first.",
+    ]],
+  ] },
+  { v: "v0.27", secs: [
+    ["THE BACKFIELD LOOKS LIKE FOOTBALL", [
+      "The QB and the backs have real pre-snap stances, picked from the formation and the situation, never from the call (no tells). Under center: knees bent, back flat, hands under the center, lower on the goal line, feet staggered in the victory formation. Shotgun and pistol: tall with the hands open, more upright in the hurry-up. Backs: a two-point with hands on the thigh pads, taller beside the QB in the gun, lower in short yardage; the fullback is in a three-point.",
+      "Under center the QB now sets up right behind the center instead of level with the line. His drops end where they always did.",
+      "The snap is animated: the center has a hand on the ball with his head up and lifts it back between his legs with a quarter turn, or fires a low spiral in the shotgun and pistol; the QB's hands close on it and bring it in.",
+    ]],
+    ["HANDOFFS AND PITCHES IN STRIDE", [
+      "The back never slows, stops or waits for the ball any more. The QB takes it to him: his footwork is worked out from the back's path at the snap, the ball goes out belt-high as the back closes, and it changes hands on the run. The back keeps the speed he has.",
+      "Every run has its own exchange: an open step on inside runs, a reverse pivot on power, counter and trap, running flat to the mesh on the stretch (now a handoff, not a pitch), a ride on the zone read, a low quick one on the goal line, a slip out of the pass set on the draw.",
+      "Pitches are real pitches: the QB reverse-pivots and tosses it underhand with a wind-up and a follow-through (a catch-and-flip in the shotgun), earlier and softer than before, led to where the back will be. He catches it chest high in two hands without breaking stride; only his head turns.",
+      "The back opens a pocket for the handoff, keeps both arms over the ball for two steps, then moves it to his outside arm. A sold play fake shows too: the QB shows the ball and pulls it to his hip, the back folds his arms over nothing.",
+      "Because the ball gets there sooner, the defense is held in its run read a little longer on outside runs, so they play about as before. Inside runs reach the line at the same time as before.",
+    ]],
+    ["NEW RUN: PIN & PULL", [
+      "A shotgun pitch to the offset back's side. Covered linemen pin or reach their men, uncovered ones pull (two at most): the first takes the force, the second turns up inside him. The outside receiver cracks a safety or backer walked down inside him, and then the puller takes the corner.",
+      "The back runs it with patience on the puller's hip and makes one read: bang inside a kick-out, bounce outside a log, or bend it back if the pin is lost. The coordinator checks out of it against a bad look, and never calls it inside the 5. The computer's offense and the simulated games use it too (boom or bust).",
+      "All of it is in the animation library's EXTRAS tab: the stances, the three snaps, the handoffs, the toss and the flip.",
+    ]],
+  ] },
   { v: "v0.26", secs: [
     ["HALFTIME HIGHLIGHTS: A REAL CUT-UP", [
       "The halftime reel is now about 8 to 10 clips of both teams' big plays, in the order they happened, instead of 4. Fewer big plays means a shorter reel, never filler.",

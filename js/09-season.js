@@ -500,7 +500,8 @@ function poAfter() {
   if (poPending().length) return;
   if (po.round === 3) {
     po.over = true; po.champ = poWon(po.rounds[3][0]);
-    try { const g = po.rounds[3][0], win = po.champ, lose = win === g.h ? g.a : g.h; po.pbStats = { ...pbStatGen(win, win === g.h ? g.hs : g.as), ...pbStatGen(lose, win === g.h ? g.as : g.hs) }; } catch (e) {}   // (the Paper Bowl box score, made now so the card and the awards agree on the MVP)
+    try { const g = po.rounds[3][0], win = po.champ, lose = win === g.h ? g.a : g.h; po.pbStats = { ...pbStatGen(win, win === g.h ? g.hs : g.as), ...pbStatGen(lose, win === g.h ? g.as : g.hs) };
+      const real = { ...pbReal(win), ...pbReal(lose) }; if (Object.keys(real).length) po.pbStats = real; } catch (e) {}   // (a Paper Bowl you played: the lines from the game itself, not made-up ones)   // (the Paper Bowl box score, made now so the card and the awards agree on the MVP)
     if (po.champ === season.team) {
       season.beatOld = po.rounds.some(rg => rg.some(x => poHas(x, season.team) && poWon(x) === season.team && (career.past || []).some(p => poHas(x, p.team))));   // (the title run went through a team you left: blood ring)
     }
@@ -922,6 +923,19 @@ function pbStatGen(team, pts) {
 const PB_MVP = { pts: { 'PASS YDS': 0.04, 'PASS TD': 4, 'INT': -2, 'RUSH YDS': 0.1, 'RUSH TD': 6, 'REC': 0.5, 'REC YDS': 0.1, 'REC TD': 6,
                         'TACKLES': 0.5, 'SACKS': 2, 'TFL': 1, 'PASSES DEFENDED': 1, 'DEF INT': 4 },
                  grp: { QB: 1.35, RB: 1, WR: 1, TE: 1, DL: 0.55, LB: 0.55, CB: 0.55, S: 0.55 } };
+// the Paper Bowl you were in: every player's real line from that game (PST, written by pstFinish before the bracket moves on), in the box score's rows
+function pbReal(team) {
+  const out = {};
+  for (const p of ROSTER[team] || []) {
+    const e = PST[p.name], g = e && [...e.games].reverse().find(x => !x.gp && x.yr === LEAGUE.year && x.wk === 'PO' && x.rd === 3); if (!g) continue;
+    const v = k => g[k] || 0, G = p.group, rec = [['REC', v('rc')], ['REC YDS', v('ry')], ['REC TD', v('rt')]], run = [['CARRIES', v('ca')], ['RUSH YDS', v('cy')], ['RUSH TD', v('ct')]];
+    out[p.name] = G === 'QB' ? [['CMP/ATT', `${v('pc')}/${v('pa')}`], ['PASS YDS', v('py')], ['PASS TD', v('pt')], ['INT', v('pi')], ...(v('ca') ? run : [])]
+      : G === 'RB' ? [...run, ...rec] : G === 'WR' || G === 'TE' ? [...rec, ...(v('ca') ? run : [])]
+      : G === 'OL' ? [['SACKS ALLOWED', v('sa')], ['PANCAKES', v('pk')]] : G === 'K' ? [['FG', `${v('fg')}/${v('fa')}`], ['XP', `${v('xp')}/${v('xa')}`]]
+      : [['TACKLES', v('tk')], ['SACKS', v('sk')], ['TFL', v('tfl')], ['INT', v('ic')], ['PASSES DEFENDED', v('pd')]];
+  }
+  return out;
+}
 function pbMvpScore(p, lines) {
   const w = PB_MVP.grp[p.group];
   if (w == null || !lines) return -1e9;
@@ -1092,8 +1106,9 @@ function drawAllPro(me) {
   [['OFFENSE', ap.off, 60], ['DEFENSE', ap.def, 680]].forEach(([title, list, x0]) => {
     ctx.fillStyle = RES.gold; ctx.font = 'bold 26px monospace'; ctx.textAlign = 'left'; ctx.fillText(title, x0, 92);
     list.forEach(({ p, k }, i) => {
-      const y = 112 + i * 40, mine = k === me;
-      ctx.fillStyle = mine ? 'rgba(242,194,48,0.28)' : 'rgba(255,255,255,0.10)'; ctx.fillRect(x0, y, 540, 36);
+      const y = 112 + i * 40, mine = k === me, hot = hoverPt && !offPop && inBtn(hoverPt, { x: x0, y, w: 540, h: 36 });   // (rows are clickable: his player card)
+      UI_BTNS.push({ x: x0, y, w: 540, h: 36 });
+      ctx.fillStyle = hot ? 'rgba(255,226,90,0.45)' : mine ? 'rgba(242,194,48,0.28)' : 'rgba(255,255,255,0.10)'; ctx.fillRect(x0, y, 540, 36);
       ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(x0, y, 540, 36);
       drawLogo(k, x0 + 22, y + 18, 28);
       ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'left';
@@ -1110,6 +1125,7 @@ function drawAwards() {
   const now = performance.now(), dt = Math.min(0.05, (now - (OFF.lt || now)) / 1000), me = season.team;
   OFF.lt = now;
   paperBg();
+  if (OFF.awSel) { drawPlayerPage(OFF.awSel.k, OFF.awSel.p, null); return; }   // (a clicked winner / All-Pro: his player card)
   if (OFF.allPro) return drawAllPro(me);
   coinBox(20, 16, LEAGUE.coins, RES.bright);
   ctx.fillStyle = RES.line; ctx.font = 'bold 44px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1411,7 +1427,7 @@ function moveMood(p, dir) {
   moraleShiftAll(2 * d);   // (the whole locker room: every player's morale moves, the team's is their average)
   LEAGUE.approval = Math.max(0, Math.min(1, LEAGUE.approval + 0.015 * d));
 }
-function buyCap() { if (LEAGUE.coins >= CAP.cost && (LEAGUE.cap || CAP.start) < CAP.max) { const was = LEAGUE.cap || CAP.start; LEAGUE.coins -= CAP.cost; LEAGUE.cap = was + CAP.step; upgradeSfx(); capBought(was, LEAGUE.cap); autosaveSoon(); } }
+function buyCap() { if (LEAGUE.coins >= capCost() && (LEAGUE.cap || CAP.start) < CAP.max) { const was = LEAGUE.cap || CAP.start; LEAGUE.coins -= capCost(); delete LEAGUE.capSale; LEAGUE.cap = was + CAP.step; upgradeSfx(); capBought(was, LEAGUE.cap); autosaveSoon(); } }
 const OFF_ROSTER_BTN = { x: 700, y: 640, w: 310, h: 58 };
 // (on the re-sign screen the cap leaves out the contracts still to decide: they count again at their new price once re-signed)
 // over the cap on the re-sign screen: ROSTER shrinks and a TRADES button sits beside it (trades from there ignore the salary cap for both teams: TR.capFree)
@@ -1426,7 +1442,7 @@ function offOpenRoster() { rosterReturn = results.screen; rosterView.team = null
 let RS_BTNS = null;   // (made on first use: ROSTER_CARDS is defined further down)
 const rsBtns = () => RS_BTNS || (RS_BTNS = ROSTER_CARDS.map(b => ({ yes: { x: b.x + 10, y: b.y + b.h - 46, w: 120, h: 36 }, no: { x: b.x + b.w - 130, y: b.y + b.h - 46, w: 120, h: 36 } })));
 // ticked cards: RE-SIGN / LET GO act on all of them at once (OFF.rs.chk = the players); their asks, and a hovered RE-SIGN's, preview on the cap bar (OFF.rs.plus)
-const RS_ALL = { x: 1224, y: 12, w: 46, h: 46 }, RS_MASS_YES = { x: 930, y: 10, w: 140, h: 50 }, RS_MASS_NO = { x: 1078, y: 10, w: 138, h: 50 };   // (RS_ALL = the big select-all tick box, top right beside LET GO)
+const RS_ALL = { x: 20, y: 12, w: 46, h: 46 }, RS_MASS_YES = { x: 74, y: 10, w: 140, h: 50 }, RS_MASS_NO = { x: 222, y: 10, w: 138, h: 50 };   // (top left: the credits / XP boxes are top right)   // (RS_ALL = the big select-all tick box, top right beside LET GO)
 const rsChkBtn = i => ({ x: ROSTER_CARDS[i].x + 10, y: ROSTER_CARDS[i].y + 10, w: 34, h: 34 });
 const rsTicked = () => (OFF.rs.chk = (OFF.rs.chk || []).filter(p => OFF.expiring.includes(p)));
 function rsSign(me, p) {
@@ -1733,6 +1749,7 @@ function drawFA() {
   }
   const list = faList(), pages = Math.ceil(list.length / OFFSEASON.perPage) || 1;
   F.page = Math.min(F.page, pages - 1);
+  coinBox(COIN_SPOT.x, COIN_SPOT.y - 8, LEAGUE.coins, RES.bright);   // (signing costs credits: they show on the list too)
   menuBtn(FA_TITLE_BTN, `${F.pos && F.pos !== 'ALL' ? F.pos : 'FREE AGENTS'} ${F.dd ? '▴' : '▾'}`, F.dd ? SEL : RES.bright, 30);
   menuBtn(FA_SIDE_BTNS[0].b, F.filter === 'off' ? 'OFFENSE' : F.filter === 'def' ? 'DEFENSE' : 'ALL', F.filter !== 'all' ? SEL : RES.bright, 22);   // (one button: ALL > OFFENSE > DEFENSE)
   if (!F.browse) menuBtn(TR_TEAM_BTN, 'TRADES', RES.bright, 22);   // (trades are open all offseason)
@@ -1791,7 +1808,7 @@ function faSign(p) {
   FA_POOL.splice(FA_POOL.indexOf(p), 1);
   LEAGUE.coins -= signCost(p); p.newWk = 2;
   if (OFF && OFF.fa) OFF.fa.sel = null; moveMood(p, 1); recalcTeamStars();
-  postWire('sign', p, me);
+  postWire('sign', p, me); cardShowAdd(p, me, 'SIGNED');
   autosaveSoon();
 }
 // signing a free agent costs credits: 3 for a 1-star up to 25 for a 5-star
@@ -2003,7 +2020,7 @@ function draftTake(p) {   // you pick him
   D.pool.splice(D.pool.indexOf(p), 1);
   p.drafted = true; delete p.scout; D.n++; D.mine.push(p); postWire('draft', p, me, { n: D.n });
   uniqueNum(R, p); R.splice(depthAt(R, p), 0, p);
-  moveMood(p, 1); recalcTeamStars();
+  moveMood(p, 1); recalcTeamStars(); cardShowAdd(p, me, 'DRAFTED');
   D.sel = null; D.used++; D.left--; D.page = 0;
   if (D.left > 0) D.cands = D.pool.slice(); else draftRoundEnd();
 }
@@ -2444,9 +2461,9 @@ function offFinishFA() {
   if (star.length || swaps.length) { lines.push('AROUND THE LEAGUE:'); star.forEach(t => lines.push(`  ${t}.`)); swaps.forEach(t => lines.push(`  ${t}`)); }
   offTip('newyear');
   const lg = OFF.retiredLg.filter(r => r.p.stars >= 4).slice(0, 6), cats = [
-    { name: 'YOUR RETIREMENTS', lines: OFF.retiredYou.length ? [] : ['Nobody retired.'], cards: OFF.retiredYou.map(r => ({ p: r.p, team: me, sub: `AGE ${r.p.age}  RETIRED` })) },
+    { name: 'YOUR RETIREMENTS', lines: OFF.retiredYou.length ? ['Click a card for his career.'] : ['Nobody retired.'], cards: OFF.retiredYou.map(r => ({ p: r.p, team: me, sub: `AGE ${r.p.age}  RETIRED`, retire: true })) },
     { name: 'COORDINATORS', lines: staff.length ? staff.flatMap(t => wrapLines(t, 90)) : ['No changes on your staff.'], cards: [] },
-    { name: 'AROUND THE LEAGUE', lines: lg.length ? ['Stars who retired around the league.'] : ['No stars retired.'], cards: lg.map(r => ({ p: r.p, team: r.k, sub: `${r.k}  RETIRED` })) },
+    { name: 'AROUND THE LEAGUE', lines: lg.length ? ['Stars who retired around the league.'] : ['No stars retired.'], cards: lg.map(r => ({ p: r.p, team: r.k, sub: `${r.k}  RETIRED`, retire: true })) },
     { name: 'LEAGUE TRADES', lines: swaps.length ? swaps.flatMap(t => wrapLines(t, 90)) : ['No big trades.'], cards: tcards }];
   catPopShow({ title: `NEW SEASON  ${nflYear()}`, cats, noOpen: true, done: () => { results.screen = 'offers'; offTip('offers'); } });
 }
@@ -2484,7 +2501,7 @@ function tenureTally() {   // once per season, when the Paper Bowl rings are han
   t.games += g; t.wins += Math.round(winPct(T) * g); t.seasons++;
   if (((season.fin || {})[season.team] || 0) > 0) t.po++;
   if (season.pb && season.pb.win === season.team) {
-    t.titles++;
+    t.titles++; moraleShiftAll(MORALE_TEAM.bowl);   // (champions: the whole locker room)
     const red = career.redeem || (career.redeem = {}), kind = season.beatOld ? 'blood' : red[season.team] ? 'silver' : null;   // blood = beat a team you left on the way; silver = first title back on a team you left
     delete red[season.team];
     (career.rings = career.rings || []).push({ year: LEAGUE.year, team: season.team, kind });
@@ -2493,15 +2510,15 @@ function tenureTally() {   // once per season, when the Paper Bowl rings are han
 }
 const isPast = k => (career.past || []).some(p => p.team === k);
 const redStar = () => !!career && (career.hcStars || 0) >= 6;   // the 6th (red) coach star
-function redGive(p) {   // red star: his ability becomes a star factor (X) now
+function tierGive(p, to) {   // his ability moves up to tier `to` (S / X) on the roster entry: the boost grows by the difference
   const was = p.tier;
-  p.tier = 'X'; p.xf = undefined;
+  p.tier = to; if (to === 'X') p.xf = undefined;
   for (const [k, v] of Object.entries(SIG_BOOST[p.ability] || {})) {
-    const a = k !== 'cut' ? k : ATTRS[p.group].includes('agi') ? 'agi' : 'spd', d = v * (SIG_TIER.X - SIG_TIER[was]);
+    const a = k !== 'cut' ? k : ATTRS[p.group].includes('agi') ? 'agi' : 'spd', d = v * (SIG_TIER[to] - SIG_TIER[was]);
     if (p.at && a in p.at) { p.at[a] += d; (p.boost ||= {})[a] = (p.boost[a] || 0) + d; }
   }
-  career.redUsed = LEAGUE.year;
 }
+function redGive(p) { tierGive(p, 'X'); career.redUsed = LEAGUE.year; }   // red star: his ability becomes a star factor (X) now
 function facTier(k) {   // a team's hidden facility tier 1-5 (rolled once, kept in the league)
   const m = LEAGUE.facTier || (LEAGUE.facTier = {});
   if (m[k] == null) { m[k] = 1; for (let i = 0; i < 4; i++) if (Math.random() < MOVE.facTier) m[k]++; }

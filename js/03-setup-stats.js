@@ -95,8 +95,7 @@ function rateOffense() {
     p.spdMult = p.spdRel = rm(p, 'spd', p.grp === 'OL' ? A5.ol.speed : 'speed');   // (top speed goes through effTop; a lineman's SPEED only nudges it)
     p.quickK = p.grp === 'OL' ? Math.max(0.9, Math.min(1.2, rm(p, 'spd', A5.ol.quick))) : null;   // (OL SPEED: acceleration and change of direction, in steer)
     // QB / RB / WR: top speed off the one shared scale (relative to the base speed his spot runs at)
-    const abs = absTop(p), ref = p === qb ? QB_RUN : p === rb ? RB_RUN : p.topBase;
-    if (abs && ref) p.spdMult = abs / ref;
+    setAbsSpeed(p);
     // agility (receivers) / speed (backs: route running, change of direction): speed kept through a cut
     if (p.cut) p.cut = Math.min(0.95, p.cut * (p.grp === 'RB' ? rm(p, 'spd', 'cut') : rm(p, 'agi', ROUTE_RUN.cut)));
     if (p.catchMult || p === rb) p.catchMult = (p.catchMult || 1) * rm(p, 'ctc', 'catch') * (p === rb ? rbVis(RB_VISION.catchK) : 1) * pulseCatch();   // (the back's vision helps him track it; the crowd)
@@ -118,9 +117,9 @@ function rateDefense() {
     if (d.react) d.react *= (1 - DC_LOGIC.react * dcK) * (1 + OC_LOGIC.react * oc);
     if (d.shedAt) d.shedAt *= 1 - DC_LOGIC.shed * dcK;
     const abs = absTop(d);   // corners / safeties: the shared speed scale
-    const sp = abs ? abs / d.top : Math.max(0.2, rm(d, 'spd', 'speed') - RATE_K.speed * (tut ? 0 : diffFor(d).rz));   // (top speed is the same on every difficulty: scrimmage's; difficulty only moves skills)
+    const sp = abs ? abs / d.top : rmSpd(d, 'speed');   // (top speed is the same on every difficulty: scrimmage's; difficulty only moves skills)
     d.top *= sp; if (d.zoneTop) d.zoneTop *= sp; if (d.rush) d.rush *= sp;
-    d.accel *= rm(d, 'spd', 'accel');
+    d.accel *= rmSpd(d, 'accel');   // (acceleration too)
     if (d.push) d.push *= rm(d, 'str', 'shed');                   // bull rush
     if (d.pickTry) d.pickTry *= rm(d, 'ctc', 'ball') * (tut ? 1 : diffFor(d).def * (diffFor(d).pick ?? 1)) * (1 + DC_LOGIC.ball * dcK);
     d.cov = (tut ? 1 : diffFor(d).cover * (1 + COVER_SKILL.team * (oppStars(MATCH.opp).def - 3))) *
@@ -307,7 +306,7 @@ function halfOK() {
 }   // (from the sim panel: straight on to the second half, not back to the same sim screen)
 function announceHalf() { endWhistle(true); if (simGame || simFast) return; halfHold = true; halfGo = false; halfT0 = halfLeave = 0; }   // (drawTurnoverBanner shows HALFTIME once the other banners are done)
 // the final whistle: the horn sounds; a live game then shows the last play's replay with FINISH GAME over it
-function endGame() { game.over = true; endWhistle(true); }
+function endGame() { game.over = true; endWhistle(true); crowdFinal(); celebGameEnd(); }   // (the winners celebrate before the result screen: see celebrations)
 const finalReplay = () => game.over && !results && state === 'done' && !ONL.on;
 let tossWinner = null;   // who receives the opening kickoff ('BLUE' = you, 'RED' = them): rolled when the matchup screen comes up, so it's known before the game starts
 let tossUntil = 0;   // performance.now() ms until the opening coin toss is decided: nobody is drawn on the field before that
@@ -943,7 +942,7 @@ function newGame() {
   moveWear = { juke: 1, spin: 1, truck: 1, stiff: 1 }; lastMove = null; moveStreak = 0;
   halfHold = false;
   highlights = []; lastRec = null;   // (a new game's tapes)
-  HTS.clips = []; HTS.cards = []; HT = null; pgPending = true;   // (and no halftime reel left from the old game; the pregame show comes up once the game screen does)
+  if (hl && hl.bg) hlClose(); HTS.clips = []; HTS.cards = []; HTS.game = []; HT = null; pgPending = true;   // (and no halftime reel left from the old game; the pregame show comes up once the game screen does)
   kick = null; kickoff = null; aim = null;   // (a restart: no reticle or meters left over from the old game's kick)
   patNext = false; patMode = null; tryFlip = null; pendingSim = null; kickoffNext = false; kickoffPlay = false; fourthPending = false;   // (left right after a score: the old game's try / kickoff must not carry into this one)
   Object.assign(game, { blue: 0, red: 0, quarter: 1, secs: QUARTER_SECS, over: false, pendingQuarter: false, runoff: 0, runoffTotal: 0,
@@ -975,6 +974,8 @@ const catchers = () => {
 
 function reset() {
   runPid++;   // (a new play: everyone's yards run start over)
+  if (Array.isArray(ols) && qb) for (const p of allPlayers()) { if (!p) continue; p.armsUp = false; p.coast = null; }   // (not on the very first reset at load: nobody exists yet)
+  //   // (a kick rusher's raised arms never carry into the next play; nor an old scorer's end-zone coast: the camera panned to him, by then an unrelated man, at every later whistle until the next kickoff)
   if (tut && tut.koUnflip) { tut.koUnflip = false; if (twoP && twoP.koOnly) { flipSides(); twoP = null; } }   // (the tutorial's kickoff return is over: the sides go back now, not while the players are still on the field in their kits)
   if (tut && !(tutStep() || {}).kick) { kick = null; kickoff = null; kickoffPlay = false; puntPlay = null; puntRet = puntRetPlay = false; game.kickPending = null; }   // (nothing of a kicking lesson lingers into the next play)
   if (!game.over && game.pendingQuarter && game.quarter === 4 && game.blue !== game.red && !tut) endGame();   // (overtime is for ties only)
@@ -1001,8 +1002,8 @@ function reset() {
   clock = 0;
   audiblesLeft = 2; defAudLeft = 2;
   tgt = runner = null; playCatcher = null;
-  cpuCel = null; firstDownCall = false;   // (last play's pending first-down point / CPU celebration must not fire on this snap's carrier)
-  if (ols && ols.length) for (const p of allPlayers()) { p.celebrate = null; p.pendingPoint = false; }
+  firstDownCall = false; celebReset();   // (last play's celebration never carries into this snap)
+  if (ols && ols.length) for (const p of allPlayers()) p.coast = null;
   xfHit = null; xfAir = 0; xfDrop = false; pickThrown = false;
   snaps = []; fgExit = [];
   puntPlay = null; puntRet = false; puntRetPlay = false;   // (a punt return's flag must not outlive it: every later play was scored as a return = 1st and 10 at the spot)
@@ -1354,7 +1355,8 @@ function assignRoutesOnce() {
     rb.runType = outside ? 'outside' : 'inside';
     rb.scheme = call ? call.scheme : pickScheme(outside);
     rb.runSide = side;
-    rb.runLane = outside ? [L(-2.5, 5), L(0.5, 8.5), L(10, 9)]      // bounce it to the edge, turn it up
+    rb.runLane = outside && rb.scheme === 'pinPull' ? rbpPinLane(L)   // flat to 2 yd outside the pin, then up
+                         : outside ? [L(-2.5, 5), L(0.5, 8.5), L(10, 9)]      // bounce it to the edge, turn it up
                          : rbpLane(rb.scheme, L);                   // downhill at the scheme's aiming point (playbook: IZ guard's hip, B gap, iso A gap, counter step)
     rb.path = rb.runLane.map(p => [...p]);
     if (!outside && ols.length > 1 && Math.abs(rb.y - MID) < 5 * YD && rb.x < los - 0.5 * YL) {   // (only a back lined up in the backfield: one lined up wide as a receiver just runs his route) (as a route out of the backfield he slips through a gap between two linemen, not through a lineman: the nearest gap to his lane; a handoff still follows the run lane)
@@ -1439,7 +1441,7 @@ function alignDefense() {
   const top = sides[0].recs, bot = sides[1].recs;
   blitzWalkT = 0; for (const d of back7) { d.blitzShow = null; d.walked = false; }
   dl.forEach((d, i) => { d.dropZone = false; d.zone = null; d.y = MID + [-SPLITS.de, -SPLITS.dt, SPLITS.dt, SPLITS.de][i] * YD; });   // (a re-align after an audible starts from the line again)
-  const set = (p, x, y, zone) => { if (p.blitzCov) { p.cov /= p.blitzCov; p.blitzCov = 0; } p.x = los + x * YL; p.y = y; p.zone = zone; p.flex = null; p.svx = p.svy = 0; p.turned = false; p.hips = 'square'; p.hipSide = 0; p.hipWant = null; p.zoneSince = 0; p.passOff = 0; p.matchAt = 0; p.recTurn = 0; p.headTo = 'qb'; p.lookAt = null; p.blitz = false; p.man = null; p.coverOn = null; p.carrying = null; p.angleErr = 0; p.mom = 0; p.hx = undefined; p.eyes = null; p.hsx = null; p.breakFx = null; p.fightOn = null; p.gapY = null;
+  const set = (p, x, y, zone) => { if (p.blitzCov) { p.cov /= p.blitzCov; p.blitzCov = 0; } p.x = los + x * YL; p.y = y; p.zone = zone; p.svx = p.svy = 0; p.turned = false; p.hips = 'square'; p.hipSide = 0; p.hipWant = null; p.zoneSince = 0; p.passOff = 0; p.matchAt = 0; p.recTurn = 0; p.headTo = 'qb'; p.lookAt = null; p.blitz = false; p.man = null; p.coverOn = null; p.carrying = null; p.angleErr = 0; p.mom = 0; p.hx = undefined; p.eyes = null; p.hsx = null; p.breakFx = null; p.fightOn = null; p.gapY = null;
     p.biteUntil = 0; p.biteV = null; p.readOn = null; p.readUntil = 0; p.lungeY = 0; p.attacked = false; };
   // press man: walk up on the receiver, try to jam him at the line, then run with him
   const press = (p, r) => {
@@ -1771,7 +1773,7 @@ const audibleLocked = () => !!tut && (tutStep() || {}).id !== 'audible';
 // Formation changes: an audible can move a receiver across the formation (2x2 <-> 3x1) or swap a tight end for a slot receiver (or back).
 // The players really jog there (p.fmTo, stepFormation) and the snap waits until everybody's set; subs run on from the sideline as the man they
 // replace jogs off.
-const FM = { chance: 0.7, speed: 8 * YD };
+const FM = { chance: 0.7, speed: 8 * YD, accel: 14 * YD, turn: 4 * YD };   // accel = how fast a man gets up to his jog and slows into his spot (per s^2); turn = a move at least this long, mostly along the field, turns him to run; shorter ones he shuffles, squared up
 const fmBusy = () => state === 'pre' && allPlayers().some(p => p.fmTo);
 let fmWait = 0;
 const FM_MAX_WAIT = 8;   // seconds the snap may wait for the formation to settle before everyone is put in place
@@ -1835,9 +1837,13 @@ function stepFormation(dt) {
     if (!to) continue;
     if (to.pace == null) { to.pace = 0.8 + Math.random() * 0.4; to.delay = Math.random() * 0.5; to.t = 0; }   // (each man his own pace and his own start)
     if ((to.t += dt) < to.delay) continue;
-    const dx = to.x - p.x, dy = to.y - p.y, d = Math.hypot(dx, dy), step = (to.v || FM.speed) * to.pace * dt;
+    const dx = to.x - p.x, dy = to.y - p.y, d = Math.hypot(dx, dy);
+    // (eased: he builds up to his jog and slows into his spot, no instant start / dead stop; and he only turns his back for a real run along the field)
+    to.sp = Math.min((to.v || FM.speed) * to.pace, (to.sp || 0) + FM.accel * dt, Math.sqrt(2 * FM.accel * d) + 0.6 * YD);
+    if (to.far == null) to.far = !!to.leave || (d > FM.turn && Math.abs(dx) > Math.abs(dy) * 0.6);
+    const step = to.sp * dt;
     if (d <= step) { p.x = to.x; p.y = to.y; p.fmTo = null; p.vx = p.vy = 0; p.moving = false; p.face = p.team === 'def' ? -1 : 1; if (to.leave) fgExit = fgExit.filter(g => g !== p); continue; }
-    p.x += dx / d * step; p.y += dy / d * step; p.moving = true; p.vx = dx / d * step / dt; p.vy = dy / d * step / dt; p.face = dx > 0 ? 1 : -1;
+    p.x += dx / d * step; p.y += dy / d * step; p.moving = true; p.vx = dx / d * step / dt; p.vy = dy / d * step / dt; p.face = to.far ? (dx > 0 ? 1 : -1) : p.team === 'def' ? -1 : 1;
   }
 }
 // A saved / suspended game comes back at its last pre-snap, with the audibles left, the routes the receivers were running (audibles and hot
@@ -1919,7 +1925,7 @@ function snap(run = false) {
   clock = 0;
   qb.coast = null;
   pstSnap();
-  snapFly ={ dur: oo && oo.cfg ? 0.01 : shotgun ? SNAP_FLY.gun : SNAP_FLY.center };   // (1v1: he snaps it to himself, the ball is already in his hands)
+  snapFly ={ dur: oo && oo.cfg ? 0.01 : shotgun ? (qbDepth < SHOTGUN.depth ? SNAP_FLY.pistol : SNAP_FLY.gun) : SNAP_FLY.center };   // (1v1: he snaps it to himself, the ball is already in his hands)
   playMoves = {};
   snapSfx();
   keepHighlight(rec); if (rec && rec.frames && rec.frames.length > 5 && !rec.replaying) lastRec = rec; rec = { frames: [], t: 0, doneT: 0, replaying: false };
@@ -1956,6 +1962,9 @@ function snap(run = false) {
       bit = bit || d;
     }
   }
+  // (a sold fake is shown: the QB holds the ball out to the back and pulls it to his hip, the back folds his arms over an empty belly for a few steps. Looks only: PA_LOOK)
+  qb.paT = bit && !shotgun ? snapFly.dur : null; qb.exGive = qb.exThru = null;
+  rb.fakeUntil = bit && !rb.split && !rb.protect ? snapFly.dur + PA_LOOK.rb : 0;
   passProt = null;
   if (!run) {
     // play action: the line waits for the fake to clear before it commits to the rush
@@ -2061,10 +2070,17 @@ function handoff() {
   // (or a back too far away for a clean mesh) follow the lane after the handoff
   rb.lane = swing ? rb.path.map(p => [...p]) : rb.runLane;
   rb.laneLeg = 0;
-  if (swing || rb.runType === 'outside' || Math.abs(rb.y - qb.y) > 3 * YD) {
-    const side = rb.runSide || Math.sign(rb.y - qb.y) || 1;
-    ball.pitch = { t: 0, T: OUTSIDE_RUN.pitchT, fx: qb.x, fy: qb.y, side, delay: swing || rb.runType === 'outside' ? OUTSIDE_RUN.lead : 0 };
-    if (rbpLive() && rbp.play === 'sweep') ball.pitch.delay = Math.max(ball.pitch.delay, (liveForm === 'PRO SET' ? RBP.toss.pro : RBP.toss.t) - clock);   // (playbook: the toss is pitched at 1.0 s, 0.8 s from the pro set, so the puller gets there)
+  // pitched: a swing, the toss sweep, pin & pull, an old-style outside run (no playbook: the tutorial / 1v1), a back lined up too wide to hand it to, or any
+  // handoff that can't be made in stride (meshPlan: his path runs away from the QB). Everything else is handed off on the move, the stretch included
+  ball.pitch = null; qb.exGive = qb.exThru = null; qb.exRide = 0;
+  let pitched = swing || rb.scheme === 'sweep' || rb.scheme === 'pinPull' || (rb.runType === 'outside' && !rbpLive()) || Math.abs(rb.y - qb.y) > 3 * YD;
+  if (!pitched) pitched = meshPlan(rb, meshState(), RB_RUN).none;
+  if (pitched) {
+    const side = rb.runSide || Math.sign(rb.y - qb.y) || 1, snapIn = snapFly ? snapFly.dur + RUN_MESH.after : 0;
+    // when it leaves his hands (s after the snap, never before the snap is in): the toss at RBP.toss, the others at OUTSIDE_RUN.lead; called late (out of a pass set): a beat from now
+    const base = rbpLive() && rbp.play === 'sweep' ? (liveForm === 'PRO SET' ? RBP.toss.pro : RBP.toss.t) : rbpLive() && rbp.play === 'pinPull' ? RBP.toss.pin : swing || rb.runType === 'outside' ? OUTSIDE_RUN.lead : 0;
+    ball.pitch = { t: 0, T: OUTSIDE_RUN.pitchT, at: clock > RUN_MESH.snapWin ? clock + PITCH.late : Math.max(snapIn, base), out: false, fx: qb.x, fy: qb.y, fz: 0, side };
+    meshState().plan = null; meshState().sx = null; meshState().v = 0;
     msg = 'Pitch!';
   } else msg = 'Handoff...';
 }
@@ -2100,6 +2116,7 @@ const SCHEMES = {
   draw:       { name: 'DRAW',        pull: 0, kick: 0, reach: 0, combo: 0.6, hold: 1.1, seal: 0.8, drive: 0.8, climb: 0.9 },   // (a handoff out of a pass set: RBP.draw)
   outsideZone:{ name: 'OUTSIDE ZONE',dlFirst: 0, pull: 0, kick: 0, reach: 1.4, combo: 0.5, hold: 1, seal: 1.5, drive: 1, climb: 0.9 },
   sweep:      { name: 'TOSS SWEEP',  dlFirst: 0, pull: 1, kick: 1, reach: 0, combo: 0.5, hold: 0.9, seal: 1, drive: 1, climb: 1 },
+  pinPull:    { name: 'PIN & PULL',  dlFirst: 0, pull: 0, kick: 0, reach: 0.8, combo: 0.5, hold: 1, seal: 1.2, drive: 1, climb: 1 },   // (shotgun pitch; the pullers come from the playbook's read of the front: rbpPinPlan. Only ever called through liveRunCall)
 };
 const SCHEME_ODDS = { inside: [['insideZone', 0.4], ['duo', 0.15], ['power', 0.2], ['counter', 0.1], ['trap', 0.15]], outside: [['outsideZone', 0.65], ['sweep', 0.35]] };
 const pickScheme = outside => { let r = Math.random(); for (const [k, w] of SCHEME_ODDS[outside ? 'outside' : 'inside']) if ((r -= w) < 0) return k; return outside ? 'outsideZone' : 'insideZone'; };

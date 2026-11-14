@@ -87,6 +87,7 @@ function throwBall() {
   const t = throwTarget(), bullet = bulletMode, P = thrower(), trick = P !== qb;
   aim = null; ball.forced = false;   // (the computer's QB sets this after a forced throw)
   if (t.dist < 3 * YD || P.action) return;
+  hsEv('throw', P);   // (the release: a long completion's highlight starts here)
   if (tut) tut.bullet = bulletMode;
   if (trick) {
     if (t.x < P.x - 0.5 * YD) return;   // (a screen catcher just keeps running)
@@ -231,7 +232,7 @@ const catchRadius = w => CATCH_RADIUS * (toSideline(w) < SIDELINE_ZONE ? SIDELIN
 
 // Ends the play and works out the next down. kind: 'td' or 'turnover' start a new drive.
 let firstDownBig = false;    // that first down was an important one (the crowd cheers when he signals it)
-let firstDownCall = false;  // first down just made: right-click in the short window before the replay to point downfield
+let firstDownCall = false;  // first down just made (the crowd, the banner, the celebration roll)
 let patMode = null;   // after a touchdown: 'choose' (kick it or go for two), then 'kick' or 'two' for the try itself
 let patNext = false;  // a touchdown was just scored: the extra point decision comes next
 // a click may only skip a finished play once the carrier is on the turf and CLICK_DELAY ms have passed
@@ -239,17 +240,47 @@ let doneAt = 0;
 const CLICK_DELAY = 1000;
 const DEF_CLICK_DELAY = 1300;   // on defense (you on their drive) the next play can't be called up for this long (ms)
 const playSettled = () => performance.now() - doneAt >= (aiOff() && !tut ? DEF_CLICK_DELAY : CLICK_DELAY) &&
-  !allPlayers().some(p => p.hasBall && p.action === 'down' && p.act && p.act.fall && p.act.t < (p.act.slide || 0.4)) &&
-  !allPlayers().some(p => !(aiOff() && p.team === 'off') && (p.action === 'dance' || p.action === 'griddy' || (p.celebrate && p.celebrate.queuedAt !== undefined)));   // (your own celebration can't be clicked away; the computer's can)
-const SNAP_FLY = { gun: 0.42, center: 0.2 };   // seconds the snap takes to reach the QB (the computer's QB waits for it)
+  !allPlayers().some(p => p.hasBall && p.action === 'down' && p.act && p.act.fall && p.act.t < (p.act.slide || 0.4));   // (a celebration never holds the next play up: any key or tap skips it, celebSkip)
+const SNAP_FLY = { gun: 0.42, center: 0.2, pistol: 0.42 };   // seconds the snap takes to reach the QB (the computer's QB waits for it); pistol = the gun's time for now (a real 4-yd snap is nearer 0.3)
+// the snap's look (scrimmage plays; punts and field goals keep their own). x = yd the ball sits ahead of the center's spot before the snap, z = sprite units above the turf;
+// uc / gun = where the QB takes it, sprite units from his hips [ahead, up] (under center: between his hands under the center's seat; gun / pistol: between belt and chest);
+// arc = the gun snap's rise (sprite units), spin = its spiral (rad/s); ucLet / gunLet = share of the flight the center's hand stays on the ball (then it comes up to block);
+// close = share of the flight after which the QB's hands close on it; bring = s he takes to bring it up to his chest; reach = the center's snap arm [upper, fore] lengths
+const SNAP_LOOK = { x: 0.45, z: 2.2, uc: [9.75, -0.25], gun: [7.75, 3.25], arc: 3, spin: 30, ucLet: 0.8, gunLet: 0.3, close: 0.45, bring: 0.22, reach: [5.5, 6.5], headUp: 0.5 };   // headUp = share of his lean the center's head undoes
+// the ball in the center's hand / on its way back to the QB. Sets ball x / y / z / rot (+ snapNose for the gun's spiral) and the two men's hand timers; false = no snap going on
+function snapBall() {
+  const cen = ols && ols[2];
+  if (qb) { qb.snapIn = null; if (state === 'run') qb.snapK = 0; }   // (a run play: updateQB isn't there to clear it)
+  if (cen) cen.snapArm = null;
+  if (!cen || !qb || qb.hasBall || kickoffPlay || tut || (oo && oo.cfg)) return false;   // (the tutorial / 1v1: the QB starts with the ball)
+  const live = !!snapFly && (state === 'drop' || state === 'pocket' || state === 'run');
+  if (live && clock >= snapFly.dur) { if (clock - snapFly.dur < SNAP_LOOK.bring) qb.snapIn = clock - snapFly.dur; return false; }
+  if (state !== 'pre' && !live) return false;
+  snapPath(ols[2], qb, state === 'pre' ? null : clock / snapFly.dur, shotgun);
+  return true;
+}
+// the ball's spot k (0-1) of the way from the center `cen` to the QB `q` (k = null: still in the center's hand, on the turf)
+function snapPath(cen, q, k, gun) {
+  const gx = cen.x + figX(cen, SNAP_LOOK.x * YD), gz = SNAP_LOOK.z * S - FOOT;   // (on the turf under his hand)
+  if (k == null) { ball.x = gx; ball.y = cen.y; ball.z = gz; ball.rot = 0; cen.snapArm = 0; return; }
+  const T = gun ? SNAP_LOOK.gun : SNAP_LOOK.uc, tx = q.x + figX(q, T[0] * S) * q.face, tz = q.z + figZ(q, T[1] * S);
+  ball.x = gx + (tx - gx) * k; ball.y = cen.y + (q.y - cen.y) * k;
+  ball.z = gz + (tz - gz) * k + (gun ? Math.sin(Math.PI * k) * SNAP_LOOK.arc * S : 0);
+  if (gun) { ball.snapNose = Math.atan2(-(tz - gz) - Math.PI * SNAP_LOOK.arc * S * Math.cos(Math.PI * k), tx - gx); ball.spiral = clock * SNAP_LOOK.spin; ball.rot = 0; }   // (a low spiral back through his legs)
+  else ball.rot = k * Math.PI / 2;   // (under center: lifted back with a quarter turn)
+  cen.snapArm = k; q.snapK = Math.max(0.001, k);
+}
 let snapFly = null;      // { dur } while the ball is on its way from the center
 let playWho = '';        //"Caught by X (from Y)" / "X ran the ball" for the line under the scoreboard
 let stopClock = false;   // set by incomplete(): no runoff after this play
 function endPlay(text, next, kind) {
   playEndedAt = performance.now();
+  const clutch = kind === 'fg' && bigKick();   // (a late kick that ties or wins it: asked before the points go up; the kicker's celebration)
   const wasKickoff = kickoffPlay || puntRet || puntRetPlay;   // (kick and punt returns aren't rushes)
   const pen = !wasKickoff && rbpPenalty(kind, next);   // (run-block holding: the play comes back, replay the down)
   if (pen) { text = pen.text; next = los; kind = ''; }
+  else celebWhistle(text, kind);   // (celebrations: a blocked kick, a pick, a recovery, a sack)
+  if (!pen && !kind && /SACKED/.test(text) && state !== 'done') sackCall();   // (whatever path ended it: the banner is up at the whistle)
   for (const p of allPlayers()) if (!p.hasBall) { p.tipArms = false; p.tipK = 0; p.reach = false; p.overShoulder = false; }   // (the pass is dead: nobody keeps his hands up for a catch / tip that didn't happen)
   kickoffPlay = false;
   // BROKEN UP is only called once the pass is dead: incomplete, or picked (never on a ball that was tipped, and might still be caught)
@@ -297,6 +328,7 @@ function endPlay(text, next, kind) {
     yardsTag = { p: gainer, text: `${yds > 0 ? '+' : ''}${yds} YDS`, color: yds > 0 ? '#ffffff' : yds < 0 ? '#ff6b6b' : '#dddddd', t: 0 };   // (its own tag, above any callout)
   }
   state = 'done'; doneAt = performance.now();
+  if (/incomplete/i.test(text) && !pen) ball.incDone = doneAt;   // (any incompletion: the camera stays on the ball, updateCamera)
   aim = null;
   firstDownCall = false;
   // a kickoff return: he's down, and that's where you start (1st and 10). Brought out of the end zone and
@@ -323,7 +355,8 @@ function endPlay(text, next, kind) {
                              : (made ? 'TWO-POINT CONVERSION IS GOOD  -  2 points  -  click' : 'The two-point try fails  -  click');
     if (kind === 'turnover') msg = `${text}  -  click`;
     if (!made && /^Blocked kick|BLOCKED/.test(text)) { msg = `The extra point is BLOCKED  -  click`; if (kind !== 'turnover') showBanner('BLOCKED!'); }
-    if (made && patMode === 'kick') showBanner("IT'S GOOD!", '#7dff8a', '#0a3a14', who(rb) || 'Extra point');
+    else if (!made && patMode === 'kick' && kind !== 'turnover') showBanner('MISSED!');   // (red = your kick, green = theirs, white two-player: showBanner's own side colors)
+    if (made && patMode === 'kick') { showBanner("IT'S GOOD!", '#7dff8a', '#0a3a14', who(rb) || 'Extra point'); celebAsk(clutch ? 'bigKick' : 'pat', rb); }
     patMode = null;
     if (game.ot && game.quarter >= 5 && !game.over) { game.ot.done.BLUE = true; game.ot.score = game.blue + game.red; otCheck('BLUE'); }   // (overtime: your possession's over)
     checkQuarterEnd();   // (a touchdown on the last play: now the clock's run out)
@@ -337,9 +370,9 @@ function endPlay(text, next, kind) {
   let note = '';
   if (pen) { nextLos = pen.spot; nextDown = down; nextLtg = lineToGain; }
   else if (kind) newDrive();
-  else if (next <= 0) { note = `SAFETY  -  2 points for ${teamName('RED')}, you kick off to them`; game.red += 2; newDrive(); showBanner('SAFETY!'); }
+  else if (next <= 0) { note = `SAFETY  -  2 points for ${teamName('RED')}, you kick off to them`; game.red += 2; newDrive(); showBanner('SAFETY!'); celebAsk('safety', celebFlags.tk ? celebFlags.tk.p : [...dl, ...back7].sort((a, b) => dist(a, ball) - dist(b, ball))[0]); }
   else if ((next + BALL_TIP >= lineToGain || (ballFar + BALL_TIP >= lineToGain && ballFar > los && next > los)) && next > los) {   // (any part of the ball past the marker, even if it was spotted short of it)
-    note = 'FIRST DOWN  -  right-click to celebrate';
+    note = 'FIRST DOWN';
     firstDownCall = true;
     if (!tut) showBanner('FIRST DOWN!', '#ffd94a', '#3a2a00');   // (yellow yours; showBanner turns it red for theirs when you play defense)
     nextLos = next; nextDown = 1; nextLtg = Math.min(FIELD, next + 10 * YL);
@@ -349,12 +382,11 @@ function endPlay(text, next, kind) {
   // six; the point after comes next (with zeros on the clock only if it can still decide the game)
   // (a touchdown always gets its try, even with 0:00 on the clock; except in overtime when it ends the game)
   if (kind === 'td') { game.blue += 6; patNext = !game.over && !(game.quarter >= 5 && game.ot && game.ot.done.RED && game.blue > game.red); }
-  if (kind === 'fg') { game.blue += 3; crowdCheer(0.9); showBanner("IT'S GOOD!", '#7dff8a', '#0a3a14', who(rb) || 'Field goal'); }
-  else if (kind === 'fgmiss') crowdCheer(0.6, 'opp', true);
+  if (kind === 'fg') { game.blue += 3; crowdCheer(0.9); showBanner("IT'S GOOD!", '#7dff8a', '#0a3a14', who(rb) || 'Field goal'); celebAsk(clutch ? 'bigKick' : 'fg', rb); }
+  else if (kind === 'fgmiss') { crowdCheer(0.6, 'opp', true); if (!/block/i.test(text)) showBanner('MISSED!'); if (!/block/i.test(text)) celebAsk('fgMiss', [...dl, ...back7].sort((a, b) => dist(a, rb) - dist(b, rb))[0]); }
   // a defensive stop on 3rd or 4th down gets the crowd going
   else if (!kind && next > 0 && next < lineToGain && down >= 3) crowdCheer(down === 4 ? 0.85 : 0.6, 'opp');
   // the clock keeps running after a tackle in bounds; incompletions and out of bounds stop it
-  // (the few seconds that tick off after the play are the window to celebrate a first down)
   // the ball changed hands (or a score): red's drive gets simulated before the next play
   pendingSim = null;
   if (!game.over && !/PICK SIX|PUNT RETURN TD/.test(text)) {
@@ -390,28 +422,20 @@ function endPlay(text, next, kind) {
   else if (firstDownBig) crowdCheer(down === 4 || gain > BIG_PLAY ? 0.85 : 0.7);
   if (kind === 'td' || kind === 'turnover') playHype = 0;
   else if (kind !== 'punt') crowdPayoff(gain, gain >= CROWD_OK_GAIN || firstDownCall);   // (a gain of 4+ never disappoints the crowd)
-  cpuCel = (aiOff() || TOUCH) && !tut && (kind === 'td' || firstDownBig || gain > BIG_PLAY) ? { at: clock + CPU_CELEBRATE.delay } : null;
+  if (!kind && !pen && !note.startsWith('SAFETY')) celebPlayEnd({ gain: (next - los) / YL, first: firstDownCall, inc: /incomplete/i.test(text), downs: note === 'Turnover on downs' });   // (the small celebrations, both sides: see celebrations)
   if (oo) { nextLos = 25 * YL; nextDown = 1; nextLtg = nextLos + 10 * YL; if (!aiOff()) pendingSim = null; }   // (1v1 test: every rep starts from the same spot, the ball never advances)
+  if (oo && oo.cfg) celebOoEnd(text, kind, (next - los) / YL);   // (a 1v1 rep: its winner celebrates)
   if (tut) { if (kind === 'fg') tutEvent('fg'); else if (kind === 'punt') tutEvent('punt', 'kickoff'); else if (twoP && twoP.koOnly) tutEvent('kickoff');   // (the real kickoff: its live return ends the lesson, then the sides go back)
     if (twoP && twoP.koOnly) tut.koUnflip = true;   // (flipped back at the next reset: flipping now would swap every player's kit mid-play)
     tutAfterPlay(); }
 }
-// the computer's offense celebrates on its own: a touchdown gets the spike / dance, a big gain or a big first down the point downfield
-const CPU_CELEBRATE = { delay: 0.8 };   // s after the whistle
-let cpuCel = null;
-function cpuCelebrate() {
-  if (!cpuCel || clock < cpuCel.at || (rec && rec.replaying)) return;
-  cpuCel = null;
-  if (allPlayers().some(q => q.celebrate && !q.celebrate.danced)) tryCelebrate();
-  else if (firstDownCall) pointFirstDown();
-}
-
 function touchdown() {
   const twoPt = patMode === 'two';   // (endPlay clears patMode)
   const tdYds = Math.max(1, Math.round((FIELD - los) / YL));   // how long the touchdown was
   const qbCarry = ['drop', 'pocket', 'run'].includes(state) && !ball.inAir && !ball.loose;   // (a scrambling QB never has hasBall set)
+  const passTd = !twoPt && !isRunPlay && !kickoffPlay && !puntRet && !puntRetPlay && !qbCarry;   // (thrown for it: the QB celebrates too)
   endPlay('TOUCHDOWN!', 0, 'td');
-  // the scorer keeps running through the end zone, pulls up before the end line, maybe dances
+  // the scorer keeps running through the end zone, pulls up before the end line, then celebrates (see celebrations)
   const scorer = allPlayers().find(p => p.hasBall && p.team === 'off') || (qbCarry ? runner || qb : null);
   // under the banner: who scored (named players only: a nameless backup gets no line)
   showBanner(twoPt ? 'SCORED!' : 'TOUCHDOWN!', '#ffd94a', '#4a3500', scorer ? who(scorer) + (twoPt ? '' : `  -  ${tdYds} YD${tdYds === 1 ? '' : 'S'}`) : null);
@@ -419,116 +443,31 @@ function touchdown() {
   if (MATCH.home !== 'you') oohSfx(0.6);   // (a road touchdown: the home crowd's let-down)
   if (scorer) {
     moraleEvent(scorer, 'td');
-    scorer.celebrate = { v: Math.max(Math.hypot(scorer.vx, scorer.vy), 4 * YD) };
+    scorer.coast = { v: Math.max(Math.hypot(scorer.vx, scorer.vy), 4 * YD) };
     scorer.stiff = null; scorer.truck = scorer.sprint = false;
-    if (!twoPt && !aiOff()) msg = 'TOUCHDOWN!  -  right-click to celebrate  -  click for the next play';
+    celebAsk(twoPt ? 'two' : 'td', scorer);   // (see celebrations: he pulls up, then it plays by itself)
+    if (passTd && qb && scorer !== qb && tgt === scorer && qb.team === scorer.team) celebAsk('tdPass', qb, { tgt: scorer });
   }
 }
 
 // The scorer coasts through the end zone: still steerable, no moves, slowing to a stop before the end line.
 const lyingDown = p => p.action === 'down' || p.action === 'dive' || p.action === 'slide';
 const doneLying = p => lyingDown(p) && (!(p.act && p.act.dur) || p.act.t >= p.act.dur);   // (the dive / fall is over: he's flat on the turf)
-function celebrate(p, dt) {
-  const c0 = p.celebrate;
-  if (c0.wantUp && doneLying(p)) { if (!p.act) p.act = { angle: 0 }; getUp(p); }   // (scored laid out: up off the turf first)
+function coastIn(p, dt) {
   if (p.action) return updateAction(p, dt);
-  if (c0.wantUp) {   // back on his feet: now the spike / spin, then the celebration
-    c0.wantUp = false;
-    if (!c0.done) { spikeOrSpin(p); c0.queuedAt = clock + 0.7; }
-    else startCelebration(p);
-    return;
-  }
   // (dir -1: a defender who returned one to your end zone, coasting the other way, not steerable)
-  const c = p.celebrate, dir = c.dir || 1;
+  const c = p.coast, dir = c.dir || 1;
   const end = dir > 0 ? FIELD + ENDZONE - 1.5 * YD : -ENDZONE + 1.5 * YD, rem = (end - p.x) * dir;
-  if (c.queuedAt !== undefined && clock >= c.queuedAt) { c.queuedAt = undefined; startCelebration(p); return; }
   const px = p.x, py = p.y;
+  if (p.cel) c.v = 0;   // (celebrating: he has stopped)
   if (c.v > 0) {
-    c.v = rem > 0 ? Math.max(0, c.v - Math.max(2 * YD, c.v * c.v / (2 * rem)) * dt) : 0;
+    c.v = rem > 0 ? Math.max(0, c.v - Math.max(CELEB.brake * YD, c.v * c.v / (2 * rem)) * dt) : 0;   // (he pulls up within a few steps, and always before the end line)
     const d = dir < 0 ? { x: -1, y: 0 } : (pocketDir() || { x: 1, y: 0 });   // (A counts as a direction here, like the other keys)
     p.x = dir > 0 ? Math.min(end, p.x + d.x * c.v * dt) : Math.max(end, p.x + d.x * c.v * dt);
     p.y = Math.max(Y_MIN + YD, Math.min(Y_MAX - YD, p.y + d.y * c.v * dt));
   }
   setVelocity(p, px, py, dt);
   p.moving = c.v > YD;
-  // (he pulls up and holds the ball: the spike / spin and the dance only come when you celebrate, tryCelebrate)
-}
-
-// Pulls up and either spikes the ball or sets it spinning on the turf (always before any celebration).
-function spikeOrSpin(p) {
-  p.celebrate.done = true;
-  p.hasBall = false;
-  if (Math.random() < 0.5) {
-    Object.assign(ball, { x: p.x + 6 * S * p.face, y: p.y, z: 18 * S, vx: 0, vy: 0, vz: -320 * S,
-                          loose: true, live: false, inAir: false, spin: 10 });
-    p.action = 'swat'; p.act = { t: 0, dur: 0.35 };   // arm comes down hard
-    popup(p, 'SPIKE', '#ffd94a');
-  } else {
-    Object.assign(ball, { x: p.x + 8 * S * p.face, y: p.y, z: 6 * S, vx: 0, vy: 0, vz: 0,
-                          loose: true, live: false, inAir: false, spin: 26 * (Math.random() < 0.5 ? 1 : -1),
-                          axisSpin: true, axis: (Math.random() - 0.5) * 0.8 });   // spun on its long axis, like a spiral
-  }
-}
-
-// Right-click after a first down: the player who made it stands and points downfield.
-function pointFirstDown() {
-  const p = allPlayers().find(q => q.hasBall && q.team === 'off') || (runner && runner.team === 'off' ? runner : tgt);
-  if (!p || !firstDownCall) return false;
-  firstDownCall = false;
-  popup(p, 'FIRST DOWN', '#ffd94a');
-  if (firstDownBig) crowdCheer(0.6);
-  // on the ground (tackled, laid out)? get up first, then point. Standing, or out at the sideline, he points right away.
-  if (lyingDown(p) || p.action === 'getup') {
-    p.pendingPoint = true;   // (settle gets him up once the dive / fall is over, then he points)
-    if (doneLying(p)) { p.act = p.act || { angle: 0 }; getUp(p); }
-  } else startPoint(p);
-  return true;
-}
-
-function startPoint(p) {
-  p.pendingPoint = false;
-  if (p.hasBall) {   // sets the ball down first, then the signal
-    p.hasBall = false;
-    Object.assign(ball, { x: p.x + 5 * S * p.face, y: p.y, z: 10 * S, vx: 0, vy: 0, vz: 0, loose: true, live: false, inAir: false, spin: 0 });
-  }
-  p.action = 'point';
-  p.act = { t: 0, dur: 99 };
-  p.face = 1; p.z = 0; p.vx = p.vy = 0; p.moving = false;
-}
-
-// Clicking after a touchdown: he celebrates (once), the next click moves on.
-function tryCelebrate() {
-  const p = allPlayers().find(q => q.celebrate);
-  if (!p || p.celebrate.danced) return false;
-  p.celebrate.danced = true;
-  p.celebrate.v = 0;
-  if (tut) tutEvent('celebrate');
-  msg = 'TOUCHDOWN!  -  click for the next play';   // left-click / Space moves on
-  if (lyingDown(p) || p.action === 'getup') { p.celebrate.wantUp = true; return true; }   // (on the turf after a dive: he gets up first, then celebrates)
-  if (!p.celebrate.done) {   // ball first: spike or spin it, then celebrate
-    spikeOrSpin(p);
-    p.celebrate.queuedAt = clock + 0.7;
-    return true;
-  }
-  startCelebration(p);
-  return true;
-}
-
-function startCelebration(p) {
-  if (Math.random() < 0.5) {
-    p.action = 'dance';
-    p.act = { t: 0, dur: 2.5 };
-  } else {
-    // the griddy, right across the end zone, and sometimes a teammate or two runs over to join
-    const vy = Math.sign(MID - p.y || 1) * 2.4 * YD;
-    p.action = 'griddy';
-    p.act = { t: 0, dur: 3.2, vy };
-    popup(p, 'THE GRIDDY', '#ffd94a');
-    p.act.dur = 4.2;   // long enough for teammates to get there
-    const mates = [...recs, rb].filter(q => q !== p && q.action !== 'down' && dist(q, p) < 22 * YD)
-                               .sort(() => Math.random() - 0.5).slice(0, Math.random() < 0.5 ? 2 : Math.random() < 0.5 ? 1 : 0);
-    mates.forEach((q, i) => { q.joinGriddy = { target: p, oy: (i ? -1 : 1) * 1.6 * YD, ox: -1.2 * YD * (i + 1) }; });
-  }
 }
 
 const HELP_UP = { odds: 0.25, range: 6, walk: 0.9, pull: 0.45, max: 3 };   // after a tackle, odds a nearby opponent (the first one up) helps the carrier up; range yd; seconds to walk over / to pull; give-up time
@@ -537,14 +476,13 @@ const AFTER_WHISTLE = { cap: 10, decay: 1.5, ud: 2.6 };
 // the end zone is just more field: chasers who were on the scorer keep running him down through it (full speed, momentum kept) for t s, pulling up once they're on him
 const TD_FINISH = { t: 0.9, range: 9, stop: 1.1, k: 1 };   // cap = fastest yd/s carried past the whistle; decay / ud = 1/s slow-down (lower = keeps his momentum longer)
 function settle(p, dt) {
-  if (p.celebrate) return celebrate(p, dt);
+  if (p.coast) return coastIn(p, dt);
   if (p.action) {
-    if (p.pendingPoint && doneLying(p)) { p.act = p.act || { angle: 0 }; getUp(p); }   // (the dive's over: up off the turf)
-    else if (doneLying(p) && !(p.act && p.act.pin) && !p.lyingKeep) {   // (the play's over: whoever is still on the turf picks himself up after a beat)
+    if (doneLying(p) && !(p.act && p.act.pin) && !p.lyingKeep) {   // (the play's over: whoever is still on the turf picks himself up after a beat)
       if (p.helpRoll !== runPid) {   // sometimes the first man up, a tackler, walks over and pulls the one still on the ground to his feet
         p.helpRoll = runPid;
         if ((p.hasBall || p === runner) && Math.random() < HELP_UP.odds) {
-          const q = allPlayers().filter(o => o.team !== p.team && !o.action && !o.celebrate && !o.helpTarget && dist(o, p) < HELP_UP.range * YD).sort((a, b) => dist(a, p) - dist(b, p))[0];
+          const q = allPlayers().filter(o => o.team !== p.team && !o.action && !o.coast && !o.cel && !o.helpTarget && dist(o, p) < HELP_UP.range * YD).sort((a, b) => dist(a, p) - dist(b, p))[0];
           if (q) { q.helpTarget = p; q.helpT = 0; p.helper = q; p.upAfter = 99; }
         }
       }
@@ -553,18 +491,6 @@ function settle(p, dt) {
       if (p.lieT > (p.upAfter ??= 0.6 + Math.random() * 0.7)) { p.lieT = 0; p.upAfter = null; getUp(p); }
     } else p.lieT = 0;
     updateAction(p, dt);
-    if (!p.action && p.pendingPoint) startPoint(p);   // up off the turf: now the signal
-    return;
-  }
-  if (p.joinGriddy) {
-    // running over to join the scorer's griddy
-    const j = p.joinGriddy, s = j.target, tx = s.x + j.ox, ty = s.y + j.oy, px = p.x, py = p.y;
-    if (s.action !== 'griddy') { p.joinGriddy = null; return; }
-    if (moveToward(p, tx, ty, 9.5 * YD * dt) || dist(p, { x: tx, y: ty }) < 0.8 * YD) {
-      p.joinGriddy = null;
-      p.action = 'griddy';
-      p.act = { t: s.act.t, dur: s.act.dur, vy: s.act.vy };
-    } else setVelocity(p, px, py, dt);
     return;
   }
   if (p.helpTarget) {   // walking over to pull the man on the ground up: a hand out, a tug, then both are on their feet
@@ -578,7 +504,7 @@ function settle(p, dt) {
     return;
   }
   if (!p.engaged && p !== ud && p.top && typeof doneAt === 'number' && performance.now() - doneAt < TD_FINISH.t * 1000) {
-    const sc = allPlayers().find(o => o.celebrate && o.team !== p.team);
+    const sc = allPlayers().find(o => o.coast && o.team !== p.team);
     if (sc && dist(p, sc) < TD_FINISH.range * YD && dist(p, sc) > TD_FINISH.stop * YD && Math.hypot(p.vx, p.vy) > 2 * YD) {
       const px = p.x, py = p.y;
       if (p.svx == null) { p.svx = p.vx; p.svy = p.vy; }
@@ -743,7 +669,7 @@ function catchHit(kind) {
                              * (kind === 'one' || kind === 'jumpOne' || kind === 'diveOne' ? CATCH_HIT.oneHand : 1)   // (a one-hander is easy to jar loose)
                              * rm(d, 'str', 'bigHit') * rm(d, 'tck', 'bigHit') / rm(tgt, 'str', 'powerResist') * diffFor(d).hit * (xfOn(d, 'Reinforcement') || xfOn(d, 'Dual Threat') ? XFX.jar : 1))) return false;
   const risky = (kind === 'jump' || kind === 'jumpOne' || kind === 'one' || kind === 'diveOne') && jq < 0.6;
-  const aimT = tackleAim(d, tgt, 0.2 * DIVE_FEEL.slow);
+  const aimT = tackleAim(d, tgt, diveEta(d, tgt.x, tgt.y));
   startDive(d, aimT.x, aimT.y, 0.2, LUNGE_DIST * 1.3);
   d.hitStick = true; d.tackling = false; d.recoverUntil = clock + 1;
   // one hand on it, a big hit all but guarantees the ball comes out
@@ -769,7 +695,7 @@ function catchHit(kind) {
                 vx: hx / hl * push, vy: hy / hl * push, angle: Math.atan2(hy, hx) };
     impacts.push({ x: tgt.x, y: tgt.y - 10 * S, t: 0 });
     shakeKick = 16;
-    tackleSfx(true);   // (the BOOM hit sound)
+    knockoutSfx();   // (the BOOM hit clip + the knockout's own crack and thud)
     popup(tgt, outOfBounds ? 'KNOCKED OUT OF BOUNDS' : 'KNOCKOUT', '#ff6b6b');
     ball.x = tgt.x; ball.y = tgt.y; ball.z = 10 * S; ball.loose = false;
     incomplete(outOfBounds ? 'BOOM!  Knocked out of bounds  -  incomplete' : 'BOOM!  Knocked it loose  -  incomplete');
@@ -804,6 +730,7 @@ function catchReach(p) {
 }
 function catchBall(text, kind = 'normal') {
   catchReach(tgt);
+  hsEv('catch', tgt);   // (the ball is in his hands: where a highlight's throw ends)
   // out of bounds is never luck: any part of a foot on or past the inner edge of the line, now or where he lands, is out
   if ((!feetInBounds(tgt) || !feetInBounds(landingSpot(tgt))) && !awrFeetIn(tgt)) {
     // he still makes the catch (the catch animation, toe tap / drag attempt and all), it just doesn't count: incomplete, no gain, clock stopped
@@ -836,6 +763,7 @@ function catchBall(text, kind = 'normal') {
   tgt.catchFrom = { x: ball.x, y: ball.y, z: ball.z, t: clock };   // (the ball glides into his hands from where it was)
   const spec = catchAnim(kind, secure), specText = CATCH_TEXT[spec];   // the catch animation (spectacular ones are called out)
   if (tut && (/one/i.test(kind) || /one/i.test(spec || ''))) tutEvent('onehand');   // (a spectacular one-hander is still a one-handed catch)
+  if (specText || /one/i.test(kind) || tgt.action === 'dive' || back7.some(d => dist(d, tgt) <= CELEB.contestYd * YD)) celebNote('catch', tgt);   // (a good catch: called out, one-handed, diving or contested)
   if (ballX(tgt) >= FIELD) {
     popup(tgt, specText || 'CAUGHT', '#ff9f1c', undefined, !specText, false, catchIco(kind, spec));
     tgt.hasBall = true; ball.inAir = ball.loose = ball.live = false;
@@ -931,17 +859,6 @@ function airTuckK(p, c = clock) {
   return oneBringK(p);
 }
 const oneBringK = p => p.act ? smooth01((p.act.t - (p.oneAt || 0) - ONE_BRING_WAIT) / ONE_BRING) : 1;
-// A DB's celebration after he stops a play that mattered (a pass breakup / tip, or a big hit): the seatbelt (buckling up)
-// or the box. Likelier on a big play prevented (air yards) or an important down (3rd / 4th, the red zone, a star in the zone).
-const DB_FLEX = { dur: 1.5, big: 15, pbu: [0.15, 0.7], hit: [0.1, 0.5] };   // chance [ordinary play, important play]
-const DEF_CELEBRATE = false;   // defensive celebrations are off for now (a pick six / scoop and score still celebrates)
-function dbFlex(d, why) {
-  if (!DEF_CELEBRATE || !d || d.team !== 'def' || d.flex || tut || d.role === 'DE' || d.role === 'DT') return;
-  const bigAir = tgt && why === 'pbu' && ball.tx - los >= DB_FLEX.big * YL;
-  const important = down >= 3 || bigAir || los >= FIELD - 20 * YL || xfLit(d);
-  const [lo, hi] = DB_FLEX[why] || DB_FLEX.pbu;
-  if (Math.random() < (important ? hi : lo)) d.flex = { t: 0, dur: DB_FLEX.dur, kind: 'box' };   // (the seatbelt was removed)
-}
 function popLoose(by, text, up, spread) {
   if (tut && by && by === ud && aiOff() && /Tipped|Batted|pick/.test(text) && state === 'flight') return intercept(by, by.action === 'dive');   // (tutorial: your defender's hands on it = a pick, never a tip)
   const a =Math.random() * Math.PI * 2, s = spread * (0.4 + Math.random() * 0.6);
@@ -961,7 +878,7 @@ function popLoose(by, text, up, spread) {
   // a big breakup (a deep ball, or one the crowd was already up for) is the defense's good play: boos at home, cheers on the road
   if (/^(Broken up|Tipped|Batted down)/.test(text) && by && by.team === 'def' && ((ball.tx - ball.fx) / YL >= ANTICIPATE.deep * 0.65 || playHype >= CROWD_IMPACT.hype))
     crowdCheer(0.5 + 0.4 * Math.min(1, playHype), 'opp', false, true);
-  if (by && by.team === 'def' && label !== 'DROPPED' && (label || text === 'Broken up!')) dbFlex(by, 'pbu');
+  if (by && by.team === 'def' && label !== 'DROPPED' && (label || text === 'Broken up!')) celebNote('pbu', by);
   if (text === 'Dropped!' || text === 'Dropped the pick!' || text === 'Bobbled!') dropSfx();
   if (text === 'Dropped!' && by && by.team === 'off') moraleEvent(by, 'drop');
   if (label === 'TIPPED') catchSfx();   // (the ball off a defender's hands)
@@ -1376,7 +1293,8 @@ function tackleCarrier(c, d, trip) {
   // a sack (read before the hit moves him: a hit stick launches him, and can pop the ball loose): the banner goes up first, like sack()'s
   const sackHit = c === qb && !isRunPlay && !kickoffPlay && patMode !== 'kick' && markX(c) < los && feetInBounds(c);   // (a two-point try's sack counts too)
   pstTackle(d, sackHit);
-  if (sackHit) { sackPlay = false; showBanner('SACK!'); sackPlay = true; }
+  if (big && d) celebNote('hit', d);   // (a hit stick that landed: see celebrations)
+  if (sackHit) sackCall();
   // already on the turf (a diving catch / pick still sliding, or getting up off it): touched down where he lies, no new tackle fall that stands him back up first
   if (c.action === 'getup' && c.act && c.act.t / (c.act.dur || 1) >= GETUP_TACKLE) { c.action = null; c.act = null; }   // (nearly up: a normal tackle fall)
   const onTurf = onTurfDive(c) || c.action === 'getup' || (c.action === 'dive' && (c.diveCaught || c.hasBall));
@@ -1393,7 +1311,6 @@ function tackleCarrier(c, d, trip) {
       return fumble(c, false, 'STRIPPED');
     }
   }
-  if (big) dbFlex(d, 'hit');   // (a big hit is only a big play if it jars the ball loose: fumble() above)
   // hit from the infield side near the sideline: he's driven over it and goes down out of bounds (clock stops)
   const near = c.y < MID ? -1 : 1, hvy = d ? (d.svy ?? d.vy ?? 0) : 0;
   const sideOut = !!d && toSideline(c) < SIDE_OUT.range * YD && (c.y - d.y) * near > Math.abs(d.x - c.x) * 0.7 && hvy * near > SIDE_OUT.speed * YD;
@@ -1428,7 +1345,7 @@ function downTick() {
   const oob = p.sideOut || !feetInBounds(c) || !ballInBounds(c), at = markX(c);
   // the QB brought down behind the line (tucked it, or scrambling back) is a sack too: the banner and the stat
   if (p.sackHit || (c === qb && !isRunPlay && !kickoffPlay && patMode === null && at < los && !oob)) {
-    if (!p.sackHit) { sackPlay = false; showBanner('SACK!'); sackPlay = true; }
+    if (!p.sackHit) sackCall();
     return endPlay(`${p.big ? 'BOOM!  ' : ''}SACKED${p.d ? ' by ' + who(p.d) : ''}! -${Math.round(Math.max(0, los - at) / YL)} yds`, Math.min(los, at));
   }
   const what = kickoffPlay ? (puntRetPlay ? 'Punt return' : 'Kickoff return') : c === qb ? 'QB run' : isRunPlay ? 'Run' : `Complete, caught by ${who(c)}`;
@@ -1470,6 +1387,7 @@ function bigHitLaunch(c, d) {
 function fumble(c, big, called) {   // called = already announced (STRIPPED / STRIP SACK): no FUMBLE callout on top
   c.hasBall = false;
   pstFumble(c);
+  celebNote('fum', allPlayers().filter(o => o.team !== c.team && dist(o, c) < 2.5 * YD).sort((a, b) => dist(a, c) - dist(b, c))[0]);   // (who knocked it out: the nearest opponent on him)
   moraleEvent(c, 'fumble');
   // a fumble goes in the books whoever ends up with it
   if (patMode === null && c.team === 'off') { const s = statOf(c); if (s) s.fum++; }
@@ -1493,6 +1411,18 @@ function fumble(c, big, called) {   // called = already announced (STRIPPED / ST
   if (!tut) crowdCheer(0.6, (c.team === 'off') === !aiOff() ? 'opp' : 'you', false, true);   // (the crowd reacts the moment it comes out, not only when somebody falls on it)
 }
 
+// EVERY sack goes through here (the pocket sack and its strip, a QB tackled or run down behind the line by the computer or the defender you
+// steer, and endPlay's catch-all for any play that ends SACKED): the SACK! banner, the lunch bag over the QB (showBanner), and once a play
+// the crowd (a big play for the team that got it: cheers at home, boos on the road) and a highlight. Online: the guest gets showBanner /
+// crowdCheer as the host's events.
+let sackPid = -1;
+function sackCall() {
+  sackPlay = false; showBanner('SACK!'); sackPlay = true;
+  if (sackPid === runPid || tut) return;
+  sackPid = runPid;
+  if (rec && !rec.replaying) rec.big = true;
+  crowdCheer(SACK_CROWD, aiOff() ? 'you' : 'opp', false, true);
+}
 function sack(r) {
   if (ucShield()) return;   // (still taking the snap under center: he gets there a beat later)
   if (tut && udCtl(r)) tutEvent('dblitz', 'dline');
@@ -1508,11 +1438,11 @@ function sack(r) {
   // a rusher arriving untouched at full speed can blow the QB up; the ball often comes out
   const big = qb.hitBy === r && qb.hitBig != null ? qb.hitBig : bigSackRoll(r);
   const blindMult = qbHitFumble(r) * (1 + WEAR.fumble * (qb.wear || 0)) / moraleMulP(qb);   // (read before the hit turns him; tired = looser ball)
-  tackleLunge(r, qb.x, qb.y, 0.2, 16 * S);
+  tackleLunge(r, qb.x, qb.y, 0.2, 0.95 * YD);   // (a ground distance: it was written in sprite units)
   tackleSfx(big);
   injuryHit(qb, big ? 'stick' : 'sack');
   pstTackle(r, true);
-  sackPlay = false; showBanner('SACK!'); sackPlay = true;   // any turnover off this play flashes SACK! with it
+  sackCall();   // any turnover off this play replaces SACK!
   qb.action = 'down';
   if (big) {
     const hx = qb.x - r.x, hy = qb.y - r.y, hl = Math.hypot(hx, hy) || 1;
@@ -1520,7 +1450,7 @@ function sack(r) {
     impacts.push({ x: qb.x, y: qb.y - 10 * S, t: 0 });
     shakeKick = 18;
     popup(qb, 'BOOM!', '#ff6b6b');
-    sackPlay = false; showBanner('SACK!'); sackPlay = true;   // (popup() clears the banner: SACK! goes back up after BOOM!)
+    sackCall();   // (popup() clears the banner: SACK! goes back up after BOOM!)
     if (Math.random() < QB_HIT.fumble * blindMult * rm(r, 'tck', 'fumble')) { qb.vx = hx / hl * 3 * YD; qb.vy = hy / hl * 3 * YD; return fumble(qb, true); }
   } else {
     qb.act = { t: 0, fall: true, back: true, vx: 0, vy: 0, angle: Math.PI };
@@ -1553,7 +1483,7 @@ const bigSackRoll = r => Math.hypot(r.vx, r.vy) > 0.6 * (r.rush || r.top) && Mat
 function hitAsHeThrows() {
   const r = rusherOnQb();
   if (!r) return;
-  tackleLunge(r, qb.x, qb.y, 0.2, 16 * S);
+  tackleLunge(r, qb.x, qb.y, 0.2, 0.95 * YD);   // (a ground distance: it was written in sprite units)
   r.recoverUntil = clock + 1;
   const hx = qb.x - r.x, hy = qb.y - r.y, hl = Math.hypot(hx, hy) || 1;
   qb.action = 'down';
@@ -1582,46 +1512,82 @@ function homeLunge(d, c, dt, fooled) {
   a.tx = tx; a.ty = ty; a.angle = Math.atan2(ty - a.fy, tx - a.fx);
   if (Math.abs(tx - a.fx) > 0.4 * YD && !(mine > 1 && d.hitStick)) { d.face = tx > a.fx ? 1 : -1; a.face = d.face; }   // (your hit stick keeps the facing it launched with) (his chest follows the way he's really going: no leaping one way and landing the other)
 }
-// every dive takes slow x as long; how far he can launch scales from min (standing still) to the full lunge at fullSpeed yd/s or faster
-const DIVE_FEEL = { slow: 0.87, min: 0.55, fullSpeed: 8 * YD };   // (slow 0.87 = dives 15% faster)
-// a dive for the ball never flies faster than speed yd/s on the way to it (too late = he lands short), never longer than lunge yd,
-// and never aims more than oob yd past a sideline (balls sailing out of bounds made players "teleport" after them)
-const DIVE_CAP = { speed: 15, lunge: 4.5, oob: 1.2 };
+// --- one dive physics ----------------------------------------------------------------
+// EVERY dive in the game (a runner's dive, the pylon, diving catches, tackles, hit sticks, shoestrings, loose balls, tips, picks, kick blocks, cut blocks)
+// goes through startDive and moves by the same three rules:
+//  1. LAUNCH: he leaves the ground at the speed he carries into it (all of it straight ahead, `plant` of it square to his run, none of it straight back)
+//     plus the push of the jump, between vMin (a standing dive) and vMax. Nobody dives faster than his own run allows.
+//  2. FLIGHT: that speed is held in the air, and he rises and falls under the game's one gravity (AIR.g, the same as a leap), so how high he gets is just how
+//     long he is up; never higher than AIR.dive.max (a dive that would need longer in the air than that lands and comes up short).
+//  3. LANDING: he hits the turf and slides to a stop on friction. Nothing stops dead and nothing floats.
+// How FAR a dive may go is still the caller's `lunge` (scaled from DIVE_FEEL.min standing to the full lunge at fullSpeed, +DIVE_PACE.reach for a ball, less
+// back against his own momentum): reach did not change with the physics. A dive timed to a pass (arrive) is where the ball is when it gets there if his
+// launch speed allows it (he gathers first if the ball is still a while off), then lands and slides on past it.
+// push / vMin / vMax = yd/s; friction = yd/s^2 on the turf; slideMax = most of an untimed dive's length spent sliding; over = s he lands after the catch
+// point of a timed dive; minT = shortest dive (s)
+const DIVE = { push: 3, vMin: 6.5, vMax: 14, plant: 0.7, friction: 40, slideMax: 0.3, over: 0.05, minT: 0.12 };
+const DIVE_FEEL = { min: 0.55, fullSpeed: 8 * YD };   // reach: x the lunge standing still .. the full lunge at fullSpeed or faster
+// a dive for the ball is never longer than lunge yd and never aims more than oob yd past a sideline (balls sailing out of bounds made players "teleport" after them)
+const DIVE_CAP = { lunge: 4.5, oob: 1.2 };
 const DIVE_BODY = { r: 0.7 };   // yd: a tackle dive that reaches a blocker's body (not the carrier's) stops there, missed
-const REV_DIVE = { cut: 0.45, slow: 0.35 };   // diving for the ball back against his own momentum: up to this much less reach (x) and slower (x)
-// arrive (optional) = s until his hands should reach the spot (a pass dive: when the ball gets there)
+const REV_DIVE = { cut: 0.45 };   // diving back against his own momentum: up to this much less reach (x), any dive
+function diveLaunch(p, ux, uy) {
+  const vx = p.vx || 0, vy = p.vy || 0, sp = Math.hypot(vx, vy), cos = sp > 0.3 * YD ? (vx * ux + vy * uy) / sp : 0;
+  const carry = sp * (cos >= 0 ? DIVE.plant + (1 - DIVE.plant) * cos : DIVE.plant * (1 + cos));
+  return Math.max(DIVE.vMin, Math.min(DIVE.vMax, carry / YD + DIVE.push)) * YD;
+}
+// s until a dive launched now gets to that spot (for leading a tackle: where the runner will be when the dive lands)
+const diveEta = (p, tx, ty) => { const dx = tx - p.x, dy = ty - p.y, d = Math.hypot(dx, dy) || 1; return Math.min(0.35, d / diveLaunch(p, dx / d, dy / d)); };
+// the flight: L = px to cover, v = launch speed, arrive = s until his hands must be at L (a pass) or null, z0 = height he starts from (out of a leap),
+// v0 = the speed he already has along the dive. Returns v (air speed), vg / tw (a timed dive's gather: s still on his feet first, and his speed through
+// it), Tl (s until he lands), Ts (s sliding), S (total px), h (peak), airT (s in the air)
+function diveKin(L, v, arrive, z0, v0 = 0) {
+  const mu = DIVE.friction * YD, airCap = z0 > 0 ? airTime(0, z0) : airTime(AIR.dive.max), nat = v * v / (2 * mu);
+  let vv = v, vg = 0, tw = 0, air, Ls = nat;
+  if (arrive != null && z0 > 0) { vv = Math.min(v, L / Math.max(0.05, arrive)); air = airCap; Ls = vv * vv / (2 * mu); }
+  else if (arrive != null) {
+    const ta = Math.max(0.05, arrive), flyMax = airCap - DIVE.over;
+    if (L / ta >= v) air = Math.min(ta, flyMax) + DIVE.over;   // (it needs more speed than he can launch with: he goes now, flat out, and lands short of it)
+    else {
+      // the ball is still a moment off: he gathers on his feet first (never faster than he was already going), then lays out at his launch speed and is there with it
+      vg = Math.max(0, Math.min(v0, 0.8 * L / ta));
+      tw = (v * ta - L) / (v - vg);
+      if (ta - tw > flyMax) { tw = ta - flyMax; vg = Math.max(0, (L - v * flyMax) / tw); }   // (too far to fly in one dive: he closes more of it on his feet)
+      air = ta - tw + DIVE.over;
+    }
+  } else {
+    Ls = Math.min(nat, L * DIVE.slideMax);
+    air = (L - Ls) / v;
+    if (z0 > 0) { air = airCap; if (v * air > L) vv = L / air; Ls = Math.max(0, Math.min(nat, L - vv * air)); }
+    else if (air > airCap) { air = airCap; Ls = Math.max(0, Math.min(nat, L - v * air)); }   // (he can't stay up that long: he lands, slides what his speed gives him, and comes up short)
+  }
+  return { v: vv, vg, tw, Tl: tw + air, Ts: vv > 1 ? 2 * Ls / vv : 0, S: vg * tw + vv * air + Ls, lift: tw, h: z0 > 0 ? 0 : AIR.g * air * air / 8, airT: air };
+}
+// how far along the dive he is (0-1 of its length) t s in: the gather (a timed dive), the launch speed held until he lands, then the slide
+function diveE(K, t) {
+  if (!(K.S > 0)) return 1;
+  const tw = K.tw || 0;
+  let s = (K.vg || 0) * Math.min(t, tw) + K.v * Math.max(0, Math.min(t, K.Tl) - tw);
+  if (t > K.Tl && K.Ts > 0) { const u = Math.min(t - K.Tl, K.Ts); s += K.v * u - K.v * u * u / (2 * K.Ts); }
+  return Math.min(1, s / K.S);
+}
+// tx, ty = where he dives at; lunge = the most he may cover (px); arrive (optional) = s until his hands should reach the spot (a pass dive: when the ball
+// gets there). dur is not used any more (every dive's time comes from its physics): callers still pass their old value
 function startDive(p, tx, ty, dur, lunge, arrive) {
   const forBall = (state === 'flight' || state === 'loose') && !p.tackling && !p.hitStick && !p.hasBall;   // laying out for the ball (either side)
-  const mom = Math.min(1, Math.hypot(p.vx || 0, p.vy || 0) / DIVE_FEEL.fullSpeed);
-  dur *= DIVE_FEEL.slow;
+  const sp = Math.hypot(p.vx || 0, p.vy || 0), mom = Math.min(1, sp / DIVE_FEEL.fullSpeed);
   lunge *= (DIVE_FEEL.min + (1 - DIVE_FEEL.min) * mom) * (forBall ? 1 + DIVE_PACE.reach * mom : 1);
   if (forBall) { ty = Math.max(-DIVE_CAP.oob * YD, Math.min(FW + DIVE_CAP.oob * YD, ty)); lunge = Math.min(lunge, DIVE_CAP.lunge * YD); }   // (a ball sailing out of bounds: he lays out toward the sideline, not off into the crowd)
-  if (forBall) {   // a man running one way can't turn on a dime and lay out the other way: the farther back against his speed, the shorter and slower the dive
-    const rx = tx - p.x, ry = ty - p.y, rd = Math.hypot(rx, ry) || 1, sp = Math.hypot(p.vx || 0, p.vy || 0), opp = sp > 0.5 * YD ? Math.max(0, -((p.vx || 0) * rx + (p.vy || 0) * ry) / (sp * rd)) : 0, f = opp * Math.min(1, sp / DIVE_FEEL.fullSpeed);
-    if (f > 0) { lunge *= 1 - REV_DIVE.cut * f; dur *= 1 + REV_DIVE.slow * f; if (arrive != null) arrive *= 1 + REV_DIVE.slow * f; }
+  {   // a man running one way can't turn on a dime and lay out the other way: the farther back against his speed, the shorter the dive (his launch speed drops too: diveLaunch)
+    const rx = tx - p.x, ry = ty - p.y, rd = Math.hypot(rx, ry) || 1, opp = sp > 0.5 * YD ? Math.max(0, -((p.vx || 0) * rx + (p.vy || 0) * ry) / (sp * rd)) : 0, f = opp * Math.min(1, sp / DIVE_FEEL.fullSpeed);
+    if (f > 0) lunge *= 1 - REV_DIVE.cut * f;
   }
-  const dx = tx - p.x, dy = ty - p.y, d = Math.hypot(dx, dy) || 1, L = Math.min(d, lunge);
-  if (!(forBall && arrive != null)) dur = Math.min(DIVE_STD.max, Math.max(DIVE_STD.min, L / (DIVE_STD.speed * YD * DIVE_AIR)));   // (one air speed for every dive, whoever he is and whatever the weather; a dive timed to a pass keeps its own arrive time)
+  const dx = tx - p.x, dy = ty - p.y, d = Math.hypot(dx, dy) || 1, L = Math.min(d, lunge), ux = dx / d, uy = dy / d;
   const z0 = p.action === 'jump' ? p.z || 0 : 0;   // (out of a leap he keeps his height)
+  const K = diveKin(L, diveLaunch(p, ux, uy), forBall && arrive != null && L > 0.2 * YD ? arrive : null, z0, Math.max(0, (p.vx || 0) * ux + (p.vy || 0) * uy));
   p.action = 'dive'; p.tkStyle = null;   // (a tackle dive sets its style right after this: see pursueMove / userLunge)
-  // m0 = his speed into the dive (along it) in path-lengths per dive: the lunge picks up from his stride rather
-  // than lurching off at a set burst (2 = the old fixed ease-out; capped so he never overshoots and comes back)
-  const v0 = Math.max(0, ((p.vx || 0) * dx + (p.vy || 0) * dy) / d);
-  let m0 = L > 0.2 * YD ? Math.max(DIVE_SMOOTH.min, Math.min(DIVE_SMOOTH.max, v0 * dur / L)) : 2, Lp = L, air;
-  if (forBall && L > 0.2 * YD) {
-    // a dive for the ball: reaches the spot at `arrive`, then rides his momentum on past it (lands and slides out):
-    // the whole dive is stretched until the slide past the spot matches his speed
-    const ease = (k, m) => (k ** 3 - 2 * k * k + k) * m + (3 * k * k - 2 * k ** 3);
-    const ta = Math.max(0.12, arrive != null ? arrive : dur, L / (DIVE_CAP.speed * YD)), slide = Math.max(DIVE_PACE.slideMin * YD, v0 * DIVE_PACE.slide);   // (weather doesn't change a dive)
-    const mOf = T => Math.max(DIVE_SMOOTH.min, Math.min(DIVE_SMOOTH.max, v0 * T / (L + slide)));
-    let lo = ta, hi = ta * 6 + 1;
-    for (let i = 0; i < 18; i++) { const T = (lo + hi) / 2; if (ease(ta / T, mOf(T)) * (L + slide) > L) lo = T; else hi = T; }
-    dur = lo; m0 = mOf(dur); Lp = L / Math.max(0.05, ease(ta / dur, m0));
-    air = Math.min(DIVE_AIR, ta / dur + DIVE_PACE.air);
-  }
-  // (a ball carrier's dive on a wet / snowy field slides on further; dives for the ball stretch their slide above, tackles keep their reach)
-  const wk = 1;   // (weather never touches a dive any more)
-  p.act = { t: 0, dur: dur * Math.sqrt(wk), fx: p.x, fy: p.y, tx: p.x + dx / d * Lp * wk, ty: p.y + dy / d * Lp * wk, angle: Math.atan2(dy, dx), m0, z0, air };
+  p.act = { t: 0, dur: Math.max(DIVE.minT, K.Tl + K.Ts), fx: p.x, fy: p.y, tx: p.x + ux * K.S, ty: p.y + uy * K.S, angle: Math.atan2(dy, dx), z0,
+            kin: K, airH: K.h, airT: K.airT, at: -K.lift };
   // he's squared up the way he launched: chest toward the man, and he stays that way all through it
   if (Math.abs(dx) > 0.15 * YD) p.face = dx > 0 ? 1 : -1;
   p.act.face = p.face;
@@ -1638,12 +1604,12 @@ const LAND = { fallVk: 0.7, oddsK: 1.6, stumbleV: 3, stumbleSpan: 5, stumbleSlow
   how: { oneBack: 'back', mossBack: 'back', oneSpin: 'roll', sideOneLeap: 'roll', mossOver: 'roll' } };
 // down on the turf out of a leap, sliding on with his momentum: how = 'back' | 'roll' | null (on his chest). Returns the slide's s
 function landOffFeet(p, how, vx, vy, wet) {
-  const dur = DIVE_PACE.fallDur;
   p.action = 'dive'; p.tkStyle = null;
   if (p.hasBall && p.jumpCaught) p.diveCaught = p.jumpCaught;   // (a leaping catch that lands on the turf: the dive's tucked-in arms carry on, not a second raised pair on top of the catch arms)
-  const sk = DIVE_PACE.slideK * (1 + WXF.wetSlide * wet);   // (slides further on a slick field)
-  p.act = { t: 0, dur, fx: p.x, fy: p.y, tx: p.x + vx * sk, ty: p.y + vy * sk, angle: how === 'back' ? (p.face > 0 ? Math.PI : 0) : Math.atan2(vy, vx),   // (on his back: head goes the way his back faces)
-            m0: Math.max(DIVE_SMOOTH.min, Math.min(DIVE_SMOOTH.max, dur / DIVE_PACE.slideK)), z0: 0, air: 0.001, face: p.face, post: how || undefined };
+  // the same landing as any dive: he slides out on friction from the speed he came down with (further on a slick field)
+  const v = Math.hypot(vx, vy), Ls = v * v / (2 * DIVE.friction * YD) * (1 + WXF.wetSlide * wet), Ts = v > 1 ? 2 * Ls / v : 0, dur = Math.max(0.3, Ts);
+  p.act = { t: 0, dur, fx: p.x, fy: p.y, tx: p.x + (v > 1 ? vx / v * Ls : 0), ty: p.y + (v > 1 ? vy / v * Ls : 0), angle: how === 'back' ? (p.face > 0 ? Math.PI : 0) : Math.atan2(vy, vx),   // (on his back: head goes the way his back faces)
+            kin: { v, vg: 0, tw: 0, Tl: 0, Ts, S: Ls, lift: 0, h: 0, airT: 0 }, airH: 0, airT: 0, at: 0, z0: 0, air: 0.001, face: p.face, post: how || undefined };
   return dur;
 }
 function jumpLand(p) {
@@ -1701,7 +1667,8 @@ const COD_K = 0.12;   // an agility rating step's pull on how fast a player chan
 function runFade(p) {
   const y = p.ranPid === runPid ? p.ranYd || 0 : 0, R = RUN_FADE;
   const f = y <= R.yd ? R.max * y / R.yd : R.max + (y - R.yd) / R.per * 0.01;
-  return 1 - Math.min(R.cap, f) * (p.retPid === runPid ? R.ret : 1);   // (retPid: he's this play's kick / punt returner)
+  const fl = game && game.quarter >= 4 ? facLvl('rec') : 0, late = fl && p.src && yoursEntry(p.src) ? 1 - FAC_FX.rec.late * fl : 1;   // (your Recovery Center: fresher legs in the 4th quarter and overtime)
+  return 1 - Math.min(R.cap, f) * (p.retPid === runPid ? R.ret : 1) * late;   // (retPid: he's this play's kick / punt returner)
 }
 // offense turning from going backward to forward: min = the backward speed (yd/s) that counts, accel = x how fast his velocity turns, top = x his top speed for dur s after
 const REVERSE = { min: 1.2, accel: 0.5, top: 0.85, dur: 0.45 };
@@ -1721,9 +1688,11 @@ function retReverse(p, fwd, dt) {   // fwd: how much his heading points upfield 
   if (fwd > 0.2) p.retBack = 0;
 }
 const DB_STATES = ['pre', 'drop', 'pocket', 'flight', 'loose', 'run'];
+// the top speed steer really lets him run when asked for `top`: no coverage bonus or lead takes a defender past the top speed his attributes give him, and
+// the yards he has run this play wear it down (runFade). The pursuit math (pursuitPoint) reads the same number, so nobody plans an angle at a speed he hasn't got
+const steerTop = (p, top) => (p.team === 'def' && p !== ud && p.top && ['CB', 'S', 'LB'].includes(p.role) && DB_STATES.includes(state) ? Math.min(top, effTop(p, p.top)) : top) * runFade(p);
 function steer(p, tx, ty, top, accel, dt) {
-  if (p.team === 'def' && p !== ud && p.top && ['CB', 'S', 'LB'].includes(p.role) && DB_STATES.includes(state)) top = Math.min(top, effTop(p, p.top));   // (no coverage bonus or lead takes a defender past the top speed his attributes give him)
-  top *= runFade(p);
+  top = steerTop(p, top);
   { const t = { x: tx, y: ty }; oobAim(p, t); tx = t.x; ty = t.y; }   // (the AI tries to stay in bounds; nothing physical stops anyone at the line)
   const dx = tx - p.x, dy = ty - p.y, d = Math.hypot(dx, dy);
   let wx = 0, wy = 0;
@@ -1749,7 +1718,7 @@ function steer(p, tx, ty, top, accel, dt) {
 // (the AI's targets stay in bounds: oobAim in steer). The old clamp walled defenders 0.2 yd INSIDE the line (more in the red zone)
 // but let carriers / receivers 1.5 yd out: a tackler riding a carrier down over the sideline was yanked back in the moment he let go
 // (the post-play teleport), and anyone whose role or the state changed snapped to the new wall.
-const OOB_ROOM = { y: 3.9, x: 4.4 };   // yd anyone's feet can go past a sideline (y) / an end line (x): the stands' ad wall is a hard wall (sideline wall = CROWD.wall 4.4 yd out, end wall = endGap + wall 5 yd), minus half a yard of body (clampField; oobBrake slows him so he never slams into it)
+const OOB_ROOM = { y: 3.9, x: 4.4 };   // yd anyone's feet can go past a sideline (y) / an end line (x): the stands' ad wall is a hard wall (sideline wall = its foot, CROWD.wall 4.4 yd out, however tall CROWD.wallH makes it; end wall = endGap + wall 5 yd), minus half a yard of body (clampField; oobBrake slows him so he never slams into it)
 const OOB_DRAG = { drag: 3.2, decel: 55 };   // out of bounds: drag = 1/s slow-down on his velocity, decel = yd/s^2 he can brake at (his speed toward the wall is capped so he stops before it, never hitting it)
 function oobBrake(p, dt) {   // (steer, before the move: past a sideline / end line a runner sheds speed fast and can't carry it into the wall)
   if (p.svx == null || p.svy == null) return;
@@ -1830,13 +1799,14 @@ function noteDefCut(p, dt) {
 }
 
 // Top speed after stamina drain and broken-tackle wear.
-// settings SPEED: the CPU's players / yours run faster or slower without touching ratings (difficulty nudges the CPU side: SPEED_SET.diff at D 0 / 0.5 / 1)
-const SPEED_SET = { lo: 0.8, hi: 1.2, step: 0.05, diff: [0.97, 1, 1.04] };
+// settings SPEED: the CPU's players / yours run faster or slower without touching ratings. Only the custom sliders (PLAYER SPEED / CPU SPEED) do it: a difficulty
+// preset never changes speed. dyn = the DYNAMIC difficulty's own nudge on the CPU side at D 0 / 0.5 / 1 (that mode only; [1, 1, 1] = none)
+const SPEED_SET = { lo: 0.8, hi: 1.2, step: 0.05, dyn: [0.97, 1, 1.04] };
 let spdK = { t: -1, cpu: 1, me: 1 };
 function speedSetK(p) {
   if (!p || tut || (typeof ONL !== 'undefined' && ONL.on)) return 1;   // (online: both sides untouched so the two games agree)
   const now = performance.now();
-  if (now - spdK.t > 250) { let dk = 1; try { dk = lerpPts([0, 0.5, 1], SPEED_SET.diff, diffD()); } catch (e) {} spdK = { t: now, cpu: diffX('cpuSpd') * dk, me: diffX('youSpd') }; }
+  if (now - spdK.t > 250) { let dk = 1; try { if (diffMode() === 'dynamic') dk = lerpPts([0, 0.5, 1], SPEED_SET.dyn, diffD()); } catch (e) {} spdK = { t: now, cpu: diffX('cpuSpd') * dk, me: diffX('youSpd') }; }
   const pvp = twoP && !twoP.ai, mine = pvp || p.team === (aiOff() ? 'def' : 'off');
   return mine ? spdK.me : spdK.cpu;
 }
@@ -1864,12 +1834,18 @@ function stumbleCheck(c) {
 }
 // A broken tackle the player didn't make a move for still looks like something: a tackler diving low at him
 // gets hurdled; otherwise he shrugs it off with a quick side-step away from the man.
+// the wings icon goes up on EVERY hurdle (any state, either team); only one that clears a man is the HURDLE callout (crowd, goals, highlights)
+function hurdleWings(c, cleared) {
+  if (cleared) { if (c.act) c.act.called = true; popup(c, 'HURDLE', '#7fe3ff'); }
+  else popup(c, 'MOVE TRIED', '#7fe3ff', undefined, true, true, { k: 'wings' });
+}
 function autoBreak(c, d) {
   if (c.action) return;
   const sp = Math.hypot(c.vx, c.vy), vx = sp > YD ? c.vx : c.face * 4 * YD, vy = sp > YD ? c.vy : 0;
   if (d.action === 'dive' && !d.hitStick && Math.random() < HURDLE.chance) {
     c.action = 'hurdle';
     c.act = { t: 0, dur: HURDLE.dur, vx, vy, h: HURDLE.h, style: hurdleStyle(false) };
+    hurdleWings(c, false);
   }
   // (no automatic jukes / spins / stiff arms / trucks: those only come from the player's keys)
 }
@@ -1931,9 +1907,10 @@ function updateAction(p, dt) {
   const a = p.act;
   const k = a.dur ? Math.min(a.t / a.dur, 1) : 1;
   if (p.action === 'dive' || p.action === 'slide') {
-    a.t = Math.min(a.t + dt * (p.diveTip && state !== 'flight' ? 2.5 : 1), a.dur);   // (a tip-dive whose ball is already caught finishes fast, not in slow motion)
-    // (a Hermite ease: leaves at his running speed (m0), glides to a stop on the turf; m0 = 2 is a plain ease-out)
-    const k2 = a.t / a.dur, m0 = a.m0 ?? 2, e = (k2 ** 3 - 2 * k2 * k2 + k2) * m0 + (3 * k2 * k2 - 2 * k2 ** 3);
+    if (p.action === 'dive' && a.kin && a.look === undefined) a.look = diveLookPick(p, a);   // (which dive it looks like: see dive looks, 07-drawing)
+    a.t = Math.min(a.t + dt, a.dur);
+    // (the dive's own physics: launch speed held in the air, then the slide, diveE; an act without it (lying where he let go) eases like a plain slide)
+    const k2 = a.t / a.dur, m0 = a.m0 ?? 2, e = a.kin ? diveE(a.kin, a.t) : (k2 ** 3 - 2 * k2 * k2 + k2) * m0 + (3 * k2 * k2 - 2 * k2 ** 3);
     const lieX = p.x, lieY = p.y;   // (where he lay last frame: a pin let go below keeps him here)
     p.x = a.fx + (a.tx - a.fx) * e;
     p.y = a.fy + (a.ty - a.fy) * e;
@@ -2026,8 +2003,6 @@ function updateAction(p, dt) {
     p.x += sx; p.y += sy;
     if (a.maxX != null) p.x = Math.min(p.x, a.maxX);
     p.z = a.launch ? airZ(a.t, (a.launchH || 12) * S) : 0;   // (a big hit's launch: same gravity as any leap)
-  } else if (p.action === 'point') {
-    a.t += dt;                       // standing and pointing downfield for the first down
   } else if (p.action === 'getup' || p.action === 'throw') {
     if (!a.hold) a.t += dt; else if (p.action === 'getup') a.t = Math.max(0, a.t - dt * GETUP_SINK);   // (hold: touched down while getting up, he sinks back onto the turf instead of freezing mid-rise)
     if (a.t >= a.dur) { if (p.action === 'getup') { p.vx = p.vy = p.svx = p.svy = 0; p.moving = false; } p.action = null; }   // (up off the turf: the old slide's momentum is gone, he stands still instead of drifting around)
@@ -2063,22 +2038,6 @@ function updateAction(p, dt) {
       p.action = 'dive';   // let go: lying where he ended up
       p.act = { t: 1, dur: 1, fx: p.x, fy: p.y, tx: p.x, ty: p.y, angle: a.angle };
     }
-  } else if (p.action === 'griddy') {
-    // hopping side to side across the end zone, arms swinging
-    a.t += dt;
-    p.y = Math.max(Y_MIN + YD, Math.min(Y_MAX - YD, p.y + a.vy * dt));
-    { const h = 3 * S; p.z = airZ(a.t % airTime(h), h); }   // (each hop under AIR.g)
-    p.run += dt * 22;
-    p.face = a.vy > 0 ? 1 : -1;
-    if (a.t >= a.dur) { p.action = null; p.z = 0; }
-    p.griddy = !!p.action;
-    clampField(p);
-    return;
-  } else if (p.action === 'dance') {
-    a.t += dt;
-    { const h = 5 * S; p.z = airZ(a.t % airTime(h), h); }
-    p.face = Math.floor(a.t * 4) % 2 ? 1 : -1;
-    if (a.t >= a.dur) { p.action = null; p.z = 0; }
   }
   p.moving = false;
   clampField(p);

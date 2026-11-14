@@ -97,11 +97,11 @@ function testClick(p) {
   if (t) startTest(t.id);
 }
 // --- animation library -----------------------------------------------------------------------
-// ANIMATION LIBRARY (start screen, above TEST MODE): every move, break-tackle reaction, catch and tackle style, played on a loop with the real
+// ANIMATION LIBRARY (start screen, above TEST MODE): every move, break-tackle reaction, catch, tackle style and celebration, played on a loop with the real
 // drawing / action code (a cloned ball carrier `A` and defender `B` on a small stage). Pick one on the left; REPLAY restarts it. Nothing counts.
 const ANIM_BTN = { x: 30, y: 460, w: 210, h: 70 };
-const ANIM_CATS = ['MOVES', 'REACTIONS', 'CATCHES', 'TACKLES', 'EXTRAS'];
-const ANIM_TABS = ANIM_CATS.map((c, i) => ({ cat: c, x: 20 + i * 156, y: 64, w: 150, h: 46 }));
+const ANIM_CATS = ['MOVES', 'REACTIONS', 'CATCHES', 'TACKLES', 'EXTRAS', 'CELEBRATE'];
+const ANIM_TABS = ANIM_CATS.map((c, i) => ({ cat: c, x: 20 + i * 104, y: 64, w: 99, h: 46 }));   // (six tabs, all left of the stage's title)
 const ANIM_STAGE = { x: 650, y: 130, w: 610, h: 480, zoom: 2.1 };   // (2.4 before the FIGURE size-up)
 const ANIM_LEN = 2.8;   // seconds a clip plays before it restarts
 const ANIM_ROWS = 10, ANIM_COLW = 196, ANIM_ROWH = 46;
@@ -142,27 +142,101 @@ function animEntries(cat) {
     ['TOE TAP', A => animAct(A, 'toetap', { dur: 0.6 })],
     ['TOE DRAG', A => animAct(A, 'toedrag', { dur: 1.2 })],
     ['THROW', A => animAct(A, 'throw', { dur: 0.5 })],
-    ['FIRST DOWN POINT', A => animAct(A, 'point', {})],
-    ['DANCE', A => animAct(A, 'dance', { dur: ANIM_LEN })],
-    ['THE GRIDDY', A => animAct(A, 'griddy', { dur: ANIM_LEN, vy: 0 })],
     ['FALL (TACKLED)', A => { A.action = 'down'; A.act = { t: 0, fall: true, back: false, side: 0, fallTime: 0.4, vx: 3 * YD, vy: 0, angle: 0 }; }],
   ];
   if (cat === 'REACTIONS') return Object.keys(REEL_ST).map(k => [k.replace(/([A-Z])/g, ' $1').toUpperCase(), (A, B) => { A.moving = true; A.vx = 6 * YD; B.x = A.x + 1.6 * YD; startReel(B, k, A); }]);
   if (cat === 'CATCHES') return Object.keys(CATCH_ST).filter(k => !EXTRA_CATCHES.includes(k)).map(k => [k.replace(/([A-Z])/g, ' $1').toUpperCase(), animCaught(k)]);
   if (cat === 'EXTRAS') return extraEntries();
+  // every celebration move (see celebrations): he holds the ball for a beat, plays it, and the last frame stays up
+  if (cat === 'CELEBRATE') return Object.keys(CELEB_MOVES).map(id => [id.replace(/([A-Z])/g, ' $1').toUpperCase(), (A, B) => {
+    const mv = CELEB_MOVES[id], n = celebCastN(mv).pop(), far = [[3, 0.5], [-3, -0.5], [3.6, -0.9], [-3.6, 0.9]];
+    B.x = 1e6; A.hasBall = true; ball.tucked = true;   // (B: off the stage)
+    if (mv.dx) A.x = -mv.dx(mv.secs, { dist: 1 }) * YD / 2;
+    const mates = far.slice(0, n - 1).map(([x, y]) => Object.assign({}, A, { x: x * YD, y: y * YD, face: x > 0 ? -1 : 1, hasBall: false, big: mv.mate === 'ol', cel: null }));   // (his teammates start a few yards off)
+    const c = celebMake(id, A, mates, { t0: clock + 0.5, keep: true, env: { away: 1, goalX: A.x + 1.5 * YD, postX: A.x + 2.2 * YD, mid: A.y, yLo: -1e9, yHi: 1e9 } });
+    Object.assign(c.cels[0], { aim: 0.2, dist: 1 }); c.cast.forEach((p, k) => { p.cel = c.cels[k]; });
+    anim.more = mates; anim.zoomK = n > 2 ? 0.6 : n > 1 || mv.marks ? 0.82 : 1; anim.len = mv.secs + 1.6;
+    A.tick = () => celebPlace(c, Math.max(0, Math.min(mv.secs, clock - c.t0)));   // (where everyone is: their jog to the mark, a move's own travel)
+  }]);
   return tackleEntries();
 }
 // landings, tips, picks, throws and hurdles (A = the player, B = the man he plays against)
 function extraEntries() {
-  const dive = post => A => { startDive(A, A.x + 3 * YD, A.y, 0.45, 2.8 * YD); A.act.post = post; };
+  const dive = post => A => { startDive(A, A.x + 3 * YD, A.y, 0.45, 2.8 * YD); A.act.post = post; A.act.look = 'layout'; };
+  // a dive look off a run (A.vx: the dive's launch speed and flight come from it) / from a standstill; the landing is the look's own
+  const diveLk = (look, run) => A => { A.vx = (run == null ? 7 : run) * YD; A.vy = 0; startDive(A, A.x + 4 * YD, A.y, 0.45, 2.8 * YD); A.act.look = look; };
   const leapLand = how => A => { animAct(A, 'jump', { dur: 0.6, h: 12 * S, over: false }); A.vx = (how === 'back' ? -2 : how === 'roll' ? 1 : 2.5) * YD; A.vy = how === 'roll' ? 2 * YD : 0;
     A.catchAt = 0.6; A.later = () => { A.z = 0; landOffFeet(A, how, A.vx, A.vy, 0); }; };
   const tip = st => (A, B) => { A.face = 1; B.x = A.x + 1.2 * YD; B.face = 1; animAct(A, 'swat', { dur: 0.45, tip: true, tipSt: st, one: !!(TIP_ST[st] && TIP_ST[st].one) }); };
   const hurdle = (style, kind) => (A, B) => { A.moving = true; A.vx = 5 * YD; B.x = A.x + 1.4 * YD;
     animAct(A, 'hurdle', { dur: HURDLE.userDur, vx: 4 * YD, vy: 0, h: HURDLE.userH, user: false, space: true, cleared: [], style, backward: style === 'back' });
     if (kind) { hurdledBy(A, B); if (B.act) B.act.kind = kind; } };
+  const stance = k => A => { A.stHold = k; A.stKey = k; A.stB = 0; };   // (QB / back pre-snap stances: he settles into it)
+  // a snap: B = the center, A = the QB (gun = yd back, 0 = under center); a beat in their stances, the snap, then he brings it in
+  const snapClip = (gun, dur) => (A, B) => {
+    const d = gun ? gun * YD : UC_DEPTH - YD, t0 = 0.9;
+    anim.asQB = A; anim.showBall = true; shotgun = !!gun; ball.tucked = false; ball.inAir = false;
+    Object.assign(B, { team: A.team, face: 1, big: true, x: d / 2, stHold: 'three', stKey: 'three', stB: 1 });
+    Object.assign(A, { x: -d / 2, stHold: gun ? 'qbGun' : 'qbUC', stKey: gun ? 'qbGun' : 'qbUC', stB: 1 });
+    A.tick = t => {
+      A.snapK = 0; A.snapIn = null; A.cradle = false;
+      if (t < t0) return snapPath(B, A, null, !!gun);
+      A.stHold = B.stHold = null;
+      if (t < t0 + dur) return snapPath(B, A, (t - t0) / dur, !!gun);
+      B.snapArm = null; ball.snapNose = null; A.cradle = true; A.snapIn = t - t0 - dur < SNAP_LOOK.bring ? t - t0 - dur : null;
+    };
+  };
+  // exchanges (A = the QB, B = the back), run by the clip's clock with the same plain numbers the game sets: exK / exE, pk, exSet, twoArm, pitchK, fakeArms, paK
+  const exClip = kind => (A, B) => {
+    const toss = kind === 'toss' || kind === 'flip', draw = kind === 'draw', Q = EXCH_QB[kind] || EXCH_QB.open, t0 = draw ? 1.3 : toss ? 0.8 : 0;
+    let took = null, from = null;
+    anim.asQB = A; anim.asRB = B; anim.showBall = true; shotgun = kind === 'flip' || kind === 'gun';
+    Object.assign(B, { team: A.team, face: 1, y: toss ? 0.6 * YD : 0.45 * YD }); A.x = 0.6 * YD; A.face = kind === 'toss' || kind === 'reverse' ? -1 : 1;
+    A.tick = (t, dt) => {
+      ball.tucked = false; ball.inAir = false; ball.snapNose = null; anim.showBall = true;
+      Object.assign(A, { exK: null, exE: 0, paK: 0, cradle: false }); Object.assign(B, { pk: 0, exSet: false, pitchK: 0, twoArm: false, fakeArms: false, moving: true, vx: 6 * YD, exLean: kind === 'low' ? 0.2 : 0 });
+      B.run += dt * 12;
+      if (kind === 'pa') {   // play action: the ball shown to the back and pulled to the QB's hip; the back folds his arms over nothing and keeps running
+        B.x = -3 * YD + 5.5 * YD * t; B.fakeArms = B.x > A.x - YD; A.cradle = true; A.paK = t > 0.4 && t < 0.4 + PA_LOOK.qb ? (t - 0.4) / PA_LOOK.qb : 0; anim.showBall = false; return;
+      }
+      if (toss) {   // the toss (reverse pivot, wound up) / the shotgun flip: thrown to where the back will be, caught in stride
+        const T = 0.3, k = (t - t0) / T, bx = t => -1.4 * YD + 1.2 * YD * t, by = t => 0.6 * YD - 2.4 * YD * t;
+        B.x = bx(t); B.y = by(t);
+        if (k < 0) {
+          const e = Math.max(0, Math.min(1, 1 - (t0 - t) / PITCH.wind)), dx = B.x - A.x, dy = B.y - A.y, d = Math.hypot(dx, dy) || 1, w = -Math.sin(Math.PI * e) * figX(A, PITCH.swing * S);
+          A.exK = 'wind'; A.exE = e; ball.x = A.x + figX(A, 4 * S) * A.face + dx / d * w; ball.y = A.y + dy / d * w * 0.7; ball.z = figZ(A, -S); ball.rot = 0; from = [ball.x, ball.y, ball.z];
+        } else if (k < 1) {
+          const hx = B.x + figX(B, PITCH.front * S), hz = figZ(B, PITCH.chest * S);
+          ball.x = from[0] + (hx - from[0]) * k; ball.y = from[1] + (B.y - from[1]) * k; ball.z = from[2] + (hz - from[2]) * k + Math.sin(Math.PI * k) * PITCH.arc * S; ball.rot = k * Math.PI;
+          B.pitchK = Math.max(0.001, k);
+        } else { B.hasBall = true; B.twoArm = k < 1 + PITCH.hold / T; ball.tucked = true; }
+        if (k >= 0 && t - t0 < PITCH.thru) { A.exK = 'thru'; A.exE = (t - t0) / PITCH.thru; }
+        return;
+      }
+      // a handoff: the ball goes out to the back as he closes, changes hands as he passes, both his arms over it for two steps; the QB's empty hands come away, then the fake
+      if (draw) { B.x = took == null ? -0.9 * YD : -0.9 * YD + 5 * YD * (t - took); A.x = Math.max(B.x + 0.9 * YD, 2.2 * YD - 2.4 * YD * Math.max(0, t - 0.5)); if (took == null) { B.moving = false; B.vx = 0; B.exSet = true; A.cradle = t < 0.7; } }
+      else B.x = -3.2 * YD + 5.5 * YD * t;
+      const dx = B.x - A.x, dy = B.y - A.y, d = Math.hypot(dx, dy) || 1, e = smooth01((RUN_MESH.far * YD - d) / ((RUN_MESH.far - RUN_MESH.reach) * YD));
+      if (took == null && (draw ? t >= t0 : d <= RUN_MESH.reach * YD || B.x > A.x)) took = t;
+      if (took == null) {
+        if (!A.cradle) { const r = figX(A, Q.ext * S) * e; A.exK = 'hold'; A.exE = e; if (!draw) B.pk = e; ball.x = A.x + figX(A, 4 * S) * A.face * (1 - e) + dx / d * r; ball.y = A.y + dy / d * r * 0.7; ball.z = figZ(A, -Q.y * S); ball.rot = 0; }
+        else anim.showBall = false;
+      } else {
+        B.hasBall = true; B.twoArm = t - took < (kind === 'low' ? RUN_MESH.low : RUN_MESH.wrap); ball.tucked = true;
+        if (t - took < EXCH_GIVE) { A.exK = 'give'; A.exE = (t - took) / EXCH_GIVE; } else if (t - took < EXCH_GIVE + RBP.fake.time) A.exK = 'fake';
+      }
+    };
+  };
   return [
-    ['DIVE: CHEST SKID', dive('skid')], ['DIVE: ROLL OVER', dive('roll')],
+    ['HANDOFF: INSIDE', exClip('open')], ['HANDOFF: REVERSE PIVOT', exClip('reverse')], ['HANDOFF: SHOTGUN', exClip('gun')], ['HANDOFF: GOAL LINE', exClip('low')], ['HANDOFF: DRAW', exClip('draw')],
+    ['PITCH: TOSS', exClip('toss')], ['PITCH: SHOTGUN FLIP', exClip('flip')], ['FAKE: PLAY ACTION', exClip('pa')],
+    ['SNAP: UNDER CENTER', snapClip(0, SNAP_FLY.center)], ['SNAP: SHOTGUN', snapClip(4.5, SNAP_FLY.gun)], ['SNAP: PISTOL', snapClip(3.2, SNAP_FLY.pistol)],
+    ['STANCE: QB UNDER C', stance('qbUC')], ['STANCE: QB GOAL LINE', stance('qbGL')], ['STANCE: QB SHOTGUN', stance('qbGun')], ['STANCE: QB HURRY-UP', stance('qbHurry')], ['STANCE: QB VICTORY', stance('qbVic')],
+    ['STANCE: RB 2-POINT', stance('rb2')], ['STANCE: RB LOW', stance('rbLow')], ['STANCE: RB SHOTGUN', stance('rbGun')], ['STANCE: FULLBACK', stance('fb')],
+    ['DIVE: CHEST SKID', dive('skid')], ['DIVE: ROLL OVER', dive('roll')], ['DIVE: ONTO HIS SIDE', dive('side')],
+    ['DIVE LOOK: LAYOUT', diveLk('layout')], ['DIVE LOOK: SUPERMAN', diveLk('superman')], ['DIVE LOOK: SCISSOR', diveLk('scissor')],
+    ['DIVE LOOK: SPEAR', diveLk('spear')], ['DIVE LOOK: ONE-ARM REACH', diveLk('reach')], ['DIVE LOOK: TUCK AND ROLL', diveLk('tuck')],
+    ['DIVE: STANDING START', diveLk('layout', 0)], ['DIVE: FULL SPEED', diveLk('superman', 10)],
     ['LEAP: ON HIS BACK', leapLand('back')], ['LEAP: ROLLING', leapLand('roll')], ['LEAP: ON HIS CHEST', leapLand(null)],
     ['TIP: LUNGE', tip('lunge')], ['TIP: BACKHAND', tip('backhand')], ['TIP: CHOP', tip('chop')], ['TIP: RAKE (BEHIND)', tip('rake')], ['TIP: STRETCH', tip('stretch')],
     ['CATCH: HELMET PIN', animCaught('helmetPin')],
@@ -194,11 +268,12 @@ const tackleEntries = () => TACKLE_STYLES.map(([label, id]) => [label, (A, B) =>
 function animCast() {
   const mk = (src, x, face) => Object.assign({}, src, { x, y: 0, z: 0, vx: 0, vy: 0, svx: 0, svy: 0, speed: 0, run: 0, moving: false, action: null, act: null, face,
     hasBall: false, stiff: null, stiffTgt: null, stiffSet: false, truck: false, catchFx: null, catchMode: null, tackling: false, resolved: false, downMiss: false,
-    recoverUntil: 0, engaged: false, push: null, stB: 0, breakFx: null, reach: false, cradle: false, cock: false, guard: false, swimLeft: 0, celebrate: null });
+    recoverUntil: 0, engaged: false, push: null, stB: 0, breakFx: null, reach: false, cradle: false, cock: false, guard: false, swimLeft: 0, coast: null, cel: null });
   return { A: mk(rb, 0, 1), B: mk(cbT, 0, -1) };
 }
 function animStart(i) {
-  anim.i = i; anim.t = 0; anim.err = null;
+  anim.i = i; anim.t = 0; anim.err = null; anim.asQB = anim.asRB = null; anim.showBall = false; anim.len = 0; anim.more = null; anim.zoomK = 1;
+  ball.snapNose = null;
   const e = anim.list[i]; if (!e) return;
   Object.assign(anim, animCast());
   try { e[1](anim.A, anim.B); } catch (err) { anim.err = String(err && err.message || err); }
@@ -212,15 +287,18 @@ function openAnimLib() {
   animStart(0);
 }
 function animLeave() { if (anim) clock = anim.clock0; anim = null; endExhibition('start'); }
-const animListBtn = rectCache(n => { const col = Math.floor(n / ANIM_ROWS); return { x: 20 + col * ANIM_COLW, y: 126 + (n % ANIM_ROWS) * ANIM_ROWH, w: ANIM_COLW - 8, h: ANIM_ROWH - 6 }; });
+// (three columns: a long list, like EXTRAS, gets more and shorter rows in the same space)
+const animRows = () => Math.max(ANIM_ROWS, Math.ceil(((anim && anim.list) || []).length / 3));
+const animListBtn0 = rectCache(key => { const rows = Math.floor(key / 1000), n = key % 1000, rh = ANIM_ROWS * ANIM_ROWH / rows, col = Math.floor(n / rows); return { x: 20 + col * ANIM_COLW, y: 126 + (n % rows) * rh, w: ANIM_COLW - 8, h: rh - (rows > ANIM_ROWS ? 3 : 6) }; });
+const animListBtn = n => animListBtn0(animRows() * 1000 + n);
 function drawAnims() {
   if (!anim) return;
   paperBg();
   const now = performance.now(), dt = Math.min(0.05, (now - anim.last) / 1000); anim.last = now;
   ctx.fillStyle = RES.line; ctx.font = 'bold 40px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('ANIMATION LIBRARY', W / 2, 34);
-  for (const t of ANIM_TABS) menuBtn(t, t.cat, t.cat === anim.cat ? SEL : RES.bright, 20);
-  anim.list.forEach((e, n) => menuBtn(animListBtn(n), e[0], n === anim.i ? SEL : RES.bright, e[0].length > 15 ? 14 : 17));
+  for (const t of ANIM_TABS) menuBtn(t, t.cat, t.cat === anim.cat ? SEL : RES.bright, 15);
+  anim.list.forEach((e, n) => menuBtn(animListBtn(n), e[0], n === anim.i ? SEL : RES.bright, animRows() > ANIM_ROWS ? 13 : e[0].length > 15 ? 14 : 17));
   // the stage
   const S0 = ANIM_STAGE;
   ctx.save();
@@ -231,19 +309,26 @@ function drawAnims() {
   const keepMirror = MIRROR; MIRROR = 1;
   if (anim.A) {
     anim.t += dt; clock += dt;
-    if (anim.t > ANIM_LEN) animStart(anim.i);
+    if (anim.t > (anim.len || ANIM_LEN)) animStart(anim.i);   // (len: a clip with its own length, e.g. a celebration)
     try {
       const { A, B } = anim;
       if (A.moving) A.run += dt * 12;
       if (A.later && anim.t >= A.catchAt) { const f = A.later; A.later = null; f(); }
+      if (A.tick) A.tick(anim.t, dt);   // (clips that run by the clock: snaps, handoffs, pitches)
       for (const p of [A, B]) {
         if (p.action) updateAction(p, dt);
         if (p.action === 'jump' || p.action === 'dive') { /* (their own update moves them) */ }
       }
       const cx = S0.x + S0.w / 2, cy = S0.y + S0.h / 2 + 30;
-      ctx.translate(cx, cy); ctx.scale(S0.zoom, S0.zoom);
+      ctx.translate(cx, cy); ctx.scale(S0.zoom * (anim.zoomK || 1), S0.zoom * (anim.zoomK || 1));   // (zoomK: pulled back for a celebration with a cast)
       ctx.fillStyle = 'rgba(0,0,0,0.0)';
-      for (const p of [B, A].sort((a, b) => a.y - b.y)) { p.x -= 0; drawPlayer(p); }
+      // (asQB / asRB: the clip's QB / back stand in for the real ones while they're drawn, so the QB's own poses show)
+      const q0 = qb, r0 = rb;
+      try {
+        if (anim.asQB) qb = anim.asQB; if (anim.asRB) rb = anim.asRB;
+        for (const p of [B, A, ...(anim.more || [])].sort((a, b) => a.y - b.y)) { p.x -= 0; drawPlayer(p); }
+        if (anim.showBall && !ball.tucked && !(A.cradle && anim.asQB === A)) drawBallBody();
+      } finally { qb = q0; rb = r0; }
     } catch (err) { anim.err = String(err && err.message || err); }
   }
   MIRROR = keepMirror;
@@ -997,6 +1082,7 @@ function wxDraw() {
     }
     ctx.restore();
   }
+  if (reelOn()) return;   // (a highlight reel: no badge or notices over the play)
   // the badge: condition, wind speed and an arrow the way it blows
   const label = g.roof === 'dome' ? 'INDOORS' : g.roof === 'closed' ? 'ROOF CLOSED' : WX_LABELS[wxCode(g)];
   const live = wxLive(), txt = live ? `${label}  ${Math.round(WXI.mph)} MPH` : label;
@@ -1261,14 +1347,15 @@ function injuryHit(p, kind) {
   if (injuryCall || s.outGame) return;
   const tired = (1 + WEAR.injury * (p.wear || 0)) * (1 + WXF.inj * wxSnow()) * diffX('injK');   // (difficulty: injuryK; a worn-down player is easier to hurt; so is one on a frozen field)
   if (s.inj) {   // playing hurt: one more hit can make it worse (and he's done for the day)
-    if (Math.random() < INJURY.reinjure[s.inj.sev] * (kind === 'stick' ? 1.5 : 1) * tired) {
+    const fresh = INJURY.hit[kind] * condFactor(s), re = INJURY.reinjure[s.inj.sev] * (kind === 'stick' ? 1.5 : 1);   // (Medical takes away the extra risk of playing hurt, down to a healthy man's odds)
+    if (Math.random() < (fresh + (re - fresh) * (1 - Math.min(1, FAC_FX.med.again * facLvl('med')))) * tired) {
       s.inj.re = true; s.inj.sev = Math.min(2, s.inj.sev + 1); s.outGame = true;
       injuryCall = { p, s, re: true }; popup(p, 'REINJURED', '#ff6b6b'); injuryAuto();
     }
     return;
   }
   // (difficulty makes big hits likelier, but never injuries: the hit-stick / sack odds are divided back out)
-  if (Math.random() < INJURY.hit[kind] * condFactor(s) * tired / (kind === 'tackle' ? 1 : (diffLvl().hit || 1))) {
+  if (Math.random() < INJURY.hit[kind] * condFactor(s) * tired * (1 - FAC_FX.med.hit * facLvl('med')) / (kind === 'tackle' ? 1 : (diffLvl().hit || 1))) {
     s.inj = { sev: rollSev(s), weeks: null, kept: false, re: false }; injuryBegin(s);
     injuryCall = { p, s }; popup(p, 'INJURED', '#ff6b6b'); injuryAuto();
   }
@@ -1298,7 +1385,8 @@ const POT_LOSS = { chance: [0.35, 0.6, 0.9], max: [2, 4, 7], none: 0.04 };
 function injuryPotential(s, sev) {
   s.injN = (s.injN || 0) + 1;   // (every new injury counts against his trade value: injury prone)
   if (Math.random() >= POT_LOSS.chance[sev]) return 0;
-  const now = scoreOf(s), loss = Math.random() < POT_LOSS.none ? 0 : Math.min(ptsOf(s) - now, 1 + Math.floor(Math.random() * POT_LOSS.max[sev]));
+  const now = scoreOf(s); let loss = Math.random() < POT_LOSS.none ? 0 : Math.min(ptsOf(s) - now, 1 + Math.floor(Math.random() * POT_LOSS.max[sev]));
+  if (yoursEntry(s)) loss = Math.round(loss * (1 - FAC_FX.med.pot * facLvl('med')));   // (your medical staff saves some of it)
   if (loss <= 0) return 0;
   s.potPts = ptsOf(s) - loss; s.potential = starsOfScore(s.potPts);
   return loss;
@@ -1321,20 +1409,20 @@ function injuriesAfterGame(passed) {
       if (inj && inj.weeks == null) {   // hurt in this game
         let w = rint(...INJURY.weeks[inj.sev]);
         if (inj.kept) w += (inj.re ? 1 : 0) + rint(0, 1);   // playing on it: a longer layoff
-        inj.weeks = Math.min(inj.kept ? INJURY.maxKept : INJURY.max, w);
-        lost = injuryPotential(s, inj.sev);
+        inj.weeks = medWeeks(Math.min(inj.kept ? INJURY.maxKept : INJURY.max, w));
+        lost = injuryPotential(s, inj.sev); moraleKeyInjury(s);
       } else if (inj && s.missed) inj.weeks--;   // sat this one out
       else if (!inj && !s.missed && Math.random() < INJURY.post * condFactor(s)) {
         const sev = rollSev(s);
-        s.inj = { sev, weeks: Math.max(1, rint(...INJURY.weeks[sev])) }; injuryBegin(s);
-        lost = injuryPotential(s, sev);
+        s.inj = { sev, weeks: medWeeks(Math.max(1, rint(...INJURY.weeks[sev]))) }; injuryBegin(s);
+        lost = injuryPotential(s, sev); moraleKeyInjury(s);
       }
       if (s.inj && passed > 1) s.inj.weeks -= passed - 1;   // bye weeks count
       if (s.limited) rehabStep(s, passed);   // (back but LIMITED: every game played fills the rehab meter)
       if (s.inj) notes.push(`${s.short} (${SEV_NAME[s.inj.sev]}): ${s.inj.weeks > 0 ? `out ${s.inj.weeks} wk` : 'back next week'}${lost ? `` : ''}`);
       if (s.inj && s.inj.weeks <= 0) { const sev = s.inj.sev; s.inj = null; injuryReturn(s, sev, notes); }   // (back: LIMITED until rehab is full)
       else if (s.limited && rehabOf(s) >= 1) { s.limited = false; notes.push(`${s.short}: fully cleared`); }
-      s.cond = !s.missed && passed === 1 ? Math.max(0, condOf(s) - (INJURY.weekly + rint(0, INJURY.weeklyRnd)) * playShareK(s)) : 100;   // (the more of the game he played, the more condition it cost)
+      s.cond = !s.missed && passed === 1 ? Math.max(0, condOf(s) - (INJURY.weekly + rint(0, INJURY.weeklyRnd)) * playShareK(s) * (1 - FAC_FX.rec.reset * facLvl('rec'))) : 100;   // (the more of the game he played, the more condition it cost)
     }
     s.benchNext = false; s.outGame = false;
   }
@@ -1392,8 +1480,17 @@ const PRAC_FAC = {
   field:  { name: 'PRACTICE FIELDS', cost: [6, 10, 16, 24, 34, 46], wks: [2, 3, 4, 6, 7, 8], dev: 0.10, groups: null, text: 'Faster development for everyone (+10% a level).' },
   weight: { name: 'WEIGHT CENTER',   cost: [6, 10, 16, 24, 34, 46], wks: [2, 3, 4, 6, 7, 8], dev: 0.14, groups: ['OL', 'DL', 'RB', 'TE', 'LB'], text: 'Linemen, backs, TEs, LBs develop faster (+14% a level).' },
   film:   { name: 'FILM ROOM',       cost: [6, 10, 16, 24, 34, 46], wks: [2, 3, 4, 6, 7, 8], dev: 0.14, groups: ['QB', 'WR', 'TE', 'CB', 'S', 'LB'], text: 'QBs, receivers, LBs and DBs develop faster (+14% a level).' },
-  med:    { name: 'MEDICAL / REHAB', cost: [8, 12, 18, 26, 36, 48], wks: [2, 3, 4, 6, 7, 8], dev: 0, groups: null, text: 'Cuts practice injury risk (most at high loads), speeds rehab, restores condition.' },
+  med:    { name: 'MEDICAL / REHAB', cost: [8, 12, 18, 26, 36, 48], wks: [2, 3, 4, 6, 7, 8], dev: 0, groups: null, text: '-8% INJURY TIME, -5% INJURY CHANCE A LEVEL' },
+  rec:    { name: 'RECOVERY CENTER', cost: [8, 12, 18, 26, 36, 48], wks: [2, 3, 4, 6, 7, 8], dev: 0, groups: null, text: '+6% STAMINA RECOVERY A LEVEL' },
+  lounge: { name: 'PLAYER LOUNGE',   cost: [8, 12, 18, 26, 36, 48], wks: [2, 3, 4, 6, 7, 8], dev: 0, groups: null, text: '+3 MORALE BASELINE, FASTER BOUNCE-BACK A LEVEL' },
 };
+// my facility's finished levels above 1 (what FAC_FX multiplies): 0 outside your franchise (scrimmage, 1v1, online, tutorial), so every effect is neutral there
+function facLvl(k) {
+  if (typeof career === 'undefined' || !career || !career.prac || !season || exhibition || tut) return 0;
+  const F = career.prac.fac[k];
+  return F ? Math.max(0, F.lvl - 1) : 0;
+}
+const medWeeks = w => w >= 1 ? Math.max(1, Math.round(w * (1 - FAC_FX.med.out * facLvl('med')))) : w;   // (a layoff, shortened by Medical; never under a game)
 const PRAC_SPEC = {
   off: [{ id: 'PASSING', groups: ['QB', 'WR', 'TE'], text: 'QB / WR / TE develop faster' }, { id: 'GROUND', groups: ['RB', 'OL', 'TE'], text: 'RB / OL / TE develop faster' },
         { id: 'STRENGTH', groups: ['OL', 'RB', 'TE'], text: 'Strength work: OL / RB / TE develop faster' }, { id: 'SPEED', groups: ['WR', 'RB', 'QB'], text: 'Speed work: WR / RB / QB develop faster' },
@@ -1419,6 +1516,7 @@ function pracTrainerNew(side, minStars = 1) {   // a starting trainer: a candida
 function prac() {
   if (!career.prac) career.prac = { load: { off: PRAC.loadDefault, def: PRAC.loadDefault }, tr: { off: pracTrainerNew('off', 2), def: pracTrainerNew('def', 2) }, fac: { field: { lvl: 1, build: null }, weight: { lvl: 1, build: null }, film: { lvl: 1, build: null }, med: { lvl: 1, build: null } } };
   const P = career.prac;   // (older saves: the newer fields get their defaults)
+  for (const k of Object.keys(PRAC_FAC)) if (!P.fac[k]) P.fac[k] = { lvl: 1, build: null };
   if (!Array.isArray(P.focus)) P.focus = [];
   if (!Array.isArray(P.hist)) P.hist = [];
   if (!P.pairs) P.pairs = {};
@@ -1469,7 +1567,7 @@ function pracCalc(s, side, load, cx) {
   const ageRisk = age <= 24 ? 0.85 : age <= 28 ? 1 : age <= 31 ? 1.3 : 1.7, prone = 1 + 0.3 * Math.min(4, s.injN || 0), tired = 1 + 2 * (1 - cond) ** 2;
   const med = Math.min(PRAC.medMax, (pracLvl('med') - 1) * PRAC.medCut * (0.35 + 0.65 * load / 100));
   const risk = on && pracInjOn() ? PRAC.riskMax * (load / 100) ** PRAC.riskPow * ageRisk * prone * tired * (1 - med) * (hasT(tr, 'Injury Handler') ? 0.85 : 1) * rk : 0;
-  const cd = PRAC.trCond * tr.stars + (tr.spec === 'CONDITIONING' ? PRAC.trCondSpec : 0) + (hasT(tr, 'Physio') ? 1.5 : 0) + PRAC.medCond * (pracLvl('med') - 1) - PRAC.fatigue * fk * (hasT(tr, 'Taskmaster') ? 1.2 : 1) * (load / 100) ** PRAC.fatPow * (age >= 30 ? 1.25 : 1);
+  const cd = PRAC.trCond * tr.stars + (tr.spec === 'CONDITIONING' ? PRAC.trCondSpec : 0) + (hasT(tr, 'Physio') ? 1.5 : 0) + PRAC.medCond * (pracLvl('rec') - 1) - PRAC.fatigue * fk * (hasT(tr, 'Taskmaster') ? 1.2 : 1) * (load / 100) ** PRAC.fatPow * (age >= 30 ? 1.25 : 1);
   return { xp, risk, cd: on ? cd : 0, dev, xm, mentors: ms, mm, bench: isBench, dep, foc: P.focus.includes(s.group) };
 }
 // the unit at a load, per season: upgrades earned (capped by the room each player has), average condition change a week, expected practice injuries
@@ -1504,8 +1602,8 @@ function pracWeek(passed = 1) {
       s.cond = Math.max(0, Math.min(100, condOf(s) + c.cd));
       if (pracInjOn() && !s.inj && Math.random() < c.risk) {
         const sev = rollSev(s);
-        s.inj = { sev, weeks: Math.max(1, rint(...INJURY.weeks[sev])) }; injuryBegin(s);
-        injuryPotential(s, sev);
+        s.inj = { sev, weeks: medWeeks(Math.max(1, rint(...INJURY.weeks[sev]))) }; injuryBegin(s);
+        injuryPotential(s, sev); moraleKeyInjury(s);
         const line = `${s.short} (${SEV_NAME[sev]}): hurt in practice, out ${s.inj.weeks} wk`;
         notes.push(line); hurtNew.push(line);
       }
@@ -1580,14 +1678,14 @@ function pracBattles() {
   return out;
 }
 function pracBuild(n) {   // construction ticks down; a finished one is a level higher
-  for (const [k, F] of Object.entries(prac().fac)) if (F.build && (F.build.left -= n) <= 0) { F.lvl++; F.build = null; PR.done = `${PRAC_FAC[k].name} is now LEVEL ${F.lvl}`; }
+  for (const [k, F] of Object.entries(prac().fac)) if (F.build && (F.build.left -= n) <= 0) { F.lvl++; F.build = null; PR.done = `${PRAC_FAC[k].name} is now LEVEL ${F.lvl}`; (LEAGUE.facNews = LEAGUE.facNews || []).push(`${PRAC_FAC[k].name} LV ${F.lvl} IS OPEN`); }   // (facNews: told once by homeNews)
 }
 // a year goes by (offTick): construction goes on, and young players may gain potential
 function pracOffseason() {
   if (exhibition) return;
   const P = prac(), lines = [];
   pracBuild(PRAC.offWeeks);
-  if (PR.done) { lines.push(PR.done); PR.done = null; }
+  if (PR.done) { lines.push(PR.done); PR.done = null; LEAGUE.facNews = []; }   // (said here: not again on the home screen)
   lines.push(...hireOffseason());
   for (const side of ['off', 'def']) {
     const tr = P.tr[side], ch = PRAC.potChance * (tr.stars / 3) * (tr.spec === 'YOUTH' ? 2 : 1) * (hasT(tr, 'Prospect Whisperer') ? 1.5 : 1) * (1 + 0.1 * (pracLvl('field') - 1));
@@ -1821,10 +1919,10 @@ function wavyLine(x0, y, x1, col, lw = 1.6) {
 // spendWatch (each frame: LEAGUE.coins went down -> the button under the last click); callers that call spendFx themselves set spendSkip.
 const SPEND = { ms: 760, split: 0.3, gap: 40, max: 20, click: 2000 };
 let spendFxs = [], spendClick = null, spendSeen = null, spendLg = null, spendSkip = 0, spendFrame = 0, spendDrawn = -1;
-function spendFx(b, n) {
-  const now = performance.now(), cnt = Math.min(SPEND.max, 3 + n * 2), src = coinTarget();
-  spendSkip = now;
-  spendFxs.push({ b, t0: now, coins: Array.from({ length: cnt }, (_, i) => { const a = Math.random() * Math.PI * 2, d = 40 + Math.random() * 70;
+function spendFx(b, n, xp = false) {   // xp = XP tokens out of the XP box (same show as credits)
+  const now = performance.now(), cnt = Math.min(SPEND.max, 3 + n * 2), src = xp && coinAt && coinAt.xx ? [coinAt.xx, coinAt.y] : coinTarget();
+  if (!xp) spendSkip = now;
+  spendFxs.push({ b, xp, t0: now, coins: Array.from({ length: cnt }, (_, i) => { const a = Math.random() * Math.PI * 2, d = 40 + Math.random() * 70;
     return { t0: now + i * SPEND.gap, sx: src[0], sy: src[1], mx: src[0] + Math.cos(a) * d, my: src[1] + Math.abs(Math.sin(a)) * d * 0.8 + 20, ox: (Math.random() - 0.5) * 30, oy: (Math.random() - 0.5) * 20 }; }) });
 }
 function spendWatch() {   // once a frame (before the menus draw): credits went down since last frame after a click = animate it into what was clicked
@@ -1844,16 +1942,16 @@ function drawSpendFx() {
   const now = performance.now();
   spendFxs = spendFxs.filter(f => now - f.t0 < SPEND.ms + f.coins.length * SPEND.gap + 1000);
   for (const f of spendFxs) {
-    const b = f.b, cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    const b = f.b, cx = b.x + b.w / 2, cy = b.y + b.h / 2, icon = f.xp ? xpIcon : eraserIcon;   // (XP spending: the XP token instead of the credit)
     ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     let last = 0;
     for (const c of f.coins) {
       const k = (now - c.t0) / SPEND.ms; last = Math.max(last, c.t0 + SPEND.ms);
       if (k < 0 || k >= 1) continue;
-      if (k < SPEND.split) { const s = k / SPEND.split, e = s * s * (3 - 2 * s); eraserIcon(c.sx + (c.mx - c.sx) * e, c.sy + (c.my - c.sy) * e, 14, k * 8); continue; }   // split out of the credits box
+      if (k < SPEND.split) { const s = k / SPEND.split, e = s * s * (3 - 2 * s); icon(c.sx + (c.mx - c.sx) * e, c.sy + (c.my - c.sy) * e, 14, k * 8); continue; }   // split out of the credits box
       const q = (k - SPEND.split) / (1 - SPEND.split), e = q * q * (3 - 2 * q), tx = cx + c.ox, ty = cy + c.oy;
       const x = c.mx + (tx - c.mx) * e, y = c.my + (ty - c.my) * e - Math.sin(Math.PI * q) * 50, r = 14 - 5 * e;
-      eraserIcon(x, y, r, -0.5 + q * 6);
+      icon(x, y, r, -0.5 + q * 6);
     }
     const g = 1 - (now - last) / 900;
     if (now >= last - 100 && g > 0) {
@@ -1955,7 +2053,7 @@ const TOUR_BOX = { w: 540 };
 const tvCol = (s, w = 96) => ({ x: TB.x[s] + TB.w - w - 8, y: TB.y + 86, w, h: TB.rows * 42 });
 const tbRows = (s, n) => ({ x: TB.x[s] + 12, y: TB.y + 88, w: TB.w - 24, h: n * 42 - 4 });
 const TR_METER = { x: 140, y: 574, w: 640, h: 14 };
-const TR_HELP_BTN = { x: 130, y: 646, w: 52, h: 52 }, TOUR_Q_BTN = { x: 1204, y: 14, w: 50, h: 50 };
+const TR_HELP_BTN = { x: 130, y: 646, w: 52, h: 52 }, TOUR_Q_BTN = { x: 1204, y: 14, w: 50, h: 50 }, HIRE_Q_BTN = { x: 26, y: 14, w: 50, h: 50 };   // (HIRE_Q_BTN: the staff / hiring board ?, top left; the credits / XP boxes are top right)
 function tourPractice(stage) {   // sets up the demo trade on the builder: 0 = empty, 1 = a lopsided swap, 2 = more added until they would say yes
   const me = season.team;
   const k = TR.partner && TR.partner !== me ? TR.partner : Object.keys(ROSTER).find(t => NFL[t] && t !== me && picksOf(t).length >= 2) || Object.keys(ROSTER).find(t => NFL[t] && t !== me);
@@ -1989,12 +2087,13 @@ const TOUR_STEPS = {
     { scr: 'home', rect: () => STANDINGS_PANEL, text: 'STANDINGS: your division. Click the box to switch to the playoff seeding for your conference.' },
     { scr: 'home', rect: () => AWH_BOX, text: 'WEEKLY AWARDS: the best offensive and defensive player of the week around the league. Click a card to open him.' },
     { scr: 'home', rect: () => HOME_TEAM, text: 'TEAM: your offense and defense star ratings, plus condition and morale. Tired or unhappy players play worse.' },
+    { scr: 'home', rect: () => HOME_COIN, text: 'CREDITS: earned from games, goals and awards. Click the box to flip it to your XP BANK (the spare XP of players at their potential), and click again to flip back.' },
     { scr: 'home', rect: () => [HOME_BTNS[1], HOME_BTNS[2]], text: 'FRONT OFFICE (coaches, free agents, trades) and ROSTER (your players and their upgrades). CONTINUE moves on to the next game.' },
     { scr: 'staff', enter: () => { staffView.sel = null; }, rect: () => STAFF_CARDS[0], text: 'YOU are the HEAD COACH. Your rating and tendencies lift the whole team and grow as you win.' },
     { scr: 'staff', enter: () => { staffView.sel = null; }, rect: () => [STAFF_CARDS[1], STAFF_CARDS[2]], text: 'The OFFENSIVE and DEFENSIVE COORDINATORS (OC / DC). Their stars add to your team ratings, and their tendencies shape play-calling. Click one for details.' },
     { scr: 'staff', hc: true, enter: () => { staffView.sel = 0; }, rect: () => HC_MAIN_BTN, need: () => !!career.hcMain, text: 'PICK YOUR MAIN ABILITY: click the red button to cycle through the abilities until one fits your style. You must choose one to continue (you can change it later).' },
     { scr: 'roster', enter: () => { rosterView.team = null; rosterView.sel = null; rosterView.page = 0; rosterView.side = 'off'; rosterUI.view = 'simple'; rosterReturn = null; }, rect: () => ROSTER_CARDS.slice(0, 4), text: 'ROSTER: your players, best starters first. Each card shows his stars and his tag. Click a player for his ratings, contract, stats and upgrades.' },
-    { scr: 'roster', rect: () => [ROSTER_TABS.off, ROSTER_TABS.def], text: 'The left button switches OFFENSE / DEFENSE; the right one switches the offense between SIMPLE (8 cards a page) and FORMATION view. Tired or hurt players play worse, so check back before each game.' },
+    { scr: 'roster', rect: () => [ROSTER_TABS.off, ROSTER_VIEW_TAB], text: 'The left button switches OFFENSE / DEFENSE; the right one switches the offense between SIMPLE (8 cards a page) and FORMATION view. Tired or hurt players play worse, so check back before each game.' },
     { scr: 'roster', enter: () => { rosterUI.view = 'form'; FVS.team = null; }, rect: () => FV.box, text: 'FORMATION VIEW: your players at their spots in each formation. Drag to move, scroll or pinch to zoom (zoom in for more detail), double-tap to fit. The side arrows flip formations, then the special-teams units.' },
     { scr: 'roster', rect: () => FV.box, text: 'DEPTH CHART: the arrow under a card cycles through who else can play that spot. Press START to make him the starter there (a padlock marks it; tap the padlock to unlock). Every formation shares one chart, and each special-teams unit has its own.' },
     { scr: 'roster', rect: () => [FV_AUTO_BTN, FV.name], text: 'AUTO fills every unlocked spot on this page (or AUTO ALL for the whole chart) with the best fit. Tap the page name to jump to any formation or special-teams unit.' },
@@ -2011,8 +2110,16 @@ const TOUR_STEPS = {
     { scr: 'board', rect: () => ({ x: 660, y: 446, w: 590, h: 170 }), text: 'NEGOTIATE with - and +. Paying above his ask helps, and so does a contract near the length he wants; the payroll line turns red if it breaks your budget.' },
     { scr: 'board', rect: () => ({ x: 670, y: 560, w: 570, h: 56 }), text: 'MAKE OFFER is one roll at the CHANCE shown. If he says no he will not talk again this year, and stars are pickier. Underpay a signed coach and another team may poach him.' },
   ],
+  xp: [   // the XP bank, the first time a player banks spare XP (home screen)
+    { scr: 'home', enter: () => xpcFlip(true), rect: () => HOME_COIN, text: 'XP BANK (the other face of the credits box: click it to flip): a player who has reached his potential can\'t use his XP any more, so after every game his spare XP is banked here instead.' },
+    { scr: 'roster', enter: () => { rosterView.team = null; rosterView.sel = null; rosterView.page = 0; rosterView.side = 'off'; rosterUI.view = 'simple'; rosterReturn = null; }, rect: () => ROSTER_CARDS.slice(0, 4), text: 'Spend it on a player\'s card: BOOST POTENTIAL raises his ceiling, QUICK UPGRADE buys a waiting +1 at once, and a star player can move up a Star Factor tier.' },
+    { scr: 'home', rect: () => HOME_COIN, text: 'It can also TRAIN a coordinator on his FRONT OFFICE page. The tip under the box shows what a click flips it to.' },
+  ],
   prac: [   // FACILITIES (the campus alone)
-    { scr: 'practice', enter: () => { PR.tab = 'fac'; }, rect: () => Object.values(PR_CELLS), text: 'FACILITIES: four buildings (field, weight room, film room, medical), each level 1-5. Click one to see what it does and what an upgrade costs.' },
+    { scr: 'practice', enter: () => { PR.tab = 'fac'; }, rect: () => Object.values(PR_CELLS), text: 'FACILITIES: six buildings (field, weight room, film room, medical, recovery, lounge). Click one to see what it does and what an upgrade costs.' },
+    { scr: 'practice', enter: () => { PR.tab = 'fac'; PR.sel = 'med'; }, rect: () => [PR_CELLS.med, PR_SIDE], text: 'Medical / Rehab: shorter injuries, fewer of them, and your injury report.' },
+    { scr: 'practice', enter: () => { PR.tab = 'fac'; PR.sel = 'rec'; }, rect: () => [PR_CELLS.rec], text: 'Recovery Center: tired players get their legs back faster, in games and between them.' },
+    { scr: 'practice', enter: () => { PR.tab = 'fac'; PR.sel = 'lounge'; }, rect: () => [PR_CELLS.lounge, PR_SIDE], text: 'Player Lounge: lifts team morale. Morale gives a small edge on catches and fumbles.' },
     { scr: 'practice', enter: () => { PR.tab = 'fac'; }, rect: () => [{ x: 30, y: 492, w: 618, h: 120 }, PR_UP], text: 'The panel under the campus says what the building does and what the next level costs. UPGRADE spends credits, and upgrades take weeks to build (the crane shows it is going up).' },
   ],
   pracWeek: [
@@ -2073,26 +2180,35 @@ function facUnlockWatch() {
   if (!facOn() || results.screen !== 'home' || (career.tut || {}).facSeen) return;
   if (!career.tut) career.tut = {};
   career.tut.facSeen = true; autosaveSoon();
-  offPopShow({ title: 'NEW: FACILITIES & PRACTICE', lines: wrapLines('Your first offseason is done, so your staff has opened the FACILITIES and PRACTICE buttons on the home screen. Upgrade your buildings and set how hard each unit trains. Your first visit comes with a quick tutorial.', 52), btns: [{ label: 'OK', green: true, on: () => { facFlashAt = performance.now(); } }] });
+  offPopShow({ title: 'NEW: FACILITIES', lines: wrapLines('Your first offseason is done, so your staff has opened the FACILITIES button on the home screen. Upgrade your buildings there. Your first visit comes with a quick tutorial.', 52), btns: [{ label: 'OK', green: true, on: () => { facFlashAt = performance.now(); } }] });
+}
+function pracUnlockWatch() {   // PRACTICE opens a little later than FACILITIES (PRAC_FROM): said once
+  const t = career.tut || (career.tut = {});
+  if (t.pracSeen || results.screen !== 'home' || !pracShown()) return;
+  t.pracSeen = true; autosaveSoon();
+  if (!t.pracAll) offPopShow({ title: 'NEW: PRACTICE', lines: wrapLines('Your staff has opened the PRACTICE button on the home screen: set how hard each unit trains during the week. Your first visit comes with a quick tutorial.', 52), btns: [{ label: 'OK', green: true }] });
 }
 function tourWatch() {   // the first time a tutorial's screen is open in this franchise
   if (tour || !results || !season || exhibition || teamPick || offPop || tutPrompt) return;
   facUnlockWatch();
   if (offPop) return;
+  pracUnlockWatch();
+  if (offPop) return;
   const t = career.tut || {};
+  if (!t.xp && results.screen === 'home' && xpcOn() && xpBank() >= 1 && !coinFly.length) { tourStart('xp'); return; }   // (the first XP in the bank: what it is and where it is spent)
   if (!t.pracAll && results.screen === 'practice' && PR.tab !== 'fac') tourStart('pracAll');
   else if (!t.prac && results.screen === 'practice' && PR.tab === 'fac') tourStart('prac');
   else if (!t.trade && !TR.awSel && (results.screen === 'trade' || results.screen === 'tradeb')) tourStart('trade');   // (not when a weekly-award card opened the trade page)
   else if (!t.hire && (results.screen === 'hire' || results.screen === 'board')) tourStart('hire');
 }
-const PRAC_Q_BTN = { get x() { return PR.tab === 'fac' ? 26 : 170; }, y: 14, w: 50, h: 50 };   // (top left of the facilities screen, beside the credits box)
+const PRAC_Q_BTN = { x: 26, y: 14, w: 50, h: 50 };   // (top left: the credits / XP boxes are top right on every page)
 function tourQDraw() {   // the "?" button that replays the tutorial of the screen you are on
-  const b = results.screen === 'trade' && !TR.sel ? TR_HELP_BTN : results.screen === 'practice' && !tour ? PRAC_Q_BTN : results.screen === 'tradeb' || results.screen === 'hire' || results.screen === 'board' ? TOUR_Q_BTN : null;
+  const b = results.screen === 'trade' && !TR.sel ? TR_HELP_BTN : results.screen === 'practice' && !tour ? PRAC_Q_BTN : results.screen === 'tradeb' ? TOUR_Q_BTN : results.screen === 'hire' || results.screen === 'board' ? HIRE_Q_BTN : null;
   if (b) menuBtn(b, '?', RES.bright, 30);
 }
 function tourQClick(pt) {   // true when the "?" was hit
   const scr = results.screen, id = scr === 'trade' && !TR.sel ? 'trade' : scr === 'tradeb' ? 'trade' : scr === 'hire' || scr === 'board' ? 'hire' : scr === 'practice' ? ({ fac: 'prac', week: 'pracWeek', plan: 'pracPlan', groups: 'pracGroups', battles: 'pracBattles' }[PR.tab] || 'pracWeek') : null;
-  if (!id || !inBtn(pt, id === 'trade' && scr === 'trade' ? TR_HELP_BTN : id.startsWith('prac') ? PRAC_Q_BTN : TOUR_Q_BTN)) return false;
+  if (!id || !inBtn(pt, id === 'trade' && scr === 'trade' ? TR_HELP_BTN : id.startsWith('prac') ? PRAC_Q_BTN : id === 'hire' ? HIRE_Q_BTN : TOUR_Q_BTN)) return false;
   tourStart(id, true); return true;
 }
 function drawTour() {
@@ -2161,11 +2277,16 @@ function drawTradeMeter(k) {
 
 // the screen: a top-down campus (left) beside the dashboard (right)
 const PR = { draft: null, sel: 'field', drag: null, msg: null, done: null, tab: 'week' };
-const pracShown = () => !!season && !exhibition && !tut;   // (franchise only: no PRACTICE button in exhibitions or the tutorial)
+// PRACTICE is introduced after FACILITIES: from week PRAC_FROM.week of season PRAC_FROM.year (a franchise that already opened practice keeps it)
+const PRAC_FROM = { year: 2, week: 2 };
+const pracOpenYet = () => { const y = LEAGUE.year || 1, t = career.tut || {}; return y > PRAC_FROM.year || (y === PRAC_FROM.year && !!season && (season.offseason || season.week >= PRAC_FROM.week)) || !!t.pracAll || !!t.pracSeen; };
+const pracShown = () => !!season && !exhibition && !tut && pracOpenYet();   // (franchise only: no PRACTICE button in exhibitions or the tutorial)
 const PR_TABS = [['week', 'THIS WEEK'], ['plan', 'TRAINING PLAN'], ['groups', 'GROUPS'], ['battles', 'BATTLES']];   // (FACILITIES is not a tab: its home button opens the campus alone, tab 'fac')
 const PR_TAB_BTNS = PR_TABS.map((t, i) => ({ k: t[0], x: 240 + i * 250, y: 14, w: 240, h: 50 }));
 const PR_FOCUS_BTNS = PRAC_GROUPS.map((g, i) => ({ g, x: 50, y: 138 + i * 50, w: 120, h: 40 }));
-const PR_CELLS = { field: { x: 30, y: 90, w: 315, h: 190 }, weight: { x: 355, y: 90, w: 305, h: 190 }, film: { x: 30, y: 290, w: 315, h: 180 }, med: { x: 355, y: 290, w: 305, h: 180 } };
+const PR_CELLS = { field: { x: 30, y: 90, w: 206, h: 190 }, weight: { x: 242, y: 90, w: 206, h: 190 }, film: { x: 454, y: 90, w: 206, h: 190 }, med: { x: 30, y: 290, w: 206, h: 180 }, rec: { x: 242, y: 290, w: 206, h: 180 }, lounge: { x: 454, y: 290, w: 206, h: 180 } };   // the campus: 3 x 2
+const PR_TILE = { w: 310, h: 190, k: 0.7, top: 4, tagH: 44, paths: [239, 451] };   // the buildings are drawn for a w x h cell and scaled by k into the smaller ones; tagH = the two-line name tag; paths = the vertical paths' x
+const PR_SIDE = { x: 690, y: 86, w: 560, h: 392 };   // the panel beside the campus (injury report / team morale)
 const PR_CARD = { off: { x: 690, y: 90, w: 560, h: 196 }, def: { x: 690, y: 300, w: 560, h: 196 } };
 const PR_STAFF = { x: 130, y: 625, w: 250, h: 80 };
 const PR_UP = { x: 500, y: 520, w: 140, h: 76 }, PR_OK = { x: 690, y: 524, w: 560, h: 76 }, PR_REP = { off: { x: 1100, y: 108, w: 138, h: 34 }, def: { x: 1100, y: 318, w: 138, h: 34 } };
@@ -2244,6 +2365,64 @@ function pracDrawMed(c, l, t) {
   if (l >= 3) { pBox(x, y + h + 12, 58, 26, '#e8ecef'); ctx.fillStyle = '#d93a3a'; ctx.fillRect(x + 8, y + h + 20, 30, 12); ctx.fillStyle = '#fff'; ctx.fillRect(x + 14, y + h + 22, 8, 8); ctx.fillStyle = '#333'; ctx.beginPath(); ctx.arc(x + 14, y + h + 33, 3, 0, 7); ctx.arc(x + 34, y + h + 33, 3, 0, 7); ctx.fill(); }   // ambulance bay
   if (l >= 4) { const px = x + w + 46, py = y + 14; pBox(px, py, 50, 46, '#8ecbe8'); ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 1.5; for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(px + 12 + i * 13 + 2 * Math.sin(t * 2 + i), py + 14 + i * 8, 4, 0, 6.3); ctx.stroke(); } }   // rehab pool
   if (l >= 5) { const hx = x + w - 28, hy = y + h + 36; ctx.fillStyle = '#556'; ctx.beginPath(); ctx.arc(hx, hy, 26, 0, 7); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.stroke(); ctx.fillStyle = '#fff'; ctx.font = 'bold 28px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('H', hx, hy + 1); }   // helipad
+}
+function pracDrawRec(c, l, t) {   // recovery center: ice tubs with wavy water (one more per level, to 3), then a wing and a cold-air unit
+  const w = [84, 108, 130, 150, 170][l - 1], h = [56, 64, 72, 78, 84][l - 1], x = c.x + (c.w - w) / 2 - (l >= 4 ? 24 : 0), y = c.y + 28;
+  pBox(x, y, w, h, '#bfe3e0'); ctx.fillStyle = '#9fcfcb'; ctx.fillRect(x + 5, y + 5, w - 10, 7);
+  const n = Math.min(3, l), tw = Math.min(40, (w - 16) / n - 6);
+  for (let i = 0; i < n; i++) {
+    const tx = x + 10 + i * (tw + 6), ty = y + 20, th = h - 30;
+    ctx.fillStyle = '#6fb6e0'; ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(tx, ty, tw, th, 7); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = RES.bright; ctx.lineWidth = 1.5;
+    for (let r = 0; r < 2; r++) { const wy = ty + th * (0.35 + 0.3 * r); ctx.beginPath(); for (let a = 0; a <= 8; a++) { const px = tx + 5 + (tw - 10) * a / 8, py = wy + 2.5 * Math.sin(a * 1.6 + t * 2.4 + i + r * 2); if (a) ctx.lineTo(px, py); else ctx.moveTo(px, py); } ctx.stroke(); }
+    ctx.fillStyle = RES.bright; ctx.fillRect(tx + tw - 13, ty + 5, 6, 6); ctx.fillRect(tx + 6, ty + th - 12, 5, 5);   // ice cubes
+  }
+  if (l >= 2) pBox(x + w + 6, y + 16, 32, h - 28, '#d2ebe8');
+  if (l >= 4) { const px = x + w + 44, py = y + 12; pBox(px, py, 46, 50, '#a8d6e6'); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(px + 8, py + 12 + i * 13); ctx.lineTo(px + 38, py + 12 + i * 13); ctx.stroke(); } }   // cold room
+  if (l >= 5) { const fx = x + 22, fy = y + h + 30; ctx.fillStyle = '#7b8794'; ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(fx, fy, 18, 0, 7); ctx.fill(); ctx.stroke(); ctx.strokeStyle = RES.bright; ctx.lineWidth = 3; for (let i = 0; i < 3; i++) { const a = t * 3 + i * 2.094; ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(fx + 14 * Math.cos(a), fy + 14 * Math.sin(a)); ctx.stroke(); } }   // chiller fan
+}
+function pracDrawLounge(c, l, t) {   // player lounge: a couch facing a TV (seen through the roof), then more seats, a games patio and a sign
+  const w = [86, 110, 132, 152, 172][l - 1], h = [58, 66, 74, 80, 86][l - 1], x = c.x + (c.w - w) / 2 - (l >= 4 ? 26 : 0), y = c.y + 28;
+  pBox(x, y, w, h, '#d9a66e'); ctx.fillStyle = '#bd8950'; ctx.fillRect(x + 5, y + 5, w - 10, 7);
+  const couch = (cx, cy, cw) => { ctx.fillStyle = '#7a4a9c'; ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(cx, cy, cw, 20, 5); ctx.fill(); ctx.stroke(); ctx.fillStyle = '#5d3580'; ctx.beginPath(); ctx.roundRect(cx, cy + 12, cw, 9, 4); ctx.fill(); ctx.stroke(); ctx.fillRect(cx - 3, cy + 3, 6, 17); ctx.fillRect(cx + cw - 3, cy + 3, 6, 17); };
+  const tvW = l >= 2 ? 44 : 30, tvX = x + (w - tvW) / 2, tvY = y + 17;
+  ctx.fillStyle = '#23262e'; ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.fillRect(tvX, tvY, tvW, 14); ctx.strokeRect(tvX, tvY, tvW, 14);
+  ctx.fillStyle = ['#7fd0ff', '#ffe08a', '#9df0a8'][Math.floor(t * 1.5) % 3]; ctx.fillRect(tvX + 3, tvY + 3, tvW - 6, 8);   // the screen flickers
+  couch(x + (w - (l >= 3 ? 40 : 52)) / 2 - (l >= 3 ? 26 : 0), y + h - 26, l >= 3 ? 40 : 52);
+  if (l >= 3) couch(x + w / 2 + 6, y + h - 26, 40);
+  if (l >= 2) pBox(x + w + 6, y + 16, 30, h - 30, '#e6c08f');
+  if (l >= 4) { const px = x + w + 42, py = y + 14; ctx.fillStyle = '#c9b48a'; ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.fillRect(px, py, 54, 54); ctx.strokeRect(px, py, 54, 54); ctx.fillStyle = '#2f8a4e'; ctx.fillRect(px + 8, py + 14, 38, 24); ctx.strokeRect(px + 8, py + 14, 38, 24); ctx.strokeStyle = RES.bright; ctx.beginPath(); ctx.moveTo(px + 27, py + 12); ctx.lineTo(px + 27, py + 40); ctx.stroke(); }   // games patio: table tennis
+  if (l >= 5) { ctx.fillStyle = Math.sin(t * 4) > -0.3 ? '#ff5fa2' : '#8a3358'; ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(x + 8, y + h + 16, 70, 18, 6); ctx.fill(); ctx.stroke(); }   // neon sign
+}
+// the panel beside the campus: Medical = the injury report, Player Lounge = team morale, Recovery Center = team condition
+function pracSidePanel(k) {
+  const S = PR_SIDE, x = S.x + 24, r = S.x + S.w - 24;
+  if (k !== 'med' && k !== 'lounge' && k !== 'rec') return;
+  resPanel(S.x, S.y, S.w, S.h, [[k === 'med' ? 'INJURY REPORT' : k === 'lounge' ? 'TEAM MORALE' : 'TEAM CONDITION', 24]], RES.bright);
+  ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace';
+  if (k === 'med') {
+    const hurt = (ROSTER[MATCH.you] || []).filter(s => s.inj && s.inj.weeks > 0 && SETTINGS.injuries).sort((a, b) => b.stars - a.stars).slice(0, FAC_FX.report.rows), exact = facLvl('med') >= FAC_FX.report.exact;
+    if (!hurt.length) { ctx.textAlign = 'center'; ctx.font = 'bold 24px monospace'; ctx.fillStyle = MORALE.gain; ctx.fillText('ALL HEALTHY', S.x + S.w / 2, S.y + S.h / 2); }
+    hurt.forEach((s, i) => {
+      const y = S.y + 78 + i * 56, w = s.inj.weeks;
+      ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.fillText(s.name, x, y, 280); ctx.fillStyle = RES.dim; ctx.fillText(s.group, x + 296, y);
+      ctx.textAlign = 'right'; ctx.fillStyle = SEV_COLOR[s.inj.sev]; ctx.fillText(exact ? `${w} GAME${w > 1 ? 'S' : ''}` : `${Math.max(1, w - 1)}-${w + 1} GAMES`, r, y);
+    });
+    ctx.textAlign = 'left'; ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.fillText(exact ? 'Returns are exact.' : `Returns are a range until MEDICAL reaches LV ${FAC_FX.report.exact + 1}.`, x, S.y + S.h - 24);
+  } else if (k === 'lounge') {
+    const m = LEAGUE.morale == null ? MORALE.neutral : LEAGUE.morale;
+    ctx.font = 'bold 44px monospace'; ctx.fillText(`${m}`, x, S.y + 96); ctx.font = 'bold 20px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(moraleTier(m), x + 96, S.y + 100); drawFace(r - 22, S.y + 96, 20, '#ffd23a', m);
+    moraleGauge(x, S.y + 140, S.w - 48, 34, m);
+    ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.fillText('0', x, S.y + 192); ctx.textAlign = 'right'; ctx.fillText('100', r, S.y + 192);
+    ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = '16px monospace';
+    wrapLines(`The tick is the resting point (${moraleBase()}): morale drifts back to it every week, faster from below with a better lounge. Wins, streaks and titles lift it; losses, blowouts, a key injury or losing a star sink it.`, 50).forEach((ln, i) => ctx.fillText(ln, x, S.y + 232 + i * 24));
+  } else {
+    const cnd = LEAGUE.condition == null ? 100 : LEAGUE.condition;
+    ctx.font = 'bold 44px monospace'; ctx.fillText(`${Math.round(cnd)}%`, x, S.y + 96);
+    pencilBar(x, S.y + 140, S.w - 48, 34, cnd / 100, condTone(cnd), 20, 5);
+    ctx.fillStyle = RES.line; ctx.font = '16px monospace';
+    wrapLines('Each level: tired players get their legs back faster on the sideline, a game costs less condition, practice restores more, and long runs fade less in the 4th quarter and overtime.', 50).forEach((ln, i) => ctx.fillText(ln, x, S.y + 216 + i * 24));
+  }
 }
 function pracConstruction(c, F, t) {   // hatching and a swinging crane over a building going up
   ctx.save(); ctx.beginPath(); ctx.rect(c.x + 10, c.y + 14, c.w - 20, c.h - 54); ctx.clip();
@@ -2370,28 +2549,31 @@ function drawPracFac(plan) {   // plan = the TRAINING PLAN tab (load sliders, tr
   if (!plan) {   // the campus
   ctx.fillStyle = RES.line; ctx.font = 'bold 40px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('FACILITIES', W / 2, 44);
   ctx.fillStyle = '#9bc277'; ctx.strokeStyle = RES.line; ctx.lineWidth = 3; ctx.beginPath(); ctx.roundRect(26, 86, 638, 392, 8); ctx.fill(); ctx.stroke();
-  ctx.strokeStyle = 'rgba(235,225,190,0.9)'; ctx.lineWidth = 12; ctx.beginPath(); ctx.moveTo(350, 90); ctx.lineTo(350, 474); ctx.moveTo(30, 284); ctx.lineTo(660, 284); ctx.stroke();   // paths
-  const draw = { field: pracDrawField, weight: pracDrawWeight, film: pracDrawFilm, med: pracDrawMed };
+  ctx.strokeStyle = 'rgba(235,225,190,0.9)'; ctx.lineWidth = 6; ctx.beginPath(); for (const px of PR_TILE.paths) { ctx.moveTo(px, 90); ctx.lineTo(px, 474); } ctx.moveTo(30, 284); ctx.lineTo(660, 284); ctx.stroke();   // paths
+  const draw = { field: pracDrawField, weight: pracDrawWeight, film: pracDrawFilm, med: pracDrawMed, rec: pracDrawRec, lounge: pracDrawLounge };
   for (const [k, c] of Object.entries(PR_CELLS)) {
     const F = P.fac[k];
     ctx.save(); ctx.beginPath(); ctx.rect(c.x + 4, c.y + 2, c.w - 8, c.h - 4); ctx.clip();
-    draw[k](c, Math.min(5, F.lvl), t);
+    ctx.save(); ctx.translate(c.x + c.w / 2, c.y + PR_TILE.top); ctx.scale(PR_TILE.k, PR_TILE.k);
+    draw[k]({ x: -PR_TILE.w / 2, y: 0, w: PR_TILE.w, h: PR_TILE.h }, Math.min(5, F.lvl), t);
+    ctx.restore();
     for (let i = 5; i < F.lvl; i++) drawStar(c.x + c.w - 22 - (i - 5) * 26, c.y + 20, 11, '#ffd23f', '#8a5a00', 2);   // (levels 6-7: gold stars)
     if (F.build) pracConstruction(c, F, t);
     ctx.restore();
     if (PR.sel === k) { ctx.strokeStyle = '#e8b61c'; ctx.lineWidth = 4; ctx.setLineDash([10, 6]); ctx.strokeRect(c.x + 4, c.y + 2, c.w - 8, c.h - 4); ctx.setLineDash([]); }
     // name tag
-    const tag = `${PRAC_FAC[k].name}  LV ${F.lvl}${F.build ? ` > ${F.lvl + 1}` : ''}`;
-    ctx.font = 'bold 15px monospace'; const tw = ctx.measureText(tag).width + 20, tx = c.x + 12, ty = c.y + c.h - 30;
-    ctx.fillStyle = '#fffdf4'; ctx.fillRect(tx, ty, tw, 22); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.strokeRect(tx, ty, tw, 22);
-    ctx.fillStyle = RES.line; ctx.textAlign = 'left'; ctx.fillText(tag, tx + 10, ty + 12);
-    if (F.build) { const fr = 1 - F.build.left / F.build.total; ctx.fillStyle = '#fffdf4'; ctx.fillRect(tx + tw + 6, ty + 4, 40, 14); ctx.fillStyle = '#f0a014'; ctx.fillRect(tx + tw + 6, ty + 4, 40 * fr, 14); ctx.strokeRect(tx + tw + 6, ty + 4, 40, 14); ctx.fillStyle = RES.line; ctx.font = 'bold 12px monospace'; ctx.fillText(`${F.build.left}W`, tx + tw + 50, ty + 12); }
+    const tw = c.w - 20, tx = c.x + 10, th = PR_TILE.tagH, ty = c.y + c.h - th - 6;   // (two lines: the name, then the level and the build's weeks left)
+    ctx.fillStyle = RES.bright; ctx.fillRect(tx, ty, tw, th); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.strokeRect(tx, ty, tw, th);
+    ctx.fillStyle = RES.line; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(PRAC_FAC[k].name, tx + 8, ty + 12, tw - 16); ctx.fillText(`LV ${F.lvl}${F.build ? ` > ${F.lvl + 1}` : ''}`, tx + 8, ty + 31);
+    if (F.build) { const fr = 1 - F.build.left / F.build.total, bx = tx + 78; ctx.fillStyle = RES.bright; ctx.fillRect(bx, ty + 24, 30, 14); ctx.fillStyle = '#f0a014'; ctx.fillRect(bx, ty + 24, 30 * fr, 14); ctx.strokeRect(bx, ty + 24, 30, 14); ctx.fillStyle = RES.line; ctx.fillText(`${F.build.left}W LEFT`, bx + 36, ty + 31); }
   }
+  pracSidePanel(PR.sel);
   // the selected facility
   { const k = PR.sel, F = P.fac[k], D = PRAC_FAC[k], cost = D.cost[F.lvl - 1];
     resPanel(30, 492, 618, 120, [[`${D.name}  LEVEL ${F.lvl} OF ${FAC_MAX}`, 24]], RES.bright);
     ctx.fillStyle = RES.line; ctx.font = '15px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    wrapLines(D.text, 46).slice(0, 2).forEach((ln, i) => ctx.fillText(ln, 48, 526 + i * 20));
+    wrapLines(D.text, 40).slice(0, 2).forEach((ln, i) => ctx.fillText(ln, 48, 526 + i * 20));
     ctx.fillStyle = RES.dim; ctx.fillText(F.build ? `UNDER CONSTRUCTION: ${F.build.left} of ${F.build.total} weeks to go` : F.lvl >= FAC_MAX ? 'FULLY UPGRADED' : `NEXT LEVEL: ${cost} ¤, ${D.wks[F.lvl - 1]} weeks to build`, 48, 574);
     const can = !F.build && F.lvl < FAC_MAX && LEAGUE.coins >= cost;
     const free = !F.build && F.lvl < FAC_MAX;
@@ -2936,6 +3118,17 @@ function matchFixed(m, sn = season) {
   else f.you = sn.team;
   return f;
 }
+// A franchise's numbers live in two shared objects (LEAGUE, career). Both are wiped to a clean slate before a new career starts and before a
+// slot loads, so nothing a save doesn't hold (bought cap room / roster spots, cap hits, the XP bank, coach XP and stars, practice, goals,
+// seen-once tips...) can leak in from the franchise that was open before. CAREER_KEEP = your coach's identity + the tutorials already seen.
+const LEAGUE_NEW = () => ({ year: 1, fans: 0.4, morale: 55, coins: 15, injNotes: [], approval: 0.5, streak: 0, lastPay: null, capHit: {}, carry: [], picks: {}, awards: [], awardNews: [], tradeNews: [], upgNew: [],
+  depth: null, xp: {}, post: null, fo: null, rb: null, lean: null });
+function leagueReset() {
+  for (const [k, d] of Object.entries(Object.getOwnPropertyDescriptors(LEAGUE))) if ('value' in d) delete LEAGUE[k];   // (the getters stay)
+  Object.assign(LEAGUE, LEAGUE_NEW());
+}
+const CAREER_KEEP = ['first', 'last', 'face', 'team', 'fav', 'back', 'focus', 'roll', 'sel', 'dd', 'nameErr', 'sig', 'react'];
+function careerReset() { for (const k of Object.keys(career)) if (!CAREER_KEEP.includes(k)) delete career[k]; career.tut = career.tut || {}; }
 function buildSave() {
   syncPre();
   const stars = {}, mt = matchFixed({ ...MATCH });
@@ -3333,7 +3526,7 @@ function loadFromSlot(i) {
     const src = own ? d.world.settings : SETTINGS_DEF;
     for (const k of Object.keys(SETTINGS_DEF)) if (k !== 'difficulty' && k !== 'hitboxes' && !GLOBAL_SET.includes(k) && k in src) SETTINGS[k] = JSON.parse(JSON.stringify(src[k]));
     setScope = true; }   // (the frame check must not swap the defaults back in while this load finishes)   // (the save keeps its difficulty until it's changed again)
-  Object.assign(MATCH, d.match); if (d.season) Object.assign(MATCH, matchFixed({ ...MATCH }, d.season)); Object.assign(career, d.career); Object.assign(LEAGUE, { picks: {}, awards: [], awardNews: [], tradeNews: [], upgNew: [], depth: null, post: null, fo: null, rb: null, lean: null }, d.league);
+  Object.assign(MATCH, d.match); if (d.season) Object.assign(MATCH, matchFixed({ ...MATCH }, d.season)); careerReset(); Object.assign(career, d.career); career.tut = career.tut || {}; leagueReset(); Object.assign(LEAGUE, d.league);   // (wiped first: what this save doesn't hold must not stay from the franchise open before it)
   season = d.season; exhibition = null; teamPick = null; tutPrompt = null;
   if (d.world) {   // (a save from before the full save only brings back the franchise numbers and your stars)
     const w = d.world, fill = (to, from) => { for (const k of Object.keys(to)) delete to[k]; Object.assign(to, from); };

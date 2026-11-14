@@ -5,7 +5,7 @@
 const RUN_DROP = { time: 0.3, depth: 1.0 * YL, gun: 0.3 * YL };   // s the drop takes; how far back under center / in the gun
 function runDrop(dt) {
   const px = qb.x, py = qb.y, p = Math.min(1, clock / RUN_DROP.time), from = qbDepth;
-  qb.x = los - from - (shotgun ? RUN_DROP.gun : RUN_DROP.depth) * p;
+  qb.x = los - from - (shotgun ? RUN_DROP.gun : Math.max(0, UC_OLD + RUN_DROP.depth - from)) * p;   // (under center: measured from the line, so it ends where it always did wherever he lines up)
   qb.face = 1; setVelocity(qb, px, py, dt);
 }
 function updateQB(dt) {
@@ -731,7 +731,7 @@ function updateReceiver(r, dt) {
 
 function updateCarrier(c, top, dt) {
   // run play: the back hasn't got it yet; he takes the handoff at the mesh or catches the pitch
-  if (c.awaiting) return updateMesh(c, dt);
+  if (c.awaiting) return updateMesh(c, dt, top);
   // held keys: stiff arm (Q), truck (C), sprint (A), protect the ball (G: no stiff arm / truck)
   // (a screen catcher set up to throw has the QB's pocket controls: no truck, no sprint)
   const setUp = passerMode && c === passer;
@@ -780,7 +780,9 @@ function updateCarrier(c, top, dt) {
   if (c.guard) cap *= PROTECT.slow;
   if (clock < (c.boostUntil ?? -9)) cap *= POWER_BOOST.speed;   // fresh off a won stiff arm / truck
   // on a run, hitting the hole too early means the blocks haven't had time to set up
-  if (isRunPlay && c === rb && c.sprint && clock - runStart < 0.7 && !impatient) {
+  const pinWait = rbpLive() && rbp.play === 'pinPull' && c === rb && !!rbp.pp && !rbp.pp.read;   // pin & pull, before the read: the pullers need the time
+  cap *= rbpPinK(c, dt);   // (on his play art before the read: patience speed, behind puller 1's outside hip; eased, never a snap)
+  if (isRunPlay && c === rb && c.sprint && clock - runStart < (pinWait ? RBP.pin.patience : 0.7) && !impatient) {
     impatient = true;
     for (const r of dl) r.shedAt -= 0.6;
   }
@@ -889,98 +891,247 @@ function findHole(c, dir) {
   return best;
 }
 
-// The handoff or pitch on a run play.
-// the exchange waits for the snap to reach the QB (he snaps it to himself, then hands it off or pitches it); a pitch always goes back or
-// sideways, caught behind the QB and the line (the back never gets past him before it's out)
-const RUN_MESH = { after: 0.1, aheadQB: 2, behindLos: 1.0,   // s after the snap lands; most yd ahead of the QB / least behind the line a pitch is caught (the handoff spot stays behind it too)
-  side: 0.6, reach: 1.0, qbStep: 4.5,    // handoff: the QB hands it off from side yd beside the back's path, once the two are within reach yd; yd/s he steps to that spot
-  start: 4.5, accel: 12, speed: 7.5,     // the back's burst down his path before he has it: first-step yd/s, yd/s^2, top yd/s
-  creep: 1.5, gather: 1.0, lead: 0.1,    // too early for the ball / the QB: he jab-steps at creep yd/s and holds gather yd short of the mesh (room to burst through it); he goes lead s before he has to
-  keep: 1, take: 5, late: 1 };           // out of the exchange he keeps x that speed (never under take yd/s); held up late s with no QB beside him: he goes to the QB's hip instead
-let meshSt = null;   // this handoff's working state (per play, never on the players): v = the back's speed to the mesh, wait = s he's been held up, sx / sy = the QB's hand-off spot
-const meshState = () => meshSt && meshSt.pid === runPid ? meshSt : (meshSt = { pid: runPid, v: 0, wait: 0, sx: null, sy: null });
+// The handoff or pitch on a run play: in stride. The QB and the ball go to the back; the back never slows, stops, waits or turns back for it.
+// Handoff: at the snap the mesh is worked out from the back's path and build-up (meshPlan): the first spot on his path the QB's footwork (EXCH_QB) can have the
+// ball at as he goes by. If there is none (the shotgun: the snap is still in the air when he passes) the mesh is where his path passes the QB and his FIRST STEPS
+// are shorter: one smooth build-up from the snap, set once and never touched again, so he is still accelerating through it. If even that can't work (he runs
+// away from the QB) it is pitched. Pitch: thrown to where he will be (his velocity x the flight time), chest high, out in front of him.
+// Only a QB who can't move (hit, the tutorial's still steps) or a missing play art falls back to the old "come to his hip"; a draw's pass set is the play itself.
+const RUN_MESH = { after: 0.04, behindLos: 1.0, aheadQB: 2,   // s after the snap lands before it can change hands; least yd behind the line it does; a pitch is out before he is this far ahead of the QB
+  side: 0.6, reach: 1.15, far: 3,        // handoff: the QB's spot is side yd beside the back's path; it changes hands within reach yd; the ball starts going out to him far yd away
+  start: 4.5, accel: 12, speed: 7.5,     // the back's build-up down his path before he has it: first-step yd/s, yd/s^2, top yd/s
+  slow: 0.5, lead: 0.03, minD: 0.8,      // a mesh that comes too soon for the ball: his first step is no faster than slow x the even speed to it; the ball is there lead s early; a mesh under minD yd down his path = a pitch instead
+  snapWin: 0.12,                         // a handoff called within this many s of the snap is timed from the snap; later = out of a pass set (the draw: he waits in his set)
+  wrap: 0.35, low: 0.6,                  // s both arms stay over the ball after the take (two steps; low = the goal-line take), then the outside arm (ballArm)
+  toss: [3.5, 8], gun: [1.5, 6] };       // a pitch: the back's first-step yd/s and yd/s^2 under center / in the shotgun or pistol (an open step and a crossover: the pitch meets him a few yards from the QB, not across the field)
+// pitches: speed = the ball's yd/s (soft, catchable), tMin / tMax = flight s, arc = sprite units of loft, wind = s of wind-up before it leaves, thru = s the hands follow through,
+// late = a pitch called after the snap window leaves this many s later; chest / front = where it meets him (sprite units up from the belt / ahead of him); swing = sprite units the wind-up draws the ball back
+const PITCH = { speed: 12, tMin: 0.2, tMax: 0.42, arc: 5, wind: 0.16, thru: 0.32, late: 0.15, chest: 6, front: 5, swing: 3.5, hold: 0.2 };   // hold = s both hands stay on it after the catch
+// one row per run: [QB under center, QB in the shotgun, QB in the pistol, the back's take]. The GOAL LINE formation's handoffs are all 'low' / 'lowTake'.
+// (closest matches: duo = the inside-run exchange (iso); trap = the reverse pivot with power / counter; shotgun inside zone = the ride; a pitch from the gun or
+//  pistol - pin & pull, a toss called there, an old-style outside run, a swing - = the flip; under center = the toss)
+const EXCH = {
+  insideZone: ['open', 'gun', 'pistol', 'pocket'], zoneRead: ['open', 'ride', 'ride', 'pocket'], duo: ['open', 'gun', 'pistol', 'pocket'], goalLine: ['low', 'low', 'low', 'lowTake'],
+  power: ['reverse', 'gun', 'pistol', 'jab'], counter: ['reverse', 'gun', 'pistol', 'jab'], trap: ['reverse', 'gun', 'pistol', 'jab'],
+  outsideZone: ['stretch', 'gun', 'pistol', 'open'], sweep: ['toss', 'flip', 'flip', 'pitch'], pinPull: ['toss', 'flip', 'flip', 'pitch'], draw: ['draw', 'draw', 'draw', 'set'] };
+// the QB's moves. v = footwork yd/s to the mesh, range = most yd he goes to meet the back, deep = yd behind his usual hand-off depth (reverse pivot: a deep handoff),
+// turn = s with his back to the line, ext = how far the ball is held out (sprite units), y = hand height (sprite units below the belt), ride = s his hands stay on it in the back's belly
+const EXCH_QB = {
+  open:    { v: 4.5, range: 2,   deep: 0,    turn: 0,    ext: 8, y: 1 },     // inside run under center: opens to the play side, steps back at an angle, ball out belt-high in both hands
+  reverse: { v: 5,   range: 2.5, deep: 0.6,  turn: 0.32, ext: 8, y: 1 },     // power / counter / trap: back to the line, a deep handoff
+  stretch: { v: 6.5, range: 4,   deep: 0.3,  turn: 0,    ext: 9, y: 0.5 },   // stretch: opens and runs flat to the mesh with the ball reached out
+  gun:     { v: 4,   range: 1.5, deep: 0,    turn: 0,    ext: 8, y: 1 },     // shotgun: catch, one pivot step, held out as the back crosses his face
+  ride:    { v: 4,   range: 1.5, deep: 0,    turn: 0,    ext: 8, y: 1, ride: 0.12 },   // zone read: rides it in the back's belly, eyes on the read key
+  pistol:  { v: 4,   range: 1.5, deep: 0.3,  turn: 0,    ext: 7, y: 1 },     // pistol: catch, open to one side, hand back to the back coming downhill
+  draw:    { v: 3.5, range: 3,   deep: 0,    turn: 0,    ext: 6, y: 3 },     // draw: slipped low to the back out of the pass set
+  low:     { v: 5,   range: 1.5, deep: -0.3, turn: 0,    ext: 7, y: 3 },     // goal line: quick and low, off the snap
+  toss:    { turn: 0.3 }, flip: { turn: 0 } };                                // pitches: the toss reverse-pivots first; the flip is one motion off the catch
+// the defense keys an outside run late: until this many s after the snap the back seven stay in their reads (unless the back is within near yd of them), as they
+// did while a pitch sat in the QB's hands for a second. The exchange is early and in stride now; this keeps what the defense is given the same (toss / stretch / pin & pull)
+const RUN_READ = { toss: 1.35, stretch: 1.1, gun: 1.35, pin: 1.2, near: 3 };   // (gun = any other outside run from the shotgun / pistol: the back starts slower there, so the flip is short)
+function runReading(d, c) {
+  if (!isRunPlay || c !== rb || kickoffPlay || dl.includes(d) || udCtl(d) || tut) return false;
+  const k = rb.scheme === 'pinPull' ? RUN_READ.pin : rb.runType !== 'outside' ? 0 : rb.scheme === 'sweep' && !shotgun ? RUN_READ.toss : shotgun ? RUN_READ.gun : RUN_READ.stretch;
+  return clock < k && dist(d, c) > RUN_READ.near * YD;
+}
+const EXCH_GIVE = 0.22;   // s the empty hands take to come away after a handoff
+const PA_LOOK = { qb: 0.42, rb: 0.75 };   // play action (a sold fake): s the QB shows the ball to the back and pulls it to his hip; s the back keeps his arms folded over an empty belly
+function exchOf() {
+  const play = rbpLive() ? rbp.play : rb.scheme, row = EXCH[play] || EXCH.insideZone, col = shotgun ? (qbDepth < SHOTGUN.depth ? 2 : 1) : 0;
+  let k = row[col], r = row[3];
+  if (ball.pitch) { if (k !== 'toss' && k !== 'flip') k = shotgun ? 'flip' : 'toss'; r = 'pitch'; }
+  else if (k === 'toss' || k === 'flip') { k = shotgun ? 'gun' : 'open'; r = 'pocket'; }   // (a pitch play that is being handed off after all)
+  else if (liveForm === 'GOAL LINE') { k = 'low'; r = 'lowTake'; }
+  return { k, rb: r, Q: EXCH_QB[k] };
+}
+const carryCap = (c, top) => effTop(c, top || RB_RUN) * CARRY_BASE * runFade(c) * BURST;   // (what updateCarrier lets him run: nothing before the take is faster, so the take never slows him)
+let meshSt = null;   // this exchange's working state (per play, never on the players): plan = meshPlan's numbers, v = the back's speed, t / d = s and px down his path, sx / sy = the QB's hand-off spot
+const meshState = () => meshSt && meshSt.pid === runPid ? meshSt : (meshSt = { pid: runPid, plan: null, v: 0, t: 0, d: 0, sx: null, sy: null });
 const meshQBFree = () => !qb.action && !(tut && (tutStep() || {}).still);   // (the tutorial's still steps: the QB stands where he is)
-// the QB's part of a handoff: once he has the snap, a step or two to the spot beside the back's path (set by updateMesh). False = not a handoff / he can't move
+const meshOn = () => !!meshSt && meshSt.pid === runPid && meshSt.sx != null;
+const snapLanding = () => !!snapFly && clock < snapFly.dur + RUN_MESH.after;
+// the plan for a handoff, made once (handoff calls it; none = it can't be handed off in stride: pitch it)
+function meshPlan(c, st, top) {
+  const M = RUN_MESH, X = exchOf(), Q = X.Q && X.Q.v ? X.Q : EXCH_QB.open, late = clock > M.snapWin;
+  const legs = c.lane && c.lane[c.laneLeg || 0] ? c.lane.slice(c.laneLeg || 0, (c.laneLeg || 0) + 2) : null;
+  const vmax = Math.max(M.start * YD, Math.min(M.speed * YD, carryCap(c, top)));
+  const pl = st.plan = { tb: snapFly ? snapFly.dur + M.after : 0, hip: !legs, set: late && !!legs, none: false, v0: M.start * YD, a: M.accel * YD, vmax, D: 0, X, Q, t0: clock };
+  st.v = 0; st.t = 0; st.d = 0; st.sx = st.sy = null;
+  if (!legs || late) return pl;   // (the draw: the QB brings it to him in his set, updateMesh keeps the spot beside him)
+  // where the QB hands it off from: his own depth in the gun, his old run-drop depth under center (deeper on a reverse pivot)
+  const qx = shotgun ? qb.x - Q.deep * YD : los - Math.max(qbDepth, UC_OLD + RUN_DROP.depth + Q.deep * YD), qy = qb.y;
+  const at = d => {   // the spot d px down his path
+    let ax = c.x, ay = c.y;
+    for (const [bx, by] of legs) { const L = Math.hypot(bx - ax, by - ay); if (d <= L || L < 1) { const k = L < 1 ? 0 : d / L; return [ax + (bx - ax) * k, ay + (by - ay) * k]; } d -= L; ax = bx; ay = by; }
+    return [ax, ay];
+  };
+  const beside = (mx, my) => {   // the QB's spot beside that point of the path (right on it: he steps off it, away from the play)
+    let nx = qx - mx, ny = qy - my; const nl = Math.hypot(nx, ny);
+    if (nl > 0.05 * YD) { nx /= nl; ny /= nl; } else { nx = 0; ny = -(rb.runSide || Math.sign(c.y - qb.y) || 1); }
+    return [Math.min(mx + nx * M.side * YD, los - M.behindLos * YD), my + ny * M.side * YD];
+  };
+  const tA = (vmax - pl.v0) / pl.a, run = t => t <= tA ? pl.v0 * t + pl.a * t * t / 2 : pl.v0 * tA + pl.a * tA * tA / 2 + vmax * (t - tA);
+  const qb0 = (shotgun ? snapFly.dur : 0) - clock;   // (in the gun he can't leave before the snap is in)
+  // 1) the back at his own build-up: the first spot the QB's footwork can have the ball at as he goes by
+  for (let t = Math.max(0.02, pl.tb + M.lead - clock); t < 1.2; t += 0.02) {
+    const d = run(t), [mx, my] = at(d);
+    if (mx > los - (M.behindLos + 0.3) * YD) break;
+    const [sx, sy] = beside(mx, my), dq = Math.hypot(qb.x - sx, qb.y - sy);
+    if (dq <= Q.range * YD && Math.max(0, qb0) + dq / (Q.v * YD) <= t) { st.sx = sx; st.sy = sy; pl.D = d; return pl; }
+  }
+  // 2) no such spot: the mesh is where his path passes the QB, and his first steps are shortened so he gets there as the ball does
+  let best = null, sofar = 0, ax = c.x, ay = c.y;
+  for (const [bx, by] of legs) {
+    const dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy);
+    if (L > 1) { const k = Math.max(0, Math.min(1, ((qx - ax) * dx + (qy - ay) * dy) / (L * L))), mx = ax + dx * k, my = ay + dy * k, d = Math.hypot(qx - mx, qy - my); if (!best || d < best.d - 1) best = { d, mx, my, D: sofar + L * k }; }
+    sofar += L; ax = bx; ay = by;
+  }
+  if (!best || best.D < M.minD * YD || best.d > Q.range * YD) { pl.none = true; return pl; }
+  [st.sx, st.sy] = beside(best.mx, best.my); pl.D = best.D;
+  const T = Math.max(pl.tb, Math.max(0, qb0) + Math.hypot(qb.x - st.sx, qb.y - st.sy) / (Q.v * YD)) + M.lead - clock;
+  if (T > 0 && run(T) > pl.D) { pl.v0 = Math.min(pl.v0, M.slow * pl.D / T); pl.a = 2 * (pl.D - pl.v0 * T) / (T * T); }
+  return pl;
+}
+// the QB's part of a handoff: his footwork to the spot beside the back's path (under center from the snap, in the gun once he has it). False = not a handoff / he can't move
 function meshQB(dt) {
   const c = runner, st = meshSt;
-  if (!c || !c.awaiting || ball.pitch || !isRunPlay || kickoffPlay || !meshQBFree() || !st || st.pid !== runPid || st.sx == null) return false;
-  const px = qb.x, py = qb.y;
-  if (!snapLanding()) moveToward(qb, st.sx, st.sy, RUN_MESH.qbStep * YD * dt);
-  clampField(qb); setVelocity(qb, px, py, dt); qb.face = 1; qb.pvx = qb.pvy = 0;
+  if (!c || !c.awaiting || ball.pitch || !isRunPlay || kickoffPlay || !meshQBFree() || !meshOn() || !st.plan) return false;
+  const px = qb.x, py = qb.y, Q = st.plan.Q;
+  if (!(shotgun && snapFly && clock < snapFly.dur) || st.plan.set) moveToward(qb, st.sx, st.sy, Q.v * YD * dt);
+  clampField(qb); setVelocity(qb, px, py, dt); qb.pvx = qb.pvy = 0;
+  qb.face = Q.turn && clock - st.plan.t0 < Q.turn && clock - st.plan.t0 > 0.06 ? -1 : 1;   // (reverse pivot: his back to the line for a beat)
   return true;
 }
-const snapLanding = () => !!snapFly && clock < snapFly.dur + RUN_MESH.after;
-function updateMesh(c, dt) {
-  const px = c.x, py = c.y;
+// the back has it: his arms close over it, the ball comes across from the QB's hands, the QB's empty hands come away
+function meshTook(c) {
+  const X = meshSt && meshSt.plan ? meshSt.plan.X : null;
+  c.pk = 0; c.exSet = false; c.pitchK = 0;
+  c.wrapUntil = clock + (X && X.rb === 'lowTake' ? RUN_MESH.low : RUN_MESH.wrap);
+  c.catchFrom = { x: ball.x, y: ball.y, z: ball.z, t: clock };
+  if (!ball.pitch) { qb.exGive = clock; qb.exRide = X && X.Q && X.Q.ride ? clock + X.Q.ride : 0; }
+}
+// where the ball is in the QB's hands before a pitch: at his belt, drawn back (away from the back) through the wind-up and swung through as it leaves
+// the toss under center: a reverse pivot, his back to the line from just after the snap until his follow-through is done (he pitches facing the back)
+const pitchFace = () => { const p = ball.pitch; return p && !shotgun && clock > 0.08 && (!p.out || (qb.exThru != null && clock - qb.exThru < PITCH.thru)) ? -1 : 1; };
+function pitchHand(c, e) {
+  const dx = c.x - qb.x, dy = c.y - qb.y, d = Math.hypot(dx, dy) || 1, w = -Math.sin(Math.PI * Math.max(0, Math.min(1, e))) * figX(qb, PITCH.swing * S);
+  ball.x = qb.x + figX(qb, 4 * S) * qb.face + dx / d * w; ball.y = qb.y + dy / d * w * 0.7; ball.z = qb.z + figZ(qb, -S); ball.rot = 0;
+}
+function updateMesh(c, dt, top) {
+  const px = c.x, py = c.y, M = RUN_MESH, st = meshState();
+  let wp = c.lane && c.lane[c.laneLeg || 0];
+  if (wp && Math.hypot(wp[0] - c.x, wp[1] - c.y) < 0.7 * YD && c.lane[(c.laneLeg || 0) + 1]) wp = c.lane[c.laneLeg = (c.laneLeg || 0) + 1];
+  const xCap = los - M.behindLos * YD;
   if (ball.pitch) {
-    const p = ball.pitch;
-    c.laneLeg = c.laneLeg || 0;
-    let wp = c.lane && c.lane[c.laneLeg];
-    if (wp && Math.hypot(wp[0] - c.x, wp[1] - c.y) < 0.7 * YD && c.lane[c.laneLeg + 1]) wp = c.lane[++c.laneLeg];
-    const xCap = Math.min(qb.x + RUN_MESH.aheadQB * YD, los - RUN_MESH.behindLos * YD);   // (he never turns back for it: it may lead him a little, still behind the line)
-    if (snapLanding() && p.delay <= 0) p.delay = 0.01;   // (the ball isn't in the QB's hands yet)
-    if (p.delay > 0 && !snapLanding() && c.x >= xCap - 0.8 * YD) p.delay = 0;   // (he's about to get even with the QB: out it goes now)
-    if (p.delay > 0) {
-      // outside runs: he gets going on his path in the backfield first, the QB holding it, then it's pitched to him
-      if (!snapLanding()) p.delay -= dt;
-      if (wp) moveToward(c, wp[0], wp[1], RB_RUN * OUTSIDE_RUN.leadStep * dt);
-      p.fx = ball.x = qb.x; p.fy = ball.y = qb.y; ball.z = 0;
-      clampField(c); setVelocity(c, px, py, dt);
+    const p = ball.pitch, cap = Math.min(carryCap(c, top) * rbpPinK(c, dt), RB_RUN * (p.out ? OUTSIDE_RUN.pitchStep : OUTSIDE_RUN.leadStep));   // (pin & pull: his patience speed is the same before and after the catch)
+    // already running: one build-up from the snap along his path (an open step and a crossover in the gun, while the snap is in the air), never held for the ball
+    const [v0, acc] = shotgun ? M.gun : M.toss;
+    st.v = Math.min(cap, Math.max(st.v, v0 * YD) + acc * YD * dt);
+    if (wp) moveToward(c, wp[0], wp[1], st.v * dt); else moveToward(c, c.x + 2 * YD, c.y + p.side * 2 * YD, st.v * dt);
+    if (c.x > xCap && c.x > px) c.x = Math.max(px, xCap);   // (never across the line without it)
+    clampField(c); setVelocity(c, px, py, dt);
+    const landed = !snapFly || clock >= snapFly.dur;
+    if (!p.out) {
+      // it goes at its time, or now if he is about to get even with the QB (a pitch is never forward) - but not before the snap is in
+      if (landed && (clock >= p.at || c.x >= Math.min(qb.x + M.aheadQB * YD, xCap) - 0.8 * YD)) {
+        pitchHand(c, 1);
+        p.out = true; p.t = 0; p.fx = ball.x; p.fy = ball.y; p.fz = ball.z;
+        const vx = (c.x - px) / dt, vy = (c.y - py) / dt, d0 = Math.hypot(c.x - p.fx, c.y - p.fy);
+        // thrown to where he will be: the flight time for that distance (he keeps moving, so the lead is worked out twice)
+        let T = Math.max(PITCH.tMin, Math.min(PITCH.tMax, d0 / (PITCH.speed * YD)));
+        T = Math.max(PITCH.tMin, Math.min(PITCH.tMax, Math.hypot(c.x + vx * T - p.fx, c.y + vy * T - p.fy) / (PITCH.speed * YD)));
+        p.T = T; p.ax = c.x + vx * T; p.ay = c.y + vy * T;
+        qb.exThru = clock;
+      } else if (landed) pitchHand(c, 1 - (p.at - clock) / PITCH.wind);
+      c.pitchK = 0;
       return;
     }
     p.t += dt;
-    // (he keeps running his path while it's in the air and catches it in stride: behind the QB and the line)
-    if (wp) moveToward(c, wp[0], wp[1], RB_RUN * OUTSIDE_RUN.pitchStep * dt);
-    else moveToward(c, c.x + 2 * YD, c.y + p.side * 2 * YD, RB_RUN * OUTSIDE_RUN.pitchStep * dt);
-    if (c.x > xCap && c.x > px) c.x = Math.max(px, xCap);   // (held at the cap, never pulled back behind the QB)
-    const k = Math.min(1, p.t / p.T);
-    ball.x = p.fx + (c.x - p.fx) * k; ball.y = p.fy + (c.y - p.fy) * k;
-    ball.z = Math.sin(Math.PI * k) * 14 * S;
-    // a defender in the lane of the pitch can pick it off or bat it down (one look each; a batted pitch is a live ball)
+    const k = Math.min(1, p.t / p.T), hx = c.x + figX(c, PITCH.front * S) * c.face, hz = c.z + figZ(c, PITCH.chest * S), e = k * k;
+    // (aimed at the lead spot; over the flight it homes on his hands, so it lands in them wherever he really is: chest high, out in front of his number)
+    const tx = p.ax + figX(c, PITCH.front * S) * c.face + (hx - p.ax - figX(c, PITCH.front * S) * c.face) * e, ty = p.ay + (c.y - p.ay) * e;
+    ball.x = p.fx + (tx - p.fx) * k; ball.y = p.fy + (ty - p.fy) * k;
+    ball.z = p.fz + (hz - p.fz) * k + Math.sin(Math.PI * k) * PITCH.arc * S; ball.rot = k * Math.PI;
+    c.pitchK = Math.max(0.001, k);
+    // a defender in the lane of the pitch can bat it down (one look each; a batted pitch is a live ball)
     p.looked = p.looked || new Set();
     for (const d of defenders()) {
       if (p.looked.has(d) || d.action || (d.engaged && dl.includes(d)) || dist(d, ball) > PITCH_PICK.range * YD) continue;
       p.looked.add(d);
       const r = Math.random(), skill = rm(d, 'ctc', 'ball');
       if (r < PITCH_PICK.bat * skill) {   // (a pitch can be batted down, never picked off)
-        const bx = ball.x, by = ball.y; ball.pitch = null; c.awaiting = false;
+        const bx = ball.x, by = ball.y; ball.pitch = null; c.awaiting = false; c.pitchK = 0;
         d.action = 'swat'; d.act = { t: 0, dur: 0.3 };
         popup(d, 'BATTED DOWN', '#ff6b6b');
         fumble(c, false, 'PITCH BATTED'); ball.x = bx; ball.y = by; ball.z = Math.max(ball.z, 6 * S);
         return;
       }
     }
-    if (k >= 1) { c.noCutUntil = clock + 0.6; c.joyA = undefined; if (keys.KeyW || keys.KeyS || (keys.KeyA && !aiOff()) || keys.ArrowUp || keys.ArrowDown || keys.ArrowLeft || keys.ArrowRight) c.lane = null; catchSfx();   /* a key held at the catch takes a swing / outside run off the play art, straight upfield */ ball.pitch = null; ball.z = 0; c.awaiting = false; c.hasBall = true; c.speed = Math.max(5 * YD, RB_RUN * OUTSIDE_RUN.pitchStep); }
+    if (k >= 1) {
+      c.noCutUntil = clock + 0.6; c.joyA = undefined;
+      if (keys.KeyW || keys.KeyS || (keys.KeyA && !aiOff()) || keys.ArrowUp || keys.ArrowDown || keys.ArrowLeft || keys.ArrowRight) c.lane = null;   // (a key held at the catch takes a swing / outside run off the play art, straight upfield)
+      catchSfx();
+      c.awaiting = false; c.hasBall = true; c.speed = st.v;   // (the speed he is running at: caught in stride)
+      meshTook(c); c.wrapUntil = clock + PITCH.hold;   // (a two-hand catch at his chest, pulled in, then tucked to the outside arm)
+      ball.pitch = null;
+    }
   } else {
-    // the handoff: he runs his own path from the snap (the first leg of the play art) and takes it on the move as he passes the QB, never back toward him.
-    // The QB steps to a spot beside that path (meshQB). Too early for the ball or the QB: he jab-steps, then goes so that he gets there as they do
-    const M = RUN_MESH, st = meshState(), early = snapLanding(), qbStill = !meshQBFree() || st.wait > M.late;
-    const sd = Math.sign(c.y - qb.y) || 1, wp = !qbStill && c.lane && c.lane[c.laneLeg || 0];
-    const ax = wp ? wp[0] : qb.x, ay = wp ? wp[1] : qb.y + sd * M.side * YD;   // (a QB who can't move, or no play art: the back comes to his hip)
-    const dx = ax - c.x, dy = ay - c.y, L = Math.hypot(dx, dy), t = L > 1 ? Math.max(0, Math.min(1, ((qb.x - c.x) * dx + (qb.y - c.y) * dy) / (L * L))) : 0;
-    const mx = c.x + dx * t, my = c.y + dy * t, toM = L * t;   // the mesh: where his path passes the QB
-    let nx = qb.x - mx, ny = qb.y - my; const nl = Math.hypot(nx, ny);
-    if (nl > 0.05 * YD) { nx /= nl; ny /= nl; } else { nx = 0; ny = -(rb.runSide || sd); }   // (the QB right on the path: he steps off it, away from the play)
-    st.sx = Math.min(mx + nx * M.side * YD, los - M.behindLos * YD); st.sy = my + ny * M.side * YD;
-    const near = dist(qb, c) <= M.reach * YD;
-    const eta = (early ? snapFly.dur + M.after - clock : 0) + (qbStill ? 0 : Math.hypot(qb.x - st.sx, qb.y - st.sy) / (M.qbStep * YD));   // s until the ball can be at the mesh
-    let v;
-    if (eta > toM / (M.speed * YD) + M.lead && (early || !near)) { v = toM > M.gather * YD ? M.creep * YD : 0; st.v = 0; if (!early && !v) st.wait += dt; }
-    else v = st.v = Math.min(M.speed * YD, (st.v || M.start * YD) + M.accel * YD * dt);
-    moveToward(c, ax, ay, v * dt);
-    const xCap = los - M.behindLos * YD;
-    if (c.x > xCap && c.x > px) c.x = Math.max(px, xCap);   // (never across the line without it)
-    if (!early && near && !rbpKeep(c)) {   // (zone read: the QB may pull it instead)
-      c.awaiting = false; c.hasBall = true; c.speed = Math.max(M.take * YD, v * M.keep);   // (his momentum carries through the exchange)
-      // (straight onto the play art: his heading starts along the first leg of it, with no plant or chop on the way out)
-      const wp = c.lane && c.lane[c.laneLeg || 0];
-      if (wp) c.joyA = Math.atan2(wp[1] - c.y, wp[0] - c.x);
+    const pl = st.plan || meshPlan(c, st, top), ready = clock >= pl.tb;
+    if (pl.hip || pl.none || !meshQBFree() || !wp) {   // no play art, or the QB can't move (hit, the tutorial's still steps): the back comes to his hip, as he always did
+      const sd = Math.sign(c.y - qb.y) || 1;
+      st.v = Math.min(pl.vmax, Math.max(st.v, pl.v0) + M.accel * YD * dt);
+      moveToward(c, qb.x, qb.y + sd * M.side * YD, st.v * dt);
+      st.sx = null;
+    } else if (pl.set) {   // the draw: he sits in his pass set, hands up, and the QB slips it to him (that wait is the play)
+      const nx = qb.x - c.x, ny = qb.y - c.y, nl = Math.hypot(nx, ny) || 1;
+      st.sx = c.x + nx / nl * M.side * YD; st.sy = c.y + ny / nl * M.side * YD; st.v = 0;
+    } else {   // on his path from the snap, building speed: nothing here looks at the ball
+      st.t += dt; st.v = Math.min(pl.vmax, pl.v0 + pl.a * st.t); st.d += st.v * dt;
+      moveToward(c, wp[0], wp[1], st.v * dt);
+      if (st.d > pl.D + 0.4 * YD) {   // (past the mesh without it, the exchange was held up: the QB goes after him)
+        const nx = qb.x - c.x, ny = qb.y - c.y, nl = Math.hypot(nx, ny) || 1;
+        st.sx = Math.min(c.x + (c.x - px) / dt * 0.1 + nx / nl * M.side * YD, xCap); st.sy = c.y + (c.y - py) / dt * 0.1 + ny / nl * M.side * YD;
+      }
+    }
+    if (c.x > xCap && c.x > px) c.x = Math.max(px, xCap);   // (never across the line without it: only reached when the exchange was broken up)
+    const d = dist(qb, c);
+    c.pk = pl.set ? 0 : smooth01((M.far * YD - d) / ((M.far - M.reach) * YD));   // his arms open into the pocket as he closes on the QB
+    c.exSet = !!pl.set;
+    c.exLean = pl.X.rb === 'lowTake' ? 0.2 : pl.X.rb === 'jab' && st.t < 0.2 ? -0.16 * Math.sin(Math.PI * st.t / 0.2) : 0;   // (low pads on the goal line; the jab step on power / counter / trap)
+    clampField(c); setVelocity(c, px, py, dt);
+    if (ready && d <= M.reach * YD && !rbpKeep(c)) {   // (zone read: the QB may pull it instead)
+      c.awaiting = false; c.hasBall = true;
+      c.speed = pl.set ? M.start * YD : st.v;   // (the speed he has: nothing zeroed, capped or restarted)
+      if (wp && !pl.set) c.joyA = Math.atan2(c.y - py, c.x - px);   // (his heading is the path he is already on)
       c.noCutUntil = clock + 0.6;
+      meshTook(c);
     }
   }
-  clampField(c);
-  setVelocity(c, px, py, dt);
   if (!c.awaiting && runner === c) { runStart = clock; msg = 'Handoff!  -  ' + RUN_HELP; }
+}
+// the ball in the QB's hands on the way to a handoff: out toward the back as he closes (EXCH_QB ext / y). False = no handoff going on
+function exchHold() {
+  const c = runner;
+  if (state !== 'run' || !isRunPlay || !c || c === qb || !c.awaiting || ball.pitch || qb.action || kickoffPlay || qb.hasBall) return false;
+  const M = RUN_MESH, Q = meshSt && meshSt.pid === runPid && meshSt.plan ? meshSt.plan.Q : EXCH_QB.open;
+  const dx = c.x - qb.x, dy = c.y - qb.y, d = Math.hypot(dx, dy) || 1, e = smooth01((M.far * YD - d) / ((M.far - M.reach) * YD)), r = figX(qb, Q.ext * S) * e;
+  ball.x = qb.x + figX(qb, 4 * S) * qb.face * (1 - e) + dx / d * r; ball.y = qb.y + dy / d * r * 0.7; ball.z = qb.z + figZ(qb, -Q.y * S); ball.rot = 0;
+  qb.exK = 'hold'; qb.exE = e;
+  return true;
+}
+// this frame's exchange looks, as plain numbers the drawing (and the replay tape, and an online guest) can read: the QB's exK / exE, the back's wrap, play action's fake
+function exchPose() {
+  if (!qb || !rb) return;
+  qb.exK = null; qb.exE = 0;
+  qb.paK = qb.paT != null && clock >= qb.paT && clock - qb.paT < PA_LOOK.qb && (state === 'drop' || state === 'pocket') && !aim ? (clock - qb.paT) / PA_LOOK.qb : 0;
+  rb.fakeArms = !!rb.fakeUntil && clock < rb.fakeUntil && !rb.hasBall && !rb.action && (state === 'drop' || state === 'pocket');
+  for (const p of [rb]) { p.twoArm = !!p.hasBall && clock < (p.wrapUntil || 0); if (!p.awaiting) { p.pk = 0; p.exSet = false; p.pitchK = 0; if (p.exLean && !p.twoArm) p.exLean = 0; } }
+  if (state !== 'run' || !isRunPlay || qb.action || runner === qb || kickoffPlay) return;
+  const p = ball.pitch, g = qb.exGive, th = qb.exThru;
+  if (p && !p.out) { if (!snapFly || clock >= snapFly.dur) { qb.exK = 'wind'; qb.exE = Math.max(0, Math.min(1, 1 - (p.at - clock) / PITCH.wind)); } }
+  else if (th != null && clock >= th && clock - th < PITCH.thru) { qb.exK = 'thru'; qb.exE = (clock - th) / PITCH.thru; }
+  else if (g != null && clock >= g && clock - g < Math.max(EXCH_GIVE, (qb.exRide || 0) - g)) { qb.exK = clock < (qb.exRide || 0) ? 'ride' : 'give'; qb.exE = Math.min(1, (clock - g) / EXCH_GIVE); }
+  else if (g != null && clock >= g && rbpLive() && rbp.fakeT && clock - rbp.fakeT < RBP.fake.time) qb.exK = 'fake';
 }
 
 function runAction(code) {
@@ -1043,7 +1194,7 @@ function runAction(code) {
     c.act.style = hurdleStyle(c.act.backward);
     if (space && ahead && ahead.f <= HURDLED.near * YD) hurdledBy(c, ahead.o);   // (the man he's going over reacts under him)
     c.hurdleReady = clock + HURDLE.cooldown;
-    if (space && ahead) popup(c, 'HURDLE', '#7fe3ff');
+    hurdleWings(c, !!(space && ahead));
     if (tut && space) tutEvent('hurdle');
   } else if ((code === 'KeyW' || code === 'KeyS') && !(c.jukeReady > clock)) {
     const side = code === 'KeyW' ? -1 : 1;
@@ -1076,7 +1227,15 @@ const blockMissed = (b, d) => {
 // per s he needs to get there (closer to the runner = blocked first), capped at cap s; double = yd of cost for doubling while a threat is free
 const BLOCK_PRI = { threat: 2.2, danger: 2.2, cap: 4, double: 25 };
 const WR_SIDE = { free: 6, cross: 18, lat: 0.6, still: 0.18 };   // run blocks: yd sideways a receiver looks freely; cost (yd) of a man across the back from him; cost per yd sideways past free; yd from his spot he holds still
+// a second-level / perimeter block: the blocker has to be on the ball carrier's side of his man (no blocking in the back). BLOCK_SIDE = the cosine of the widest
+// angle off the line from the defender to the carrier he can lock on from: 0 = only dead in front (the old rule: a man walling him off from the side just
+// ran along beside him), negative = a little past square to the side too
+const BLOCK_SIDE = -0.25;
+const blockSideOK = (b, d, c) => { const ax = b.x - d.x, ay = b.y - d.y, cx = c.x - d.x, cy = c.y - d.y; return ax * cx + ay * cy > BLOCK_SIDE * Math.hypot(ax, ay) * Math.hypot(cx, cy); };
+// the blockers with their hands on this back-seven man right now
+const blockersOn = (d, c) => blockerPool().filter(b => b !== c && b.assign === d && !b.action && !(b.stunUntil > clock) && dist(b, d) <= BLOCK_RANGE * 1.2 && blockSideOK(b, d, c));
 function updateBlocker(b, dt, speed) {
+  speed = Math.min(speed, ownTop(b));   // (the flat blocking speed never takes a man past his own top speed: a tight end at fullback leads at a tight end's pace)
   if (rbpOwned(b)) return;   // (a tight end on a down lineman: updateLine runs that block)
   b.engaged = false;
   if (b.action) return updateAction(b, dt);
@@ -1137,8 +1296,7 @@ function updateBlocker(b, dt, speed) {
   if (d) {
     if (Math.abs(d.x - b.x) > 0.15 * YD) b.face = d.x >= b.x ? 1 : -1;   // (squared up to the man he's about to block / is blocking)
     // locked up; pursue() places us (but only while the lock is real: a stale one - his man diving, or us out of position - must not freeze us)
-    if (d.blockers && d.blockers.includes(b) && clock < d.blockUntil && !d.action && dist(b, d) <= BLOCK_RANGE * 1.4 &&
-        (b.x - d.x) * (c.x - d.x) + (b.y - d.y) * (c.y - d.y) > 0) return;
+    if (d.blockers && d.blockers.includes(b) && clock < d.blockUntil && !d.action && dist(b, d) <= BLOCK_RANGE * 1.4 && blockSideOK(b, d, c)) return;
     const dx = c.x - d.x, dy = c.y - d.y, dd = Math.hypot(dx, dy) || 1, tx = d.x + dx / dd * BLOCK_RANGE * 0.9, ty = d.y + dy / dd * BLOCK_RANGE * 0.9;
     if (Math.hypot(tx - b.x, ty - b.y) > WR_SIDE.still * YD || dist(b, d) > BLOCK_RANGE * 1.2) moveToward(b, tx, ty, speed * dt);   // (already on his spot in front of the man: he holds it, no running in place)
   } else {
@@ -1182,7 +1340,16 @@ const RBP = {
   stalk: { x: 5, z: 4, gun: 3, rel: 10, push: 0.8, hips: 2 },   // stem yd (X on the line, Z / slot off it, shotgun / pistol), release once the runner is rel yd past him or his DB turns and runs (hips yd/s), wall drive yd/s
   lead: { show: 1.5, first: 5, down: 0.5 },   // FB / near back: a backer within show yd of the hole, coming downhill at down yd/s or faster, shows; else the nearest unblocked man within first yd of it
   lane: { insideZone: 1.2, duo: 0.5, goalLine: 1.5, power: 1.5, counter: 1.5, trap: 0.8, draw: 0.5, step: 0.7 },   // the back's aiming point (x SPLITS.ol off the middle: IZ = the playside guard's outside hip, power / counter / the goal-line dive = B gap, trap = just inside the trapped man, iso / draw = A gap); step = counter step yd
-  toss: { t: 1, pro: 0.8 },   // the toss sweep is pitched this many s after the snap (pro set: pro)
+  toss: { t: 0.34, pro: 0.32, pin: 0.46 },   // the toss sweep leaves the QB's hands this many s after the snap (pro set: pro; pin = the pin & pull's catch-and-flip in the gun, never before the snap is in). Was 1.0 / 0.8 with the back held at a clamp: now he is never held, so it goes early and travels a short way
+  // pin & pull (shotgun, to the offset back's side). w = call weight (x the outside-run share); min5 = never inside this many yd of the goal line;
+  // wide = the end this many yd outside the pin man is reached instead of pinned (reachLoss s off that block); out = the back's aiming point, yd outside the pin;
+  // inside = puller 2 turns up this many yd inside it; sq = a force man this many yd inside the aiming point (and not upfield) has squeezed: log him;
+  // speed = the back's patience speed until the read (x his top), hip / hipSlow = out ahead of puller 1's outside hip by this many yd: x hipSlow more; ease = how fast that share changes (/s); read = yd from puller 1's block
+  // where he decides; numbers = a bounce turns up this many yd in from the sideline; bend = a cutback goes this many yd inside puller 2;
+  // crack = [range yd, depth yd] of a safety / backer walked down inside the receiver; patience = s after the catch a sprint counts as impatient;
+  // fit = call weight x: tight end on that side, the box loaded up after runs (tight), an end lined up wide, a blitz look; sim = simulated plays: loss / 10+ gain share
+  pin: { w: 0.5, min5: 5, wide: 1.2, reachLoss: 0.25, out: 2, inside: 1, sq: 0.5, speed: 0.85, hip: 0.5, hipSlow: 0.85, ease: 1.2, read: 3, numbers: 9, bend: 1, crack: [8, 5], patience: 1,
+         fit: { te: 1.4, tight: 1.5, wideEnd: 0.3, blitz: 0.4 }, sim: { loss: 0.2, big: 0.13 } },
   draw: 0.9,       // a handoff after this long in a pass set = a draw
   scramble: 2.5,   // a QB scramble out of a pass set: the line lets go and climbs after s
   downfield: 1,    // yd a lineman may release before a pass is thrown (RPO)
@@ -1202,7 +1369,120 @@ const RBP_PLAYS = {
   goalLine:   { BT: ['cut', 'WDE', 'WILL'], BG: ['combo', 'NT', 'MIKE'], C: ['post', 'NT'], PG: ['post', 'T3'], PT: ['combo', 'T3', 'SAM'], TE: ['base', 'SDE'], TE2: ['base', 'WDE'], FB: ['lead', 'MIKE'] },
   // (goalLine = the GOAL LINE formation's dive only; never three on one man: C + BG double the nose, BT cuts off the backside end, or climbs to WILL when TE2 has him: rbpApply)
   draw:       { BT: ['ride', 'WDE'], BG: ['wash', 'NT'], C: ['wash', 'NT'], PG: ['wash', 'T3'], PT: ['ride', 'SDE'], TE: ['base', 'SDE'], TE2: ['base', 'WDE'] },
+  // pin & pull: the base look only (vs a 4-3 with a tight end). rbpPinPlan re-reads the front every snap: covered = pin (down) or reach, uncovered = pull (two at most)
+  pinPull:    { BT: ['cut', 'WDE', 'WILL'], BG: ['climb', 'WILL'], C: ['down', 'NT'], PG: ['down', 'T3'], PT: ['pullKick', 'FORCE', 'SS'], TE: ['down', 'SDE'], TE2: ['base', 'WDE'], FB: ['kick', 'FORCE'] },
 };
+// pin & pull (RBP.pin): the call, the lane, who pins / reaches / pulls, the crack, the back's read
+const rbpPinTes = P => recs.filter(r => r.isTE && !r.fb && P(r) > 0 && Math.abs(r.y - MID) < (SPLITS.te + 2) * YD);
+// may it be called? Shotgun (not the pistol), the back offset beside the QB, not inside the 5, never in the tutorial / 1v1 (liveRunCall is off there)
+const rbpPinOK = () => RBP.on && !tut && shotgun && liveForm === 'SHOTGUN' && !rb.split && Math.abs(rb.y - MID) > 0.5 * YD && patMode === null && FIELD - los > RBP.pin.min5 * YL && ols.length === 5;
+// call weight from the look (the defense isn't lined up yet when the play is called: its call, the end's usual split and the run streak stand in; rbpPinCheck reads the real front at the snap)
+function rbpPinFit() {
+  const s = rb.side || 1, P = p => (p.y - MID) * s, F = RBP.pin.fit, tes = rbpPinTes(P), end = Math.max(...ols.map(P), ...tes.map(P));
+  let k = tes.length ? F.te : 1;
+  if (SPLITS.de * YD > end + RBP.pin.wide * YD) k *= F.wideEnd;   // (their end lines up wide of the last blocker: hard to pin)
+  if (BLITZ_COVERAGES.includes(coverage) || coverage === COVER_0) k *= F.blitz;   // (pressure off the edge gets there before the pullers)
+  else k *= 1 + (F.tight - 1) * Math.min(1, runHeat() / RUN_STREAK.max);   // (the box loaded up after run on run: get outside it)
+  return k;
+}
+// the back's path: flat toward the sideline, bending up to RBP.pin.out yd outside the pin (the play-side tight end, else the tackle)
+function rbpPinLane(L) {
+  const s = rb.side || 1, P = p => (p.y - MID) * s, pin = Math.max(...ols.map(P), ...rbpPinTes(P).map(P)) / YD, a = pin + RBP.pin.out;
+  const d = Math.min(-2, (rb.x - los) / YL), w0 = Math.abs(rb.y - MID) / YD;
+  return [L(d * 0.8, Math.max(w0 + 1, a - 2.5)), L(-1.2, a), L(1.5, a + 0.5), L(10, a + 1)];
+}
+// who does what: the end is pinned by the tight end (the tackle with none), or reached when he's too wide. Then, outside in, each play-side lineman and the center:
+// a man in his inside gap = pin (down), on him / shaded outside = reach, uncovered = pull (two at most; a third climbs). Backside: cut off, like the stretch
+function rbpPinPlan(R) {
+  const P = R.P, F = RBP.pin, gap = SPLITS.ol * YD, plan = { BT: ['cut', 'WDE', 'WILL'], TE2: ['base', 'WDE'], FB: ['kick', 'FORCE'] }, used = new Set(), pull = [];
+  const dls = dl.filter(d => !d.dropZone && !d.action), end = R.TE || R.PT;
+  if (R.WDE) used.add(R.WDE);
+  if (R.SDE) { plan[R.TE ? 'TE' : 'PT'] = [P(R.SDE) > P(end) + F.wide * YD ? 'reach' : 'down', R.SDE]; used.add(R.SDE); }
+  else if (R.TE) plan.TE = ['hook', 'SAM'];
+  for (const role of R.TE || !R.SDE ? ['PT', 'PG', 'C'] : ['PG', 'C']) {
+    const b = R[role], free = dls.filter(d => !used.has(d));
+    const ins = free.filter(d => P(d) < P(b) - 0.15 * YD && P(d) > P(b) - 0.85 * gap).sort((p, q) => P(q) - P(p))[0];
+    const d = ins || free.filter(d => P(d) >= P(b) - 0.15 * YD && P(d) < P(b) + 0.6 * gap)[0];
+    if (d) { used.add(d); plan[role] = [ins ? 'down' : 'reach', d]; }
+    else if (pull.length < 2) pull.push(role);
+    else plan[role] = ['climb', 'MIKE'];
+  }
+  // a play-side lineman nobody has: the nearest puller stays in and reaches him instead
+  for (const d of dls.filter(x => !used.has(x) && P(x) > -0.2 * gap)) {
+    const role = [...pull].sort((p, q) => Math.abs(P(R[p]) - P(d)) - Math.abs(P(R[q]) - P(d)))[0];
+    if (!role) break;
+    pull.splice(pull.indexOf(role), 1); used.add(d); plan[role] = ['reach', d];
+  }
+  const bs = dls.find(d => !used.has(d));   // (a backside tackle left over: the backside guard cuts him off, else he climbs)
+  plan.BG = bs ? ['cut', bs, 'WILL'] : ['climb', 'WILL'];
+  if (R.TE2) { plan.BT = ['climb', 'WILL']; if (!bs) plan.BG = ['climb', 'MIKE']; }   // (the backside tight end has that end)
+  pull.sort((p, q) => P(R[q]) - P(R[p]));   // (the outside one leads)
+  if (pull[0]) plan[pull[0]] = ['pullKick', 'FORCE', 'SS'];   // puller 1: the force. Kick him out if he's wide / upfield, log him if he squeezed (rbpTick)
+  if (pull[1]) plan[pull[1]] = ['pullWrap', 'MIKE', 'WILL'];   // puller 2: turns up inside puller 1 onto the first backer coming inside-out
+  return { plan, pull };
+}
+// at the snap: more men outside the pin than pullers + receivers (+ the fullback), nobody free to pull, the end out too wide or a blitz off that edge = the coordinator
+// checks out of it (his usual odds) into the inside zone
+function rbpPinCheck(R) {
+  const P = R.P, F = RBP.pin, end = R.TE || R.PT, { pull } = rbpPinPlan(R);
+  const out = back7.filter(d => P(d) > P(end) + 0.3 * YD && d.x - los <= RBP.box.deep * YL && !d.action).length;
+  const have = pull.length + R.wrs.filter(w => P(w) > P(end)).length + (R.FB ? 1 : 0);
+  const wideEnd = !!R.SDE && P(R.SDE) > P(end) + (F.wide + 1) * YD, edge = back7.some(d => d.blitz && P(d) > P(end) - YD);
+  if (pull.length && (!(out > have || wideEnd || edge) || Math.random() >= lerpOc(RBP.box.check))) return false;
+  const L = (dx, dy) => [los + dx * YL, clampRouteY(MID + dy * YD * R.s)];
+  rb.scheme = 'insideZone'; rb.runType = 'inside'; rb.runLane = rbpLane('insideZone', L);
+  rb.routeName = `Inside run ${R.s > 0 ? 'bottom' : 'top'} (${SCHEMES.insideZone.name})`;
+  popup(qb, 'CHECK!', '#7fe3ff');
+  return true;
+}
+// the play-side receiver cracks a safety / backer walked down inside him (then puller 1 takes the corner); else he stalks the corner like any run. Also sets up the read (rbp.pp)
+function rbpPinSetup(R, tgt) {
+  const P = R.P, end = R.TE || R.PT, [rng, deep] = RBP.pin.crack;
+  const p1 = ols.find(o => o.rbp && o.rbp.kind === 'pullKick') || null, p2 = ols.find(o => o.rbp && o.rbp.kind === 'pullWrap') || null;
+  rbp.pp = { aim: P(end) + RBP.pin.out * YD, p1, p2, ty: P(R.PT), read: null };
+  const eb = end.rbp;
+  if (R.SDE && eb && eb.kind === 'reach' && eb.t === R.SDE) R.SDE.rblAdj = (R.SDE.rblAdj || 0) - RBP.pin.reachLoss;   // (a reach on a wide end holds less than a pin)
+  const w = R.wrs.filter(r => P(r) > P(end) + YD && r.rbp && r.rbp.kind === 'stalk').sort((p, q) => P(q) - P(p))[0];
+  if (!w) return;
+  const ok = d => !!d && d.role !== 'CB' && !d.action && P(d) < P(w) - YD && P(d) > P(end) - 0.5 * YD && d.x - los < deep * YL && dist(d, w) < rng * YD;
+  const f = rbpWho('FORCE'), m = ok(f) ? f : back7.filter(ok).sort((p, q) => dist(p, w) - dist(q, w))[0];
+  if (!m) return;
+  const corner = w.rbp.t;
+  w.rbp = { kind: 'stalk', t: m, stem: w.x, ps: true, sw: true, crack: true }; w.assign = m; tgt.add(m);
+  if (p1 && corner) { p1.rbp.t = corner; p1.assign = corner; tgt.add(corner); }
+}
+// the back's patience before the read, as a share of his top speed: RBP.pin.speed on his play art, x hipSlow while he is out ahead of puller 1's outside hip.
+// Eased both ways (ease /s), and the same number before and after the catch, so his speed never jumps
+function rbpPinK(c, dt) {
+  if (!rbpLive() || rbp.play !== 'pinPull' || c !== rb || !rbp.pp) return 1;
+  const pp = rbp.pp, F = RBP.pin, p1 = pp.p1, P = rbp.R.P;
+  let want = 1;
+  if (!pp.read && c.lane && c.lane[c.laneLeg || 0]) want = F.speed * (p1 && p1.rbp && p1.rbp.pull && !p1.rbp.mode && P(c) > P(p1) + F.hip * YD ? F.hipSlow : 1);
+  pp.k = pp.k == null ? want : pp.k + Math.max(-F.ease * dt, Math.min(F.ease * dt, want - pp.k));
+  return pp.k;
+}
+// the back's one read, about RBP.pin.read yd from puller 1's block (computer carriers; yours keeps his play art, the patience speed just ends there):
+// the force kicked out = BANG, cut up inside him; logged = BOUNCE, stay outside and turn up at the numbers; the pin lost or a man in the backfield = BEND,
+// plant and cut back behind puller 2 (never before he's past the tackle's original spot). Full speed from the cut on
+function rbpPinRead(c) {
+  const pp = rbp.pp;
+  if (!pp || pp.read || c !== rb || !c.hasBall || c.awaiting) return;
+  const R = rbp.R, s = R.s, P = R.P, F = RBP.pin, p1 = pp.p1, a1 = p1 && p1.rbp, t1 = a1 && a1.t;
+  if (!c.lane || !c.lane[c.laneLeg]) { pp.read = 'off'; return; }   // (off the play art: you're steering, or it's run out)
+  const lost = !!R.SDE && !R.SDE.action && R.SDE.shed && !R.SDE.sealed && P(R.SDE) > P(c) - 3 * YD;
+  const back = [...dl, ...back7].some(d => !d.action && !d.engaged && !(d.blockers && d.blockers.length) && d.x < los - 0.5 * YL && P(d) > P(c) && dist(d, c) < 4 * YD);
+  const near = (!!t1 && dist(c, t1) < F.read * YD) || (!!a1 && !!a1.mode && dist(c, p1) < (F.read + 1) * YD) || c.x > los - 1.3 * YL;
+  if (!near && !lost && !back) return;
+  if (!aiOff()) { if (near) pp.read = 'user'; return; }
+  let call = lost || back ? 'bend' : a1 && a1.mode ? (a1.mode === 'log' ? 'bounce' : 'bang') : t1 && P(t1) < pp.aim - F.sq * YD ? 'bounce' : 'bang';
+  if (call === 'bend' && P(c) < pp.ty) { if (!near) return; call = 'bang'; }   // (no cutback before the tackle's spot)
+  pp.read = call;
+  const Y = p => clampRouteY(MID + s * p), x1 = Math.max(c.x + 0.5 * YD, los + 0.5 * YL);
+  if (call === 'bang') { const y = Y(t1 ? Math.max(pp.aim - 2 * YD, P(t1) - 1.6 * YD) : pp.aim - YD); c.lane = [[x1, y], [los + 10 * YL, y]]; }
+  else if (call === 'bounce') { const y = Y(Math.max(FW / 2 - F.numbers * YD, P(c) + YD, t1 ? P(t1) + 2 * YD : 0)); c.lane = [[Math.max(c.x + YD, los - 0.5 * YL), y], [los + 12 * YL, y]]; }
+  else { const y = Y(pp.p2 ? P(pp.p2) - F.bend * YD : pp.ty - YD); c.lane = [[x1, y], [los + 10 * YL, y]]; noteBreak(c, 'plant'); }
+  c.laneLeg = 0;
+}
 let rbp = null, rbpPen = null;   // this run's plan; a holding flag waiting for the whistle
 const rbpLive = () => !!rbp && rbp.pid === runPid && isRunPlay;
 const rbpOL = b => ols.includes(b) || (rbpLive() && rbp.helpers.includes(b));   // linemen + tight ends on a down lineman
@@ -1234,6 +1514,7 @@ function rbpRoles() {
 }
 // step 2: free = box defenders on the play side (a man on the middle = half on each side, like the center) - (half the center + guard + tackle + tight ends + lead back there). 2+ free: check to the other side, or to zone
 function rbpCheck(R) {
+  if (rb.scheme === 'pinPull') return rbpPinCheck(R);
   const P = R.P, mid = RBP.box.mid * YD, free = k => R.box.reduce((n, d) => n + (P(d) * k > mid ? 1 : P(d) * k < -mid ? 0 : 0.5), 0) - (2.5 + R.tes.filter(t => P(t) * k > 0).length + (R.FB ? 1 : 0));
   const ps = free(1), bs = free(-1);
   if (ps < 2 || Math.random() >= lerpOc(RBP.box.check)) return false;
@@ -1261,6 +1542,7 @@ function rbpStart(draw, swing) {
 }
 function rbpWho(k) {   // a name -> the man (light box: a missing backer's job goes to the next one in the box, then a safety)
   if (!k || !rbp) return null;
+  if (typeof k === 'object') return k;   // (pin & pull names its men directly)
   const R = rbp.R, inBox = d => !!d && R.box.includes(d) && !d.blitz;
   if (k === 'FORCE') {   // the force: the first man outside the end blocker near the line (the Sam, or the safety who walked down in his place)
     const end = R.TE || R.PT, ey = end.y, f = back7.filter(d => d.role !== 'CB' && R.P(d) > R.P(end) - YD && d.x - los < RBP.box.deep * YL)
@@ -1297,7 +1579,7 @@ function rbpLetGo(r, bs) {   // a block that's done: his man is sealed (slowed, 
 }
 function rbpApply() {
   if (!rbpLive()) return;
-  const R = rbp.R, s = R.s, P = R.P, plan = { ...RBP_PLAYS[rbp.play] }, tgt = new Set();
+  const R = rbp.R, s = R.s, P = R.P, plan = rbp.play === 'pinPull' ? rbpPinPlan(R).plan : { ...RBP_PLAYS[rbp.play] }, tgt = new Set();
   if (rbp.play === 'insideZone' && R.TE2) { plan.BT = ['climb', 'WILL']; plan.BG = ['post', 'NT']; }   // 12 personnel: TE-L takes WDE, LT scoops to WILL, LG posts with C
   if (rbp.play === 'goalLine' && R.TE2) plan.BT = ['climb', 'WILL'];   // (TE2 has the backside end: the tackle climbs to WILL)
   if (!R.FB && plan.FB && plan.FB[0] === 'kick' && plan.BG && plan.BG[0] === 'pullLead') plan.BG = ['pullKick', 'FORCE', 'SS'];   // (no fullback to kick out the force: the pulling guard does)
@@ -1348,6 +1630,7 @@ function rbpApply() {
     w.rbp = { kind: 'stalk', t: m, stem: w.x + (shotgun ? RBP.stalk.gun : w.x > los - 1.05 * YD ? RBP.stalk.x : RBP.stalk.z) * YL, ps: P(w) > 0 };
     w.assign = m;
   }
+  if (rbp.play === 'pinPull') rbpPinSetup(R, tgt);   // (the crack on a walked-down safety / backer; the back's read)
   // the zone-read key sits on the keep threat (longer with a fast QB) unless he crashes on the back (a sloppier defense more often): then the QB should pull it
   if (rbp.key) {
     const k = rbp.key;
@@ -1410,6 +1693,7 @@ function rbpTick(dt) {
     const touching = (t.blockers && t.blockers.includes(b)) || (b.lockedTo === t && b.engaged);
     if (touching && !a.mode) {
       a.mode = a.kind === 'pullTrap' ? 'trap' : a.kind === 'pullWrap' ? 'wrap' : a.kind === 'pullLead' ? (P(t) > P(c) ? 'kick' : 'log')
+        : rbp.pp ? (P(t) > rbp.pp.aim - RBP.pin.sq * YD || t.x < los ? 'kick' : 'log')   // (pin & pull: wide of the aiming point or upfield = kicked out; squeezed inside it = logged)
         : P(t) < (rbp.holeY - MID) * s + RBP.kick.squeeze * YD ? 'log' : 'kick';
       const dir = a.mode === 'log' ? -s : s;
       if (back7.includes(t) && a.mode !== 'wrap') {
@@ -1443,8 +1727,9 @@ function rbpTick(dt) {
     const t = a.t;
     if (a.ps && !a.sw && R.SS && R.SS !== t && !R.SS.action && dist(R.SS, w) < 4 * YD && P(R.SS) > P(w) - 2 * YD && !rbpTaken(R.SS, w)) { a.sw = true; a.t = R.SS; w.assign = R.SS; continue; }
     if (c.x > w.x + RBP.stalk.rel * YL || ((t.vx || 0) > RBP.stalk.hips * YD && t.x > c.x + 3 * YL) || t.action === 'down') { a.rel = true; continue; }
-    if (t.blockers && t.blockers.includes(w) && !t.rbpPush) t.rbpPush = { by: w, v: (Math.sign(t.y - MID) || s) * RBP.stalk.push * YD };
+    if (t.blockers && t.blockers.includes(w) && !t.rbpPush) t.rbpPush = { by: w, v: (a.crack ? -s : Math.sign(t.y - MID) || s) * RBP.stalk.push * YD };   // (a crack drives him inside, a stalk walls him to the sideline)
   }
+  rbpPinRead(c);   // (pin & pull: the back's bang / bounce / bend)
   // second-level blocks (climbs, hooks, the FB's kick-out): done once the runner is past or the man is down (the goal-line 2 yd cap: end of updateLine)
   const fbk = R.FB && R.FB.rbp && !rbp.leads.includes(R.FB) ? [R.FB] : [];
   for (const b of [...ols, ...R.tes, ...fbk]) {
@@ -1475,7 +1760,8 @@ function rbpPuller(b, dt) {
   const a = b.rbp;
   if (!rbpLive() || !a || !a.pull || a.pulled || state !== 'run') return false;
   const R = rbp.R, s = R.s, t = a.t;
-  const aimY = a.kind === 'pullLead' ? MID + s * (Math.abs((R.TE || R.PT).y - MID) + 1.5 * YD) : a.kind === 'pullWrap' || !t ? rbp.holeY : t.y - s * 0.6 * YD;
+  const aimY = a.kind === 'pullLead' ? MID + s * (Math.abs((R.TE || R.PT).y - MID) + 1.5 * YD) : a.kind === 'pullWrap' && rbp.pp ? MID + s * (rbp.pp.aim - RBP.pin.inside * YD)   // (pin & pull's second puller: up inside the first)
+    : a.kind === 'pullWrap' || !t ? rbp.holeY : t.y - s * 0.6 * YD;
   if ((aimY - b.y) * s < RBP.pull.at * YD) { a.pulled = true; return false; }
   const bz = back7.find(d => d.blitz && !d.action && dist(d, b) < RBP.pull.blitz * YD && !rbpTaken(d, b));
   if (bz) {
@@ -1560,7 +1846,7 @@ function rbpQB(dt) {
   if (!rbpLive() || qb.action || runner === qb || !runner) return false;
   const px = qb.x, py = qb.y, s = rbp.R.s;
   if (ball.pitch) { qb.pvx = qb.pvy = 0; }   // (a pitch: he stands where he took the snap and flips it)
-  else if (rb.runType === 'outside') moveToward(qb, runner.x - 3 * YD, runner.y - s * YD, QB_SPEED * 0.8 * dt);
+  else if (rb.runType === 'outside' && rbp.play !== 'pinPull') moveToward(qb, runner.x - 3 * YD, runner.y - s * YD, QB_SPEED * 0.8 * dt);   // (pin & pull: the boot fake away, below)
   else {
     if (runner.awaiting) return false;
     if (!rbp.fakeT) { rbp.fakeT = clock; for (const d of rbp.free) d.rbpFrz = Math.max(d.rbpFrz || 0, clock + RBP.fake.freeze); }
@@ -2818,7 +3104,7 @@ function tryCutBlock(b, d) {
   b.assign = null; d.blockers = null; d.engaged = false; d.shed = true; d.tackling = false;
   // the blocker fires low through the man's thighs like a hit stick (shoulder first, bent at the waist, not a flat dive), aimed where the legs
   // will be at contact; the man only goes down at the contact frame (lowContact from updateAction), so nobody snaps into a pose
-  const lead = CUT_LOOK.dur * DIVE_FEEL.slow * CUT_LOOK.contact;
+  const lead = diveEta(b, d.x, d.y) * CUT_LOOK.contact;
   startDive(b, d.x + (d.vx || 0) * lead, d.y + (d.vy || 0) * lead, CUT_LOOK.dur, (win ? CUT_LOOK.lunge : CUT_LOOK.lunge * 1.3) * YD);
   b.act.lowHit = { kind: 'cut', d, win }; b.recoverUntil = clock + (win ? 0.7 : CUT.miss);   // (missed: he hops it and the blocker's the one on the turf)
   return true;
@@ -2881,6 +3167,7 @@ function tryPancake(b, d, odds) {
     popup(d, 'PANCAKE', '#7fe3ff');
   }
   if (!kickoffPlay && !puntRetPlay && state !== 'kickoff' && state !== 'punt') pstOL(b, 'pk');   // (linemen, tight ends and receivers all get their pancakes)
+  celebNote('pancake', b, { tgt: d });
   return true;
 }
 
@@ -2994,15 +3281,23 @@ function pursuitPoint(d, c, speed, dir, err = 1) {
     c.vsx = (c.vsx ?? 0) + ((c.vx || 0) - (c.vsx ?? 0)) * k; c.vsy = (c.vsy ?? 0) + ((c.vy || 0) - (c.vsy ?? 0)) * k;
     c.velAt = clock;
   }
+  speed = steerTop(d, speed);   // (the speed steer will really give him: his attribute cap and the yards he has already run this play. It used to plan on the asked-for
+                                //  speed, boosts and all: a tired coverage man aimed at a spot he could not reach in time and came out behind the returner)
   const path = [];   // his predicted spot every step
   let px = c.x, py = c.y, vx = c.vsx, vy = c.vsy, best = -1;
   const s = Math.hypot(vx, vy), lo = Y_MIN + PURSUIT.edge, hi = Y_MAX - PURSUIT.edge, reach = LUNGE_RANGE * 0.6;
-  // DBs read it better: they look further ahead and allow for the ground they lose getting up to speed
+  // DBs read it better: they look further ahead
   const db = d.role === 'CB' || d.role === 'S', horizon = db ? PURSUIT.dbHorizon : PURSUIT.horizon;
-  const cur = Math.min(speed, Math.hypot(d.svx || 0, d.svy || 0)), lag = db && d.accel ? (speed - cur) ** 2 / (2 * d.accel) : 0;
-  for (let i = 0; i * PURSUIT.step <= horizon; i++) {
+  // everyone allows for the ground he loses getting up to speed toward the spot (the most when he is running the other way: a coverage man coming downfield)
+  const svx = d.svx || 0, svy = d.svy || 0, acc = Math.max(4 * YD, d.accel || 12 * YD), lagK = db ? Math.max(1, PURSUIT.lag) : PURSUIT.lag;
+  const maxI = s > YD ? Math.ceil(PURSUIT.leadMax * YD / (s * PURSUIT.step)) : Infinity;   // (the lead is capped)
+  for (let i = 0; i * PURSUIT.step <= horizon && i <= maxI; i++) {
     path.push([px, py]);
-    if (best < 0 && Math.hypot(px - d.x, py - d.y) <= Math.max(0, speed * i * PURSUIT.step - lag) + reach) { best = i; if (err <= 1) break; }
+    if (best < 0) {
+      const gx = px - d.x, gy = py - d.y, g = Math.hypot(gx, gy) || 1, along = (svx * gx + svy * gy) / g;
+      const lag = lagK * Math.max(0, speed - along) ** 2 / (2 * acc);
+      if (g <= Math.max(0, speed * i * PURSUIT.step - lag) + reach) { best = i; if (err <= 1) break; }
+    }
     if (best >= 0 && i >= best * err) break;
     px += vx * PURSUIT.step; py += vy * PURSUIT.step;
     if (py < lo || py > hi) { py = Math.max(lo, Math.min(hi, py)); vx = (Math.sign(vx) || dir) * s; vy = 0; }   // up the sideline
@@ -3010,7 +3305,13 @@ function pursuitPoint(d, c, speed, dir, err = 1) {
   }
   // an imperfect read aims at where he'd be after err x the meeting time (short = too flat, long = overruns it)
   const i = best < 0 ? path.length - 1 : Math.min(path.length - 1, Math.round(best * err));
-  return { x: path[i][0], y: path[i][1] };
+  return { x: path[i][0], y: path[i][1], t: i * PURSUIT.step, met: best >= 0 };   // (t = seconds until the carrier is there; met = he can get there in time)
+}
+// a shaded aim point (a lane, contain, the vise, a hip) is only worth running to while he still gets there about when the carrier does: once that angle is
+// lost he goes straight for the plain meeting point (base, from pursuitPoint) instead of arcing round and coming out behind him
+function pursuitLate(d, aim, base, speed) {
+  if (!base.met) return true;
+  return Math.hypot(aim.x - d.x, aim.y - d.y) / Math.max(YD, steerTop(d, speed)) > base.t * PURSUIT.late + PURSUIT.lateT;
 }
 
 // Once the ball is caught or run, every defender has his eyes on the ball carrier.
@@ -3049,14 +3350,19 @@ function pursueMove(d, c, dt) {
     d.stiffBy = null;
   }
   if (rbpFrozen(d, c, dt)) return;   // (biting on the QB's fake / the read key sitting home)
-  if (c.awaiting) {   // mesh not finished: nobody triggers yet (the ball isn't in the back's hands): they read it from their spots / drops
-    if (d.action) return updateAction(d, dt);
+  const reading = c.awaiting || runReading(d, c);   // mesh not finished: nobody triggers yet (the ball isn't in the back's hands): they read it from their spots / drops
+  const readHold = () => {
     if (d.zone && !dl.includes(d)) return zoneDefend(d, dt);
     const px = d.x, py = d.y;
     if (dl.includes(d)) steer(d, c.x, c.y, d.top * 0.8, d.accel, dt);   // (the line plays its gap into the backfield: it's being blocked)
     else steer(d, d.x + 0.15 * YD, d.y + (c.y - d.y) * 0.02, d.top * 0.2, d.accel, dt);   // (a shuffle in place, eyes on the mesh)
     clampField(d); setVelocity(d, px, py, dt);
-    return;
+  };
+  // (...but a blocker who has reached him blocks him now: the block is on while he reads, not only once he triggers. Blockers used to arrive, stand in front of a
+  //  reading backer and wait)
+  if (reading && (d.action || dl.includes(d) || !blockersOn(d, c).length)) {
+    if (d.action) return updateAction(d, dt);
+    return readHold();
   }
   if (d.action) {
     homeLunge(d, c, dt, c.jukeT >= d.lungeAt - JUKE_LEAD || c.spinT >= d.lungeAt - 0.2);
@@ -3072,14 +3378,14 @@ function pursueMove(d, c, dt) {
       if (c.action === 'hurdle' && c.act && c.act.user && c.act.space && dist(d, c) <= CONTACT) {
         const cl = c.act.cleared || (c.act.cleared = []);
         if (cl.includes(d)) hurdled = true;
-        else if (cl.length < HURDLE.maxClear && Math.random() < HURDLE.overChance * rm(c, agil(c), 'hurdle') * (d.hitStick ? HURDLE.hitStickK : 1) * Math.max(0.3, 1 - HURDLE.heavy * 1.5 * wz(c) + HURDLE.tallMe * hz(c))) { cl.push(d); hurdled = true; }
+        else if (cl.length < HURDLE.maxClear && Math.random() < HURDLE.overChance * rm(c, agil(c), 'hurdle') * (d.hitStick ? HURDLE.hitStickK : 1) * Math.max(0.3, 1 - HURDLE.heavy * 1.5 * wz(c) + HURDLE.tallMe * hz(c))) { cl.push(d); hurdled = true; if (!c.act.called) hurdleWings(c, true); }
         else c.hurdleAir = true;   // caught in the air: ball comes away easier
       }
       // fooled by a juke / spin and clearly not getting there: he reacts to the move now instead of finishing a dive at empty air
       if ((juked || spun) && !hurdled && d.action === 'dive' && d.act.t >= d.act.dur * REEL_IN.early && dist(d, c) > Math.max(CONTACT * REEL_IN.clear, SHOESTRING.range)) {
         d.resolved = true;
         msg = spun ? 'Spun out of it!' : 'Juked him!';
-        missReel(c, d, spun ? 'spin' : 'juke');
+        if (!missReel(c, d, spun ? 'spin' : 'juke')) popup(spun ? c : d, spun ? 'SPIN MOVE' : 'JUKED', '#ffd94a');   // (tornado round the runner / broken ankle at the fooled man's feet)
         return;
       }
       if (dist(d, c) <= CONTACT && c.action !== 'slide' && !hurdled) {
@@ -3182,7 +3488,7 @@ function pursueMove(d, c, dt) {
             c.slow = Math.min(0.6, c.slow + MISS_CONTACT.slow / balK(c)); c.falterUntil = Math.max(c.falterUntil || 0, clock + MISS_CONTACT.stumble / balK(c));
           }
         } else {
-          if (juked || spun || c.truck) popup(spun ? c : d, 'MOVE TRIED', '#ffd94a', undefined, true, true, spun ? { k: 'tornado' } : c.truck ? { k: 'impact' } : ICON_ANKLE);   // (the move's icon shows on every attempt, even when it didn't work)
+          if (juked || c.truck) popup(d, 'MOVE TRIED', '#ffd94a', undefined, true, true, c.truck ? { k: 'impact' } : ICON_ANKLE);   // (a juke's / truck's icon shows on every attempt, even when it didn't work; the spin's tornado only when the spin worked)
           return tackleCarrier(c, d);
         }
       } else if (d.act.t >= d.act.dur) {
@@ -3207,9 +3513,7 @@ function pursueMove(d, c, dt) {
   // blocked: hold until he rips free, usually toward the ball carrier's side.
   // A double team all but locks him up.
   // no blocking in the back: the blocker has to be on the ball carrier's side of his man
-  const engagedNow = blockerPool().filter(b => b !== c && b.assign === d && !b.action &&
-                                                 !(b.stunUntil > clock) && dist(b, d) <= BLOCK_RANGE * 1.2 &&
-                                                 (b.x - d.x) * (c.x - d.x) + (b.y - d.y) * (c.y - d.y) > 0);
+  const engagedNow = blockersOn(d, c);
   // receivers sometimes whiff on their block completely
   for (const b of engagedNow) {
     const climb = ols.includes(b) && isRunPlay && !kickoffPlay && back7.includes(d);   // a lineman at the second level can miss his climb
@@ -3295,6 +3599,7 @@ function pursueMove(d, c, dt) {
     d.blockers = null; d.heldT = 0;
   }
   d.engaged = false;
+  if (reading) return readHold();   // (the block on him didn't hold: back to his read until the ball is in the back's hands)
   if (d.runRead && !(c === qb && !isRunPlay) && !(dist(d, c) <= LUNGE_RANGE * 1.6 || (FIELD - c.x < 4 * YL && dist(d, c) <= 4 * YD)) && clock - runStart < d.runRead * (isRunPlay ? RUN_REACT.read / Math.max(0.5, diffX('run')) * (1 - runHeat() * RUN_STREAK.react) : 0.25)) {
     if (d.zone) zoneDefend(d, dt);
     return;
@@ -3322,7 +3627,7 @@ function pursueMove(d, c, dt) {
     && defenders().filter(o => o !== d && !o.isKicker && o.x > c.x - 2 * YD && dist(o, c) < dist(d, c)).length < KICK_COVER.gear;
   const koCov = kickoffPlay && d.lane !== undefined && !d.isKicker;   // (a kick coverage man: quicker, and cuts back far sharper)
   const chase = d.top * (lastLine ? PURSUIT.lastLine : PURSUIT.chase) * (1 + 0.08 * (d.mom || 0)) * (closing ? BREAKDOWN.k : 1) * PURSUIT.boost * (koCov ? (kickoff && kickoff.punt ? PUNT.chaseK * PUNT_COVER.speed : KICK_COVER.speed) : 1);   // (their punt = the same coverage speed as yours)
-  const aimAt = pursuitPoint(d, c, chase, c.team === 'off' ? 1 : -1, closing ? Math.min(err, 1) : err);
+  const aimAt = pursuitPoint(d, c, chase, c.team === 'off' ? 1 : -1, closing ? Math.min(err, 1) : err), base = { ...aimAt }, cdir = c.team === 'off' ? 1 : -1;
   // kickoff coverage keeps its lanes: stays fanned out (tightening as it closes), the outside men contain, so nobody bunches up and gets cut back on
   // roles: the outside two a side CONTAIN (stay outside the returner, force him back in), the next men FILL their lanes (hold them
   // until the returner is close), and the middle two RUSH straight at the ball
@@ -3338,13 +3643,18 @@ function pursueMove(d, c, dt) {
   // not everyone runs straight at him: each man takes an angle toward his own side of the returner (outside of him, to wall off the sideline),
   // closing in as he gets near. The middle men take the smallest angle, the outside men the biggest
   if (kickoffPlay && d.lane !== undefined && !d.isKicker && d.x > c.x) {
-    const side = kOff < 0 ? -1 : kOff > 0 ? 1 : (d.lane % 2 ? 1 : -1), reachK2 = Math.min(1, (d.x - c.x) / (16 * YL));
+    const laneSide = kOff < 0 ? -1 : kOff > 0 ? 1 : (d.lane % 2 ? 1 : -1), reachK2 = Math.min(1, (d.x - c.x) / (16 * YL));
+    const side = Math.abs(d.y - c.y) > 1.5 * YD ? Math.sign(d.y - c.y) : laneSide;   // (the hip he is really on: a man the returner has already crossed never loops over his face to get back to his lane's side)
     // (vise: the offset never closes to zero, so the men on his two sides arrive on opposite hips and pinch him instead of piling into the same spot)
     aimAt.y += side * Math.max(KICK_VISE * YD, (0.6 + 0.3 * Math.min(4.5, Math.abs(kOff))) * KICK_ANGLE * YD * reachK2);   // (tight angles: a small outside shade, not a wide arc he can cut back under)
   }
   // a punt's gunners: no lane or wide contain, a tight angle right at where he's headed (a sliver of outside shade), so he has nowhere to go
   const gunP = kickoffPlay && puntRetPlay && (d.lane === 0 || d.lane === 9) && d.x > c.x - YD;
   if (gunP) aimAt.y = Math.max(Y_MIN + YD, Math.min(Y_MAX - YD, pursuitPoint(d, c, chase, c.team === 'off' ? 1 : -1, 1).y + (d.lane ? 1 : -1) * PUNT_GUN.shade * YD));
+  // the angle is lost (he can't get to his lane / contain / vise spot before the returner is past it): straight to the meeting point
+  if (kickoffPlay && !d.isKicker && d.lane !== undefined && pursuitLate(d, aimAt, base, chase)) { aimAt.x = base.x; aimAt.y = base.y; }
+  // leverage (every play): a man in front of the carrier comes in on his near hip, never across his face, so the cutback behind him stays shut
+  else if (!kickoffPlay && !lastLine && (d.x - c.x) * cdir > PURSUIT.levAhead * YD && Math.abs(d.y - aimAt.y) > 2 * PURSUIT.lev * YD) aimAt.y += Math.sign(d.y - aimAt.y) * PURSUIT.lev * YD;
   // enough men are already on the returner: the rest stop chasing his tail, cut him off ahead and squeeze him toward the sideline (from the inside), the outside men hold the edge
   if (kickoffPlay && !d.isKicker && d.x > c.x - YD && dist(d, c) > CUT_OFF.near * YD * 0.6) {
     const onHim = defenders().filter(o => o !== d && !o.isKicker && !o.action && o.x > c.x - 2 * YD && dist(o, c) < CUT_OFF.near * YD).length;
@@ -3391,7 +3701,7 @@ function pursueMove(d, c, dt) {
     // (the dive carries him through the hit: a faster hitter flies further and stays in the air longer, and lands past where he left from)
     const fr = Math.min(1.2, d.hitSpeed), mom = 0.7 + 0.5 * fr + 0.2 * (d.mom || 0);
     const dur = (d.hitStick ? 0.26 : 0.3) * (0.85 + 0.3 * Math.min(1, fr));   // aim where he'll be when the dive lands
-    const lead = dur * DIVE_FEEL.slow;   // (the dive really lasts this long: lead him by that, so he launches the way he'll end up and doesn't swing round mid-air)
+    const lead = diveEta(d, c.x, c.y);   // (how long the dive really takes to get there: lead him by that, so he launches the way he'll end up and doesn't swing round mid-air)
     const aimT = tackleAim(d, c, lead);
     startDive(d, aimT.x, aimT.y, dur, LUNGE_DIST * mom * (d.hitStick ? 1.3 : 1) * (notBehind ? 1 : BEHIND_REACH));
     // the tackle he's going for is picked now, before the animation: big hit, gator roll (at the legs), or a plain wrap-up dive
