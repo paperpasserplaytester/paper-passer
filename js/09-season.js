@@ -91,7 +91,7 @@ const DIVS = ['EAST', 'NORTH', 'SOUTH', 'WEST'];
 const divTeams = (conf, d) => Object.keys(NFL).filter(k => NFL[k].conf === `${conf} ${DIVS[d]}`);
 const shortName = k => ['NYG', 'NYJ', 'LAR', 'LAC'].includes(k) ? NFL[k].nick : NFL[k].city;   // (two cities have two teams)
 const CITY_AB = { LAR: "LA", LAC: "LA", NYG: "NY", NYJ: "NY" };   // (city + team name together: the city is abbreviated, CIN Bengals; the city alone stays spelled out)
-const teamFull = k => NFL[k] ? `${CITY_AB[k] || k} ${NFL[k].nick}` : String(k);
+const teamFull = k => NFL[k] ? `${CITY_AB[k] || k}. ${NFL[k].nick}` : String(k);
 function seasonGames() {
   const games = [], add = (h, a) => games.push({ h, a }), rnd = n => Math.floor(Math.random() * n);
   const r = 1 + rnd(3), s = rnd(4), s2 = (s + 1 + rnd(3)) % 4;   // conference division pairing (d ^ r), the two cross-conference shifts
@@ -232,6 +232,7 @@ function simGameScore(g) {
   g.hs = simPoints(H.off - th + (meA ? dd : 0), A.def - ta + (meH ? dd : 0), true);
   g.as = simPoints(A.off - ta + (meH ? dd : 0), H.def - th + (meA ? dd : 0), false);
   if (g.hs === g.as && Math.random() < SIM_SCORE.otWin) { if (Math.random() < 0.55) g.hs += 3; else g.as += 3; }   // overtime field goal
+  if (season && !exhibition && !tut && (meH || meA) && !g.dynSeen) { g.dynSeen = true; try { dynAfterGame(meH ? g.hs : g.as, meH ? g.as : g.hs, true); } catch (e) {} }   // (a simmed game of yours moves adaptive difficulty too, at DYN.simW)
 }
 // the story hooks for the Post: the play that won (or lost) a close game late, and your game's longest play
 function postGameFacts(blue, red) {
@@ -756,6 +757,7 @@ const wrapLines = (text, n) => {
   if (cur) out.push(cur);
   return out;
 };
+const POP_ARROWS = ['◂', '▸'];
 const offPopShow = p => { if (offPop) popQ.push(p); else offPop = p; };
 const offPopClose = () => { offPop = popQ.shift() || null; };
 const offPopNow = p => { if (offPop) popQ.unshift(offPop); offPop = p; };   // (jumps the queue: shown at once)
@@ -839,9 +841,10 @@ function drawOffPop() {
     ctx.textAlign = 'center';
   }
   ctx.textAlign = 'center';
-  const bw = 220, gap = 30, tot = P.btns.length * bw + (P.btns.length - 1) * gap;
-  P.btns.forEach((b, i) => {
-    Object.assign(b, { x: W / 2 - tot / 2 + i * (bw + gap), y: card.y + card.h - 84, w: bw, h: 62 });
+  const gap = 30, bwOf = b => POP_ARROWS.includes(b.label) ? 80 : 220, tot = P.btns.reduce((t, b) => t + bwOf(b), 0) + (P.btns.length - 1) * gap;   // (paging arrows get small square-ish buttons)
+  let bx = W / 2 - tot / 2;
+  P.btns.forEach(b => {
+    const bw = bwOf(b); Object.assign(b, { x: bx, y: card.y + card.h - 84, w: bw, h: 62 }); bx += bw + gap;
     popBtnDraw = true; menuBtn(b, b.label, b.green ? IN_GAME_PAPER.green : RES.bright, 26); popBtnDraw = false;
   });
   if (P.hide) {   // a small button in the bottom right corner: never show this tip again
@@ -1126,6 +1129,45 @@ function drawAwards() {
 
 // --- the Paper Bowl screen: both rosters (winner on the left), 8 cards a page, box score on each player's page
 const PB_STATS_BTN = { x: 130, y: 625, w: 200, h: 80 };
+const PB_SCORE_BTN = { x: 130, y: 625, w: 200, h: 80 };   // SCORING next to BACK on the Paper Bowl screen: the scoring summary
+// the Paper Bowl's scoring plays, made once from the final score and the box score (TDs = the box score's rushing / receiving TDs, the rest field goals / safeties)
+function pbScoring(pb) {
+  if (pb.log) return pb.log;
+  const out = [];
+  for (const team of [pb.win, pb.lose]) {
+    const pts = team === pb.win ? pb.ws : pb.ls, R = ROSTER[team] || [], st = n => pb.stats[n] || [], val = (n, k) => Number((st(n).find(l => l[0] === k) || [])[1]) || 0;
+    const qb = R.find(p => p.group === 'QB'), k = R.find(p => p.group === 'K'), td = [];
+    for (const p of R) { for (let i = 0; i < val(p.name, 'REC TD'); i++) td.push(`${p.name}, pass from ${qb ? qb.name : 'the QB'}`); for (let i = 0; i < val(p.name, 'RUSH TD'); i++) td.push(`${p.name}, run`); }
+    const tds = Math.floor(pts / 7), r = pts - 7 * tds, ev = [];
+    while (td.length < tds) td.push(`${(R.find(p => p.group === 'RB') || {}).name || 'the offense'}, run`);
+    for (let i = 0; i < tds; i++) ev.push({ pts: 7, what: 'TOUCHDOWN', who: `${td[i]} (kick good)` });
+    const fg = () => ev.push({ pts: 3, what: 'FIELD GOAL', who: k ? k.name : 'kicker' }), sf = () => ev.push({ pts: 2, what: 'SAFETY', who: 'defense' });
+    const two = () => { if (!ev.length) return sf(); ev[0].pts = 8; ev[0].who = ev[0].who.replace('(kick good)', '(2-pt good)'); };
+    if (r === 1) two(); else if (r === 2) sf(); else if (r === 3) fg(); else if (r === 4) { two(); fg(); } else if (r === 5) { fg(); sf(); } else if (r === 6) { fg(); fg(); }
+    for (const e of ev) out.push({ ...e, team, q: 1 + Math.floor(Math.random() * 4), s: Math.random() });
+  }
+  out.sort((a, b) => a.q - b.q || a.s - b.s);
+  let w = 0, l = 0;
+  for (const e of out) { if (e.team === pb.win) w += e.pts; else l += e.pts; e.sc = `${w}-${l}`; }
+  return (pb.log = out);
+}
+function drawPbScoring(pb) {
+  const ev = pbScoring(pb), x = 200, y = 100, w = W - 400, rowH = Math.min(44, Math.floor(430 / Math.max(1, ev.length)));
+  resPanel(x, y, w, 510, [['SCORING SUMMARY', null]], RES.bright);
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 15px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'left';
+  ctx.fillText('QTR', x + 30, y + 52); ctx.fillText('PLAY', x + 170, y + 52); ctx.textAlign = 'right'; ctx.fillText(`${pb.win} - ${pb.lose}`, x + w - 30, y + 52);
+  ev.forEach((e, i) => {
+    const ry = y + 84 + i * rowH;
+    ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = `bold ${Math.min(18, rowH - 6)}px monospace`;
+    ctx.fillText(`Q${e.q}`, x + 30, ry);
+    drawLogo(e.team, x + 120, ry, Math.min(34, rowH - 4));
+    ctx.fillText(e.what, x + 170, ry, 170);
+    ctx.font = `${Math.min(16, rowH - 8)}px monospace`; ctx.fillStyle = RES.dim; ctx.fillText(e.who, x + 350, ry, w - 500);
+    ctx.textAlign = 'right'; ctx.fillStyle = RES.line; ctx.font = `bold ${Math.min(18, rowH - 6)}px monospace`; ctx.fillText(e.sc, x + w - 30, ry);
+  });
+  if (!ev.length) { ctx.textAlign = 'center'; ctx.fillStyle = RES.dim; ctx.fillText('No scoring', x + w / 2, y + 250); }
+}
 function drawPbowl() {
   if (!OFF || !season || !season.pb) { results.screen = 'home'; return; }
   const pb = season.pb, V = OFF.pb, team = V.tab ? pb.lose : pb.win, ps = ROSTER[team];
@@ -1168,7 +1210,9 @@ function drawPbowl() {
     ROSTER_ARROWS.forEach((b, i) => menuBtn(b, i ? '▸' : '◂', RES.bright, 30));
     ctx.font = 'bold 18px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.fillText(`PAGE ${V.page + 1} / ${pages}`, W / 2, 668);
   }
+  if (V.scoring) drawPbScoring(pb);
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
+  menuBtn(PB_SCORE_BTN, V.scoring ? 'ROSTERS' : 'SCORING', V.scoring ? SEL : RES.bright, 24);
   menuBtn(MENU_NEXT, 'NEXT ▸', RES.bright);
 }
 function pbClick(pt) {
@@ -1179,6 +1223,8 @@ function pbClick(pt) {
     else if (inBtn(pt, PB_STATS_BTN)) V.stats = !V.stats;
     return;
   }
+  if (inBtn(pt, PB_SCORE_BTN)) { V.scoring = !V.scoring; return; }
+  if (V.scoring) { if (inBtn(pt, BACK_BTN)) V.scoring = false; else if (inBtn(pt, MENU_NEXT)) offAfterPb(); return; }   // (the summary is up: the cards under it don't take clicks)
   if (inBtn(pt, ROSTER_TABS.off)) { V.tab = 0; V.page = 0; return; }
   if (inBtn(pt, ROSTER_TABS.def)) { V.tab = 1; V.page = 0; return; }
   const pages = Math.ceil(ps.length / OFFSEASON.perPage);
@@ -1372,7 +1418,7 @@ const OFF_ROSTER_BTN = { x: 700, y: 640, w: 310, h: 58 };
 const RS_TRADE_BTN = { x: 860, y: 640, w: 150, h: 58 };
 const rsOverCap = () => !!(OFF && season && OFF.expiring.some(p => p.ask && resignRoom(season.team, p) < 0));
 const OFF_TRADE_BTN = { x: 860, y: 640, w: 150, h: 58 };   // (draft screen: ROSTER shrinks to make room for TRADES)
-const offCapBar = () => { OFF_ROSTER_BTN.w = results.screen === 'resign' && rsOverCap() || results.screen === 'draft' ? 150 : 310; if (results.screen === 'draft') menuBtn(OFF_TRADE_BTN, 'TRADES', RES.bright, 22); drawCapBar(season.team, 150, 636, 520, results.screen === 'resign' && OFF ? OFF.expiring : [], false, results.screen === 'resign' && OFF && OFF.rs.plus ? OFF.rs.plus : []); menuBtn(OFF_ROSTER_BTN, 'ROSTER', RES.bright, 22); };
+const offCapBar = () => { OFF_ROSTER_BTN.w = results.screen === 'resign' || results.screen === 'draft' ? 150 : 310; if (results.screen === 'draft') menuBtn(OFF_TRADE_BTN, 'TRADES', RES.bright, 22); drawCapBar(season.team, 150, 636, 520, results.screen === 'resign' && OFF ? OFF.expiring : [], false, results.screen === 'resign' && OFF && OFF.rs.plus ? OFF.rs.plus : []); menuBtn(OFF_ROSTER_BTN, 'ROSTER', RES.bright, 22); };
 let rosterReturn = null;   // the offseason screen the roster was opened from (BACK goes there)
 function offOpenRoster() { rosterReturn = results.screen; rosterView.team = null; rosterView.sel = null; rosterView.page = 0; if (rosterView.side === 'upg') rosterView.side = rosterUI.side; results.screen = 'roster'; }
 
@@ -1439,7 +1485,7 @@ function drawResign() {
     ctx.font = 'bold 16px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`PAGE ${OFF.rs.page + 1} / ${pages}`, W / 2, 620);
   }
   offCapBar();
-  if (rsOverCap()) menuBtn(RS_TRADE_BTN, 'TRADES', '#ffd23a', 22);
+  menuBtn(RS_TRADE_BTN, 'TRADES', rsOverCap() ? '#ffd23a' : RES.bright, 22);   // (always open in the offseason; over the cap = the cap-free kind)
   menuBtn(MENU_NEXT, 'NEXT ▸', list.length ? CARD_GRAY : RES.bright, 22, null, !list.length);   // (back to the main franchise screen, where FREE AGENCY is next)
 }
 function resignClick(pt) {
@@ -1455,6 +1501,7 @@ function resignClick(pt) {
     offPopShow({ title: 'CAP-FREE TRADES', lines: wrapLines('You are over the salary cap. Trades made from here ignore the cap for both teams, so you can move salary and make room to re-sign your players.', 54) });
     return;
   }
+  if (inBtn(pt, RS_TRADE_BTN)) { TR.capFree = false; tradeOpen('resign'); return; }
   if (!list.length) { if (inBtn(pt, MENU_NEXT)) { OFF.stage = 'fa'; results.screen = 'home'; } return; }
   const tk = rsTicked();
   if (inBtn(pt, RS_ALL)) { OFF.rs.chk = tk.length === list.length ? [] : list.slice(); return; }
@@ -1486,7 +1533,7 @@ const DESKFX = { foilStars: 4, goldStars: 5, starStamp: 4.5, lift: 12, tilt: 0.0
 const deskHash = s => [...String(s)].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
 const DESK_BGS = {};
 function boardBg(cork) {   // cached full-screen backdrop (offscreen canvas, so dark mode's ctx wrapping never touches it)
-  const dk = !!SETTINGS.darkMode, key = (cork ? 'c' : 'd') + dk;
+  const dk = darkOn(), key = (cork ? 'c' : 'd') + dk;
   if (!DESK_BGS[key]) {
     const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d'), r = seeded(cork ? 11 : 5);
     if (cork) {
@@ -1687,8 +1734,8 @@ function drawFA() {
   const list = faList(), pages = Math.ceil(list.length / OFFSEASON.perPage) || 1;
   F.page = Math.min(F.page, pages - 1);
   menuBtn(FA_TITLE_BTN, `${F.pos && F.pos !== 'ALL' ? F.pos : 'FREE AGENTS'} ${F.dd ? '▴' : '▾'}`, F.dd ? SEL : RES.bright, 30);
-  FA_SIDE_BTNS.forEach(s => menuBtn(s.b, s.label, F.filter === s.side ? SEL : RES.bright, 22));
-  if (!F.browse && OFF.draftDone) menuBtn(TR_TEAM_BTN, 'TRADES', RES.bright, 22);   // (the offseason trade window: after the draft)
+  menuBtn(FA_SIDE_BTNS[0].b, F.filter === 'off' ? 'OFFENSE' : F.filter === 'def' ? 'DEFENSE' : 'ALL', F.filter !== 'all' ? SEL : RES.bright, 22);   // (one button: ALL > OFFENSE > DEFENSE)
+  if (!F.browse) menuBtn(TR_TEAM_BTN, 'TRADES', RES.bright, 22);   // (trades are open all offseason)
   FA_TAB_BTNS.forEach(t => {   // position index tabs along the top
     const on = (F.pos || 'ALL') === t.pos, dim = F.filter !== 'all' && t.pos !== 'ALL' && OFF_GROUPS.includes(t.pos) !== (F.filter === 'off'), b = t.b;
     UI_BTNS.push(b);
@@ -1794,11 +1841,10 @@ function faClick(pt) {
   }
   const ss = FA_SORT_BTNS.find(s => inBtn(pt, s.b));
   if (ss) { F.sort = F.sort === ss.k ? 'rate' : ss.k; F.page = 0; return; }
-  if (!F.browse && OFF.draftDone && inBtn(pt, TR_TEAM_BTN)) { tradeOpen('fa'); return; }
+  if (!F.browse && inBtn(pt, TR_TEAM_BTN)) { tradeOpen('fa'); return; }
   if (inBtn(pt, FA_DD)) { F.dd = true; return; }
-  const sb = FA_SIDE_BTNS.find(s => inBtn(pt, s.b));
-  if (sb) {
-    F.filter = F.filter === sb.side ? 'all' : sb.side; F.page = 0;
+  if (inBtn(pt, FA_SIDE_BTNS[0].b)) {
+    F.filter = F.filter === 'off' ? 'def' : F.filter === 'def' ? 'all' : 'off'; F.page = 0;
     if (F.pos && F.pos !== 'ALL' && F.filter !== 'all' && OFF_GROUPS.includes(F.pos) !== (F.filter === 'off')) F.pos = 'ALL';
     return;
   }
@@ -2002,7 +2048,7 @@ function drawDraft() {
     ctx.font = 'bold 13px monospace'; ctx.fillStyle = RES.dim;
     ctx.fillText(`ROUND ${D.round}/${DRAFT.rounds}  PICK ${D.slot + 1} (#${(D.round - 1) * D.order.length + D.slot + 1})  SCOUTS ${D.scouts}  ${D.label} CLASS`, b.x + b.w / 2, b.y + 58);
   });
-  for (const [side, b] of Object.entries(ROSTER_TABS)) menuBtn(b, side === 'off' ? 'OFFENSE' : 'DEFENSE', side === D.side ? SEL : RES.bright, 26);
+  menuBtn(ROSTER_TABS.off, D.side === 'off' ? 'OFFENSE' : D.side === 'def' ? 'DEFENSE' : 'ALL', D.side ? SEL : RES.bright, 26);   // (one button: ALL > OFFENSE > DEFENSE)
   ctx.font = 'bold 12px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(D.log.length ? `JUST PICKED: ${D.log.join('   ')}` : '', W / 2, 88);
   list.slice(D.page * OFFSEASON.perPage, (D.page + 1) * OFFSEASON.perPage).forEach((p, i) => rosterCard(p, ROSTER_CARDS[i], me, null, `${fmtM(p.salary)} ${p.years}Y`));
@@ -2050,9 +2096,8 @@ function draftClick(pt) {
   }
   if (inBtn(pt, ROSTER_TITLE_BTN)) { D.dd = true; return; }
   const list = draftList(), pages = Math.ceil(list.length / OFFSEASON.perPage) || 1;
-  const side = Object.keys(ROSTER_TABS).find(s => inBtn(pt, ROSTER_TABS[s]));
-  if (side) {
-    D.side = D.side === side ? null : side; D.page = 0;
+  if (inBtn(pt, ROSTER_TABS.off)) {
+    D.side = !D.side ? 'off' : D.side === 'off' ? 'def' : null; D.page = 0;
     if (D.pos && D.pos !== 'ALL' && D.side && OFF_GROUPS.includes(D.pos) !== (D.side === 'off')) D.pos = 'ALL';
     return;
   }
@@ -2391,13 +2436,18 @@ function offFinishFA() {
   if (retired.length) retired.forEach(t => lines.push(`  ${t}.`)); else lines.push('  Nobody retired.');
   staff.forEach(t => lines.push(`  ${t}`));
   const swaps = LEAGUE.tradeNews.splice(0).slice(0, 3);
+  const findP = (nm, k) => (ROSTER[k] || []).find(q => q.name === nm);
+  const tcards = (LEAGUE.tradeCards || []).splice(0).slice(-8).flatMap(t => {   // each big deal: the star (and the player coming back) as cards, FROM -> TO under them
+    const a = findP(t.name, t.to), b = t.gotP ? findP(t.gotP, t.from) : null;
+    return [a ? { p: a, team: t.to, sub: `${t.from} ➜ ${t.to}` } : null, b ? { p: b, team: t.from, sub: `${t.to} ➜ ${t.from}` } : null].filter(Boolean);
+  });
   if (star.length || swaps.length) { lines.push('AROUND THE LEAGUE:'); star.forEach(t => lines.push(`  ${t}.`)); swaps.forEach(t => lines.push(`  ${t}`)); }
   offTip('newyear');
   const lg = OFF.retiredLg.filter(r => r.p.stars >= 4).slice(0, 6), cats = [
     { name: 'YOUR RETIREMENTS', lines: OFF.retiredYou.length ? [] : ['Nobody retired.'], cards: OFF.retiredYou.map(r => ({ p: r.p, team: me, sub: `AGE ${r.p.age}  RETIRED` })) },
     { name: 'COORDINATORS', lines: staff.length ? staff.flatMap(t => wrapLines(t, 90)) : ['No changes on your staff.'], cards: [] },
     { name: 'AROUND THE LEAGUE', lines: lg.length ? ['Stars who retired around the league.'] : ['No stars retired.'], cards: lg.map(r => ({ p: r.p, team: r.k, sub: `${r.k}  RETIRED` })) },
-    { name: 'LEAGUE TRADES', lines: swaps.length ? swaps.flatMap(t => wrapLines(t, 90)) : ['No big trades.'], cards: [] }];
+    { name: 'LEAGUE TRADES', lines: swaps.length ? swaps.flatMap(t => wrapLines(t, 90)) : ['No big trades.'], cards: tcards }];
   catPopShow({ title: `NEW SEASON  ${nflYear()}`, cats, noOpen: true, done: () => { results.screen = 'offers'; offTip('offers'); } });
 }
 function offFinish(team) {
@@ -2490,13 +2540,13 @@ function drawOffers() {
   ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 34px monospace';
   ctx.fillText(moveMode ? 'DEMAND A TRADE' : 'JOB OFFERS', W / 2, 30);
   ctx.font = 'bold 16px monospace'; ctx.fillStyle = RES.dim;
-  ctx.fillText(moveMode ? 'ANY TEAM CAN BE NEGOTIATED WITH: CLICK ONE. GREEN = THEY CALLED AND PAY YOU, THE REST COST CREDITS.' : n ? `${n} TEAM${n > 1 ? 'S' : ''} WANT${n > 1 ? '' : 'S'} YOU AS THEIR HEAD COACH` : 'NO TEAMS HAVE CALLED', W / 2, 60);
+  ctx.fillText(moveMode ? 'ANY TEAM CAN BE NEGOTIATED WITH: CLICK ONE. GREEN = THEY CALLED AND PAY YOU, THE REST COST CREDITS.' : (n ? `${n} TEAM${n > 1 ? 'S' : ''} WANT${n > 1 ? '' : 'S'} YOU` : 'NO TEAMS HAVE CALLED') + '. THE REST COST CREDITS (LESS THE MORE THEY WANT YOU)', W / 2, 60);
   for (const [conf, b] of Object.entries(PICK_TABS)) menuBtn(b, conf, conf === pickConf ? SEL : RES.bright, 26);
   PICK_DIVS.forEach((div, di) => { const pn = PICK_PANEL(di); resPanel(pn.x, pn.y, pn.w, pn.h, [[`${pickConf} ${div}`, null]], RES.bright); });
   for (const b of PICK_BTNS.filter(b => b.conf === pickConf)) {
-    const t = NFL[b.key], offered = moveMode ? moveOk(b.key) : !!OFF.offers[b.key], cur = b.key === me;
+    const t = NFL[b.key], offered = moveMode ? moveOk(b.key) : !!OFF.offers[b.key], buyable = !moveMode && !offered && moveOk(b.key), cur = b.key === me;
     menuBtn(b, '', offered ? RES.bright : CARD_GRAY, 20, bb => {
-      ctx.globalAlpha = offered || cur ? 1 : 0.4;
+      ctx.globalAlpha = offered || cur ? 1 : buyable ? 0.7 : 0.4;
       drawLogo(b.key, bb.x + 44, bb.y + bb.h / 2, 46);
       ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'left';
       ctx.fillText(`${teamFull(b.key)}`.slice(0, 22), bb.x + 88, bb.y + bb.h / 2 + 1);
@@ -2507,9 +2557,10 @@ function drawOffers() {
       teamStarRow(bb.x + bb.w - 94, cy, st.def, 8, 18, true, b.key);
       ctx.globalAlpha = 1; ctx.textAlign = 'center';
       if (OFF && OFF.offers && OFF.offers[b.key]) { ctx.fillStyle = '#2f8f3a'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.fillText(`+${OFF.offers[b.key]} ¤`, bb.x + 88, bb.y + bb.h - 8); }
+      else if (buyable) { ctx.fillStyle = '#b8401f'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.fillText(`-${offerPrice(b.key)} ¤`, bb.x + 88, bb.y + bb.h - 8); }
       if (offered && !moveMode || OFF && OFF.offers && OFF.offers[b.key]) { ctx.strokeStyle = '#2f8f3a'; ctx.lineWidth = 3; ctx.strokeRect(bb.x + 1.5, bb.y + 1.5, bb.w - 3, bb.h - 3); }
       if (cur) { ctx.strokeStyle = RES.gold; ctx.lineWidth = 3; ctx.strokeRect(bb.x + 1.5, bb.y + 1.5, bb.w - 3, bb.h - 3); }
-    }, offered);
+    }, offered || buyable);
   }
   menuBtn(MENU_NEXT, moveMode ? 'BACK' : n ? 'REJECT\nALL' : 'CONTINUE ▸', RES.bright, 22);
   if (scoutUI.team) drawScout();

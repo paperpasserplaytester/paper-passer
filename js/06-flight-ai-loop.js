@@ -97,6 +97,7 @@ function updateFlight(dt) {
     d.divePick = true;
   }
 
+  const eyesOnBall = d => d.eyes === 'ball' || watchingBall(d);
   for (const d of [...back7].sort((a, b) => dist(a, ball) - dist(b, ball))) {
     if (d.rolled || d.action || ball.p <= 0.25 || pushedOff(d)) continue;   // shoved off: he can only punch at the catch
     const rk = reachK(d), dd = dist(d, ball) / rk;   // a taller DB's reach (and catch radius) is bigger
@@ -106,7 +107,7 @@ function updateFlight(dt) {
         const r = Math.random();
         // beyond his two-handed reach he can only stretch one hand out: now and then a fingertip, very rarely a pick
         if (dd > DEFLECT_RANGE) {
-          if (!udCtl(d) && !d.action && ball.z > STRIDE_HEIGHT * DB_LEAP.low && Math.random() < DB_LEAP.one) {   // (a CPU DB stretching for it often jumps for the fingertip / one-hander)
+          if (!udCtl(d) && !d.action && ball.z > STRIDE_HEIGHT * DB_LEAP.low && Math.random() < DB_LEAP.one * (eyesOnBall(d) ? 1.25 : 1)) {   // (a CPU DB stretching for it often jumps for the fingertip / one-hander)
             const sp = ballSpot(d, PICK_RANGE * rk, JUMP_TIME / 2, Math.max(Math.hypot(d.svx, d.svy), d.top || 0));
             d.action = 'jump'; d.act = { t: 0, dur: JUMP_TIME, h: Math.max(14 * S, Math.min(JUMP_REACH, Math.min(ball.z, sp.z)) - 16 * S) };
             const gx = sp.x - d.x, gy = sp.y - d.y, gd = Math.hypot(gx, gy);
@@ -124,7 +125,7 @@ function updateFlight(dt) {
         const pickMult = (eyes === 'ball' ? 1.5 : eyes === 'receiver' ? (dd <= PICK_RANGE ? 1.4 : 0.7) : 1) * (facesBall(d) ? 1 : PICK_BLIND) *
                          (1 + DUCK_PICK * (ball.duck || 0)) * dbSkill(d) * (ball.bullet ? BULLET_PICK : 1);   // a wobbler (the QB got hit) hangs up there for him
         const deflMult = (eyes === 'receiver' ? 1.4 : eyes === 'ball' ? 0.85 : 1) * (1 + DB_SKILL.pbu * (dbSkill(d) - 1));
-        if ((eyes === 'receiver' || (!udCtl(d) && Math.random() < DB_LEAP.ball)) && dd <= PICK_RANGE * 1.2 && !guardsOther(d)) {   // (CPU DBs with eyes on the ball also go up for it more often: DB_LEAP.ball)
+        if ((eyes === 'receiver' || (!udCtl(d) && Math.random() < (eyes === 'ball' || watchingBall(d) ? DB_LEAP.eyesBall : DB_LEAP.ball))) && dd <= PICK_RANGE * 1.2 && !guardsOther(d)) {   // (CPU DBs with eyes on the ball also go up for it more often: DB_LEAP.ball)
           const lands = Math.hypot(d.x - ball.tx, d.y - ball.ty) <= PICK_RANGE * rk * 0.9;   // coming down inside his radius: wait for it
           const sp = ballSpot(d, PICK_RANGE * rk, JUMP_TIME / 2, Math.max(Math.hypot(d.svx, d.svy), d.top || 0));   // (he goes up toward where he can take it, lower on its way down if it's too high)
           if (!lands && ball.z > Math.max(d.reachZ * 0.5, STRIDE_HEIGHT) * DB_LEAP.low && sp.z > Math.max(d.reachZ * 0.8, STRIDE_HEIGHT) * rk * DB_LEAP.low) {   // (no leap for a ball he can reach standing, or one that's under his hands by the time he's up there)
@@ -134,7 +135,7 @@ function updateFlight(dt) {
             if (gd > 0.25 * YD) { const v = Math.min(gd / (JUMP_TIME * 0.55), 1.1 * (d.top || 8 * YD)); d.vx = gx / gd * v; d.vy = gy / gd * v; }
             else { d.vx = d.svx; d.vy = d.svy; }
             if (gd > 0.25 * YD) d.face = Math.sign(sp.x - d.x) || d.face;   // (turned to the ball for the leap)
-          } else if (dd > PICK_RANGE * 0.87) startDive(d, ball.x, ball.y, 0.25, DIVE_LUNGE);
+          } else if (dd > PICK_RANGE * 0.87) startDive(d, ball.x, ball.y, DB_DIVE.dur, DIVE_LUNGE);
         }
         if (dd <= PICK_RANGE && ball.z <= d.reachZ * 0.75 && facingPlay(d)) {
           // thrown right into his chest with no receiver near: he should catch it
@@ -343,12 +344,25 @@ const toeNear = p => toSideline(p) < 3 * YD || FIELD + ENDZONE - p.x < 3 * YD;  
 let ignoreD = false;   // D was pressed for a one-hander: don't read it as steering until it is released
 // the one-handed reach: whichever hand is on the side the ball is coming in on (the more effective one)
 const bestHand = () => Math.sign((ball.tx ?? ball.x) - tgt.x) || -1;
+// a receiver's jump / dive timing, shown like your defender's leap: hand outlines green for perfect, yellow a bit off, red way off (rem = s until the ball gets there)
+function timingPop(p, rem, dive) {
+  if (!p || aiOff()) return;   // (yours only: the computer's receivers don't show it)
+  const want = dive ? DB_DIVE.dur * 0.5 : JUMP_TIME / 2 + JUMP_TIMING.lead, win = dive ? DEF.jump.window : JUMP_TIMING.window * (tut ? TUT_CATCH.timing : 1);
+  const q = Math.max(0, 1 - Math.abs(rem - want) / win), perfect = q >= DEF.jump.perfect, f = Math.max(0, Math.min(1, q / DEF.jump.perfect));
+  const col = perfect ? ICON.col.hands : `rgb(255,${Math.round(74 + 151 * f)},${Math.round(58 + 16 * f)})`;
+  popup(p, perfect ? (dive ? 'PERFECT DIVE' : 'PERFECT JUMP') : rem > want ? 'EARLY' : 'LATE', '#ffd94a', undefined, true, false, { k: 'hands', c: col });
+}
 function flightAction(code) {
   if (!tgt || tgt.action) return;
   if (code === 'KeyD') ignoreD = true;
   // when he called for the jump: pressed so the jump peaks as the ball gets there is "well timed"
   if ((code === 'KeyW' || (code === 'KeyD' && keys.KeyW)) && tgt.jumpPress == null && state === 'flight') {
     tgt.jumpPress = (1 - ball.p) * ball.T;
+    timingPop(tgt, tgt.jumpPress, false);
+  }
+  if ((code === 'KeyS' || (code === 'KeyD' && keys.KeyS)) && tgt.divePress == null && state === 'flight' && !toeNear(tgt)) {
+    tgt.divePress = (1 - ball.p) * ball.T;
+    timingPop(tgt, tgt.divePress, true);
   }
   // A (the sprint key, downfield) = catch on the run at full speed; D (the other way) = one hand
   if (code === 'KeyA' || code === 'ShiftLeft' || code === 'ShiftRight') {
@@ -1228,7 +1242,10 @@ function defTick(dt) {
   if (back7.includes(ud) && (state === 'drop' || state === 'pocket')) {
     if (!ud.blitz && ud.x < los + YL) {
       Object.assign(ud, { blitz: true, edge: Math.abs(ud.y - MID) > 3 * YD, side: Math.sign(ud.y - MID) || 1, rush: ud.rush || (ud.role === 'LB' ? 9 : 9.5) * YD, rushV: 0, push: YD, shedAt: 99, shed: false, rbHit: false, gapY: null });
-    } else if (ud.blitz && !ud.engaged && ud.x > los + 2.5 * YL) ud.blitz = false;
+    } else if (ud.blitz && !ud.engaged) {   // (a disguised blitzer starts off the ball: he only drops out of the blitz once you back him up past where he was at the snap)
+      if (ud.bx0Pid !== runPid) { ud.bx0Pid = runPid; ud.bx0 = ud.x; }
+      if (ud.x > Math.max(los + 2.5 * YL, ud.bx0 + 1.5 * YL)) ud.blitz = false;
+    }
   }
 }
 
@@ -1563,7 +1580,7 @@ function formCall(key, ocS, c, pass) {
 // (depthLocks: show = keep a hurt locked man in his slot, for the roster view only), then starters, the rules from the formation notes
 function formPersonnel(team, f, show = false) {
   const R = (ROSTER[team] || []).filter(p => !isOut(p)), used = new Set(), st = startersOf(team);
-  const lk = depthLocks(team, show), map = chartSlotsOf(f), out = map.map(k => (k && lk[k]) || null);
+  const lk = depthLocksF(team, f, show), map = chartSlotsOf(f), out = map.map(k => (k && lk[k]) || null);
   for (const p of out) if (p) used.add(p);
   const av = (...g) => R.filter(p => g.includes(p.group) && !used.has(p));
   const take = p => { if (p) used.add(p); return p || null; };
@@ -2029,12 +2046,12 @@ const CPU_QB = { misreadPow: 2.2, powPer: 0.35, noise: 1.6, rollBase: 0.22, roll
 const DEEP_CALL = { shot: 1.8, mid: 1.3, sim: 1.5 };   // x the weight of deep / intermediate route concepts in the computer's play calls, x the odds of a deep shot in a simmed drive
 const AVG_DEPTH = 11;   // yards a simmed completion is aimed past the line on a normal down (was 8.5)
 const AI_DEEP = { per: 1.2, shortPen: 3, shortYd: 8, cap: 38, at: 15, bonus: 11, force: 0.5, forceMin: 14, forceHeat: 0.35, scr: 0.5 };   // (force was 0.9: with nobody open he nearly always forced a deep throw and never ran) // scr = base odds he's a scrambler this play (was 0.45, 0.28); mid / deep shots x1.5 (per, bonus, forced: forceMin 12 -> 8, forceHeat = pressure needed)   // the computer's QB and deep shots: open-ness points per yard downfield (up to cap yd), + bonus for a throw at least `at` yd past the line; force = share of plays where, under pressure with nobody open, he forces it to his deepest man (at least forceMin yd downfield) instead of running / throwing it away
-const AI_PAT = { shortYd: 8, shortSep: 1.5, shortWait: 0.9, flushBase: 0.75, flushPer: 0.3, flushHeat: 0.15 };   // the computer's QB patience: a throw under shortYd past the line needs shortSep more yards of separation to beat his release time, and he waits up to shortWait s past it before settling for one; flush* = odds (base + per x speed+agility steps) he escapes the pocket away from a rusher once pressure passes flushHeat
+const AI_PAT = { shortYd: 8, shortSep: 1.5, shortWait: 0.9, flushBase: 0.75, flushPer: 0.3, flushHeat: 0.15, flushAwr: 0.06, solidHeat: 0.3, solidAwr: 0.04 };   // flushAwr / solidAwr = per awareness step: a sharp QB only leaves under real heat and stays in a clean pocket longer   // the computer's QB patience: a throw under shortYd past the line needs shortSep more yards of separation to beat his release time, and he waits up to shortWait s past it before settling for one; flush* = odds (base + per x speed+agility steps) he escapes the pocket away from a rusher once pressure passes flushHeat
 const AI_SIDE = { cross: 3.5, crossRun: 4, same: 0.7, dir: 0.5 };   // crossRun = extra cross-field penalty when he has open grass to run (a throw across the field is then ruled out until he holds it too long)
 // (   // the computer's QB, in open-ness points: the penalty for a throw all the way across the field, the pull toward a receiver on his side of the field (and the push off the other), a receiver running the way he is moving
 const AI_LEAD = { minSpd: 2, ahead: 0.3, away: 1.6, range: 5 };   // (ahead was 1.2: receivers had to dive for it; now in stride)   // the computer's QB leads a moving receiver: min speed (yd/s) to bother, extra yards ahead of him, up to this many yards sideways away from the nearest defender (within `range` yards of the spot)
 const LANE = { max: 4, weight: 0.3 };   // the computer's QB likes a clear throwing lane: yards of room to the nearest defender off the line (capped at max) x weight, added to the open-ness score
-const AI_JAM_OFF = 1.5, AI_JAM_LEAD = 1.7;   // s after a jam that the QB still treats him as covered unless he has separation; how much further he leads such a man
+const AI_JAM_OFF = 2.2, AI_JAM_LEAD = 1.7;   // s after a jam that the QB still treats him as covered unless he has separation; how much further he leads such a man
 function aiTarget(force) {
   const st = tut && tutStep(), aimUd = (st && st.target === 'ud' && ud) || (!tut && exhibition && exhibition.forceInt && aiOff() && ud) || (oo && oo.target === 'ud' && aiOff() && ud), e = cpuEdge();   // (the test menu's INTERCEPTION RETURN also throws it right at your defender)
   // the decision sheet's throw: past the sticks on 3rd (and 2nd & 7+), short of the marker is a wasted throw, safe when ahead, depth when behind (x how closely he follows it)
@@ -2049,7 +2066,7 @@ function aiTarget(force) {
   const hp0 = tut ? 0 : pressure(), openMin = Math.max(0.7, DEF.open - 0.35 * e) * (1 - 0.5 * hp0);
   for (const r of catchers()) {
     if (r.isPasser || r.action) continue;
-    if (!aimUd && !tut && r.jammer && clock < (r.jamUntil || 0)) continue;   // (a man being jammed at the line isn't a target yet)
+    if (!aimUd && !tut && ((r.jammer && clock < (r.jamUntil || 0)) || r.jamFightOn || clock < (r.falterUntil || 0) || r.action === 'sit')) continue;   // (a man being jammed / hand-fighting at the line, or stumbling out of it, isn't a target yet)
     const offJam = !aimUd && !tut && r.jammer && clock - (r.jamUntil || 0) < AI_JAM_OFF;   // (just came off a jam: no throw unless he's got separation, and then it leads him further into the open)
     let T = Math.max(0.3, dist(qb, r) / BALL_SPEED), px = r.x + r.vx * T, py = r.y + r.vy * T;
     if (!aimUd && !tut) {   // (lead him by the ball's real flight time: the arc makes it take longer than distance / speed, and a moving man behind the line (a swing, a screen) was thrown behind)
@@ -2073,7 +2090,7 @@ function aiTarget(force) {
     const sep = Math.min(...defenders().map(d => Math.hypot(d.x + d.vx * T * 0.5 - px, d.y + d.vy * T * 0.5 - py))) / YD;
     if (offJam && sep < openMin) continue;
     // (still in his stem, before the break: only when he's wide open; a back / flat man near the line isn't held to it)
-    if (!aimUd && !tut && r !== rb && r.route && r.path && r.path.length >= 2 && !(r.leg >= 1) && r.x - los > AI_STEM.minYd * YL && sep < openMin * AI_STEM.open) continue;
+    if (!aimUd && !tut && r !== rb && r.route && r.path && r.path.length >= 2 && !(r.leg >= 1) && r.x - los > AI_STEM.minYd * YL && sep < openMin * AI_STEM.open * Math.max(0.6, 1 + AI_STEM.awr * rz(qb, 'awr'))) continue;
     // (a little extra look at the man or the zone you're covering: they test you)
     let zb = 0;
     if (ud && !aimUd && !tut) {
@@ -2178,10 +2195,10 @@ function aiPocket() {
     ai.stepUp = Math.random() < Math.max(0.15, Math.min(0.95, CPU_QB.stepBase + CPU_QB.stepPer * rz(qb, 'acc')));
   }
   // good blocking and a pocket that has formed: he stays in it (no rollout, no tucking it) until it breaks down or somebody is on him
-  const solid = !hold && !tut && heat < 0.3 && inPocket() > 0 && !aiCollapsing() && !(qb.escapedAt != null && clock - qb.escapedAt < ESCAPE.time);
+  const solid = !hold && !tut && heat < AI_PAT.solidHeat * Math.max(0.6, 1 + AI_PAT.solidAwr * rz(qb, 'awr')) && inPocket() > 0 && !aiCollapsing() && !(qb.escapedAt != null && clock - qb.escapedAt < ESCAPE.time);
   if (ai.roll && !solid && !hold && !tut && !qb.action && qb.x < los + YD && clock < ai.throwAt + 1.2 && toSideline(qb) > CPU_QB.rollTo * YD) keys[qb.y < MID ? 'KeyW' : 'KeyS'] = true;   // (rolling out toward the nearer sideline, not past the line)
   if (ai.flush == null) ai.flush = Math.random() < Math.max(0.1, Math.min(0.9, AI_PAT.flushBase + AI_PAT.flushPer * (rz(qb, 'spd') + rz(qb, 'agi'))));   // (a fast, shifty QB leaves the pocket under pressure)
-  if (ai.flush && !hold && !tut && !qb.action && rusher && heat > AI_PAT.flushHeat && qb.x < los + YD && toSideline(qb) > CPU_QB.rollTo * 0.5 * YD) { keys[rusher.y > qb.y ? 'KeyW' : 'KeyS'] = true; keys.KeyA = qb.x < los - 2 * YD; }   // (flushed out: away from the closest rusher, up toward the line, and he can still throw on the run)
+  if (ai.flush && !hold && !tut && !qb.action && rusher && heat > AI_PAT.flushHeat * Math.max(0.5, 1 + AI_PAT.flushAwr * rz(qb, 'awr')) && qb.x < los + YD && toSideline(qb) > CPU_QB.rollTo * 0.5 * YD) { keys[rusher.y > qb.y ? 'KeyW' : 'KeyS'] = true; keys.KeyA = qb.x < los - 2 * YD; }   // (flushed out: away from the closest rusher, up toward the line, and he can still throw on the run)
   // the line repels him: every rusher near pushes him the other way (a blocked one only up close), and with a clean pocket he climbs it
   const threats = hold ? [] : [...dl, ...back7.filter(d => d.blitz)];   // (a lineman on the ground is still in the way: he steps around him)
   let rx = 0, ry = 0;
@@ -2652,7 +2669,7 @@ function update(dt) {
     // the defense triggers on the screen; the few who stayed home keep playing their zones while he's set to throw
     for (const d of back7) if (state === 'run') { if (settingUp && d.screenStay) zoneDefend(d, dt); else pursue(d, runner, dt); }
     if (kickoffPlay && state === 'run' && runner !== qb) kickoffBlock(qb, dt, WR_BLOCK_SPEED);
-    else if (runner !== qb) { if (isRunPlay && !kickoffPlay && !qb.action && !(tut && (tutStep() || {}).still) && clock < RUN_DROP.time) runDrop(dt); else if (passCaught() && !qb.action) updateBlocker(qb, dt, QB_SPEED); else idleQB(qb, dt); }   // (a caught pass: the QB goes downfield to block too)
+    else if (runner !== qb) { if (isRunPlay && !kickoffPlay && !qb.action && !(tut && (tutStep() || {}).still) && clock < RUN_DROP.time && !ball.pitch) runDrop(dt); else if (ball.pitch && isRunPlay && !qb.action) { qb.pvx = qb.pvy = 0; setVelocity(qb, qb.x, qb.y, dt); qb.face = 1; } else if (passCaught() && !qb.action) updateBlocker(qb, dt, QB_SPEED); else if (!rbpQB(dt)) idleQB(qb, dt); }   // (a caught pass: the QB goes downfield to block too)
   } else if (state === 'flight') {
     for (const p of [qb, ...ols, ...recs.filter(r => r.teBlock)]) { if (p.action || p.coast || p.hitBy) idleQB(p, dt); else afterThrow(p, dt, p === qb ? QB_SPEED : OL_RUN); }   // (no freezing once it's thrown: they keep working / follow the ball like they do once it's caught)
     for (const d of dl) d.dropZone ? defendBall(d, dt) : lineToBall(d, dt);
@@ -2693,6 +2710,7 @@ function update(dt) {
 
   if (state === 'pre') {
     stepFormation(dt);
+    blitzWalk(dt);   // (disguised blitzers creep up late: the read)
     // safety net: nobody may hold the snap forever. A man whose formation jog never finished (a stuck target, a lost frame) used to block the play for the rest of the game
     // ("cannot start a play"): after FM_MAX_WAIT seconds every one of them is simply put where he was going
     if (allPlayers().some(p => p.fmTo)) {

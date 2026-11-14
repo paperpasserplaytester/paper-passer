@@ -152,7 +152,7 @@ const SELL = {
   burst: 1.9, burstT: 0.45,                         // second move: x accel for burstT s (slow, then go)
   soldPts: 6, noise: 2.5, attack: 1, xfPts: 1,      // the check (points over position average): (0.45 agility + 0.3 awareness + 0.25 speed) + soldPts x (sell - 1) (+ attacked cushion / Route Technician) + noise
   eyesMan: 1.5, eyesQb: -1, zoneDeep: 1.2,          // ...vs COVERAGE + these: eyes on the receiver (disciplined), on the QB (reads the eyes: bites), a deep zone (disciplined)
-  stumbleSpeed: 2,   // a DB's stumble from a route / release plays this x faster (2 = half the time)
+  stumbleSpeed: 1,   // a DB's stumble from a route / release plays at this pace (1 = real speed: it's cut short instead, DB_STUMBLE.cut)
   big: 2.5, narrow: 0, readAt: -1.8, stumble: 0.3,   // diff over big = sold, over narrow = a step, under readAt (with REL.read coverage, or 2 more) = he reads it; stumble = x sellK chance a sold one leaves the DB stumbling
   bite: { big: 0.6, narrow: 0.25, speed: 0.75, freeze: 0.22 },   // (the DB's reaction time to recover: shorter bites, not a faster DB)   // bite s (x sellK), drift speed on the fake (x his top); sold: freeze odds (x sellK)
   readT: 1.4, readSpd: 1.06,                        // read it: runs the second move's line for readT s at x top
@@ -238,7 +238,7 @@ function relDecide(r) {
     R.res = 'clean';
     d.falseStepUntil = clock + JAM.missStep * REL.beat; d.lungeY = -R.L * R.inS;   // lunged at air, toward the fake side
     if (REL.call) popup(r, m.name, '#7fe3ff', undefined, true);
-    if (Math.random() < SELL.stumble * REL.cleanStumble * sellK(r)) { reelQuiet = true; try { startReel(d, 'jukeStumble', r, SELL.stumbleSpeed); } finally { reelQuiet = false; } }   // (a clean release can leave the press man stumbling)
+    if (Math.random() < SELL.stumble * REL.cleanStumble * sellK(r)) { reelQuiet = true; try { routeStumble(d, r); } finally { reelQuiet = false; } }   // (a clean release can leave the press man stumbling)
   } else if (diff >= REL.hold) {
     R.res = 'delay'; r.slow = Math.max(r.slow || 0, REL.delay.slow); d.stickUntil = clock + REL.delay.stick;
   } else {
@@ -339,7 +339,7 @@ function dblCheck(r, dir) {
     if (diff >= SELL.big) {
       d.biteUntil = clock + SELL.bite.big * q; d.biteV = v;
       const sk = (d.hips && d.hips !== 'square' ? DB_TURN.stumbleHips : 1) / (rm(d, 'agi', 'cut') * rm(d, 'cov', A5.cov.sell));   // (turned hips = off balance; agility + coverage keep his feet)
-      if (Math.random() < SELL.stumble * q * sk) { reelQuiet = true; try { startReel(d, 'jukeStumble', r, SELL.stumbleSpeed); } finally { reelQuiet = false; } }   // (a sold double move can leave him stumbling)
+      if (Math.random() < SELL.stumble * q * sk) { reelQuiet = true; try { routeStumble(d, r); } finally { reelQuiet = false; } }   // (a sold double move can leave him stumbling)
       else if (Math.random() < SELL.bite.freeze * q * sk) sellStumble(d, r);   // (fooled, he stumbles and fights to recover; he doesn't stand there)
       if (!any) popup(d, 'SOLD IT', '#7fe3ff', undefined, true);   // (broken-ankle icon at the fooled cover man's feet)
       any = true;
@@ -350,10 +350,31 @@ function dblCheck(r, dir) {
   }
 }
 
+// a DB stumbling on a route: played at real speed but cut off after cut[0..1] of it (shorter on average, never sped up), then he scrambles back
+// to the man who beat him (his priority until the ball is thrown): rec s of a hard chase at x accel, aimed lead s ahead of the receiver
+const DB_STUMBLE = { cut: [0.35, 0.7], rec: 1.6, accel: 1.6, lead: 0.35 };
+function routeStumble(d, r) {
+  startReel(d, 'jukeStumble', r, SELL.stumbleSpeed, DB_STUMBLE.cut[0] + Math.random() * (DB_STUMBLE.cut[1] - DB_STUMBLE.cut[0]));
+  if (d.action === 'reel') d.stumRec = { r, at: null };
+}
+function stumbleRecover(d, dt) {   // true = he spent this frame chasing back to his man (pressMan / zoneDefend call it first)
+  const s = d.stumRec;
+  if (!s) return false;
+  if (d.action === 'reel') return false;
+  if (s.at == null) s.at = clock;
+  const r = s.r;
+  if (!(state === 'drop' || state === 'pocket') || clock - s.at > DB_STUMBLE.rec || !r || r.hasBall) { d.stumRec = null; return false; }
+  const px = d.x, py = d.y, tx = r.x + (r.vx || 0) * DB_STUMBLE.lead + (d.zone && d.zone.deep ? COVER.attachGap * YD : 0), ty = r.y + (r.vy || 0) * DB_STUMBLE.lead;
+  if (Math.hypot(tx - d.x, ty - d.y) < 1.2 * YD) { d.stumRec = null; return false; }   // (back on him: normal coverage again)
+  steer(d, tx, ty, d.top, d.accel * DB_STUMBLE.accel, dt);
+  clampField(d); setVelocity(d, px, py, dt);
+  d.face = Math.sign(d.vx) || d.face; d.eyes = 'receiver'; d.coverOn = r;
+  return true;
+}
 // a cover man fooled by a sold route: the stumble animation (he fights to recover) in place of standing frozen
 function sellStumble(d, r) {
   if (d.action || grounded(d)) return;
-  reelQuiet = true; try { startReel(d, 'jukeStumble', r, SELL.stumbleSpeed); } finally { reelQuiet = false; }
+  reelQuiet = true; try { routeStumble(d, r); } finally { reelQuiet = false; }
 }
 function sellCut(r) {
   if (state !== 'drop' && state !== 'pocket' && state !== 'flight') return;
@@ -594,7 +615,8 @@ function updateReceiver(r, dt) {
     else r.speed = Math.min(r.speed, JAM.stumSpeed * WR_TOP);
   }
   const jammed =clock < (r.jamUntil || 0) && (state === 'drop' || state === 'pocket');
-  r.jamFightOn = jammed && r.jammer ? r.jammer : null;   // (drawn: hands up fighting the jammer's hands)
+  // (drawn: hands up fighting the jammer's hands; also while a press man has his hands on him without a full jam: he never just accepts it)
+  r.jamFightOn = jammed && r.jammer ? r.jammer : (state === 'drop' || state === 'pocket') && !r.action ? back7.find(d => (d.fightOn === r || (d.man === r && r.handfight)) && dist(d, r) < 1.7 * YD) || null : null;
   const fighting = r.handfight;
   r.handfight = false;
   if (jammed) r.speed = Math.min(r.speed, JAM.slow * WR_TOP);
@@ -817,6 +839,7 @@ function updateCarrier(c, top, dt) {
     }
   }
   d = { x: Math.cos(c.joyA), y: Math.sin(c.joyA) };
+  d = blockerAvoid(c, d);   // (his own blockers: he slides round them instead of running into their backs)
   const wk = wxRunK(d.x, d.y);   // (wind at his back / in his face)
   c.x += d.x * c.speed * wk * dt; c.y += d.y * c.speed * wk * dt;
   clampField(c);
@@ -824,6 +847,24 @@ function updateCarrier(c, top, dt) {
   tire(c, top, dt);
 }
 
+// a ball carrier's own teammates in his path: look = yd ahead he reads, r = yd of body to clear, k = how hard he bends round (the heading he wants is kept)
+const OWN_AVOID = { look: 2.6, r: 1.15, k: 1.6 };
+function blockerAvoid(c, d) {
+  let nx = 0, ny = 0;
+  const L = OWN_AVOID.look * YD, R = OWN_AVOID.r * YD;
+  for (const b of allPlayers()) {
+    if (b === c || b.team !== c.team || b.action === 'down' || (b.z || 0) > 20 * S) continue;
+    const rx = b.x - c.x, ry = b.y - c.y, along = rx * d.x + ry * d.y;
+    if (along <= 0 || along > L) continue;
+    const lat = -rx * d.y + ry * d.x;   // (+ = he's on my left of the heading)
+    if (Math.abs(lat) >= R) continue;
+    const w = (1 - along / L) * (1 - Math.abs(lat) / R), side = lat > 0 ? -1 : lat < 0 ? 1 : (b.y > MID ? -1 : 1);   // (dead ahead: go round toward the middle of the field)
+    nx += -d.y * side * w; ny += d.x * side * w;
+  }
+  if (!nx && !ny) return d;
+  const ox = d.x + nx * OWN_AVOID.k, oy = d.y + ny * OWN_AVOID.k, ol = Math.hypot(ox, oy) || 1;
+  return { x: ox / ol, y: oy / ol };
+}
 // A hole: the gap between two blockers who are both locked on defenders, a little in front of
 // the runner and with no free defender sitting in it. Returns the best one (close to where he's
 // already headed), or null.
@@ -848,6 +889,10 @@ function findHole(c, dir) {
 }
 
 // The handoff or pitch on a run play.
+// the exchange waits for the snap to reach the QB (he snaps it to himself, then hands it off or pitches it); a pitch always goes back or
+// sideways, caught behind the QB and the line (the back never gets past him before it's out)
+const RUN_MESH = { after: 0.1, wait: 0.9, waitSpd: 3.5, aheadQB: 2, behindLos: 1.0 };   // s after the snap lands; yd short of the mesh he waits at; yd/s he creeps; most yd ahead of the QB / least behind the line a pitch is caught
+const snapLanding = () => !!snapFly && clock < snapFly.dur + RUN_MESH.after;
 function updateMesh(c, dt) {
   const px = c.x, py = c.y;
   if (ball.pitch) {
@@ -855,18 +900,22 @@ function updateMesh(c, dt) {
     c.laneLeg = c.laneLeg || 0;
     let wp = c.lane && c.lane[c.laneLeg];
     if (wp && Math.hypot(wp[0] - c.x, wp[1] - c.y) < 0.7 * YD && c.lane[c.laneLeg + 1]) wp = c.lane[++c.laneLeg];
+    const xCap = Math.min(qb.x + RUN_MESH.aheadQB * YD, los - RUN_MESH.behindLos * YD);   // (he never turns back for it: it may lead him a little, still behind the line)
+    if (snapLanding() && p.delay <= 0) p.delay = 0.01;   // (the ball isn't in the QB's hands yet)
+    if (p.delay > 0 && !snapLanding() && c.x >= xCap - 0.8 * YD) p.delay = 0;   // (he's about to get even with the QB: out it goes now)
     if (p.delay > 0) {
       // outside runs: he gets going on his path in the backfield first, the QB holding it, then it's pitched to him
-      p.delay -= dt;
+      if (!snapLanding()) p.delay -= dt;
       if (wp) moveToward(c, wp[0], wp[1], RB_RUN * OUTSIDE_RUN.leadStep * dt);
       p.fx = ball.x = qb.x; p.fy = ball.y = qb.y; ball.z = 0;
       clampField(c); setVelocity(c, px, py, dt);
       return;
     }
     p.t += dt;
-    // (he keeps running his path while it's in the air and catches it in stride)
+    // (he keeps running his path while it's in the air and catches it in stride: behind the QB and the line)
     if (wp) moveToward(c, wp[0], wp[1], RB_RUN * OUTSIDE_RUN.pitchStep * dt);
     else moveToward(c, c.x + 2 * YD, c.y + p.side * 2 * YD, RB_RUN * OUTSIDE_RUN.pitchStep * dt);
+    if (c.x > xCap && c.x > px) c.x = Math.max(px, xCap);   // (held at the cap, never pulled back behind the QB)
     const k = Math.min(1, p.t / p.T);
     ball.x = p.fx + (c.x - p.fx) * k; ball.y = p.fy + (c.y - p.fy) * k;
     ball.z = Math.sin(Math.PI * k) * 14 * S;
@@ -888,9 +937,11 @@ function updateMesh(c, dt) {
   } else {
     // run to the mesh point; the QB turns and meets him
     const mx = qb.x - 0.6 * YD, my = qb.y + Math.sign(c.y - qb.y || 1) * 0.6 * YD;
-    moveToward(c, mx, my, 7 * YD * dt);
-    moveToward(qb, qb.x - 0.5 * YD * dt, qb.y, 2 * YD * dt);
-    if (Math.hypot(c.x - mx, c.y - my) < 0.4 * YD) {
+    const toM = Math.hypot(c.x - mx, c.y - my), early = snapLanding();
+    if (early && toM < RUN_MESH.wait * YD) moveToward(c, mx, my, RUN_MESH.waitSpd * YD * dt * Math.max(0, (toM - 0.45 * YD) / (RUN_MESH.wait * YD)));   // (the snap is still on its way: he gathers short of the mesh)
+    else moveToward(c, mx, my, 7 * YD * dt);
+    if (!early) moveToward(qb, qb.x - 0.5 * YD * dt, qb.y, 2 * YD * dt);
+    if (!early && c.x <= qb.x && Math.hypot(c.x - mx, c.y - my) < 0.4 * YD && !rbpKeep(c)) {   // (zone read: the QB may pull it instead)
       c.awaiting = false; c.hasBall = true; c.speed = 4 * YD;
       // (straight onto the play art: his heading starts along the first leg of it, with no plant or chop on the way out)
       const wp = c.lane && c.lane[c.laneLeg || 0];
@@ -900,7 +951,7 @@ function updateMesh(c, dt) {
   }
   clampField(c);
   setVelocity(c, px, py, dt);
-  if (!c.awaiting) { runStart = clock; msg = 'Handoff!  -  ' + RUN_HELP; }
+  if (!c.awaiting && runner === c) { runStart = clock; msg = 'Handoff!  -  ' + RUN_HELP; }
 }
 
 function runAction(code) {
@@ -995,16 +1046,22 @@ const blockMissed = (b, d) => {
 // run / after-catch blockers: threat = s to reach the runner under which an unblocked man must be blocked before anyone doubles; danger = yd of cost
 // per s he needs to get there (closer to the runner = blocked first), capped at cap s; double = yd of cost for doubling while a threat is free
 const BLOCK_PRI = { threat: 2.2, danger: 2.2, cap: 4, double: 25 };
+const WR_SIDE = { free: 6, cross: 18, lat: 0.6, still: 0.18 };   // run blocks: yd sideways a receiver looks freely; cost (yd) of a man across the back from him; cost per yd sideways past free; yd from his spot he holds still
 function updateBlocker(b, dt, speed) {
+  if (rbpOwned(b)) return;   // (a tight end on a down lineman: updateLine runs that block)
   b.engaged = false;
   if (b.action) return updateAction(b, dt);
+  if (rbpRide(b, dt, speed)) return;   // (beaten: riding his man)
   if (b.stunUntil > clock || !runner) { b.moving = false; return; }
+  if (rbpSkill(b, dt, speed)) return;   // (the FB's path, a stalk's stem, the toss lead, draw routes)
   const c = runner, px = b.x, py = b.y;
   const leadBlock = recs.includes(b) && !kickoffPlay && (isRunPlay || runner === qb);   // (receivers on a run / QB run block out in front of him, never back toward him)
   const blockers = blockerPool();
   // block the nearest man (receivers prefer DBs); two can double him, a third looks elsewhere
   const others = x => blockers.filter(o => o !== b && o.assign === x).length;
   let d = b.assign;
+  const nm = rbpNamed(b);   // (the playbook's named man: kept until his release rule)
+  if (nm) d = b.assign = nm;
   // (on an inside run a free lineman looks to the unblocked defensive ends first)
   const endsFirst = !kickoffPlay && isRunPlay && ols.includes(b) && !(c.x > b.x + CLIMB.past * YD);   // (the back is already past him: straight to the second level)   // (a lineman who's done with his man (or missed him) takes the end in front of the back before any backer)
   const allDL = endsFirst && (SCHEMES[rb.scheme] || SCHEMES.insideZone).dlFirst !== 0;   // (...and, unless the scheme says otherwise, any unblocked down lineman, tackles too, before he climbs)
@@ -1014,7 +1071,8 @@ function updateBlocker(b, dt, speed) {
   const chaser = x => dist(x, c) < PURSUIT_BLOCK.range && dist(b, c) < PURSUIT_BLOCK.near;
   const peel = d && !chaser(d) && !(d.blockers && d.blockers.includes(b) && clock < d.blockUntil) &&
                pool.some(x => chaser(x) && !x.action && !x.hasBall && others(x) < 2);
-  const leadBad = leadBlock && !!d && (d.x < c.x - RUN_WR.past * YD || clock - (b.wrAt || 0) > RUN_WR.hold);   // (a man the runner has gone past is dropped at once; otherwise the pick holds for a beat so it doesn't flip every frame)
+  const onHim = !!d && !!d.blockers && d.blockers.includes(b) && dist(b, d) <= BLOCK_RANGE * 1.6;
+  const leadBad = leadBlock && !!d && (d.x < c.x - RUN_WR.past * YD || (!onHim && clock - (b.wrAt || 0) > RUN_WR.hold));   // (a man he's on is never dropped on a timer)   // (a man the runner has gone past is dropped at once; otherwise the pick holds for a beat so it doesn't flip every frame)
   // seconds until this man can get to the runner (his own speed toward him, less the runner pulling away), read from where both will be a beat from now
   // (BLOCK_LOOK.ahead s; a more aware receiver reads further ahead), so the blocker picks the man who is about to be dangerous, not only the one who is now
   const look = Math.max(0, BLOCK_LOOK.ahead + BLOCK_LOOK.awrAhead * rz(b, 'awr'));
@@ -1027,15 +1085,16 @@ function updateBlocker(b, dt, speed) {
   // must re-pick now (his man is gone / tripled / beat him) vs could re-pick (someone more dangerous): the soft kind waits BLOCK_LOOK.hold s and needs a clearly better man
   // a receiver attached to his man finishes the block first: only a man who is very unlikely to make the tackle gets let go early (WR_FINISH)
   const attached = recs.includes(b) && !!d && !d.action && !!d.blockers && d.blockers.includes(b) && dist(b, d) <= BLOCK_RANGE * WR_FINISH.reach;
-  const finish = attached && !(ttr(d) > WR_FINISH.ttr || (d.x < c.x && dist(d, c) > WR_FINISH.far * YD));
+  const finish = attached && !(d.x < c.x - RUN_WR.past * YD && dist(d, c) > WR_FINISH.far * YD);   // (stays on him until the back is past AND the man can't get back to him)
   const hardPick = !d || !pool.includes(d) || d.action === 'dive' || (!finish && others(d) >= 2) || (ends.length && !ends.includes(d)) || blockMissed(b, d) || (!finish && leadBlock && d.x < c.x - RUN_WR.past * YD);
   const softPick = !hardPick && !finish && (peel || dropDouble || leadBad) && clock - (b.wrAt || 0) > BLOCK_LOOK.hold;
-  if (hardPick || softPick) {
+  if ((hardPick || softPick) && !nm) {
     const isWR = recs.includes(b);
     const slot = isWR && isRunPlay && Math.abs(b.y - MID) < 12 * YD;   // crack block: a slot receiver comes back inside on the safety / backer
     const cost = x => dist(x, b) * (isWR && x.role !== 'LB' ? 0.7 : 1) * (slot && (x.role === 'S' || x.role === 'LB') ? 1 - RBL.crack * ((b.rbl ?? 0.5) - 0.5) : 1) +others(x) * 3 * YD - (chaser(x) ? PURSUIT_BLOCK.bonus : 0) - (ends.includes(x) ? 30 * YD : 0) + Math.min(BLOCK_PRI.cap, ttr(x)) * BLOCK_PRI.danger * YD + dbl(x);
     const dbl = x => freeThreat && (others(x) > 0 || x.engaged) ? BLOCK_PRI.double * YD : 0;   // (doubling / helping waits until every dangerous man has a blocker)
-    const lcost = x => ttr(x) * RUN_WR.k * YD + others(x) * 3 * YD + (x.engaged ? RUN_WR.blocked * YD : 0) - (ends.includes(x) ? 30 * YD : 0) + dbl(x);
+    const far = x => isRunPlay && (x.y - c.y) * (b.y - c.y) < 0 && Math.abs(x.y - c.y) > WR_SIDE.free * YD ? WR_SIDE.cross * YD : 0;   // (a man across the back from him, away from the play: someone else's)
+    const lcost = x => ttr(x) * RUN_WR.k * YD + others(x) * 3 * YD + (x.engaged ? RUN_WR.blocked * YD : 0) - (ends.includes(x) ? 30 * YD : 0) + dbl(x) + far(x) + Math.max(0, Math.abs(x.y - b.y) - WR_SIDE.free * YD) * WR_SIDE.lat;
     // (a less aware blocker misjudges: a fixed per-play error on each man, so his choice is worse but doesn't flicker)
     const err = x => ((((x.num || 0) * 37 + (b.num || 0) * 11 + runPid * 7) % 17) / 16 - 0.5) * Math.max(0, BLOCK_LOOK.noise - BLOCK_LOOK.awrNoise * rz(b, 'awr')) * YD;
     const fc = x => (leadBlock ? lcost(x) : cost(x)) + err(x);
@@ -1051,8 +1110,8 @@ function updateBlocker(b, dt, speed) {
     // locked up; pursue() places us (but only while the lock is real: a stale one - his man diving, or us out of position - must not freeze us)
     if (d.blockers && d.blockers.includes(b) && clock < d.blockUntil && !d.action && dist(b, d) <= BLOCK_RANGE * 1.4 &&
         (b.x - d.x) * (c.x - d.x) + (b.y - d.y) * (c.y - d.y) > 0) return;
-    const dx = c.x - d.x, dy = c.y - d.y, dd = Math.hypot(dx, dy) || 1;
-    moveToward(b, d.x + dx / dd * BLOCK_RANGE * 0.9, d.y + dy / dd * BLOCK_RANGE * 0.9, speed * dt);
+    const dx = c.x - d.x, dy = c.y - d.y, dd = Math.hypot(dx, dy) || 1, tx = d.x + dx / dd * BLOCK_RANGE * 0.9, ty = d.y + dy / dd * BLOCK_RANGE * 0.9;
+    if (Math.hypot(tx - b.x, ty - b.y) > WR_SIDE.still * YD || dist(b, d) > BLOCK_RANGE * 1.2) moveToward(b, tx, ty, speed * dt);   // (already on his spot in front of the man: he holds it, no running in place)
   } else {
     // nobody to block yet: hustle to the ball carrier (full speed if he's behind the play) and lead the way
     const behind = b.x < c.x;
@@ -1064,6 +1123,416 @@ function updateBlocker(b, dt, speed) {
   if (d && Math.abs(d.x - b.x) > 0.15 * YD) b.face = d.x >= b.x ? 1 : -1;   // (after the move: always eyes on his man, whichever way he's running)
   if (kickoffPlay && d && dist(b, d) < 8 * YD) b.face = Math.sign(d.x - b.x) || b.face;   // (return blocks: squared up to his man, never turned away from the coverage)
 }
+
+// --- run blocking playbook ------------------------------------------------------------
+// Run_Blocking_Playbook.pdf: one engine for every run block (read the call, count the box, choose the target, the block, the release).
+// rbpStart (handoff, before the pulls) names everyone from the play side (rbpRoles: BT BG C PG PT = backside / playside tackle, guard,
+// center; WDE NT T3 SDE = backside end, nose (backside DT), 3-tech (playside DT), strong end; WILL MIKE SAM, SS FS; TE / TE2 = playside /
+// backside in-line tight end, FB = fullback or near back, wrs), counts the box (rbpCheck: 2+ free = the coordinator checks to the other
+// side or to zone) and picks the table (RBP_PLAYS = the PDF's assignments; the game's duo = Iso, sweep = Toss; a handoff after a pass set
+// = DRAW; shotgun inside zone = ZONE READ, the read key left alone). rbpApply (after the old pull code) hands out the targets.
+// rbpTick (updateLine, each run frame) = the triggers: R1 combo climbs + the center's peel, R3 pulls (kick-out / log / trap / wrap /
+// wrong arm), R4 backside cut-off, the FB's first color, the stalks. R2 / R6 sit in updateLine's release code (rbpLetGo / rbpNextOf),
+// R5 = rbpBeaten / rbpRide (a grab can draw a holding flag: rbpPen, enforced in endPlay). Hooks: rbpNamed / rbpSkill (updateBlocker),
+// rbpPuller (updateLine), rbpFrozen (pursueMove: the QB's fake, the read key), rbpQB (the QB carries out the fake), rbpKeep (zone read pull).
+const RBP = {
+  on: true,
+  combo: { drive: 1, lb: 1.5, t: 0.7, pistol: 0.6, proSet: 0.2, over: 1.2 },   // R1: the climber leaves once the DL is driven back drive yd, a LB is within lb yd of the double, or t s (pistol mesh 0.6; pro set holds +0.2 s); a LB who flowed over yd over the top = he stays and finishes the DL
+  gl: { yd: 5, move: 1, lb: 1, max: 2 },   // goal line (ball within yd): climbs only once the DL is moved move yd or the LB is within lb yd, and never past max yd
+  hold: { past: 2, deep: 3, chase: 3, far: 12 },   // R2: let go once the runner is past yd, or the man is driven deep yd past the LOS; then the named next level (within far yd) or the nearest chaser within chase yd
+  pull: { off: 2, depth: 1, wrapDepth: 1.6, speed: 1.25, at: 0.8, blitz: 2 },   // R3: done once his man is turned off yd off the runner's track (or the runner passes); flat pull depth yd behind the LOS (the wrap: behind the guard), turns up within at yd of his aim; a blitzer within blitz yd is taken first (the FB gets the old man)
+  cut: { t: 1.2, toss: 2, past: 3 },   // R4: backside cut-off holds until t s with the runner past the A / B gap (toss: toss s), or the runner past yd beyond the LOS
+  ride: { time: 0.7, slow: 0.3, grab: 0.3, grabTime: 1.5, grabSlow: 0.55, flag: 0.1, past: 3, yds: 10 },   // R5: a beaten blocker rides his man time s (slow on him); grab x (1 - logic) = he grabs instead and hangs on grabTime s (more slow; flag odds per s once the runner is past yd); yds = the penalty
+  cap: { ride: 2.5, max: 3 },   // R6: drives stop at ride s, no block lasts past max s
+  box: { wide: 2, deep: 7, check: [0.25, 0.85] },   // step 2: the box = up to wide yd outside the end man, deep yd off the ball; odds a 2+ free count is checked (weak .. sharp OC)
+  fake: { freeze: 0.5, time: 0.55, yd: 1.8 },   // the QB's boot fake: the free men are held freeze s; he carries it out time s, yd toward the backside
+  read: { hold: [0.35, 0.8], crash: 0.3, pull: [0.55, 0.95], pistol: 0.5 },   // zone read: the key sits hold s (slow .. fast QB); crashes on the back crash x (1.3 - 0.6 DC); the QB reads it and pulls pull (awareness); pistol inside zone is a read this share
+  kick: { push: 1.6, wrong: 0.22, wrongHold: 0.35, squeeze: 0.8 },   // kick-out / log drive yd/s, wrong-arm odds, s the spilled block lasts, a force man this far inside the hole = squeezed (log him)
+  stalk: { x: 5, z: 4, gun: 3, rel: 10, push: 0.8, hips: 2 },   // stem yd (X on the line, Z / slot off it, shotgun / pistol), release once the runner is rel yd past him or his DB turns and runs (hips yd/s), wall drive yd/s
+  lead: { show: 1.5, first: 5 },   // FB / near back: a backer within show yd of the hole, moving downhill, shows; else the nearest unblocked man within first yd of it
+  lane: { insideZone: 1.2, duo: 0.5, power: 1.5, counter: 1.5, trap: 0.8, draw: 0.5, step: 0.7 },   // the back's aiming point (x SPLITS.ol off the middle: IZ = the playside guard's outside hip, power / counter = B gap, trap = just inside the trapped man, iso / draw = A gap); step = counter step yd
+  toss: { t: 1, pro: 0.8 },   // the toss sweep is pitched this many s after the snap (pro set: pro)
+  draw: 0.9,       // a handoff after this long in a pass set = a draw
+  scramble: 2.5,   // a QB scramble out of a pass set: the line lets go and climbs after s
+  downfield: 1,    // yd a lineman may release before a pass is thrown (RPO)
+};
+// [block, target, next]: base / post / down / reach / cut (cut-off) / ride / wash on a down lineman; combo = with the post man, then climb to next;
+// peel = the center's base block, peeling to next; climb / hook; release = leave the read key, go to next; pullKick / pullWrap / pullTrap /
+// pullLead = pulls; lead = FB first color (next = preferred); kick = FB kick-out. FORCE = Sam (or the box safety in his place), EDGE = first man outside
+const RBP_PLAYS = {
+  insideZone: { BT: ['cut', 'WDE', 'WILL'], BG: ['combo', 'NT', 'WILL'], C: ['post', 'NT'], PG: ['post', 'T3'], PT: ['combo', 'T3', 'MIKE'], TE: ['base', 'SDE', 'SS'], TE2: ['base', 'WDE'], FB: ['lead', 'MIKE'] },
+  zoneRead:   { BT: ['release', 'WDE', 'WILL'], BG: ['combo', 'NT', 'MIKE'], C: ['post', 'NT'], PG: ['post', 'T3'], PT: ['combo', 'T3', 'SS'], TE: ['base', 'SDE', 'SS'], TE2: ['base', 'WDE'], FB: ['lead', 'MIKE'] },
+  outsideZone:{ BT: ['cut', 'WDE', 'WILL'], BG: ['climb', 'WILL'], C: ['reach', 'NT'], PG: ['combo', 'T3', 'MIKE'], PT: ['reach', 'T3'], TE: ['reach', 'SDE', 'SS'], TE2: ['base', 'WDE'], FB: ['lead', 'SAM'] },
+  duo:        { BT: ['cut', 'WDE', 'WILL'], BG: ['combo', 'NT', 'WILL'], C: ['post', 'NT'], PG: ['base', 'T3'], PT: ['base', 'SDE'], TE: ['hook', 'SAM'], TE2: ['base', 'WDE'], FB: ['lead', 'MIKE'] },
+  power:      { BT: ['cut', 'WDE', 'WILL'], BG: ['pullKick', 'FORCE', 'SS'], C: ['peel', 'NT', 'WILL'], PG: ['post', 'T3'], PT: ['combo', 'T3', 'MIKE'], TE: ['down', 'SDE', 'SS'], TE2: ['base', 'WDE'], FB: ['lead', 'MIKE'] },
+  powerUnder: { BT: ['combo', 'NT', 'WILL'], BG: ['post', 'NT'], C: ['post', 'T3'], PG: ['combo', 'T3', 'MIKE'], PT: ['down', 'SDE'], TE: ['hook', 'SAM'], TE2: ['base', 'WDE'], FB: ['kick', 'FORCE'] },   // (4-3 Under: the 3-tech is backside: C + playside G double the nose, the backside pair takes the 3-tech, no pull)
+  counter:    { BG: ['pullKick', 'FORCE', 'FS'], BT: ['pullWrap', 'MIKE', 'WILL'], C: ['base', 'NT'], PG: ['post', 'T3'], PT: ['combo', 'T3', 'WILL'], TE: ['down', 'SDE', 'SS'], TE2: ['base', 'WDE'], FB: ['lead', 'MIKE'] },
+  trap:       { BT: ['cut', 'WDE', 'WILL'], BG: ['pullTrap', 'T3', 'SS'], C: ['base', 'NT'], PG: ['climb', 'MIKE'], PT: ['base', 'SDE'], TE: ['hook', 'SAM'], TE2: ['base', 'WDE'], FB: ['lead', 'WILL'] },
+  sweep:      { BT: ['cut', 'WDE', 'WILL'], BG: ['pullLead', 'EDGE'], C: ['reach', 'NT'], PG: ['climb', 'MIKE'], PT: ['reach', 'T3'], TE: ['reach', 'SDE'], TE2: ['base', 'WDE'], FB: ['kick', 'FORCE'] },
+  goalLine:   { BT: ['down', 'NT'], BG: ['combo', 'NT', 'MIKE'], C: ['post', 'NT'], PG: ['post', 'T3'], PT: ['combo', 'T3', 'SAM'], TE: ['base', 'SDE'], TE2: ['base', 'WDE'], FB: ['lead', 'MIKE'] },
+  draw:       { BT: ['ride', 'WDE'], BG: ['wash', 'NT'], C: ['wash', 'NT'], PG: ['wash', 'T3'], PT: ['ride', 'SDE'], TE: ['base', 'SDE'], TE2: ['base', 'WDE'] },
+};
+let rbp = null, rbpPen = null;   // this run's plan; a holding flag waiting for the whistle
+const rbpLive = () => !!rbp && rbp.pid === runPid && isRunPlay;
+const rbpOL = b => ols.includes(b) || (rbpLive() && rbp.helpers.includes(b));   // linemen + tight ends on a down lineman
+const rbpBall = () => runner === rb || (rbpLive() && runner === qb);   // (a zone-read keep is still the run)
+function rbpLane(sch, L) {   // the back's aiming point on an inside run (the counter step first on counter)
+  if (!RBP.on || tut) return [L(-1.5, 1), L(2, 1.4), L(10, 1.4)];
+  const k = (RBP.lane[sch] ?? RBP.lane.insideZone) * SPLITS.ol, pts = [L(-1.5, k * 0.75), L(2, k), L(10, k)];
+  if (sch === 'counter') pts.unshift(L(-2.2, -RBP.lane.step));
+  return pts;
+}
+function rbpRoles() {
+  const s = rb.runSide || 1, P = p => (p.y - MID) * s, by = a => [...a].sort((p, q) => P(p) - P(q));
+  const o = by(ols), de = by(dl.filter(d => d.role === 'DE')), dts = by(dl.filter(d => d.role !== 'DE'));
+  const R = { s, P, BT: o[0], BG: o[1], C: o[2], PG: o[3], PT: o[4] };
+  R.WDE = de.find(d => P(d) < 0) || null; R.SDE = [...de].reverse().find(d => P(d) >= 0) || null;
+  R.T3 = dts.length ? dts[dts.length - 1] : null; R.NT = dts.length > 1 ? dts[0] : null;
+  R.under = !!(R.NT && R.T3 && Math.abs(R.NT.y - MID) - Math.abs(R.T3.y - MID) > 0.3 * YD);   // (the wider DT is the 3-tech; on the backside = Under)
+  const ob = by([lbW, lbS].filter(Boolean));
+  R.MIKE = lbM; R.WILL = ob[0] || null; R.SAM = ob[1] || null;
+  const ss = [sT, sB].filter(Boolean).sort((a, b) => a.x - b.x);   // (the safety nearer the ball is the box safety)
+  R.SS = ss[0] || null; R.FS = ss[1] || null;
+  R.tes = recs.filter(r => r.isTE && !r.fb && Math.abs(r.y - MID) < (SPLITS.te + 2) * YD);
+  R.TE = R.tes.filter(r => P(r) > 0).sort((a, b) => P(a) - P(b))[0] || null;
+  R.TE2 = R.tes.filter(r => P(r) <= 0).sort((a, b) => P(b) - P(a))[0] || null;
+  R.FB = recs.find(r => r.fb && Math.abs(r.y - MID) < 5 * YD && r.x < los) || null;
+  R.wrs = recs.filter(r => r !== R.TE && r !== R.TE2 && r !== R.FB);
+  const edge = Math.max(...ols.map(p => Math.abs(p.y - MID)), ...R.tes.map(p => Math.abs(p.y - MID)));
+  R.box = [...dl.filter(d => !d.dropZone), ...back7].filter(d => Math.abs(d.y - MID) <= edge + RBP.box.wide * YD && d.x - los <= RBP.box.deep * YL);
+  return R;
+}
+// step 2: free = box defenders on the play side - (half the center + guard + tackle + tight ends + lead back there). 2+ free: check to the other side, or to zone
+function rbpCheck(R) {
+  const P = R.P, free = k => R.box.filter(d => P(d) * k > 0).length - (2.5 + R.tes.filter(t => P(t) * k > 0).length + (R.FB ? 1 : 0));
+  const ps = free(1), bs = free(-1);
+  if (ps < 2 || Math.random() >= lerpOc(RBP.box.check)) return false;
+  if (bs < ps) { rb.runSide = -(rb.runSide || 1); rb.runLane = rb.runLane.map(([x, y]) => [x, 2 * MID - y]); rb.routeName = (rb.routeName || '').replace(/top|bottom/, m => m === 'top' ? 'bottom' : 'top'); }
+  else if (SCHEMES[rb.scheme] && SCHEMES[rb.scheme].pull && rb.runType === 'inside') rb.scheme = 'insideZone';
+  else return false;
+  popup(qb, 'CHECK!', '#7fe3ff');
+  return true;
+}
+function rbpStart(draw, swing) {
+  rbp = null; rbpPen = null;
+  if (!RBP.on || tut || kickoffPlay || swing || ols.length < 5 || dl.length < 2 || rb.split || !rb.runSide || !rb.runLane) return;
+  let R = rbpRoles();
+  rbp = { pid: runPid, t0: clock, R, draw, gl: FIELD - los <= RBP.gl.yd * YL, combos: [], helpers: [], free: [], leads: [], fakeT: 0, key: null, crash: false, read: false };
+  if (draw) {   // a handoff after a pass set: the draw (the line rides the rush where it's going, the back hits the A gap)
+    rb.scheme = 'draw'; rb.runType = 'inside';
+    const y = MID + R.s * RBP.lane.draw * SPLITS.ol * YD;
+    rb.runLane = [[Math.min(rb.x, los - 1.2 * YL), y], [los + 2 * YL, y], [los + 10 * YL, y]];
+  } else if (clock < 0.6 && rbpCheck(R)) rbp.R = R = rbpRoles();
+  const sch = rb.scheme;
+  rbp.play = draw ? 'draw' : sch === 'insideZone' && shotgun && (liveForm !== 'PISTOL' || Math.random() < RBP.read.pistol) ? 'zoneRead'
+    : sch === 'duo' && (liveForm === 'GOAL LINE' || rbp.gl) ? 'goalLine' : sch === 'power' && R.under ? 'powerUnder' : RBP_PLAYS[sch] ? sch : 'insideZone';
+  rbp.trig = (liveForm === 'PISTOL' ? RBP.combo.pistol : RBP.combo.t) + (liveForm === 'PRO SET' ? RBP.combo.proSet : 0);
+  rbp.holeY = rb.runLane[rb.runLane.length - 1][1];
+}
+function rbpWho(k) {   // a name -> the man (light box: a missing backer's job goes to the next one in the box, then a safety)
+  if (!k || !rbp) return null;
+  const R = rbp.R, inBox = d => !!d && R.box.includes(d) && !d.blitz;
+  if (k === 'FORCE') {   // the force: the first man outside the end blocker near the line (the Sam, or the safety who walked down in his place)
+    const end = R.TE || R.PT, ey = end.y, f = back7.filter(d => d.role !== 'CB' && R.P(d) > R.P(end) - YD && d.x - los < RBP.box.deep * YL)
+      .sort((p, q) => Math.hypot(p.x - los, p.y - ey) - Math.hypot(q.x - los, q.y - ey))[0];
+    return f || R.SAM || R.SS;
+  }
+  if (k === 'EDGE') return null;
+  const p = R[k];
+  if (k === 'WDE' || k === 'NT' || k === 'T3' || k === 'SDE' || k === 'SS' || k === 'FS') return p || null;
+  return inBox(p) ? p : [R.MIKE, R.WILL, R.SAM].find(inBox) || R.SS || null;
+}
+const rbpTaken = (d, b) => [...ols, ...recs, rb].some(o => o !== b && o !== runner && o.assign === d);
+function rbpClimbTo(k, b) {   // the climber's man: the named backer if he's there and free, else the nearest other one (no backers left: a safety)
+  const R = rbp.R, ok = d => !!d && !d.action && !d.hasBall && !rbpTaken(d, b) && dist(d, b) < RBP.hold.far * YD;
+  const n = rbpWho(k);
+  return ok(n) ? n : [R.MIKE, R.WILL, R.SAM, R.SS, R.FS].filter(ok).sort((p, q) => dist(p, b) - dist(q, b))[0] || null;
+}
+function rbpChaser(b) {   // the nearest defender within RBP.hold.chase yd still in the play
+  const c = runner;
+  return [...dl, ...back7].filter(x => !x.action && !x.hasBall && x !== b.assign && !rbpTaken(x, b) && dist(x, b) < RBP.hold.chase * YD && (!c || x.x > c.x - 2 * YD))
+    .sort((p, q) => dist(p, b) - dist(q, b))[0] || null;
+}
+function rbpNextOf(b) {   // after a block: the named next level, else the nearest chaser within 3 yd (no extra credit for holding a man the runner is past)
+  const a = b.rbp;
+  let n = a && a.next ? rbpWho(a.next) : null;
+  if (n && (n.action || n.hasBall || (dl.includes(n) && n.shed) || dist(n, b) > RBP.hold.far * YD || rbpTaken(n, b))) n = null;
+  n = n || rbpChaser(b);
+  if (a) { a.t = n; a.rel = !n; a.next = null; a.pull = false; a.kind = n ? 'climb' : a.kind; }
+  return n;
+}
+function rbpLetGo(r, bs) {   // a block that's done: his man is sealed (slowed, not freed to chase), the blockers are loose
+  for (const b of bs) { b.assign = null; b.lockedTo = null; b.engaged = false; }
+  r.sealed = true; r.shed = true; r.freedAt = clock; r.slow = Math.max(r.slow || 0, CLIMB.slow); r.engaged = false;
+}
+function rbpApply() {
+  if (!rbpLive()) return;
+  const R = rbp.R, s = R.s, P = R.P, plan = { ...RBP_PLAYS[rbp.play] }, tgt = new Set();
+  if (rbp.play === 'insideZone' && R.TE2) { plan.BT = ['climb', 'WILL']; plan.BG = ['post', 'NT']; }   // 12 personnel: TE-L takes WDE, LT scoops to WILL, LG posts with C
+  if (!R.FB && plan.FB && plan.FB[0] === 'kick' && plan.BG && plan.BG[0] === 'pullLead') plan.BG = ['pullKick', 'FORCE', 'SS'];   // (no fullback to kick out the force: the pulling guard does)
+  if (!R.TE && plan.TE && plan.TE[1] === 'SDE' && plan.PT) {   // no tight end on the play side: the tackle takes the end (his block), the guard has the 3-tech alone
+    plan.PT = [...plan.TE];
+    const zone = rbp.play === 'outsideZone' || rbp.play === 'sweep';
+    if (!Object.values(plan).some(e => e && e !== plan.PG && e[1] === 'T3')) plan.PG = [zone ? 'reach' : 'base', 'T3'];
+    else if (plan.PG && plan.PG[0] === 'post') plan.PG = ['base', 'T3'];
+  }
+  for (const role of ['BT', 'BG', 'C', 'PG', 'PT', 'TE', 'TE2', 'FB']) {
+    const b = R[role], e = plan[role];
+    if (!b || !e) continue;
+    const [kind, tk, nk] = e, t = rbpWho(tk);
+    const a = b.rbp = { kind, t, next: nk || null, role };
+    if (ols.includes(b)) { b.lockedTo = null; b.pulling = a.pull = kind.startsWith('pull'); }
+    else if (b.rbl == null) b.rbl = blockLogic(b, 'str');
+    if (kind === 'release') { a.t = rbpWho(nk); a.next = null; rbp.key = t; }   // the read key is left alone on purpose
+    else if (kind === 'lead') { a.t = null; a.pref = tk; a.next = null; a.aim = { x: los - 0.3 * YL, y: R.PT.y + s * 0.6 * YD }; rbp.leads.push(b); }
+    else if (kind === 'combo' || kind === 'peel') a.next = null;
+    b.assign = a.t || null;
+    if (!b.assign) continue;
+    tgt.add(b.assign);
+    const d = b.assign;
+    if (dl.includes(d)) {
+      if (!ols.includes(b)) rbp.helpers.push(b);
+      // which way he drives him: down / reach / cut-off = inside (on the backside: away from the play), a TE's base = out to the sideline, draw = where the rusher is going
+      const dr = kind === 'down' || kind === 'reach' || kind === 'cut' ? -s : kind === 'base' && !ols.includes(b) ? s : kind === 'ride' ? (Math.sign(d.y - MID) || s)
+        : kind === 'wash' ? (Math.sign(d.vy || 0) || Math.sign(d.y - rbp.holeY) || s) : 0;
+      if (dr && !d.rbpDrive) d.rbpDrive = dr;
+      if (kind === 'combo' || kind === 'peel') { const L = rbpWho(nk); rbp.combos.push({ b, d, lb: nk, x0: d.x, lp0: L ? P(L) : 0, done: false, peel: kind === 'peel' }); }
+    }
+  }
+  for (const o of ols) o.pulling = !!(o.rbp && o.rbp.pull);   // (the table's pullers, nobody else)
+  // blitz: the nearest uncovered lineman (a climber) picks up a blitzer nobody has
+  for (const d of back7.filter(x => x.blitz && !tgt.has(x))) {
+    const k = ols.filter(o => o.rbp && (o.rbp.kind === 'climb' || o.rbp.kind === 'combo' || o.rbp.kind === 'release')).sort((p, q) => dist(p, d) - dist(q, d))[0];
+    if (!k) continue;
+    const cb = rbp.combos.find(c => c.b === k); if (cb) cb.done = true;
+    k.rbp.kind = 'climb'; k.rbp.t = d; k.assign = d; tgt.add(d);
+  }
+  // receivers: stalk the man covering them (the slot: the nickel; his man blitzing: the next man in the box)
+  const dbs = back7.filter(d => !R.box.includes(d) || d.role === 'CB'), used = new Set();
+  for (const w of [...R.wrs].sort((p, q) => Math.abs(q.y - MID) - Math.abs(p.y - MID))) {
+    let m = dbs.filter(d => !used.has(d)).sort((p, q) => dist(p, w) - dist(q, w))[0] || null;
+    if (m && m.blitz) m = R.SS && !tgt.has(R.SS) ? R.SS : null;
+    if (m) { used.add(m); tgt.add(m); }
+    if (w.rbl == null) w.rbl = blockLogic(w, 'str');
+    w.rbp = { kind: 'stalk', t: m, stem: w.x + (shotgun ? RBP.stalk.gun : w.x > los - 1.05 * YD ? RBP.stalk.x : RBP.stalk.z) * YL, ps: P(w) > 0 };
+    w.assign = m;
+  }
+  // the zone-read key sits on the keep threat (longer with a fast QB) unless he crashes on the back (a sloppier defense more often): then the QB should pull it
+  if (rbp.key) {
+    const k = rbp.key;
+    rbp.crash = Math.random() < RBP.read.crash * (1.3 - 0.6 * dcK);
+    if (!rbp.crash) { k.rbpHome = true; k.rbpFrz = clock + RBP.read.hold[0] + (RBP.read.hold[1] - RBP.read.hold[0]) * Math.max(0, Math.min(1, 0.5 + 0.25 * rz(qb, 'spd'))); }
+  }
+  // the free men (nobody has them): the QB's fake holds them a beat
+  const climbs = rbp.combos.map(c => rbpWho(c.lb));
+  rbp.free = R.box.filter(d => !tgt.has(d) && d !== rbp.key && !climbs.includes(d));
+}
+function rbpTick(dt) {
+  if (!rbpLive() || state !== 'run' || !runner) return;
+  const R = rbp.R, s = R.s, P = R.P, c = runner, el = clock - rbp.t0, gl = rbp.gl;
+  // R1: the combo's climber leaves on the first trigger (DL driven back / LB close / time); a LB over the top: he stays and finishes the DL.
+  // The center peels only when both happen (NT driven back AND a backer scraping into the A gap)
+  for (const k of rbp.combos) {
+    if (k.done) continue;
+    if (k.b.assign !== k.d || k.d.shed || k.d.action) { k.done = true; continue; }
+    const L = rbpWho(k.lb), moved = k.d.x - k.x0 >= (gl ? RBP.gl.move : RBP.combo.drive) * YL;
+    const near = !!L && !L.action && dist(L, k.d) <= (gl ? RBP.gl.lb : RBP.combo.lb) * YD;
+    let go;
+    if (k.peel) go = moved && !!L && !L.action && Math.abs(L.y - R.C.y) < (0.5 * SPLITS.ol + 1.5) * YD && L.x < los + 3 * YL;
+    else {
+      if (L && !L.action && P(L) - P(k.d) > RBP.combo.over * YD && P(L) - k.lp0 > YD && L.x <= k.d.x + 2 * YL) { k.done = true; continue; }
+      go = moved || near || (!gl && el >= rbp.trig);
+    }
+    if (!go) continue;
+    k.done = true;
+    const n = rbpClimbTo(k.lb, k.b);
+    if (!n) continue;
+    k.b.assign = n; k.b.lockedTo = null; k.b.rbp.t = n; k.b.rbp.kind = 'climb';
+  }
+  // R4: the backside cut-off holds until the runner is past the A / B gap after RBP.cut.t s (toss: RBP.cut.toss s), or well past the line; then WILL if he's filling the cutback
+  for (const b of ols) {
+    const a = b.rbp;
+    if (!a || a.kind !== 'cut' || a.rel || !a.t || b.assign !== a.t || a.t.shed) continue;
+    const past = P(c) > P(R.PG) || c.x > los + YL;
+    if (rb.runType === 'outside' ? el >= RBP.cut.toss : (el >= RBP.cut.t && past) || c.x > los + RBP.cut.past * YL) {
+      rbpLetGo(a.t, [b]);
+      const W = R.WILL, fill = W && !W.action && !W.engaged && !rbpTaken(W, b) && P(W) < P(R.C) + YD && W.x < los + 4 * YL;
+      const n = fill ? W : rbpChaser(b);
+      a.t = n; a.rel = !n; a.kind = 'climb'; b.assign = n;
+    }
+  }
+  // R3: the pullers. Kick out the force (log him if he squeezed inside the aim), trap the DL from the inside, wrap to the first backer; the toss lead takes the first man outside.
+  // A force man may wrong-arm it (spills the run). Done once his man is turned off the runner's track or the runner passes: then the next level
+  for (const b of ols) {
+    const a = b.rbp;
+    if (!a || !a.pull || a.rel || !a.pulled) continue;
+    if (a.kind === 'pullLead' && !a.t) {
+      const n = back7.filter(d => !d.action && !d.hasBall && !rbpTaken(d, b) && P(d) > P(R.PT) && dist(d, b) < 9 * YD).sort((p, q) => dist(p, b) - dist(q, b))[0];
+      if (n) { a.t = n; b.assign = n; }
+      continue;
+    }
+    const t = a.t;
+    if (!t) continue;
+    const touching = (t.blockers && t.blockers.includes(b)) || (b.lockedTo === t && b.engaged);
+    if (touching && !a.mode) {
+      a.mode = a.kind === 'pullTrap' ? 'trap' : a.kind === 'pullWrap' ? 'wrap' : a.kind === 'pullLead' ? (P(t) > P(c) ? 'kick' : 'log')
+        : P(t) < (rbp.holeY - MID) * s + RBP.kick.squeeze * YD ? 'log' : 'kick';
+      const dir = a.mode === 'log' ? -s : s;
+      if (back7.includes(t) && a.mode !== 'wrap') {
+        if (a.mode === 'kick' && a.kind === 'pullKick' && Math.random() < RBP.kick.wrong * Math.max(0.3, 1 + 0.3 * zc(rz(t, 'str')) - 0.3 * zc(rz(b, 'rbk')))) {
+          t.blockUntil = Math.min(t.blockUntil || clock, clock + RBP.kick.wrongHold);        } else t.rbpPush = { by: b, v: dir * RBP.kick.push * YD };
+      }
+      if (dl.includes(t)) { t.rbpDrive = dir; t.driveY0 = undefined; }
+    }
+    const pushed = t.rbpPush ? Math.sign(t.rbpPush.v) : t.rbpDrive || s;
+    const off = a.mode && a.mode !== 'wrap' && Math.abs(t.y - c.y) > RBP.pull.off * YD && Math.sign(t.y - c.y) === pushed;
+    const turnedIn = a.kind === 'pullLead' && P(t) < P(c) - YD;
+    if (off || turnedIn || c.x > b.x + RBP.hold.past * YL || t.action === 'down' || (dl.includes(t) && t.shed)) { a.mode = null; b.assign = rbpNextOf(b); }
+  }
+  // FB / near back: first color. Aim at the outside hip of the playside tackle; the first backer to show at the hole (the named one if nobody has him),
+  // else (once he's there) the nearest unblocked man near it; let go once his man is flattened or the runner passes, then the next threat within 3 yd
+  const hx = los + YL, hy = rbp.holeY, hd = d => Math.hypot(d.x - hx, d.y - hy);
+  for (const b of rbp.leads) {
+    const a = b.rbp;
+    if (a.rel || b === runner) continue;
+    if (a.t) { if (a.t.action === 'down' || a.t.hasBall || c.x > b.x + RBP.hold.past * YL) { b.assign = rbpChaser(b); a.t = b.assign; a.rel = !a.t; } continue; }
+    const pref = rbpWho(a.pref), cand = back7.filter(d => !d.action && !d.hasBall && !rbpTaken(d, b));
+    const shows = cand.filter(d => hd(d) < (RBP.lead.show + 1) * YD && (d.vx || 0) < 0.5 * YD).sort((p, q) => hd(p) - hd(q));
+    let n = shows.includes(pref) ? pref : shows[0];
+    if (!n && a.aimed) n = cand.filter(d => hd(d) < RBP.lead.first * YD).sort((p, q) => hd(p) - (p === pref ? YD : 0) - hd(q) + (q === pref ? YD : 0))[0] || rbpChaser(b);
+    if (n) { a.t = n; b.assign = n; a.aimed = true; }
+  }
+  // stalks: the playside Z switches to a box safety who fills outside; let go once the runner is 10 yd past or his DB turns and runs; wall him to the sideline
+  for (const w of R.wrs) {
+    const a = w.rbp;
+    if (!a || a.kind !== 'stalk' || a.rel || !a.t || w === runner) continue;
+    const t = a.t;
+    if (a.ps && !a.sw && R.SS && R.SS !== t && !R.SS.action && dist(R.SS, w) < 4 * YD && P(R.SS) > P(w) - 2 * YD && !rbpTaken(R.SS, w)) { a.sw = true; a.t = R.SS; w.assign = R.SS; continue; }
+    if (c.x > w.x + RBP.stalk.rel * YL || ((t.vx || 0) > RBP.stalk.hips * YD && t.x > c.x + 3 * YL) || t.action === 'down') { a.rel = true; continue; }
+    if (t.blockers && t.blockers.includes(w) && !t.rbpPush) t.rbpPush = { by: w, v: (Math.sign(t.y - MID) || s) * RBP.stalk.push * YD };
+  }
+  // second-level blocks (climbs, hooks): done once the runner is past or the man is down; the goal line: nobody climbs past 2 yd
+  for (const b of [...ols, ...R.tes]) {
+    const a = b.rbp;
+    if (a && !a.rel && !a.pull && a.t && back7.includes(a.t) && (a.t.action === 'down' || a.t.hasBall || c.x > b.x + RBP.hold.past * YL)) b.assign = rbpNextOf(b);
+    if (gl && ols.includes(b) && b.x > los + RBP.gl.max * YL) b.x = los + RBP.gl.max * YL;
+  }
+}
+// the pull: drop step, flat and tight (1 yd behind the line), turn up at his aim; a blitzer in the path is the first threat (the FB takes the old man)
+function rbpPuller(b, dt) {
+  const a = b.rbp;
+  if (!rbpLive() || !a || !a.pull || a.pulled || state !== 'run') return false;
+  const R = rbp.R, s = R.s, t = a.t;
+  const aimY = a.kind === 'pullLead' ? MID + s * (Math.abs((R.TE || R.PT).y - MID) + 1.5 * YD) : a.kind === 'pullWrap' || !t ? rbp.holeY : t.y - s * 0.6 * YD;
+  if ((aimY - b.y) * s < RBP.pull.at * YD) { a.pulled = true; return false; }
+  const bz = back7.find(d => d.blitz && !d.action && dist(d, b) < RBP.pull.blitz * YD && !rbpTaken(d, b));
+  if (bz) {
+    if (t && R.FB && R.FB.rbp && !R.FB.rbp.rel) { R.FB.rbp.t = t; R.FB.assign = t; }
+    a.t = bz; b.assign = bz; a.pulled = true; a.pull = false; a.kind = 'climb';
+    return false;
+  }
+  const px = b.x, py = b.y;
+  moveToward(b, los - (a.kind === 'pullWrap' ? RBP.pull.wrapDepth : RBP.pull.depth) * YL, aimY, OL_RUN * RBP.pull.speed * dt);
+  clampField(b); setVelocity(b, px, py, dt); b.face = 1; b.moving = true;
+  return true;
+}
+function rbpNamed(b) {   // his named man while the rules keep him on it (updateBlocker won't re-pick)
+  if (!rbpLive() || !b.rbp || state !== 'run') return null;
+  const a = b.rbp, t = a.t;
+  if (a.rel || !t || t.action === 'down' || t.hasBall || (dl.includes(t) && t.shed) || t === rbp.key || b === runner) return null;
+  return t;
+}
+const rbpOwned = b => rbpLive() && state === 'run' && rbp.helpers.includes(b) && !!b.assign && dl.includes(b.assign) && !b.assign.shed && !b.action && !b.rbpRide;
+const rbpLine = () => rbpLive() && state === 'run' ? rbp.helpers.filter(b => b !== runner && b.assign && dl.includes(b.assign) && !b.assign.shed) : [];
+const FB_ALLEY = { ahead: 3, wide: 3.5 };   // the lead back's look: yd ahead of the runner along his run, yd either side of that line
+function rbpSkill(b, dt, speed) {   // moves before the block: the FB to his aiming point, a stalk's stem (sell the route, break down), the toss lead turning up, draw routes clearing the box
+  if (!rbpLive() || !b.rbp || state !== 'run') return false;
+  const a = b.rbp, c = runner;
+  let tx = null, ty = b.y;
+  if (a.kind === 'lead' && c && c.hasBall && !c.awaiting && (a.aimed || a.t) && clock >= (a.alleyAt || 0)) {   // (the back has it: the lead back takes the biggest threat in the alley the back is running to)
+    a.alleyAt = clock + 0.25;
+    const sp = Math.hypot(c.vx || 0, c.vy || 0) || 1, ax = c.x + (c.vx || 0) / sp * FB_ALLEY.ahead * YD, ay = c.y + (c.vy || 0) / sp * FB_ALLEY.ahead * YD;
+    const cand = [...back7, ...dl].filter(x => !x.action && !x.hasBall && x.x > c.x - 0.5 * YD && Math.abs(x.y - ay) < FB_ALLEY.wide * YD && !(x.engaged && dl.includes(x)) && !(x.blockers && x.blockers.some(o => o !== b && dist(o, x) < BLOCK_RANGE * 1.3)))
+      .sort((p, q) => Math.hypot(p.x - ax, p.y - ay) / (1 + (p.vx || 0) * -1 / (5 * YD)) - Math.hypot(q.x - ax, q.y - ay) / (1 + (q.vx || 0) * -1 / (5 * YD)));
+    if (cand[0] && cand[0] !== a.t) { a.t = cand[0]; b.assign = cand[0]; b.wrAt = clock; }
+  }
+  if (a.kind === 'lead' && !a.t && !a.aimed) { tx = a.aim.x; ty = a.aim.y; if (Math.hypot(b.x - tx, b.y - ty) < YD) a.aimed = true; }
+  else if (a.kind === 'stalk' && rbp.draw && c.x < los + YL) tx = b.x + 3 * YD;
+  else if (a.kind === 'stalk' && !a.rel && a.t && b.x < a.stem && dist(b, a.t) > 1.6 * YD) tx = a.stem;
+  else if (a.kind === 'pullLead' && a.pulled && !a.t) tx = Math.max(b.x, c.x) + 3 * YD;
+  if (tx == null) return false;
+  const px = b.x, py = b.y;
+  moveToward(b, tx, ty, speed * dt); clampField(b); setVelocity(b, px, py, dt); b.face = 1; b.moving = true;
+  return true;
+}
+// R5: beaten (his hip got past): turn and ride him the way he's going, never grab. A sloppy blocker grabs anyway: holding odds once the runner is 3+ yd past
+function rbpBeaten(r, eng) {
+  for (const b of eng) {
+    if (!rbpOL(b)) continue;
+    b.stunUntil = clock + 0.12;
+    const grab = Math.random() < RBP.ride.grab * (1 - (b.rbl ?? 0.5));
+    b.rbpRide = { d: r, until: clock + (grab ? RBP.ride.grabTime : RBP.ride.time), grab };
+  }
+}
+function rbpRide(b, dt, speed) {
+  const w = b.rbpRide;
+  if (!w) return false;
+  const d = w.d;
+  if (clock >= w.until || d.action || !rbpLive() || state !== 'run') { b.rbpRide = null; return false; }
+  const px = b.x, py = b.y;
+  moveToward(b, d.x - 0.3 * YD, d.y + (Math.sign(b.y - d.y) || 1) * 0.7 * YD, speed * 1.1 * dt);
+  d.slow = Math.max(d.slow || 0, w.grab ? RBP.ride.grabSlow : RBP.ride.slow);
+  if (w.grab && !rbpPen && runner && runner.x > b.x + RBP.ride.past * YL && Math.random() < RBP.ride.flag * dt) { rbpPen = { num: b.num || '' }; popup(b, 'HOLDING', '#ffd23f'); }
+  clampField(b); setVelocity(b, px, py, dt); b.face = d.x >= b.x ? 1 : -1; b.moving = true;
+  return true;
+}
+// holding (R5) at the whistle: 10 yd from the line (half the distance when closer), replay the down. Declined after a turnover / kick, or a loss worse than the penalty
+function rbpPenalty(kind, next) {
+  const p = rbpPen; rbpPen = null;
+  if (!p || patMode !== null || kind === 'turnover' || kind === 'fg' || kind === 'fgmiss' || kind === 'punt' || (kind !== 'td' && !(next > 0))) return null;
+  const spot = Math.max(los - RBP.ride.yds * YL, los / 2);
+  if (kind !== 'td' && next <= spot) return null;
+  return { spot, text: `HOLDING, offense${p.num ? ' #' + p.num : ''}: ${Math.round((los - spot) / YL)} yards, replay ${['1st', '2nd', '3rd', '4th'][down - 1] || 'the'} down` };
+}
+// the QB's fake holds the free men a beat; the zone-read key sits home on the keep threat
+function rbpFrozen(d, c, dt) {
+  if (!(d.rbpFrz > clock) || d.action || d.engaged || !rbpLive() || c !== rb || udCtl(d) || dist(d, c) < 1.6 * YD) return false;
+  const px = d.x, py = d.y;
+  if (d.rbpHome) steer(d, d.x - 0.2 * YD, d.y + (qb.y - d.y) * 0.1, d.top * 0.25, d.accel, dt);
+  else steer(d, qb.x, qb.y, d.top * 0.35, d.accel, dt);
+  clampField(d); setVelocity(d, px, py, dt);
+  return true;
+}
+// after the handoff the QB carries out the boot fake (the free men bite); on a pitch he trails the back
+function rbpQB(dt) {
+  if (!rbpLive() || qb.action || runner === qb || !runner) return false;
+  const px = qb.x, py = qb.y, s = rbp.R.s;
+  if (ball.pitch) { qb.pvx = qb.pvy = 0; }   // (a pitch: he stands where he took the snap and flips it)
+  else if (rb.runType === 'outside') moveToward(qb, runner.x - 3 * YD, runner.y - s * YD, QB_SPEED * 0.8 * dt);
+  else {
+    if (runner.awaiting) return false;
+    if (!rbp.fakeT) { rbp.fakeT = clock; for (const d of rbp.free) d.rbpFrz = Math.max(d.rbpFrz || 0, clock + RBP.fake.freeze); }
+    if (clock - rbp.fakeT > RBP.fake.time) return false;
+    moveToward(qb, qb.x - 0.4 * YD, qb.y - s * RBP.fake.yd * YD, QB_SPEED * 0.8 * dt);
+  }
+  clampField(qb); setVelocity(qb, px, py, dt); qb.face = 1;
+  return true;
+}
+// zone read at the mesh: the key crashed on the back, so the QB (if he reads it) pulls it and runs; the back carries out the fake and lead-blocks
+function rbpKeep(c) {
+  return false;   // (no automatic QB keepers: the QB only runs it when you take him past the line yourself)
+  if (!rbpLive() || !rbp.key || !rbp.crash || rbp.read || c !== rb) return false;
+  rbp.read = true;
+  if (Math.random() >= RBP.read.pull[0] + (RBP.read.pull[1] - RBP.read.pull[0]) * Math.max(0, Math.min(1, 0.5 + 0.25 * rz(qb, 'awr')))) return false;
+  c.awaiting = false; c.hasBall = false; c.speed = 4 * YD;
+  runner = qb; runStart = clock; qb.speed = 3 * YD;
+  c.rbp = { kind: 'lead', t: null, pref: 'WILL', aim: { x: los, y: MID - rbp.R.s * 2 * YD } }; rbp.leads.push(c);
+  popup(qb, 'KEEP', '#ffd94a');
+  msg = 'QB keeps it!  -  ' + RUN_HELP;
+  return true;
+}
+// a QB scramble out of a pass set: after RBP.scramble s nobody holds a block any more; they climb toward the ball
+function rbpScramble() { for (const b of ols) if (b.assign && dl.includes(b.assign)) { b.assign = null; b.lockedTo = null; } }
 
 // --- pass protection & pass rush ------------------------------------------------------
 // protCall (from snap, pass plays): the line reads the front and picks man or slide, the center helps on the most dangerous inside rusher,
@@ -1228,12 +1697,15 @@ function updateLine(dt) {
   if (qb.hitBy && (state === 'drop' || state === 'pocket') && (clock >= qb.hitUntil || !aim)) return sack(qb.hitBy);
   if ((state === 'drop' || state === 'pocket') && passProt && !isRunPlay) for (const o of ols) if (o.passX0 != null && !o.action && o.x > o.passX0) o.x = o.passX0;   // (never steps upfield to block)
   const goal = runner || qb;
+  rbpTick(dt);   // (run blocking playbook: combo climbs, pulls, cut-offs, the lead back, stalks)
+  const qbScram = state === 'run' && runner === qb && !isRunPlay && !kickoffPlay;
+  if (qbScram && clock >= RBP.scramble) rbpScramble();
   // on a pass the back stays in only if he isn't running a route
   // the back stays in on a pass when there's someone to pick up (a blitzer or a lineman who got loose);
   // if nobody comes by the time he's checked it, he releases into his route
   if ((state === 'drop' || state === 'pocket') && rb.protect && !rb.passBlock && !rb.pickedUp && clock > 0.9) rb.protect = false;
   const teBlockers = state === 'run' ? [] : recs.filter(r => r.teBlock);
-  const blockers = state === 'run' ? ols : [...ols, ...(rb.protect || !rb.route ? [rb] : []), ...teBlockers];
+  const blockers = state === 'run' ? [...ols, ...rbpLine()] : [...ols, ...(rb.protect || !rb.route ? [rb] : []), ...teBlockers];
   for (const b of blockers) b.engaged = false;
   // a screen is caught: the interior linemen let their men go and get out in front of him
   for (const b of ols) if (screenRelease(b) && !b.released) { b.released = true; b.assign = null; b.lockedTo = null; }
@@ -1320,10 +1792,11 @@ function updateLine(dt) {
     // a won block on a run: the back is past the man and his blocker(s), so the DL isn't getting there. The lineman lets go (the man is
     // slowed, not freed to chase) and climbs to the next level
     if (r.engaged && state === 'run' && isRunPlay && !r.shed && runner && !runner.awaiting) {
-      const ob = eng.filter(b => ols.includes(b));
-      if (ob.length && clock - (r.engAt ?? clock) > CLIMB.hold && runner.x > r.x + CLIMB.past * YD && ob.every(b => runner.x > b.x + CLIMB.past * YD)) {
-        for (const b of ob) { b.assign = null; b.lockedTo = null; b.engaged = false; }
-        r.sealed = true; r.shed = true; r.freedAt = clock; r.slow = Math.max(r.slow || 0, CLIMB.slow); r.engaged = false;
+      // (playbook R2: the runner 2 yd past, or the man driven 3 yd past the line; R6: nothing lasts past 3 s. Then the next man within 3 yd)
+      const live = rbpLive(), ob = eng.filter(b => rbpOL(b)), past = live ? RBP.hold.past * YL : CLIMB.past * YD, held = clock - (r.engAt ?? clock);
+      if (ob.length && ((held > CLIMB.hold && runner.x > r.x + past && ob.every(b => runner.x > b.x + past)) || (live && (r.x > los + RBP.hold.deep * YL || held >= RBP.cap.max)))) {
+        rbpLetGo(r, ob);
+        if (live) for (const b of ob) b.assign = rbpNextOf(b);
       }
     }
     if (r.engaged && r.blitz) r.rushV = Math.min(r.rushV || 0, 2 * YD);   // stood up by the block
@@ -1409,6 +1882,7 @@ function updateLine(dt) {
         r.freedAt = clock;
         if (tut && udCtl(r)) tutEvent('dline');
         for (const b of eng) { b.stunUntil = clock + 0.6; b.lockedTo = null; }
+        if (state === 'run' && rbpLive()) rbpBeaten(r, eng);   // (R5: the beaten blocker rides him)
         if (r.move && MOVE_NAME[r.move]) {
           // arm over the top (or spun / ripped through, or around the edge) and he's past him, toward the QB or the ball carrier
           const dx = goal.x - r.x, dy = goal.y - r.y, dl2 = Math.hypot(dx, dy) || 1;
@@ -1449,12 +1923,12 @@ function updateLine(dt) {
         // (how far depends on this play's blocking roll, and on how patient the back is being)
         // outside run: they reach him instead, everyone driven toward the inside so the edge opens up
         const outsideRun = runPlay && rb.runType === 'outside';
-        const blockOut = runPlay && rb.runLane && runBlock !== 'stuffed' && eng.some(b => ols.includes(b));
+        const blockOut = runPlay && rb.runLane && runBlock !== 'stuffed' && eng.some(b => rbpOL(b)) && !(rbpLive() && clock - (r.engAt ?? clock) >= RBP.cap.ride);   // (R6: past 2.5 s the drive becomes a ride)
         if (blockOut) {
           const holeY = rb.runLane[1][1];
-          const ob = eng.filter(b => ols.includes(b)), logic = 1 + RBL.drive * ((SCHEMES[rb.scheme] || SCHEMES.insideZone).drive) * (ob.reduce((t, b) => t + (b.rbl ?? 0.5), 0) / ob.length - 0.5);   // (drive blocks / reaches: the coached line follows the aiming point)
+          const ob = eng.filter(b => rbpOL(b)), logic = 1 + RBL.drive * ((SCHEMES[rb.scheme] || SCHEMES.insideZone).drive) * (ob.reduce((t, b) => t + (b.rbl ?? 0.5), 0) / ob.length - 0.5);   // (drive blocks / reaches: the coached line follows the aiming point)
           const drive = (outsideRun ? OUTSIDE_RUN.drive : RUN_HOLE.drive[runBlock] * (1 + RUN_PATIENCE.drive * Math.min(1, runPatience))) * logic;
-          if (r.driveY0 === undefined) { r.driveY0 = r.y; r.driveAway = outsideRun ? -(rb.runSide || 1) : Math.sign(r.y - holeY) || (Math.random() < 0.5 ? -1 : 1); }
+          if (r.driveY0 === undefined) { r.driveY0 = r.y; r.driveAway = (rbpLive() && r.rbpDrive) || (outsideRun ? -(rb.runSide || 1) : Math.sign(r.y - holeY) || (Math.random() < 0.5 ? -1 : 1)); }
           if ((r.y - r.driveY0) * r.driveAway < drive) r.y += r.driveAway * drive * 0.85 * dt;
           r.y += (rb.runSide || 0) * RUN_FLOW.drift * YD * dt;   // the whole line flows with the play: blocks are carried the way it's going
         }
@@ -1526,7 +2000,8 @@ function updateLine(dt) {
     const r = b.assign;
     // on a handoff, linemen with no one left on the line climb to the second level
     if (kickoffPlay && state === 'run') { kickoffBlock(b, dt, KICKOFF.blockSpeed); continue; }
-    if (screenRelease(b) || passCaught() || (state === 'run' && runner === rb && (!r || r.shed || back7.includes(r) || blockMissed(b, r)))) { updateBlocker(b, dt, OL_RUN * (b.pulling ? PULL.speed : 1)); continue; }
+    if (rbpPuller(b, dt)) continue;   // (the pull path, flat behind the line)
+    if (screenRelease(b) || passCaught() || (state === 'run' && (rbpBall() || qbScram) && (!r || r.shed || back7.includes(r) || blockMissed(b, r)))) { updateBlocker(b, dt, OL_RUN * (b.pulling ? PULL.speed : 1)); continue; }
     const px = b.x, py = b.y;
     if (b.stunUntil > clock) { b.moving = false; continue; }
     // stunt: he doesn't chase his man as he loops away; he sits in his gap for whoever comes through it
@@ -1566,7 +2041,7 @@ function updateLine(dt) {
     b.face = 1;
   }
   // on a pass the line can't release downfield: nobody gets more than 2 yards past the line
-  if (!isRunPlay && !kickoffPlay && !passCaught()) for (const b of ols) b.x = Math.min(b.x, los + 2 * YL);   // (not on a kickoff: that's what yanked the blockers to the returner)
+  if (!isRunPlay && !kickoffPlay && !passCaught()) for (const b of ols) b.x = Math.min(b.x, los + RBP.downfield * YL);   // (not on a kickoff: that's what yanked the blockers to the returner)
 }
 
 // A blitzer's path to (gx, gy): through his own gap in the line until he's past it, around any free blocker in his way
@@ -1712,6 +2187,7 @@ function speedCushion(d, r) {
   return { yd: Math.max(S2.ydMin, Math.min(S2.ydMax, (S2.yd[0] + (S2.yd[1] - S2.yd[0]) * g) * cv)), flip: 1 + S2.flip * g * cv, run: 1 + S2.run * g * cv };
 }
 function pressMan(d, dt) {
+  if (!d.action && stumbleRecover(d, dt)) return;
   const r = d.man, px = d.x, py = d.y;
   dbHips(d, r, dt);
   const deep = r.route && r.route.pts && isDeep(r.route);
@@ -1804,6 +2280,9 @@ const SAFETY_STRIP = { minDepth: 8, hold: 0.9 };   // a deep safety only reacts 
 // deep zone discipline: before the throw a deep defender never comes downhill (on = the rule; give = yd he may still step up; floor = shallowest depth, yd past
 // the line). Among threats he leans to the least covered (openW x yd to the nearest teammate, capped at openCap); two verticals closer than split yd are split.
 const DEEP_HOLD = { on: true, give: 0.6, floor: 9, openW: 0.6, openCap: 8, split: 12 };
+// deep men feel a route that LOOKS vertical early: a man pushing upfield at over vx x his top speed and past `early` yd is a deep threat (even before the strip's
+// minDepth), scored by his upfield speed (score x vx s); while he's carrying it the deep man bails to stay on top: over s of his run ahead + cushion yd
+const VERT_CARRY = { vx: 0.6, early: 4, score: 1.1, over: 0.7, cushion: 2.5 };
 function zoneDefend(d, dt) {
   if (d.action) return updateAction(d, dt);   // e.g. on the seat of his pants
   if (fooled(d, dt)) return;
@@ -1841,6 +2320,7 @@ function zoneDefend(d, dt) {
     return;
   }
   if (coverage === 'Cover 4' && !d.man && !d.blitz && d.zone && d.zone.deep && (d.role === 'CB' || d.role === 'S') && (state === 'drop' || state === 'pocket')) patternMatch(d);
+  if (stumbleRecover(d, dt)) return;
   if (d.man && (state === 'drop' || state === 'pocket' || state === 'flight')) return pressMan(d, dt);
   const jam = recs.find(r => r.jammer === d && clock < (r.jamUntil || 0));
   if (jam && (state === 'drop' || state === 'pocket')) {
@@ -1871,9 +2351,10 @@ function zoneDefend(d, dt) {
     const outside = d.role === 'CB' || (!z.deep && Math.abs(Ly - MID) > ZONE_HELP.flatWidth * YD);
     const boundary = outside && Math.sign(p.y - MID) === Math.sign(Ly - MID) && toSideline(p) < ZONE_HELP.sideline * YD &&
                      p.x < Lx + ZONE_HELP.sideDepth * YL && p.x > los + 2 * YL;
-    const threat = boundary || (z.deep ? (strip ? p.x > los + SAFETY_STRIP.minDepth * YL && inStrip(p) : p.x > los + 4 * YL && Math.abs(p.y - Ly) < R * 1.4) : (dL < R * 1.25 || approaching));
+    const vert = z.deep && p.vx > VERT_CARRY.vx * WR_TOP && p.x > los + VERT_CARRY.early * YL;   // (looks vertical: he's threatened already)
+    const threat = boundary || (z.deep ? (strip ? (p.x > los + SAFETY_STRIP.minDepth * YL || vert) && inStrip(p) : (p.x > los + 4 * YL || vert) && Math.abs(p.y - Ly) < R * 1.4) : (dL < R * 1.25 || approaching));
     if (!threat) continue;
-    let score = z.deep ? p.x + p.vx * 0.5 + Math.min(DEEP_HOLD.openCap * YD, back7.reduce((m, o) => o === d || o.blitz || o.action ? m : Math.min(m, Math.hypot(o.x - p.x, o.y - p.y)), Infinity)) * DEEP_HOLD.openW : -dL;   // (deep: the deepest threat, leaning to the one nobody else has)
+    let score = z.deep ? p.x + p.vx * (vert ? VERT_CARRY.score : 0.5) + Math.min(DEEP_HOLD.openCap * YD, back7.reduce((m, o) => o === d || o.blitz || o.action ? m : Math.min(m, Math.hypot(o.x - p.x, o.y - p.y)), Infinity)) * DEEP_HOLD.openW : -dL;   // (deep: the deepest threat, leaning to the one nobody else has)
     // the boundary man comes first (for a corner, only with a deep safety behind him to take the vertical)
     if (boundary && (d.role !== 'CB' || safetyDeep)) score += 100 * YD;
     if (!best || score > best.score) best = { p, score, boundary };
@@ -1954,6 +2435,7 @@ function zoneDefend(d, dt) {
       // take an angle: aim where he's going to be, not where he is (safeties read it from further out)
       const lead = d.role === 'S' ? COVER.safetyLead : 0.4;
       tx = Math.max(Lx, p.x + Math.max(0, p.vx) * lead + (d.role === 'S' ? DEEP_BALL.cushion : COVER.deepCushion) * YD);
+      if (p.vx > VERT_CARRY.vx * WR_TOP && state !== 'flight') tx = Math.max(tx, p.x + p.vx * VERT_CARRY.over + VERT_CARRY.cushion * YD);   // (carrying a vertical: stay on top of it, helping the corner under him)
       ty = Ly + (p.y + p.vy * (d.role === 'S' ? lead : 0) - Ly) * (best.attach ? 0.8 : COVER.zoneBlend);
       const oy = ty - Ly;
       if (strip) ty = Math.max(strip.cy - strip.ry * SAFETY_STRIP.hold, Math.min(strip.cy + strip.ry * SAFETY_STRIP.hold, ty));   // (he never leaves his half for a man who is in it)
@@ -2153,7 +2635,7 @@ function defendBall(d, dt) {
     // (how high the ball will be when he's at the top of a leap: a low ball (or one under his hands) gets a dive at it, not a jump over it)
     const pk = Math.min(1, ball.p + (JUMP_TIME / 2) / Math.max(0.01, ball.T)), zPk = Math.sin(Math.PI * pk) * ball.h + (ball.z0 || 0) * (1 - pk);
     if (zPk <= Math.max((d.reachZ || 0) * 0.8, STRIDE_HEIGHT)) {
-      if (Math.hypot(d.x - ball.tx, d.y - ball.ty) <= DIVE_LUNGE * 1.6) { startDive(d, ball.tx, ball.ty, 0.3, DIVE_LUNGE); d.diveTip = true; return; }
+      if (Math.hypot(d.x - ball.tx, d.y - ball.ty) <= DIVE_LUNGE * 1.6) { startDive(d, ball.tx, ball.ty, DB_DIVE.dur, DIVE_LUNGE); d.diveTip = true; return; }
     } else {
       d.action = 'jump';
       d.act = { t: 0, dur: JUMP_TIME, h: Math.max(14 * S, Math.min(JUMP_REACH, zPk) - 16 * S) };
@@ -2221,6 +2703,8 @@ function defendBall(d, dt) {
 
 // Get-up looks (dur = seconds up off the turf, w = odds; hop = spring off the turf, hunch = bent over on the way up, wob = stagger as he finds his feet)
 const GETUP_K = 1.7;   // x every get-up's length: players take longer to rise (and the rise eases in and out, see the getup draw)
+const GETUP_SINK = 2;   // touched down while getting up: the rise plays backward this many x as fast, back down onto the turf
+const GETUP_TACKLE = 0.5;   // ...unless he's this far up (share of the rise): then he's tackled like a standing man
 const GETUP_ST = { push: { dur: 0.45 * GETUP_K, w: 5 }, spring: { dur: 0.32 * GETUP_K, w: 2, hop: 1.5 }, slow: { dur: 0.7 * GETUP_K, w: 2, hunch: 0.16 }, stagger: { dur: 0.6 * GETUP_K, w: 1.5, wob: 0.12 } };
 function pickGetUp(p) {
   const keys = Object.keys(GETUP_ST), tired = Math.min(1, Math.max(0, 1 - (p.stam ?? 1)));   // (a winded man gets up slower)
@@ -2511,11 +2995,13 @@ function pursueMove(d, c, dt) {
     if (d.stiffBy === c && c.stiffLock && c.stiffLock.d === d) return;
     d.stiffBy = null;
   }
-  if (c.awaiting) {   // mesh not finished: read it, flow toward the back, but nobody to tackle yet
-    if (!d.action && d.zone && clock - runStart < (d.runRead || 0) * RUN_REACT.read / Math.max(0.5, diffX('run')) * (1 - runHeat() * RUN_STREAK.react)) return zoneDefend(d, dt);   // reading it: still in their drops
+  if (rbpFrozen(d, c, dt)) return;   // (biting on the QB's fake / the read key sitting home)
+  if (c.awaiting) {   // mesh not finished: nobody triggers yet (the ball isn't in the back's hands): they read it from their spots / drops
     if (d.action) return updateAction(d, dt);
+    if (d.zone && !dl.includes(d)) return zoneDefend(d, dt);
     const px = d.x, py = d.y;
-    steer(d, c.x, c.y, d.top * 0.8, d.accel, dt);
+    if (dl.includes(d)) steer(d, c.x, c.y, d.top * 0.8, d.accel, dt);   // (the line plays its gap into the backfield: it's being blocked)
+    else steer(d, d.x + 0.15 * YD, d.y + (c.y - d.y) * 0.02, d.top * 0.2, d.accel, dt);   // (a shuffle in place, eyes on the mesh)
     clampField(d); setVelocity(d, px, py, dt);
     return;
   }
@@ -2713,8 +3199,10 @@ function pursueMove(d, c, dt) {
         * teHold(engagedNow)
         * (d.role === 'LB' && !engagedNow.some(b => ols.includes(b) || b.pos === 'TE') ? WR_BLOCK.lb : 1);   // a backer slips a wideout fast
       d.blockUntil = clock + (d.blockUntil - clock) * holdMult;
+      if (rbpLive()) d.rbpEng = clock;
     }
     if (fresh.length && d.blockers && d.blockers.length) d.blockUntil += 3 + Math.random() * 2;   // second man arrives
+    if (rbpLive() && d.rbpEng != null) d.blockUntil = Math.min(d.blockUntil, d.rbpEng + RBP.cap.max);   // (playbook R6: no block lasts past 3 s)
     d.blockers = engagedNow;
     const dx = c.x - d.x, dy = c.y - d.y, dd = Math.hypot(dx, dy) || 1;
     if (kickoffPlay && clock < d.blockUntil) {   // a return block gets harder to hold the longer it's held: the odds he sheds it climb every second
@@ -2734,6 +3222,7 @@ function pursueMove(d, c, dt) {
         const keep = Math.exp(-BLOCK_CATCH.decay * dt);
         d.svx = (d.svx || 0) * keep; d.svy = (d.svy || 0) * keep;
         d.x += (dx / dd * YD * give + d.svx) * dt; d.y += (dy / dd * YD * give + d.svy) * dt;
+        if (d.rbpPush && engagedNow.includes(d.rbpPush.by) && rbpLive()) d.y += d.rbpPush.v * dt;   // (kicked out / logged / walled to the sideline)
         clampField(d);
       }
       engagedNow.forEach((b, i) => {
@@ -2816,6 +3305,10 @@ function pursueMove(d, c, dt) {
   if (kickoffPlay && !d.isKicker && d.lane !== undefined && !gunP && ((c.vx || 0) * (c.team === 'off' ? 1 : -1) < -KICK_HOLD.speed * YD) && d.x * (c.team === 'off' ? 1 : -1) > c.x * (c.team === 'off' ? 1 : -1) + KICK_HOLD.near * YD) {
     aimAt.x = d.x + (c.team === 'off' ? 1 : -1) * 0.2 * YD;   // (settles, doesn't come on)
     aimAt.y = d.y + (Math.max(Y_MIN + YD, Math.min(Y_MAX - YD, c.y + kOff * KICK_COVER.space)) - d.y) * KICK_HOLD.lane;   // (shades toward his own lane)
+  }
+  if (!closing) {   // (hawking him down: aim through the meeting point, so he arrives at full speed instead of easing up onto it)
+    const ax = aimAt.x - d.x, ay = aimAt.y - d.y, L = Math.hypot(ax, ay), need = chase * PURSUIT.through;
+    if (L > 1 && L < need) { aimAt.x = d.x + ax / L * need; aimAt.y = d.y + ay / L * need; }
   }
   steer(d, aimAt.x, aimAt.y, chase * (gunP ? PUNT_GUN.speed : 1), d.accel * (koCov ? (kickoff && kickoff.punt ? PURSUIT.accel * PUNT_COVER.accel : KICK_COVER.accel) : PURSUIT.accel), dt);
   clampField(d);

@@ -760,6 +760,12 @@ function drawCrumple() {
   if (!crumple) return;
   const G = crumpleG, p = (performance.now() - crumple.t0) / G.ms;
   if (p >= 1) { crumple = null; return; }
+  if (p < 0) {   // (holding the old page while spent credits finish flying into its button)
+    ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0);
+    if (crumple.full) ctx.drawImage(crumpleSnap, -PAD, 0, W + 2 * PAD, H);
+    spendDrawn = -1; drawSpendFx();
+    ctx.restore(); return;
+  }
   const ease = t => t * t * (3 - 2 * t);
   const f = ease(Math.min(1, p / G.fold)), wob = Math.sin(Math.PI * f);
   // after the fold: tossed in an arc off the bottom, spinning
@@ -826,6 +832,21 @@ const inCircle = (p, who) => {
 };
 const rbCloser = p => { const w = screenToWorld(p); return Math.hypot(w.x - rb.x, w.y - rb.y) <= Math.hypot(w.x - qb.x, w.y - qb.y) + 0.25 * YD; };   // (overlapping rings: the RB gets the tie)
 const clickedRB = p => !rb.split && inCircle(p, rb);   // any back in the backfield can carry it
+// a two-back set: the fullback can carry it too (his own RUN ring); clicking it makes him the runner (fbCarry swaps him into the RB slot)
+const fbCarrier = () => !aiOff() && !tut && liveForm && recs ? recs.find(r => r.fb && r.x < los) || null : null;
+function clickedFB(p) {
+  const f = fbCarrier(); if (!f || !inCircle(p, f)) return null;
+  const w = screenToWorld(p);
+  return !clickedRB(p) || Math.hypot(w.x - f.x, w.y - f.y) < Math.hypot(w.x - rb.x, w.y - rb.y) ? f : null;
+}
+function fbCarry(f) {   // the fullback and the back trade places in the code: the FB becomes `rb` (the runner), the halfback takes the FB's blocking slot
+  const old = rb, i = recs.indexOf(f); if (i < 0) return;
+  recs[i] = old;
+  for (const sd of sides) { const j = sd.recs.indexOf(f); if (j >= 0) sd.recs[j] = old; }
+  Object.assign(f, { fb: false, isTE: false, route: null, path: [], leg: 0, scheme: old.scheme, runSide: old.runSide, runType: old.runType, runLane: old.runLane, routeName: old.routeName, lane: null, split: false, side: old.side, fbGrp: null, color: old.color });
+  Object.assign(old, { fb: true, isTE: true, route: null, path: [], leg: 0, lane: null, fbGrp: 'RB', color: ROUTE_COLORS[i] || RB_COLOR });
+  rb = f;
+}
 
 // Pre-snap: drag from the QB circle = pass play, click the RB circle = run play.
 // During the drop: press anywhere to aim, release to throw. Right-click: lob/bullet.
@@ -882,7 +903,7 @@ canvas.addEventListener('pointerdown', e => {
   if (hl) {   // watching the highlights: the bar's buttons, else the replay's own mouse controls (hold = slow motion, right-drag = look around)
     const p = pointerPos(e);
     if (hlDel) { if (e.button === 0) hlDelClick(p); return; }   // (the delete card is up)
-    if (e.button === 0) { if (hl.mode === 'half') { if (hlBarHit(p)) hlClick(p); else hsNext(); return; } if (tipClick(p)) return; if (hlBarHit(p)) hlClick(p); else { pressAt = performance.now(); replayLeft = { sx: p.x, sy: p.y, moved: false }; } }
+    if (e.button === 0) { if (hl.mode === 'half') { if (hlBarHit(p)) hlClick(p); else hsClip(1); return; } if (tipClick(p)) return; if (hlBarHit(p)) hlClick(p); else { pressAt = performance.now(); replayLeft = { sx: p.x, sy: p.y, moved: false }; } }
     else if (e.button === 2) { replayDrag = { sx: p.x, sy: p.y, px: replayPan.x, py: replayPan.y, moved: false }; canvas.setPointerCapture(e.pointerId); }
     return;
   }
@@ -981,6 +1002,7 @@ canvas.addEventListener('pointerdown', e => {
   if (e.button === 0 && overPauseButton(pointerPos(e))) { if (noPause()) return; paused = !paused; resetAsk = false; pauseGoals = false; aim = null; return; }
   if (paused) {
     const p = pointerPos(e), hit = b => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
+    if (e.button === 0 && !ONL.on && dcShown() && hit(DC_BTN)) { if (dcWhich()) dcOpen(); return; }   // (DEPTH CHART: before the snap only)
     if (pauseSim && state !== 'sim' && !tut) {   // the sim screen
       if (e.button === 0 && hit(PAUSE_MENU.back)) pauseSim = false;
       else if (e.button === 0) { const s = PAUSE_MENU.sims.find(b => hit(b) && simAvailable(b.id)); if (s) { pauseSim = false; simAhead(s.id); } }
@@ -998,7 +1020,7 @@ canvas.addEventListener('pointerdown', e => {
     else if (e.button === 0 && !tut && hit(leaveBtn()) && leaveOK()) resetAsk = 'leave';
     return;
   }
-  if (rec && rec.replaying && e.button === 0 && !finalReplay() && !halfShown()) { const p = pointerPos(e); pressAt = performance.now(); replayLeft = { sx: p.x, sy: p.y, moved: false }; return; }   // (a replay takes the click before anything under it: a pre-kick / pre-snap replay of the last play used to hand it to the kick meter, PAT switch or kick target)
+  if (rec && rec.replaying && e.button === 0 && !finalReplay() && !halfShown()) { const p = pointerPos(e); if (tipClick(p)) { pressAt = 0; replayLeft = null; return; } pressAt = performance.now(); replayLeft = { sx: p.x, sy: p.y, moved: false }; return; }   // (a replay takes the click before anything under it: a pre-kick / pre-snap replay of the last play used to hand it to the kick meter, PAT switch or kick target)
   if (e.button === 0 && !paused && !showKeys && tipClick(pointerPos(e))) return;   // (the names / star tips toggle with a click)
   if (halfShown()) { if (e.button === 0 && inBtn(pointerPos(e), HALF_OK_BTN)) halfOK(); return; }   // halftime: only OK moves on
   if (halfHold && !(rec && rec.replaying)) { if (e.button === 0 && replayBtnShowing() && inBtn(pointerPos(e), REPLAY_BTN) && replayBtnOn() && playSettled() && !bannerUp()) { startReplay(); rec.fromClick = true; } else if (e.button === 0 && state === 'done' && !(rec && (rec.replaying || rec.rewind)) && playSettled() && !bannerUp()) halfGo = true; return; }   // (the card isn't up yet: the play is still settling, or a replay is playing)
@@ -1082,6 +1104,7 @@ canvas.addEventListener('pointerdown', e => {
   if (state === 'pre') {
     const b = AUDIBLE_BTN;
     if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) { audible(); return; }
+    { const f = clickedFB(p), w0 = screenToWorld(p); if (f && (!inCircle(p, qb) || Math.hypot(w0.x - f.x, w0.y - f.y) < Math.hypot(w0.x - qb.x, w0.y - qb.y))) { fbCarry(f); handoff(); return; } }   // (the fullback's RUN ring: he carries it; overlapping the QB's ring, the nearer man wins)
     if (clickedRB(p) && (!inCircle(p, qb) || rbCloser(p))) { handoff(); return; }   // (where the two rings overlap: the run play, unless the click is nearer the QB)
     if ((!tut || (tutStep() || {}).id === 'hot') && !inCircle(p, qb) && hotRouteClick(p)) return;   // clicking a receiver: his next hot route
     if (tut && tutStep() && tutStep().def !== 'none' && !tutStep().recs) return;   // (the tutorial's run steps: only the hand-off)
@@ -1218,7 +1241,8 @@ canvas.addEventListener('wheel', e => {
   if (showKeys) { scrollKeys(keysScroll + e.deltaY * (e.deltaMode === 1 ? 38 : 1)); return; }   // scrolls the keybinds
   if (settingsOpen && diffUI) { diffUI.scroll += e.deltaY * (e.deltaMode === 1 ? 38 : 1); return; }
   if (settingsOpen) { bindScroll = Math.max(0, Math.min(bindMax(), bindScroll + e.deltaY * (e.deltaMode === 1 ? 38 : 1))); return; }   // scrolls the settings keybinds
-  if (results && results.screen === 'roster' && fvWheel(e)) return;   // (the roster's formation view zooms)
+  if (results && results.screen === 'roster' && fvWheel(e)) return;
+  if (results && results.screen === 'tradeb' && !offPop && tbWheel(e)) return;   // (the offer builder's player cards page)   // (the roster's formation view zooms)
   if (results && results.screen === 'week') { weekScroll = Math.max(0, Math.min(weekMax, weekScroll + Math.sign(e.deltaY) * WEEK_ROW)); return; }   // end-of-week player list
   if (results && results.screen === 'home') {   // over the schedule strip: scroll through the season
     const p = pointerPos(e), d = (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) * (e.deltaMode === 1 ? 38 : 1);
@@ -1297,6 +1321,7 @@ window.addEventListener('keydown', e => {
 });
 const heldKeys = {};   // (what each physical key was read as when it went down: it is let go as that, whatever has changed since (the snap, the drive direction))
 function onKeyDown(e) {
+  if (dcg && e.code === 'Escape' && !offPop && !teamPick) { e.preventDefault(); if (rosterView.sel != null) { rosterView.sel = null; statsView = null; } else dcClose(); return; }   // (the in-game depth chart: Esc steps back, then closes it)
   if (tour && results) {   // a tutorial is up: Esc skips, Enter / Space / right arrow go on, left arrow goes back
     e.preventDefault();
     if (e.repeat) return;
@@ -1307,10 +1332,10 @@ function onKeyDown(e) {
   if (settingsOpen) { if (diffUI) { diffKey(e); return; } if (e.code === 'Escape') { e.preventDefault(); if (dbgUI) dbgUI = false; else if (spdUI) spdUI = false; else if (htUI) htUI = false; else settingsOpen = false; } return; }
   if (injuryShowing() && !paused && e.code !== 'Escape') return;   // (answer the injury timeout first)
   if (HT && !hl) { if (e.code === 'Escape' || e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); if (!e.repeat) { if (e.code === 'Escape') hsSkip(); else hsNext(); } } return; }   // (a halftime card: Enter / Space next segment, Esc skips the show)
-  if (hl && hl.mode === 'half') {   // a halftime clip: Enter next segment, Esc skips the show, Space pauses
+  if (hl && hl.mode === 'half') {   // a halftime clip: Enter next clip, Backspace previous clip, Esc skips the show, Space pauses
     e.preventDefault();
     if (e.repeat) return;
-    if (e.code === 'Escape') hsSkip(); else if (e.code === 'Enter') hsNext(); else if (e.code === 'Space' && rec) rec.paused = !rec.paused;
+    if (e.code === 'Escape') hsSkip(); else if (e.code === 'Enter') hsClip(1); else if (e.code === 'Backspace') hsClip(-1); else if (e.code === 'Space' && rec) rec.paused = !rec.paused;
     return;
   }
   if (hl) {   // the highlights: Enter next, Backspace previous, Esc done; everything else is the replay's (Space pause, A / D scrub, arrows pan)
@@ -1457,11 +1482,11 @@ function speedStep(dt) {
 function frame(now, bg) {   // bg: stepped by the background ticker (a hidden online tab), which must not start a second rAF chain
   try { spendWatch(); } catch (e) {}   // (credits spent since last frame: animate them into the clicked button; reads last frame's buttons)
   UI_BTNS_PREV = UI_BTNS; UI_BTNS = [];
-  { const hi = !!(results && results.screen === 'roster' && formView()); if (hi !== RK_HI) { RK_HI = hi; fitScreen(); } }   // (the roster formation view renders at full screen resolution)
   { const s = inSave(); if (s !== setScope) { setScope = s; if (!s) { useDefaults(); QUARTER_SECS = SETTINGS.quarterMin * 60; } } }   // (back to the menu / an exhibition / franchise setup: the defaults apply)
   if (pstStash && !exhibition) pstExhibitionOff();   // (left the exhibition: the franchise's stats come back)
   if (!bg) requestAnimationFrame(frame);   // (first, so a bug thrown below shows up in the console but can't stop the loop and freeze the whole game)
   const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));   // (never negative: a timestamp older than the last one would stall the game step)
+  if (!bg) liteTick(now - last);   // (performance mode: are the frames still slow?)
   last = now;
   if (!paused) pauseSim = false;   // (the pause menu always opens on its main screen)
   if (paused || showKeys || settingsOpen) { if (animFrozenAt === null) animFrozenAt = now; }
@@ -1484,8 +1509,15 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   wxAudio();
   stepAudio();
   const page = pageKey();   // (the canvas still holds the old page here: that's what crumples)
-  if (lastPage !== null && page !== lastPage) startCrumple();
+  if (lastPage !== null && page !== lastPage) {
+    // credits spent on the click that changed the page: the old page holds (coins flying into the button it was) until they land, then crumples
+    let hold = 0;
+    try { const n0 = spendFxs.length; spendWatch(); if (spendFxs.length > n0) { const f = spendFxs[spendFxs.length - 1]; hold = f.coins.length * SPEND.gap + SPEND.ms + 150; } } catch (e) {}
+    startCrumple();
+    if (hold && crumple) { crumple.t0 += hold; crumple.full = true; }
+  }
   lastPage = page;
+  { const hi = !!(results && (results.screen === 'roster' || results.screen === 'tradeb')), lv = liteLevel(); if (hi !== RK_HI || lv !== liteLvl) { RK_HI = hi; liteLvl = lv; fitScreen(); } }   // (the roster / offer builder render at full screen resolution; after the page-change snapshot above: a resize clears the canvas, so doing it first crumpled a blank / wrong page)
   if (TUI.on && now - lastPaint < paintMin) return;   // (phones: drawn at most ~60 times a second even on a 90 / 120 Hz screen, ~30 when a frame takes too long to paint; the game steps above are unaffected)
   lastPaint = now;
   const paintT0 = performance.now();
@@ -1636,6 +1668,7 @@ function fitScreen() {
   const asp = Math.max(W / H, Math.min(WIDE_MAX, lw / lh));   // (laptops too, not only the touch layout)
   PAD = Math.round((asp * H - W) / 2);
   RK = TUI.on ? RENDER_K : 1;
+  if (liteLvl) RK = Math.min(RK, LITE.rk) * (liteLvl > 1 ? LITE.slowRk : 1);   // (performance mode: a phone's canvas at 1x; frames still slow: fewer pixels on every device)
   if (RK_HI) { const r = layRect(canvas); RK = Math.max(RK, Math.min(FV.resMax, (window.devicePixelRatio || 1) * Math.max(1, r.width) / (W + 2 * PAD))); }   // (formation view: sharp at every zoom)
   const cw = Math.round((W + 2 * PAD) * RK), ch = Math.round(H * RK);
   if (canvas.width !== cw) canvas.width = cw;
@@ -2002,7 +2035,7 @@ for (const [type, k] of [['pointerdown', 'pd'], ['pointermove', 'pm'], ['pointer
   }
   if (k === 'pd') onlSendKm();   // (a tap can be the kick's click: the meter value this guest saw goes first)
   const hx = Math.round(onlPtX(p));   // (the host's frame)
-  NET.send({ t: 'in', k, x: hx, y: Math.round(p.y) });
+  { const pm = { t: 'in', k, x: hx, y: Math.round(p.y), q: ONL.pq = (ONL.pq || 0) + 1 }; if (k === 'pm') NET.sendFast(pm); else NET.send(pm); }   // (q: the order they were made in. A drag's moves may be lost (the next one replaces them): the fast channel; down / up always arrive)
   ONL.gLastP = { x: hx, y: Math.round(p.y) }; ONL.gClient = { x: e.clientX, y: e.clientY };
   if (k === 'pu') setTimeout(() => { if (ONL.gLastP && ONL.gPid == null) NET.send({ t: 'in', k: 'pu', x: ONL.gLastP.x, y: ONL.gLastP.y }); }, 150);   // (the release is sent twice: the host ignores the second one, a lost first one no longer leaves the aim stuck)
   if (mouse) e.stopImmediatePropagation();
@@ -2027,7 +2060,7 @@ for (const [type, k] of [['pointerdown', 'pd'], ['pointermove', 'pm'], ['pointer
   if (k === 'pu') ONL.hostIds.delete(e.pointerId);
 }, true);
 // while a finger is held on the field its spot is repeated a few times a second, so the host can tell "held still" from "the release got lost"
-setInterval(() => { if (ONL.on && ONL.guest && ONL.gPid != null && ONL.gLastP && !document.hidden) NET.send({ t: 'in', k: 'pm', x: ONL.gLastP.x, y: ONL.gLastP.y }); }, 300);
+setInterval(() => { if (ONL.on && ONL.guest && ONL.gPid != null && ONL.gLastP && !document.hidden) NET.sendFast({ t: 'in', k: 'pm', x: ONL.gLastP.x, y: ONL.gLastP.y, q: ONL.pq = (ONL.pq || 0) + 1 }); }, 300);
 // online on a laptop: switching tabs must not stop the match. A hidden tab gets no animation frames and slow timers, so a worker's timer (not throttled like the
 // page's) steps the game and the heartbeat instead.
 try {

@@ -162,18 +162,28 @@ function setKickTarget(wx, wy) {
   if (!kick.punt) { kick.winBase ??= kick.window; kick.window = kick.winBase * (t.x < 0 ? KOK_TB_HARD.win : 1); }   // (a touchback kick: a tighter aim window)
 }
 const KOK_TB_HARD = { win: 0.55, pow: 0.5 };   // a kickoff aimed into the end zone (a touchback): x the aim window, x the power marker's green tolerance
+const KO_RETICLE = { w: 20, dash: 30, gap: 18, head: 60, end: 0.9, ring: 6 };   // your kickoff / punt aim: arrow line width, dashes, arrowhead size (px), share of the way it reaches (the head lands short of the crosshair), ring line width
 function drawKickReticle() {
   const t = kick.target, [rl, rt] = reticleSpread(), from = kickoff && kickoff.kicker || rb;   // (the kicker or punter, never the returner)
   ctx.save();
-  ctx.fillStyle = '#ffffff';
-  for (let i = 1; i <= 15; i++) {   // the line out to it, arcing like a pass
-    const p = i / 15, h = Math.min(260 * S, Math.abs(t.x - from.x) * 0.12);
-    ctx.fillRect(from.x + (t.x - from.x) * p - 5, from.y + (t.y - from.y) * p - Math.sin(Math.PI * p) * h - 5, 10, 10);
+  const R = KO_RETICLE, h = Math.min(260 * S, Math.abs(t.x - from.x) * 0.12);
+  const at = p => [from.x + (t.x - from.x) * p, from.y + (t.y - from.y) * p - Math.sin(Math.PI * p) * h];
+  // the arrow out to it, arcing like a pass: a thick dark-edged line ending in an arrowhead
+  const pts = []; for (let i = 0; i <= 30; i++) pts.push(at(i / 30 * R.end));
+  ctx.lineCap = ctx.lineJoin = 'round';
+  for (const [w, c] of [[R.w + 6, 'rgba(0,0,0,0.45)'], [R.w, '#ffffff']]) { ctx.strokeStyle = c; ctx.lineWidth = w; ctx.setLineDash([R.dash, R.gap]); ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke(); }
+  ctx.setLineDash([]);
+  const [ex, ey] = pts[pts.length - 1], [qx, qy] = at(R.end - 0.02), ang = Math.atan2(ey - qy, ex - qx);
+  for (const [grow, c] of [[4, 'rgba(0,0,0,0.45)'], [0, '#ffffff']]) {
+    const L = R.head + grow, Wd = R.head * 0.7 + grow;
+    ctx.fillStyle = c; ctx.beginPath(); ctx.moveTo(ex + Math.cos(ang) * L * 0.5, ey + Math.sin(ang) * L * 0.5);
+    ctx.lineTo(ex - Math.cos(ang) * L * 0.6 - Math.sin(ang) * Wd, ey - Math.sin(ang) * L * 0.6 + Math.cos(ang) * Wd);
+    ctx.lineTo(ex - Math.cos(ang) * L * 0.6 + Math.sin(ang) * Wd, ey - Math.sin(ang) * L * 0.6 - Math.cos(ang) * Wd); ctx.closePath(); ctx.fill();
   }
-  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3; ctx.setLineDash([8, 6]);
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = R.ring; ctx.setLineDash([10, 7]);
   ctx.beginPath(); ctx.ellipse(t.x, t.y, rl, rt, 0, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);   // how far off it typically lands
-  ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(t.x, t.y, 11, 0, Math.PI * 2); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(t.x - 20, t.y); ctx.lineTo(t.x + 20, t.y); ctx.moveTo(t.x, t.y - 20); ctx.lineTo(t.x, t.y + 20); ctx.stroke();
+  ctx.lineWidth = R.ring; ctx.beginPath(); ctx.arc(t.x, t.y, 16, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(t.x - 28, t.y); ctx.lineTo(t.x + 28, t.y); ctx.moveTo(t.x, t.y - 28); ctx.lineTo(t.x, t.y + 28); ctx.stroke();
   ctx.restore();
 }
 const KO_TIP_KEY = 'pocketPasser.koTipSeen';   // set once a game has finished: the kickoff reticle tip stops showing
@@ -968,7 +978,7 @@ function drawKickMeters() {
 // end zone, or into it untouched, is a touchback. A block is the field goal's: the ball goes loose ('fumble').
 const ACROSS = WS * YD;   // pixels per yard across the field (the field is drawn narrower than it is long)
 // a punt in the air moves along the ground as fast as a kickoff does (a kickoff covers ~65 yd in 2.6 s): yd/s, the least air time, peak height (x S)
-const PUNT_AIR = { yps: 22.5, minT: 2.1, high: 432 };   // (punts fly 1.2x higher)
+const PUNT_AIR = { yps: 22.5, minT: 2.1, high: 600 };   // (high = peak height in sprite units: punts sail well above the kickoffs)
 const puntAirT = yd => Math.max(PUNT_AIR.minT, yd / PUNT_AIR.yps);
 // slide = YD/s the protection kick-slides back, ppBack = x setBack for the personal protector, mirror = how fast a blocker shuffles across with his man, ppSpeed = YD/s the protector steps to a man through
 const PUNT = { slide: 4.5, ppBack: 0.25, mirror: 2.5, ppSpeed: 6, notice: [0.45, 1.35], speed: 1.2, jam: [0.5, 0.95], jamSlow: 0.3, setBack: 3.6, snapT: 0.55, stepT: 0.85, depth: 10, walk: 2.2, protect: 0.9,   // jam = seconds the jammers hold each gunner at the line, jamSlow = his speed while held; setBack = yards the edge blockers kick-slide back (the tackles half that); the rest: yards the punter stands behind the line; seconds: snap to him, his walk up into the kick; yards he walks up; odds the protector picks up a free rusher
@@ -2334,8 +2344,11 @@ const ST = { covGroups: ['LB', 'CB', 'S'], covTck: 1, covStars: 5, retGroups: ['
              lanes: [4, 5, 3, 6, 2, 7, 1, 8, 0, 9] };
 function stPick(team, groups, score, n, skip = []) {
   const lk = stRuleLocks(team, groups).filter(s => !skip.includes(s)), held = stUnitHeld(team, groups);   // (your depth chart: locked men of this rule first; men locked elsewhere in the unit never auto-picked)
-  const auto = (ROSTER[team] || []).filter(s => groups.includes(s.group) && !skip.includes(s) && !isOut(s) && !lk.includes(s) && !held.includes(s))
-    .sort((a, b) => score(b) - score(a));
+  // anyone can play special teams (kickers and QBs only where the rule wants them): the best fit fills it, out-of-position men at DEPTH.oop of their score
+  // (a missing attribute counts as 8, like the depth chart's fit)
+  const fit = s => { const v = score({ at: new Proxy(s.at || {}, { get: (o, a) => o[a] != null ? o[a] : 8 }) }) || 0; return groups.includes(s.group) ? v : v * DEPTH.oop; };
+  const auto = (ROSTER[team] || []).filter(s => (groups.includes(s.group) || (s.group !== 'K' && s.group !== 'QB')) && !skip.includes(s) && !isOut(s) && !lk.includes(s) && !held.includes(s))
+    .map(s => [s, fit(s)]).sort((a, b) => b[1] - a[1]).map(x => x[0]);
   return [...lk, ...auto.slice(0, Math.max(0, n - lk.length))];
 }
 function stFill(p, s, grp, team, used) {
@@ -3025,6 +3038,75 @@ function drawSimButton(b, on) {
   menuBtn(b, b.label, on ? IN_GAME_PAPER.blue : IN_GAME_PAPER.off, 18, null, on);
   ctx.restore();
 }
+// --- in-game depth chart (pause menu: DEPTH CHART, top right of the top bar) ---------------------------------------------------
+// Franchise games only. Usable before the snap (greyed mid play): offense presnap = the offense chart (simple view; FORMATION opens the
+// formation being run, tagged CURRENT), defense presnap = the defense list, a kick / punt / kickoff / kick return set-up = that special-teams
+// page alone (no other pages, no side / view switch). The roster screen opens over the paused game (results.dc); BACK / Esc closes it.
+// Changes that touch this play are made on the field at once: the man coming in jogs on from the sideline, the man going out jogs off
+// (like an audible's sub). Other formations pick the changes up the next time they're called. Simple view = who is on the field now.
+const DC_BTN = { x: W - 226, y: 8, w: 214, h: 48 };
+let dcg = null;   // open: { which, st, page, prevView, prevSide, snap, flip, field }
+const dcShown = () => !!season && !exhibition && !tut && !ONL.on && !(twoP && !twoP.ai) && !game.over && state !== 'sim' && !(rec && rec.replaying);
+function dcWhich() {   // what can be edited right now (null = mid play)
+  if (state === 'pre' && !fourthPending && patMode !== 'choose') return aiOff() ? 'def' : 'off';
+  if (state === 'kick' && kick && (kick.phase === 'enter' || kick.phase === 'power')) return kick.punt ? 'punt' : 'fg';
+  if (state === 'kickoff' && kickoff && kickoff.phase === 'ready' && !kickoff.punt) return kickoff.user ? 'ko' : 'kr';
+  return null;
+}
+const dcBodies = w => w === 'off' || w === 'fg' ? [qb, rb, ...recs, ...ols] : w === 'def' ? [...dl, ...back7] : [];
+const dcSnap = () => { const t = meK(), R = ROSTER[t] || []; return JSON.stringify([LEAGUE.depth || {}, R.map(p => p.name + (p.benchNext ? '*' : '')), krTags[t] || '']); };
+function dcOpen() {
+  const which = dcWhich(); if (!which || !dcShown()) return;
+  const st = which !== 'off' && which !== 'def', P = fvPages();
+  dcg = { which, st, prevView: rosterUI.view, prevSide: rosterView.side, snap: dcSnap(), flip: !!(twoP && twoP.flipped), page: null,
+    field: st ? null : new Set(dcBodies(which).map(p => p.src).filter(Boolean)) };
+  if (dcg.flip) { [MATCH.you, MATCH.opp] = [MATCH.opp, MATCH.you]; [MATCH.youKit, MATCH.oppKit] = [MATCH.oppKit, MATCH.youKit]; twoP.flipped = false; }   // (your team is "you" while the chart is open)
+  Object.assign(rosterView, { team: null, sel: null, pos: null, page: 0, statsOnly: false, side: which === 'def' ? 'def' : 'off' });
+  if (st) { rosterUI.view = 'form'; dcg.page = Math.max(0, P.findIndex(p => p.unit === which)); }
+  else { rosterUI.view = 'simple'; if (which === 'off' && liveForm) { const i = P.findIndex(p => p.f === FORM_BY[liveForm]); dcg.page = i >= 0 ? i : null; } }
+  FVS.team = null; FVS.dd = null; FVS.pick = false; FVS.autoDD = false; statsView = null;
+  results = { screen: 'roster', dc: true };
+}
+function dcClose() {
+  const g = dcg; if (!g) return;
+  rosterUI.view = g.prevView; Object.assign(rosterView, { side: g.prevSide === 'def' ? 'def' : 'off', sel: null, team: null, pos: null, page: 0 });
+  FVS.team = null; FVS.dd = null; FVS.pick = false; FVS.autoDD = false; statsView = null;
+  if (g.flip) { [MATCH.you, MATCH.opp] = [MATCH.opp, MATCH.you]; [MATCH.youKit, MATCH.oppKit] = [MATCH.oppKit, MATCH.youKit]; twoP.flipped = true; }
+  results = null; dcg = null;
+  if (dcSnap() !== g.snap) dcApply(g.which);
+}
+// the changes on the field now: re-place this play's men (ratings start over first, the way audibleFormation does it), then sub animation
+function dcApply(which) {
+  if (dcWhich() !== which) return;
+  if (which === 'ko' || which === 'kr' || which === 'punt') { showTopCallout('DEPTH CHART SET: FROM THE NEXT KICK'); return; }
+  const B = dcBodies(which), before = new Map(B.map(p => [p, { src: p.src, clone: Object.assign({}, p) }]));
+  if (which === 'off') { for (const r of recs) Object.assign(r, recBase(r)); Object.assign(rb, { catchMult: undefined, cut: 0.6, jamMult: 0.8 }); rateOffense(); }
+  else if (which === 'def') rateDefense();
+  else if (which === 'fg') stFgApply();
+  const off = which !== 'def', n = [];
+  for (const p of B) {
+    const b = before.get(p); if (p.src === b.src) continue;
+    n.push(p);
+    const gone = Object.assign(b.clone, { fmTo: { x: los + (off ? -6 : 6) * YL, y: leaveEdge(), leave: true }, hasBall: false, action: null, act: null });
+    fgExit.push(gone);
+    if (p.hasBall) continue;   // (the center keeps the ball: he just swaps in place)
+    const to = { x: p.x, y: p.y }; p.y = fmEdge(p.y); p.x = los + (off ? -6 : 6) * YL; p.fmTo = to;
+  }
+  if (n.length) showTopCallout(n.length === 1 ? `${(n[0].name || 'SUB').toUpperCase()} COMES IN` : `${n.length} SUBS COME IN`);
+}
+// rateDefense builds on each defender's own numbers: they're kept the first time a play is rated, put back before a re-rate
+const RATE_D_KEYS = ['lag', 'react', 'shedAt', 'top', 'zoneTop', 'rush', 'accel', 'push', 'pickTry'];
+function rateStash(list, keys) {
+  for (const p of list) {
+    if (p._r0 && p._r0.pid === runPid) { for (const k of keys) p[k] = p._r0[k]; }
+    else { p._r0 = { pid: runPid }; for (const k of keys) p._r0[k] = p[k]; }
+  }
+}
+function drawDcBtn() {
+  if (!dcShown()) return;
+  const on = !!dcWhich();
+  ctx.save(); menuBtn(DC_BTN, 'DEPTH CHART', on ? IN_GAME_PAPER.yellow : IN_GAME_PAPER.off, 19, null, on); ctx.restore();
+}
 const leaveOK = () => state === 'pre' || state === 'done' || game.over || !!exhibition;   // (a franchise game can't be left in the middle of a play; an exhibition can, any time)
 const leaveBtn = () => pmRect('leave');   // the pause menu's LEAVE GAME (last in the list)
 // LEAVE GAME: drop this game and go back to the matchup screen it was started from (an exhibition: the exhibition screen)
@@ -3137,6 +3219,7 @@ const KEYBINDS = [
   ['T', 'Timeout once the play is over (stops the runoff)'],
   ['Esc', 'Pause menu (resume, reset, sim ahead)'],
   ['Enter / Space, Esc', 'Halftime show: next segment, skip the whole show (SETTINGS > HALFTIME SHOW turns segments on / off)'],
+  ['Enter / click, Backspace, Space', 'Halftime highlights: next clip, previous clip, pause (the NEXT button = next segment)'],
   ['Click the Star Factors tip', 'Show / hide the Star Factors panel (what turns each star\'s Star Factor on and off); it stays that way in every game'],
   ['Click the player names tip', 'Show / hide the player names before the snap (stays that way in every game)'],
   ['Backspace (tutorial)', 'Start the current tutorial step over'],
@@ -3306,13 +3389,14 @@ function showBanner(text, color = '#ff2a2a', edge = '#3a0000', sub = null, flipp
   if (pickHeld()) { pendingBanner = [text, color, edge, sub, true]; return; }
   const texts = [text];   // (one banner at a time: a turnover off a sack replaces SACK! instead of flashing with it)
   pendingBanner = null;
-  clearAnnouncements();
+  const icons = popups.filter(q => q.ico);   // (icons on the field stay up under a banner: a sack's bag, a move's icon)
+  clearAnnouncements(); popups = icons;
   turnoverBanner ={ text: texts[0], texts, color, edge, sub, t0: animNow() };
 }
 // a short call (OUT OF BOUNDS) shown just under the scoreboard at the top of the screen
 let topCallout = null;
 const TOP_CALLOUT_MS = 2200;
-function showTopCallout(text, color = '#ffffff') { if (pickHeld()) return; clearAnnouncements(); topCallout ={ text, color, t0: animNow() }; }
+function showTopCallout(text, color = '#ffffff') { if (pickHeld()) return; const icons = popups.filter(q => q.ico); clearAnnouncements(); popups = icons; topCallout ={ text, color, t0: animNow() }; }
 function drawTopCallout() {
   if (!topCallout) return;
   const e = animNow() - topCallout.t0;
@@ -3357,6 +3441,8 @@ function drawHalfHold(leaving = 0) {   // the HALFTIME banner stays up with an O
   menuBtn(B, 'OK', RES.bright, 28);   // (the same torn-paper button as the rest of the game)
   ctx.restore();
 }
+const BANNER_FONT = { main: 66, sub: 48, subY: 46, line: 23, lineY: 88 };   // px: banner text alone / with a line under it (and that line)
+const fitFont = (text, px, maxW) => { ctx.font = `bold ${px}px monospace`; const w = ctx.measureText(text).width; return w > maxW ? Math.floor(px * maxW / w) : px; };   // (shrinks a long banner to fit)
 function drawTurnoverBanner() {
   if (halfLeave) { const lv = animNow() - halfLeave; if (lv > HALF_LEAVE_MS) halfLeave = halfT0 = 0; else drawHalfHold(1 - lv / HALF_LEAVE_MS); }   // (OK pressed: the card fades out)
   // HALFTIME waits for every banner that's playing (or queued) to finish
@@ -3376,15 +3462,16 @@ function drawTurnoverBanner() {
   ctx.beginPath(); ctx.rect(-PAD, 0, W + 2 * PAD, BH + 12); ctx.clip();
   paperStrip(-6, BH + 6);   // (drawn a little oversize so the top edge falls outside the clip; the bottom edge is torn)
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.font = `bold ${sub ? 38 : 50}px monospace`;
-  const tx = W / 2 + slide, ty = sub ? 44 : BH / 2 + 2;
-  ctx.lineJoin = 'miter'; ctx.lineWidth = sub ? 6 : 7; ctx.strokeStyle = turnoverBanner.edge;
+  const BF = BANNER_FONT;
+  ctx.font = `bold ${fitFont(turnoverBanner.text, sub ? BF.sub : BF.main, W - 80)}px monospace`;
+  const tx = W / 2 + slide, ty = sub ? BF.subY : BH / 2 + 2;
+  ctx.lineJoin = 'miter'; ctx.lineWidth = sub ? 7 : 8; ctx.strokeStyle = turnoverBanner.edge;
   ctx.strokeText(turnoverBanner.text, tx, ty);
   ctx.fillStyle = turnoverBanner.color;
   ctx.fillText(turnoverBanner.text, tx, ty);
   if (sub) {   // who scored, sliding in a beat behind
-    ctx.font = 'bold 18px monospace'; ctx.fillStyle = RES.line;
-    ctx.fillText(sub, W / 2 + Math.max(0, 1 - Math.max(0, e - 120) / 180) * W, 82);
+    ctx.font = `bold ${BF.line}px monospace`; ctx.fillStyle = RES.line;
+    ctx.fillText(sub, W / 2 + Math.max(0, 1 - Math.max(0, e - 120) / 180) * W, BF.lineY);
   }
   ctx.restore();
 }
@@ -3434,6 +3521,7 @@ function draw() {
     // pick the play: drag from the QB to pass, click the RB to run
     ringFree(qb); drawPickCircle(qb, '#ffffff', 'PASS');   // (the QB's PASS circle is his one ring before the snap)
     if (!rb.split) drawPickCircle(rb, RB_COLOR, 'RUN');
+    { const f = fbCarrier(); if (f) drawPickCircle(f, RB_COLOR, 'FB RUN'); }   // (two backs: either one can carry)
   }
   if (aim && (!ONL.on || onlIAmOff())) drawAim();   // (online: only the thrower sees his aim)
   if (state === 'kickoff' && kick && kick.userKo && kick.target && !kick.onside && ['target', 'power', 'aim'].includes(kick.phase) && onlKickOwner()) drawKickReticle();
@@ -3465,6 +3553,7 @@ function draw() {
   if ((state === 'pre' || (rec && rec.replaying)) && !tossing() && !SETTINGS.hideNames && !(hl && hl.mode === 'half') && !cine) drawNameTags();   // (Y hides / shows them in a replay too)
   if (!tossing() && !cine) drawStarMarks();
   if (!cine) drawPopups();
+  drawHsFreeze();   // (the halftime reel's freeze frame: the man of the play of the half, circled)
   ctx.restore();
   wxDraw();
   dmHold = Math.max(0, dmHold - 1);
@@ -3635,8 +3724,10 @@ function draw() {
   if (oo && !paused && !(rec && rec.replaying)) drawOO();
   if (injuryShowing() && !paused) drawInjuryCall();
   if (paused && !ONL.on) {   // (online: drawOnlineOverlay's pause menu)
+    if (turnoverBanner || topCallout || pendingBanner) { turnoverBanner = null; topCallout = null; pendingBanner = null; annFade = null; }   // (pausing clears whatever banner was up)
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
+    drawDcBtn();
     ctx.fillStyle = '#fff';
     ctx.textAlign = 'center';
     ctx.font = 'bold 56px monospace';
@@ -3795,6 +3886,8 @@ function drawScoreboard() {
   Object.assign(game, sb);
   try { drawScoreboardNow(); } finally { Object.assign(game, real); }
 }
+// px: team box / center box widths, gap between, the score panel's width, the quarter and down-and-distance columns, font sizes
+const SCOREBOARD = { team: 270, mid: 400, gap: 8, scoreW: 78, qW: 96, ddW: 150, name: 21, score: 42, quarter: 22, clock: 42, down: 20, spot: 15 };
 function drawScoreboardNow() {
   // centered in the top bar
   const cx = W / 2, top = 4, h = TOP_BAR - 8, o = (h - 36) / 2;   // (fills the top bar; o centres the text in the taller boxes)
@@ -3804,53 +3897,58 @@ function drawScoreboardNow() {
   ctx.textBaseline = 'alphabetic';
 
   // teams: name + score + timeouts left; a marker shows who has the ball (the player's offense is always blue)
+  const B = SCOREBOARD, half = B.mid / 2, tL = cx - half - B.gap - B.team, tR = cx + half + B.gap;
   const team = (x, w, fill, name, pts, ball, timeouts) => {
     box(x, w, fill);
+    ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(x + w - B.scoreW, top, B.scoreW, h);   // (a darker panel behind the score)
+    ctx.fillStyle = 'rgba(255,255,255,0.22)'; ctx.fillRect(x, top, w, 3);                   // (a light top edge)
     ctx.textAlign = 'left';
-    ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.font = 'bold 14px monospace';
-    if (ball) { ctx.beginPath(); ctx.moveTo(x + 10, top + o + 8); ctx.lineTo(x + 10, top + o + 20); ctx.lineTo(x + 19, top + o + 14); ctx.closePath(); ctx.fill(); }   // (a plain triangle: the ▶ character draws as an emoji on phones)
-    ctx.fillText(name || '', x + (ball ? 24 : 10), top + o + 19, w - (ball ? 76 : 62));
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.font = `bold ${B.name}px monospace`;
+    if (ball) { ctx.beginPath(); ctx.moveTo(x + 10, top + 12); ctx.lineTo(x + 10, top + 28); ctx.lineTo(x + 22, top + 20); ctx.closePath(); ctx.fill(); }   // (a plain triangle: the ▶ character draws as an emoji on phones)
+    ctx.fillText(name || '', x + (ball ? 30 : 12), top + 28, w - B.scoreW - (ball ? 36 : 18));
     for (let i = 0; i < 3; i++) {                    // timeout pips
       ctx.fillStyle = i < timeouts ? '#ffd94a' : 'rgba(0,0,0,0.35)';
-      ctx.fillRect(x + 10 + i * 14, top + o + 27, 10, 5);
+      ctx.fillRect(x + 12 + i * 22, top + 39, 16, 7);
     }
-    ctx.textAlign = 'right';
+    ctx.textAlign = 'center';
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold 28px monospace';
-    ctx.fillText(String(pts), x + w - 12, top + o + 30);
+    ctx.font = `bold ${B.score}px monospace`;
+    ctx.fillText(String(pts), x + w - B.scoreW / 2, top + h / 2 + B.score * 0.36);
   };
   // (the boxes never swap sides: when the sides are flipped for their offense, your team is still on the left)
   if (twoP && twoP.flipped) {   // (flipped: BLUE is the original right-side team, so it's drawn on the right)
-    team(cx + 156, 150, tut && !tutFr() ? '#222222' : teamColor('BLUE'), tut && !tutFr() ? 'TUTORIAL' : NFL[MATCH.you].nick, game.blue, true, game.timeouts);
-    team(cx - 306, 150, tut ? '#222222' : teamColor('RED'), tut ? 'TUTORIAL' : NFL[MATCH.opp].nick, game.red, false, twoP.to);
+    team(tR, B.team, tut && !tutFr() ? '#222222' : teamColor('BLUE'), tut && !tutFr() ? 'TUTORIAL' : NFL[MATCH.you].nick, game.blue, true, game.timeouts);
+    team(tL, B.team, tut ? '#222222' : teamColor('RED'), tut ? 'TUTORIAL' : NFL[MATCH.opp].nick, game.red, false, twoP.to);
   } else {
-    team(cx - 306, 150, tut && !tutFr() ? '#222222' : teamColor('BLUE'), tut && !tutFr() ? 'TUTORIAL' : NFL[MATCH.you].nick, game.blue, true, game.timeouts);
-    team(cx + 156, 150, tut ? '#222222' : teamColor('RED'), tut ? 'TUTORIAL' : NFL[MATCH.opp].nick, game.red, false, twoP ? twoP.to : 3);
+    team(tL, B.team, tut && !tutFr() ? '#222222' : teamColor('BLUE'), tut && !tutFr() ? 'TUTORIAL' : NFL[MATCH.you].nick, game.blue, true, game.timeouts);
+    team(tR, B.team, tut ? '#222222' : teamColor('RED'), tut ? 'TUTORIAL' : NFL[MATCH.opp].nick, game.red, false, twoP ? twoP.to : 3);
   }
 
   // center: quarter, clock, down and distance
-  box(cx - 150, 300, '#0b0f0d');
+  box(cx - half, B.mid, '#0b0f0d');
   ctx.strokeStyle = '#2d4436'; ctx.lineWidth = 2;
-  ctx.strokeRect(cx - 149, top + 1, 298, h - 2);
+  ctx.strokeRect(cx - half + 1, top + 1, B.mid - 2, h - 2);
+  ctx.beginPath(); ctx.moveTo(cx - half + B.qW, top + 8); ctx.lineTo(cx - half + B.qW, top + h - 8); ctx.moveTo(cx + half - B.ddW, top + 8); ctx.lineTo(cx + half - B.ddW, top + h - 8); ctx.stroke();   // (dividers)
   ctx.textAlign = 'center';
   const between = game.pendingQuarter && !game.over;      // clock stopped between quarters / at the half
-  ctx.font = 'bold 18px monospace';
+  const qx = cx - half + B.qW / 2, dx = cx + half - B.ddW / 2, clx = (cx - half + B.qW + cx + half - B.ddW) / 2;
+  ctx.font = `bold ${B.quarter}px monospace`;
   ctx.fillStyle = '#ffffff';
-  ctx.fillText(game.over ? (game.quarter >= 5 ? 'F/OT' : 'FINAL') : between && game.quarter === 2 ? 'HALF' : qLabel(game.quarter), cx - 105, top + o + 20);
+  ctx.fillText(game.over ? (game.quarter >= 5 ? 'F/OT' : 'FINAL') : between && game.quarter === 2 ? 'HALF' : qLabel(game.quarter), qx, top + 28, B.qW - 10);
   for (let i = 0; i < 4; i++) {                          // four quarters: filled up to the current one
     ctx.fillStyle = i < game.quarter ? '#ffd94a' : '#2d4436';
-    ctx.fillRect(cx - 105 - 27 + i * 14, top + o + 27, 10, 5);
+    ctx.fillRect(qx - 33 + i * 18, top + 39, 13, 7);
   }
-  ctx.font = 'bold 28px monospace';
+  ctx.font = `bold ${B.clock}px monospace`;
   ctx.fillStyle = game.secs < 20 && !game.over ? '#ff6b6b' : '#ffd94a';
-  ctx.fillText(game.over ? '0:00' : clockTxt, cx - 10, top + o + 30);
-  ctx.font = 'bold 15px monospace';
+  ctx.fillText(game.over ? '0:00' : clockTxt, clx, top + h / 2 + B.clock * 0.36);
+  ctx.font = `bold ${B.down}px monospace`;
   ctx.fillStyle = '#fff';
-  ctx.fillText(puntRetPlay || state === 'punt' || (state === 'kick' && kick && kick.punt) || (state === 'kickoff' && kickoff && kickoff.punt) ? 'PUNT' : kickoffPlay || state === 'kickoff' || kickoffNext || (state === 'kick' && kick && kick.kickoff) || (puntRet && puntPlay && puntPlay.ko) ? 'KICKOFF' : patMode !== null || patNext ? 'EXTRA POINT' : downAndDistance(), cx + 87, top + o + 17);
-  ctx.font = '12px monospace';
+  ctx.fillText(puntRetPlay || state === 'punt' || (state === 'kick' && kick && kick.punt) || (state === 'kickoff' && kickoff && kickoff.punt) ? 'PUNT' : kickoffPlay || state === 'kickoff' || kickoffNext || (state === 'kick' && kick && kick.kickoff) || (puntRet && puntPlay && puntPlay.ko) ? 'KICKOFF' : patMode !== null || patNext ? 'EXTRA POINT' : downAndDistance(), dx, top + 25, B.ddW - 12);
+  ctx.font = `${B.spot}px monospace`;
   ctx.fillStyle = '#9fb3a6';
-  if (Number.isFinite(los)) ctx.fillText(`ball on ${spot(los)}`, cx + 87, top + o + 33);
+  if (Number.isFinite(los)) ctx.fillText(`ball on ${spot(los)}`, dx, top + 46, B.ddW - 12);
 
   return;   // (no commentary under the scoreboard any more)
   // play result under the scoreboard (not the pre-snap formation line)

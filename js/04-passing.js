@@ -185,7 +185,7 @@ function throwBall() {
   }, { r: recs[0], d: Infinity }).r;
   tgt.catchMode = null;
   pstThrow();
-  for (const r of catchers()) { r.jumpPress = null; r.jumpQ = 0; r.toe = null; }
+  for (const r of catchers()) { r.jumpPress = null; r.divePress = null; r.jumpQ = 0; r.toe = null; }
   // eyes up once it's in the air: on the ball if the receiver is near him, else on the receiver
   for (const d of back7) { d.eyes = Math.hypot(d.x - tgt.x, d.y - tgt.y) < DB_SKILL.look * YD * Math.min(1.5, dbSkill(d)) ? 'ball' : 'receiver';
     if (d.eyes === 'ball' && d.man && d.headTo !== 'ball' && Math.random() > Math.min(1, (d.hips === 'trail' ? DB_TURN.locateTrail : DB_TURN.locate) * covOf(d))) d.eyes = 'receiver';   // (a man DB who hasn't turned his head finds the ball late: no ball-eyes bonus on PBU / picks)
@@ -248,6 +248,8 @@ let stopClock = false;   // set by incomplete(): no runoff after this play
 function endPlay(text, next, kind) {
   playEndedAt = performance.now();
   const wasKickoff = kickoffPlay || puntRet || puntRetPlay;   // (kick and punt returns aren't rushes)
+  const pen = !wasKickoff && rbpPenalty(kind, next);   // (run-block holding: the play comes back, replay the down)
+  if (pen) { text = pen.text; next = los; kind = ''; }
   for (const p of allPlayers()) if (!p.hasBall) { p.tipArms = false; p.tipK = 0; p.reach = false; p.overShoulder = false; }   // (the pass is dead: nobody keeps his hands up for a catch / tip that didn't happen)
   kickoffPlay = false;
   // BROKEN UP is only called once the pass is dead: incomplete, or picked (never on a ball that was tipped, and might still be caught)
@@ -333,7 +335,8 @@ function endPlay(text, next, kind) {
     return;
   }
   let note = '';
-  if (kind) newDrive();
+  if (pen) { nextLos = pen.spot; nextDown = down; nextLtg = lineToGain; }
+  else if (kind) newDrive();
   else if (next <= 0) { note = `SAFETY  -  2 points for ${teamName('RED')}, you kick off to them`; game.red += 2; newDrive(); showBanner('SAFETY!'); }
   else if ((next + BALL_TIP >= lineToGain || (ballFar + BALL_TIP >= lineToGain && ballFar > los && next > los)) && next > los) {   // (any part of the ball past the marker, even if it was spotted short of it)
     note = 'FIRST DOWN  -  right-click to celebrate';
@@ -530,7 +533,9 @@ function startCelebration(p) {
 
 const HELP_UP = { odds: 0.25, range: 6, walk: 0.9, pull: 0.45, max: 3 };   // after a tackle, odds a nearby opponent (the first one up) helps the carrier up; range yd; seconds to walk over / to pull; give-up time
 // After the whistle nobody stops dead: they coast and settle.
-const AFTER_WHISTLE = { cap: 10, decay: 1.5, ud: 2.6 };   // cap = fastest yd/s carried past the whistle; decay / ud = 1/s slow-down (lower = keeps his momentum longer)
+const AFTER_WHISTLE = { cap: 10, decay: 1.5, ud: 2.6 };
+// the end zone is just more field: chasers who were on the scorer keep running him down through it (full speed, momentum kept) for t s, pulling up once they're on him
+const TD_FINISH = { t: 0.9, range: 9, stop: 1.1, k: 1 };   // cap = fastest yd/s carried past the whistle; decay / ud = 1/s slow-down (lower = keeps his momentum longer)
 function settle(p, dt) {
   if (p.celebrate) return celebrate(p, dt);
   if (p.action) {
@@ -571,6 +576,16 @@ function settle(p, dt) {
       if (p.helpT > HELP_UP.walk + HELP_UP.pull) { p.helpTarget = null; p.reach = false; }   // (the tug: he's up, and they part)
     }
     return;
+  }
+  if (!p.engaged && p !== ud && p.top && typeof doneAt === 'number' && performance.now() - doneAt < TD_FINISH.t * 1000) {
+    const sc = allPlayers().find(o => o.celebrate && o.team !== p.team);
+    if (sc && dist(p, sc) < TD_FINISH.range * YD && dist(p, sc) > TD_FINISH.stop * YD && Math.hypot(p.vx, p.vy) > 2 * YD) {
+      const px = p.x, py = p.y;
+      if (p.svx == null) { p.svx = p.vx; p.svy = p.vy; }
+      steer(p, sc.x + (sc.vx || 0) * 0.25, sc.y + (sc.vy || 0) * 0.25, p.top * TD_FINISH.k, p.accel || 20 * YD, dt);
+      clampField(p); setVelocity(p, px, py, dt);
+      return;
+    }
   }
   if (p.engaged) p.vx = p.vy = 0;   // still tied up when the whistle blew: the block just lets go, he is not flung out of it
   const coast = Math.hypot(p.vx, p.vy), cap = AFTER_WHISTLE.cap * YD;   // (cap = fastest he's still moving at the whistle; the decay below = how fast he stops, per s)
@@ -770,9 +785,10 @@ function catchHit(kind) {
 // close enough to a sideline or the back line of the end zone to need his feet down (toe tap / toe drag)
 const edgeClose = p => toSideline(p) <= SIDELINE_ZONE || FIELD + ENDZONE - p.x <= SIDELINE_ZONE;
 function toeDown(p, tap) {
+  const was = p.action || null;   // (the catch he made keeps its own arms / body pose: only the footwork is the toe tap / drag)
   p.action = tap ? 'toetap' : 'toedrag';
   // (a toe drag slides him on across the sideline: out = which way that is; at the back line he just slides on forward)
-  p.act = { t: 0, dur: tap ? 0.5 : 0.9, out: toSideline(p) <= SIDELINE_ZONE ? (p.y < MID ? -1 : 1) : 0 };
+  p.act = { t: 0, dur: tap ? 0.5 : 0.9, out: toSideline(p) <= SIDELINE_ZONE ? (p.y < MID ? -1 : 1) : 0, was };
   popup(p, tap ? 'TOE TAP' : 'TOE DRAG', '#7dff8a');
 }
 const landingSpot = p =>p.action === 'jump' && p.act ? { x: p.x + p.vx * Math.max(0, p.act.dur - p.act.t), y: p.y + p.vy * Math.max(0, p.act.dur - p.act.t) } : p;
@@ -808,6 +824,7 @@ function catchBall(text, kind = 'normal') {
                     (tgt.catchMode === 'secure' || tgt.catchMode === 'diveOne') && (tgt.action === 'dive' || /dive/i.test(kind)) ? 'divecatch' : null,   // (he has to actually lay out and make the catch)
                     tgt.runCatch && !tgt.action ? 'runcatch' : null);
   const secure = tgt.catchMode === 'secure';
+  if (ball.tipped) hsEv('tipcatch', tgt);   // (tipped, then caught anyway: a halftime reel moment; no callout of its own)
   pstCatch();
   if ((ball.tx - ball.fx) / YL > MORALE.deepYd) moraleEvent(tgt, 'deep');
   catchSfx();   // (every catch: in the end zone and at the sideline too)
@@ -903,7 +920,7 @@ function catchBall(text, kind = 'normal') {
 
 // DB ball skills: x on his chance to pick it / get a hand in / lay out for it. Catching rating (per step above average) and
 // a lit star factor raise it; look = yd from the target inside which he turns his head for the ball at the throw
-const DB_LEAP = { ball: 0.55, low: 0.8, one: 0.5 };   // CPU DBs leap more: chance a DB with his eyes on the ball goes up anyway, x the height gate (lower balls get a leap too), chance he jumps for a fingertip / one-hand reach
+const DB_LEAP = { ball: 0.55, eyesBall: 0.9, low: 0.7, one: 0.75 };   // eyesBall = the same chance for a DB whose eyes ARE on the ball (in reach and looking: he nearly always goes up); CPU DBs leap more: chance a DB with his eyes on the ball goes up anyway, x the height gate (lower balls get a leap too), chance he jumps for a fingertip / one-hand reach
 const DB_SKILL = { ctc: 0.18, xf: 0.3, look: 8.5, pbu: 0.8, dive: 1.2 };   // (pbu / dive = how much of the skill counts toward breakups / diving picks)
 const dbSkill = d => Math.max(0.7, 1 + DB_SKILL.ctc * rz(d, 'ctc') + (xfLit(d) ? DB_SKILL.xf : 0));
 // a one-handed catch made in the air: 0..1 how far he has pulled the ball in from full reach to his chest (act time since the catch)
@@ -1121,7 +1138,7 @@ function intercept(d, diving = false) {
   const pst = catchAnim(one ? (diving ? 'diveOne' : leap ? 'jumpOne' : 'one') : diving ? 'dive' : 'normal', false, d, catchers());
   // every pick: a shield where the ball was picked (green yours, red theirs, white two-player; diving / one-handed / spectacular = iconic)
   popup(d, one ? 'ONE-HANDED PICK' : CATCH_TEXT[pst] ? PICK_LOOK.spec : diving ? 'DIVING PICK' : 'PICKED', '#ff6b6b', undefined, !one && !CATCH_TEXT[pst] && !diving, false,
-        { k: 'shield', c: one || diving || CATCH_TEXT[pst] ? 'iconic' : 'side' });
+        { k: 'shield', c: 'side', rank: one || diving || CATCH_TEXT[pst] ? ICON.rank.iconic : 0 });   // (always the side's color; the spectacular ones add the sparkle)
   ball.inAir = ball.loose = ball.live = false;
   state = 'picked';
   d.laneA = 0; d.retKeys0 = RET_DIR_KEYS.map(k => dkeys[k] ? 1 : 0).join('');   // (a pick return starts upfield toward the goal; the direction keys already held when he caught it (chasing the ball) don't steer him until you press something new)
@@ -1357,10 +1374,11 @@ function tackleCarrier(c, d, trip) {
   c.stiff = null;
   c.z = 0;
   // a sack (read before the hit moves him: a hit stick launches him, and can pop the ball loose): the banner goes up first, like sack()'s
-  const sackHit = c === qb && !isRunPlay && !kickoffPlay && patMode === null && markX(c) < los && feetInBounds(c);
+  const sackHit = c === qb && !isRunPlay && !kickoffPlay && patMode !== 'kick' && markX(c) < los && feetInBounds(c);   // (a two-point try's sack counts too)
   pstTackle(d, sackHit);
   if (sackHit) { sackPlay = false; showBanner('SACK!'); sackPlay = true; }
   // already on the turf (a diving catch / pick still sliding, or getting up off it): touched down where he lies, no new tackle fall that stands him back up first
+  if (c.action === 'getup' && c.act && c.act.t / (c.act.dur || 1) >= GETUP_TACKLE) { c.action = null; c.act = null; }   // (nearly up: a normal tackle fall)
   const onTurf = onTurfDive(c) || c.action === 'getup' || (c.action === 'dive' && (c.diveCaught || c.hasBall));
   if (onTurf) { c.vx = c.vy = 0; if (c.action === 'getup' && c.act) c.act.hold = true; }
   else if (big) bigHitLaunch(c, d);
@@ -1569,6 +1587,7 @@ const DIVE_FEEL = { slow: 0.87, min: 0.55, fullSpeed: 8 * YD };   // (slow 0.87 
 // a dive for the ball never flies faster than speed yd/s on the way to it (too late = he lands short), never longer than lunge yd,
 // and never aims more than oob yd past a sideline (balls sailing out of bounds made players "teleport" after them)
 const DIVE_CAP = { speed: 15, lunge: 4.5, oob: 1.2 };
+const DIVE_BODY = { r: 0.7 };   // yd: a tackle dive that reaches a blocker's body (not the carrier's) stops there, missed
 const REV_DIVE = { cut: 0.45, slow: 0.35 };   // diving for the ball back against his own momentum: up to this much less reach (x) and slower (x)
 // arrive (optional) = s until his hands should reach the spot (a pass dive: when the ball gets there)
 function startDive(p, tx, ty, dur, lunge, arrive) {
@@ -1730,7 +1749,7 @@ function steer(p, tx, ty, top, accel, dt) {
 // (the AI's targets stay in bounds: oobAim in steer). The old clamp walled defenders 0.2 yd INSIDE the line (more in the red zone)
 // but let carriers / receivers 1.5 yd out: a tackler riding a carrier down over the sideline was yanked back in the moment he let go
 // (the post-play teleport), and anyone whose role or the state changed snapped to the new wall.
-const OOB_ROOM = { y: 2.2, x: 2.5 };   // yd anyone can go past a sideline (y) / an end line (x): the invisible wall in front of the stands (clampField)
+const OOB_ROOM = { y: 3.9, x: 4.4 };   // yd anyone's feet can go past a sideline (y) / an end line (x): the stands' ad wall is a hard wall (sideline wall = CROWD.wall 4.4 yd out, end wall = endGap + wall 5 yd), minus half a yard of body (clampField; oobBrake slows him so he never slams into it)
 const OOB_DRAG = { drag: 3.2, decel: 55 };   // out of bounds: drag = 1/s slow-down on his velocity, decel = yd/s^2 he can brake at (his speed toward the wall is capped so he stops before it, never hitting it)
 function oobBrake(p, dt) {   // (steer, before the move: past a sideline / end line a runner sheds speed fast and can't carry it into the wall)
   if (p.svx == null || p.svy == null) return;
@@ -1904,6 +1923,18 @@ function updateAction(p, dt) {
     const lieX = p.x, lieY = p.y;   // (where he lay last frame: a pin let go below keeps him here)
     p.x = a.fx + (a.tx - a.fx) * e;
     p.y = a.fy + (a.ty - a.fy) * e;
+    if (p.tackling && !a.pin && runner && runner !== p && a.t < a.dur) {   // (a tackle dive can't fly through a blocker: it stops dead against his body, and that dive is over)
+      const mx = p.x - lieX, my = p.y - lieY;
+      for (const b of allPlayers()) {
+        if (b.team === p.team || b === runner || b.hasBall || lyingDown(b) || b.action === 'getup') continue;
+        const bx = b.x - lieX, by = b.y - lieY;
+        if (Math.hypot(b.x - p.x, b.y - p.y) < DIVE_BODY.r * YD && bx * mx + by * my > 0 && dist(p, runner) > Math.hypot(bx, by)) {
+          p.x = lieX; p.y = lieY; a.fx = a.tx = p.x; a.fy = a.ty = p.y; p.resolved = true; p.downMiss = true;
+          p.recoverUntil = Math.max(p.recoverUntil || 0, clock + MISSED_DOWN);
+          break;
+        }
+      }
+    }
     if (a.lowHit && !a.lowHit.done && k2 >= (a.lowHit.kind === 'cut' ? CUT_LOOK.contact : 0.6)) lowContact(p, a.lowHit);   // (cut block / momentum pancake: the hit lands now)
     if (a.pin && (a.pinT || 0) > 1 && !lyingDown(a.pin.target)) {   // (the runner has stood up: the tackler lets go and gets up on his own, never dragged along behind him)
       a.pin = null;
@@ -1984,7 +2015,7 @@ function updateAction(p, dt) {
   } else if (p.action === 'point') {
     a.t += dt;                       // standing and pointing downfield for the first down
   } else if (p.action === 'getup' || p.action === 'throw') {
-    if (!a.hold) a.t += dt;   // (hold: touched down while getting up, he stays where he was)
+    if (!a.hold) a.t += dt; else if (p.action === 'getup') a.t = Math.max(0, a.t - dt * GETUP_SINK);   // (hold: touched down while getting up, he sinks back onto the turf instead of freezing mid-rise)
     if (a.t >= a.dur) { if (p.action === 'getup') { p.vx = p.vy = p.svx = p.svy = 0; p.moving = false; } p.action = null; }   // (up off the turf: the old slide's momentum is gone, he stands still instead of drifting around)
   } else if (p.action === 'kneel') {
     a.t += dt;                       // dropping to a knee (the pose eases in over KNEEL_TIME)

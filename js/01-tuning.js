@@ -396,7 +396,7 @@ const WEAR = {
   run: { ol: 1.8, rb: 2.0 },        // x on run plays for the line and the back
   rush: 1.2,                        // x for the D-line on pass plays
   qb: 0.45, qbSpd: 0.12, qbMin: 0.25,  // QBs tire slower: x qb, then -qbSpd per rating step of SPEED (faster = fitter), never under x qbMin
-  sub: 0.04,                        // wear a player sitting out (subbed) recovers per play
+  sub: 0.09,                        // wear a player sitting out (subbed) recovers per play (more than a play costs: a rest on the sideline pays off)
   rest: 0.55,                       // share of the wear shed at each change of possession
   speed: 0.08, accel: 0.15,         // top speed / acceleration lost at full wear
   fumble: 0.6, injury: 1.0,         // extra fumble / injury odds at full wear (x1 + this)
@@ -707,7 +707,7 @@ const TWO_HAND_PICK = 1.35;   // x the pick odds once a DB has timed it and gets
 const PICK_DROP_ALONE = 0.25;   // x the drop odds when no receiver is within a few yards of the defender
 // diving pick: a defender reading the ball (late in the throw, past p) lays out for one beyond PICK_RANGE but within range yd,
 // if it's no higher than z; chance = he goes for it; catch = he hangs on once his hands get within hands yd (else it's tipped)
-const DIVE_PICK = { range: 1.9, late: 0.6, z: 20 * S, chance: 0.2, catch: 0.35, hands: 0.7, dur: 0.32 };
+const DIVE_PICK = { range: 1.9, late: 0.6, z: 20 * S, chance: 0.2, catch: 0.35, hands: 0.7, dur: 0.45 };
 // interception returns: chance an offensive player's tackle sticks; the defense's blocks whiff this often
 // and otherwise hold a chaser for hold seconds
 // interception returns: blockers whiff whiff of the time, hold their man hold seconds, retry after retry s;
@@ -1018,7 +1018,7 @@ const LB_DROP = { extra: 0.5, vert: 0.5, carry: 20, floor: 3 };
 // seam help: a vertical within width yd of the middle, past depth yd, with nobody within open yd of him is carried by the
 // nearest underneath zone dropper (if he's within reach yd)
 const SEAM = { width: 14, depth: 5, open: 4, reach: 14 };   // (the middle of the field: wider, earlier, quicker to pick up a seam runner)
-const RUN_REACT = { read: 0.8, angle: [0.82, 1.12] };   // (slower run reads, looser pursuit angles: running is easier)
+const RUN_REACT = { read: 0.8, angle: [0.97, 1.1] };   // (slower run reads, looser pursuit angles: running is easier)
 // Running it again and again: each straight run (capped at max) costs the line block share of its hold time
 // (and makes quick DL wins quick x likelier), cuts the defense's run read by react and its pursuit-angle error
 // by angle, and adds blitz to the blitz chance; each also makes a stuffed run stuff x likelier and a big hole stuff x rarer
@@ -1072,7 +1072,7 @@ const REDZONE_D = { yards: 20, man: 8, dc: 0.6, blitz: 0.18, edge: 0.6, middle: 
 const redZone = () => patMode === 'two' || los >= FIELD - REDZONE_D.yards * YL;
 // pursuit-angle prediction: sim step/horizon s, sideline margin, runner-velocity smoothing per frame, angle error on non-runs;
 // chase / lastLine = pursuit speed x top speed (the last man back finds an extra gear)
-const PURSUIT = { step: 0.05, horizon: 2.5, edge: 0.6 * YD, smooth: 0.2, passAngle: [0.96, 1.02], chase: 0.96, lastLine: 1.05,
+const PURSUIT = { step: 0.05, horizon: 3.5, edge: 0.6 * YD, smooth: 0.2, passAngle: [1, 1.06], chase: 1, lastLine: 1.05, through: 0.45, runAngle: [0.97, 1.1],   // through = s of running he aims past the meeting point (never eases up on arrival); runAngle = the angle range on designed runs (>= ~1: they cut him off, never trail)
                   dbHorizon: 5, dbErr: 0.1, boost: 1.05, accel: 1.15 };   // boost = x speed chasing a ball carrier (after a catch / on a run), accel = x their accel (sharper angles)   // DBs: look-ahead s, and how much of the usual angle error they make (0.15 = 15%: they take sharp angles)
 const BREAKDOWN = { range: 4.5 * YD, k: 0.72 };   // special-teams coverage: inside range yd of the returner, a man slows to k x his speed (breaks down to tackle)
 // wrap-up tackles: he falls along runner x his velocity + tackler x the tackler's; met head-on he goes over
@@ -1292,7 +1292,7 @@ const A5 = {
   dl: { shed: 0.16, quickWin: 0.28, hurry: 0.14, blitz: 0.1 },   // PASS RUSH: getting off the block, winning at the snap, hurrying the throw, the extra push on a blitz call
   cov: { cover: 0.14, sell: 0.25, jam: 0.06, low: 0.4 },       // COVERAGE: staying on him / reading it, biting on double moves, a slightly stickier jam; low = share of the penalty a below-average rating keeps (poor cover men aren't helpless)
 };
-const AI_STEM = { open: 2.4, minYd: 1 };   // the computer's QB and a receiver still in his stem (before the first break, past minYd): only a throw when he's open x this much more than usual
+const AI_STEM = { open: 3.6, minYd: 1, awr: 0.12 };   // awr = how much each awareness step tightens it (a sharp QB waits for the break; a poor one throws in the stem a bit more)   // the computer's QB and a receiver still in his stem (before the first break, past minYd): only a throw when he's open x this much more than usual
 const balK = c => Math.max(0.6, Math.min(1.6, rm(c, 'bal', A5.rb.stumble)));   // (1 for anyone without BALANCE)
 const balMove = (c, k) => Math.max(0.7, Math.min(1.4, rm(c, 'bal', A5.rb[k])));
 const attr5 = (p, a, dflt) => p && p.at && p.at[a] != null ? p.at[a] : dflt;
@@ -1440,12 +1440,9 @@ function drawOpenWave() {
     const g = Math.min(1, (now - (r.openT0 || now)) / 1000 / W0.pop), R = W0.size * YD * (0.4 + 0.6 * g), sw = Math.sin(now / 1000 * W0.rate) * W0.swing;
     ctx.save();
     ctx.translate(r.x, r.y - W0.up * S); ctx.scale(MIRROR, 1);
-    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.arc(0, 2, R * 1.05, 0, Math.PI * 2); ctx.fill();   // (soft shadow disc so it reads on any turf)
-    ctx.fillStyle = '#2fd15a'; ctx.strokeStyle = '#0b3d18'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    ctx.translate(0, R * 0.45); ctx.rotate(sw);   // (the hand rocks from the wrist)
-    ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#0b3d18'; ctx.lineWidth = 2;
-    const u = R / 10;
+    ctx.translate(0, R * 0.45); ctx.rotate(sw);   // (just a green hand, rocking from the wrist)
+    ctx.fillStyle = '#2fd15a'; ctx.strokeStyle = '#0b3d18'; ctx.lineWidth = 2.5; ctx.lineJoin = 'round';
+    const u = R / 7;
     ctx.beginPath(); ctx.roundRect ? ctx.roundRect(-3.2 * u, -7 * u, 6.4 * u, 6 * u, 1.6 * u) : ctx.rect(-3.2 * u, -7 * u, 6.4 * u, 6 * u); ctx.fill(); ctx.stroke();   // palm
     for (let i = 0; i < 4; i++) { const fx = -2.4 * u + i * 1.6 * u, fl = (i === 1 || i === 2 ? 5 : 4.2) * u; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(fx - 0.7 * u, -7 * u - fl, 1.4 * u, fl + 1 * u, 0.7 * u) : ctx.rect(fx - 0.7 * u, -7 * u - fl, 1.4 * u, fl + u); ctx.fill(); ctx.stroke(); }   // fingers
     ctx.save(); ctx.translate(3 * u, -3.5 * u); ctx.rotate(0.7); ctx.beginPath(); ctx.roundRect ? ctx.roundRect(-0.7 * u, -3.6 * u, 1.5 * u, 4 * u, 0.7 * u) : ctx.rect(-0.7 * u, -3.6 * u, 1.5 * u, 4 * u); ctx.fill(); ctx.stroke(); ctx.restore();   // thumb
@@ -1455,7 +1452,7 @@ function drawOpenWave() {
 function drawAwareness() {
   if (aiOff() || tut || (rec && rec.replaying)) return;
   if (state === 'pre') for (const d of back7) {
-    if (!d.blitz || !d.awrSeen) continue;
+    if (!d.blitz || !d.awrSeen || !d.walked) continue;   // (read only once he walks up: the disguise hides it until then)
     const a = Math.atan2(qb.y - d.y, qb.x - d.x), L = Math.min(dist(d, qb) * 0.45, 5 * YD), ex = d.x + Math.cos(a) * L, ey = d.y + Math.sin(a) * L + FOOT;
     ctx.strokeStyle = ctx.fillStyle = '#ff3b3b'; ctx.lineWidth = 6;
     ctx.beginPath(); ctx.moveTo(d.x, d.y + FOOT); ctx.lineTo(ex, ey); ctx.stroke();
@@ -2125,6 +2122,11 @@ function wearPlay() {   // a scrimmage play just ended: everyone on the field ti
   // a player who sat this play (subbed out) catches his breath
   const on = new Set(allPlayers().map(p => p.wk));
   for (const team of [MATCH.you, MATCH.opp]) for (const s of ROSTER[team] || []) if (!on.has(s) && WEAR_MAP.has(s)) WEAR_MAP.set(s, Math.max(0, WEAR_MAP.get(s) - WEAR.sub));
+  // snap counts for the week's condition (injuriesAfterGame): each of your men on the field, and how many plays each of your units was out there
+  const mine = new Set(ROSTER[MATCH.you] || []), sn = game.snaps || (game.snaps = { off: 0, def: 0, by: {} });
+  const here = allPlayers().map(p => p.src).filter(s => s && mine.has(s));
+  for (const side of ['off', 'def']) if (here.some(s => OFF_GROUPS.includes(s.group) === (side === 'off'))) sn[side]++;
+  for (const s of here) sn.by[s.name] = (sn.by[s.name] || 0) + 1;
 }
 function wearRest() { for (const [k, v] of WEAR_MAP) WEAR_MAP.set(k, v * (1 - Math.min(RECOVERY.restMax, WEAR.rest * recoveryK(k)))); }   // possession changes: a breather (the trainer and morale speed it up)
 

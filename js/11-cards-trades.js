@@ -256,16 +256,20 @@ function drawPlayerCard(team, p, kr) {
   const onTrade = !!results && results.screen === 'trade', tabs = od ? [] : [[STATS_BTN, 'STATS', RES.bright]];
   if (onTrade) menuBtn(TR_STATS_BTN, 'STATS', RES.bright, 22);
   if (od) offDetailExtras(team, p);
-  if (own && benchable(p)) tabs.push([BENCH_BTN, p.benchNext ? 'BENCHED' : p.backup ? 'PROMOTE' : 'BENCH', p.benchNext ? SEL : RES.bright]);   // (BENCH <-> BENCHED on every click)
-  if (own && !exhibition) tabs.push([DROP_BTN, 'DROP', RES.bright]);
-  if (own && !exhibition && season) tabs.push([TRADE_BTN, 'TRADE', RES.bright]);
+  if (own && benchable(p)) {   // BENCH (starters; BENCHED again puts him back) and PROMOTE TO WR1 etc. (anyone below the top of his position)
+    const dn = depthNo(team, p);
+    if (p.benchNext || startersOf(team).has(p)) tabs.push([BENCH_BTN, p.benchNext ? 'BENCHED' : 'BENCH', p.benchNext ? SEL : RES.bright]);
+    if (!p.benchNext && dn > 1) tabs.push([PROMOTE_BTN, `PROMOTE\nTO ${p.group}${dn - 1}`, RES.bright]);
+  }
+  if (own && !exhibition && !dcg) tabs.push([DROP_BTN, 'DROP', RES.bright]);
+  if (own && !exhibition && season && !dcg) tabs.push([TRADE_BTN, 'TRADE', RES.bright]);
   if (false) {   // the second card: his portrait and stars, top left
     const R2 = 13.5 * 1.6, nm2 = cardCmp.name.split(' ').filter(w => !/^(JR\.?|SR\.?|II|III|IV|V)$/i.test(w)).slice(-1)[0].toUpperCase();
     drawPortrait(cardCmp, C.x + 56, C.y + 132 + R2 * 0.98, 1.6, team);
     ctx.textAlign = 'center'; ctx.fillStyle = CARD_CMP_COL; ctx.font = 'bold 12px monospace'; ctx.fillText(nm2, C.x + 56, C.y + 176 + R2 * 0.6, 84); starsRow(C.x + 22, C.y + 196 + R2 * 0.6, cardCmp.stars, 6.5);
   }
   const tw0 = tabs.length * C.tabW + (tabs.length - 1) * C.tabGap;
-  tabs.forEach(([b, label, bg], i) => { Object.assign(b, { x: C.cx - tw0 / 2 + i * (C.tabW + C.tabGap), y: C.tabY, w: C.tabW, h: C.tabH }); menuBtn(b, label, bg === SEL ? SEL : '#ecd8a0', 24); });
+  tabs.forEach(([b, label, bg], i) => { Object.assign(b, { x: C.cx - tw0 / 2 + i * (C.tabW + C.tabGap), y: C.tabY, w: C.tabW, h: C.tabH }); menuBtn(b, label, bg === SEL ? SEL : '#ecd8a0', label.includes('\n') ? 17 : 24); });
   HELP_BTNS.bench = HELP_BENCH_BTN;
   drawHelpIcon(HELP_BTNS.bench);
   tipCtx = { team, p, own, bench: own && benchable(p), drop: own && !exhibition };
@@ -539,7 +543,7 @@ function drawHof() {
   hofView.page = Math.min(hofView.page, pages - 1);
   ctx.fillStyle = RES.line; ctx.font = 'bold 44px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('HALL OF FAME', W / 2, 46);
-  for (const [side, b] of Object.entries(ROSTER_TABS)) menuBtn(b, side === 'off' ? 'OFFENSE' : 'DEFENSE', side === hofView.side ? SEL : RES.bright, 26);
+  menuBtn(ROSTER_TABS.off, hofView.side === 'def' ? 'DEFENSE' : 'OFFENSE', SEL, 26);   // (one button: shows the side, a click flips it)
   HOF_CARDS.forEach((bb, i) => { const h = list[hofView.page * HOF_CARDS.length + i]; if (h) hofCard(h, bb); });
   if (!list.length) { ctx.fillStyle = RES.dim; ctx.font = 'bold 24px monospace'; ctx.fillText(`NO ${hofView.side === 'off' ? 'OFFENSIVE' : 'DEFENSIVE'} PLAYERS YET`, W / 2, 330); ctx.font = 'bold 16px monospace'; ctx.fillText('click the black HOF banner on a player page to send him here', W / 2, 366); }
   if (pages > 1) ROSTER_ARROWS.forEach((b, i) => menuBtn(b, i ? '▸' : '◂', RES.bright, 30));
@@ -550,8 +554,7 @@ function drawHof() {
 }
 function hofClick(pt) {
   if (statsView) return statsClick(pt);
-  const side = Object.keys(ROSTER_TABS).find(s => inBtn(pt, ROSTER_TABS[s]));
-  if (side) { hofView.side = side; hofView.page = 0; return; }
+  if (inBtn(pt, ROSTER_TABS.off)) { hofView.side = hofView.side === 'def' ? 'off' : 'def'; hofView.page = 0; return; }
   const list = hofList(), pages = Math.max(1, Math.ceil(list.length / HOF_CARDS.length)), a = ROSTER_ARROWS.findIndex(b => inBtn(pt, b));
   if (a >= 0) { if (pages > 1) hofView.page = (hofView.page + (a ? 1 : -1) + pages) % pages; return; }
   const i = HOF_CARDS.findIndex((b, k) => hofView.page * HOF_CARDS.length + k < list.length && inBtn(pt, b));
@@ -696,7 +699,7 @@ function chofClick(pt) {
   if (inBtn(pt, BACK_BTN)) results.screen = 'home';
 }
 // BENCH / DROP / TRADE: three even buttons, a third of the attributes box (x 660-1220) each
-const BENCH_BTN = { x: 660, y: 614, w: 176, h: 68 };
+const BENCH_BTN = { x: 660, y: 614, w: 176, h: 68 }, PROMOTE_BTN = { x: 0, y: -999, w: 0, h: 0 };   // (PROMOTE: placed with the folder tabs)
 const DROP_BTN = { x: 852, y: 614, w: 176, h: 68 };
 const TRADE_BTN = { x: 1044, y: 614, w: 176, h: 68 };
 // the little ? buttons on a player page: what his ability does, what benching does (click = a popup)
@@ -841,7 +844,13 @@ function rosterClick(pt) {
     else { statsClick(pt); if (!statsView && rosterView.statsOnly) rosterView.sel = null; return; }   // (stats-only list: BACK goes straight back to the list)
   }
   if (rosterView.sel == null) {
+    if (teamUpgClick(pt)) return;   // (TEAM UPGRADES popup open: it takes every click)
     if (formView() && fvClick(pt, team, ps)) return;   // (formation view: quick-pick list, page name, arrows, AUTO, presses in the view)
+    if (dcg) {   // (the in-game depth chart: your team only, its side / view / page are set by the game situation)
+      if (inBtn(pt, BACK_BTN)) { dcClose(); return; }
+      if (inBtn(pt, ROSTER_TITLE_BTN) || inBtn(pt, ROSTER_TABS.off) || inBtn(pt, HOF_ROSTER_BTN) || inBtn(pt, BUY_SPOT_BTN) || inBtn(pt, UPG_BTN) || inBtn(pt, UPG_ALL_BTN)) return;
+      if (inBtn(pt, ROSTER_TABS.def) && (dcg.st || rosterView.side !== 'off')) return;
+    }
     if (inBtn(pt, ROSTER_TITLE_BTN)) { teamPick = 'roster'; pickConf = NFL[team].conf.slice(0, 3); return; }
     if (rosterView.side !== 'upg' && inBtn(pt, ROSTER_TABS.off)) { rosterView.side = rosterUI.side = rosterView.side === 'off' ? 'def' : 'off'; rosterView.pos = null; rosterView.page = 0; rosterUISave(); return; }   // OFFENSE <-> DEFENSE
     if (rosterView.side === 'off' && !rosterView.statsOnly && inBtn(pt, ROSTER_TABS.def)) { rosterUI.view = rosterUI.view === 'form' ? 'simple' : 'form'; rosterView.page = 0; rosterUISave(); return; }   // FORMATION <-> SIMPLE
@@ -859,7 +868,7 @@ function rosterClick(pt) {
     }
     if (inBtn(pt, HOF_ROSTER_BTN)) { hofReturn = 'roster'; results.screen = 'hof'; hofView.page = 0; statsView = null; rosterView.statsOnly = false; return; }
     if (own && !rosterView.statsOnly && (upgTotal(team) > 0 || rosterView.side === 'upg') && inBtn(pt, UPG_BTN)) { rosterView.side = rosterView.side === 'upg' ? 'off' : 'upg'; rosterView.page = 0; return; }
-    if (own && !exhibition && season && !rosterView.statsOnly && rosterView.side !== 'upg' && inBtn(pt, BUY_SPOT_BTN)) { buySpot(); return; }
+    if (own && !exhibition && season && !rosterView.statsOnly && rosterView.side !== 'upg' && inBtn(pt, BUY_SPOT_BTN)) { rosterView.tu = true; return; }   // TEAM UPGRADES popup
     const pages = rosterPages(ps, rosterView.side, team), a = formView() ? -1 : ROSTER_ARROWS.findIndex(b => inBtn(pt, b));
     if (a >= 0) { rosterView.page = ((rosterView.page || 0) + (a ? 1 : -1) + pages) % pages; return; }
     const i = formView() ? -1 : ROSTER_CARDS.findIndex((b, k) => (rosterView.page || 0) * ROSTER_CARDS.length + k < ps.length && inBtn(pt, b));
@@ -883,14 +892,16 @@ function rosterClick(pt) {
       else rosterView.sel = at < 0 ? null : at;
       return; }
   }
-  if (own && !exhibition && inBtn(pt, DROP_BTN)) { dropPlayer(team, ps[rosterView.sel]); return; }
-  if (own && !exhibition && season && inBtn(pt, TRADE_BTN)) { TR.ret = results.screen; TR.sel = null; TR.v++; TCX = null; tradeStart(team, ps[rosterView.sel]); return; }   // shop him: pick a team, then the offer builder
+  if (own && !exhibition && !dcg && inBtn(pt, DROP_BTN)) { dropPlayer(team, ps[rosterView.sel]); return; }
+  if (own && !exhibition && season && !dcg && inBtn(pt, TRADE_BTN)) { TR.ret = results.screen; TR.sel = null; TR.v++; TCX = null; tradeStart(team, ps[rosterView.sel]); return; }   // shop him: pick a team, then the offer builder
   if (own && inBtn(pt, CARD_KR)) { tagReturner(team, ps[rosterView.sel]); return; }
   if (cardHitOn && inBtn(pt, CARD_HIT_BTN)) { cardHit = !cardHit; return; }   // (HIT: the attribute-hit table)
   if (cardExtrasClick(pt, team, ps[rosterView.sel]) || cardSpokeClick(pt)) return;   // (a spoke's label on the card: tap = what that attribute does)
-  if (own && benchable(ps[rosterView.sel]) && inBtn(pt, BENCH_BTN)) {
+  const promo = own && benchable(ps[rosterView.sel]) && !ps[rosterView.sel].benchNext && depthNo(team, ps[rosterView.sel]) > 1 && inBtn(pt, PROMOTE_BTN);
+  if (promo || (own && benchable(ps[rosterView.sel]) && (ps[rosterView.sel].benchNext || startersOf(team).has(ps[rosterView.sel])) && inBtn(pt, BENCH_BTN))) {
     const q = ps[rosterView.sel];
-    if (q.backup && !q.benchNext) promoteStarter(team, q); else { q.benchNext = !q.benchNext; if (q.benchNext) moraleShift(q, MORALE.ev.bench); }   // (benched: morale takes a hit)
+    if (promo) promoteUp(team, q);   // (he swaps with the man right above him, in every formation)
+    else { q.benchNext = !q.benchNext; if (q.benchNext) { moraleShift(q, MORALE.ev.bench); depthDropAll(q); } }   // (benched: out of every formation, morale takes a hit; unbenched: back everywhere)
     recalcTeamStars();
     rosterView.sel = Math.max(0, rosterSide(team, rosterView.side).indexOf(q));   // (stay on his card, wherever the list moved him)
     autosaveSoon();
@@ -1269,7 +1280,7 @@ function drawRedPick() {
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H);
   resPanel(170, 80, 940, 540, [['RED STAR: PICK A PLAYER TO GIVE A STAR FACTOR', null]], '#e01b1b');
   L.slice(redUI.page * RED_PER, redUI.page * RED_PER + RED_PER).forEach((p, i) => {
-    menuBtn(RED_ROW(i), `${p.name}  ${p.group}  ${p.stars}*   ${abilName(p.ability)} (${p.tier})  ->  STAR FACTOR`, RES.bright, 18);
+    menuBtn(RED_ROW(i), `${p.name}  ${p.group}  ${p.stars}★   ${abilName(p.ability)} (${p.tier})  ->  STAR FACTOR`, RES.bright, 18);
   });
   if (!L.length) { ctx.fillStyle = RES.dim; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center'; ctx.fillText('EVERY PLAYER ALREADY HAS ONE', W / 2, 300); }
   if (redUI.page > 0) menuBtn(RED_PREV, '< PREV', RES.bright, 18);
@@ -1603,7 +1614,7 @@ function homeNews() {
   }
   if (up.length && !LEAGUE.upgTipSeen) { LEAGUE.upgTipSeen = 1; offPopShow({ title: 'UPGRADES READY', lines: [...wrapLines(up.slice(0, 8).join(', ') + (up.length > 8 ? ` +${up.length - 8} more` : ''), 54), '', 'Open the player on your ROSTER and press +1.'] }); }
   if (tr.length) offPopShow({ title: 'AROUND THE LEAGUE', lines: tr.slice(0, 5).flatMap(t => wrapLines(t, 54)) });
-  LEAGUE.upgNew = []; LEAGUE.tradeNews = [];
+  LEAGUE.upgNew = []; LEAGUE.tradeNews = []; if (season && !season.offseason) LEAGUE.tradeCards = [];   // (in-season deals were told here: the new-season popup shows the offseason ones)
   const pn = LEAGUE.pracNews || [];
   if (pn.length) offPopShow({ title: 'PRACTICE BATTLES', lines: pn.slice(0, 4).flatMap(t => wrapLines(t, 54)) });
   LEAGUE.pracNews = [];
@@ -1649,6 +1660,7 @@ const TRADE = {
   pickScale: 0.7, hold: 1.25, holdTop: 1.6,   // pickScale = x every draft pick's trade value; hold / holdTop = x the value a contender / a top-4 team puts on its own 3+ star players when asked to give them up
   surplus: 0.85, bad: -0.25, sweet: 2, sweetCap: 0.5, strapped: 5, shed: 1.1,   // x for a spare at a stocked position; a deal this overpaid (s) needs a sweetener of `sweet` TV per $M a year per year left (at most sweetCap of his TV); under `strapped` $M of cap a team pays x `shed` for dumping salary
   retireYrs: 8, retireMin: 0.5, unproven: 0.6, mood: 0.1, condHit: 0.3,   // years left to retirement for full value (fewer = down to retireMin); unproven rookie x; morale +-mood; poor condition up to -condHit
+  attrW: 0.5,                                                 // how much his real attribute total (scoreOf, as stars) counts next to his star rating in his base TV (0 = stars only)
   prone: 0.06, proneMin: 0.6,                                 // each injury he has had takes this off his trade value (x), down to proneMin
   future: [1, 0.85, 0.7, 0.6],                                // pick TV x by years out
   starKeep: 4, loyal: 1.35, keepStar: 0.7,                    // stars at starKeep+ are what a team builds around: they're worth x loyal to it when it's asked to give them up, and a computer seller leaves them off the block keepStar of the time (and cuts them last)
@@ -1680,7 +1692,8 @@ function overpay(p) {   // $M a year over a fair deal, once he is overpaid by mo
 }
 function tvPlayer(p) {   // his trade value to a neutral team
   const best = Math.max(...ATTRS[p.group].map(a => p.raw[a])), age = p.age + (p.group === 'QB' ? -3 : p.group === 'RB' ? 2 : 0);
-  let v = lerpTab(TRADE.base, p.stars) * TRADE.pos[tradeKey(p)][0] * TRADE.age.find(([a]) => age <= a)[1] * contractMul(p);
+  const aStars = Math.max(0.5, Math.min(5, 1 + (scoreOf(p) - 20) / 8)), mixSt = p.stars * (1 - TRADE.attrW) + aStars * TRADE.attrW;   // (attributes count too, not just the star rating)
+  let v = lerpTab(TRADE.base, mixSt) * TRADE.pos[tradeKey(p)][0] * TRADE.age.find(([a]) => age <= a)[1] * contractMul(p);
   if (best >= TRADE.hi) v *= 1 + TRADE.attr; else if (best <= TRADE.lo) v *= 1 - TRADE.attr;
   v *= p.sagaTV || 1;   // (saga news moves it: ARC_FX tv)
   if (p.tier === 'X') v *= 1 + TRADE.xfStar; else if (p.tier === 'S') v *= 1 + TRADE.xf;
@@ -1927,7 +1940,7 @@ function tradeDecide(k, giveA, getA) {   // the computer team k is offered giveA
   else ok = false;
   return { ok, roll, lock: S.locked, ratio: S.ratio };
 }
-const assetName = a => a.kind === 'pick' ? `${nflYear(a.year)} ROUND ${a.round}${a.x ? ' (EXTRA PICK)' : a.orig !== a.owner ? ` (${a.orig})` : ''}` : `${a.p.short || a.p.name} ${a.p.tag} ${a.p.stars}*`;
+const assetName = a => a.kind === 'pick' ? `${nflYear(a.year)} ROUND ${a.round}${a.x ? ' (EXTRA PICK)' : a.orig !== a.owner ? ` (${a.orig})` : ''}` : `${a.p.short || a.p.name} ${a.p.tag} ${a.p.stars}★`;
 const sameAsset = (a, b) => a.kind === b.kind && (a.kind === 'pick' ? !!a.x === !!b.x && pickKey(a.year, a.round, a.orig) === pickKey(b.year, b.round, b.orig) : a.p === b.p);
 const assetTV = a => a.kind === 'pick' ? pickTV(a) : tvPlayer(a.p);
 function playersOf(team) { return ROSTER[team].map(p => ({ kind: 'player', p, team })).sort((a, b) => scoreOf(b.p) - scoreOf(a.p) || b.p.stars - a.p.stars); }
@@ -1942,7 +1955,7 @@ function picksOf(team) {
 }
 function tradeClosed() {   // why trades are shut right now (null = open)
   if (!season) return 'NO SEASON';
-  if (season.offseason) return (OFF && (OFF.draftDone || OFF.draft)) || TR.capFree ? null : 'OPENS AFTER THE DRAFT';   // (cap-free trades from the re-sign screen are open)
+  if (season.offseason) return null;   // (open through the whole offseason)
   if (season.week > TRADE.deadline) return 'DEADLINE PASSED (AFTER WEEK 9)';
   return null;
 }
@@ -2038,6 +2051,7 @@ function aiTrades(me, tries) {
     if (star && (LEAGUE.tradeNews || (LEAGUE.tradeNews = [])).length < 8) {
       const [from, to, got] = star === x ? [A, B, best] : [B, A, x];
       LEAGUE.tradeNews.push(`${from} sends ${assetName(star)} to ${to} for ${got.kind === 'pick' ? 'the ' : ''}${assetName(got)}`);
+      (LEAGUE.tradeCards || (LEAGUE.tradeCards = [])).push({ name: star.p.name, from, to, got: assetName(got), gotP: got.kind === 'player' ? got.p.name : null });   // (the new-season popup's trade cards: player, FROM -> TO)
     }
   }
   recalcTeamStars();
@@ -2203,13 +2217,50 @@ function offersClick(pt) {
 }
 const TR_SUG_BTN = { x: 440, y: 640, w: 220, h: 58 };   // SUGGESTIONS (the cap bar is shortened to make room)   // (bottom row, after ROSTER)
 // --- the trade screens: 'trade' = every player in the league (best attribute total first), 'tradeb' = the offer
-const TR = { sel: null, page: 0, side: null, pos: 'ALL', team: null, dd: false, ret: 'staff', v: 0, partner: null, give: [], get: [], tab: [0, 1], pg: [0, 0], pendingGive: null };
+const TR = { sel: null, page: 0, side: null, pos: 'ALL', team: null, dd: false, ret: 'staff', v: 0, partner: null, give: [], get: [], tab: [0, 1], pg: [0, 0], grp: ['ALL', 'ALL'], pendingGive: null };
 const TR_TEAM_BTN = { x: 240, y: 12, w: 160, h: 56 }, TR_NEW_BTN = { x: 880, y: 12, w: 160, h: 56 }, TR_GO_BTN = { x: 852, y: 614, w: 250, h: 68 }, TR_STATS_BTN = { x: 660, y: 614, w: 176, h: 68 };   // (both under the attributes card)
 const TB = { x: [40, 660], y: 100, w: 580, h: 470, rows: 8 };
 const tbTabBtn = rectCache((s, t) => ({ x: TB.x[s] + 12 + t * 156, y: TB.y + 44, w: 148, h: 36 }));
 const tbRow = rectCache((s, i) => ({ x: TB.x[s] + 12, y: TB.y + 88 + i * 42, w: TB.w - 24, h: 38 }));
 const tbArrow = rectCache((s, d) => ({ x: d ? TB.x[s] + TB.w - 72 : TB.x[s] + 12, y: TB.y + 428, w: 60, h: 34 }));
-const tbAssets = s => { const t = s ? TR.partner : season.team; return TR.tab[s] ? playersOf(t) : picksOf(t); };
+const tbAssets = s => { const t = s ? TR.partner : season.team; return TR.tab[s] ? playersOf(t).filter(a => TR.grp[s] === 'ALL' || a.p.group === TR.grp[s]) : picksOf(t); };
+// PLAYERS tab = his real roster cards, by position group (tabs), 3 x 2 a page (wheel / arrows page through): TV top left, contract big under the card
+const TBC = { groups: ['ALL', 'QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'CB', 'S', 'K'], sc: 0.5, cols: 3, rows: 2, gapX: 30, gapY: 8, tag: 22, top: 122, lift: 8, grow: 0.06, pop: 0.18, ease: 12 };
+const tbPer = s => TR.tab[s] ? TBC.cols * TBC.rows : TB.rows;
+const tbGrpBtn = rectCache((s, i) => { const w = (TB.w - 24) / TBC.groups.length; return { x: TB.x[s] + 12 + i * w, y: TB.y + 86, w: w - 3, h: 30 }; });
+const tbCard = rectCache((s, i) => { const cw = 270 * TBC.sc, ch = 248 * TBC.sc, tot = TBC.cols * cw + (TBC.cols - 1) * TBC.gapX, c = i % TBC.cols, r = Math.floor(i / TBC.cols);
+  return { x: TB.x[s] + (TB.w - tot) / 2 + c * (cw + TBC.gapX), y: TB.y + TBC.top + r * (ch + TBC.tag + TBC.gapY), w: cw, h: ch + TBC.tag }; });
+const TBC_FX = {}, TBC_BB = {};
+function tbDrawCard(s, i, a, on) {
+  const b = tbCard(s, i), key = `${s}:${a.p.name}`, o = TBC_FX[key] || (TBC_FX[key] = { h: 0, sel: on ? 1 : 0, pop: 0, t: performance.now() }), now = performance.now(), dt = Math.min(0.1, (now - o.t) / 1000); o.t = now;
+  const over = hoverPt && inBtn(hoverPt, b) && !offPop;
+  o.h += ((over ? 1 : 0) - o.h) * Math.min(1, dt * TBC.ease);
+  if (on !== (o.sel > 0.5) && o.pop <= 0) o.pop = 1;   // (just picked / dropped: a little pop)
+  o.sel += ((on ? 1 : 0) - o.sel) * Math.min(1, dt * TBC.ease); o.pop = Math.max(0, o.pop - dt * 3);
+  const k = 1 + TBC.grow * o.h + TBC.pop * Math.sin(o.pop * Math.PI), cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  ctx.save(); ctx.translate(cx, cy - o.h * TBC.lift); ctx.rotate(((deskHash(a.p.name) % 100) / 100 - 0.5) * 0.04 * (1 - o.h)); ctx.scale(k, k); ctx.translate(-cx, -cy);
+  if (o.sel > 0.02) { ctx.save(); ctx.globalAlpha = o.sel; ctx.shadowColor = '#ffd23f'; ctx.shadowBlur = 18; ctx.fillStyle = '#ffd23f'; ctx.fillRect(b.x - 5, b.y - 5, b.w + 10, b.h + 10); ctx.restore(); }
+  ctx.save(); ctx.translate(b.x, b.y); ctx.scale(TBC.sc, TBC.sc);
+  rosterCard(a.p, TBC_BB[key] || (TBC_BB[key] = { x: 0, y: 0, w: 270, h: 248 }), a.team, null);
+  ctx.restore();
+  // TV badge (top left) and the contract tag (under the card, big)
+  const tv = `~${Math.round(trTV(a, s))} TV`; ctx.font = 'bold 15px monospace'; const tw = ctx.measureText(tv).width + 12;
+  ctx.fillStyle = '#fffdf4'; ctx.fillRect(b.x + 3, b.y + 3, tw, 22); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(b.x + 3, b.y + 3, tw, 22);
+  ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(tv, b.x + 3 + tw / 2, b.y + 15);
+  const ty = b.y + b.h - TBC.tag; ctx.fillStyle = on ? '#ffe680' : '#fffdf4'; ctx.fillRect(b.x, ty, b.w, TBC.tag); ctx.strokeRect(b.x, ty, b.w, TBC.tag);
+  ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.fillText(`${fmtM(payOf(a.p))}/${a.p.years}Y`, cx, ty + TBC.tag / 2 + 1, b.w - 6);
+  if (o.sel > 0.5) { ctx.fillStyle = '#2e8b57'; ctx.beginPath(); const kx = b.x + b.w - 16, ky = b.y + b.h - TBC.tag - 18; ctx.arc(kx, ky, 12, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(kx - 6, ky); ctx.lineTo(kx - 1, ky + 5); ctx.lineTo(kx + 6, ky - 5); ctx.stroke(); }   // (the check: bottom right of the photo, clear of the position tag
+  ctx.restore();
+}
+function tbWheel(e) {   // the mouse wheel over a PLAYERS panel pages its cards
+  const pt = pointerPos(e);
+  for (const s of [0, 1]) if (inBtn(pt, { x: TB.x[s], y: TB.y, w: TB.w, h: TB.h })) {
+    const pages = Math.max(1, Math.ceil(tbAssets(s).length / tbPer(s)));
+    if (Math.abs(e.deltaY) > 2) TR.pg[s] = Math.max(0, Math.min(pages - 1, TR.pg[s] + Math.sign(e.deltaY)));
+    return true;
+  }
+  return false;
+}
 let TR_LIST = { key: '', list: [] };
 function trList() {
   const key = `${TR.side}|${TR.pos}|${TR.team}|${TR.v}`;
@@ -2234,7 +2285,7 @@ const trDDItems = () => [...FA_POSITIONS.filter(pos => pos === 'ALL' || !TR.side
   .map((pos, i) => ({ label: pos === 'BM' ? 'BOOKMARKS' : pos, pos, b: { x: FA_TITLE_BTN.x, y: FA_TITLE_BTN.y + FA_TITLE_BTN.h + 4 + i * 38, w: FA_TITLE_BTN.w, h: 36 } }));
 function tradeOpen(ret) { TR.ret = ret; TR.sel = null; TR.page = 0; TR.dd = false; TR.v++; TCX = null; results.screen = 'trade'; }
 function tradePartner(k) {   // a team was picked to trade with
-  TR.partner = k; TR.give = TR.pendingGive || []; TR.get = []; TR.tab = TR.give.length ? [1, 0] : [0, 1]; TR.pg = [0, 0]; TR.pendingGive = null;
+  TR.partner = k; TR.give = TR.pendingGive || []; TR.get = []; TR.tab = TR.give.length ? [1, 0] : [0, 1]; TR.pg = [0, 0]; TR.grp = ['ALL', 'ALL']; TR.pendingGive = null;
   teamPick = null; results.screen = 'tradeb';
 }
 function tradeStart(k, p) {   // TRADE FOR HIM (another team's player) / SHOP HIM (yours)
@@ -2242,7 +2293,7 @@ function tradeStart(k, p) {   // TRADE FOR HIM (another team's player) / SHOP HI
   if (why) { offPopShow({ title: 'TRADES CLOSED', lines: wrapLines(`${why}. Trades run until the deadline after week 9, and again after the draft.`, 54) }); return; }
   if (k === me) { TR.pendingGive = [{ kind: 'player', p, team: me }]; teamPick = 'tradePartner'; pickConf = 'AFC'; return; }
   TR.pendingGive = null; tradePartner(k);
-  TR.get = [{ kind: 'player', p, team: k }]; TR.tab = [0, 1]; TR.pg = [0, Math.floor(Math.max(0, playersOf(k).findIndex(a => a.p === p)) / TB.rows)];
+  TR.get = [{ kind: 'player', p, team: k }]; TR.tab = [0, 1]; TR.grp = ['ALL', p.group]; TR.pg = [0, Math.floor(Math.max(0, playersOf(k).filter(a => a.p.group === p.group).findIndex(a => a.p === p)) / (TBC.cols * TBC.rows))];
 }
 function drawTrade() {
   if (!season) { results.screen = 'home'; return; }
@@ -2299,6 +2350,7 @@ function drawTrade() {
     ROSTER_ARROWS.forEach((b, i) => menuBtn(b, i ? '▸' : '◂', RES.bright, 30));
     ctx.font = 'bold 16px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`PAGE ${TR.page + 1} / ${pages}`, W / 2, 620);
   }
+  if (TR.pruneV !== TR.v) { TR.pruneV = TR.v; trPrune(); }
   const nSaved = (LEAGUE.savedTrades || []).length;   // (the four folder tabs along the bottom edge; counts are badges)
   folderTab(TR_TABS[0], 'SAVED', '#f3e3a0', nSaved, '#2e8b57');
   folderTab(TR_TABS[1], 'SUGGESTIONS', '#cfe3f5');
@@ -2307,6 +2359,13 @@ function drawTrade() {
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
   tourQDraw();
   if (TR.dd) trDDItems().forEach(it => menuBtn(it.b, it.label, TR.pos === it.pos ? SEL : RES.bright, 20));
+}
+// one TV scale on the offer builder: every number is the PARTNER's view (your assets as they'd receive them, theirs as they'd give them up),
+// and the totals are exactly what the TV meter weighs (the best incoming asset in full, the rest x TRADE.depth)
+const trTV = (a, s) => tvFor(a, TR.partner, !s);
+function trTotals() {
+  const vs = TR.give.map(a => trTV(a, 0)).sort((p, q) => q - p);
+  return { give: Math.round(vs.reduce((t, v, i) => t + (i ? v * TRADE.depth : v), 0)), get: Math.round(TR.get.reduce((t, a) => t + trTV(a, 1), 0)) };
 }
 function drawTradeB() {
   if (!season || !TR.partner) { results.screen = 'trade'; return; }
@@ -2320,14 +2379,19 @@ function drawTradeB() {
   ctx.font = 'bold 13px monospace'; ctx.fillStyle = RES.dim;
   ctx.fillText(`THEIR NEEDS: ${needList(k).join(' ') || 'NONE'}      YOUR NEEDS: ${needList(me).join(' ') || 'NONE'}`, W / 2, 86);
   for (const s of [0, 1]) {
-    const t = s ? k : me, sel = s ? TR.get : TR.give, list = tbAssets(s), pages = Math.max(1, Math.ceil(list.length / TB.rows));
+    const t = s ? k : me, sel = s ? TR.get : TR.give, list = tbAssets(s), per = tbPer(s), pages = Math.max(1, Math.ceil(list.length / per));
     TR.pg[s] = Math.min(TR.pg[s], pages - 1);
     resPanel(TB.x[s], TB.y, TB.w, TB.h, [[s ? `YOU GET (${k})` : `YOU GIVE (${me})`, null]], RES.bright);
     ['PICKS', 'PLAYERS'].forEach((lab, tb) => menuBtn(tbTabBtn(s, tb), lab, TR.tab[s] === tb ? SEL : RES.bright, 18));
+    if (TR.tab[s]) {   // the cards
+      TBC.groups.forEach((g, gi) => menuBtn(tbGrpBtn(s, gi), g, TR.grp[s] === g ? SEL : RES.bright, 13, b => { ctx.fillStyle = POS_COL[g] || RES.line; ctx.fillRect(b.x + 3, b.y + b.h - 5, b.w - 6, 3); }));
+      const pg = list.slice(TR.pg[s] * per, (TR.pg[s] + 1) * per), fx = a => (TBC_FX[`${s}:${a.p.name}`] || {}).h || 0;
+      pg.map((a, i) => ({ a, i })).sort((x, y) => fx(x.a) - fx(y.a)).forEach(({ a, i }) => tbDrawCard(s, i, a, sel.some(x => sameAsset(x, a))));
+    } else
     list.slice(TR.pg[s] * TB.rows, (TR.pg[s] + 1) * TB.rows).forEach((a, i) => {
-      const on = sel.some(x => sameAsset(x, a)), tv = Math.round(assetTV(a));
+      const on = sel.some(x => sameAsset(x, a)), tv = Math.round(trTV(a, s));
       const txt = a.kind === 'pick' ? `${nflYear(a.year)}  ROUND ${a.round}${a.x ? '  (EXTRA PICK)' : a.orig !== t ? `  (${a.orig})` : ''}`
-        : `${a.p.tag.padEnd(3)} ${a.p.short || a.p.name}  ${a.p.stars}*  ${a.p.age}y  ${fmtM(payOf(a.p))}/${a.p.years}y`;
+        : `${a.p.tag.padEnd(3)} ${a.p.short || a.p.name}  ${a.p.stars}★  ${a.p.age}y  ${fmtM(payOf(a.p))}/${a.p.years}y`;
       menuBtn(tbRow(s, i), '', on ? SEL : RES.bright, 16, b => {
         ctx.fillStyle = b.ink; ctx.textBaseline = 'middle'; ctx.font = 'bold 16px monospace';
         ctx.textAlign = 'left'; ctx.fillText(txt, b.x + 12, b.y + b.h / 2 + 1, b.w - 90);
@@ -2340,9 +2404,9 @@ function drawTradeB() {
       ctx.font = 'bold 14px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`${TR.pg[s] + 1} / ${pages}`, TB.x[s] + TB.w / 2, TB.y + 445);
     }
   }
-  const sum = l => Math.round(l.reduce((t, a) => t + assetTV(a), 0)), pay = l => l.reduce((t, a) => t + (a.kind === 'player' ? payOf(a.p) : 0), 0);
+  const pay = l => l.reduce((t, a) => t + (a.kind === 'player' ? payOf(a.p) : 0), 0), T = trTotals();
   ctx.font = 'bold 16px monospace'; ctx.fillStyle = RES.line; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  ctx.fillText(`YOU GIVE ${TR.give.length}  ~${sum(TR.give)} TV     YOU GET ${TR.get.length}  ~${sum(TR.get)} TV`, 140, 598, 640);
+  ctx.fillText(`YOU GIVE ${TR.give.length}  ~${T.give} TV     YOU GET ${TR.get.length}  ~${T.get} TV${TR.give.length > 1 ? `   (EXTRAS x${TRADE.depth})` : ''}`, 140, 598, 640);
   const mine = payroll(me) - pay(TR.give) + pay(TR.get), theirs = payroll(k) - pay(TR.get) + pay(TR.give);
   ctx.font = 'bold 14px monospace'; ctx.fillStyle = RES.dim;
   ctx.fillText(`PLAYER CAP AFTER: ${fmtM(mine)} / ${fmtM(capOf(me))}      CPU: ${fmtM(theirs)} / ${fmtM(capOf(k))}`, 140, 628, 640);
@@ -2367,7 +2431,14 @@ function trSave() {
   autosaveSoon();
   offPopShow({ title: 'TRADE SAVED', lines: ['Find it under SAVED on the trade list.'] });
 }
+function trPrune() {   // a saved trade goes away once any asset in it is gone (traded, cut, retired, pick used) or its partner is gone
+  const L = LEAGUE.savedTrades; if (!L || !season) return;
+  const ok = S => NFL[S.k] && ROSTER[S.k] && S.give.every(r => trFind(r, season.team)) && S.get.every(r => trFind(r, S.k));
+  const keep = L.filter(ok);
+  if (keep.length !== L.length) { LEAGUE.savedTrades = keep; autosaveSoon(); }
+}
 function trSavedPage(i) {
+  trPrune();
   const list = LEAGUE.savedTrades || [];
   if (!list.length) return { title: 'SAVED TRADES', lines: ['No saved trades.'] };
   const n = list.length, k = (i % n + n) % n, S = list[k];
@@ -2402,7 +2473,7 @@ function tradePropose() {
     postNote('myTrade', { team: pTeam(me), give: names(gp), get: names(tp) }, { w: 12, team: me });
     if (capCuts && capCuts.length) { for (const p of capCuts) { const R = ROSTER[k], i = R.indexOf(p); if (i >= 0) { faRelease(p, k); vacate(k, p); } } recalcTeamStars(); }   // (to fit under their cap)
     gp.forEach(a => { if (a.kind === 'player') moveMood(a.p, -1); }); tp.forEach(a => { if (a.kind === 'player') moveMood(a.p, 1); });
-    recalcTeamStars(); TR.give = []; TR.get = []; TR.v++; autosaveSoon();
+    recalcTeamStars(); TR.give = []; TR.get = []; TR.v++; trPrune(); autosaveSoon();
     say('TRADE ACCEPTED', [`You send: ${names(gp)}`, `You get: ${names(tp)}`, `It cost ${cost} ¤.`, ...(capCuts && capCuts.length ? [`To make room they released: ${capCuts.map(p => `${p.short || p.name} ${p.tag}`).join(', ')}.`] : [])], [{ label: 'TO ROSTER', green: true, on: () => { offOpenRoster(); rosterReturn = TR.ret && OFF_SCREENS.includes(TR.ret) ? TR.ret : null; } }]);   // (leaving the roster goes to the home screen, or back into the offseason step the trade started in: never to the roster / front office / trade screen it came through)
     return;
   }
@@ -2421,9 +2492,10 @@ function tradeClick(pt) {
     for (const s of [0, 1]) {
       const t = [0, 1].find(tb => inBtn(pt, tbTabBtn(s, tb)));
       if (t !== undefined) { TR.tab[s] = t; TR.pg[s] = 0; return; }
-      const list = tbAssets(s), pages = Math.max(1, Math.ceil(list.length / TB.rows));
+      if (TR.tab[s]) { const gi = TBC.groups.findIndex((g, i) => inBtn(pt, tbGrpBtn(s, i))); if (gi >= 0) { TR.grp[s] = TBC.groups[gi]; TR.pg[s] = 0; return; } }
+      const list = tbAssets(s), per = tbPer(s), pages = Math.max(1, Math.ceil(list.length / per));
       if (pages > 1) for (const d of [0, 1]) if (inBtn(pt, tbArrow(s, d))) { TR.pg[s] = (TR.pg[s] + (d ? 1 : -1) + pages) % pages; return; }
-      const i = Array.from({ length: TB.rows }, (_, r) => r).find(r => inBtn(pt, tbRow(s, r))), a = i === undefined ? null : list[TR.pg[s] * TB.rows + i];
+      const i = Array.from({ length: per }, (_, r) => r).find(r => inBtn(pt, TR.tab[s] ? tbCard(s, r) : tbRow(s, r))), a = i === undefined ? null : list[TR.pg[s] * per + i];
       if (a) { const sel = s ? TR.get : TR.give, at = sel.findIndex(x => sameAsset(x, a)); if (at >= 0) sel.splice(at, 1); else sel.push(a); return; }
     }
     return;

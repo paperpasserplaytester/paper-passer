@@ -105,6 +105,7 @@ function rateOffense() {
   }
 }
 function rateDefense() {
+  rateStash([...dl, ...back7], RATE_D_KEYS);   // (re-rated before the snap: the in-game depth chart)
   const [de1, dt1, dt2, de2] = dl;
   placeRoster(tut ? '' : MATCH.opp, [[de1, 'DL', ['LE']], [de2, 'DL', ['RE']], [dt1, 'DL', ['DT']], [dt2, 'DL', ['DT']],
     [lbM, 'LB', ['MLB']], [lbW, 'LB', ['WLB']], [lbS, 'LB', ['SLB']],
@@ -1347,13 +1348,14 @@ function assignRoutesOnce() {
   if (!rb.split) {
     const call = liveRunCall();   // (a formation: the scheme comes from what fits it, by the coordinator)
     const outside = call ? call.outside : !tut && Math.random() < 0.45;   // (the tutorial always runs it inside)
-    const side = outside ? (rb.side || 1) : (Math.random() < 0.5 ? -1 : 1);   // +1 = bottom of the screen
+    const nearBack = RBP.on && liveForm === 'PRO SET' && !tut && recs.find(r => r.fb);   // (pro set: the play goes to the near back's side; he leads, the far back carries)
+    const side = nearBack ? (Math.sign(nearBack.y - MID) || 1) : outside ? (rb.side || 1) : (Math.random() < 0.5 ? -1 : 1);   // +1 = bottom of the screen
     const L = (dx, dy) => [los + dx * YL, clampRouteY(MID + dy * YD * side)];
     rb.runType = outside ? 'outside' : 'inside';
     rb.scheme = call ? call.scheme : pickScheme(outside);
     rb.runSide = side;
     rb.runLane = outside ? [L(-2.5, 5), L(0.5, 8.5), L(10, 9)]      // bounce it to the edge, turn it up
-                         : [L(-1.5, 1), L(2, 1.4), L(10, 1.4)];     // downhill through the guard-tackle gap
+                         : rbpLane(rb.scheme, L);                   // downhill at the scheme's aiming point (playbook: IZ guard's hip, B gap, iso A gap, counter step)
     rb.path = rb.runLane.map(p => [...p]);
     if (!outside && ols.length > 1 && Math.abs(rb.y - MID) < 5 * YD && rb.x < los - 0.5 * YL) {   // (only a back lined up in the backfield: one lined up wide as a receiver just runs his route) (as a route out of the backfield he slips through a gap between two linemen, not through a lineman: the nearest gap to his lane; a handoff still follows the run lane)
       const ys = ols.map(o => o.y).sort((a, b) => a - b), gaps = ys.slice(1).map((y, i) => (y + ys[i]) / 2);
@@ -1413,10 +1415,29 @@ const LB_ZONE = { up: 4, redzone: 2, min: 3, runs: 3 };   // runs = extra yards 
 function dropPickup() {
   for (const o of [ols[0], ols[4]]) if (o.assign && o.assign.dropZone) o.assign = back7.find(d => d.blitz && !ols.some(b => b.assign === d)) || (o === ols[0] ? dl[1] : dl[2]);
 }
-const BLITZ_DISGUISE = { lb: 4.5, s: 7, start: 3 };   // blitzers line up this many yards (YL) off the ball (linebackers / safeties) so it reads like coverage; start = yd/s of running start at the snap
+const BLITZ_DISGUISE = { lb: 4.5, s: 7, start: 3,
+  base: { lb: 5, s: 12, cb: 6.5, lbW: 5, sY: 17 },   // a blitzer lines up at his NORMAL coverage spot (yd off the ball; LB spacing lbW yd from the middle, safeties sY from their sideline, a corner over his outside man)
+  walk: { delay: 1.2, speed: 2.2, show: 0.35, showX: { lb: 2.5, s: 4, cb: 2 } } };   // pre-snap walk-up: after delay s at the line he creeps (speed yd/s) toward showX yd off the ball and `show` of the way to his gap: that's when the QB reads it
+// blitzers' pre-snap walk-up (called every frame before the snap): the disguise holds a beat, then they creep up and give it away
+let blitzWalkT = 0;
+function blitzWalk(dt) {
+  if (state !== 'pre' || tut || (kickoff && kickoff.forming) || coverage === GOAL_LINE) return;
+  if (allPlayers().some(p => p.fmTo)) return;   // (still lining up)
+  blitzWalkT += dt;
+  if (blitzWalkT < BLITZ_DISGUISE.walk.delay) return;
+  for (const d of back7) {
+    const w = d.blitzShow;
+    if (!d.blitz || !w || d.action || (d === ud && typeof udCtl === 'function' && udCtl(d))) continue;
+    d.walked = true;
+    const px = d.x, py = d.y, gx = w.x - d.x, gy = w.y - d.y, L = Math.hypot(gx, gy), st = BLITZ_DISGUISE.walk.speed * YD * dt;
+    if (L > 1) { const k = Math.min(1, st / L); d.x += gx * k; d.y += gy * k; d.face = -1; setVelocity(d, px, py, dt); }
+    else { d.vx = d.vy = 0; d.moving = false; }
+  }
+}   // blitzers line up this many yards (YL) off the ball (linebackers / safeties) so it reads like coverage; start = yd/s of running start at the snap
 const DEF_SPACE = { zone: 9, depth: 4, pos: 3.5, iters: 3 };   // alignDefense spacing: same-level zone landmarks (within depth yd of each other) at least zone yd apart across; pre-snap spots at least pos yd apart
 function alignDefense() {
   const top = sides[0].recs, bot = sides[1].recs;
+  blitzWalkT = 0; for (const d of back7) { d.blitzShow = null; d.walked = false; }
   dl.forEach((d, i) => { d.dropZone = false; d.zone = null; d.y = MID + [-SPLITS.de, -SPLITS.dt, SPLITS.dt, SPLITS.de][i] * YD; });   // (a re-align after an audible starts from the line again)
   const set = (p, x, y, zone) => { if (p.blitzCov) { p.cov /= p.blitzCov; p.blitzCov = 0; } p.x = los + x * YL; p.y = y; p.zone = zone; p.flex = null; p.svx = p.svy = 0; p.turned = false; p.hips = 'square'; p.hipSide = 0; p.hipWant = null; p.zoneSince = 0; p.passOff = 0; p.matchAt = 0; p.recTurn = 0; p.headTo = 'qb'; p.lookAt = null; p.blitz = false; p.man = null; p.coverOn = null; p.carrying = null; p.angleErr = 0; p.mom = 0; p.hx = undefined; p.eyes = null; p.hsx = null; p.breakFx = null; p.fightOn = null; p.gapY = null;
     p.biteUntil = 0; p.biteV = null; p.readOn = null; p.readUntil = 0; p.lungeY = 0; p.attacked = false; };
@@ -1430,9 +1451,20 @@ function alignDefense() {
   // a blitzer walks up and rushes: much quicker off the edge than a lineman, and only the
   // back (or the center, up the middle) is there to pick him up
   const blitz = (p, x, y) => {
-    // disguised: backers and safeties stand off the ball like they're in coverage (not on the line) and get a running start at the snap (the goal line stays tight)
-    const deep = coverage !== GOAL_LINE && !dl.includes(p) ? Math.max(x, p.role === 'S' ? BLITZ_DISGUISE.s : BLITZ_DISGUISE.lb) : x;
-    set(p, deep, y, { d: 5, y, r: 6 });
+    // disguised: backers and safeties line up where they would in coverage (their normal spot and spacing, not bunched on the gap), walk up late
+    // before the snap (blitzWalk: the read) and get a running start at the snap (the goal line stays tight)
+    const B = BLITZ_DISGUISE.base, dis = coverage !== GOAL_LINE && !dl.includes(p);
+    const deep = dis ? Math.max(x, p.role === 'S' ? B.s : p.role === 'CB' ? B.cb : B.lb) : x;
+    let ay = y;
+    if (dis) {
+      if (p.role === 'S') ay = p === sT ? fromTop(B.sY) : fromBot(B.sY);
+      else if (p.role === 'CB') { const rr = p === cbT ? top[0] : bot[0]; ay = rr ? rr.y + Math.sign(MID - rr.y) * 0.8 * YD : y; }
+      else ay = p === lbW ? MID - B.lbW * YD : p === lbS ? MID + B.lbW * YD : MID;
+    }
+    set(p, deep, ay, { d: 5, y, r: 6 });
+    const sx = (BLITZ_DISGUISE.walk.showX[p.role === 'S' ? 's' : p.role === 'CB' ? 'cb' : 'lb']);
+    p.blitzShow = dis ? { x: los + Math.min(deep, Math.max(x, sx)) * YL, y: ay + (y - ay) * BLITZ_DISGUISE.walk.show } : null;
+    p.walked = !dis;
     Object.assign(p, { blitz: true, edge: Math.abs(y - MID) > 3 * YD, side: Math.sign(y - MID) || 1,
                        rush: (p.role === 'LB' ? 9.0 : 9.5) * YD * rm(p, 'spd', 'speed'), rushV: deep > x ? BLITZ_DISGUISE.start * YD : 0, push: 1.0 * YD, shedAt: 99, shed: false, rbHit: false });
   };
@@ -1939,6 +1971,7 @@ function handoff() {
   if (state === 'pre') snap(true);
   aim = null;
   isRunPlay = true;
+  const drawCall = !!passProt && clock >= RBP.draw;   // (handed off out of a pass set: a draw)
   if (passProt) {   // (handed off after a pass snap: back to the run assignments, no stunt)
     ols.forEach((o, i) => { o.assign = passProt.orig[i]; o.stuntHold = 0; });
     for (const d of dl) { d.stLoop = null; d.stCrash = null; d.paWait = 0; }
@@ -1950,6 +1983,7 @@ function handoff() {
   rb.awaiting = true;
   runner = rb;
   runStart = clock;
+  rbpStart(drawCall, swing);   // run blocking playbook: names, box count / check, the table (before the pulls: a check can flip the side)
   const cenMan = ols[2].assign;
   if (!dl.includes(cenMan)) ols[2].assign = lbM;   // (the center only climbs to the Mike once the down lineman is handled: he stays on his man, then moves up when it's shed)  // run blocks hold a while, unless a lineman wins quickly and blows it up in the backfield
   for (const r of dl) { r.driveY0 = undefined; r.driveAway = undefined; r.sealK = 0; r.rblAdj = 0; }
@@ -1973,6 +2007,7 @@ function handoff() {
       if (!i && playDE) playDE.rblAdj += (puller.rbl - 0.5) * RBL.kick * sch.kick;
     });
   } else if (rb.runSide && playDE) playDE.rblAdj += (ols[rb.runSide > 0 ? 4 : 0].rbl - 0.5) * RBL.reach * sch.reach;   // zone: the tackle reaches / seals the edge man
+  rbpApply();   // (the playbook's targets for every blocker; the doubles below count from them)
   // tight ends: down block / post the end with the tackle (play side), bag or cut off the backside end; a TE wins by angle, not power
   for (const te of recs.filter(r => r.isTE && r.teBlock)) {
     te.rbl = blockLogic(te, 'str');
@@ -2029,6 +2064,7 @@ function handoff() {
   if (swing || rb.runType === 'outside' || Math.abs(rb.y - qb.y) > 3 * YD) {
     const side = rb.runSide || Math.sign(rb.y - qb.y) || 1;
     ball.pitch = { t: 0, T: OUTSIDE_RUN.pitchT, fx: qb.x, fy: qb.y, side, delay: swing || rb.runType === 'outside' ? OUTSIDE_RUN.lead : 0 };
+    if (rbpLive() && rbp.play === 'sweep') ball.pitch.delay = Math.max(ball.pitch.delay, (liveForm === 'PRO SET' ? RBP.toss.pro : RBP.toss.t) - clock);   // (playbook: the toss is pitched at 1.0 s, 0.8 s from the pro set, so the puller gets there)
     msg = 'Pitch!';
   } else msg = 'Handoff...';
 }
@@ -2061,8 +2097,9 @@ const SCHEMES = {
   power:      { name: 'POWER',       pull: 1, kick: 1.4, reach: 0, combo: 1, hold: 1, seal: 0.8, drive: 1.1, climb: 1 },
   counter:    { name: 'COUNTER',     pull: 2, kick: 1.2, reach: 0, combo: 0.8, hold: 1, seal: 0.6, drive: 1, climb: 1 },
   trap:       { name: 'TRAP',        pull: 1, kick: 0.6, reach: 0, combo: 0.8, hold: 1, seal: 0.8, drive: 0.9, climb: 0.9, trap: true },
+  draw:       { name: 'DRAW',        pull: 0, kick: 0, reach: 0, combo: 0.6, hold: 1.1, seal: 0.8, drive: 0.8, climb: 0.9 },   // (a handoff out of a pass set: RBP.draw)
   outsideZone:{ name: 'OUTSIDE ZONE',dlFirst: 0, pull: 0, kick: 0, reach: 1.4, combo: 0.5, hold: 1, seal: 1.5, drive: 1, climb: 0.9 },
-  sweep:      { name: 'PIN & PULL',  dlFirst: 0, pull: 2, kick: 1, reach: 0, combo: 0.5, hold: 0.9, seal: 1, drive: 1, climb: 1 },
+  sweep:      { name: 'TOSS SWEEP',  dlFirst: 0, pull: 1, kick: 1, reach: 0, combo: 0.5, hold: 0.9, seal: 1, drive: 1, climb: 1 },
 };
 const SCHEME_ODDS = { inside: [['insideZone', 0.4], ['duo', 0.15], ['power', 0.2], ['counter', 0.1], ['trap', 0.15]], outside: [['outsideZone', 0.65], ['sweep', 0.35]] };
 const pickScheme = outside => { let r = Math.random(); for (const [k, w] of SCHEME_ODDS[outside ? 'outside' : 'inside']) if ((r -= w) < 0) return k; return outside ? 'outsideZone' : 'insideZone'; };

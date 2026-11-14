@@ -61,11 +61,12 @@ poWin: { big: true, head: ['{team} Advance: {opp} Fall {sc} in the Playoffs', 'P
   champ: { big: true, head: ['{team} Are Champions!', 'Confetti! {team} Win the Title', 'It Is Official: {team} on Top of the League'],
            body: ['The long season ends with {team} holding the trophy.', 'Champions. There is no other word for it.'] },
   pre: { head: ['Season {yr} Kicks Off', 'New Season, New Hopes for {team}', 'Preview: What to Expect From {team}'],
-         body: ['New hire alert: the {team} have brought in a new head coach to take over the sideline.', 'New hire alert: a new head coach takes charge of the {team}, and the whole league is watching.'] },
+         body: ['New hire alert: the {team} have brought in a new head coach to take over the sideline.', 'New hire alert: a new head coach takes charge of the {team}, and the whole league is watching.'],
+         back: ['Same coach, new year: the {team} run it back with the staff that knows the building.', 'Another season under the same head coach. The {team} say the system is finally sinking in.', 'Continuity is the word around the {team} this spring: no new faces in the head office.'] },
   off: { head: ['The Offseason Edition', 'Offseason Notebook: Who Moved, Who Stayed', 'Between Seasons: The Big Picture'],
          body: ['Contracts, the draft and free agency reshaped the league.', 'The dust has settled on a busy offseason.'] },
 };
-const NEWS_WIRE = { trade: '{text}', sign: '{team} sign {pos} {p} ({stars}*)', cut: '{team} release {pos} {p} ({stars}*)', draft: '{team} draft {pos} {p} (No. {n})', retire: '{pos} {p} retires ({team})', hof: '{p} inducted into the Hall of Fame', injury: '{team} place {pos} {p} on injured list ({n} wks)', arc: '{text}' };
+const NEWS_WIRE = { trade: '{text}', sign: '{team} sign {pos} {p} ({stars}★)', cut: '{team} release {pos} {p} ({stars}★)', draft: '{team} draft {pos} {p} (No. {n})', retire: '{pos} {p} retires ({team})', hof: '{p} inducted into the Hall of Fame', injury: '{team} place {pos} {p} on injured list ({n} wks)', arc: '{text}' };
 const RUMORS = ['Sources say {team} could be shopping a veteran {posL} before the deadline.', 'Is {p} unhappy in {team}? Nobody will say, but nobody is denying it.', 'A scout from {team} was spotted at three straight {posL} workouts.', 'Word around the league: {team} are not done making moves.', 'Hear {p} may be asking for a new deal. Details are thin.', 'The grapevine says {team} are eyeing a free-agent {posL}.', 'One anonymous assistant claims {team} have a trick play they have not shown yet.', 'Whispers of a coaching shake-up in {team} are probably nothing. Probably.'];
 const LETTERS = [
   ['Dear Post, why do we never run on third and short? My dog could call a better game.', 'Hank in {city}'], ['Dear Post, I have been a season-ticket holder for {n} years and I have never seen anything like this.', 'Margie, {city}'],
@@ -263,6 +264,85 @@ const TUT_STEPS = [
 // --- changelog entries (CHANGELOG_LINES, the renumbering, GAME_VERSION and the popup are in js/13-post-online.js)
 // Newest version first. Add a new entry at the top of CHANGELOG with every update and bump GAME_VERSION by 0.1 (pre-release numbering: v0.9 -> v0.10 -> v0.11 ...; v1.0 only for the full release).
 const CHANGELOG = [
+  { v: "v0.25", secs: [
+    ["ONLINE: SMOOTHER AND LIGHTER", [
+      "Online games send about half the data they did. The host no longer sends things each device can work out for itself, sends 15 updates a second instead of 20 (30 while you aim or kick), and only what changed since the last update the other device confirmed.",
+      "Updates now travel on a second, faster channel that never waits for a lost packet: the next update simply replaces it. Scores, sounds, snaps and key presses still use the safe channel. If a device can't open the fast one, everything works as before.",
+      "The guest's picture keeps moving through a late or lost update instead of freezing, and the guest's own defender or ball carrier answers the keys at once (he leads the host's picture, then settles onto it).",
+      "A small readout under the scoreboard shows your ping and whether the link is DIRECT or going through a RELAY. Pause to also see data per second, your frame rate, and whether the fast channel and performance mode are on.",
+      "Both players need this version: online refuses mismatched builds.",
+    ]],
+    ["PERFORMANCE MODE", [
+      "New setting under EXTRAS: PERF. AUTO turns it on for online and two-player games, ON for every game, OFF never.",
+      "While it's on the stands use a fraction of their memory, the weather draws fewer particles, footsteps and the wind's hiss are off, dark mode waits until you're back in the menus, and online games stop recording replay tape nobody sees.",
+      "If frames are still slow after a couple of seconds, the stands and star HUD are dropped and the picture is drawn with fewer pixels for the rest of that game. Looks and sound only: the play itself is identical on both sides.",
+    ]],
+  ] },
+  { v: "v0.24", secs: [
+    ["DEPTH CHART", [
+      "Pause a franchise game before the snap and hit DEPTH CHART (top right) to edit your lineup mid-game: the offense, the defense, or the special-teams unit that's on the field. FORMATION opens the formation being run, marked CURRENT. Players you change jog on and off before the snap.",
+      "Picking a player in a formation's dropdown starts him right away, in that formation only. Only the man he replaces leaves, so the bug where starting one player on special teams dropped someone else is gone. Hurt players drop out of every lineup and the next best man fills in.",
+      "Simple view: cards show their spot on the depth chart (WR 1, WR 2 ...). PROMOTE TO WR2 swaps him with the man one spot above, in every formation. BENCH takes him out of every formation. AUTO ALL now really fills every formation and special-teams unit with your best healthy players.",
+      "The formation view has a zoom / pan tip, colored positions in the dropdown and sharper cards. Fixed the paper transition showing the wrong screen when you left the formation view.",
+    ]],
+    ["TRADES", [
+      "The PLAYERS tab of the offer builder is now real player cards by position, with TV in the corner and the contract in big print. They lift on hover and pop when you pick them, and the wheel pages through them.",
+      "Trade value counts a player's attributes as well as his stars. Every TV number on the offer builder (cards, totals, the meter) is now the other team's view, so they all agree. The meter's arrow sits inside the bar. Saved trades delete themselves once they go through or an asset is gone, and the saved-trade arrows are smaller.",
+    ]],
+    ["RUNNING GAME", [
+      "The snap always reaches the QB first. The back waits at the mesh for the handoff, and pitches are caught behind the QB and the line. Defenders read the mesh instead of flowing to the back before he has the ball.",
+      "Receivers block the play side first, stay on their man until the back is past him and he's no threat, and stop running in place. The fullback takes the biggest threat in the alley the back picks, and his FB RUN ring works even when it overlaps the QB's.",
+      "Dives for extra yards lean in smoothly, and the ball no longer disappears after one.",
+      "No more automatic QB KEEP on handoffs: the QB only runs when you take him past the line. On a pitch the QB stands where he took the snap, and the back or fullback never turns back for it or jumps behind the QB (it can lead him by up to 2 yd).",
+      "Fixed: a carrier tackled while getting up froze mid-rise (he now sinks back down, or goes down normally if he was nearly up), and a missed diving tackle sliding through a blocker to make the tackle anyway.",
+    ]],
+    ["ICONS & BANNERS", [
+      "Several icons can show at once, as long as they don't cover each other on the same player (wings and steam together, for example). Icons stay up under banners, so the sack bag no longer vanishes.",
+      "The sack bag is bigger and sits over the QB's helmet. The hurdle wings are bigger feathered wings. The spin tornado wraps around the player. The rush-move wave rolls, curls and throws spray. Stiff-arm steam comes out of both ears.",
+      "Every interception shows the shield: green for your picks, red for theirs, white in PvP. Special teams get icons too (tips, muffs, fair catches, punter hits, jump balls). WRONG ARM is no longer announced.",
+      "Bigger banner text, a bigger scoreboard that fills the top bar, and a bigger, thicker kickoff aim arrow with an arrowhead. Punts go higher.",
+    ]],
+    ["SEASON & MENUS", [
+      "Subbed-out players recover stamina faster on the sideline, and the condition a player loses each week depends on how much of the game he played.",
+      "Fewer practice injuries. Trades are open through the whole offseason (TRADES on re-signing, the draft and free agency).",
+      "Paper Bowl screen: SCORING next to BACK shows a scoring summary. Passer rating shows on the back of flipped cards. The roster's OFFENSE / DEFENSE and FORMATION / SIMPLE buttons have a click (tap) tip underneath.",
+      "Fixed: clicking the player-names tip during a replay skipped the replay.",
+    ]],
+  ] },
+  { v: "v0.23", secs: [
+    ["DEFENSE", [
+      "Defenders run ball carriers down at full speed and take real cut-off angles instead of trailing. The end zone is just more field: chasers keep running the scorer down through it.",
+      "Deep zone players feel routes that look vertical early, carry them and stay on top to help the corner. A DB who stumbles on a route recovers faster (shorter stumble, same speed) and sprints back to his man.",
+      "Blitzers line up where they would in coverage (no more clumping), walk up late before the snap, and that walk-up is when the QB reads the blitz. Fixed a blitzer you control switching to a zone at the snap.",
+      "CPU defenders who are looking at the ball go up for tips and picks more often. Dives on a pass in the air are no faster than any other dive.",
+    ]],
+    ["OFFENSE", [
+      "Two-back sets: click the fullback's FB RUN ring to give it to him. Ball carriers slide around their own blockers instead of running into their backs.",
+      "Receivers fight a press man with their hands. Toe taps and toe drags keep the catch animation you made, with their own footwork. Your receivers' jumps and dives show the same timing hands as a defender's pick.",
+      "Smarter CPU QB: no throws to receivers being jammed, stumbling or still in their stem, and a sharp QB stays in a clean pocket longer and only bails under real heat.",
+    ]],
+    ["SEASON & MENUS", [
+      "Roster: TEAM UPGRADES opens a popup to buy salary cap room or a roster spot. Facilities go up to level 7. Special teams use the best fit from the whole roster.",
+      "Job offers: teams that did not call can be bought with credits (cheaper the more they want you). The new-season popup shows big league trades as player cards (FROM > TO).",
+      "Adaptive difficulty: harder in the playoffs, simmed games of yours count at half weight, and its % shows when extra tools are not hidden. The open-receiver wave is now a green hand. Team names add a period after the city (CIN. Bengals); star ratings use the star.",
+      "Single OFFENSE / DEFENSE button on the Hall of Fame, draft and free agency. Formation-view buttons ease on hover and press. Spent credits finish flying to their button before the page changes. The stands' ad wall is a hard wall players slow down for. The kicker's and holder's arms ease between poses.",
+      "Fixed: the QB's PASS ring drawing a black box, the Post announcing a new head coach every season, and lag with the internet off (cloud sync now waits for the connection and never runs mid-game).",
+    ]],
+  ] },
+  { v: "v0.22", secs: [
+    ["RUN BLOCKING PLAYBOOK", [
+      "Every run now follows a real blocking plan. Each blocker gets one named man and one rule for when to let go, depending on the formation and the call: inside zone, outside zone, iso, Power O, counter trey, trap and toss sweep.",
+      "Double teams climb to the linebackers at the right moment: once the lineman is driven back a yard, a backer comes close, or 0.7 s have passed (0.6 s in the pistol, a touch longer in the pro set). If the backer flows over the top, the climber stays on the lineman. At the goal line nobody climbs past 2 yards.",
+      "Pulling guards and tackles run flat behind the line. The guard kicks out the force man, or logs him if he squeezed inside. The tackle wraps to the first backer, and the trap hits the 3-technique from the side. A pulling lineman who meets a blitzer blocks him, and the fullback takes the old man. Force men can wrong-arm a kick-out and spill the run.",
+      "The backside cuts off the pursuit before climbing. The fullback (or the pro-set near back) takes the first linebacker to show at the hole. Receivers sell a route for a few yards, then stalk their man to the sideline. The slot takes the nickel, and the playside receiver switches to a safety who fills outside.",
+      "Ball carriers aim at the scheme's hole: the guard's hip on inside zone, the B gap on power, the A gap on iso, with a counter step on counter, and just inside the trapped man on a trap. The toss is pitched at 1.0 s (0.8 s from the pro set) so the puller gets there. In the pro set the play goes to the near back's side. With no tight end on the play side, the tackle takes the end; with no fullback on a toss, the pulling guard kicks out the force.",
+      "Before the snap the line counts the box. If two or more defenders are left free, a sharp coordinator checks to the other side or to zone. After the handoff the QB carries out a boot fake, and free defenders bite for half a second.",
+      "Shotgun inside zone is a zone read: the backside end is left unblocked and has to respect the QB. If he crashes on the back, the QB may pull it and keep it, and the back lead-blocks.",
+      "Hand off after a second in a pass set and it's a DRAW: the line rides the rush past the QB, the receivers clear out, and the back hits the A gap.",
+      "Beaten blockers turn and ride their man instead of standing still. A sloppy one may grab him, and that can draw a HOLDING flag: 10 yards and the down is replayed (declined if the play went worse for you). No block lasts more than 3 seconds.",
+      "On QB scrambles the line lets go of its blocks after 2.5 s and heads downfield. Linemen can only drift 1 yard past the line before a pass is thrown.",
+    ]],
+  ] },
   { v: "v0.21", secs: [
     ["DEPTH CHART & FORMATION VIEW", [
       "Roster: the left button switches OFFENSE / DEFENSE, the right one switches the offense between SIMPLE (the old 8 cards a page) and FORMATION view. Both are remembered.",

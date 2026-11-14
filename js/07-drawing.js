@@ -2,6 +2,7 @@
 const DIVE_EASE = 0.68;   // a dive / tackle / slide rotates from upright to laid out over this fraction of it
 const TACKLE_EASE = 0.4;  // a tackle attempt snaps to head-first at the carrier (toes to helmet along the line to him) over this fraction (was 0.22: looked like one frame)
 const RUSH_STILL = { qbSpeed: 0.3, range: 7 };   // a free rusher within range yd of a QB moving under qbSpeed x QB_SPEED goes straight at him
+const DIVE_EASE_RUN = 0.24;   // s: a ball carrier's dive for extra yards leans into it over at least this long (it read as standing one frame, flat the next)
 const DIVE_EASE_MIN = 0.16;   // s: the shortest a dive / tackle may take to go from upright to laid out
 const TACKLE_LEAN = { range: 4.5 * YD, tilt: 0.3 };   // a defender closing on the carrier leans into it (radians) inside this range
 const LOCK_FEET = { rate: 8, amp: 0.18, settle: 0.35 };   // (settle = s after the snap before a locked-up man starts chopping: he fires out of his stance first)   // feet chopping while locked up with a blocker: cycle speed, leg swing
@@ -29,7 +30,7 @@ const benchKit = () => [homeKit(), awayKit()].map(t => [t.shell, t.jersey, t.pan
 // runs out of canvas memory and drops to slow software drawing: the pre-snap lag that only a reload cleared)
 const freeCanvas = c => { if (c && c.width) { c.width = 0; c.height = 0; } };
 const CROWD_LOW = 0.5;   // touch devices (mobile Safari runs out of canvas memory on the ~230 MB crowd): every crowd canvas is built at this fraction of its size (memory x CROWD_LOW^2), then drawn back up to full size
-const crowdK = () => { try { return IS_MOBILE ? CROWD_LOW : 1; } catch (err) { return 1; } };   // (IS_MOBILE is defined far below)
+const crowdK = () => { try { return Math.min(IS_MOBILE ? CROWD_LOW : 1, liteOn() ? LITE.crowdK : 1); } catch (err) { return 1; } };   // (IS_MOBILE is defined far below; performance mode: smaller still, see LITE)
 function buildCrowd() {
   if (crowdImg) { for (const v of Object.values(crowdImg)) if (v instanceof HTMLCanvasElement) freeCanvas(v); crowdImg = null; }
   const K = crowdK();
@@ -288,7 +289,7 @@ function drawBottomSide() {
 }
 
 function drawCrowd() {
-  if (!crowdImg || crowdImg.home !== homeKey() || crowdImg.kit !== benchKit()) buildCrowd();   // (rebuilt when the home team changes)
+  if (!crowdImg || crowdImg.home !== homeKey() || crowdImg.kit !== benchKit() || crowdImg.k !== crowdK()) buildCrowd();   // (rebuilt when the home team changes, or performance mode goes on / off)
   const now = animNow(), cheering = now < crowdFx.until;
   const x = CROWD.x0, y = -CROWD.depth;
   // the sideline stands and their ad walls stop where the end walls begin (the walls close into a rectangle round the field; the end stands take the corners)
@@ -524,6 +525,7 @@ const EZ_TEXT = { maxW: 0.6, h: 0.62, logoY: 0.1 };   // text width (x field wid
 const TEXT_RES = 1.25, TEXT_CACHE = new Map();
 // (also jersey numbers, name tags and pick labels: live text there made presnap / snap lag on some Windows laptops. res = image px per world px)
 function drawTextCached(txt, fs, weight, family, x, y, fill, stroke, lw, res) {
+  if (typeof txt === 'string' && txt.includes('*')) txt = txt.replace(/(\d(?:\.\d)?)\s*\*/g, '$1★');   // (a rating's * = the star icon, like ctx.fillText)
   const R = res || TEXT_RES, key = [txt, fs, weight, family, fill, stroke, lw, R].join('|');
   let c = TEXT_CACHE.get(key);
   if (!c) {
@@ -556,12 +558,24 @@ function drawEndZoneName(cx, dir) {
   }
 }
 
-// LIGHT GRAPHICS (online guest on a phone): when drawing a frame takes too long (smoothed over ~10 frames), the optional decoration is dropped (the crowd, the star HUD) until
-// the frames are quick again. Never on the host or offline, and never changes anything about the play itself.
-const LIGHT = { on: 24, off: 14 };   // ms per drawn frame: above `on` the light mode starts, below `off` it ends
-let drawMs = 8, lightOn = false;
-function lightTick(ms) { drawMs = drawMs * 0.9 + ms * 0.1; if (drawMs > LIGHT.on) lightOn = true; else if (drawMs < LIGHT.off) lightOn = false; }
-const lightGfx = () => lightOn && ONL.on && ONL.guest && TOUCH;
+// PERFORMANCE MODE (settings > EXTRAS, SETTINGS.liteMode: AUTO = online and two-player games, ON = every game, OFF = never). Looks and sound only: nothing a play
+// reads, so both sides of an online game still play the very same game. While it is on: the stands are built small (a fraction of the ~230 MB of crowd
+// canvases), the weather draws a share of its particles, the footsteps and the wind's hiss are off, dark mode's wrapping of every canvas call is off in the game,
+// an online game records no replay tape (it never shows one), and a phone's canvas is capped at LITE.rk. If the frames are STILL slow (over LITE.slowMs for
+// LITE.hold s) the second step starts and stays for the rest of that game: no stands, no star HUD, and the whole canvas at LITE.slowRk of its pixels.
+const LITE = { crowdK: 0.4, wx: 0.45, rk: 1, slowMs: 24, hold: 2, slowRk: 0.75 };   // crowdK = the stands' canvases at this share of their size (memory x crowdK^2); wx = share of the weather particles
+let liteSlow = false, liteSlowT = 0, liteLvl = 0, frameAvg = 16;   // (liteLvl: what fitScreen last sized the canvas for)
+const liteOn = () => { const m = SETTINGS.liteMode || 'AUTO'; return m === 'ON' || (m === 'AUTO' && !!((typeof ONL !== 'undefined' && ONL.on) || (twoP && !twoP.ai))); };
+const liteGame = () => liteOn() && !results;   // (in a game: the menus keep their full look)
+const darkOn = () => !!SETTINGS.darkMode && !liteGame();
+function liteTick(ms) {   // once a frame, with this device's real frame time
+  if (!liteGame()) { liteSlow = false; liteSlowT = 0; frameAvg = 16; return; }
+  if (liteSlow || paused || document.hidden || !(ms > 0 && ms < 500)) return;
+  frameAvg += (ms - frameAvg) * 0.08;
+  if (frameAvg > LITE.slowMs) { liteSlowT += ms; if (liteSlowT > LITE.hold * 1000) liteSlow = true; } else liteSlowT = 0;
+}
+const liteLevel = () => liteSlow ? 2 : liteGame() ? 1 : 0;
+const lightGfx = () => liteSlow;
 // --- pencil look (drawing only: no hitbox, spot or speed ever reads these)
 // Field lines, route art and the pick circles are drawn by hand: each line wanders a little off straight, the circles are lumpy and jagged,
 // and the RUN circle is coloured in with green pencil, the PASS circle with plain graphite. Shapes are seeded, so they hold still between frames.
@@ -584,7 +598,7 @@ function penEllipse(cx, cy, rx, ry, seed) {   // (begins a new path: a lumpy, ja
   for (let i = 0; i < n; i++) { const a = ph + i / n * Math.PI * 2, k = 1 + (r() - 0.5) * 2 * PENCIL.ell * (i % 2 ? 1.5 : 0.7); pts.push([cx + Math.cos(a) * rx * k, cy + Math.sin(a) * ry * k]); }
   ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath();
 }
-function penHatch(cx, cy, rx, ry, col, seed) {   // (the current path, coloured in with slanted pencil strokes; the path is used up by the clip)
+function penHatchE(cx, cy, rx, ry, col, seed) {   // (the current path, coloured in with slanted pencil strokes; the path is used up by the clip)
   const r = penRnd(seed + 5), sp = PENCIL.hatch;
   ctx.save(); ctx.clip(); ctx.strokeStyle = col; ctx.globalAlpha *= PENCIL.hatchA; ctx.lineWidth = PENCIL.hatchW; ctx.lineCap = 'round';
   ctx.beginPath();
@@ -838,6 +852,8 @@ Object.assign(CHEER_POPUPS, { 'ICONIC': 0.95, 'ICONIC JUKE': 0.95, 'ICONIC SPIN'
 // (also what drawPlayer draws for a dive / slide). A dive straight up or down the screen used to stay upright (it rotates to its direction of
 // travel), which read as a jump: a dive is laid flat toward the way he faces by DIVE_LOOK.flat x how vertical it is, and shortened (fore) to show depth
 const DIVE_LOOK = { flat: 1, fore: 0.3, shadowLen: 20, shadowLift: 40 };   // shadowLen = a laid-out man's shadow half-length (sprite units); shadowLift = height (sprite units) at which an airborne man's shadow is half size
+// a carrier's own dive (he had it before he left his feet) is tucked the whole way, the same rule updateBall uses: else the ball was hidden on the turf
+const heldTuckK = (p, c) => p.action === 'dive' && !p.diveCaught && !p.oneHanded ? 1 : airTuckK(p, c);
 function diveTilt(p) {
   if ((p.action !== 'dive' && p.action !== 'slide') || !p.act || !p.act.dur) return null;
   const face = p.act.face || p.face, layout = wrapAngle(((p.act.angle) || 0) + Math.PI / 2);
@@ -846,7 +862,7 @@ function diveTilt(p) {
   lay += (face * Math.PI / 2 * 0.97 - lay) * vert * DIVE_LOOK.flat;
   lay *= p.tackling && tkLunge(p.tkStyle) ? TKV.lean : 1;
   if (p.act.lowHit) { const lh = p.act.lowHit, c = lh.kind === 'cut' ? CUT_LOOK.contact : 0.6; lay *= CUT_LOOK.lean + (1 - CUT_LOOK.lean) * smooth01((p.act.t / p.act.dur - c) / (1 - c)); }   // (a low shoulder lunge, hit-stick style: bent into it, only going down after the contact)
-  const easeT = Math.min(p.act.dur * 0.9, Math.max(DIVE_EASE_MIN, p.act.dur * (p.tackling ? TACKLE_EASE * (1.3 - 0.5 * Math.min(1, p.hitSpeed || 0)) : DIVE_EASE)));
+  const easeT = Math.min(p.act.dur * (p.runDive ? 1 : 0.9), Math.max(p.runDive ? DIVE_EASE_RUN : DIVE_EASE_MIN, p.act.dur * (p.tackling ? TACKLE_EASE * (1.3 - 0.5 * Math.min(1, p.hitSpeed || 0)) : DIVE_EASE)));
   const e = smooth01(p.act.t / easeT);
   return { w: lay * e, face, fore: 1 - DIVE_LOOK.fore * vert * e, e };
 }
@@ -945,7 +961,7 @@ function drawToeFx(p) {
 }
 const MISS_CARRY = { k: 0.18, max: 1.8, dive: 0.5 };   // a beaten tackler's extra slide along his own momentum: k yd per yd/s of his speed, capped at max yd; dive = x top speed for a dive with no velocity
 let reelQuiet = false;   // a reaction that isn't a missed tackle (a blocker who whiffed): no stat
-function startReel(d, style, c, ts = 1) {   // ts = time scale (2 = the whole stumble in half the time)
+function startReel(d, style, c, ts = 1, cut = 0) {   // ts = time scale (2 = the whole stumble in half the time); cut = end it after this share of its length (0 = play it all)
   let st = REEL_ST[style]; if (!st || !d || !c) return;
   if (!reelQuiet) pstMiss(d, c);
   const tilt = diveTilt(d), z0 = d.z || 0;   // (read before the dive is replaced: he eases out of it)
@@ -967,10 +983,10 @@ function startReel(d, style, c, ts = 1) {   // ts = time scale (2 = the whole st
   const msp = Math.hypot(mx, my), carry = msp > YD ? Math.min(MISS_CARRY.max, MISS_CARRY.k * msp / YD) * YD : 0;
   const cdx = carry ? mx / msp * carry : 0, cdy = carry ? my / msp * carry : 0;
   d.face = st.from === 'self' ? (tilt ? tilt.face : Math.sign(ux) || d.face) : (Math.sign(c.x - d.x) || d.face);   // (out of a dive: keeps the dive's mirroring, no flip)
-  d.action = 'reel'; d.act = { t: 0, style, dx: ux / l * st.dist * YD + cdx, dy: uy / l * st.dist * YD + cdy, down, pe: 0, r0: tilt ? d.face * tilt.w : 0, z0, ts };
+  d.action = 'reel'; d.act = { t: 0, style, dx: ux / l * st.dist * YD + cdx, dy: uy / l * st.dist * YD + cdy, down, pe: 0, r0: tilt ? d.face * tilt.w : 0, z0, ts, cutT: cut > 0 && !st.lie ? st.dur * cut : null };
   d.tackling = false; d.resolved = true; d.hitStick = false; d.engaged = false; d.stiffBy = null; d.push = null; d.svx = d.svy = 0;
   d.downMiss = true;   // (no tackles while he's reeling; cleared when it ends)
-  d.recoverUntil = Math.max(d.recoverUntil || 0, clock + st.dur / ts + (st.lie ? down : 0));
+  d.recoverUntil = Math.max(d.recoverUntil || 0, clock + (d.act.cutT != null ? d.act.cutT : st.dur) / ts + (st.lie ? down : 0));
 }
 function updateReel(p, a, dt) {
   const st = REEL_ST[a.style];
@@ -985,7 +1001,7 @@ function updateReel(p, a, dt) {
   p.z = a.rt < T1 ? airZ(a.rt, rh, z0) : st.bounce ? airZ(a.rt - T1, st.bounce * st.h * S) : 0;
   p.vx = p.vy = 0; p.moving = false; p.engaged = false; p.speed = 0;   // (speed 0: he re-accelerates from a standstill, no free burst out of the stumble)
   clampField(p);
-  if (a.t >= st.dur + (st.lie ? a.down : 0)) {
+  if (a.t >= (a.cutT != null ? a.cutT : st.dur + (st.lie ? a.down : 0))) {
     p.z = 0; p.downMiss = false;
     if (st.lie) { p.act = { angle: p.face * (st.pose(1, a).R || 0) - Math.PI / 2 }; p.action = 'dive'; getUp(p); }   // (gets up from the pose he landed in)
     else { p.action = null; p.act = null; }
@@ -1200,12 +1216,13 @@ function poseFx(p, ac) {
   return { R: (q.R || 0) * w, tx: (q.tx || 0) * w, ty: (q.ty || 0) * w, sx: 1 + ((q.sx || 1) - 1) * w, sy: 1 + ((q.sy || 1) - 1) * w,
            tw: q.tw != null ? 1 + (q.tw - 1) * w : null,
            arms: q.arms && w > 0.6 ? q.arms : null,   // (a catch pose that sets its own arms, e.g. helmetPin)
-           legs: w > 0.35 && p.action !== 'toedrag' && (p.action || (p.z || 0) > 2 * S) ? q.legs : null };   // (back on the ground he runs: his own legs, not the catch's air pose)
+           legs: w > 0.35 && p.action !== 'toedrag' && p.action !== 'toetap' && (p.action || (p.z || 0) > 2 * S) ? q.legs : null };   // (toe tap / drag: the catch's body + arms, the toes' own footwork)   // (back on the ground he runs: his own legs, not the catch's air pose)
 }
 
 // One arm in two pieces, in the player's sprite space (+x = the way he faces): from the shoulder at (sx, sy)
 // the upper arm runs at angle a (radians, 0 = straight ahead, + = down) for l1, then the forearm bends
 // by bend for l2 and ends in the glove. Sleeve over the biceps, a darker elbow joint, a slimmer forearm.
+const KICK_EASE = { arms: 9, wind: 0.4, up: 0.3 };   // kicker / holder looks: arms = 1/s blend rate, wind = share of the balance arms shown on the last strides, up = s to rise off the holder's knee
 function drawArm(t, skin, sx, sy, a, l1, bend, l2, glove = 4.4) {
   ctx.save();
   ctx.translate(sx, sy); ctx.rotate(a);
@@ -1377,10 +1394,10 @@ function drawPlayer(p) {
   // leaping / diving one-hander: one arm stretched for it, the other flung back (instead of both arms up)
   const oneHandAir = !p.hasBall && ((p.catchMode === 'jumpOne' && p.action === 'jump') || (p.catchMode === 'diveOne' && p.action === 'dive'));
   const oneBring = p.hasBall && ((p.oneHanded && (p.action === 'jump' || p.action === 'dive')) || (p.action === 'dive' && !!p.diveCaught) || (p.action === 'jump' && !!p.jumpCaught));   // (a tucked-in dive catch draws only its own arms: no second pair on top)   // (pulling a one-hander in: its own arms, not the two-arm dive pose on top)
-  const airTucked = p.hasBall && ball.tucked && (p.action === 'dive' || p.action === 'jump') && airTuckK(p, rec && rec.replaying ? rec.rt : clock) >= 1;   // (ball already tucked after a dive / jump: only the tuck arms, not the reaching pair on top)
+  const airTucked = p.hasBall && ball.tucked && (p.action === 'dive' || p.action === 'jump') && heldTuckK(p, rec && rec.replaying ? rec.rt : clock) >= 1;   // (ball already tucked after a dive / jump: only the tuck arms, not the reaching pair on top)
   const ripT = p.ripFrom && p.hasBall ? (rec && rec.replaying ? rec.rt : clock) - p.ripFrom.t : -1;
   const ripOn = ripT >= 0 && ripT < MOSS_RIP.hold + MOSS_RIP.dur + 0.2;   // (a Moss rip: one pair of arms, on the ball all the way as it's yanked out of the DB's hands and down to his chest: never the raised pair and a holding pair together)
-  const armsUp = ripOn || !oneHandAir && !oneBring && !airTucked && ((p.action === 'dive' && !p.hitStick) || p.action === 'clasp' || (p.action === 'jump' && !htNow)) || (p.action === 'swat' && !(p.act && (p.act.punch || p.act.one || p.act.pick))) || p.action === 'toetap' ||
+  const armsUp = ripOn || !oneHandAir && !oneBring && !airTucked && ((p.action === 'dive' && !p.hitStick) || p.action === 'clasp' || (p.action === 'jump' && !htNow)) || (p.action === 'swat' && !(p.act && (p.act.punch || p.act.one || p.act.pick))) || (p.action === 'toetap' && !(p.act && p.act.was !== 'jump' && 'was' in p.act)) ||
                  (p.action === 'dance' && Math.floor(p.act.t * 4) % 2 === 0) ||
                  (p.action === 'griddy' && Math.floor(p.act.t * 6) % 2 === 0) ||   // the griddy arm swing
                  (!p.action && p.tipArms && ball.inAir && (state === 'flight' || state === 'loose')) ||   // a defender getting his hands up to tip it
@@ -1404,7 +1421,7 @@ function drawPlayer(p) {
   const lockO = locked ? allPlayers().filter(o => o.team !== p.team && o.action !== 'down' && Math.hypot(o.x - p.x, o.y - p.y) < BLOCK_RANGE * 1.6).sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[0] : null;
   const swim = !p.action && p.swimLeft > 0;     // D-lineman's swim: one arm whipping over the blocker's shoulder
   const runPump = !p.hasBall && !p.action && !p.engaged && !(p.swimLeft > 0) && Math.hypot(p.vx || 0, p.vy || 0) > (recs.includes(p) || p === rb || (p === qb && runner !== qb) ? 1.5 : 4) * YD;   // (a receiver slowed coming off a jam / rip still pumps his arms)   // running free: the arms always pump (only the ball carrier keeps his own)
-  const armsOut = !runPump && !armsUp && !oneHand && !stiff && !overShoulder && !cradle && !swim && (locked || (p.reach && reachOn) || (p.reachGoal && p.action === 'down') || p.action === 'toedrag' || p.action === 'wrap' || p.action === 'kneel');
+  const armsOut = !runPump && !armsUp && !oneHand && !stiff && !overShoulder && !cradle && !swim && (locked || (p.reach && reachOn) || (p.reachGoal && p.action === 'down') || (p.action === 'toedrag' && !(p.act && 'was' in p.act)) || p.action === 'wrap' || p.action === 'kneel');
   // breaking: quick chatter steps (arms and feet) into a sharp cut, or one big plant on a milder one
   const ac = rec && rec.replaying ? rec.rt : clock;   // animation clock: the replay's own time during a replay
   const bf = !p.action && p.breakFx, bage = bf ? ac - bf.t : 9;
@@ -1450,10 +1467,15 @@ function drawPlayer(p) {
   ctx.scale(S * sz, S * sz);
   const gM0 = p.action ? ctx.getTransform() : null;   // (his feet frame: grounded poses are noted against it for a smooth get-up)
   let kneelK = 0;
+  // kicker / holder easing (looks only): the holder's hands, the kicker's balance arms and getting up off the knee blend in and out instead of popping
+  { const nowA = animNow(), dA = Math.max(0, Math.min(0.1, (nowA - (p.ezT ?? nowA)) / 1000)), ez = (v, to) => { v = v || 0; const k = 1 - Math.exp(-KICK_EASE.arms * dA); return Math.abs(to - v) < 0.005 ? to : v + (to - v) * k; };
+    p.ezT = nowA; p.hkE = ez(p.hkE, p.action === 'kneel' && p.holding ? 1 : 0); p.kaE = ez(p.kaE, p.kickSwing ? 1 : (p.kickWind || 0) * KICK_EASE.wind);
+    if (p.action !== 'kneel' && p.knE > 0) { p.knE = !p.action ? Math.max(0, p.knE - dA / KICK_EASE.up) : 0; } }
+  if (p.action !== 'kneel' && p.knE > 0.01) { kneelK = smooth01(p.knE); ctx.translate(0, 6 * kneelK); }   // (rising off the knee)
   if (p.action === 'kneel') {
     // dropping to one knee (feet stay put): sinks and leans into it, then settles upright
     const kt = p.act && typeof p.act.t === 'number' ? p.act.t / KNEEL_TIME : 1, kn = smooth01(Math.min(1, kt));
-    kneelK = kn;
+    kneelK = kn; p.knE = kn;
     ctx.translate(0, 6 * kn);   // the hips drop; the legs fold under him (see the leg poses below)
     ctx.rotate(0.22 * Math.sin(Math.PI * Math.min(1, kt)));
   }
@@ -1572,7 +1594,7 @@ function drawPlayer(p) {
   if (chop) { ctx.translate(0, 1.5); ctx.rotate(-0.1); }   // hips sunk, weight back over the chattering feet
   if (plant) { const k = Math.sin(Math.PI * bage / CUT_ANIM.plant); ctx.translate(0, 2 * k); ctx.rotate(-0.28 * k); }   // sits on the plant foot
   if (p.big) { const k = bulkOf(p); ctx.scale(1 + 0.18 * k, 1 + 0.08 * k); }
-  const tucked = ball.tucked && (p.hasBall || (p === qb && (runner === qb || sackPlay))) && (!p.action || p.action === 'getup' || (p.action === 'down' && p.hasBall) || falling || (p === qb && sackPlay && p.action === 'down') || p.action === 'juke' || p.action === 'spin' || p.action === 'hurdle' || ((p.action === 'dive' || p.action === 'jump') && p.hasBall && airTuckK(p, ac) >= 1) || (p.action === 'kneel' && !p.holding));   // (a slide is the two-arm cradle instead)
+  const tucked = ball.tucked && (p.hasBall || (p === qb && (runner === qb || sackPlay))) && (!p.action || p.action === 'getup' || (p.action === 'down' && p.hasBall) || falling || (p === qb && sackPlay && p.action === 'down') || p.action === 'juke' || p.action === 'spin' || p.action === 'hurdle' || ((p.action === 'dive' || p.action === 'jump') && p.hasBall && heldTuckK(p, ac) >= 1) || (p.action === 'kneel' && !p.holding));   // (a slide is the two-arm cradle instead)
 
   if (p.action === 'hurdle' && p.act && p.act.backward && !HURDLE_ST[p.act.style]) ctx.rotate(-0.7 * Math.sin(Math.PI * Math.min(1, p.act.t / p.act.dur)));   // spin-hurdle: goes over leaning backwards
   if (p.action === 'sit') {   // sat down, legs out (slip / jammed down / ankles): eases down and back up, never a one-frame pop
@@ -1616,7 +1638,7 @@ function drawPlayer(p) {
   const pickGrab = p.action === 'swat' && !!p.act && !!p.act.pick && !p.act.one;   // (a two-hand pick: hands on the ball, not swatting)
   const holdingOut = !armsUp && (p.hasBall && !ball.tucked && (!p.action || pickGrab) && !p.cradle && p !== qb && !stiff && (nearBall || pickGrab)) || (headTopping && !armsUp);
   // the arm at his side swings with the stride; a man running without the ball pumps both (the far one behind him)
-  const sideArm = !armsUp && !tucked && !holdingOut && !(p.action === 'dive' && p.hitStick) && !overShoulder && !(p.action === 'kneel' && p.holding) &&
+  const sideArm = !armsUp && !tucked && !holdingOut && !(p.action === 'dive' && p.hitStick) && !overShoulder && !(p.action === 'kneel' && p.holding) && !(p.hkE > 0.02) && !(!p.action && p.kaE > 0.02) &&
                   !p.kickSwing && p.action !== 'wrap' && !armsOut && !(p.flex && !p.hasBall) && p.action !== 'point' && !cradle && !cocked && !throwing && !stiff && !oneHand && !swim;
   const pump = striding && !p.hasBall ? 1 : 0.7;
   const together = (armsUp && p.action !== 'griddy' && !p.tipArms) || lying || p.action === 'toedrag' || p.action === 'sit';
@@ -1624,7 +1646,7 @@ function drawPlayer(p) {
   // on the way forward (the recovery) and straightens as the foot plants and pushes back.
   const tip = p.action === 'toetap';
   let legs;
-  if (p.action === 'kneel') legs = [[-3, 0.1 * kneelK, 1.5 * kneelK], [3, -1.5 * kneelK, 0.9 * kneelK]];   // back knee on the turf, front foot planted
+  if (p.action === 'kneel' || (!p.action && kneelK > 0.01)) legs = [[-3, 0.1 * kneelK, 1.5 * kneelK], [3, -1.5 * kneelK, 0.9 * kneelK]];   // back knee on the turf, front foot planted
   else if ((p.kickSwing && (p.kickK ?? 9) < KICK_ANIM.done) || (!p.kickSwing && p.kickWind > 0 && !p.action)) {
     // kicking: plant leg firm; the kicking leg cocks back at the knee on the last stride, whips through
     // (knee snapping straight) to finish high, then comes back down
@@ -1796,13 +1818,15 @@ function drawPlayer(p) {
   } else if (overShoulder) {
     // both hands up and back over the shoulder, tracking the ball coming in from behind
     for (const [ox, ang] of [[-3, -2.3], [2, -2.05]]) drawArm(t, skin, ox, -11 + bob, ang, 5, 0.35, 6, 4.8);   // elbows bent, hands cupped back
-  } else if (p.action === 'kneel' && p.holding) {
-    // the holder, on one knee: both hands down on the ball standing on the turf in front of him
-    for (const [sx, sy, ang] of [[0, -10.5, 0.95], [2.5, -9, 0.75]]) drawArm(t, skin, sx, sy + bob, ang, 4, 0.15, 5);
-  } else if (p.kickSwing) {
-    // the kicker's arms out for balance as the leg swings through
-    drawArm(t, skin, 2, -10 + bob, -0.6, 4.5, 0.25, 5);
-    drawArm(t, skin, -2, -10.5 + bob, 2.5, 4.5, -0.25, 5);
+  } else if ((p.action === 'kneel' && p.holding) || ((p.action === 'kneel' || !p.action) && p.hkE > 0.02)) {
+    // the holder, on one knee: both hands down on the ball standing on the turf in front of him (eased in from hanging, hkE)
+    const k = p.hkE ?? 1, H = Math.PI / 2;
+    for (const [sx, sy, ang] of [[0, -10.5, 0.95], [2.5, -9, 0.75]]) drawArm(t, skin, sx * k + 0.5 * (1 - k), (sy * k - 9.5 * (1 - k)) + bob, H + (ang - H) * k, 2.5 + 1.5 * k, -0.15 + 0.3 * k, 3.5 + 1.5 * k);
+  } else if (p.kickSwing || (!p.action && p.kaE > 0.02)) {
+    // the kicker's arms out for balance as the leg swings through (eased in / out from hanging, kaE)
+    const k = p.kaE ?? 1, H = Math.PI / 2;
+    drawArm(t, skin, 2 * k + 0.5 * (1 - k), -10 * k - 9.5 * (1 - k) + bob, H + (-0.6 - H) * k, 2.5 + 2 * k, -0.15 + 0.4 * k, 3.5 + 1.5 * k);
+    drawArm(t, skin, -2 * k + 0.5 * (1 - k), -10.5 * k - 9.5 * (1 - k) + bob, H + (2.5 - H) * k, 2.5 + 2 * k, -0.15 - 0.1 * k, 3.5 + 1.5 * k);
   } else if (p.action === 'wrap') {
     // a wrap-up tackle: both arms reach around the runner and lock behind him, driving him down
     // (upper arms reach out wide around him, then the forearms curl in and the hands lock behind his back)
@@ -2145,7 +2169,7 @@ function drawPickCircle(p, color, label) {
   const rx = PR * pulse, ry = PR * 0.5 * pulse, cy = p.y + FOOT;
   ctx.save();
   penEllipse(p.x, cy, rx, ry, sd); ctx.fillStyle = run ? 'rgba(120,200,70,0.28)' : 'rgba(60,60,60,0.22)'; ctx.fill();
-  penHatch(p.x, cy, rx, ry, run ? '#43b02a' : '#3b3b3b', sd);
+  penHatchE(p.x, cy, rx, ry, run ? '#43b02a' : '#3b3b3b', sd);
   ctx.strokeStyle = run ? '#6bd145' : '#2c2c2c'; ctx.lineWidth = 5; ctx.lineJoin = 'round';
   penEllipse(p.x, cy, rx, ry, sd); ctx.stroke();
   ctx.globalAlpha *= 0.5; ctx.lineWidth = 2; penEllipse(p.x + 2, cy - 1.5, rx * 0.98, ry * 0.98, sd + 3); ctx.stroke();   // (a second pencil pass)

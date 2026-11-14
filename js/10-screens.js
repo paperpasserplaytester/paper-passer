@@ -9,7 +9,7 @@ function tscout() {
 }
 const tsFuzz = (key, amp) => { let h = 7; for (const c of key) h = (h * 31 + c.charCodeAt(0)) % 9973; return Math.round(((h % 101) / 100 * 2 - 1) * amp); };   // (same guess every time you look: no re-rolling by reopening)
 function drawScout() {
-  const k = scoutUI.team, t = NFL[k], S = tscout(), sc = !!S.done[k], ok = moveMode ? moveOk(k) : !!OFF.offers[k];
+  const k = scoutUI.team, t = NFL[k], S = tscout(), sc = !!S.done[k], ok = moveOk(k) || !!OFF.offers[k];   // (job offers: a team that did not call can still be bought for its asking price)
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H);
   resPanel(60, 70, 1160, 600, [[`${teamFull(k)}  ${sc ? 'SCOUTED' : 'ESTIMATES'}`, null]], RES.bright);
   ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.font = 'bold 18px monospace';
@@ -19,8 +19,8 @@ function drawScout() {
     const y = 176 + i * 44, pts = ptsOf(p), e = DRAFT.scoutErr * 2;
     const lo = starsOfScore(Math.max(0, pts - e + tsFuzz(p.name + k, 2))), hi = starsOfScore(Math.min(ATTR_TOTAL, pts + e + tsFuzz(p.name + k, 2)));
     ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.fillText(`${p.name} ${p.group}`.slice(0, 26), 90, y);
-    ctx.fillText(`${p.stars}*`, 400, y);
-    ctx.fillStyle = sc ? '#2e8b57' : RES.dim; ctx.fillText(sc ? `POT ${starsOfScore(pts)}*` : lo === hi ? `POT ~${lo}*` : `POT ${lo}-${hi}*`, 470, y);
+    ctx.fillText(`${p.stars}★`, 400, y);
+    ctx.fillStyle = sc ? '#2e8b57' : RES.dim; ctx.fillText(sc ? `POT ${starsOfScore(pts)}★` : lo === hi ? `POT ~${lo}★` : `POT ${lo}-${hi}★`, 470, y);
   });
   const tier = facTier(k), est = Math.max(1, Math.min(5, tier + tsFuzz('fac' + k, 1))), band = n => n <= 2 ? 'LOW' : n === 3 ? 'MID' : 'HIGH';
   ctx.fillStyle = RES.dim; ctx.font = 'bold 18px monospace'; ctx.fillText('FACILITIES', 700, 140);
@@ -38,7 +38,7 @@ function drawScout() {
   });
   menuBtn(TS_BACK, 'BACK', RES.bright, 22);
   menuBtn(TS_SCOUT, sc ? 'SCOUTED' : `SCOUT\n${S.left} LEFT`, !sc && S.left > 0 ? RES.bright : CARD_GRAY, 20, null, !sc && S.left > 0);
-  const bonus = offerOf(k), price = moveMode && ok && !bonus ? offerPrice(k) : 0, rich = LEAGUE.coins >= price;
+  const bonus = offerOf(k), price = ok && !bonus ? offerPrice(k) : 0, rich = LEAGUE.coins >= price;
   ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center';
   ctx.fillText(bonus ? `THEY OFFER A ${bonus} ¤ SIGNING BONUS` : price ? `THEY ASK ${price} ¤ TO HIRE YOU (YOU HAVE ${LEAGUE.coins} ¤)` : '', W / 2, 580);
   if (price) { const hg = haggled(k); menuBtn(TS_NEG, hg ? 'HAGGLED' : 'HAGGLE', hg ? CARD_GRAY : RES.bright, 20, null, !hg); }
@@ -48,7 +48,7 @@ const TS_NEG = { x: 765, y: 612, w: 200, h: 50 };
 const offerOf = k => OFF && OFF.offers ? OFF.offers[k] || 0 : 0;   // credits a team that called pays you (0 = none)
 const haggled = k => !!(career.haggle && career.haggle.yr === LEAGUE.year && career.haggle[k]);
 function scoutClick(pt) {
-  const k = scoutUI.team, S = tscout(), ok = moveMode ? moveOk(k) : !!offerOf(k), bonus = offerOf(k), price = moveMode && ok && !bonus ? offerPrice(k) : 0;
+  const k = scoutUI.team, S = tscout(), ok = moveOk(k) || !!offerOf(k), bonus = offerOf(k), price = ok && !bonus ? offerPrice(k) : 0;
   if (inBtn(pt, TS_BACK)) { scoutUI.team = null; return; }
   if (inBtn(pt, TS_SCOUT) && !S.done[k] && S.left > 0) { S.done[k] = true; S.left--; return; }
   if (price && inBtn(pt, TS_NEG) && !haggled(k)) {   // haggle once: a good year and a team that wants you can cut the price; a bad one can raise it
@@ -284,11 +284,11 @@ const seeded = s => () => (s = (s * 16807 + 11) % 2147483647) / 2147483647;
 const PAPER_COLOR = '#FAFAF7';   // the notebook paper's base colour (near white: text stays readable)
 let PAPER_BG = null, DESK_BG = null;
 function paperBg() {
-  if (PAPER_BG && PAPER_BG.dk !== !!SETTINGS.darkMode) { freeCanvas(PAPER_BG); PAPER_BG = null; }   // (dark mode builds its own grey sheet)
+  if (PAPER_BG && PAPER_BG.dk !== darkOn()) { freeCanvas(PAPER_BG); PAPER_BG = null; }   // (dark mode builds its own grey sheet)
   if (!PAPER_BG) {
     // (built DESK_X wider on each side, with the blotches, ruling, creases and grain spread across all of it: a widened touch screen gets the same paper to its edges)
     const PX = DESK_X, FW2 = W + 2 * PX, c = PAPER_BG = document.createElement('canvas'); c.width = FW2; c.height = H;
-    const g = c.getContext('2d'), r = seeded(7), dk = c.dk = !!SETTINGS.darkMode, hi = a => `rgba(255,255,255,${dk ? a * DM.paperHi : a})`;
+    const g = c.getContext('2d'), r = seeded(7), dk = c.dk = darkOn(), hi = a => `rgba(255,255,255,${dk ? a * DM.paperHi : a})`;
     g.translate(PX, 0);
     g.fillStyle = dk ? DM.page : PAPER_COLOR; g.fillRect(-PX, 0, FW2, H);
     for (const [fx, fy, fx2, fy2] of [[W / 3, 0, W / 3 + 6, H], [0, H / 2, W, H / 2 - 5], [2 * W / 3, 0, 2 * W / 3 - 8, H]]) {   // fold marks: a shadow beside a highlight
@@ -601,7 +601,7 @@ const DM_WRAP = {
 if (DM_P.roundRect) DM_WRAP.roundRect = function (x, y, w, h, r) { if (!dmHold) dmGrow(x, y, x + w, y + h); return DM_P.roundRect.call(ctx, x, y, w, h, r); };
 function dmFrame() {   // once a frame, before anything is drawn
   dmRecs.length = 0; dmHold = 0; dmPath = null;
-  const on = !!SETTINGS.darkMode;
+  const on = darkOn();   // (performance mode: off in a game, the wrapping costs a call on every canvas draw)
   if (on === dmOn) return;
   dmOn = on;
   for (const k of Object.keys(DM_WRAP)) { if (on) ctx[k] = DM_WRAP[k]; else delete ctx[k]; }
@@ -1625,7 +1625,7 @@ const GS_TITLE = { x: W / 2 - 250, y: 8, w: 500, h: 72 };
 const GS_TABS = { home: { x: 20, y: 12, w: 200, h: 60 }, away: { x: W - 220, y: 12, w: 200, h: 60 } };
 const GS_DD = Array.from({ length: 16 }, (_, k) => ({ x: 190 + (k % 2) * 450, y: 96 + Math.floor(k / 2) * 52, w: 440, h: 46 }));
 // (derived rates, longs and counts a quick box score doesn't need)
-const GS_SKIP = new Set(['GP', 'GS', 'SOLO', 'ASSISTS', 'CMP %', 'Y/A', 'RATING', 'YDS/CARRY', 'YDS/REC', 'CATCH %', 'FG %', 'XP %', 'LONG', 'LONG RUN', 'LONG FG', 'GROSS AVG', 'NET AVG', 'LONG PUNT', 'TARGETS']);
+const GS_SKIP = new Set(['GP', 'GS', 'SOLO', 'ASSISTS', 'CMP %', 'Y/A', 'YDS/CARRY', 'YDS/REC', 'CATCH %', 'FG %', 'XP %', 'LONG', 'LONG RUN', 'LONG FG', 'GROSS AVG', 'NET AVG', 'LONG PUNT', 'TARGETS']);
 function gsOpen(ret) {
   const ex = !!exhibition || !season, po = !ex && season.lastPO != null, wk = !ex && !po ? (season.last || gamesPlayed()) : null;
   let games;
@@ -1973,7 +1973,7 @@ function buySpot() {
   rosterView.page = pg;
 }
 const rosterSide = (team, side) => {
-  const st = startersOf(team), rank = p => (isOut(p) ? 2 : st.has(p) ? 0 : 1);
+  const st = dcg && dcg.field && team === MATCH.you ? dcg.field : startersOf(team), rank = p => (isOut(p) ? 2 : st.has(p) ? 0 : 1);
   if (side === 'upg') return (ROSTER[team] || []).filter(p => upgSpendable(p) || UPG_POPS.some(u => u.p === p && performance.now() - u.at < 1200)).sort((a, b) => (OFF_GROUPS.includes(b.group) - OFF_GROUPS.includes(a.group)) || scoreOf(b) - scoreOf(a));
   const L = (ROSTER[team] || []).filter(p => OFF_GROUPS.includes(p.group) === (side === 'off')).sort((a, b) => rank(a) - rank(b) || scoreOf(b) - scoreOf(a));
   const seen = {}, wt = new Map();   // (starters first, then by how much his slot weighs in the offense / defense rating (SIDE_W: QB, then WR / CB, ...), then his own score)
@@ -2317,11 +2317,15 @@ function drawRoster() {
     drawLogo(team, b.x + 40, b.y + b.h / 2, 46); drawLogo(team, b.x + b.w - 40, b.y + b.h / 2, 46);
   });
   if (rosterView.side !== 'upg') {   // (the upgrades list shows both sides together: no tabs) left = OFFENSE / DEFENSE toggle, right = FORMATION / SIMPLE view (defense: simple only)
-    menuBtn(ROSTER_TABS.off, rosterView.side === 'off' ? 'OFFENSE' : 'DEFENSE', SEL, 26);
-    const canForm = rosterView.side === 'off' && !rosterView.statsOnly;
+    menuBtn(ROSTER_TABS.off, rosterView.side === 'off' ? 'OFFENSE' : 'DEFENSE', dcg ? CARD_GRAY : SEL, 26, undefined, !dcg);
+    const canForm = rosterView.side === 'off' && !rosterView.statsOnly && !(dcg && dcg.st);
     menuBtn(ROSTER_TABS.def, canForm && rosterUI.view === 'form' ? 'FORMATION' : 'SIMPLE', RES.bright, 24, undefined, canForm);
+    const tipUnder = (b, s) => { ctx.font = 'bold 12px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(s, b.x + b.w / 2, b.y + b.h + 10); };   // (what a click on the toggle brings up)
+    const verb = TOUCH ? 'tap' : 'click';
+    if (!dcg) tipUnder(ROSTER_TABS.off, `${verb} for ${rosterView.side === 'off' ? 'defense' : 'offense'}`);
+    if (canForm) tipUnder(ROSTER_TABS.def, `${verb} for ${rosterUI.view === 'form' ? 'simple' : 'formation'}`);
   }
-  const starting = startersOf(team);
+  const starting = dcg && dcg.field ? dcg.field : startersOf(team);   // (in-game depth chart: the men on the field this play)
   for (const p of ps) p.backup = !starting.has(p);
   const pages = rosterPages(ps, rosterView.side, team), pg = Math.min(rosterView.page || 0, pages - 1);
   const upgView = rosterView.side === 'upg', nUpg = team === MATCH.you ? upgTotal(team) : 0;
@@ -2343,17 +2347,38 @@ function drawRoster() {
   if (!rosterView.statsOnly && team === MATCH.you && upgView && nUpg > 0) menuBtn(UPG_ALL_BTN, 'UPGRADE\nALL', '#7fd48f', 16);
   ROSTER_ARROWS.forEach((b, i) => menuBtn(b, i ? '▸' : '◂', RES.bright, 30));   // (formation view: they flip formation / special-teams pages)
   drawCapBar(team, 150, 636, 480, [], true);
-  if (!rosterView.statsOnly && team === MATCH.you && !exhibition && season && !upgView) {   // buy another roster spot on this side: grayed out (and still) without the credits or at the max
-    const can = LEAGUE.coins >= SPOT.cost && spots < SPOT.max;
-    menuBtn(BUY_SPOT_BTN, '', RES.bright, 17, b => {
-      ctx.fillStyle = can ? b.ink : 'rgba(70,55,30,0.6)'; ctx.font = 'bold 17px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(spots >= SPOT.max ? 'ROSTER SPOTS' : 'PURCHASE', b.x + b.w / 2, b.y + 20); ctx.fillText(spots >= SPOT.max ? 'MAXED OUT' : 'ROSTER SPOT', b.x + b.w / 2, b.y + 42);
-      if (spots < SPOT.max) { ctx.font = 'bold 22px monospace'; const tw = ctx.measureText(String(SPOT.cost)).width; ctx.fillText(String(SPOT.cost), b.x + b.w / 2 - 14, b.y + 63); ctx.save(); if (!can) ctx.globalAlpha = 0.45; eraserIcon(b.x + b.w / 2 + tw / 2 - 2, b.y + 63, 8); ctx.restore(); }
-    }, can);
-  }
+  if (!rosterView.statsOnly && team === MATCH.you && !exhibition && season && !upgView) menuBtn(BUY_SPOT_BTN, 'TEAM\nUPGRADES', RES.bright, 20);   // (opens the popup: more cap room / another roster spot)
   menuBtn(HOF_ROSTER_BTN, 'HOF', RES.bright, 26);
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
   if (formView()) fvOverlay(team);   // (the page quick-pick list, over everything)
+  if (rosterView.tu) drawTeamUpg(team, spots);
+}
+// TEAM UPGRADES popup (roster screen): +CAP.step $M of cap room, or one more roster spot on the side shown
+const TU = { box: { x: 370, y: 170, w: 540, h: 360 }, cap: { x: 400, y: 260, w: 230, h: 180 }, spot: { x: 650, y: 260, w: 230, h: 180 }, close: { x: 560, y: 456, w: 160, h: 56 } };
+function drawTeamUpg(team, spots) {
+  const B = TU.box, side = rosterView.side === 'def' ? 'DEFENSE' : 'OFFENSE';
+  ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = RES.bg; ctx.fillRect(B.x, B.y, B.w, B.h); penOutline(B.x, B.y, B.w, B.h, 41, RES.line, 3);
+  ctx.fillStyle = RES.line; ctx.font = 'bold 28px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('TEAM UPGRADES', B.x + B.w / 2, B.y + 40);
+  ctx.font = 'bold 15px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(`${LEAGUE.coins} ¤ TO SPEND`, B.x + B.w / 2, B.y + 70);
+  const capNow = LEAGUE.cap || CAP.start, capMax = capNow >= CAP.max, capCan = !capMax && LEAGUE.coins >= CAP.cost;
+  const spMax = spots >= SPOT.max, spCan = !spMax && LEAGUE.coins >= SPOT.cost;
+  const card = (b, can, l1, l2, l3, cost) => menuBtn(b, '', RES.bright, 18, bb => {
+    ctx.fillStyle = can ? bb.ink : 'rgba(70,55,30,0.55)'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = 'bold 22px monospace'; ctx.fillText(l1, bb.x + bb.w / 2, bb.y + 40);
+    ctx.font = 'bold 15px monospace'; ctx.fillText(l2, bb.x + bb.w / 2, bb.y + 74); ctx.fillText(l3, bb.x + bb.w / 2, bb.y + 98);
+    if (cost != null) { ctx.font = 'bold 24px monospace'; ctx.fillText(`${cost} ¤`, bb.x + bb.w / 2, bb.y + 145); }
+  }, can);
+  card(TU.cap, capCan, 'SALARY CAP', capMax ? 'MAXED OUT' : `+${fmtM(CAP.step)}`, `NOW ${fmtM(capNow)}`, capMax ? null : CAP.cost);
+  card(TU.spot, spCan, 'ROSTER SPOT', spMax ? 'MAXED OUT' : `+1 ON ${side}`, `${spots} / ${SPOT.max} SPOTS`, spMax ? null : SPOT.cost);
+  menuBtn(TU.close, 'CLOSE', RES.bright, 22);
+}
+function teamUpgClick(pt) {   // true = the popup took the click
+  if (!rosterView.tu) return false;
+  if (inBtn(pt, TU.cap)) { const was = LEAGUE.cap || CAP.start; buyCap(); if ((LEAGUE.cap || CAP.start) > was) rosterView.tu = false; }
+  else if (inBtn(pt, TU.spot)) { const n = spotsOf(MATCH.you, rosterView.side); buySpot(); if (spotsOf(MATCH.you, rosterView.side) > n) rosterView.tu = false; }
+  else if (inBtn(pt, TU.close) || !inBtn(pt, TU.box)) rosterView.tu = false;
+  return true;
 }
 // an open roster spot: gray card, gray faceless bust with a question mark, "?" position, blank name line, gray stars
 function emptyCard(bb, k = 1) {   // k < 1: a freshly bought spot, a crumpled ball of paper that smooths out
@@ -2382,6 +2407,7 @@ function emptyCard(bb, k = 1) {   // k < 1: a freshly bought spot, a crumpled ba
   if (k < 1) ctx.restore();
 }
 // one roster card (extra: a tag on the photo's lower right, e.g. a free agent's ask)
+const depthTagOn = (team, p) => !!results && results.screen === 'roster' && !offDetail() && !!ROSTER[team] && ROSTER[team].includes(p) && p.group !== 'K';
 function rosterCard(p, bb, team, kr, extra) {
   const { main } = sideKit(team, p);
   const cardBg = p => !offDetail() && (isOut(p) || p.backup) ? CARD_GRAY : mixHex(main, 0.5, 255);   // team colour; benched / backups gray
@@ -2404,15 +2430,16 @@ function rosterCard(p, bb, team, kr, extra) {
       ctx.fillStyle = g; ctx.fillRect(px, py, pw, ph); ctx.restore();
       ctx.save(); ctx.shadowColor = 'rgba(255,200,40,0.9)'; ctx.shadowBlur = 10; ctx.strokeStyle = '#e0a81c'; ctx.lineWidth = 3.5; ctx.strokeRect(px, py, pw, ph); ctx.restore();
     }
-    ctx.font = 'bold 20px monospace'; const tw = ctx.measureText(p.group || p.tag).width + 14;
+    const dn = depthTagOn(team, p) ? depthNo(team, p) : 0, gl = `${p.group || p.tag}${dn ? ' ' + dn : ''}`;   // (roster: WR 1, WR 2 ... = his place on the depth chart)
+    ctx.font = 'bold 20px monospace'; const tw = ctx.measureText(gl).width + 14;
     ctx.fillStyle = pcol; ctx.fillRect(px + pw - tw - 6, py + 6, tw, 28); ctx.strokeStyle = RES.line; ctx.lineWidth = 2.5; ctx.strokeRect(px + pw - tw - 6, py + 6, tw, 28);
-    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(p.group || p.tag, px + pw - tw / 2 - 6, py + 21);
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(gl, px + pw - tw / 2 - 6, py + 21);
     if (!offDetail() && !extra) {   // hurt: plasters; worn out (your own players): red TIRED tape
       if (injLabel(p)) bandage(px + pw - 40, py + ph - 52, false);
       else if (team === MATCH.you && season && !exhibition && condOf(p) < TIRED_COND) bandage(px + pw - 44, py + ph - 52, true);
     }
     if (p === kr) drawBookmark({ x: px + 8, y: py, w: 30, h: 40 }, true);
-    const tag = offDetail() ? (results.screen === 'draft' && p.scout ? 'SCOUTED' : p.rookie ? 'ROOKIE' : null) : injLabel(p) ? `INJ ${p.inj.weeks > 0 ? p.inj.weeks + ' WK' : ''}` : p.benchNext ? 'BENCHED' : p.backup ? 'BACKUP' : null;   // hurt / sitting next game / not a starter
+    const tag = offDetail() ? (results.screen === 'draft' && p.scout ? 'SCOUTED' : p.rookie ? 'ROOKIE' : null) : injLabel(p) ? `INJ ${p.inj.weeks > 0 ? p.inj.weeks + ' WK' : ''}` : p.benchNext ? 'BENCHED' : p.backup && !depthTagOn(team, p) ? 'BACKUP' : null;   // hurt / sitting next game / not a starter (the roster shows his depth number instead)
     if (tag) {
       ctx.font = 'bold 16px monospace'; const w2 = ctx.measureText(tag).width + 12;
       ctx.fillStyle = tag === 'BENCHED' ? SEL : tag === 'BACKUP' ? '#6b6f78' : tag === 'SCOUTED' ? '#2e8b57' : '#c81b1b'; ctx.fillRect(px + 6, py + ph - 30, w2, 24);
@@ -2524,7 +2551,7 @@ function fvEnter(team, page) {   // a page change (or a fresh visit): new layout
 }
 // who is shown in each slot of a page (null = nobody: the empty sticky note)
 function fvPeople(team, pg) {
-  return pg.kind === 'form' ? formPersonnel(team, pg.f, true) : stPeople(team, pg);
+  return pg.kind === 'form' ? formPersonnel(team, pg.f) : stPeople(team, pg);
 }
 // a page's slot i -> its depth-chart key, who may play it, how well a man fits it (formations: the offense chart; special teams: their own)
 const fvKey = (pg, i) => pg.kind === 'form' ? chartSlotsOf(pg.f)[i] : pg.slots[i].k;
@@ -2540,13 +2567,32 @@ function fvCands(team, pg, i, cur, holder) {   // the slot's list: the man in it
   return [cur, ...L.filter(p => !busy(p)).sort(by), ...L.filter(busy).sort(by)];
 }
 const FV_AUTO_BTN = { x: FV.box.x + 10, y: FV.box.y + FV.box.h - 50, w: 118, h: 40 };   // AUTO: pinned to the view's bottom left (screen px, never zoomed / panned); your franchise only
-const fvAutoItems = () => ['AUTO THIS PAGE', 'AUTO ALL'].map((label, i) => ({ i, label, b: { x: FV_AUTO_BTN.x, y: FV_AUTO_BTN.y - (2 - i) * 40, w: 210, h: 36 } }));
+const FV_AUTO_B = [{}, {}];
+const fvAutoItems = () => ['AUTO THIS PAGE', 'AUTO ALL'].map((label, i) => ({ i, label, b: Object.assign(FV_AUTO_B[i], { x: FV_AUTO_BTN.x, y: FV_AUTO_BTN.y - (2 - i) * 40, w: 210, h: 36 }) }));
 function fvAuto(team, all) {
   const pg = fvPages()[FVS.page];
-  if (all) { depthAuto(team); stAutoAll(team); }
-  else if (pg.kind === 'form') depthAuto(team, chartSlotsOf(pg.f).filter(Boolean));
-  else stAuto(team, pg);
-  FVS.cyc = {};
+  if (all) depthAutoFull(team);
+  else if (LEAGUE.depth) {   // this page only: its own lineup cleared (formations: plus the shared chart's slots it uses), its groups re-sorted
+    if (pg.kind === 'form') { delete LEAGUE.depth[fUnit(pg.f)]; const u = LEAGUE.depth.off; if (u) for (const k of chartSlotsOf(pg.f)) if (k) delete u[k]; depthAuto(team, chartSlotsOf(pg.f).filter(Boolean)); }
+    else delete LEAGUE.depth[pg.unit];
+    autosaveSoon();
+  }
+  FVS.cyc = {}; ST_HOLD.t = 0;
+}
+// a dropdown pick: he starts there at once. The page's lineup is frozen first (everyone shown keeps his slot), so only the man he
+// replaces leaves; if he was already in another slot of this page, they swap. Formations: that formation only (its own unit).
+function fvPick(team, pg, i, p) {
+  const keys = FVS.lay.L.map(c => fvKey(pg, c.i)), k = fvKey(pg, i); if (!k || !p) return;
+  const people = fvPeople(team, pg), unit = pg.kind === 'form' ? fUnit(pg.f) : pg.unit, cur = people[i];
+  if (cur === p) return;
+  LEAGUE.depth = LEAGUE.depth || {}; const U = LEAGUE.depth[unit] = {};
+  pg.slots.forEach((s, j) => { const kj = fvKey(pg, j), q = people[j]; if (kj && q && q.name) U[kj] = q.name; });
+  const jp = people.indexOf(p), kp = jp >= 0 ? fvKey(pg, jp) : null;
+  if (unit === 'kr') { if (k === 'KR') depthSet('kr', 'KR', p); else if (kp === 'KR' && cur) depthSet('kr', 'KR', cur); }
+  for (const q of Object.keys(U)) if (U[q] === p.name) delete U[q];
+  U[k] = p.name;
+  if (kp && kp !== k && cur && (!fvGroups(pg, kp) || fvGroups(pg, kp).includes(cur.group))) U[kp] = cur.name;
+  FVS.cyc = {}; ST_HOLD.t = 0; autosaveSoon();
 }
 function fvStart(team, pg, h) {   // START: he takes the slot (locked); a man who held another slot in this unit swaps with the one he replaces
   const unit = pg.unit;
@@ -2592,7 +2638,12 @@ function fvSlotCard(p, c, team, kr, o) {
 }
 function drawFormView(team) {
   const P = fvPages();
-  if (FVS.team !== team || !FVS.lay) { const fav = ocFavForm(team); fvEnter(team, Math.max(0, P.findIndex(p => p.f === fav))); }
+  if (FVS.team !== team || !FVS.lay) { const fav = ocFavForm(team); fvEnter(team, dcg && dcg.page != null ? dcg.page : Math.max(0, P.findIndex(p => p.f === fav))); }
+  if (dcg && dcg.page != null && FVS.page === dcg.page) {   // (the in-game depth chart: the formation / unit on the field now)
+    ctx.font = 'bold 15px monospace'; const t = 'CURRENT', tw = ctx.measureText(t).width + 18, tb = { x: FV.name.x - tw - 10, y: FV.name.y, w: tw, h: FV.name.h };
+    ctx.fillStyle = '#e8862a'; ctx.fillRect(tb.x, tb.y, tb.w, tb.h); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(tb.x, tb.y, tb.w, tb.h);
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(t, tb.x + tw / 2, tb.y + tb.h / 2 + 1);
+  }
   const pg = P[FVS.page], B = FV.box, z = FVS.z, C = FV.card, people = fvPeople(team, pg), kr = kickReturner(team);
   FVS.hits = []; FVS.cand = {};
   // the page name under the title card (tap: quick-pick list), the formation notes button beside it
@@ -2617,8 +2668,8 @@ function drawFormView(team) {
   btnPress = bp0 && inBtn(bp0, B) && !panning ? { ...bp0, ...fvToView(bp0.x, bp0.y) } : null;
   try {
     for (const c of FVS.lay.L) {
-      const k = keys[c.i], cur = people[c.i], cands = fvCands(team, pg, c.i, cur, holder), idx = (FVS.cyc[c.i] || 0) % cands.length, p = cands[idx];
-      const browsing = idx > 0 && !!p, at = browsing ? holder.get(p) || null : null;
+      const k = keys[c.i], cur = people[c.i], cands = fvCands(team, pg, c.i, cur, holder), idx = 0, p = cur;
+      const browsing = false, at = null;
       FVS.cand[c.i] = { list: cands, holder, k, idx };
       fvSlotCard(p, c, team, kr, { label: k || c.s.k, backup: browsing, oop: fvOopOf(pg, k, p), tired: fvTired(team, pg, p), x2: fvX2(team, p), at: at && at !== k ? at : null });
       if (p) FVS.hits.push({ kind: 'card', p, c, b: fvBox(c.bb.x, c.bb.y, C.w, C.h) });
@@ -2627,17 +2678,15 @@ function drawFormView(team) {
         drawPadlock(x0 - 16, c.y - 18, 36);
         if (own) ctl.push({ kind: 'lock', k, b: fvBox(x0 - 18, c.y - 20, 40, 42) });
       }
-      const canStart = own && browsing && !isOut(p) && !!k;
+      const canStart = false;
       if (cands.length > 1) {   // the slot arrow: opens the list of who can play here
-        const b = canStart ? { x: x0, y: y0, w: 128, h: 38 } : { x: c.x - 75, y: y0, w: 150, h: 38 }, open = FVS.dd && FVS.dd.i === c.i;
-        fvPaper(b, open ? '#fff3a0' : '#fffdf4');
-        ctx.fillStyle = RES.line; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`${open ? '▴' : '▾'} ${idx + 1}/${cands.length}`, b.x + b.w / 2, b.y + 20);
+        const b = Object.assign(c.cycB || (c.cycB = {}), canStart ? { x: x0, y: y0, w: 128, h: 38 } : { x: c.x - 75, y: y0, w: 150, h: 38 }), open = FVS.dd && FVS.dd.i === c.i;   // (kept on the slot: menuBtn's hover / press easing sticks)
+        menuBtn(b, `${open ? '▴' : '▾'} ${own ? 'CHANGE' : `${cands.length - 1} MORE`}`, open ? '#fff3a0' : '#fffdf4', 20);
         ctl.push({ kind: 'cyc', i: c.i, b: fvBox(b.x, b.y, b.w, b.h) });
       }
       if (canStart) {   // START: make the man shown the slot's starter
-        const b = { x: x0 + C.w - 128, y: y0, w: 128, h: 38 };
-        fvPaper(b, '#7fd48f');
-        ctx.fillStyle = RES.line; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(at && at !== k ? 'SWAP' : 'START', b.x + b.w / 2, b.y + 20);
+        const b = Object.assign(c.startB || (c.startB = {}), { x: x0 + C.w - 128, y: y0, w: 128, h: 38 });
+        menuBtn(b, at && at !== k ? 'SWAP' : 'START', '#7fd48f', 20);
         ctl.push({ kind: 'start', k, p, cur, at, b: fvBox(b.x, b.y, b.w, b.h) });
       }
     }
@@ -2645,15 +2694,21 @@ function drawFormView(team) {
   FVS.hits.push(...ctl);   // (buttons over cards: checked first)
   ctx.restore();
   if (own) menuBtn(FV_AUTO_BTN, FVS.autoDD ? 'AUTO ▴' : 'AUTO ▾', FVS.autoDD ? SEL : RES.bright, 17);
+  {   // how to move around (bottom right, across from AUTO)
+    const tip = TUI.on || IS_MOBILE ? 'PINCH TO ZOOM  ·  DRAG TO PAN' : 'SCROLL TO ZOOM  ·  LEFT CLICK TO PAN';
+    ctx.font = 'bold 14px monospace'; const tw = ctx.measureText(tip).width + 20, tb = { x: B.x + B.w - tw - 10, y: B.y + B.h - 40, w: tw, h: 30 };
+    ctx.globalAlpha = 0.85; fvPaper(tb); ctx.globalAlpha = 1; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(tip, tb.x + tw / 2, tb.y + tb.h / 2 + 1);
+  }
   ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(B.x, B.y, B.w, B.h);
 }
 // the quick-pick list of pages (formations; special teams in their own section)
+const FV_PICK_B = [];
 const fvPickItems = () => {
   const P = fvPages(), out = []; let y = 124, head = null;
   P.forEach((pg, i) => {
     const h = pg.kind === 'form' ? 'FORMATIONS' : 'SPECIAL TEAMS';
     if (h !== head) { out.push({ head: h, y }); y += 26; head = h; }
-    out.push({ i, b: { x: W / 2 - 200, y, w: 400, h: 32 } }); y += 36;
+    out.push({ i, b: Object.assign(FV_PICK_B[i] || (FV_PICK_B[i] = {}), { x: W / 2 - 200, y, w: 400, h: 32 }) }); y += 36;   // (cached: the buttons ease on hover / press)
   });
   return out;
 };
@@ -2690,10 +2745,11 @@ function fvDrawDD() {
     menuBtn(b, '', idx === D.cur ? SEL : busy ? '#e4e6ea' : RES.bright, 15, q => {
       ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.font = 'bold 15px monospace';
       if (!p) { ctx.fillStyle = RES.dim; ctx.fillText('— EMPTY —', q.x + 10, q.y + q.h / 2 + 1); return; }
-      ctx.fillStyle = isOut(p) ? '#c81b1b' : RES.line;
-      let nm = fvShort(p); while (nm.length > 4 && ctx.measureText(nm).width > 122) nm = nm.slice(0, -1);
-      ctx.fillText(nm, q.x + 10, q.y + q.h / 2 + 1);
-      fvStarIcons(q.x + 138, q.y + q.h / 2, p.stars || 0, 6.5);
+      ctx.fillStyle = POS_COL[p.group] || RES.line; ctx.font = 'bold 13px monospace'; ctx.fillText(p.group, q.x + 8, q.y + q.h / 2 + 1);
+      ctx.font = 'bold 15px monospace'; ctx.fillStyle = isOut(p) ? '#c81b1b' : RES.line;
+      let nm = fvShort(p); while (nm.length > 4 && ctx.measureText(nm).width > 104) nm = nm.slice(0, -1);
+      ctx.fillText(nm, q.x + 36, q.y + q.h / 2 + 1);
+      fvStarIcons(q.x + 146, q.y + q.h / 2, p.stars || 0, 6.5);
       const tag = isOut(p) ? 'OUT' : busy ? at : idx === 0 ? '✓' : '';
       if (tag) { ctx.textAlign = 'right'; ctx.fillStyle = busy ? '#d9822b' : RES.dim; ctx.font = 'bold 13px monospace'; ctx.fillText(tag, q.x + q.w - 8, q.y + q.h / 2 + 1); }
     });
@@ -2713,10 +2769,15 @@ function fvNotes(f) {   // the formation guide (what the old FORMATION page show
 }
 // clicks (from rosterClick on pointerdown). True = taken. Presses inside the view wait for pointerup (tap) or become a pan.
 function fvClick(pt, team, ps) {
-  if (FVS.dd) { const r = (FVS.dd.rows || []).find(q => inBtn(pt, q.b)); if (r) FVS.cyc[FVS.dd.i] = r.idx; FVS.dd = null; return true; }   // (the slot dropdown: a row shows him on the card; anywhere else closes it)
+  if (FVS.dd) {   // (the slot dropdown: a row starts him there at once; anywhere else closes it)
+    const D = FVS.dd, r = (D.rows || []).find(q => inBtn(pt, q.b)), p = r ? D.list[r.idx] : null; FVS.dd = null;
+    if (p && r.idx > 0 && depthOwn(team) && !hurtOut(p)) fvPick(team, fvPages()[FVS.page], D.i, p);
+    return true;
+  }   // (the slot dropdown: a row shows him on the card; anywhere else closes it)
   if (FVS.pick) { const it = fvPickItems().find(q => q.b && inBtn(pt, q.b)); FVS.pick = false; if (it) fvEnter(team, it.i); return true; }
   if (FVS.autoDD) { const it = fvAutoItems().find(q => inBtn(pt, q.b)); FVS.autoDD = false; if (it) fvAuto(team, it.i === 1); return true; }
   if (depthOwn(team) && inBtn(pt, FV_AUTO_BTN)) { FVS.autoDD = true; return true; }
+  if (dcg && dcg.st && (inBtn(pt, FV.name) || ROSTER_ARROWS.some(b => inBtn(pt, b)))) return true;   // (in-game special teams: this unit's page only)
   if (inBtn(pt, FV.name)) { FVS.pick = true; return true; }
   const pg = fvPages()[FVS.page];
   if (pg && pg.kind === 'form' && inBtn(pt, FV.info)) { fvNotes(pg.f); return true; }
@@ -2817,12 +2878,44 @@ const depthAny = () => !!LEAGUE.depth && Object.values(LEAGUE.depth).some(u => u
 // a unit's locked slots as roster entries ({ slot: player }); hurt / benched men only when show (the roster view)
 function depthLocks(team, show = false, unit = 'off') {
   const out = {}; if (!depthOwn(team)) return out;
-  const R = ROSTER[team] || [], G = unit === 'off' ? DEPTH.grp : null;
+  const fu = isFUnit(unit), R = ROSTER[team] || [], G = unit === 'off' || fu ? DEPTH.grp : null;
   for (const [k, nm] of Object.entries(depthRaw(unit))) {
     const p = R.find(q => q.name === nm);
-    if (p && (show || !isOut(p)) && (!G || (G[k] || []).includes(p.group))) out[k] = p;
+    if (p && (show || !(fu ? hurtOut(p) : isOut(p))) && (!G || (G[k] || []).includes(p.group))) out[k] = p;
   }
   return out;
+}
+// per-formation lineups: LEAGUE.depth['f:<name>'] = { chart slot: name }, set from the formation view's dropdowns. They beat the shared
+// offense chart ('off') in that formation only, and may start a benched man there (selecting him on a formation plays him in that one only)
+const fUnit = f => 'f:' + f.name, isFUnit = u => typeof u === 'string' && u.startsWith('f:');
+const hurtOut = s => !exhibition && !tut && !!(s.outGame || s.susp > 0 || (SETTINGS.injuries && s.inj && s.inj.weeks > 0));
+function depthLocksF(team, f, show = false) {   // the shared chart's locks, overlaid by the formation's own
+  const base = depthLocks(team, show, 'off'); if (!f) return base;
+  const own = depthLocks(team, show, fUnit(f)), mine = new Set(Object.values(own));
+  for (const k of Object.keys(base)) if (mine.has(base[k])) delete base[k];
+  return Object.assign(base, own);
+}
+const depthUnitsOff = () => Object.keys(LEAGUE.depth || {}).filter(u => u === 'off' || isFUnit(u));
+function depthSwapAll(a, b) {   // PROMOTE in the simple view: the two men trade places in every formation (and the shared chart)
+  for (const u of depthUnitsOff()) { const U = LEAGUE.depth[u]; for (const k of Object.keys(U)) { if (U[k] === a.name) U[k] = b.name; else if (U[k] === b.name) U[k] = a.name; } }
+}
+function depthDropAll(p) {   // BENCH in the simple view: off every formation's lineup
+  for (const u of depthUnitsOff()) { const U = LEAGUE.depth[u]; for (const k of Object.keys(U)) if (U[k] === p.name) delete U[k]; }
+}
+// his number at his position (WR1, WR2 ...): ROSTER order, healthy men first
+function depthNo(team, p) {
+  const G = (ROSTER[team] || []).filter(q => q.group === p.group), L = [...G.filter(q => !isOut(q)), ...G.filter(q => isOut(q))];
+  return L.indexOf(p) + 1;
+}
+function promoteUp(team, p) {   // PROMOTE TO WRn-1: he swaps places with the man right above him (every formation follows)
+  const R = ROSTER[team], G = R.filter(q => q.group === p.group), L = [...G.filter(q => !isOut(q)), ...G.filter(q => isOut(q))], i = L.indexOf(p);
+  if (i < 1) return;
+  const up = L[i - 1], st = startersOf(team), a = R.indexOf(p), b = R.indexOf(up);
+  R[a] = up; R[b] = p;
+  depthSwapAll(p, up);
+  if (st.has(up) && !st.has(p)) moraleShift(up, MORALE.ev.bench);
+  for (const q of R) delete q.backup;
+  autosaveSoon();
 }
 function depthSet(unit, k, p) {   // lock (p) or unlock (null) a slot; a man holds one slot per unit
   LEAGUE.depth = LEAGUE.depth || {};
@@ -2859,6 +2952,20 @@ function depthSync(team) {
   return [...before].filter(p => !after.has(p) && OFF_GROUPS.includes(p.group));
 }
 // AUTO: the groups these slots use are re-sorted best-fit first (locked men stay at the front); the role rules then fill the slots
+function depthAutoFull(team) {   // AUTO ALL: every formation and special-teams unit gets the best healthy men (locks cleared, benched men back, groups re-sorted by stars)
+  if (!depthOwn(team)) return;
+  const R = ROSTER[team];
+  for (const p of R) if (p.benchNext && !hurtOut(p)) delete p.benchNext;
+  LEAGUE.depth = {};
+  for (const g of new Set(R.map(p => p.group))) {
+    const at = [], mem = [];
+    R.forEach((p, i) => { if (p.group === g) { at.push(i); mem.push(p); } });
+    mem.sort((a, b) => (isOut(a) - isOut(b)) || (b.stars || 0) - (a.stars || 0) || scoreOf(b) * starForm(b) - scoreOf(a) * starForm(a));
+    mem.forEach((p, j) => { R[at[j]] = p; delete p.subFor; });
+  }
+  for (const q of R) delete q.backup;
+  recalcTeamStars(); autosaveSoon();
+}
 function depthAuto(team, slots = DEPTH.off) {
   if (!depthOwn(team)) return;
   const R = ROSTER[team], lk = depthLocks(team), gs = new Set();
@@ -2876,7 +2983,7 @@ function depthAuto(team, slots = DEPTH.off) {
 }
 // rateOffense -> placeRoster: the locked men for the live slots (null = none: the old picks)
 function depthPre(slots) {
-  const lk = depthLocks(MATCH.you); if (!Object.keys(lk).length) return null;
+  const lk = depthLocksF(MATCH.you, liveForm ? FORM_BY[liveForm] : null); if (!Object.keys(lk).length) return null;
   const next = { TE: ['TE1', 'TE2'], WR: ['WR1', 'WR2'], SLOT: ['WR3', 'WR4'] }, out = slots.map(() => null);
   slots.forEach(([p], i) => {
     const k = p === qb ? 'QB' : p === rb ? 'RB' : ols.includes(p) ? OL_KEYS[ols.indexOf(p)] : p.fb ? 'FB'
@@ -2967,7 +3074,7 @@ function stFgApply() {   // startFieldGoal: your locked PAT / FG men take their 
 }
 // who each slot of a page shows: locked men (hurt ones too), then the game's own picks for the rest
 function stPeople(team, pg) {
-  const R = (ROSTER[team] || []).filter(p => !isOut(p)), lk = depthLocks(team, true, pg.unit), out = pg.slots.map(s => lk[s.k] || null), taken = new Set(out.filter(Boolean));
+  const R = (ROSTER[team] || []).filter(p => !isOut(p)), lk = depthLocks(team, false, pg.unit), out = pg.slots.map(s => lk[s.k] || null), taken = new Set(out.filter(Boolean));
   const free = (i, p) => { if (p && !taken.has(p)) { out[i] = p; taken.add(p); } };
   const st = startersOf(team);
   for (const r of ['K', 'P', 'KR', 'gun', 'cover', 'punt', 'ret', 'fgL', 'fgW', 'fgH']) {

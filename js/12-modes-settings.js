@@ -890,7 +890,7 @@ function wxGround() {
 }
 // rain streaks, snowflakes and wind lines over the field (screen space), plus the weather badge and change notices
 const wxParts = { rain: [], snow: [], wind: [], t: 0 };
-const fxK = () => TUI.on ? 0.45 : 1;   // phones / tablets: this share of the particles (rain, snow, wind, footprints) and no gradient glows
+const fxK = () => (TUI.on ? 0.45 : 1) * (liteGame() ? LITE.wx : 1);   // phones / tablets: this share of the particles (rain, snow, wind, footprints) and no gradient glows
 function wxDraw() {
   const g = game.wx;
   if (!g || !g.on) return;
@@ -1090,7 +1090,7 @@ function wxAudio() {
     wxAud = { wf, wg };
   }
   const t = a.currentTime, gust = 0.7 + 0.25 * Math.sin(t * 0.6) + 0.15 * Math.sin(t * 1.9 + 1);
-  const wind = on && WXI.mph > 7 ? Math.min(1, (WXI.mph - 7) / 27) * 0.3 * gust : 0;
+  const wind = on && !liteGame() && WXI.mph > 7 ? Math.min(1, (WXI.mph - 7) / 27) * 0.3 * gust : 0;   // (performance mode: no wind hiss)
   wxAud.wg.gain.setTargetAtTime(wind, t, 0.25);
   wxAud.wf.frequency.setTargetAtTime(280 + 260 * gust, t, 0.3);
 }
@@ -1130,7 +1130,7 @@ function stepAudio() {
   const now = performance.now();
   if (!stepTried && actx) stepLoad();
   if (!sndOn()) { silenceLoops(); return; }
-  const on = sndOn() && !(rec && rec.replaying) && state !== 'pre' && state !== 'done';
+  const on = sndOn() && !liteGame() && !(rec && rec.replaying) && state !== 'pre' && state !== 'done';   // (performance mode: no footstep loops)
   const me = on ? controlledPlayer() : null, spd = p => p ? Math.hypot(p.vx || 0, p.vy || 0) / YD : 0;
   // the other one: the fastest man near the camera, not on the ground
   let other = null;
@@ -1303,6 +1303,15 @@ function injuryPotential(s, sev) {
   s.potPts = ptsOf(s) - loss; s.potential = starsOfScore(s.potPts);
   return loss;
 }
+// condition lost after a game scales with his share of his unit's snaps (game.snaps from wearPlay): min = dressed but never played,
+// full = the share that counts as a full game (an every-down starter loses x1, a bit more past it, up to max). No snap counts (a simmed game) = x1.
+const COND_PLAY = { min: 0.15, full: 0.85, max: 1.15 };
+function playShareK(s) {
+  const sn = game && game.snaps, side = sn && (OFF_GROUPS.includes(s.group) ? sn.off : sn.def);
+  if (!side) return 1;
+  const share = (sn.by[s.name] || 0) / side;
+  return Math.min(COND_PLAY.max, COND_PLAY.min + (1 - COND_PLAY.min) * share / COND_PLAY.full);
+}
 function injuriesAfterGame(passed) {
   const notes = [];
   for (const s of yourStars()) {
@@ -1325,7 +1334,7 @@ function injuriesAfterGame(passed) {
       if (s.inj) notes.push(`${s.short} (${SEV_NAME[s.inj.sev]}): ${s.inj.weeks > 0 ? `out ${s.inj.weeks} wk` : 'back next week'}${lost ? `` : ''}`);
       if (s.inj && s.inj.weeks <= 0) { const sev = s.inj.sev; s.inj = null; injuryReturn(s, sev, notes); }   // (back: LIMITED until rehab is full)
       else if (s.limited && rehabOf(s) >= 1) { s.limited = false; notes.push(`${s.short}: fully cleared`); }
-      s.cond = !s.missed && passed === 1 ? Math.max(0, condOf(s) - INJURY.weekly - rint(0, INJURY.weeklyRnd)) : 100;
+      s.cond = !s.missed && passed === 1 ? Math.max(0, condOf(s) - (INJURY.weekly + rint(0, INJURY.weeklyRnd)) * playShareK(s)) : 100;   // (the more of the game he played, the more condition it cost)
     }
     s.benchNext = false; s.outGame = false;
   }
@@ -1360,7 +1369,7 @@ function healAll() { for (const s of Object.values(ROSTER).flat()) { s.cond = 10
 const PRAC = {
   xpBase: 0.35,                                 // weekly practice XP = MARKET.avgXP x this x the curve and every multiplier (x UPG.xpK in upgGain)
   tau: 40, loadDefault: 40, weeks: 17,           // dev curve 1 - e^(-load/tau), scaled to 1 at load 100; weeks = a season, for the projections
-  riskMax: 0.035, riskPow: 2.4,                  // weekly injury chance of a baseline player at load 100; x (load/100)^riskPow
+  riskMax: 0.017, riskPow: 2.4,                 // weekly injury chance of a baseline player at load 100; x (load/100)^riskPow
   fatigue: 9, fatPow: 1.5,                       // condition lost a week at load 100 (x (load/100)^fatPow)
   trCond: 0.7, trCondSpec: 2,                     // condition regained a week per trainer star (+ a CONDITIONING specialist)
   trDev: 0.15, trDevBase: 0.7, specDev: 1.25, youthDev: 1.35,   // dev x = base + per star; x specDev for his position groups; x youthDev at 24 and under for YOUTH
@@ -1378,11 +1387,12 @@ const BENCH_DEV = { xp: 1.2, base: 2.5, perStar: 0.12, cap: 0.2 };
 // position battles (one practice week): per group chance, a starter vs a non-starter within gap stars, at most maxWeek a week; winner = weighted roll (rating, awareness, condition, luck), gains minBoost-maxBoost stars of attribute points (1 star = 10 attribute points) as far as his potential allows; hist = results kept
 const BATTLE = { chance: 0.3, gap: 1, maxWeek: 2, minBoost: 0.5, maxBoost: 1, hist: 10, wRate: 1, wAwr: 0.5, wCond: 0.4, luck: 0.35, bigStars: 3, overK: 0.6 };   // overK = share of a battle boost a player at his ceiling still gets (pracOverCeil, max 15 an attribute)
 const PRAC_GROUPS = ['QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'CB', 'S'];
+const FAC_MAX = 7;   // facility levels (the campus art tops out at 5; 6 and 7 add gold stars over the building)
 const PRAC_FAC = {
-  field:  { name: 'PRACTICE FIELDS', cost: [6, 10, 16, 24], wks: [2, 3, 4, 6], dev: 0.10, groups: null, text: 'Faster development for everyone (+10% a level).' },
-  weight: { name: 'WEIGHT CENTER',   cost: [6, 10, 16, 24], wks: [2, 3, 4, 6], dev: 0.14, groups: ['OL', 'DL', 'RB', 'TE', 'LB'], text: 'Linemen, backs, TEs, LBs develop faster (+14% a level).' },
-  film:   { name: 'FILM ROOM',       cost: [6, 10, 16, 24], wks: [2, 3, 4, 6], dev: 0.14, groups: ['QB', 'WR', 'TE', 'CB', 'S', 'LB'], text: 'QBs, receivers, LBs and DBs develop faster (+14% a level).' },
-  med:    { name: 'MEDICAL / REHAB', cost: [8, 12, 18, 26], wks: [2, 3, 4, 6], dev: 0, groups: null, text: 'Cuts practice injury risk (most at high loads), speeds rehab, restores condition.' },
+  field:  { name: 'PRACTICE FIELDS', cost: [6, 10, 16, 24, 34, 46], wks: [2, 3, 4, 6, 7, 8], dev: 0.10, groups: null, text: 'Faster development for everyone (+10% a level).' },
+  weight: { name: 'WEIGHT CENTER',   cost: [6, 10, 16, 24, 34, 46], wks: [2, 3, 4, 6, 7, 8], dev: 0.14, groups: ['OL', 'DL', 'RB', 'TE', 'LB'], text: 'Linemen, backs, TEs, LBs develop faster (+14% a level).' },
+  film:   { name: 'FILM ROOM',       cost: [6, 10, 16, 24, 34, 46], wks: [2, 3, 4, 6, 7, 8], dev: 0.14, groups: ['QB', 'WR', 'TE', 'CB', 'S', 'LB'], text: 'QBs, receivers, LBs and DBs develop faster (+14% a level).' },
+  med:    { name: 'MEDICAL / REHAB', cost: [8, 12, 18, 26, 36, 48], wks: [2, 3, 4, 6, 7, 8], dev: 0, groups: null, text: 'Cuts practice injury risk (most at high loads), speeds rehab, restores condition.' },
 };
 const PRAC_SPEC = {
   off: [{ id: 'PASSING', groups: ['QB', 'WR', 'TE'], text: 'QB / WR / TE develop faster' }, { id: 'GROUND', groups: ['RB', 'OL', 'TE'], text: 'RB / OL / TE develop faster' },
@@ -1598,7 +1608,7 @@ function pracGrow(p) {
 }
 function pracUpgrade(k) {
   const F = prac().fac[k], D = PRAC_FAC[k];
-  if (F.build || F.lvl >= 5) return;
+  if (F.build || F.lvl >= FAC_MAX) return;
   if (LEAGUE.coins < D.cost[F.lvl - 1]) { PR.msg = { t: performance.now(), text: `NEED ${D.cost[F.lvl - 1]} ¤` }; return; }
   LEAGUE.coins -= D.cost[F.lvl - 1]; F.build = { left: D.wks[F.lvl - 1], total: D.wks[F.lvl - 1] }; autosaveSoon();
 }
@@ -2142,10 +2152,11 @@ function drawTradeMeter(k) {
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = 'bold 14px monospace'; ctx.fillStyle = RES.line;
   if (!TR.give.length || !TR.get.length) { ctx.fillText('TV METER: ADD SOMETHING TO BOTH SIDES', x + w + 16, y + h / 2); return; }
   const S = tradeSide(k, TR.give, TR.get), r = Math.min(hi, S.ratio);
-  const vs = TR.give.map(a => tvFor(a, k, true)).sort((p, q) => q - p), recv = Math.round(vs.reduce((t, v, i) => t + (i ? v * TRADE.depth : v), 0)), sent = Math.round(TR.get.reduce((t, a) => t + tvFor(a, k, false), 0));
-  const mx = at(r); ctx.fillStyle = RES.line; ctx.beginPath(); ctx.moveTo(mx, y - 1); ctx.lineTo(mx - 7, y - 10); ctx.lineTo(mx + 7, y - 10); ctx.closePath(); ctx.fill();
+  const T = trTotals();
+  const mx = at(r), aw = h * 0.42; ctx.fillStyle = RES.line; ctx.beginPath(); ctx.moveTo(mx, y + h); ctx.lineTo(mx - aw, y); ctx.lineTo(mx + aw, y); ctx.closePath(); ctx.fill();   // (the marker sits inside the bar, top edge to bottom edge)
+  ctx.strokeStyle = '#fffdf4'; ctx.lineWidth = 1.5; ctx.stroke();
   const verdict = S.locked ? 'WON\'T MOVE A STAR QB' : S.ratio >= TRADE.accept ? (S.ratio >= 1.3 ? 'WILL ACCEPT (YOU OVERPAY)' : 'WILL ACCEPT') : S.ratio >= TRADE.maybe ? 'CLOSE CALL' : 'LIKELY REJECTED';
-  ctx.fillText(`${verdict}  ~${recv} IN / ~${sent} OUT`, x + w + 16, y + h / 2, 440);
+  ctx.fillText(`${verdict}  ~${T.give} IN / ~${T.get} OUT`, x + w + 16, y + h / 2, 440);
 }
 
 // the screen: a top-down campus (left) beside the dashboard (right)
@@ -2364,7 +2375,8 @@ function drawPracFac(plan) {   // plan = the TRAINING PLAN tab (load sliders, tr
   for (const [k, c] of Object.entries(PR_CELLS)) {
     const F = P.fac[k];
     ctx.save(); ctx.beginPath(); ctx.rect(c.x + 4, c.y + 2, c.w - 8, c.h - 4); ctx.clip();
-    draw[k](c, F.lvl, t);
+    draw[k](c, Math.min(5, F.lvl), t);
+    for (let i = 5; i < F.lvl; i++) drawStar(c.x + c.w - 22 - (i - 5) * 26, c.y + 20, 11, '#ffd23f', '#8a5a00', 2);   // (levels 6-7: gold stars)
     if (F.build) pracConstruction(c, F, t);
     ctx.restore();
     if (PR.sel === k) { ctx.strokeStyle = '#e8b61c'; ctx.lineWidth = 4; ctx.setLineDash([10, 6]); ctx.strokeRect(c.x + 4, c.y + 2, c.w - 8, c.h - 4); ctx.setLineDash([]); }
@@ -2377,15 +2389,15 @@ function drawPracFac(plan) {   // plan = the TRAINING PLAN tab (load sliders, tr
   }
   // the selected facility
   { const k = PR.sel, F = P.fac[k], D = PRAC_FAC[k], cost = D.cost[F.lvl - 1];
-    resPanel(30, 492, 618, 120, [[`${D.name}  LEVEL ${F.lvl} OF 5`, 24]], RES.bright);
+    resPanel(30, 492, 618, 120, [[`${D.name}  LEVEL ${F.lvl} OF ${FAC_MAX}`, 24]], RES.bright);
     ctx.fillStyle = RES.line; ctx.font = '15px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     wrapLines(D.text, 46).slice(0, 2).forEach((ln, i) => ctx.fillText(ln, 48, 526 + i * 20));
-    ctx.fillStyle = RES.dim; ctx.fillText(F.build ? `UNDER CONSTRUCTION: ${F.build.left} of ${F.build.total} weeks to go` : F.lvl >= 5 ? 'FULLY UPGRADED' : `NEXT LEVEL: ${cost} ¤, ${D.wks[F.lvl - 1]} weeks to build`, 48, 574);
-    const can = !F.build && F.lvl < 5 && LEAGUE.coins >= cost;
-    const free = !F.build && F.lvl < 5;
+    ctx.fillStyle = RES.dim; ctx.fillText(F.build ? `UNDER CONSTRUCTION: ${F.build.left} of ${F.build.total} weeks to go` : F.lvl >= FAC_MAX ? 'FULLY UPGRADED' : `NEXT LEVEL: ${cost} ¤, ${D.wks[F.lvl - 1]} weeks to build`, 48, 574);
+    const can = !F.build && F.lvl < FAC_MAX && LEAGUE.coins >= cost;
+    const free = !F.build && F.lvl < FAC_MAX;
     menuBtn(PR_UP, free ? 'UPGRADE' : '', can ? '#6cc070' : RES.bright, 22, null, free);
     if (!free) { ctx.fillStyle = RES.dim; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.fillText(F.build ? 'BUILDING' : 'MAXED', PR_UP.x + PR_UP.w / 2, PR_UP.y + PR_UP.h / 2); }
-    if (!can && !F.build && F.lvl < 5) { ctx.fillStyle = RES.dim; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'; ctx.fillText('NOT ENOUGH ¤', PR_UP.x + PR_UP.w / 2, PR_UP.y + PR_UP.h + 8); }
+    if (!can && !F.build && F.lvl < FAC_MAX) { ctx.fillStyle = RES.dim; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'; ctx.fillText('NOT ENOUGH ¤', PR_UP.x + PR_UP.w / 2, PR_UP.y + PR_UP.h + 8); }
   }
   } else {   // the training plan
   resPanel(30, 84, 636, 520, [['HOW TRAINING WORKS', 24]], RES.bright);
@@ -2543,15 +2555,16 @@ const SET_BTNS = {
   volDn: { x: SET_X, y: 434, w: 76, h: 38 }, volUp: { x: SET_X + 364, y: 434, w: 76, h: 38 },
   ht: { x: SET_X, y: 478, w: SET_HALF, h: 38 }, pg: { x: SET_X2, y: 478, w: SET_HALF, h: 38 },
   // EXTRAS
-  dbg: { x: SET_X, y: 542, w: 140, h: 38 }, dark: { x: SET_X + 150, y: 542, w: 140, h: 38 }, post: { x: SET_X + 300, y: 542, w: 140, h: 38 },
+  dbg: { x: SET_X, y: 542, w: 102, h: 38 }, dark: { x: SET_X + 113, y: 542, w: 102, h: 38 }, post: { x: SET_X + 225, y: 542, w: 102, h: 38 }, lite: { x: SET_X + 338, y: 542, w: 102, h: 38 },   // (lite = PERFORMANCE MODE, see LITE)
   swap: { x: 665, y: 580, w: 540, h: 56 },   // (swap: touch only, in the controls panel)
 };
 const SET_GROUPS = [['GAME', 94], ['GAMEPLAY', 206], ['SOUND & SHOWS', 422], ['EXTRAS', 530]];   // [header, y of its text]
+const LITE_MODES = ['AUTO', 'ON', 'OFF'];   // SETTINGS.liteMode (performance mode: AUTO = online and two-player games)
 const SET_TIP_Y = 598;   // the one-line tip / note under the last group
 const SET_TIPS = { simDef: () => SETTINGS.simDefense ? 'SIM DEFENSE: their drives are simulated' : 'SIM DEFENSE: you play defense on their drives', autoSw: () => 'AUTO SWITCH: on a pass, jump to the defender closest to the ball',
   morale: () => 'MORALE: plays and games move each player\'s morale, which scales his ratings (off = always neutral)',
   pinj: () => 'PRACTICE INJ: injuries from practice (needs INJURIES on too)', inj: () => 'INJURIES: game injuries, condition and wear',
-  dir: () => 'DRIVE: which way the offense drives on screen', spd: () => SETTINGS.simST ? 'SIM KICKS: your kickoffs, punts, field goals and returns are simulated' : 'SIM KICKS: you play every kickoff, punt, field goal and return', rep: () => 'REPLAYS: how often replays run', wx: () => 'WEATHER: takes effect next game', ht: () => 'HALFTIME SHOW: choose its segments', pg: () => 'PREGAME SHOW: choose its segments', dbg: () => 'DEBUG: hitboxes, mobile mode, extra tools', dark: () => 'DARK MODE: grey menus instead of white paper' };
+  dir: () => 'DRIVE: which way the offense drives on screen', spd: () => SETTINGS.simST ? 'SIM KICKS: your kickoffs, punts, field goals and returns are simulated' : 'SIM KICKS: you play every kickoff, punt, field goal and return', rep: () => 'REPLAYS: how often replays run', wx: () => 'WEATHER: takes effect next game', ht: () => 'HALFTIME SHOW: choose its segments', pg: () => 'PREGAME SHOW: choose its segments', dbg: () => 'DEBUG: hitboxes, mobile mode, extra tools', dark: () => 'DARK MODE: grey menus instead of white paper', lite: () => 'PERFORMANCE: lighter stands, weather and sound (AUTO = online / 2 players)' };
 // a settings popup (DEBUG / HALFTIME / PREGAME) is up: the page behind it holds still (menuBtn / hoverAmt / pressDepth check this); the popup's own buttons draw with setPopDraw on
 let setPopDraw = false;
 const settingsPopUp = () => settingsOpen && !diffUI && !!(dbgUI || htUI || spdUI);
@@ -2707,9 +2720,10 @@ function drawSettingsMain() {
     const hk = !settingsPopUp() && hoverPt && Object.keys(SET_TIPS).find(k => inBtn(hoverPt, B[k]));
     if (hk) { ctx.font = 'bold 13px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(SET_TIPS[hk](), SET_X + 220, SET_TIP_Y, SET_FULL); }
   }
-  menuBtn(B.dbg, 'DEBUG', Y, 20);
-  menuBtn(B.dark, `DARK: ${SETTINGS.darkMode ? 'ON' : 'OFF'}`, Y, 17);
-  menuBtn(B.post, `POST: ${SETTINGS.post !== false ? 'ON' : 'OFF'}`, Y, 17);
+  menuBtn(B.dbg, 'DEBUG', Y, 17);
+  menuBtn(B.dark, `DARK: ${SETTINGS.darkMode ? 'ON' : 'OFF'}`, Y, 15);
+  menuBtn(B.post, `POST: ${SETTINGS.post !== false ? 'ON' : 'OFF'}`, Y, 15);
+  menuBtn(B.lite, `PERF: ${SETTINGS.liteMode || 'AUTO'}`, Y, 15);
   menuBtn(B.ht, 'HALFTIME', Y, 17); menuBtn(B.pg, 'PREGAME', Y, 17);
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
   if (TUI.on) {   // phones / tablets: no keys to rebind, the touch controls instead
@@ -2907,6 +2921,7 @@ function settingsClick(p) {
   else if (inBtn(p, BACK_BTN)) settingsOpen = false;
   else if (inBtn(p, B.dbg)) dbgUI = true;
   else if (inBtn(p, B.dark)) SETTINGS.darkMode = !SETTINGS.darkMode;
+  else if (inBtn(p, B.lite)) SETTINGS.liteMode = LITE_MODES[(LITE_MODES.indexOf(SETTINGS.liteMode || 'AUTO') + 1) % LITE_MODES.length];
   else if (inBtn(p, B.post)) SETTINGS.post = SETTINGS.post === false;   // (the Paper Passer Post: newspaper, story arcs and midweek events; franchise only)
   else if (inBtn(p, B.ht)) htUI = 'half';
   else if (inBtn(p, B.pg)) htUI = 'pre';
@@ -2997,7 +3012,8 @@ const SYNC = { owner: 'paperpasserplaytester', repo: 'paper-passer-saves', branc
 const SYNC_KEY = 'pocketPasser.account';   // this device's sign-in (never synced)
 let acct = null;    // { user, key (raw AES key, base64: the password itself is never stored), sha (cloud file sha last seen), hash (this device's data hash then), at (last sync) }
 let acctUI = null;  // the DOM popup (real inputs, so phones get their keyboard and password managers work)
-const sync = { busy: false, err: '', wait: null, etag: null };   // wait = { kind: 'pull' | 'choose', ... } held until the main menu
+const sync = { busy: false, err: '', wait: null, etag: null, offline: false };   // offline = no internet (navigator / a failed fetch): no sync tries until the 'online' event
+const syncNetOk = () => !sync.offline && navigator.onLine !== false;   // wait = { kind: 'pull' | 'choose', ... } held until the main menu
 try { acct = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null'); } catch (e) {}
 const syncOn = () => !!(SYNC.owner && SYNC.repo && SYNC.tok && window.crypto && crypto.subtle && window.fetch);
 function acctStore() { try { if (acct) localStorage.setItem(SYNC_KEY, JSON.stringify(acct)); else localStorage.removeItem(SYNC_KEY); } catch (e) {} }
@@ -3083,8 +3099,11 @@ async function syncUpload(sha) {   // overwrite the cloud with this device
   acct.hash = await bundleHash(local); acct.at = Date.now(); acctStore();
 }
 const syncMenu = () => typeof results !== 'undefined' && results && results.screen === 'start' && !settingsOpen && !slotUI && !teamPick && !offPop && !(typeof ONL !== 'undefined' && ONL.on);
-async function syncNow() {   // the auto / SYNC NOW step
+async function syncNow(manual) {   // the auto / SYNC NOW step
   if (!acct || !syncOn() || sync.busy || sync.wait) return;
+  if (manual) sync.offline = false;   // (SYNC NOW always tries once)
+  if (!syncNetOk()) { sync.err = 'OFFLINE: WILL SYNC WHEN THE INTERNET IS BACK'; acctRender(); return; }
+  if (!manual && !results) return;   // (never mid-game: bundling + sealing every save is heavy; it runs again back in the menus)
   sync.busy = true; sync.err = ''; acctRender();
   try {
     const path = await acctPath(acct.user), local = syncBundle(), h = await bundleHash(local);
@@ -3106,7 +3125,7 @@ async function syncNow() {   // the auto / SYNC NOW step
         else { acct.at = Date.now(); acctStore(); }
       }
     }
-  } catch (e) { sync.err = syncErrText(e); }
+  } catch (e) { sync.err = syncErrText(e); if (!(e && e.message) || e instanceof TypeError || navigator.onLine === false) { sync.offline = true; sync.err = 'OFFLINE: WILL SYNC WHEN THE INTERNET IS BACK'; } }
   sync.busy = false; syncGate(); acctRender();
 }
 async function syncGate() {   // a pull / choice waits for the main menu (never mid-game)
@@ -3216,7 +3235,7 @@ function acctAct(a) {
   if (a === 'close') acctClose();
   else if (a === 'mode') { U.mode = U.mode === 'new' ? 'in' : 'new'; U.p = U.p2 = ''; acctRender(); }
   else if (a === 'signin' || a === 'create') acctSignIn(a === 'create');
-  else if (a === 'sync') syncNow();
+  else if (a === 'sync') syncNow(true);
   else if (a === 'out') { acct = null; sync.wait = null; sync.err = ''; sync.etag = null; acctStore(); U.u = ''; U.note = 'SIGNED OUT. YOUR DATA STAYS ON THIS DEVICE.'; acctRender(); }
   else if (a === 'cloud' || a === 'upload') acctChoose(a === 'cloud');
   else if (a === 'cancel') { U.view = 'main'; U.choose = null; acctRender(); }
@@ -3224,6 +3243,8 @@ function acctAct(a) {
 // auto sync: shortly after load, every SYNC.every s while visible, when the page is hidden (phone app switch / tab close) and when it comes back
 setTimeout(() => { syncNow(); setInterval(() => { if (document.visibilityState === 'visible') syncNow(); }, SYNC.every * 1000); setInterval(syncGate, 1000); }, 2500);
 document.addEventListener('visibilitychange', () => syncNow());
+addEventListener('offline', () => { sync.offline = true; });
+addEventListener('online', () => { sync.offline = false; sync.err = ''; setTimeout(() => syncNow(), 1500); });
 // a player leaving (closing the tab, switching away, backing out to the menu) pushes the franchise to the cloud right then, not at the next 60 s tick
 function syncOnLeave() {
   try { if (results && season && !exhibition && !tut && !ONL.on) { if (curSlot === null) autoAssignSlot(); else saveToSlot(curSlot, true); } } catch (e) {}
