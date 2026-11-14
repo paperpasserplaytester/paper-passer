@@ -135,7 +135,7 @@ function replayPanClamp() {
   replayPan.y = Math.max(-REPLAY_EDGE - by, Math.min(FW + REPLAY_EDGE - by, replayPan.y));
 }
 const REPLAY_MARGIN = 3 * YD;        // replay camera: the whole field width plus this much past each sideline
-const replayZoom = () => (H - TOP_BAR - BOT_BAR) / (FW + 2 * REPLAY_MARGIN);
+const replayZoom = () => (H - TOP_BAR - FIELD_BOT) / (FW + 2 * REPLAY_MARGIN);
 let lastRec = null;
 // the pause menu's REPLAY: the play that just ended (a finished play, or the last one before this snap); a click ends it and goes on as usual
 // (also before the first click of a field goal / extra point: the power meter hasn't been started yet)
@@ -502,13 +502,13 @@ function drawHsFreeze() {   // (world space, from draw() right after drawPopups)
   ctx.restore();
 }
 // the reel's crowd: coming out of slow motion they react to the play; while it's slow, any crowd clip playing drops in pitch
-let hsWasSlow = false;
+let hsSlowOf = null;   // (the clip that's in slow motion right now)
 function hsCrowd(k) {
-  if (!(hl && hl.mode === 'half')) { if (hsWasSlow) { hsWasSlow = false; hsPitch(1); } return; }
-  const slowNow = k < 0.6, c = hl.list[hl.i];
-  if (slowNow !== hsWasSlow) hsPitch(slowNow ? HLREEL.slow.pitch : 1);
-  if (hsWasSlow && k >= 0.99 && c) { hsWasSlow = false; try { crowdCheer(Math.min(1, c.score / 80), c.fav || 'you', false, true); } catch (e) {} }
-  else if (slowNow) hsWasSlow = true;
+  const c = hl && hl.mode === 'half' ? hl.list[hl.i] : null, base = c && hl.again ? HLREEL.slow.again : 1;
+  if (hsSlowOf && hsSlowOf !== c) { hsSlowOf = null; hsPitch(1); }   // (the clip was skipped or the reel closed mid slow motion)
+  if (!c) return;
+  if (!hsSlowOf && k < 0.6 * base) { hsSlowOf = c; hsPitch(HLREEL.slow.pitch); }
+  else if (hsSlowOf && k >= 0.99 * base) { hsSlowOf = null; hsPitch(1); try { crowdCheer(Math.min(1, c.score / 80), c.fav || 'you', false, true); } catch (e) {} }
 }
 function hsPitch(r) { for (const k in sfxCtl) if (/cheer|boo|crowd|ooh|disappoint/i.test(k)) { try { const a = sfxCtl[k].a; if (a && !a.paused) a.playbackRate = r; else if (a && r === 1) a.playbackRate = 1; } catch (e) {} } }
 function hsClip(d) { if (!hl || hl.mode !== 'half') return; hl.again = false; hlPlay(hl.i + d); }   // the reel's next / previous clip (past the last one the list closes and the show moves on)
@@ -517,6 +517,7 @@ function hlClose() {
   hlKitsBack();
   const L = hl.live, half = hl.mode === 'half';
   hl = null;
+  hsCrowd(1);   // (a crowd clip slowed by the reel goes back to its own pitch)
   sbApply(L.sb); game.over = L.over; game.pendingQuarter = L.pendingQuarter;
   ({ qb, rb, ols, recs, dl, back7, fgExit, los, lineToGain, down, state, rec, msg, runner, popups, impacts } = L);
   for (const [p, d] of L.ps) Object.assign(p, d);
@@ -526,11 +527,17 @@ function hlClose() {
   if (half) hsAdvance();   // (a halftime clip list is over, or was skipped: on to the next segment)
 }
 // --- halftime show (presentation only: nothing here touches a score, the clock or any roll). At the Q2 -> Q3 break (halfOK) a skippable show plays its segments in
-// order: HIGHLIGHTS (the first half's best plays of either team, cut to their apex window and played with the highlight player (hl mode 'half'); title cards when
-// replays are off, and stat cards for simulated drives, which have no frames), AROUND THE LEAGUE, HISTORIC STATS, QB COMPARISON, DEFENSE COMPARISON, MATCHUP
-// SPOTLIGHT (canvas cards from the live first-half lines in PST + rosters). SETTINGS.halftime = master switch, SETTINGS.ht.<segment> = one each (htOn); an empty
-// segment is dropped, no segments = straight to the second half. Off in the tutorial, online and two-player games; simulated games never get the break banner.
-// The reel keeps at most HLREEL.max clips of a few seconds each (every HLREEL.skip-th frame of the window only) and frees them when the show ends.
+// order: HIGHLIGHTS (the first half's best plays of either team as a cut-up, played with the highlight player (hl mode 'half'); title cards when replays are
+// off, and stat cards for simulated drives, which have no frames), AROUND THE LEAGUE (staged clips 'lgclips', then the cards), HISTORIC STATS, QB COMPARISON,
+// DEFENSE COMPARISON, MATCHUP SPOTLIGHT (canvas cards from the live first-half lines in PST + rosters). SETTINGS.halftime = master switch, SETTINGS.ht.<segment>
+// = one each (htOn); an empty segment is dropped, no segments = straight to the second half. Off in the tutorial, online and two-player games; simulated
+// games never get the break banner.
+// The reel: every callout of a play is tagged (hsEv: when, kind, who) and the play scored at its end (hsScoreRec: yards, score, turnover, moments with caps,
+// bonuses). While the half is played the HLREEL.pool best tapes are kept (hsCollect), each cut down to windows around its moments + a score's finish
+// (hsTape: every HLREEL.skip-th frame, `cut` marks a jump). At the break hsBuild picks by score up to HLREEL.budget s with some variety and plays them in
+// the order they happened: jump cuts in stepReplay, a director camera (HLREEL.cam: blocker / runner lead / push in / hit kick), slow motion on the 3 best
+// (hsSpeed), the best one twice as the PLAY OF THE HALF with a freeze frame (hsFreeze / drawHsFreeze), per-clip skip (hsClip), pips, a lower third and the
+// league ticker (drawHsClipUI). Everything is freed when the show ends.
 const HLREEL = {
   pool: 12, minScore: 30,                                       // tapes kept while the half is played; a play needs this score to count
   budget: 55, cards: 4,                                         // reel length in s; most text cards
@@ -545,7 +552,7 @@ const HLREEL = {
   slow: { k: 0.3, win: 0.35, again: 0.6, pitch: 0.7 },             // slow motion on the 3 best clips: speed at the moment, eased back over win s; the whole second run plays at again; the crowd clips' pitch while slow
   nearIn: 1.5 * YD, nearOut: 7 * YD, punch: 0.35, maxSecs: 7, skip: 2, maxFrames: 260, zoom: 1.35, pan: 0.5,   // zoom = extra zoom on the reel, pan = camera follow ease (how fast it tracks the ball)                      // a clip's longest window; keep every n-th frame; most frames a clip holds
 };
-const HALFTIME = { preSecs: 6, cardSecs: 14, leagueMax: 4, pace: 2, gapW: 10 };   // a card stays this long unless NEXT; league cards; first-half stat x pace = on pace for a high; rating gap weight in the matchup pick
+const HALFTIME = { preSecs: 6, cardSecs: 14, leagueMax: 4, pace: 2, gapW: 10, lgClips: 3, lgSecs: 3.2 };   // a card stays this long unless NEXT; league cards; first-half stat x pace = on pace for a high; rating gap weight in the matchup pick; most staged league clips, and about how long each runs
 const HTS = { clips: [], cards: [] };   // the reel so far: clips (tapes or, with replays off, titles only) and simulated-drive cards
 let HT = null;                          // the show playing: { segs, i, t0, after, skip }
 const LGHL_KEY = 'pocketPasser.lgHL';   // per franchise slot: one best-stat-line per simulated league game, last 2 weeks
@@ -663,7 +670,8 @@ function lgHLAdd(g, wk, lines) {
   if (!best) return;
   const { p, l } = best, G = p.group, tm = (ROSTER[g.h] || []).includes(p) ? g.h : g.a;
   const text = G === 'QB' ? `${p.name} (QB) THROWS FOR ${l.py} YDS, ${l.pt} TD` : G === 'RB' ? `${p.name} (RB) RUSHES FOR ${l.cy} YDS${l.ct ? `, ${l.ct} TD` : ''}` : G === 'K' ? `${p.name} (K) HITS A ${l.fgl}-YD FIELD GOAL` : G === 'WR' || G === 'TE' ? `${p.name} (${G}) CATCHES FOR ${l.ry} YDS${l.rt ? `, ${l.rt} TD` : ''}` : l.ic ? `${p.name} (${p.tag}) PICKS OFF ${l.ic}` : `${p.name} (${p.tag}) GETS ${l.sk} SACKS`;
-  LGHL.push({ yr: LEAGUE.year, wk, h: g.h, a: g.a, hs: g.hs, as: g.as, team: tm, text });
+  const kind = G === 'QB' ? 'pass' : G === 'RB' ? 'rush' : G === 'K' ? 'fg' : G === 'WR' || G === 'TE' ? 'rec' : l.ic ? 'pick' : 'sack';   // (what the show's staged clip re-enacts; entries saved before this have none and get no clip)
+  LGHL.push({ yr: LEAGUE.year, wk, h: g.h, a: g.a, hs: g.hs, as: g.as, team: tm, text, pn: p.name, grp: G, kind, v: Math.round(best.v) });
   LGHL = LGHL.filter(e => e.yr === LEAGUE.year && e.wk >= wk - 1);
 }
 // --- the show's flow
@@ -676,7 +684,7 @@ function hsBegin(after) {
   let segs = [];
   try { segs = hsBuild(); } catch (e) { console.warn('halftime show', e); }
   if (!segs.length) return quiet();
-  HT = { segs, i: -1, t0: 0, after, skip: false };
+  HT = { segs, i: -1, t0: 0, after, skip: false, ticker: segs.ticker || '', tick0: performance.now() };
   hsAdvance();
   return !!HT;
 }
@@ -699,18 +707,25 @@ function hsBuild() {
     if (texts.length) segs.push({ k: 'cards', list: texts });
   }
   const add = (key, k, fn) => { if (!htOn(key)) return; let d = null; try { d = fn(); } catch (e) { console.warn('halftime ' + k, e); } if (d) segs.push({ k, data: d }); };
-  add('league', 'league', hsLeague); add('historic', 'hist', hsHistoric); add('qb', 'qb', hsQB); add('def', 'def', hsDef); add('match', 'match', hsMatch);
+  // around the league: the cards are built once (their SO FAR scores are rolled): the same ones feed the ticker; staged clips of last week's best lines go first
+  let lg = null; if (htOn('league')) { try { lg = hsLeague(); } catch (e) { console.warn('halftime league', e); } }
+  if (lg) segs.ticker = lg.map(c => `${hsTn(c.h)} ${c.hs} - ${hsTn(c.a)} ${c.as}  ${c.tag === 'SO FAR' ? 'SO FAR' : 'FINAL (LAST WEEK)'}`).join('       *       ') + '       *       ';
+  add('league', 'lgclips', () => { const l = hsLgClips(); return l && { list: l }; });
+  { const s = segs[segs.length - 1]; if (s && s.k === 'lgclips') { s.list = s.data.list; s.i = 0; } }
+  add('league', 'league', () => lg); add('historic', 'hist', hsHistoric); add('qb', 'qb', hsQB); add('def', 'def', hsDef); add('match', 'match', hsMatch);
   return segs;
 }
 function hsAdvance() {
   if (!HT) return;
+  lgSceneOff();   // (a staged league clip was up: the live game's things go back)
   HT.i++; HT.t0 = performance.now();
   if (HT.skip || HT.i >= HT.segs.length) return hsEnd();
   const s = HT.segs[HT.i];
   if (s.k === 'clips') hlOpen(s.list, 'half');
+  else if (s.k === 'lgclips') lgSceneStart(s, 0);
 }
-function hsEnd() { const a = HT && HT.after; if (HT && performance.now() - showEscAt < 600) paused = false; HT = null; HTS.clips = []; HTS.cards = []; if (a) a(); }   // (the clips are let go here: the tapes are the biggest thing the show holds)
-function hsNext() { if (!HT) return; if (hl && hl.mode === 'half') hlClose(); else hsAdvance(); }
+function hsEnd() { lgSceneOff(); const a = HT && HT.after; if (HT && performance.now() - showEscAt < 600) paused = false; HT = null; HTS.clips = []; HTS.cards = []; if (a) a(); }   // (the clips are let go here: the tapes are the biggest thing the show holds)
+function hsNext() { if (!HT) return; if (hl && hl.mode === 'half') hlClose(); else if (!lgClipNext()) hsAdvance(); }   // (during the staged league clips: the next clip first)
 let hsSkipNext = false;   // Esc on the halftime banner / card: the show is skipped before it starts
 let showEscAt = -1e9;  // when Esc last skipped a pregame / halftime show
 function hsSkip() { if (!HT) return; showEscAt = performance.now(); HT.skip = true; hsNext(); }
@@ -727,8 +742,8 @@ function drawHsBar() {
   ctx.fillText(`${HT.pre ? 'PREGAME' : 'HALFTIME'} SHOW ${HT.i + 1} / ${HT.segs.length}     ${hl && hl.mode === 'half' ? 'CLICK / ENTER next clip     BACKSPACE previous' : 'CLICK ANYWHERE FOR THE NEXT SCREEN'}     ESC skip`, W / 2 - 120, H - BOT_BAR / 2, W - 400);
   ctx.restore();
 }
-function drawHsClipUI() {   // over a clip: the bar and its title card
-  drawHsBar();
+function drawHsClipUI() {   // over a clip: the bar, the league ticker and its title card
+  drawHsBar(); drawHsTicker();
   const c = hl.list[hl.i]; if (!c) return;
   ctx.save();
   ctx.fillStyle = 'rgba(10,16,12,0.78)'; ctx.fillRect(W / 2 - 330, TOP_BAR + 8, 660, 64);
@@ -749,9 +764,10 @@ function drawHsClipUI() {   // over a clip: the bar and its title card
   ctx.restore();
 }
 // the reel's furniture: pips (one box per clip, the current one filling) just above the bottom bar, and a lower-third name strip on the left above them
-const HS_UI = { pipW: 26, pipH: 8, pipGap: 6, pipUp: 16, lowX: 20, lowW: 380, lowH: 54, lowUp: 34, stampX: 150, stampY: 44, stampRot: -0.1 };
+const HS_UI = { pipW: 26, pipH: 8, pipGap: 6, pipUp: 16, lowX: 20, lowW: 380, lowH: 54, lowUp: 34, stampX: 150, stampY: 44, stampRot: -0.1, tickH: 24, tickV: 70 };   // (tickH / tickV: the league ticker's height and speed in px / s)
+const hsFloor = () => H - BOT_BAR - (HT && HT.ticker ? HS_UI.tickH : 0);   // (the top of the bottom bar, or of the ticker over it)
 function hsPips(n, at, prog) {
-  const U = HS_UI, tw = n * U.pipW + (n - 1) * U.pipGap, x0 = W / 2 - tw / 2, y = H - BOT_BAR - U.pipUp - U.pipH;
+  const U = HS_UI, tw = n * U.pipW + (n - 1) * U.pipGap, x0 = W / 2 - tw / 2, y = hsFloor() - U.pipUp - U.pipH;
   ctx.save();
   ctx.fillStyle = 'rgba(10,16,12,0.78)'; ctx.fillRect(x0 - 8, y - 6, tw + 16, U.pipH + 12);
   for (let i = 0; i < n; i++) {
@@ -762,7 +778,7 @@ function hsPips(n, at, prog) {
   ctx.restore();
 }
 function hsLower(name, line) {
-  const U = HS_UI, y = H - BOT_BAR - U.pipUp - U.pipH - U.lowUp - U.lowH;
+  const U = HS_UI, y = hsFloor() - U.pipUp - U.pipH - U.lowUp - U.lowH;
   ctx.save();
   ctx.fillStyle = 'rgba(10,16,12,0.78)'; ctx.fillRect(U.lowX, y, U.lowW, U.lowH);
   ctx.fillStyle = '#ffd94a'; ctx.fillRect(U.lowX, y, 5, U.lowH);
@@ -808,8 +824,194 @@ function hsLeague() {
       cards.push({ h: g.h, a: g.a, hs: hp, as: ap, tag: 'SO FAR', text: hp === ap ? 'ALL TIED AT THE HALF' : `${hsTn(lead)} LEADS AT THE HALF`, sub: s && hp !== ap ? `${s.name} (${s.tag}) LEADING THE WAY` : '' });
     }
   }
-  for (const e of LGHL) if (e.yr === LEAGUE.year && e.wk === wk - 1 && cards.length < HALFTIME.leagueMax) cards.push({ h: e.h, a: e.a, hs: e.hs, as: e.as, tag: 'LAST WEEK  -  FINAL', text: e.text, sub: '' });
+  for (const e of LGHL) if (e.yr === LEAGUE.year && e.wk === wk - 1 && cards.length < HALFTIME.leagueMax) cards.push({ h: e.h, a: e.a, hs: e.hs, as: e.as, tag: 'LAST WEEK  -  FINAL', text: e.text, sub: '', kind: e.kind });
   return cards.length ? cards : null;
+}
+// --- around the league: staged clips. This week's other games have no plays yet, so the only real data is last week's best stat lines (LGHL): up to
+// HALFTIME.lgClips of them are re-enacted for a few seconds each by clones of two live players (animCast, as the animation library does) dressed as the
+// real men, in the two teams' kits, on the reel's camera. Looks only: nothing here touches a stat, a goal or the game (popup is muted while LGS is set).
+const LG_SCENE = { from: 15, pickAt: 45, runV: 7, runIn: 6, chaseV: 5.6, catchAt: 0.7, zoom: 1.6, ballH: 46 * S, endPast: 2.5 * YD, sackTail: 1.5 };   // yards from the goal line a scoring scene opens; the yard line of a pick / sack; speeds in YD/s (scorer, before the catch, the chaser); when the catch comes; x the reel's zoom; the pass's arc; the scene ends this far into the end zone
+const HS_LG_ICON = { pass: ['wings', '#ffd94a'], rec: ['glove', '#4a8cff'], rush: ['ankle', '#7dff8a'], pick: ['shield', '#4a8cff'], sack: ['bag', '#c9a36b'] };   // a league card's doodle icon by kind
+let LGS = null;   // the scene playing: { e, t, men, focus, step, done, moment, air, cam, keep }
+function hsLgClips() {
+  if (!season || exhibition || !LEAGUE || MATCH.playoff) return null;
+  const wk = season.week, ng = season.sched && season.sched[wk] && season.sched[wk].find(g => g.h === season.team || g.a === season.team);
+  const nextOpp = ng ? (ng.h === season.team ? ng.a : ng.h) : null, tot = t => { const s = teamStars(t); return s.off + s.def; };
+  const list = LGHL.filter(e => e.yr === LEAGUE.year && e.wk === wk - 1 && e.kind && e.kind !== 'fg' && e.pn && (ROSTER[e.team] || []).some(s => s.name === e.pn));
+  // my next opponent's game first, then upsets (the winner had the lower rating), then the biggest line
+  const rank = e => { const win = e.hs >= e.as ? e.h : e.a, lose = win === e.h ? e.a : e.h; return (nextOpp && (e.h === nextOpp || e.a === nextOpp) ? 2e6 : 0) + (e.hs !== e.as && tot(win) < tot(lose) ? 1e6 : 0) + (e.v || 0); };
+  list.sort((a, b) => rank(b) - rank(a));
+  return list.length ? list.slice(0, HALFTIME.lgClips) : null;
+}
+function lgSceneOff() {
+  if (!LGS) return;
+  const k = LGS.keep; LGS = null;
+  clock = k.clock; popups = k.popups; impacts = k.impacts; shake = k.shake; shakeKick = k.shakeKick; runner = k.runner;
+}
+function lgSceneStart(seg, i) {
+  lgSceneOff();
+  seg.i = i;
+  const e = seg.list[i]; if (!e) return false;
+  LGS = { e, t: 0, last: performance.now(), keep: { clock, popups, impacts, shake, shakeKick, runner }, men: [], err: null, cam: null, moment: 99, air: null };
+  popups = []; impacts = []; runner = null;   // (a staged dive must not bump into the live cast)
+  try { lgScript(LGS, e, (ROSTER[e.team] || []).find(s => s.name === e.pn)); } catch (err) { LGS.err = err; console.warn('league clip', err); }
+  return true;
+}
+function lgClipNext() {   // on to the next staged clip (false = that was the last one: the show moves on)
+  const s = HT && HT.segs[HT.i];
+  if (!s || s.k !== 'lgclips' || HT.skip || s.i + 1 >= s.list.length) return false;
+  startCrumple(); lgSceneStart(s, s.i + 1);
+  return true;
+}
+// the scripts, from the animation library's entries: rec = the leaping one-hander then a run to the goal line; pass = the same catch seen from the QB's
+// side; rush = a juke past a diving tackler, then the run; pick = the pick grab and the return; sack = a hit stick on the QB
+function lgScript(L, e, s) {
+  const G = LG_SCENE, other = e.team === e.h ? e.a : e.h, first = (t, grps) => (ROSTER[t] || []).find(q => grps.includes(q.group) && !isOut(q)) || null;
+  const dress = (m, q, x, y, face) => { Object.assign(m, { x, y, z: 0, face, src: null, cv: null }); if (q) Object.assign(m, { name: q.short, look: q.look || m.look, ht: q.ht, wt: q.wt, num: jerseyNum(q.num) }); return m; };
+  const run = (m, v) => { m.cv = v * YD; }, stop = m => { m.cv = null; m.moving = false; m.vx = m.vy = 0; };
+  const c1 = animCast(), c2 = animCast(), defStar = e.kind === 'pick' || e.kind === 'sack';
+  L.offTeam = defStar ? other : e.team; L.defTeam = defStar ? e.team : other;
+  const y0 = MID - 3 * YD, score = m => () => m.x >= FIELD + G.endPast || L.t > HALFTIME.lgSecs * 1.8;
+  const pass = (from, to, t0, t1) => { L.air = { x: from.x, y: from.y, to, t0, t1 }; };
+  if (e.kind === 'rush') {
+    const x0 = FIELD - G.from * YL, A = dress(c1.A, s, x0, y0, 1), B = dress(c1.B, first(other, ['LB', 'S', 'CB']), x0 + 10 * YD, y0, -1);
+    A.hasBall = true; run(A, G.runV); run(B, -2.5);
+    L.men = [A, B]; L.focus = A; L.los = x0 - 3 * YL; L.done = score(A);
+    L.step = () => {
+      if (L.fired || B.x - A.x > 2.1 * YD) return;
+      L.fired = true; L.moment = L.t + 0.1;
+      animAct(A, 'juke', { dur: 0.3, vx: 5 * YD, vy: 1.6 * YD / 0.3, side: 1 });
+      stop(B); startDive(B, A.x + 0.6 * YD, A.y, 0.32, 2.4 * YD); B.tackling = true;
+    };
+  } else if (e.kind === 'rec' || e.kind === 'pass') {
+    const x0 = FIELD - G.from * YL, isQB = e.kind === 'pass';
+    const A = dress(c1.A, isQB ? first(e.team, ['WR', 'TE']) : s, x0, y0, 1), B = dress(c1.B, first(other, ['CB', 'S']), x0 + 0.5 * YD, y0 + 0.7 * YD, 1);
+    const Q = dress(c2.A, isQB ? s : first(e.team, ['QB']), x0 - 13 * YD, MID, 1);
+    run(A, G.runIn); run(B, G.runIn); Q.hasBall = true;
+    L.men = isQB ? [A, B, Q] : [A, B]; L.focus = isQB ? Q : A; L.los = Q.x + 5 * YD; L.done = score(A); L.moment = G.catchAt + 0.32;
+    L.step = () => {
+      if (isQB && !L.threw && L.t >= 0.12) { L.threw = true; animAct(Q, 'throw', { dur: 0.5 }); }
+      if (!L.air && !L.fired && L.t >= 0.34) { Q.hasBall = false; pass(Q, A, L.t, G.catchAt + 0.32); if (isQB) L.followBall = true; }
+      if (!L.fired && L.t >= G.catchAt) {
+        L.fired = true; stop(A); stop(B);
+        animCaught('jumpOne')(A, B); animAct(B, 'jump', { dur: 0.7, h: 11 * S, over: false });
+      }
+      if (A.later && L.t >= G.catchAt + A.catchAt) { const f = A.later; A.later = null; f(); L.air = null; L.followBall = false; L.focus = A; }
+      if (L.fired && !A.later && !A.action && A.cv == null) { run(A, G.runV); run(B, G.chaseV); }
+    };
+  } else if (e.kind === 'pick') {
+    const x0 = G.pickAt * YL, D = dress(c1.B, s, x0 + 0.6 * YD, y0, 1), R = dress(c1.A, first(other, ['WR', 'TE']), x0, y0 + 0.7 * YD, 1);
+    run(D, G.runIn); run(R, G.runIn);
+    L.men = [D, R]; L.focus = D; L.los = x0 - 12 * YL; L.moment = G.catchAt;
+    pass({ x: x0 - 14 * YD, y: MID }, D, 0, G.catchAt);
+    L.step = () => {
+      if (!L.fired && L.t >= G.catchAt) { L.fired = true; L.air = null; stop(D); stop(R); D.hasBall = true; animAct(D, 'swat', { dur: 0.3, pick: true }); D.catchFx = { style: 'possession', t: clock }; }
+      if (L.fired && !D.action && D.cv == null) { run(D, -G.runV); run(R, -G.chaseV); }
+    };
+  } else {   // sack
+    const x0 = G.pickAt * YL, Q = dress(c1.A, first(other, ['QB']), x0, MID, 1), D = dress(c1.B, s, x0 + 7 * YD, MID, -1);
+    Q.hasBall = true; run(D, -G.runV);
+    L.men = [Q, D]; L.focus = Q; L.los = x0 + 7 * YL; L.done = () => L.t >= HALFTIME.lgSecs || (L.fired && L.t > L.moment + G.sackTail);
+    L.step = () => {
+      if (L.fired || D.x - Q.x > 1.5 * YD) return;
+      L.fired = true; L.moment = L.t + 0.12; stop(D);
+      forceTackle('hitStick', Q, D);
+    };
+  }
+}
+function lgBall(L) {   // the staged pass in the air: from where it left to the catcher's hands, on an arc
+  const a = L.air; if (!a) return null;
+  const u = Math.max(0, Math.min(1, (L.t - a.t0) / Math.max(0.05, a.t1 - a.t0))), x = a.x + (a.to.x - a.x) * u, y = a.y + (a.to.y - a.y) * u;
+  return { x, y, z: (34 + 14 * u) * S + (a.to.z || 0) * u + Math.sin(Math.PI * u) * LG_SCENE.ballH, nose: Math.atan2(a.to.y - a.y, a.to.x - a.x) };
+}
+function drawHsLgClip(seg) {
+  const L = LGS, next = () => { if (!lgClipNext()) { startCrumple(); hsAdvance(); } };
+  if (!L || L.err) return next();
+  const now = performance.now(), dtR = Math.min(0.05, (now - L.last) / 1000), G = LG_SCENE, C = HLREEL.cam, SW = HLREEL.slow; L.last = now;
+  HT.t0 = now;   // (the cards' own timer never cuts a clip short)
+  const dM = Math.abs(L.t - L.moment), dt = dtR * (dM < SW.win ? SW.k + (1 - SW.k) * smooth01(dM / SW.win) : 1);   // (slow motion around the scene's moment, like the reel)
+  L.t += dt; clock += dt;
+  try {
+    if (L.step) L.step(dt);
+    for (const m of L.men) {
+      if (m.action) updateAction(m, dt);
+      else if (m.cv != null) { m.moving = true; m.vx = m.cv; m.vy = 0; m.face = m.cv < 0 ? -1 : 1; m.x += m.cv * dt; }
+      if (m.moving) m.run += dt * 12;
+    }
+  } catch (err) { console.warn('league clip', err); L.err = err; return next(); }
+  // the reel's camera maths on the scorer (or the ball while a QB's pass is in the air): eased follow, a lead by his speed, a push in at the moment
+  const bp = lgBall(L), f = L.focus;
+  let fx = f.x, fy = f.y;
+  if (bp && L.followBall) { fx = bp.x; fy = bp.y; }
+  else if (!f.action && f.cv != null) fx += Math.max(-C.leadMax, Math.min(C.leadMax, f.cv * C.lead));
+  L.cam = L.cam || { x: fx, y: fy };
+  const ease = Math.min(1, dtR * 6 * HLREEL.pan + 0.02);
+  L.cam.x += (fx - L.cam.x) * ease; L.cam.y += (fy - L.cam.y) * ease;
+  const bump = 1 - Math.min(1, dM / C.apexWin);
+  // the two teams' kits and end zones for this draw only; everything of the live game is put back right after (the crowd canvases are kept as they
+  // are: they'd rebuild for a new home team)
+  const keep = { m: { you: MATCH.you, opp: MATCH.opp, youKit: MATCH.youKit, oppKit: MATCH.oppKit, home: MATCH.home }, off: { ...TEAMS.off }, def: { ...TEAMS.def },
+    crowd: crowdImg ? { home: crowdImg.home, kit: crowdImg.kit } : null, cam: [camX, camY, zoom, passPull], los, ltg: lineToGain, mir: MIRROR, ball };
+  ctx.fillStyle = '#3f5f39'; ctx.fillRect(-PAD, 0, W + 2 * PAD, H);
+  ctx.save();
+  try {
+    MATCH.you = L.offTeam; MATCH.opp = L.defTeam; MATCH.home = L.e.h === L.offTeam ? 'you' : 'opp'; defaultKits();
+    if (crowdImg) { crowdImg.home = homeKey(); crowdImg.kit = benchKit(); }
+    camX = L.cam.x; camY = L.cam.y; passPull = 1; zoom = replayZoom() * HLREEL.zoom * G.zoom * (1 + C.apex * smooth01(bump)) / userZoom;
+    los = L.los; lineToGain = FIELD; MIRROR = -1;
+    ctx.beginPath(); ctx.rect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - FIELD_BOT); ctx.clip();
+    ctx.translate(W / 2, viewCenterY());
+    dmHold++;
+    ctx.scale(MIRROR * camZ(), camZ()); ctx.translate(-camX, -camY);
+    drawField();
+    for (const m of [...L.men].sort((a, b) => a.y - b.y)) drawPlayer(m);
+    if (bp) { ball = { x: bp.x, y: bp.y, z: bp.z, inAir: true, nose: bp.nose, spiral: L.t * 28, rot: 0, loose: false, tucked: false, liftR: 0 }; drawBallBody(); }
+  } catch (err) { console.warn('league clip', err); L.err = err; }
+  finally {
+    ctx.restore();
+    dmHold = Math.max(0, dmHold - 1);
+    ball = keep.ball; MIRROR = keep.mir; los = keep.los; lineToGain = keep.ltg; [camX, camY, zoom, passPull] = keep.cam;
+    Object.assign(MATCH, keep.m); Object.assign(TEAMS.off, keep.off); Object.assign(TEAMS.def, keep.def);
+    if (crowdImg && keep.crowd) Object.assign(crowdImg, keep.crowd);
+  }
+  // caption strip, the RE-ENACTMENT tag, pips and the ticker
+  const e = L.e;
+  ctx.save();
+  ctx.fillStyle = '#16211a'; ctx.fillRect(-PAD, 0, W + 2 * PAD, TOP_BAR);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#e8e8e8'; ctx.font = 'bold 20px monospace'; ctx.fillText('AROUND THE LEAGUE', W / 2, TOP_BAR / 2);
+  ctx.fillStyle = 'rgba(10,16,12,0.78)'; ctx.fillRect(W / 2 - 400, TOP_BAR + 8, 800, 64);
+  ctx.fillStyle = '#ffd94a'; ctx.font = 'bold 20px monospace'; ctx.fillText(`LAST WEEK  -  FINAL   ${hsTn(e.h)} ${e.hs} - ${hsTn(e.a)} ${e.as}`, W / 2, TOP_BAR + 28, 780);
+  ctx.fillStyle = '#ffffff'; ctx.font = 'bold 18px monospace'; ctx.fillText(e.text, W / 2, TOP_BAR + 54, 780);
+  ctx.fillStyle = 'rgba(10,16,12,0.78)'; ctx.fillRect(W - 176, TOP_BAR + 80, 160, 24);
+  ctx.fillStyle = '#e8e8e8'; ctx.font = 'bold 13px monospace'; ctx.fillText('RE-ENACTMENT', W - 96, TOP_BAR + 92);
+  ctx.restore();
+  hsPips(seg.list.length, seg.i, L.t / HALFTIME.lgSecs);
+  drawHsTicker();
+  if (L.err || (L.done ? L.done() : L.t >= HALFTIME.lgSecs)) next();
+}
+// one line of the league's scores scrolling right to left just above the bottom bar (HT.ticker, built once in hsBuild), during the reel and the league clips
+function drawHsTicker() {
+  const s = HT && HT.ticker; if (!s) return;
+  const U = HS_UI, y = H - BOT_BAR - U.tickH;
+  ctx.save();
+  ctx.fillStyle = 'rgba(10,16,12,0.88)'; ctx.fillRect(-PAD, y, W + 2 * PAD, U.tickH);
+  ctx.beginPath(); ctx.rect(-PAD, y, W + 2 * PAD, U.tickH); ctx.clip();
+  ctx.font = 'bold 15px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#e8e8e8';
+  const w = ctx.measureText(s).width, off = ((performance.now() - (HT.tick0 || 0)) / 1000 * U.tickV) % w;
+  for (let x = -PAD - off; x < W + PAD; x += w) ctx.fillText(s, x, y + U.tickH / 2 + 1);
+  ctx.restore();
+}
+// a doodle icon on a card (screen space): k = a DOODLE drawer, r = its half-size in px
+function hsDoodle(k, col, x, y, r) {
+  if (!DOODLE[k]) return;
+  ctx.save();
+  try {
+    ctx.translate(x, y); ctx.scale(r, r); ctx.lineJoin = ctx.lineCap = 'round';
+    ddSeed = (k.length * 7919 + Math.floor(performance.now() / 1000 * ICON.boil) * 104729) % 2147483646 + 1;
+    DOODLE[k]({ k, c: col, seed: 1 }, performance.now() / 1000, 1);
+  } catch (e) {}
+  ctx.restore();
 }
 function hsHistoric() {
   const L = hsLines(); if (!L.length) return null;
@@ -928,8 +1130,8 @@ function hsFrame(title, sub) {
 }
 function drawHalfShow() {
   const s = HT.segs[HT.i]; if (!s) return;
-  ({ cards: drawHsCards, league: drawHsLeague, hist: drawHsHist, qb: drawHsQB, def: drawHsDef, match: drawHsMatch })[s.k](s);
-  drawHsBar();
+  ({ cards: drawHsCards, lgclips: drawHsLgClip, league: drawHsLeague, hist: drawHsHist, qb: drawHsQB, def: drawHsDef, match: drawHsMatch })[s.k](s);
+  if (HT) drawHsBar();   // (a staged league clip can end the show from its own draw)
 }
 function drawHsCards(s) {
   hsFrame('HALFTIME HIGHLIGHTS', 'BEST PLAYS OF THE FIRST HALF');
@@ -954,6 +1156,7 @@ function drawHsLeague(s) {
     ctx.font = 'bold 16px monospace'; ctx.fillText(hsTn(c.h), x + 90, y + 150, 160); ctx.fillText(hsTn(c.a), x + w - 90, y + 150, 160);
     ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.fillText(c.text, x + w / 2, y + 190, w - 30);
     ctx.fillStyle = RES.dim; ctx.font = 'bold 15px monospace'; ctx.fillText(c.sub, x + w / 2, y + 220, w - 30);
+    const ik = HS_LG_ICON[c.kind]; if (ik) hsDoodle(ik[0], ik[1], x + w / 2, y + 136, 24);   // (last week's line: a doodle icon by its kind)
   });
 }
 function drawHsHist(s) {
@@ -1179,6 +1382,7 @@ const POPUP_YOURS = new Set(['PERFECT JUMP', 'PERFECT DIVE', 'PERFECT PICK', 'PI
 const MOVE_CALLS = new Set(['HURDLE', 'STIFF ARM', 'SPIN MOVE', 'SPUN AWAY', 'JUKED', 'TRUCKED', 'TRUCK']), MOVE_CALL_WINDOW = 1.2;
 const moveCalled = p => !!p && clock - (p.moveCallT ?? -9) < MOVE_CALL_WINDOW;
 function popup(p, text, color = '#ffffff', fav, quiet = false, keep = false, ico) {   // fav: whose good play it is ('you' / 'opp'), for the crowd; quiet: just the callout, not a big play; keep: leave the banner / other callouts up (NEW RECORD! on a touchdown); ico: doodle icon base (see `// --- doodle icons`; undefined = by text, false = no callout)
+  if (LGS) return;   // (a staged league clip at halftime: its hits and moves are a re-enactment, never a callout, a goal or a highlight)
   // green is good for you, red bad: the offense's colors turn around when you're on defense (a fumble is green there)
   if (twoP && !twoP.ai) color = '#ffffff';
   else if (aiOff() && !POPUP_YOURS.has(text)) color = color === '#ff6b6b' ? '#7dff8a' : color === '#7dff8a' ? '#ff6b6b' : color;

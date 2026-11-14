@@ -2669,7 +2669,7 @@ function update(dt) {
     // the defense triggers on the screen; the few who stayed home keep playing their zones while he's set to throw
     for (const d of back7) if (state === 'run') { if (settingUp && d.screenStay) zoneDefend(d, dt); else pursue(d, runner, dt); }
     if (kickoffPlay && state === 'run' && runner !== qb) kickoffBlock(qb, dt, WR_BLOCK_SPEED);
-    else if (runner !== qb) { if (isRunPlay && !kickoffPlay && !qb.action && !(tut && (tutStep() || {}).still) && clock < RUN_DROP.time && !ball.pitch) runDrop(dt); else if (ball.pitch && isRunPlay && !qb.action) { qb.pvx = qb.pvy = 0; setVelocity(qb, qb.x, qb.y, dt); qb.face = 1; } else if (passCaught() && !qb.action) updateBlocker(qb, dt, QB_SPEED); else if (!rbpQB(dt)) idleQB(qb, dt); }   // (a caught pass: the QB goes downfield to block too)
+    else if (runner !== qb) { if (isRunPlay && !kickoffPlay && !qb.action && !(tut && (tutStep() || {}).still) && clock < RUN_DROP.time && !ball.pitch) runDrop(dt); else if (ball.pitch && isRunPlay && !qb.action) { qb.pvx = qb.pvy = 0; setVelocity(qb, qb.x, qb.y, dt); qb.face = 1; } else if (passCaught() && !qb.action) updateBlocker(qb, dt, QB_SPEED); else if (!meshQB(dt) && !rbpQB(dt)) idleQB(qb, dt); }   // (a caught pass: the QB goes downfield to block too)
   } else if (state === 'flight') {
     for (const p of [qb, ...ols, ...recs.filter(r => r.teBlock)]) { if (p.action || p.coast || p.hitBy) idleQB(p, dt); else afterThrow(p, dt, p === qb ? QB_SPEED : OL_RUN); }   // (no freezing once it's thrown: they keep working / follow the ball like they do once it's caught)
     for (const d of dl) d.dropZone ? defendBall(d, dt) : lineToBall(d, dt);
@@ -2721,6 +2721,7 @@ function update(dt) {
   separatePlayers(dt);
   faceOffPairs();
   sideLock();
+  for (const p of allPlayers()) postBump(p);   // (the goal posts' pads are solid for everyone, however he was moved this frame)
   updateBall(dt);
   if (state !== 'flight') ball.nose = null;  // the spiral look is only for a pass in the air
   if (state === 'loose') updateLoose();
@@ -3024,7 +3025,7 @@ function updateCamera(dt) {
   const x0 = Math.min(...xs), x1 = Math.max(...xs);
   const preTight = wide && state === 'pre' && !kickoffPlay && !rollingOut();   // (a scrimmage snap: in a little closer, just a sliver of sideline)
   const y0 = wide ? -(preTight ? CAM.preSide : 13) * YD : Math.min(...ys), y1 = wide ? FW + (preTight ? CAM.preSideB : 1.5) * YD : Math.max(...ys);
-  const VH = H - TOP_BAR - BOT_BAR;
+  const VH = H - TOP_BAR - FIELD_BOT;
   let wantZ = Math.max(0.15, Math.min(1, W / (x1 - x0 + 10 * YD), VH / (y1 - y0 + (wide ? 0 : 8 * YD))));
   // in tight on whoever has the ball (a kickoff in the air too, once it's coming down to the returner)
   const carrying = (state === 'run' && !screenPasserView()) || state === 'picked' || (state === 'kickoff' && dist(ball, rb) < 25 * YD);
@@ -3081,7 +3082,7 @@ function updateCamera(dt) {
 let passPull = 1;   // < 1 while passing: the extra pull-back on top of the camera's own zoom
 // is the whole view (all four corners, the same rectangle drawCrowd tests) inside the stadium's rounded bowl at this camera centre / total zoom?
 function viewInBowl(cxp, cyp, zc) {
-  const vc = viewCenterY(), vTop = cyp - (vc - TOP_BAR) / zc - 24, vBot = cyp + (H - BOT_BAR - vc) / zc + 24, vL = cxp - (W / 2 + PAD) / zc - 48, vR = cxp + (W / 2 + PAD) / zc + 48;
+  const vc = viewCenterY(), vTop = cyp - (vc - TOP_BAR) / zc - 24, vBot = cyp + (H - FIELD_BOT - vc) / zc + 24, vL = cxp - (W / 2 + PAD) / zc - 48, vR = cxp + (W / 2 + PAD) / zc + 48;
   const ecx = FIELD / 2, ecy = MID, ea = FIELD / 2 + ENDZONE + CROWD.endGap + CROWD.end, eb = MID + CROWD.depth, er = eb * 0.8;
   const inB = (px, py) => { const dx = Math.abs(px - ecx), dy = Math.abs(py - ecy), a = ea - 10, b = eb - 10; if (dx > a || dy > b) return false; const qx = dx - (a - er), qy = dy - (b - er); return !(qx > 0 && qy > 0 && qx * qx + qy * qy > er * er); };
   return inB(vL, vTop) && inB(vR, vTop) && inB(vL, vBot) && inB(vR, vBot);
@@ -3097,7 +3098,7 @@ function rollingOut() {
   return qb.y < Math.min(...ys) - POCKET.width || qb.y > Math.max(...ys) + POCKET.width;
 }
 // the tutorial never pulls back past its pre-snap view (the whole field width)
-const tutZoomFloor = () => (H - TOP_BAR - BOT_BAR) / (FW + 14.5 * YD);
+const tutZoomFloor = () => (H - TOP_BAR - FIELD_BOT) / (FW + 14.5 * YD);
 // The field is drawn mirrored in x (+x is screen left): MIRROR = -1 when the offense is the home team (it drives left), +1 when
 // it's the road team (drives right). Set every frame in draw; keys and the mouse follow it (see aliasKey, screenToWorld, throwTarget).
 let MIRROR = -1;

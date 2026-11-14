@@ -2111,8 +2111,8 @@ function simAdvance() {
 function drawSim() {
   if (!simReady()) return;
   ctx.fillStyle = 'rgba(0,0,0,0.62)';
-  ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
-  const pw = 860, ph = 380, x = W / 2 - pw / 2, y = TOP_BAR + (H - TOP_BAR - BOT_BAR) / 2 - ph / 2 - 30;
+  ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - FIELD_BOT);
+  const pw = 860, ph = 380, x = W / 2 - pw / 2, y = TOP_BAR + (H - TOP_BAR - FIELD_BOT) / 2 - ph / 2 - 30;
   const col = teamColor(sim.team);   // the box takes the colour of whoever has the ball
   ctx.fillStyle = '#0f1a14'; ctx.fillRect(x, y, pw, ph);
   ctx.strokeStyle = col; ctx.lineWidth = 4; ctx.strokeRect(x, y, pw, ph);
@@ -3002,7 +3002,15 @@ function updateKickoff(dt) {
 }
 
 
-const PAUSE_BTN = { x: 12, y: H - BOT_BAR + 5, w: 100 * BB, h: BOT_BAR - 10 };
+// the pause / play icon: a square in the top bar's left corner (drawn by pauseIcon: two bars while the game runs, a play triangle while it's paused)
+const PAUSE_BTN = { x: 2 * TOP_PAD, y: TOP_PAD, w: TOP_BAR - 2 * TOP_PAD, h: TOP_BAR - 2 * TOP_PAD };
+const PAUSE_ICON = { size: 0.46, bar: 0.3, touchPad: 12 };   // the glyph's height as a share of the button, a pause bar's width as a share of the glyph, px a finger may miss the button by (touch only)
+function pauseIcon(b) {
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2 + 1, r = b.h * PAUSE_ICON.size / 2, bw = 2 * r * PAUSE_ICON.bar;
+  ctx.fillStyle = b.ink;
+  if (paused || (ONL.on && ONL.view && ONL.view.pz)) { ctx.beginPath(); ctx.moveTo(cx - r * 0.75, cy - r); ctx.lineTo(cx + r, cy); ctx.lineTo(cx - r * 0.75, cy + r); ctx.closePath(); ctx.fill(); }
+  else { ctx.fillRect(cx - r * 0.8, cy - r, bw, 2 * r); ctx.fillRect(cx + r * 0.8 - bw, cy - r, bw, 2 * r); }
+}
 let paused = false;
 let pauseSim = false;   // the pause menu's sim screen is up
 const PAUSE_MENU = { replay: { x: W / 2 - 130, y: H / 2 + 114, w: 260, h: 48 }, sim: { x: W / 2 - 130, y: H / 2 + 176, w: 260, h: 48 }, back: { x: W / 2 - 130, y: H / 2 + 240, w: 260, h: 48 }, resume: { x: W / 2 - 130, y: H / 2 - 10, w: 260, h: 48 }, reset: { x: W / 2 - 130, y: H / 2 + 52, w: 260, h: 48 },
@@ -3044,7 +3052,7 @@ function drawSimButton(b, on) {
 // page alone (no other pages, no side / view switch). The roster screen opens over the paused game (results.dc); BACK / Esc closes it.
 // Changes that touch this play are made on the field at once: the man coming in jogs on from the sideline, the man going out jogs off
 // (like an audible's sub). Other formations pick the changes up the next time they're called. Simple view = who is on the field now.
-const DC_BTN = { x: W - 226, y: 8, w: 214, h: 48 };
+const DC_BTN = { x: W - 2 * TOP_PAD - Math.round(214 * HUD_K), y: TOP_PAD, w: Math.round(214 * HUD_K), h: TOP_BAR - 2 * TOP_PAD };   // (in the top bar, top right: sized with the bar, never past its edge)
 let dcg = null;   // open: { which, st, page, prevView, prevSide, snap, flip, field }
 const dcShown = () => !!season && !exhibition && !tut && !ONL.on && !(twoP && !twoP.ai) && !game.over && state !== 'sim' && !(rec && rec.replaying);
 function dcWhich() {   // what can be edited right now (null = mid play)
@@ -3105,7 +3113,7 @@ function rateStash(list, keys) {
 function drawDcBtn() {
   if (!dcShown()) return;
   const on = !!dcWhich();
-  ctx.save(); menuBtn(DC_BTN, 'DEPTH CHART', on ? IN_GAME_PAPER.yellow : IN_GAME_PAPER.off, 19, null, on); ctx.restore();
+  ctx.save(); menuBtn(DC_BTN, 'DEPTH CHART', on ? IN_GAME_PAPER.yellow : IN_GAME_PAPER.off, Math.round(19 * HUD_K), null, on); ctx.restore();
 }
 const leaveOK = () => state === 'pre' || state === 'done' || game.over || !!exhibition;   // (a franchise game can't be left in the middle of a play; an exhibition can, any time)
 const leaveBtn = () => pmRect('leave');   // the pause menu's LEAVE GAME (last in the list)
@@ -3165,8 +3173,7 @@ function leaveGame() {
 }
 // a decision screen (punt / FG / go for it, kick or go for two, the halftime card): no pausing until you pick (resuming is always allowed)
 const noPause = () => !paused && !(rec && rec.replaying) && (halfShown() || (state === 'pre' && fourthPending) || patMode === 'choose');
-const overPauseButton = p => p.x >= PAUSE_BTN.x && p.x <= PAUSE_BTN.x + PAUSE_BTN.w && p.y >= PAUSE_BTN.y && p.y <= PAUSE_BTN.y + PAUSE_BTN.h;
-const overKeysButton = p => !TOUCH && p.x >= KEYS_BTN.x && p.x <= KEYS_BTN.x + KEYS_BTN.w && p.y >= KEYS_BTN.y && p.y <= KEYS_BTN.y + KEYS_BTN.h;
+const overPauseButton = p => { const b = PAUSE_BTN, m = TOUCH ? PAUSE_ICON.touchPad : 0; return p.x >= b.x - m && p.x <= b.x + b.w + m && p.y >= b.y - m && p.y <= b.y + b.h + m; };   // (a finger gets a little room around the small icon)
 // the touch version (phones / tablets: TUI.on) of the list below
 const KEYBINDS_MOBILE = [
   ['BEFORE THE SNAP', ''],
@@ -3338,7 +3345,7 @@ function drawKeybinds() {
   ctx.textAlign = 'center'; ctx.fillStyle = '#ffd94a'; ctx.font = 'bold 20px monospace';
   ctx.fillText('Scroll for more  -  click anywhere or press Esc to close', W / 2, H - 14);
 }
-const viewCenterY = () => TOP_BAR + (H - TOP_BAR - BOT_BAR) / 2;
+const viewCenterY = () => TOP_BAR + (H - TOP_BAR - FIELD_BOT) / 2;
 
 // A coloured paper button with a small icon on the left: a stopwatch (timeout) or a megaphone (audible).
 function drawIconButton(b, fill, label, icon, on = true) {
@@ -3483,7 +3490,7 @@ function draw() {
 
   ctx.save();
   ctx.beginPath();
-  ctx.rect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
+  ctx.rect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - FIELD_BOT);
   ctx.clip();
   const shk = shake + stadiumShake();   // (the crowd on the road / a big kick's nerves)
   ctx.translate(W / 2 + (Math.random() - 0.5) * shk, viewCenterY() + (Math.random() - 0.5) * shk);
@@ -3568,8 +3575,7 @@ function draw() {
   }
 
   ctx.fillStyle = '#16211a';
-  ctx.fillRect(0, 0, W, TOP_BAR);
-  ctx.fillRect(0, H - BOT_BAR, W, BOT_BAR);
+  ctx.fillRect(0, 0, W, TOP_BAR);   // (the top bar only: no bottom bar, the field runs to the bottom of the screen)
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
   drawScoreboard();
@@ -3623,7 +3629,7 @@ function draw() {
   }
   if (rec && rec.replaying && rec.rewind) {   // the tape rewinding: a dim wash and the label
     const fade = 1 - smooth01(Math.max(0, (rec.rewind.t / rec.rewind.dur - 0.55) / 0.45));   // (the wash and label fade out over the last of the rewind)
-    ctx.save(); ctx.globalAlpha = fade; ctx.fillStyle = 'rgba(20,30,50,0.18)'; ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
+    ctx.save(); ctx.globalAlpha = fade; ctx.fillStyle = 'rgba(20,30,50,0.18)'; ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - FIELD_BOT);
     ctx.font = 'bold 34px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#ffffff';
     ctx.fillText('◂◂ REWIND', 40, TOP_BAR + 50); ctx.restore();
   }
@@ -3636,17 +3642,17 @@ function draw() {
   ctx.font = 'bold 18px monospace';
   ctx.textAlign = 'center';
   ctx.textAlign = 'center';
-  ctx.save(); menuBtn(PAUSE_BTN, paused ? 'RESUME' : 'PAUSE', IN_GAME_PAPER.green, Math.round(16 * BB)); ctx.restore();
-  // the difficulty, next to the pause button
+  ctx.save(); menuBtn(PAUSE_BTN, '', IN_GAME_PAPER.green, 16, pauseIcon); ctx.restore();   // (top left corner of the top bar)
+  // the difficulty: bottom left, level with the down and distance (text over the field, no bar behind it)
   ctx.save(); ctx.font = `bold ${Math.round(14 * BB)}px monospace`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   ctx.fillStyle = '#fff'; ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 3;
   const dTxt = `DIFFICULTY: ${diffTag()}`;
-  ctx.strokeText(dTxt, PAUSE_BTN.x + PAUSE_BTN.w + 12, PAUSE_BTN.y + PAUSE_BTN.h / 2); ctx.fillText(dTxt, PAUSE_BTN.x + PAUSE_BTN.w + 12, PAUSE_BTN.y + PAUSE_BTN.h / 2);
+  ctx.lineJoin = 'round'; ctx.strokeText(dTxt, 12, H - BOT_BAR / 2); ctx.fillText(dTxt, 12, H - BOT_BAR / 2);
   ctx.restore();
   ctx.font = `bold ${Math.round(18 * BB)}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-  ctx.fillStyle = '#ffd94a';
-  ctx.fillText(tut ? (state !== 'pre' && tutStep() ? 'TUTORIAL  -  BACKSPACE to reset the play' : 'TUTORIAL') : (puntRetPlay || (state === 'kick' && kick && kick.punt) || (state === 'kickoff' && kickoff && kickoff.punt) || state === 'punt' || (puntRet && puntPlay && !puntPlay.ko)) ? 'PUNT' : kickoffPlay || (state === 'kick' && kick && kick.kickoff) || (puntRet && puntPlay && puntPlay.ko) ? 'KICKOFF' : patMode !== null || patNext ? 'PAT' : `${downAndDistance()}  |  ${spot(los)}`, W / 2, H - BOT_BAR * 0.33);
-  if (!TOUCH) { ctx.save(); menuBtn(KEYS_BTN, 'CONTROLS', IN_GAME_PAPER.green, 16); ctx.restore(); }
+  ctx.fillStyle = '#ffd94a'; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineWidth = 4; ctx.lineJoin = 'round';   // (the down and distance: yellow text over the field, outlined so it reads without a bar)
+  const ddTxt = tut ? (state !== 'pre' && tutStep() ? 'TUTORIAL  -  BACKSPACE to reset the play' : 'TUTORIAL') : (puntRetPlay || (state === 'kick' && kick && kick.punt) || (state === 'kickoff' && kickoff && kickoff.punt) || state === 'punt' || (puntRet && puntPlay && !puntPlay.ko)) ? 'PUNT' : kickoffPlay || (state === 'kick' && kick && kick.kickoff) || (puntRet && puntPlay && puntPlay.ko) ? 'KICKOFF' : patMode !== null || patNext ? 'PAT' : `${downAndDistance()}  |  ${spot(los)}`;
+  ctx.strokeText(ddTxt, W / 2, H - BOT_BAR * 0.33); ctx.fillText(ddTxt, W / 2, H - BOT_BAR * 0.33);
   if (finishShowing()) { ctx.save(); menuBtn(finishBtn(), 'FINISH', IN_GAME_PAPER.red, 16); ctx.restore(); }
   if (!tut && state !== 'sim' && state !== 'kick' && !lightGfx() && !cine) { drawStarHud(); drawNamesTip(); }
   if (state === 'kick' || (state === 'kickoff' && kick && kick.userKo)) drawKickMeters();
@@ -3665,11 +3671,11 @@ function draw() {
     }
   }
   if (state === 'pre' && fourthPending && !paused && !aiOff() && ONL.on && !onlIAmOff()) {   // online: the offense decides; the defense just waits (no buttons it can't press)
-    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - FIELD_BOT);
     ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = 'bold 28px monospace'; ctx.fillText('OFFENSE IS CHOOSING...', W / 2, H / 2);
   } else if (state === 'pre' && fourthPending && !paused && !aiOff()) {
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
+    ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - FIELD_BOT);
     ctx.fillStyle = '#fff';
     ctx.textAlign = 'center';
     ctx.font = 'bold 34px monospace';
@@ -3683,7 +3689,7 @@ function draw() {
   if (sw && !paused && !showKeys && onlKickOwner()) { ctx.save(); menuBtn(PAT_SWITCH_BTN, sw.label, sw.fill, 16); ctx.restore(); }
   if (DB_TURN.debug && !paused) drawDbDebug();
   if (defLive() && !paused && !(pvpDef() && fourthPending) && (!ONL.on || !onlIAmOff())) {   // (the assignment art never draws over the top / bottom banner or any button)
-    ctx.save(); ctx.beginPath(); ctx.rect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);   // (the whole screen: the field is wider than W on a phone, the lines must reach its ends)
+    ctx.save(); ctx.beginPath(); ctx.rect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - FIELD_BOT);   // (the whole screen: the field is wider than W on a phone, the lines must reach its ends)
     for (const b of UI_BTNS) if (b && b.w) ctx.rect(b.x - 4, b.y - 4, b.w + 8, b.h + 8);
     ctx.clip('evenodd'); drawDefOverlay(); ctx.restore();
   }   // (online: only the defender sees his assignment)   // (two players: no play art while the offense picks punt / kick / go for it)
@@ -3726,7 +3732,7 @@ function draw() {
   if (paused && !ONL.on) {   // (online: drawOnlineOverlay's pause menu)
     if (turnoverBanner || topCallout || pendingBanner) { turnoverBanner = null; topCallout = null; pendingBanner = null; annFade = null; }   // (pausing clears whatever banner was up)
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
+    ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - FIELD_BOT);
     drawDcBtn();
     ctx.fillStyle = '#fff';
     ctx.textAlign = 'center';
@@ -3886,11 +3892,12 @@ function drawScoreboard() {
   Object.assign(game, sb);
   try { drawScoreboardNow(); } finally { Object.assign(game, real); }
 }
-// px: team box / center box widths, gap between, the score panel's width, the quarter and down-and-distance columns, font sizes
+// px at the full-height bar (TOP_BAR_FULL; the whole board is drawn x HUD_K to fit the bar): team box / center box widths, gap between, the score panel's width, the quarter and down-and-distance columns, font sizes
 const SCOREBOARD = { team: 270, mid: 400, gap: 8, scoreW: 78, qW: 96, ddW: 150, name: 21, score: 42, quarter: 22, clock: 42, down: 20, spot: 15 };
 function drawScoreboardNow() {
   // centered in the top bar
-  const cx = W / 2, top = 4, h = TOP_BAR - 8, o = (h - 36) / 2;   // (fills the top bar; o centres the text in the taller boxes)
+  const cx = W / 2, top = TOP_PAD / HUD_K, h = (TOP_BAR - 2 * TOP_PAD) / HUD_K, o = (h - 36) / 2;   // (fills the top bar; o centres the text in the taller boxes)
+  ctx.save(); ctx.translate(cx, 0); ctx.scale(HUD_K, HUD_K); ctx.translate(-cx, 0);   // (everything below is in full-size px)
   const clockSecs = Math.ceil(game.secs - 1e-6);   // (rounds up: 0:00 only when no play can start)
   const clockTxt = `${Math.floor(clockSecs / 60)}:${String(clockSecs % 60).padStart(2, '0')}`;
   const box = (x, w, fill) => { ctx.fillStyle = fill; ctx.fillRect(x, top, w, h); };
@@ -3949,20 +3956,7 @@ function drawScoreboardNow() {
   ctx.font = `${B.spot}px monospace`;
   ctx.fillStyle = '#9fb3a6';
   if (Number.isFinite(los)) ctx.fillText(`ball on ${spot(los)}`, dx, top + 46, B.ddW - 12);
-
-  return;   // (no commentary under the scoreboard any more)
-  // play result under the scoreboard (not the pre-snap formation line)
-  let line = toast && performance.now() < toast.until ? toast.text : msg && state !== 'pre' ? msg.split('\n')[0] : '';
-  if (aiOff() && !(toast && performance.now() < toast.until) && state !== 'done') {   // on defense: defensive tips, not the offense's prompts
-    const k = boundKey;   // (the keys as they're bound now)
-    line = state === 'flight' ? `Ball in the air  -  ${k('jumpD')}: jump for it  -  ${k('strip')}: one-hander  -  ${k('switchE')}: switch defender` : state === 'run' ? `${k('hit')}: hit stick  -  ${k('diveD')}: dive tackle  -  ${k('secure')}: secure tackle`
-         : state === 'drop' || state === 'pocket' ? `Rush the QB  -  hold toward him: bull rush / around: swim / ${k('jumpD')}: spin  -  ${k('switchE')}: switch` : '';
-  }
-  if (state === 'done' && playWho && line && !hl) line += '  -  ' + playWho;
-  line = runHelpKeys(line);
-  ctx.font = '14px monospace';
-  ctx.fillStyle = '#fff';
-  ctx.fillText(line, cx, top + h + 16, W - 24);   // sits fully below the scoreboard, inside the bar
+  ctx.restore();
 }
 
 // the run prompt (RUN_HELP) shows the keys as they are now: rebinds, and A / D swapped when the drive goes to the right

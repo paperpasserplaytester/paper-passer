@@ -920,7 +920,7 @@ function drawStart() {
     ctx.fillStyle = RES.line; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('NO HIGHLIGHTS SAVED YET', W - 225, H - 120); ctx.restore();
   }
 }
-const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-13 STEP-64';
+const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-13 STEP-65';
 let hlFlash = -1e9;   // when the main menu's HIGHLIGHT button was last clicked
 let quickMenu = false;   // QUICK PLAY (START_BTNS.ex) drop down: EXHIBITION / 1V1 / ONLINE take the place of FRANCHISE / CAREER / TUTORIAL (same buttons, same size)
 function startClick(p) {
@@ -1246,10 +1246,6 @@ function olClick(p) {
     if (k) { if (k.ch === '<') ol.input = ol.input.slice(0, -1); else if (ol.input.length < 4) ol.input += k.ch; ol.err = ''; }
     else if (inBtn(p, OL.go)) olJoin();
     else if (inBtn(p, OL.paste)) { try { navigator.clipboard.readText().then(olPaste).catch(() => {}); } catch (e) {} }   // (a phone has no Ctrl+V)
-  } else if (ol.view === 'lobby') {
-    if (inBtn(p, OL.team)) { teamPick = 'online'; pickConf = NFL[ol.team].conf.slice(0, 3); }
-    else if (inBtn(p, OL.leave)) { olBack(); ol.view = 'menu'; }
-    else if (NET.role === 'host' && ol.peerTeam && inBtn(p, OL.start)) onlStartHost();
   }
 }
 function olCopy(text) { ol.copied = performance.now(); try { navigator.clipboard.writeText(text); } catch (e) {} }
@@ -1531,7 +1527,7 @@ function onlPredict(now) {
 const onlFlip = () => !!(ONL.on && ONL.guest && ONL.hostMirror != null && MIRROR !== ONL.hostMirror);
 const ONL_SWAP = { ArrowLeft: 'ArrowRight', ArrowRight: 'ArrowLeft', KeyA: 'KeyD', KeyD: 'KeyA', KeyJ: 'KeyL', KeyL: 'KeyJ' };
 const onlKeyOut = code => onlFlip() && ONL_SWAP[code] ? ONL_SWAP[code] : code;   // (left / right in the host's frame)
-const onlPtX = p => (onlFlip() && !(overPauseButton(p) || overKeysButton(p))) ? W - p.x : p.x;   // (the field and the centred buttons mirror; the fixed pause / controls buttons stay where they are)
+const onlPtX = p => (onlFlip() && !overPauseButton(p)) ? W - p.x : p.x;   // (the field and the centred buttons mirror; the fixed pause icon stays where it is)
 const ONL_K = { ph: '', t: 0, at: 0, ht: 0 };
 function onlKickAnchor() {
   if (!kick || (kick.phase !== 'power' && kick.phase !== 'aim')) { ONL_K.ph = ''; return; }
@@ -1603,7 +1599,7 @@ function onlMayPoint(guestSide, pt) {   // may this player's pointer act here?  
   const off = guestSide ? !onlHostIsOff() : onlHostIsOff(), hit = b => b && inBtn(pt, b), T = pvpTO(), A = pvpAud();
   if (hit(T.def) || hit(A.def)) return !off;
   if (hit(T.off) || hit(A.off)) return off;
-  if (hit(PAUSE_BTN) || hit(KEYS_BTN)) return true;
+  if (overPauseButton(pt)) return true;
   if (onlKickerSets()) return !off;
   if (!off && ['pre', 'drop', 'pocket'].includes(state) && patMode === null && !fourthPending) {   // (the defender's tap on one of his men: switching defenders before / just after the snap)
     const w = screenToWorld(pt);
@@ -1899,7 +1895,7 @@ function drawOnlineOverlay() {
   const v = ONL.view || {}, me = onlMe();
   ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   if (v.pz) {
-    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - FIELD_BOT);
     if (v.pz.by === me && !(ONL.guest && settingsOpen) && !settingsOpen) {
       olText('PAUSED', W / 2, 190, 56, '#fff');
       if (v.pz.conf) {
@@ -1919,7 +1915,7 @@ function drawOnlineOverlay() {
     olText(al.text, W / 2, y + 26, 28, '#fff'); if (al.sub) olText(al.sub, W / 2, y + 54, 18, '#ffd94a');
   }
   if (ONL.lost) {
-    ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
+    ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - FIELD_BOT);
     olText('CONNECTION LOST, RECONNECTING...', W / 2, 300, 38, '#fff');
     if (ONL.lost.expired) { olText('COULD NOT RECONNECT', W / 2, 360, 20, '#ffd94a'); menuBtn(OPM.menu, 'BACK TO MENU', IN_GAME_PAPER.red, 24); }
     else olText(`${Math.max(0, Math.ceil(RECONNECT_SECS - (performance.now() - ONL.lost.since) / 1000))}s`, W / 2, 360, 22, '#cfd8d2');
@@ -1943,7 +1939,6 @@ function onlOverlayPointer(e, p) {   // true: handled here (the event must not r
     return true;
   }
   if (overPauseButton(p)) { if (ONL.host) onlPauseToggle('host'); else NET.send({ t: 'pm', a: 'pause' }); return true; }
-  if (overKeysButton(p)) return true;   // (the controls page would freeze the host's game)
   return false;
 }
 function olText(s, x, y, size, color, lh) {
@@ -1982,19 +1977,6 @@ function drawOnline() {
       menuBtn(OL.go, 'JOIN', ol.input.length === 4 ? IN_GAME_PAPER.green : RES.bright, 32, undefined, ol.input.length === 4);
       menuBtn(OL.paste, 'PASTE', RES.bright, 22);
     }
-  } else if (ol.view === 'lobby') {
-    resPanel(120, 130, 1040, 150, [['CONNECTED', null]], RES.bright);
-    olText(`${NET.role === 'host' ? 'YOU ARE THE HOST' : 'YOU ARE THE GUEST'}   ·   CODE ${NET.code}   ·   PING ${Math.round(NET.ping)} ms${NET.ping > NET_CFG.unstableRtt ? '  (UNSTABLE)' : ''}`, W / 2, 215, 24, RES.line);
-    const row = (label, key, y) => {
-      olText(label, 210, y, 24, RES.dim);
-      if (key) { drawLogo(key, 400, y, 52); olText(`${teamFull(key)}`.slice(0, 26), 700, y, 26, RES.line); }
-      else olText('PICKING A TEAM' + dots, 640, y, 24, RES.dim);
-    };
-    row('YOU', ol.team, 360); row('OPPONENT', ol.peerTeam, 450);
-    menuBtn(OL.team, 'CHANGE TEAM', RES.bright, 24);
-    if (NET.role === 'host') menuBtn(OL.start, 'START MATCH', ol.peerTeam ? IN_GAME_PAPER.green : RES.bright, 28, undefined, !!ol.peerTeam);
-    olText(ol.note || (NET.role === 'host' ? '' : 'WAITING FOR THE HOST TO START...'), W / 2, 575, 20, ol.note ? '#c0392b' : RES.dim);
-    menuBtn(OL.leave, 'LEAVE', RES.bright, 26);
   }
   if (ol.err) {
     const ey = ol.view === 'join' ? 664 : 552;   // (below the keypad's JOIN button on the join screen)

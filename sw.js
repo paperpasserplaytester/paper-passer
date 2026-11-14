@@ -7,12 +7,26 @@ self.addEventListener('activate', e => e.waitUntil(
 self.addEventListener('fetch', e => {
   const r = e.request, u = new URL(r.url);
   if (r.method !== 'GET' || u.origin !== location.origin) return;
-  if (r.headers.has('range')) { e.respondWith(fetch(r).catch(() => cachedRange(r))); return; }   // (audio range requests: network, else sliced from the cache so offline audio never stalls)
+  if (r.headers.has('range')) {   // (audio range requests: network, else sliced from the cache so offline audio never stalls)
+    e.respondWith(fetch(r).then(res => { if (res.ok) { try { e.waitUntil(cacheWhole(r.url)); } catch (x) { cacheWhole(r.url); } } return res; }).catch(() => cachedRange(r)));
+    return;
+  }
   e.respondWith(fetch(r).then(res => {
     if (res.ok && res.status === 200) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(r, copy)); }
     return res;
   }).catch(() => caches.match(r, { ignoreSearch: true }).then(m => m || (r.mode === 'navigate' ? caches.match('index.html') : Response.error()))));
 });
+const wholeBusy = new Set();
+async function cacheWhole(url) {   // a ranged file (audio made with new Audio) is never cached by its 206 answers: fetch the whole file once so cachedRange has a copy offline
+  if (wholeBusy.has(url)) return;
+  wholeBusy.add(url);
+  try {
+    const c = await caches.open(CACHE);
+    if (await c.match(url, { ignoreSearch: true })) return;
+    const res = await fetch(url);
+    if (res.ok && res.status === 200) await c.put(url, res);
+  } catch (x) {} finally { wholeBusy.delete(url); }
+}
 async function cachedRange(r) {   // a 206 built from the cached whole file
   const m = await caches.match(r.url, { ignoreSearch: true });
   if (!m) return Response.error();

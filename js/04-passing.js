@@ -1774,6 +1774,20 @@ const OOB_AIM = { margin: 0.2, rzEdge: true };   // AI players aim margin yd ins
 function clampField(p) {
   p.y = Math.max(Y_MIN - OOB_ROOM.y * YD, Math.min(Y_MAX + OOB_ROOM.y * YD, p.y));
   p.x = Math.max(-ENDZONE - OOB_ROOM.x * YD, Math.min(FIELD + ENDZONE + OOB_ROOM.x * YD, p.x));
+  postBump(p);
+}
+// the goal posts' padded base is solid: a small oval collider behind each end line, around the blue pad (drawGoalPost draws the pad from these same numbers). Anyone who runs into
+// it is slid around it: no fumble, no injury, no knockdown. Players only: the ball and kicks never touch it. back / deep = yd behind the end line it starts /
+// how deep it is (along the field: x YL); y / wide = yd below the middle its near edge is / how wide (across the field: x YD); body = a player's radius (yd, x YD)
+const POST_PAD = { back: 0.85, deep: 0.85, y: 0.5, wide: 2.6, body: 0.45 };
+function postBump(p) {
+  if (p.x <= FIELD && p.x >= 0) return;   // (only behind the goal lines)
+  const far = p.x > FIELD, cx = (far ? FIELD + ENDZONE : -ENDZONE) + (far ? 1 : -1) * (POST_PAD.back + POST_PAD.deep / 2) * YL, cy = MID + (POST_PAD.y + POST_PAD.wide / 2) * YD;
+  const a = POST_PAD.deep / 2 * YL + POST_PAD.body * YD, b = (POST_PAD.wide / 2 + POST_PAD.body) * YD;   // (an oval around the pad: running into it turns him along it, so he slides round instead of stopping dead)
+  let u = (p.x - cx) / a, w = (p.y - cy) / b; const l = Math.hypot(u, w);
+  if (l >= 1) return;
+  if (l < 1e-6) { u = far ? -1 : 1; w = 0; } else { u /= l; w /= l; }   // (dead centre: out the field side)
+  p.x = cx + u * a; p.y = cy + w * b;
 }
 // an AI player's move target, kept in bounds during a live play (he tries not to step out; the ball carrier, catchers and the
 // man you steer decide for themselves: toe taps, toe drags, getting out to stop the clock)

@@ -794,8 +794,12 @@ const HANDFIGHT = { slow: 0.92, slot: 0.96, catch: 0.85, swat: 0.45 };
 const PUSH_OFF = { rate: 1.2, every: 0.8, stun: 0, shove: 0.06 * YD, upset: 1.2, range: 1.5, near: 3.5 * YD };   // (subtle: a tiny shove, no freeze on the defender's feet, only close to the catch point (near))
 // the push-off only counts while they're still tangled up (within range x hand-fight range); once he's clear it's gone
 const pushedOff = d => clock < (d.pushedUntil || 0) && !!tgt && dist(d, tgt) <= HANDFIGHT_RANGE * PUSH_OFF.range;
-// the bottom bar (pause, down and distance) is bigger on a phone (the same test as IS_MOBILE, which is defined much later); BB = how much bigger
-const TOP_BAR = 64, BOT_BAR = (() => { const q = new URLSearchParams(location.search).get('touch'); return q === '1' || (q !== '0' && (/Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent) || (matchMedia('(pointer: coarse)').matches && matchMedia('(hover: none)').matches))) ? 46 : 40; })();   // (phones: was 60, a slimmer bar)
+// in-game HUD. The top bar is TOP_BAR_K x its old height (TOP_BAR_FULL): the scoreboard, the depth chart button and the pause / play icon (top left) scale with it
+// (HUD_K; TOP_PAD = px between the bar's edge and what sits in it). There is no bottom bar: the field runs to the bottom of the screen (FIELD_BOT = px kept clear
+// there, 0 = none). BOT_BAR is only the height of the band the yellow down-and-distance text and the difficulty sit in (and the shows' own bottom bar): bigger on a
+// phone (the same test as IS_MOBILE, which is defined much later); BB = how much bigger
+const TOP_BAR_FULL = 64, TOP_BAR_K = 0.7, TOP_BAR = Math.round(TOP_BAR_FULL * TOP_BAR_K), HUD_K = TOP_BAR / TOP_BAR_FULL, TOP_PAD = 4, FIELD_BOT = 0;
+const BOT_BAR = (() => { const q = new URLSearchParams(location.search).get('touch'); return q === '1' || (q !== '0' && (/Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent) || (matchMedia('(pointer: coarse)').matches && matchMedia('(hover: none)').matches))) ? 46 : 40; })();   // (phones: was 60, a slimmer bar)
 const BB = BOT_BAR / 40;
 
 // Routes, in yards: [downfield, toward the middle]. stop = sits down at the end

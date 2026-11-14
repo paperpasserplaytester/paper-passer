@@ -264,6 +264,29 @@ const TUT_STEPS = [
 // --- changelog entries (CHANGELOG_LINES, the renumbering, GAME_VERSION and the popup are in js/13-post-online.js)
 // Newest version first. Add a new entry at the top of CHANGELOG with every update and bump GAME_VERSION by 0.1 (pre-release numbering: v0.9 -> v0.10 -> v0.11 ...; v1.0 only for the full release).
 const CHANGELOG = [
+  { v: "v0.26", secs: [
+    ["HALFTIME HIGHLIGHTS: A REAL CUT-UP", [
+      "The halftime reel is now about 8 to 10 clips of both teams' big plays, in the order they happened, instead of 4. Fewer big plays means a shorter reel, never filler.",
+      "Each clip is cut down to its moments (the juke, the hit, the catch, the pick) with jump cuts between them, and a score keeps its last few yards and the goal-line cross. No more waiting through the pile or the celebration.",
+      "More plays qualify: jukes, spins, hurdles, stiff arms, broken tackles, pancakes, contested and tipped-then-caught balls all count, with a bonus for taking the lead, converting a 3rd or 4th down, or a glowing Star Factor player. The reel won't show the same player or the same kind of play over and over.",
+      "A camera director follows the action: it leads the runner, pushes in at the big moment, goes to the blocker on a big block and kicks on a hit. The three best clips drop into slow motion at their moment and the crowd reacts as they come out of it.",
+      "The best one is the PLAY OF THE HALF: it runs twice, the second time closer and slower with a freeze frame circling the player.",
+      "Dots above the bottom bar show where you are in the reel, and a name strip shows the player and his line so far. Enter or a click = next clip, Backspace = previous clip, Space = pause. NEXT still jumps to the next segment and SKIP the whole show.",
+    ]],
+    ["AROUND THE LEAGUE: CLIPS AND A TICKER", [
+      "Franchise: up to three of last week's best performances are re-enacted on the field for a few seconds each (your next opponent's game first, then upsets), in the two teams' uniforms, marked RE-ENACTMENT.",
+      "A score ticker scrolls above the bottom bar during the highlights and the league clips, and last week's cards get a hand-drawn icon for the kind of play.",
+    ]],
+    ["SLIMMER HUD, HANDOFFS ON THE MOVE, RUN BLOCKING FIXES", [
+      "The top bar is about 30% shorter (scoreboard and DEPTH CHART button with it) and the bottom bar is gone: the field runs to the bottom of the screen. Down and distance and the difficulty stay where they were, as text over the field.",
+      "PAUSE is now a pause / play icon in the top left corner. The CONTROLS button is gone; the keys are listed in SETTINGS.",
+      "Handoffs: the back takes the ball on the move along his own path and keeps his speed through the exchange, instead of backing up to the QB and starting over. The QB hands it off sooner and no longer keeps backing up in front of him. The computer's handoffs too; tosses and draws work as before.",
+      "The padded base of each goal post is solid: players slide around it. Kicks and the ball are not affected.",
+      "Run blocking: the backside tight end drives his man away from the play. The goal-line dive never puts three blockers on one man, blocks the backside end and aims at the B gap. The fullback's kick-out drives the force man out and then moves on. The box count counts the middle linebacker. Linemen climb once the QB scrambles past the line. The lead back takes the backer who is really coming downhill, and aims at the hole on dives. Cut-offs, stretch climbs and the toss lead hold their blocks by the playbook's rules.",
+      "Animations: the truck stagger and the bounce-off no longer snap between poses, a flat-footed tackler who misses lunges at the runner instead of falling away from him, and linemen held at the line stand still instead of jogging in place.",
+      "Installed app: sounds are kept for offline play after the first time they are heard.",
+    ]],
+  ] },
   { v: "v0.25", secs: [
     ["ONLINE: SMOOTHER AND LIGHTER", [
       "Online games send about half the data they did. The host no longer sends things each device can work out for itself, sends 15 updates a second instead of 20 (30 while you aim or kick), and only what changed since the last update the other device confirmed.",
@@ -637,7 +660,7 @@ const CHANGELOG = [
     ["CARDS AND TIPS", [
       "Retirement odds are words (possible, likely, very likely) instead of a percent. The tap-a-spoke tip is gone from the player card.",
       "Credits from maxed-out players are explained once, then fly from the ROSTER button to the credits box. The upgrades-ready tip shows once.",
-      "X-Factor is now STAR FACTOR in the menus, with the gold star icon.",
+      "The star ability is now called STAR FACTOR in the menus, with the gold star icon.",
       "The changelog is much shorter: older versions are merged, a few main changes each with their tweaks and bug fixes.",
     ]],
   ] },
@@ -759,7 +782,7 @@ const CHANGELOG = [
     ["GAMEPLAY", [
       "Default game speed is 10% faster.",
       "PERFECT PICK is only called when the ball was close enough to get hands on.",
-      "Star factor replaces X-Factor in the menus.",
+      "STAR FACTOR is the new name for star abilities in the menus.",
     ]],
     ["MENUS", [
       "Custom difficulty: every slider now slides both ways and has a small RST button to put it back to NORMAL (1.0x). Going to CUSTOM keeps the sliders where they were. Removed the timeouts and touchback sliders (always 3 timeouts a half).",

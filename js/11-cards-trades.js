@@ -263,11 +263,6 @@ function drawPlayerCard(team, p, kr) {
   }
   if (own && !exhibition && !dcg) tabs.push([DROP_BTN, 'DROP', RES.bright]);
   if (own && !exhibition && season && !dcg) tabs.push([TRADE_BTN, 'TRADE', RES.bright]);
-  if (false) {   // the second card: his portrait and stars, top left
-    const R2 = 13.5 * 1.6, nm2 = cardCmp.name.split(' ').filter(w => !/^(JR\.?|SR\.?|II|III|IV|V)$/i.test(w)).slice(-1)[0].toUpperCase();
-    drawPortrait(cardCmp, C.x + 56, C.y + 132 + R2 * 0.98, 1.6, team);
-    ctx.textAlign = 'center'; ctx.fillStyle = CARD_CMP_COL; ctx.font = 'bold 12px monospace'; ctx.fillText(nm2, C.x + 56, C.y + 176 + R2 * 0.6, 84); starsRow(C.x + 22, C.y + 196 + R2 * 0.6, cardCmp.stars, 6.5);
-  }
   const tw0 = tabs.length * C.tabW + (tabs.length - 1) * C.tabGap;
   tabs.forEach(([b, label, bg], i) => { Object.assign(b, { x: C.cx - tw0 / 2 + i * (C.tabW + C.tabGap), y: C.tabY, w: C.tabW, h: C.tabH }); menuBtn(b, label, bg === SEL ? SEL : '#ecd8a0', label.includes('\n') ? 17 : 24); });
   HELP_BTNS.bench = HELP_BENCH_BTN;
@@ -291,96 +286,9 @@ function drawCardPops(p) {   // an upgrade just spent: a flash on the spoke's la
   }
 }
 function drawPlayerPage(team, p, kr) {
-  drawPlayerCard(team, p, kr); return;   // (every player page is the card now; the old two-panel page below is unused)
-  Object.assign(HELP_BTNS.attrs, { x: 1184, y: 562, w: 28, h: 28 });   // (the card moves this ? around)
-  ctx.fillStyle = RES.line; ctx.font = 'bold 40px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  const title = `${p.name.toUpperCase()} - ${p.tag}`;
-  let fs = 40; while (fs > 22 && ctx.measureText(title).width > 900) ctx.font = `bold ${--fs}px monospace`;
-  ctx.fillText(title, W / 2, 46);
-  const tw = ctx.measureText(title).width / 2;
-  drawLogo(team, W / 2 - tw - 44, 46, 54); drawLogo(team, W / 2 + tw + 44, 46, 54);
-  // the bookmark: click to make him the kick returner (your own players only)
-  const own = team === MATCH.you && !offDetail();
-  if (own) {
-    drawBookmark(KR_BTN, p === kr, true);
-    ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.fillStyle = p === kr ? RES.gold : RES.dim;
-    drawBookmark(HOF_BTN, HOF.some(h => h.p.name === p.name), true, 'HOF');
-    if (season && !exhibition && !tut && career.prac && !offDetail()) pracTagsDraw(p);
-  }
-
-  // left: bio and the big portrait, rating stars below
-  resPanel(70, 100, 560, 500, [[POS_NAME[p.tag] || p.group, null]], RES.bright);
-  const info = [['AGE:', `${p.age}${p.group === 'QB' ? `   ${p.hand === 'L' ? 'LEFT' : 'RIGHT'} HANDED` : ''}`], ['HEIGHT / WEIGHT:', `${heightStr(p.ht)}  ${p.wt} LB`], ['CONDITION:', injLabel(p) || `${conditionLabel(condOf(p))} (${condOf(p)}%)`],
-                ['CONTRACT:', contractStr(p)], ['MOOD:', moraleLabel(own ? moodOf(p) : LEAGUE.morale)], ['TRADE VALUE:', valueStr(p)]];
-  info.forEach(([k, v], i) => {
-    const y = 136 + i * 58;
-    ctx.textAlign = 'left'; ctx.font = 'bold 20px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(k, 96, y);
-    ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace';
-    if (k === 'CONDITION:' && own && !p.inj && !exhibition) pencilBar(96, y + 12, 250, 22, condOf(p) / 100, condTone(condOf(p)), 10, 9);   // (a bar in place of the GREAT 100% text)
-    else if (k === 'MOOD:' && !exhibition) { const m = own ? moodOf(p) : LEAGUE.morale; pencilBar(96, y + 12, 250, 22, m / 100, m >= 80 ? 'green' : m < 25 ? 'red' : null, 10, 4); }
-    else ctx.fillText(v, 116, y + 26, 270);
-  });
-  ctx.fillStyle = RES.shade; ctx.beginPath(); ctx.ellipse(500, 452, 90, 12, 0, 0, Math.PI * 2); ctx.fill();
-  drawPortrait(p, 500, 448, 8.5, team);
-  ctx.strokeStyle = RES.line; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(70, 486); ctx.lineTo(630, 486); ctx.stroke();
-  ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center';
-  ctx.fillText('RATING', 210, 512); starsRow(150, 552, p.stars, 15);
-  const inDraft = results.screen === 'draft', sp = shownPotential(p);
-  const showPot = own || results.screen === 'fa' || results.screen === 'resign' || (inDraft && !!p.scout);   // (another team's potential is hidden; free agents show it; a draft prospect's only once scouted)
-  if (showPot || inDraft) { ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace'; ctx.fillText('POTENTIAL', 490, 512); }
-  if (showPot) potRow(430, 552, 0, sp.stars, 15);   // empty gold-outlined stars: how high he can go
-  else if (inDraft) { ctx.font = 'bold 34px monospace'; ctx.fillText('?????', 490, 552); }
-  if (showPot && inDraft) { ctx.font = 'bold 13px monospace'; ctx.fillStyle = RES.dim; ctx.fillText('SCOUT ESTIMATE', 490, 584); }
-  const potA = showPot ? potAttrs(p, sp.pts) : null;
-  if (p.ability) {   // signature ability: under the portrait
-    ctx.font = 'bold 15px monospace'; ctx.fillStyle = p.tier === 'X' ? '#c0392b' : RES.gold;
-    const txt = `${abilName(p.ability)}${{ X: ' ★ FACTOR', S: ' - ABILITY', F: ' - FIT' }[p.tier] || ''}`;
-    ctx.fillText(txt, 500, 470);
-    HELP_BTNS.ability = Object.assign(HELP_ABIL_BTN, { x: 500 + ctx.measureText(txt).width / 2 + 8, y: 459, w: 24, h: 24 });   // (one persistent object, so the ? keeps its hover / press easing)
-    drawHelpIcon(HELP_BTNS.ability);
-  } else HELP_BTNS.ability = null;
-
-  // right: the four attributes out of 15, pencilled in; empty boxes = room to grow (his potential), black = out of reach
-  const pbStats = offDetail() && results.screen === 'pbowl' && OFF.pb.stats;   // (the Paper Bowl stats take the attributes' place: they are not drawn at all)
-  if (!pbStats) resPanel(660, 100, 560, 500, [['ATTRIBUTES', null]], RES.bright);
-  if (!pbStats) ATTRS[p.group].forEach((a, i) => {
-    const y = 138 + i * ATTR_ROW, raw = Math.max(0, Math.min(15, Math.round(p.raw[a])));
-    const pot = potA ? Math.max(raw, potA[a]) : 15;   // (hidden: no room-to-grow boxes)
-    const name = attrName(p, a);
-    ctx.textAlign = 'left'; ctx.font = 'bold 22px monospace'; ctx.fillStyle = RES.line; ctx.fillText(name, 690, y);
-    ctx.textAlign = 'right'; ctx.fillStyle = RES.dim; ctx.fillText(`${raw}/15`, 1196, y);
-    if (own && upgOpen(p, a)) { upgGlowBtn(i); menuBtn(upgBtn(i), '+1', IN_GAME_PAPER.green, 20); }   // spend an upgrade on this attribute (pulsing glow)
-    const bx = 690, by = y + 20, seg = 33, bh = 34;
-    ctx.fillStyle = '#fffdf4'; ctx.fillRect(bx, by, seg * 15, bh);
-    for (let s = 0; s < raw; s++) {   // graphite scribbles, one box at a time
-      const sx = bx + s * seg, r = seeded(s * 97 + i * 13 + 5);
-      ctx.fillStyle = 'rgba(60,60,70,0.78)'; ctx.fillRect(sx + 2, by + 2, seg - 4, bh - 4);
-      ctx.strokeStyle = 'rgba(30,30,40,0.6)'; ctx.lineWidth = 1.4;
-      ctx.beginPath();
-      for (let k = 0; k < 6; k++) { const t = k / 5; ctx.moveTo(sx + 3, by + 4 + t * (bh - 10) + r() * 4); ctx.lineTo(sx + seg - 3, by + 2 + t * (bh - 10) + r() * 4); }
-      ctx.stroke();
-    }
-    ctx.fillStyle = '#14161e'; ctx.fillRect(bx + pot * seg, by, (15 - pot) * seg, bh);
-    ctx.strokeStyle = RES.line; ctx.lineWidth = 2;
-    for (let s = 1; s < 15; s++) { ctx.beginPath(); ctx.moveTo(bx + s * seg, by); ctx.lineTo(bx + s * seg, by + bh); ctx.stroke(); }
-    ctx.lineWidth = 3; ctx.strokeRect(bx, by, seg * 15, bh);
-  });
-
-  if (own && !pbStats) { drawUpgradeBar(p); drawUpgPops(p); }
-  drawHonors(p, 80, 580, 620, 11, 6);
-  if (!pbStats) drawHelpIcon(HELP_BTNS.attrs);   // (bottom right of the attributes box)
-  if (offDetail()) offDetailExtras(team, p);
-  const onTrade = !!results && results.screen === 'trade';   // (the trade screen's page: STATS and the trade button only)
-  if (own && !onTrade && benchable(p)) menuBtn(BENCH_BTN, p.benchNext ? 'BENCHED' : p.backup ? 'PROMOTE' : 'BENCH', p.benchNext ? SEL : RES.bright, 22);   // sit him for the next game (highlighted while he's sitting; a backup: make him a starter instead)
-  if (!offDetail() || onTrade) menuBtn(onTrade ? TR_STATS_BTN : STATS_BTN, 'STATS', RES.bright, 22);   // his game / season / career lines
-  HELP_BTNS.bench = HELP_BENCH_BTN;   // (top right of the page: every tip on this page, paged with arrows)
-  drawHelpIcon(HELP_BTNS.bench);
-  tipCtx = { team, p, own, bench: own && benchable(p), drop: own && !exhibition };
-  if (own && !exhibition && !onTrade) menuBtn(DROP_BTN, 'DROP', RES.bright, 22);   // release him to free agency
-  if (own && !exhibition && !onTrade && season) menuBtn(TRADE_BTN, 'TRADE', RES.bright, 22);   // shop him to another team
-  if (!offDetail()) ROSTER_ARROWS.forEach((b, i) => menuBtn(b, i ? '▸' : '◂', RES.bright, 30));
-  menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
+  drawPlayerCard(team, p, kr);   // (every player page is the card now)
 }
+
 // --- the stats page (STATS on a player page): GAME (every game of his career, arrows step through them), SEASON (arrows = seasons), CAREER
 // (totals and the last seasons). Columns depend on the position group (a QB's INT THROWN, a defender's INTS CAUGHT).
 const PST_COLS = (() => {

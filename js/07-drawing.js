@@ -281,7 +281,7 @@ function buildCrowd() {
 // the far touchline's bench and staff, standing on the line over the turf's edge
 function drawBottomSide() {
   if (!crowdImg || !crowdImg.bottom) return;
-  const zc = camZ(), vc = viewCenterY(), vBot = camY + (H - BOT_BAR - vc) / zc + 24;
+  const zc = camZ(), vc = viewCenterY(), vBot = camY + (H - FIELD_BOT - vc) / zc + 24;
   if (vBot < FW - crowdImg.botUp) return;   // (the far touchline's people are below the view)
   const img = crowdImg.bottom, vL = camX - (W / 2 + PAD) / zc - 48, vR = camX + (W / 2 + PAD) / zc + 48;
   const k = crowdImg.k, sx = Math.max(0, Math.floor(vL - CROWD.x0)), sw = Math.min(img.width / k - sx, Math.ceil(vR - vL) + 2);
@@ -296,7 +296,7 @@ function drawCrowd() {
   const wallEnd0 = CROWD.wall + 0.6 * YD, xl = -ENDZONE - CROWD.endGap - wallEnd0, xr = FIELD + ENDZONE + CROWD.endGap + wallEnd0;
   // only what the camera can see is drawn: the view's world rectangle (vL..vR, vTop..vBot), the sideline stands in strips of just the visible width, and
   // a stand, an end stand or the bowl's outer edge only when the view reaches it (the big pre-rendered stand images are the costliest thing a phone draws each frame)
-  const zc = camZ(), vc = viewCenterY(), vTop = camY - (vc - TOP_BAR) / zc - 24, vBot = camY + (H - BOT_BAR - vc) / zc + 24;
+  const zc = camZ(), vc = viewCenterY(), vTop = camY - (vc - TOP_BAR) / zc - 24, vBot = camY + (H - FIELD_BOT - vc) / zc + 24;
   const vL = camX - (W / 2 + PAD) / zc - 48, vR = camX + (W / 2 + PAD) / zc + 48;
   const topVis = vTop < 12, botVis = vBot > FW - 12;
   const strip = (img, ix, iy) => {   // the visible columns of a wide image
@@ -478,7 +478,7 @@ function drawGoalPost(px = POST_X, s = 1) {   // (one stands at the back of each
   pole(0.45 * YL * s, 0.2 * YD, '#000', '#000', 8);
   ctx.restore();
   // padded base behind the end line, with the gooseneck curving up to the pole
-  const bw = 0.85 * YL, bx = s > 0 ? px + 0.85 * YL : px - 0.85 * YL - bw, by = MID + 0.5 * YD, bh = 2.6 * YD;
+  const bw = POST_PAD.deep * YL, bx = s > 0 ? px + POST_PAD.back * YL : px - POST_PAD.back * YL - bw, by = MID + POST_PAD.y * YD, bh = POST_PAD.wide * YD;   // (POST_PAD: the same box players bump into)
   ctx.fillStyle = '#1f5fc4';   // the blue pad (as on a real post)
   ctx.strokeStyle = '#0c2a63'; ctx.lineWidth = 4;
   ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 10); ctx.fill(); ctx.stroke();
@@ -788,6 +788,8 @@ const REEL_BASE = { juke: ['jukeLunge', 'jukeStumble', 'jukeAnkles'], spin: ['sp
 const REEL_IN = { blend: 0.3, flat: 1.3, ground: 3, early: 0.45, clear: 1.6 };   // ground = sprite units of height under which a flat man counts as on the turf
 const rmp = (k, a, b) => Math.max(0, Math.min(1, (k - a) / (b - a)));
 const LIE = Math.PI / 2 * 0.95;   // laid flat (same as a fall)
+const SIT_LEGS = [[-2, -1.2, 0.1], [2, -1.4, 0.1]];   // on the seat of his pants, legs out in front
+const legMix = (A, B, f) => A.map((l, i) => l.map((v, j) => v + (B[i][j] - v) * f));   // two leg poses blended (f 0 = A, 1 = B): no one-frame jump between them
 // dur s, dist yd he's carried, from = which way (self: his own lunge, runner: knocked away from him, side: thrown across his path),
 // lie = ends on the turf (down s more, then gets up), h = peak height (sprite units), zf = height curve
 const REEL_ST = {
@@ -807,8 +809,8 @@ const REEL_ST = {
   truckBack: { dur: 0.75, dist: 1.9, from: 'runner', lie: true, h: 6, pose: k => { const f = smooth01(rmp(k, 0, 0.55));
     return { R: -LIE * f, legs: [[-2, -0.5 * f, 0.3], [2, -1.1 * f * (1 - 0.4 * rmp(k, 0.6, 1)), 0.1]], arms: [[2, -10, -1.4 - 0.9 * f, 0.2], [-1, -10.5, -1.9 - 0.7 * f, -0.2]] }; } },
   truckStagger: { dur: 1.1, dist: 2.2, from: 'runner', flat: 'truckBack', pose: k => { const ph = k * Math.PI * 5, f = smooth01(Math.min(rmp(k, 0.55, 0.75), rmp(1 - k, 0, 0.2))), m = Math.sin(ph * 1.3);
-    return { R: -0.35 * smooth01(rmp(k, 0, 0.25)) * (1 - f) - 0.25 * f, ty: 7 * f, sx: 1 + 0.1 * f, sy: 1 - 0.38 * f,
-             legs: f > 0.3 ? [[-2, -1.2 * f, 0.1], [2, -1.4 * f, 0.1]] : [[-2, 0.5 * Math.sin(ph), 0.3], [2, -0.5 * Math.sin(ph), 0.3]], arms: [[2, -10, -0.4 + 0.4 * m, 0.2], [-1, -10.5, 0.3 - 0.4 * m, 0.2]] }; } },
+    return { R: -0.35 * smooth01(rmp(k, 0, 0.25)) * (1 - f) * (1 - smooth01(rmp(k, 0.8, 1))) - 0.25 * f, ty: 7 * f, sx: 1 + 0.1 * f, sy: 1 - 0.38 * f,   // (the lean eases back to upright by the end: no snap)
+             legs: legMix([[-2, 0.5 * Math.sin(ph), 0.3], [2, -0.5 * Math.sin(ph), 0.3]], SIT_LEGS, f), arms: [[2, -10, -0.4 + 0.4 * m, 0.2], [-1, -10.5, 0.3 - 0.4 * m, 0.2]] }; } },
   // stiff arm: head snapped back, driven off the arm / shoved down on his back
   stiffShove: { dur: 1.0, dist: 1.7, from: 'runner', flat: 'stiffDown', pose: k => { const s = Math.sin(Math.PI * rmp(k, 0, 0.85)), ph = k * Math.PI * 4;
     return { R: -0.45 * s, legs: [[-2, 0.45 * Math.sin(ph), 0.3], [2, -0.45 * Math.sin(ph), 0.3]], arms: [[2, -10, -0.9 - 0.3 * s, 0.3], [-1, -10.5, -0.3, 0.2]] }; } },
@@ -817,7 +819,7 @@ const REEL_ST = {
   // plain broken tackle: bounced off him onto the seat of his pants / arms slide off, down to his knees and onto his face (or spunAround)
   bounceOff: { dur: 0.95, dist: 1.2, from: 'runner', flat: 'armSlip', pose: k => { const f = smooth01(Math.min(rmp(k, 0.25, 0.45), rmp(1 - k, 0, 0.2))), s = Math.sin(Math.PI * rmp(k, 0, 0.4));
     return { R: -0.45 * s * (1 - f) - 0.25 * f, ty: 7 * f, sx: 1 + 0.1 * f, sy: 1 - 0.38 * f,
-             legs: f > 0.3 ? [[-2, -1.2 * f, 0.1], [2, -1.4 * f, 0.1]] : [[-2, 0.4 * s, 0.3], [2, -0.4 * s, 0.3]], arms: [[2, -10, -0.3 + 2.0 * f, 0.2], [-1, -10.5, 0.2 + 2.0 * f, 0.1]] }; } },
+             legs: legMix([[-2, 0.4 * s, 0.3], [2, -0.4 * s, 0.3]], SIT_LEGS, f), arms: [[2, -10, -0.3 + 2.0 * f, 0.2], [-1, -10.5, 0.2 + 2.0 * f, 0.1]] }; } },
   armSlip: { dur: 0.85, dist: 1.4, from: 'self', lie: true, pose: k => { const b = smooth01(rmp(k, 0, 0.35)), f = smooth01(rmp(k, 0.4, 0.95));
     return { ty: 5 * b * (1 - f), sy: 1 - 0.2 * b * (1 - f), R: 0.3 * b + (LIE - 0.3) * f, legs: [[-2, 0.5 * b, 1.5 * b * (1 - f)], [2, -0.2 * b, 1.2 * b * (1 - f)]],
              arms: [[2, -10, 0.2 + 0.6 * b, 0.3], [-1, -10.5, 0.5 + 0.5 * b, 0.2]] }; } },
@@ -970,6 +972,7 @@ function startReel(d, style, c, ts = 1, cut = 0) {   // ts = time scale (2 = the
   if (st.from === 'self') {
     if (d.action === 'dive' && d.act && d.act.tx != null && Math.hypot(d.act.tx - d.act.fx, d.act.ty - d.act.fy) > 1) { ux = d.act.tx - d.act.fx; uy = d.act.ty - d.act.fy; }
     else if (Math.hypot(d.vx || 0, d.vy || 0) > YD) { ux = d.vx; uy = d.vy; }
+    else { ux = -ux; uy = -uy; }   // (standing still, no dive: he lunges at where the runner was, never away from him)
   } else if (st.from === 'side') {   // thrown across the runner's path, to the side he came in on
     const sp = Math.hypot(c.vx || 0, c.vy || 0);
     let nx = sp > YD ? -c.vy / sp : 0, ny = sp > YD ? c.vx / sp : 1;
@@ -2206,16 +2209,6 @@ function drawImpacts() {
 // a Star Factor star wears a star over his head: hollow while it's dormant, a pulsing gold one while he's in the zone
 function drawStarMarks() {
   return;   // (the star now sits beside the name tag: see drawNameTags)
-  if (tut) return;
-  ctx.save();
-  for (const p of allPlayers()) {
-    if (!p.src || p.src.tier !== 'X' || !XF_RULES[p.src.ability] || p.action === 'down') continue;
-    const on = xfGlow(p), pulse = on ? 1 + 0.2 * Math.sin(animNow() / 160) : 1;
-    ctx.save(); ctx.translate(p.x, p.y - p.z - 24 * S); ctx.scale(MIRROR, 1);
-    drawStar(0, 0, 0.5 * YD * pulse, on ? '#ffd23f' : 'rgba(255,255,255,0.25)', on ? '#fff3a0' : '#ffd23f', 2);
-    ctx.restore();
-  }
-  ctx.restore();
 }
 const NAME_SIZE = 0.8;   // player name tags: font size in YD
 function drawNameTags() {
@@ -2473,9 +2466,8 @@ function callTimeout(cpu = false, defense = false) {   // defense: two players, 
   setTimeout(whistle, 0);
   msg = `TIMEOUT, ${nm}  -  ${left} left this half`;
 }
-const KEYS_BTN = { x: W - 112, y: H - 35, w: 100, h: 30 };
-const REPLAY_FINISH_BTN = { x: W - 112 - 108, y: H - 35, w: 100, h: 30 };   // FINISH: ends a replay / highlight like tapping it (beside CONTROLS; on touch, where CONTROLS is hidden, it takes its spot)
-const finishBtn = () => { REPLAY_FINISH_BTN.x = TOUCH ? W - 112 : W - 112 - 108; return REPLAY_FINISH_BTN; };
+const REPLAY_FINISH_BTN = { x: W - 112, y: H - 35, w: 100, h: 30 };   // FINISH: ends a replay / highlight like tapping it (bottom right, floating over the field)
+const finishBtn = () => REPLAY_FINISH_BTN;
 const finishShowing = () => !!(rec && rec.replaying && !finalReplay() && !results);
 function finishReplay() { pressAt = 0; replayLeft = null; if (rec && rec.hl) hlClose(); else skipReplay(); }
 let showKeys = false, resetAsk = false;   // resetAsk: the pause menu's "reset this game?" confirm is up

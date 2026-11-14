@@ -896,7 +896,7 @@ function wxDraw() {
   if (!g || !g.on) return;
   const now = performance.now(), dt = Math.min(0.05, wxParts.t ? (now - wxParts.t) / 1000 : 0) * (paused || settingsOpen || (rec && rec.replaying && rec.paused) ? 0 : 1);   // (a paused replay / highlight freezes the weather too)
   wxParts.t = now;
-  const top = TOP_BAR, bot = H - BOT_BAR, hgt = bot - top, x0 = -PAD, ww = W + 2 * PAD;   // (x0 / ww: the whole width of a widened touch screen, so the weather runs to its edges)
+  const top = TOP_BAR, bot = H - FIELD_BOT, hgt = bot - top, x0 = -PAD, ww = W + 2 * PAD;   // (x0 / ww: the whole width of a widened touch screen, so the weather runs to its edges)
   if (wxLive()) {
     const sx = Math.cos(g.ang) * WXI.mph, sy = Math.sin(g.ang) * WXI.mph;
     ctx.save(); ctx.beginPath(); ctx.rect(x0, 0, ww, H); ctx.clip();   // (the whole picture, bars included: they're drawn over it anyway, so no bare band ever shows)
@@ -959,7 +959,7 @@ function wxDraw() {
     }
     // rain hitting the turf: little rings that flash open and fade (on the field, so they do go with the zoom)
     const spl = wxParts.splash || (wxParts.splash = []);
-    if (dt > 0 && WXI.rain > 0.05) { let n = WXI.rain * V.splash * fxK() * dt * (ww * H) / (W * H); while (n > 0 && spl.length < V.splashMax) { if (n >= 1 || Math.random() < n) spl.push({ x: x0 + Math.random() * ww, y: TOP_BAR + Math.random() * (H - TOP_BAR - BOT_BAR), t: 0 }); n -= 1; } }
+    if (dt > 0 && WXI.rain > 0.05) { let n = WXI.rain * V.splash * fxK() * dt * (ww * H) / (W * H); while (n > 0 && spl.length < V.splashMax) { if (n >= 1 || Math.random() < n) spl.push({ x: x0 + Math.random() * ww, y: TOP_BAR + Math.random() * (H - TOP_BAR - FIELD_BOT), t: 0 }); n -= 1; } }
     ctx.lineWidth = 1.2;
     for (let i = spl.length - 1; i >= 0; i--) {
       const q = spl[i]; q.t += dt; q.x += shX; q.y += shY;
@@ -1135,7 +1135,7 @@ function stepAudio() {
   // the other one: the fastest man near the camera, not on the ground
   let other = null;
   if (on) {
-    const vw = (W / camZ()) / 2, vh = ((H - TOP_BAR - BOT_BAR) / camZ()) / 2;
+    const vw = (W / camZ()) / 2, vh = ((H - TOP_BAR - FIELD_BOT) / camZ()) / 2;
     for (const p of allPlayers()) {
       if (p === me || p.action === 'down' || p.action === 'sit' || Math.abs(p.x - camX) > vw || Math.abs(p.y - camY) > vh) continue;
       if (!other || spd(p) > spd(other)) other = p;
@@ -2452,7 +2452,7 @@ function drawPracFac(plan) {   // plan = the TRAINING PLAN tab (load sliders, tr
 const INJ_BTNS = { keep: { x: W / 2 - 290, y: 440, w: 270, h: 66 }, bench: { x: W / 2 + 20, y: 440, w: 270, h: 66 }, ok: { x: W / 2 - 135, y: 440, w: 270, h: 66 } };
 function drawInjuryCall() {
   const { s, re } = injuryCall, sev = s.inj.sev, [lo, hi] = INJURY.weeks[sev];
-  ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - BOT_BAR);
+  ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - FIELD_BOT);
   resPanel(W / 2 - 340, 210, 680, 320, [['INJURY TIMEOUT', null]], RES.bright);
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillStyle = RES.line; ctx.font = 'bold 32px monospace'; ctx.fillText(`${s.name}  ${s.tag}`, W / 2, 262);

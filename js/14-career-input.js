@@ -978,7 +978,7 @@ canvas.addEventListener('pointerdown', e => {
     }
     return;
   }
-  if (tut && !paused && !showKeys && e.button === 0 && !overPauseButton(pointerPos(e)) && !overKeysButton(pointerPos(e))) {
+  if (tut && !paused && !showKeys && e.button === 0 && !overPauseButton(pointerPos(e))) {
     if (!tutStep()) { if (season && LEAGUE && !LEAGUE.tutPaid) { LEAGUE.tutPaid = 1; LEAGUE.coins += TUT_BONUS; payToFly += TUT_BONUS; } endTutorial(); return; }                             // tutorial complete: any click heads home
     if (tutSkipBtn && inBtn(pointerPos(e), tutSkipBtn)) { tut.passed = true; tutNext(); return; }   // SKIP: on to the next part
     if (tutResetBtn && inBtn(pointerPos(e), tutResetBtn)) { tut.passed = false; aim = null; reset(); return; }   // RESET (touch): start this step over, like Backspace
@@ -998,7 +998,6 @@ canvas.addEventListener('pointerdown', e => {
     return;
   }
   if (e.button === 0 && finishShowing() && inBtn(pointerPos(e), finishBtn())) { finishReplay(); return; }   // (FINISH: same as tapping the replay to continue)
-  if (e.button === 0 && overKeysButton(pointerPos(e))) { showKeys = true; aim = null; return; }   // (the controls menu works while paused too)
   if (e.button === 0 && overPauseButton(pointerPos(e))) { if (noPause()) return; paused = !paused; resetAsk = false; pauseGoals = false; aim = null; return; }
   if (paused) {
     const p = pointerPos(e), hit = b => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
@@ -1075,7 +1074,6 @@ canvas.addEventListener('pointerdown', e => {
     canvas.setPointerCapture(e.pointerId);
     return;
   }
-  if (e.button === 0 && overKeysButton(pointerPos(e))) { showKeys = true; aim = null; return; }
   if (e.button !== 0) return;
   const p = pointerPos(e);
   if (finalReplay()) {   // the game's over: only FINISH GAME moves on (a click before the replay starts it)
@@ -1744,7 +1742,7 @@ const preKick = () => (state === 'kickoff' || state === 'kick') && ((kick && KIC
 // a touch on one of the canvas buttons (pause, keys, tutorial SKIP / RESET, audible, timeout, replay, kick buttons) is the button's, never the stick's
 const overUiBtn = p => {
   const pad = 14, near = b => !!b && p.x >= b.x - pad && p.x <= b.x + b.w + pad && p.y >= b.y - pad && p.y <= b.y + b.h + pad;
-  try { return UI_BTNS.some(near) || UI_BTNS_PREV.some(near) || (typeof NAMES_RECT !== 'undefined' && near(NAMES_RECT)) || overPauseButton(p) || overKeysButton(p) || near(tutSkipBtn) || near(tutResetBtn) || ((state === 'pre' || state === 'done') && (near(AUDIBLE_BTN) || near(TIMEOUT_BTN))) || (replayBtnShowing() && near(REPLAY_BTN)) || (patSwitch() && near(PAT_SWITCH_BTN)); } catch (err) { return false; }
+  try { return UI_BTNS.some(near) || UI_BTNS_PREV.some(near) || (typeof NAMES_RECT !== 'undefined' && near(NAMES_RECT)) || overPauseButton(p) || near(tutSkipBtn) || near(tutResetBtn) || ((state === 'pre' || state === 'done') && (near(AUDIBLE_BTN) || near(TIMEOUT_BTN))) || (replayBtnShowing() && near(REPLAY_BTN)) || (patSwitch() && near(PAT_SWITCH_BTN)); } catch (err) { return false; }
 };
 const stickOn = name => STICK_SETS.includes(name) && !preKick() && !(tut && tut.passed) &&   // (the tutorial's "tap for the next play": any tap goes on, the stick is off)
  !(name === 'kickoff' && kick && kick.userKo && kick.punt && kickoff && kickoff.phase === 'flight');
@@ -1788,7 +1786,7 @@ window.addEventListener('pointerdown', e => {
   if (!TUI.on || !e.isTrusted || (e.pointerType !== 'touch' && e.button !== 0) || tpad._id != null || !stickOn(TUI.set) ||   /* (!isTrusted: the other player's presses, replayed here by the online host as mouse events, are never this finger) */ (e.target.closest && e.target.closest('#tbtns'))) return;
   const lp = layPt(e), py = pointerPos(e).y;
   if (overUiBtn(pointerPos(e))) return;
-  if (py < TOP_BAR || py > H - BOT_BAR) return;   // (the top / bottom bars hold the pause, audible and timeout buttons: a touch there is theirs, never the stick)
+  if (py < TOP_BAR || py > H - FIELD_BOT) return;   // (the top bar holds the pause icon and the scoreboard: a touch there is theirs, never the stick)
   if (touchHalf(e) !== stickSide()) return;
   e.stopImmediatePropagation();   // (this finger is the stick: the canvas never sees it, so it can't start a throw drag or a swipe)
   tpad._pts = []; tpad._flash = false; tpad.style.opacity = ''; if (tut) tut.flashUntil = 0;
