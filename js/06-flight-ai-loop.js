@@ -56,8 +56,9 @@ function updateFlight(dt) {
     if (deepLob || d.batRolled || (d.action && !leap) || (!ball.bullet && !leap) || ball.p > 0.4 || dist(d, ball) > 1.4 * YD || !dbTouch(d, false, HAND.reach * (ball.bullet ? 1.15 : DL_LEAP.lobReach))) continue;   // (a lob is only tipped by a lineman who leaps and gets a hand to it, never standing; a bullet standing: only a low ball; a leap lifts his reach)
     d.batRolled = true;
     const odds = (aiOff() && !udCtl(d) ? DL_LEAP.userDef : 1) * (leap ? (ball.bullet ? DL_LEAP.batBullet : DL_LEAP.batLob) : (ball.bullet ? DL_LEAP.standBullet : DL_LEAP.standLob) * (d.engagedAtThrow ? 0.3 : 1))
-               * Math.max(0.3, 1 + BODY.bat * (hz(d) - hz(qb)));   // a tall QB's release point is over the hands
+               * Math.max(0.3, 1 + BODY.bat * (hz(d) - hz(qb))) * abilBatK(d);   // a tall QB's release point is over the hands (abilities: Batted Ball, Wall Swatter; Arm Cannon bullets can't be tipped)
     if (Math.random() < odds) {
+      xfEvent(d.src, 'bat');
       if (facingPlay(d) && Math.random() < DL_PICK.base * (ball.bullet ? DL_PICK.bulletK : 1)) {
         if (ball.bullet && Math.random() < DL_PICK.tipShare) { if (pbuMotion(d) === 'swat' && dbTouch(d, false)) { popLoose(d, 'Tipped!', 100 * S, 3.5 * YD); knockAway(d); } return; }   // (a bullet he'd have caught is tipped instead)
         return intercept(d);
@@ -271,7 +272,7 @@ function updateFlight(dt) {
       const atK = 1 + DIVE_PACE.attempt * Math.min(1, Math.hypot(w.vx, w.vy) / DIVE_FEEL.fullSpeed);   // (flying along, he can lay out from further)
       // only if he can't get there on his feet: flat out (still accelerating) he'd come up short of his catch radius
       const vEnd = Math.min(effTop(w, w.topBase || WR_TOP), w.speed + WR_ACCEL * remaining);
-      const needed = d - (w.speed + vEnd) / 2 * remaining > R * DIVE_NEED;
+      const needed = d - (w.speed + vEnd) / 2 * remaining > R * DIVE_NEED && !(Math.hypot(w.vx || 0, w.vy || 0) < 2.5 * YD && btInPath(w, R * 0.8, STRIDE_HEIGHT));   // (waiting where he came back to meet it: it's coming through his hands, no lay-out for the landing spot)
       const toeStay = w.toe && !needed;   // (S / W at the sideline: he stays on his feet for the toe drag / tap unless he'd never get there)
       if (!toeStay && (diveMode && !aiOff() ? true : mode === 'diveOne' ? d <= DIVE_ATTEMPT * 1.4 * atK : mode === 'secure' ? d <= DIVE_ATTEMPT * 1.3 * atK : needed && d <= DIVE_ATTEMPT * atK)) {   // (S always lays out, even for a ball that's right on him)
         // (a ball coming in at his feet: he lays out the way it is travelling, onto it, not in whatever direction a tiny gap points)
@@ -1453,7 +1454,7 @@ const FORM_OL = [['LT', -3], ['LG', -1.5], ['C', 0], ['RG', 1.5], ['RT', 3]].map
 const FORMS = [
   { id: 'I-FORM', name: 'I-FORMATION', short: 'I-FORM', pers: '21', qb: 'UNDER CENTER', backs: 'FB + TB in a line',
     slots: [...FORM_OL, { k: 'TE', on: true, d: 0, w: 4.5, role: 'TE' }, { k: 'X', on: true, d: 0, w: -14, role: 'WR' },
-            { k: 'QB', d: 0.9, w: 0, role: 'QB' }, { k: 'FB', d: 4, w: 0, role: 'FB' }, { k: 'TB', d: 6.5, w: 0, role: 'RB' }, { k: 'Z', d: 1, w: 11, role: 'WR' }],
+            { k: 'QB', d: 0.9, w: 0, role: 'QB' }, { k: 'FB', d: 5.5, w: 0, role: 'FB' }, { k: 'TB', d: 8, w: 0, role: 'RB' }, { k: 'Z', d: 1, w: 11, role: 'WR' }],
     variants: 'Heavy: 22 (a 2nd TE for the flanker). Offset I: the FB shifts beside the TB to change the run strength.',
     strengths: 'Downhill power running; the lead blocker adds a body at the point of attack; play-action off the run fake is very convincing.',
     weaknesses: 'Predictable, so defenses load the box; only 2-3 receivers in routes; slower to throw than spread looks.',
@@ -1684,7 +1685,8 @@ const LIVE_FORM = {
   SINGLEBACK: { gun: false, rb: { d: 6, w: 0 }, te: r => r < 0.35 ? 2 : 1, split: false, shift: true },
   PISTOL: { gun: true, qbD: 3.2, rb: { d: 5.9, w: 0 }, te: r => r < 0.2 ? 2 : 1, split: false, shift: true },
   EMPTY: { gun: true, te: r => r < 0.1 ? 1 : 0, split: true },
-  'I-FORM': { gun: false, rb: { d: 6.6, w: 0 }, fb: { d: 4.2, w: 0.8, role: 'FB' }, shape: { a: ['WR'], b: ['WR', 'TE'] }, split: false },
+  'I-FORM': { gun: false, rb: { d: 8.1, w: 0 }, fb: { d: 5.7, w: 0, role: 'FB' },   // (FB and TB stacked straight behind the QB, a step deeper each)
+             shape: { a: ['WR'], b: ['WR', 'TE'] }, split: false },
   'PRO SET': { gun: false, rb: { d: 5.4, w: 2.4 }, fb: { d: 5.4, w: 2.4, role: 'SPLIT' }, shape: { a: ['WR'], b: ['WR', 'TE'] }, split: false },
   'GOAL LINE': { gun: false, rb: { d: 5.6, w: 0 }, fb: { d: 3.9, w: 0.7, role: 'FB' }, shape: { a: ['TE'], b: ['WR', 'TE'] }, split: false },
 };
@@ -1890,7 +1892,7 @@ const aiFollows = () => ai.follows != null ? ai.follows : (ai.follows = !tut && 
 function cpuEdge() {
   if (tut) return 0;
   const o = MATCH.you, d = MATCH.opp;
-  const raw = (diffLvl().stars || teamStars(o).off) - teamStars(d).def + XF_SIM * (xfCount(o, true) - xfCount(d, false)) + ((twoP && twoP.luck) || 0);
+  const raw = (diffLvl().stars || teamStars(o).off) - teamStars(d).def + XF_SIM * (xfLitCount(o, true) - xfLitCount(d, false)) + ((twoP && twoP.luck) || 0);
   return (raw < 0 ? raw * SIM_EDGE.badOff : raw) + diffLvl().sim * SIM_DIFF;
 }
 // pre-snap run/pass nudge from the situation (AI_QB): short yardage and the goal line favor the run, long yardage the pass, a lead leans on the run
@@ -2363,7 +2365,7 @@ function aiRun(dt) {
     const dd2 = dist(ahead, c) || 1, closing = ((ahead.vx || 0) * (c.x - ahead.x) + (ahead.vy || 0) * (c.y - ahead.y)) / dd2;   // (how fast the defender is coming at him: moves go on a man who's really there, never at air)
     if (!tut && dd2 < DEF.moveRange * YD && closing > 1.5 * YD && ai.mv <= 0 && !ahead.action) {
       ai.mv = AI_MOVE.cd;
-      if (c.x > FIELD - 2.5 * YL) runAction('Tab');
+      if (c.x > FIELD - 2.5 * YL || (c === qb && down === 4 && c.x < lineToGain && c.x + 3.2 * YD >= lineToGain)) runAction('Tab');   // (the goal line, or the computer QB diving for the 4th-down marker)
       else if (Math.random() < Math.max(0.2, Math.min(0.92, DEF.moveOdds * AI_MOVE.odds * (c === qb ? DEF.qbMoves : 1) * (1 + 0.1 * cpuEdge())))) {
         // (everything the player can do: spin, juke, truck, stiff arm; his speed picks the jukes and spins, his strength the trucks and stiff arms)
         // (the move depends on where he's coming from: from the side a stiff arm; head-on a juke, spin or truck, and rarely a hurdle.
@@ -2624,6 +2626,7 @@ function update(dt) {
   if (dt <= 0) return;
   if (tut && tut.defAsk) return;   // (the tutorial's "play defense or sim it?" card: nothing moves until you pick)
   clock += dt;
+  if (SL.on) slTick(dt);   // (sideline people: their clock; hides the chain crew for kicks)
   wxTick(dt);
   // each defender's real movement over the last frame, whatever code moved him (pursue picks its speed up from it)
   for (const d of [...(back7 || []), ...(dl || [])]) { if (d.mpx != null) { d.mvx = (d.x - d.mpx) / dt; d.mvy = (d.y - d.mpy) / dt; } d.mpx = d.x; d.mpy = d.y; }
@@ -2745,12 +2748,16 @@ function update(dt) {
     if (allPlayers().some(p => p.fmTo)) {
       fmWait += dt;
       if (fmWait > FM_MAX_WAIT) { for (const p of allPlayers()) if (p.fmTo) { const t = p.fmTo; p.x = t.x; p.y = t.y; p.fmTo = null; p.vx = p.vy = 0; p.moving = false; if (t.leave) fgExit = fgExit.filter(g => g !== p); } fmWait = 0; }
-    } else fmWait = 0;
+    } else {
+      fmWait = 0;
+      if (runQ) { const q = runQ; runQ = 0; if (performance.now() - q < RUN_QUEUE * 1000 && !fourthPending && !paused && patMode !== 'choose' && !(rec && rec.replaying)) handoff(); }   // (the hand-off clicked during the jog: everyone is set now)
+    }
   } else fmWait = 0;
   separatePlayers(dt);
   faceOffPairs();
   sideLock();
   for (const p of allPlayers()) postBump(p);   // (the goal posts' pads are solid for everyone, however he was moved this frame)
+  if (SL.on) slCollide();   // (sideline people are solid too: after celebrations / coasts have moved everyone; slides out, never back in bounds)
   updateBall(dt);
   if (state !== 'flight') ball.nose = null;  // the spiral look is only for a pass in the air
   if (state === 'loose') updateLoose();
@@ -2887,7 +2894,7 @@ function update(dt) {
     }
   }
   // the QB still behind the line with the ball (dropping back, in the pocket, rolling out): the sideline counts for him too (he used to run right off the field)
-  if ((state === 'drop' || state === 'pocket') && qb && qb.hasBall && !pendDown(qb) && (!feetInBounds(qb) || !ballInBounds(qb))) {
+  if ((state === 'drop' || state === 'pocket') && holder === qb && !snapOn && !pendDown(qb) && (!feetInBounds(qb) || !ballInBounds(qb))) {
     aim = null;
     popup(qb, 'OUT OF BOUNDS', '#ffffff');
     if (Math.min(qb.x, ballX(qb)) < 0) endPlay('Out of bounds in his own end zone', Math.min(0, qb.x, markX(qb)));
@@ -3011,7 +3018,7 @@ function updateCamera(dt) {
   }
   if (state === 'sim') { camS.vx = camS.vy = camS.vz = 0; return; }
   const dn = state === 'done', nowMs = performance.now();
-  const celHero = dn ? allPlayers().find(p => p.cel && p.cel.i === 0) || null : null;   // (a celebration: its lead man, with everyone in it, is the shot)
+  const celHero = dn ? allPlayers().find(p => p.cel && p.cel.i === 0 && !p.cel.rx) || null : null;   // (a celebration: its lead man, with everyone in it, is the shot)
   const scorer = celHero || (dn && allPlayers().find(p => p.coast && p.coast.v != null && (p.hasBall || p === runner || p === tgt)));   // (only the man the play ended with: a stale coast on anyone else is never followed)   // (the scorer's end-zone coast, { v }: NOT the release drift a QB / blocker keeps after a throw, { vx, vy }; that one sent the touchdown zoom to the QB after a pick or an incompletion)
   // at the whistle the camera stays with the BALL: the man holding it (a pick's returner, a tackled carrier), or the ball itself after an incompletion; never
   // back to `runner` when he no longer has it (still the QB if he scrambled before he threw)
@@ -3199,5 +3206,5 @@ function mirrorFor() {
   return game.quarter === 2 || game.quarter === 3 ? -m : m;
 }
 const TOUCH_ZOOM = 1.2;   // phones: the game is zoomed in a bit more
-const camZ = () => tut ? Math.max(tutZoomFloor(), zoom * userZoom * passPull * (TOUCH ? TOUCH_ZOOM : 1)) : zoom * userZoom * passPull * (TOUCH ? TOUCH_ZOOM : 1);
+const camZ = () => tut ? Math.max(tutZoomFloor(), zoom * userZoom * passPull * (TOUCH ? TOUCH_ZOOM : 1)) : zoom * userZoom * passPull * (TOUCH ? TOUCH_ZOOM : 1) * (1 + celebPunch());   // (celebPunch: the punch-in at a celebration's peak)
 

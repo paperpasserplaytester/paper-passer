@@ -71,8 +71,27 @@ function placeRoster(team, slots) {
 const STARTERS = { QB: 1, RB: 1, WR: 2, TE: 2, OL: 5, K: 1, DL: 4, LB: 3, CB: 2, S: 2 };
 const ROSTER_SPOTS = 16;   // roster spots per side of the ball (8 per page)
 // bought spots (YOUR franchise team only, kept in LEAGUE.spots): SPOT.cost credits each, one side at a time, up to SPOT.max a side; animation seconds
-const SPOT = { cost: 10, max: 24, slide: 0.45, crumple: 0.95 };
-const spotsOf = (team, side) => typeof season !== 'undefined' && season && !exhibition && team === season.team && LEAGUE && LEAGUE.spots ? (LEAGUE.spots[side] || ROSTER_SPOTS) : ROSTER_SPOTS;
+// leagueEvery: for every that many spots you buy (either side), every other team gains one on a random side (LEAGUE.aiSpots[team] = { off, def } extra spots;
+// LEAGUE.spotBuys = how many you have bought)
+const SPOT = { cost: 10, max: 24, slide: 0.45, crumple: 0.95, leagueEvery: 2 };
+const spotsOf = (team, side) => {
+  if (typeof season === 'undefined' || !season || exhibition || !LEAGUE) return ROSTER_SPOTS;
+  if (team === season.team) return LEAGUE.spots ? (LEAGUE.spots[side] || ROSTER_SPOTS) : ROSTER_SPOTS;
+  const x = LEAGUE.aiSpots && LEAGUE.aiSpots[team];
+  return Math.min(SPOT.max, ROSTER_SPOTS + ((x && x[side]) || 0));
+};
+function leagueSpots() {   // you bought a spot: the rest of the league keeps pace
+  LEAGUE.spotBuys = (LEAGUE.spotBuys || 0) + 1;
+  if (LEAGUE.spotBuys % SPOT.leagueEvery) return;
+  const A = LEAGUE.aiSpots || (LEAGUE.aiSpots = {});
+  for (const k of Object.keys(ROSTER)) {
+    if (!NFL[k] || k === season.team) continue;
+    const x = A[k] || (A[k] = { off: 0, def: 0 }), open = ['off', 'def'].filter(s => ROSTER_SPOTS + x[s] < SPOT.max);
+    if (!open.length) continue;
+    x[open[Math.floor(Math.random() * open.length)]]++;
+    if (typeof AI_FILL !== 'undefined' && AI_FILL[k]) AI_FILL[k]++;   // (and it looks to fill it)
+  }
+}
 function startersOf(team) {
   const n = {}, set = new Set();
   for (const s of ROSTER[team] || []) if ((n[s.group] = (n[s.group] || 0) + 1) <= (STARTERS[s.group] || 0)) set.add(s);
@@ -127,7 +146,7 @@ function rateDefense() {
     d.cov *= 1 - OC_LOGIC.cov * oc;
     { const cz = rz(d, 'cov'); d.cov *= Math.max(0.2, 1 + A5.cov.cover * (cz < 0 ? cz * A5.cov.low : cz)) * pulseDef(d); }   // (COVERAGE rating; a poor one hurts only A5.cov.low as much; the home crowd lifts their defense a touch)
     d.jamWon = false;
-    if (xfOn(d, 'Universal Coverage') || xfOn(d, 'Shutdown')) { d.cov *= XFX.cov; if (d.pickTry) d.pickTry *= XFX.pick; }
+    if (d.pickTry) d.pickTry *= (abilOn(d, 'ballhawk') ? ABIL_FX.ballhawk : 1) * (xfOn(d, 'magnetHands') ? XFX.magnetHands : 1);   // (Ballhawk / Magnet Hands: more pick tries)
   }
 }
 // Pass pro vs the rush, once the line knows who it's blocking: strength gets a rusher off the block sooner,
@@ -140,8 +159,15 @@ function rateTrenches() {
     // (PASS_PRO = the line's pass protection overall; the difficulty's shed = how fast their rushers get free)
     const weak = !tut && rm(d, 'str', 'shed') < 1.1;   // (bad / average rushers get help so they're a real threat)
     d.shedAt *= rmo(o, 'blk', 'shed') * rmo(o, 'sta', 'sustain') / (rm(d, 'str', 'shed') * rm(d, 'prs', A5.dl.shed) * pulseDef(d) * (back7.some(b => b.blitz) ? Math.max(0.85, Math.min(1.25, rm(d, 'prs', A5.dl.blitz))) : 1)) * PASS_PRO * diffFor(d).shed * (aiOff() ? diffX('cpuPass') : 1) * (weak ? WEAK_RUSH.shed : 1);   // (pass rush: the main lever on getting home)
-    if (Math.random() < QUICK_WIN / Math.sqrt(diffFor(d).shed) * (weak ? WEAK_RUSH.quick : 1) * rm(d, 'str', 'quickWin') * rm(d, 'prs', A5.dl.quickWin) / rmo(o, 'blk', 'quickWin')) d.shedAt = Math.min(d.shedAt, 0.8 + Math.random() * 0.7);
+    const rt = rushType(d), ak = (abilOn(d, 'longArms') ? ABIL_FX.longArms : 1) * (abilOn(d, 'finisher') ? ABIL_FX.finisher : 1)   // (Long Arms / Finisher: off the block sooner; Strong Base / Quick Feet: bull / speed rushes work less)
+      / (abilOn(o, 'strongBase') && rt === 'power' ? ABIL_FX.strongBase : 1) / (abilOn(o, 'quickFeet') && rt === 'speed' ? ABIL_FX.quickFeet : 1);
+    if (d.shedAt < 50) d.shedAt *= ak;
+    if (!abilOn(o, 'brickWall') && Math.random() < QUICK_WIN / Math.sqrt(diffFor(d).shed) * (weak ? WEAK_RUSH.quick : 1) * rm(d, 'str', 'quickWin') * rm(d, 'prs', A5.dl.quickWin) / rmo(o, 'blk', 'quickWin')) d.shedAt = Math.min(d.shedAt, 0.8 + Math.random() * 0.7);
+    if (abilOn(d, 'speedRusher') && d.src && d.src.srDrive !== ABIL_ST.drive) { d.src.srDrive = ABIL_ST.drive; d.shedAt = Math.min(d.shedAt, ABIL_FX.speedRush); }   // (Speed Rusher: his first rush each drive wins)
+    if (xfOn(d, 'unblockable')) d.shedAt = Math.min(d.shedAt, XFX.unblockable);   // (Unblockable: free inside 1.5 s)
+    if (xfOn(o, 'fortress') && !xfOn(d, 'unblockable')) d.shedAt = 99;              // (Fortress: his man never gets home)
   }
+  abilProt();
 }
 // the run game: how well the line (run blocking) and the back (awareness, slightly) open holes...
 const OL_RUN_FLOOR = 0.5;   // a below-average line gives back this share of its deficit in run blocking (bad lines still open holes)
@@ -240,7 +266,7 @@ function announceOT() { endWhistle(); showBanner('OVERTIME', '#ffd94a', '#3a2a00
 // on to the next quarter / period; starting overtime it tosses the coin and returns who receives
 function nextPeriod() {
   game.quarter++; game.pendingQuarter = false;
-  if (game.quarter < 5) { game.secs = QUARTER_SECS; if (game.quarter === 3) { game.timeouts = diffTO(); if (twoP) twoP.to = 3; } return null; }
+  if (game.quarter < 5) { game.secs = QUARTER_SECS; if (game.quarter === 3) { xfHalftime(); game.timeouts = diffTO(); if (twoP) twoP.to = 3; } return null; }
   const post = postseason();
   game.secs = QUARTER_SECS;   // overtime is as long as a quarter
   if (game.quarter === 5 || (post && game.quarter % 2 === 1)) {   // overtime starts (or a new playoff "half" of it): fresh timeouts
@@ -355,7 +381,7 @@ let PST = {}, HOF = [];   // HOF: [{ team, p: { name, tag, group, stars, face, n
 const CHOF_KEY = 'pocketPasser.coachHof';
 let CHOF = [];   // coaching Hall of Fame: [{ team, year, p: { name, group: 'HC', stars, face }, wins, games, po, titles, teams: [], rings: [kind] }] (a snapshot, so he stays after leaving)
 try { CHOF = JSON.parse(localStorage.getItem(CHOF_KEY)) || []; } catch (e) {}
-try { PST = JSON.parse(localStorage.getItem(PST_KEY)) || {}; } catch (e) {}
+try { PST = lsJson(localStorage.getItem(PST_KEY)) || {}; } catch (e) {}
 try { HOF = JSON.parse(localStorage.getItem(HOF_KEY)) || []; } catch (e) {}
 // Extended counters (see "extended stats" below): gs sn fm fl (starts, snaps, fumbles, lost) | QB lp ay xc sy th pu db sc t3a t3c rzt rzd qc gw
 // | runners lr r20 yc mtf ok on | receivers lc yac sep spn rr dr cc si ss | blockers pbn pbw rbn rbw qa ha | defense qh hu prn prw tfl rs ta ff fr pd bat bk dt mtk
@@ -380,7 +406,7 @@ function pstLoadSlot(i) {
   const h = rd(HOF_KEY, true); HOF = Array.isArray(h) ? h : [];   // (each franchise has its own Hall of Fame)
   const c = rd(CHOF_KEY); CHOF = Array.isArray(c) ? c : [];
 }
-function pstSaveSlot(i) { try { localStorage.setItem(`${CHOF_KEY}.${i}`, JSON.stringify(CHOF)); } catch (e) {} try { localStorage.setItem(`${HOF_KEY}.${i}`, JSON.stringify(HOF)); } catch (e) {} try { localStorage.setItem(`${PST_KEY}.${i}`, JSON.stringify(PST)); localStorage.setItem(`${LPST_KEY}.${i}`, lsPacked(LPST)); localStorage.setItem(`${REC_KEY}.${i}`, JSON.stringify(RECS)); } catch (e) {} }
+function pstSaveSlot(i) { try { localStorage.setItem(`${CHOF_KEY}.${i}`, JSON.stringify(CHOF)); } catch (e) {} try { localStorage.setItem(`${HOF_KEY}.${i}`, JSON.stringify(HOF)); } catch (e) {} try { localStorage.setItem(`${PST_KEY}.${i}`, lsPacked(PST)); localStorage.setItem(`${LPST_KEY}.${i}`, lsPacked(LPST)); localStorage.setItem(`${REC_KEY}.${i}`, lsPacked(RECS)); } catch (e) {} }
 function pstInit() { if (exhibition) pstExhibitionOn(); const fl = twoP && twoP.flipped, a = fl ? MATCH.opp : MATCH.you, b = fl ? MATCH.you : MATCH.opp; pstGame = { id: Date.now(), yr: exhibition || !season ? 0 : LEAGUE.year, wk: exhibition || !season ? 0 : MATCH.playoff ? 'PO' : season.week, rd: !exhibition && season && MATCH.playoff && po ? po.round : null, opp: b, a, b }; }
 // this game's stat line for a roster player (null in the tutorial or for a nobody)
 function pstRec(s) {
@@ -389,7 +415,7 @@ function pstRec(s) {
   const e = PST[s.name] || (PST[s.name] = { pos: s.tag, group: s.group, games: [] });
   e.pos = s.tag; e.group = s.group;
   let g = e.games[e.games.length - 1];
-  if (!g || g.id !== pstGame.id) { const theirs = pstGame.b && (ROSTER[pstGame.b] || []).includes(s); g = Object.assign(PST_BLANK(), { id: pstGame.id, yr: pstGame.yr, wk: pstGame.wk, rd: pstGame.rd, opp: theirs ? pstGame.a : pstGame.opp }); e.games.push(g); }
+  if (!g || g.id !== pstGame.id) { const theirs = pstGame.b && (ROSTER[pstGame.b] || []).includes(s); g = Object.assign(PST_BLANK(), { id: pstGame.id, yr: pstGame.yr, wk: pstGame.wk, rd: pstGame.rd, opp: theirs ? pstGame.a : pstGame.opp, tm: theirs ? pstGame.b : pstGame.a }); e.games.push(g); }   // (tm = his team that day: franchise career records)
   return g;
 }
 // a play ended (endPlay): passing, receiving and rushing lines
@@ -504,116 +530,466 @@ function pstFinish() {
       const g = e.games[e.games.length - 1];
       if (g && g.id === pstGame.id) { g.res = mine.has(name) ? res : resO; for (const k in PST_ZERO) if (!g[k]) delete g[k]; else if (g[k] % 1) g[k] = Math.round(g[k] * 100) / 100; }   // (zeros aren't stored: lines stay small)
     }
-    if (!pstStash) localStorage.setItem(pstKey(PST_KEY), JSON.stringify(PST));   // (an exhibition's lines aren't kept)
+    if (!pstStash) localStorage.setItem(pstKey(PST_KEY), lsPacked(PST));   // (an exhibition's lines aren't kept)
     recFinal();
   } catch (err) {}
 }
 
-// --- records (RECORDS button on the Hall of Fame; screen = drawRecords). Saved per franchise slot under 'pocketPasser.records[.slot]' = RECS.
-// Games you play: recLive (every play, from endPlay: updates records as they fall + the NEW RECORD! popup) and recFinal (game end, from pstFinish) read the
-// live stat lines (single play = the lines' longest-of counters, single game = their totals). League games only exist as simulated lines (pstSimGame -> recSim,
-// recTeamGame): their long-play counters are made up, so AI teams / players only get single-GAME records (+ team points / margin / season record), and
-// season / career totals are summed from PST + LPST when the screen opens (recTotals), so players who left keep theirs. No penalty or fumble-return records.
+// --- records: the RECORD BOOK (RECORDS on the Hall of Fame; screen = drawRecords in 11-cards-trades). A league book + one book per franchise, for single
+// game / season / career / team / playoffs. One table, RB_CATS, drives all of it: the made-up history, live tracking and the screen.
+// Stored on LEAGUE.rbk (leagueReset = a new career = a new book; saved with the slot): { seed, L: { cat: [entry] }, F: { team: { cat: [entry] } },
+// tm (this season's team totals), stk (win streaks), pbw (Paper Bowl wins: name -> { team: n }), news / chase (home screen popups) }.
+// Only marks set in THIS league are stored. The made-up history (RB.hist seasons before your first) is rebuilt from the seed when it's needed
+// (rbFakeBuild = league, rbFakeTeam = one franchise; deterministic, cached in RB_FAKE), and a book = that history + the stored entries, best RB.top kept.
+// entry = { v, n (holder: a name, or a team code for team marks), t (team), y (season; <= 0 = the made-up years), w (week; 'PO' + r = round in the
+// playoffs), p (position), y0 (first season of a career / streak) }. Simulated games count exactly like played ones; difficulty is never looked at.
+// Feeds: recLive (every play you play: the call on the field), recFinal (pstFinish), recSim (pstSimGame), recTeamGame / rbTeamGame (every final score),
+// rbWeek (seasons + careers: weekly, locked at season end, playoff careers after each round), rbPaperBowl (poAfter).
+// The old RECS lists (RECS, REC_KEY, recBlank) only stay so old saves / exhibitions load; nothing reads them now.
 const REC_KEY = 'pocketPasser.records';
-const RECORDS = { top: 5, announceMin: 5, color: '#ffd94a', teamMin: 12 };   // entries kept a category; popup only once a category already has this many (the first games just fill it); games a team needs for BEST TEAM SEASON
-// [id, label, value(line), liveOnly] (liveOnly = not from simulated games)
-const REC_PLAY = [['run', 'LONGEST RUN', g => g.lr || 0], ['pass', 'LONGEST PASS', g => g.lp || 0], ['play', 'LONGEST PLAY', g => Math.max(g.lr || 0, g.lp || 0, g.kl || 0, g.ul || 0, g.il || 0)],
-  ['int', 'LONGEST INTERCEPTION RETURN', g => g.il || 0], ['ko', 'LONGEST KICKOFF RETURN', g => g.kl || 0], ['pr', 'LONGEST PUNT RETURN', g => g.ul || 0], ['fg', 'LONGEST FIELD GOAL', g => g.fgl || 0]];
-const REC_GAME = [['pts', 'MOST POINTS (TEAM)'], ['margin', 'BIGGEST MARGIN (TEAM)'], ['py', 'PASSING YARDS', g => g.py || 0], ['pt', 'PASSING TDS', g => g.pt || 0], ['cy', 'RUSHING YARDS', g => g.cy || 0], ['ct', 'RUSHING TDS', g => g.ct || 0],
-  ['ry', 'RECEIVING YARDS', g => g.ry || 0], ['rt', 'RECEIVING TDS', g => g.rt || 0], ['sk', 'SACKS', g => g.sk || 0], ['ic', 'INTERCEPTIONS', g => g.ic || 0], ['tk', 'TACKLES', g => g.tk || 0],
-  ['kt', 'KICKOFF RETURN TDS', g => g.kt || 0, true], ['ut', 'PUNT RETURN TDS', g => g.ut || 0, true]];
-const REC_TOT = [['py', 'PASSING YARDS', g => g.py], ['pt', 'PASSING TDS', g => g.pt], ['cy', 'RUSHING YARDS', g => g.cy], ['ct', 'RUSHING TDS', g => g.ct], ['ry', 'RECEIVING YARDS', g => g.ry],
-  ['rt', 'RECEIVING TDS', g => g.rt], ['sk', 'SACKS', g => g.sk], ['ic', 'INTERCEPTIONS', g => g.ic]];
-const recBlank = () => ({ play: {}, game: {}, mine: { play: {}, game: {} }, tm: {}, who: {} });   // mine = the same lists for your team alone (so MY TEAM keeps a full top 5); tm[yr][team] = { w, l, t, pf, pa }; who[name] = latest team
+const recBlank = () => ({ play: {}, game: {}, mine: { play: {}, game: {} }, tm: {}, who: {} });
 let RECS = recBlank();
 const myTeamCode = () => season ? season.team : MATCH.you;
-// put an entry in a top list: false = didn't make it, 'in' = made it, 'top' = a new #1 in a list that was already full
-function recSet(list, e) {
-  const i = list.findIndex(x => x.k === e.k), wasTop = i === 0, full = list.length >= RECORDS.announceMin;
-  if (i >= 0) { if (list[i].v >= e.v) return false; list.splice(i, 1); }
-  else if (list.length >= RECORDS.top && list[list.length - 1].v >= e.v) return false;
-  list.push(e); list.sort((a, b) => b.v - a.v);   // (stable: a tie never takes #1)
-  if (list.length > RECORDS.top) list.length = RECORDS.top;
-  return list.indexOf(e) < 0 ? false : list.indexOf(e) === 0 && !wasTop && full ? 'top' : 'in';
+const RB = {
+  top: 5, hist: 40, games: 17,           // entries kept a category; made-up seasons before yours; games a season (17: NFL marks need no scaling)
+  q: { pa: 14, ca: 6.25, fa: 1, gpa: 20 },   // season rates need these per team game (x games: 238 att / 106 carries / 17 FGA); gpa = attempts for a one-game rating
+  jit: 0.02, capUp: 0.06,                // the made-up #1 lands within +-jit of its anchor; capped marks (99-yd plays, 158.3, 100%) aim capUp over the cap, so several tie on it
+  cv: { g: 0.04, s: 0.1, t: 0.1, f: 0.07 },   // how far under #1 the rest sit (game / season / team / franchise lists): spread per unit of draw (a category's own `cv` wins)
+  fGap: 0.45,                            // franchise lists: mean gap between neighbours, in draw units
+  arcs: 150,                             // made-up careers per position group (career lists come from these arcs, not full rosters)
+  fNoise: [0.7, 1.0], lean: 0.12,        // a franchise's #1 = base x a noise in this range, + its historic lean (pass / run / defense, ~-2..2) x lean
+  fBase: 0.85,                           // franchise base where the base book (a long-history NFL franchise) has no number = the league anchor x this
+  chaseWk: 8, chaseMax: 2, newsMax: 6, color: '#ffd94a', ink: '#5a3a00',
+};
+// made-up holders: a first initial from the draft pool + a surname from this list (kept clear of well-known NFL names)
+const RB_SURN = ('Halvorsen Brannigan Castellow Delacroix Everly Fennimore Gallard Haverty Ingvarsen Kettering Lindqvist Pemberton Quintero Radcliffe Thackeray Ulrich ' +
+  'Vanterpool Wexford Yardley Ambrose Birchfield Eckhart Hollister Imbler Jardine Kowalczyk Mottram Oduya Pellegrini Strickley Underhill Varga Whitcombe Abernathy ' +
+  'Brightwell Cordell Dunmore Elsworth Farrington Hemsworth Ingleby Jolliffe Kinsella Lattimer Nettleton Ormsby Sorensen Tremblay Vickery Wainwright Yelverton Zellner ' +
+  'Draycott Easterbrook Fairweather Huxley Lockhart Ashgrove Bellweather Quarrington').split(' ');
+const rbN = k => g => g[k] || 0;
+const rbScr = g => (g.cy || 0) + (g.ry || 0);
+const rbAP = g => rbScr(g) + (g.ky || 0) + (g.uy || 0) + (g.icy || 0);
+const rbRate = g => { if (!g.pa) return 0; const c = x => Math.max(0, Math.min(2.375, x)); return (c((g.pc / g.pa - 0.3) * 5) + c(((g.py || 0) / g.pa - 3) * 0.25) + c((g.pt || 0) / g.pa * 20) + c(2.375 - (g.pi || 0) / g.pa * 25)) / 6 * 100; };   // the NFL passer rating
+// QBR (0-100) is our own, ESPN's isn't public: an EPA-like value per action play = (pass yds + 0.6 x QB rush yds + 20 a TD - 45 an INT - sack yds
+// (6.5 a sack when not counted) - 25 a lost fumble) / (attempts + sacks + carries), through a logistic: a league-average ~6.0 = ~53, an elite ~9.5 = ~88.
+const rbQbr = g => { const n = (g.pa || 0) + (g.sq || 0) + (g.ca || 0); if (!g.pa || !n) return 0; const v = ((g.py || 0) + 0.6 * (g.cy || 0) + 20 * ((g.pt || 0) + (g.ct || 0)) - 45 * (g.pi || 0) - (g.sy || 6.5 * (g.sq || 0)) - 25 * (g.fl || 0)) / n; return 100 / (1 + Math.exp(-(v - 5.8) / 1.9)); };
+const rbQ = (k, per) => g => (g[k] || 0) >= per * RB.games;
+// [id, scope, label, value of a line, anchor = the league #1 the made-up history aims at (real NFL marks nudged ~1-3%), franchise base (0 = anchor x fBase), options]
+// scope: g = player game, s = season, c = career, tg / ts = team game / season, pg / pc / tp = playoff player game / career / team game.
+// options: lo (lower is better), q (qualifier on the line), lock (season: only counted once the season is over), cap (can't go past), fmt (n / h (halves) / d1 /
+// pct / rec), side (the historic lean that helps it: pass / run / def / st / off), pos (made-up holder's position), arc (career group), live (false = not play by play)
+// Franchise bases: a long-history NFL franchise's book (Green Bay's, from memory); 0 where unsure.
+const RB_RAW = [
+  ['g_py', 'g', 'PASSING YARDS', 'py', 547, 480, { side: 'pass', pos: 'QB' }],
+  ['g_pt', 'g', 'PASSING TDS', 'pt', 7, 6, { side: 'pass', pos: 'QB' }],
+  ['g_pc', 'g', 'COMPLETIONS', 'pc', 44, 0, { side: 'pass', pos: 'QB' }],
+  ['g_prt', 'g', 'PASSER RATING (20+ ATT)', rbRate, 158.3, 155, { side: 'pass', pos: 'QB', fmt: 'd1', cap: 158.3, q: g => (g.pa || 0) >= RB.q.gpa, live: false }],
+  ['g_cy', 'g', 'RUSHING YARDS', 'cy', 291, 218, { side: 'run', pos: 'RB' }],
+  ['g_ct', 'g', 'RUSHING TDS', 'ct', 6, 4, { side: 'run', pos: 'RB' }],
+  ['g_ry', 'g', 'RECEIVING YARDS', 'ry', 329, 257, { side: 'pass', pos: 'WR' }],
+  ['g_rc', 'g', 'RECEPTIONS', 'rc', 20, 14, { side: 'pass', pos: 'WR' }],
+  ['g_rt', 'g', 'RECEIVING TDS', 'rt', 5, 4, { side: 'pass', pos: 'WR' }],
+  ['g_scr', 'g', 'SCRIMMAGE YARDS', rbScr, 335, 0, { side: 'run', pos: 'RB' }],
+  ['g_ap', 'g', 'ALL-PURPOSE YARDS', rbAP, 396, 0, { side: 'st', pos: 'RB' }],
+  ['g_sk', 'g', 'SACKS', 'sk', 6.5, 5, { side: 'def', pos: 'DE', fmt: 'h' }],
+  ['g_tfl', 'g', 'TACKLES FOR LOSS', 'tfl', 6, 0, { side: 'def', pos: 'DT' }],
+  ['g_tk', 'g', 'TACKLES', 'tk', 24, 0, { side: 'def', pos: 'LB' }],
+  ['g_ic', 'g', 'INTERCEPTIONS', 'ic', 4, 3, { side: 'def', pos: 'CB' }],
+  ['g_ff', 'g', 'FORCED FUMBLES', 'ff', 4, 0, { side: 'def', pos: 'DE' }],
+  ['g_lp', 'g', 'LONGEST PASS', 'lp', 99, 99, { side: 'pass', pos: 'QB', cap: 99 }],
+  ['g_lr', 'g', 'LONGEST RUN', 'lr', 99, 98, { side: 'run', pos: 'RB', cap: 99 }],
+  ['g_lc', 'g', 'LONGEST RECEPTION', 'lc', 99, 99, { side: 'pass', pos: 'WR', cap: 99 }],
+  ['g_fgl', 'g', 'LONGEST FIELD GOAL', 'fgl', 65, 58, { side: 'st', pos: 'K' }],
+  ['g_pl', 'g', 'LONGEST PUNT', 'pl', 97, 90, { side: 'st', pos: 'P' }],
+  ['g_rtd', 'g', 'RETURN TDS (KR + PR)', g => (g.kt || 0) + (g.ut || 0), 2, 2, { side: 'st', pos: 'WR' }],
+  ['s_py', 's', 'PASSING YARDS', 'py', 5412, 4643, { side: 'pass', pos: 'QB' }],
+  ['s_pt', 's', 'PASSING TDS', 'pt', 54, 48, { side: 'pass', pos: 'QB' }],
+  ['s_cp', 's', 'COMPLETION % (QUALIFIED)', g => g.pa ? 100 * g.pc / g.pa : 0, 73.7, 70.7, { side: 'pass', pos: 'QB', fmt: 'pct', q: rbQ('pa', RB.q.pa), lock: true }],
+  ['s_prt', 's', 'PASSER RATING (QUALIFIED)', rbRate, 121.8, 121, { side: 'pass', pos: 'QB', fmt: 'd1', q: rbQ('pa', RB.q.pa), lock: true }],
+  ['s_qbr', 's', 'QBR (QUALIFIED)', rbQbr, 86.4, 84, { side: 'pass', pos: 'QB', fmt: 'd1', q: rbQ('pa', RB.q.pa), lock: true }],
+  ['s_lint', 's', 'FEWEST INTS (QUALIFIED)', 'pi', 2, 2, { side: 'pass', pos: 'QB', lo: true, q: rbQ('pa', RB.q.pa), lock: true }],
+  ['s_cy', 's', 'RUSHING YARDS', 'cy', 2087, 1883, { side: 'run', pos: 'RB' }],
+  ['s_ct', 's', 'RUSHING TDS', 'ct', 27, 19, { side: 'run', pos: 'RB' }],
+  ['s_ypc', 's', 'YARDS PER CARRY (QUALIFIED)', g => g.ca ? g.cy / g.ca : 0, 8.3, 0, { side: 'run', pos: 'RB', fmt: 'd1', q: rbQ('ca', RB.q.ca), lock: true }],
+  ['s_ry', 's', 'RECEIVING YARDS', 'ry', 1948, 1519, { side: 'pass', pos: 'WR' }],
+  ['s_rc', 's', 'RECEPTIONS', 'rc', 147, 123, { side: 'pass', pos: 'WR' }],
+  ['s_rt', 's', 'RECEIVING TDS', 'rt', 22, 18, { side: 'pass', pos: 'WR' }],
+  ['s_scr', 's', 'SCRIMMAGE YARDS', rbScr, 2476, 2250, { side: 'run', pos: 'RB' }],
+  ['s_td', 's', 'TOTAL TDS', g => (g.ct || 0) + (g.rt || 0) + (g.kt || 0) + (g.ut || 0) + (g.dt || 0), 30, 20, { side: 'run', pos: 'RB' }],
+  ['s_sk', 's', 'SACKS', 'sk', 23, 19.5, { side: 'def', pos: 'DE', fmt: 'h' }],
+  ['s_tfl', 's', 'TACKLES FOR LOSS', 'tfl', 38, 0, { side: 'def', pos: 'DE' }],
+  ['s_ic', 's', 'INTERCEPTIONS', 'ic', 13, 10, { side: 'def', pos: 'CB' }],
+  ['s_ff', 's', 'FORCED FUMBLES', 'ff', 10, 0, { side: 'def', pos: 'DE' }],
+  ['s_pk', 's', 'PANCAKES', 'pk', 58, 0, { side: 'run', pos: 'OL' }],
+  ['s_fg', 's', 'FIELD GOALS MADE', 'fg', 43, 33, { side: 'st', pos: 'K' }],
+  ['s_fgp', 's', 'FIELD GOAL % (QUALIFIED)', g => g.fa ? 100 * g.fg / g.fa : 0, 100, 96, { side: 'st', pos: 'K', fmt: 'pct', cap: 100, q: rbQ('fa', RB.q.fa), lock: true }],
+  ['s_kp', 's', 'KICKER POINTS', g => 3 * (g.fg || 0) + (g.xp || 0), 163, 141, { side: 'st', pos: 'K' }],
+  ['c_py', 'c', 'PASSING YARDS', 'py', 87960, 61655, { arc: 'QB', pos: 'QB' }],
+  ['c_pt', 'c', 'PASSING TDS', 'pt', 641, 475, { arc: 'QB', pos: 'QB' }],
+  ['c_cy', 'c', 'RUSHING YARDS', 'cy', 18120, 8207, { arc: 'RB', pos: 'RB' }],
+  ['c_ct', 'c', 'RUSHING TDS', 'ct', 161, 81, { arc: 'RB', pos: 'RB' }],
+  ['c_ry', 'c', 'RECEIVING YARDS', 'ry', 22410, 9656, { arc: 'WR', pos: 'WR' }],
+  ['c_rc', 'c', 'RECEPTIONS', 'rc', 1532, 743, { arc: 'WR', pos: 'WR' }],
+  ['c_rt', 'c', 'RECEIVING TDS', 'rt', 194, 99, { arc: 'WR', pos: 'WR' }],
+  ['c_sk', 'c', 'SACKS', 'sk', 197.5, 83.5, { arc: 'DE', pos: 'DE', fmt: 'h' }],
+  ['c_tfl', 'c', 'TACKLES FOR LOSS', 'tfl', 172, 0, { arc: 'DE', pos: 'DE' }],
+  ['c_ic', 'c', 'INTERCEPTIONS', 'ic', 79, 52, { arc: 'CB', pos: 'CB' }],
+  ['c_gp', 'c', 'GAMES PLAYED', 'gp', 376, 258, { arc: 'K', pos: 'K' }],
+  ['c_pb', 'c', 'PAPER BOWL WINS', 'pb', 7, 4, { arc: 'QB', pos: 'QB' }],
+  ['t_pts', 'tg', 'POINTS IN A GAME', 'pts', 70, 57, { side: 'off' }],
+  ['t_mar', 'tg', 'WINNING MARGIN', 'mar', 58, 0, { side: 'off' }],
+  ['t_yds', 'tg', 'YARDS IN A GAME', 'yds', 720, 0, { side: 'off' }],
+  ['t_spts', 'ts', 'POINTS IN A SEASON', 'pf', 598, 560, { side: 'off' }],
+  ['t_spa', 'ts', 'FEWEST POINTS ALLOWED (SEASON)', 'pa', 172, 205, { side: 'def', lo: true, lock: true, q: s => (s.g || 0) >= RB.games }],
+  ['t_syd', 'ts', 'YARDS IN A SEASON', 'yd', 7365, 6482, { side: 'off' }],
+  ['t_stk', 'ts', 'LONGEST WIN STREAK', 'n', 20, 19, { side: 'off', streak: true, cv: 0.25 }],
+  ['t_best', 'ts', 'BEST RECORD', s => (s.w || 0) + (s.t || 0) / 2, 16, 15, { side: 'off', fmt: 'rec', lock: true, q: s => (s.g || 0) >= RB.games }],
+  ['p_py', 'pg', 'PASSING YARDS', 'py', 480, 0, { side: 'pass', pos: 'QB' }],
+  ['p_pt', 'pg', 'PASSING TDS', 'pt', 6, 0, { side: 'pass', pos: 'QB' }],
+  ['p_cy', 'pg', 'RUSHING YARDS', 'cy', 244, 0, { side: 'run', pos: 'RB' }],
+  ['p_ry', 'pg', 'RECEIVING YARDS', 'ry', 238, 0, { side: 'pass', pos: 'WR' }],
+  ['p_rc', 'pg', 'RECEPTIONS', 'rc', 15, 0, { side: 'pass', pos: 'WR' }],
+  ['p_sk', 'pg', 'SACKS', 'sk', 4.5, 0, { side: 'def', pos: 'DE', fmt: 'h' }],
+  ['p_ic', 'pg', 'INTERCEPTIONS', 'ic', 3, 0, { side: 'def', pos: 'CB' }],
+  ['p_pts', 'tp', 'TEAM POINTS IN A GAME', 'pts', 62, 0, { side: 'off' }],
+  ['pc_py', 'pc', 'CAREER PASSING YARDS', 'py', 13180, 0, { arc: 'QB', pos: 'QB' }],
+  ['pc_pt', 'pc', 'CAREER PASSING TDS', 'pt', 86, 0, { arc: 'QB', pos: 'QB' }],
+  ['pc_cy', 'pc', 'CAREER RUSHING YARDS', 'cy', 1560, 0, { arc: 'RB', pos: 'RB' }],
+  ['pc_ry', 'pc', 'CAREER RECEIVING YARDS', 'ry', 2210, 0, { arc: 'WR', pos: 'WR' }],
+  ['pc_rt', 'pc', 'CAREER RECEIVING TDS', 'rt', 21, 0, { arc: 'WR', pos: 'WR' }],
+  ['pc_sk', 'pc', 'CAREER SACKS', 'sk', 16, 0, { arc: 'DE', pos: 'DE', fmt: 'h' }],
+  ['pc_ic', 'pc', 'CAREER INTERCEPTIONS', 'ic', 9, 0, { arc: 'CB', pos: 'CB' }],
+  ['pc_gp', 'pc', 'PLAYOFF GAMES PLAYED', 'gp', 47, 0, { arc: 'QB', pos: 'QB' }],
+];
+const RB_CATS = RB_RAW.map(([id, sc, l, f, a, fb, o]) => ({ id, sc, l, f: typeof f === 'string' ? rbN(f) : f, a, fb: fb || (o.lo ? a / RB.fBase : a * RB.fBase), ...o }));
+const RB_BY = Object.fromEntries(RB_CATS.map(c => [c.id, c]));
+const RB_ARC = { QB: [7, 20, 'pass'], RB: [5, 12, 'run'], WR: [6, 16, 'pass'], DE: [7, 17, 'def'], CB: [6, 15, 'def'], K: [10, 24, 'st'] };   // career groups: [shortest, longest season count, lean]
+const RB_CHASE = new Set(['s_py', 's_pt', 's_cy', 's_ct', 's_ry', 's_rc', 's_rt', 's_scr', 's_td', 's_sk', 's_tfl', 's_ic', 's_fg']);   // season marks the chase note watches
+const rbTeamCat = c => c.sc === 'tg' || c.sc === 'ts' || c.sc === 'tp';
+const rbRound = (c, v) => c.fmt === 'h' || c.fmt === 'rec' ? Math.round(v * 2) / 2 : c.fmt === 'd1' || c.fmt === 'pct' ? Math.round(v * 10) / 10 : Math.round(v);
+const rbStep = c => c.fmt === 'h' || c.fmt === 'rec' ? 0.5 : c.fmt === 'd1' || c.fmt === 'pct' ? 0.1 : 1;
+const rbBetter = (c, a, b) => c.lo ? a < b - 1e-9 : a > b + 1e-9;
+const rbSort = c => (a, b) => (c.lo ? a.v - b.v : b.v - a.v) || (a.y - b.y) || (String(a.w || '') < String(b.w || '') ? -1 : 1);   // (ties: who got there first)
+function rbFmt(c, v) {
+  if (c.fmt === 'rec') { const w = Math.floor(v), t = v % 1 ? 1 : 0; return `${w}-${RB.games - w - t}${t ? '-1' : ''}`; }
+  if (c.fmt === 'pct') return v.toFixed(1) + '%';
+  if (c.fmt === 'd1') return v.toFixed(1);
+  if (c.fmt === 'h') return v % 1 ? v.toFixed(1) : String(v);
+  return Math.round(v).toLocaleString('en-US');
 }
-function recAdd(kind, id, e, p) {
-  const lists = [RECS[kind]];
-  if (e.team === myTeamCode()) lists.push(RECS.mine[kind]);
-  let top = false;
-  for (const L of lists) if (recSet(L[id] || (L[id] = []), { ...e }) === 'top') top = true;
-  if (top && p && !pstStash) popup(p, 'NEW RECORD!', RECORDS.color, undefined, true, true);
+const rbShort = n => { const s = String(n || ''); if (/^[A-Z]\. /.test(s)) return s; const i = s.indexOf(' '); return i > 0 ? `${s[0]}. ${s.slice(i + 1)}` : s; };   // "J. Doe"
+const rbHolder = (c, e) => rbTeamCat(c) ? (NFL[e.n] ? teamFull(e.n) : String(e.n)) : rbShort(e.n);
+const rbYear = y => y >= 1 ? pstYear(y) : NFL_START + y - 1;   // (made-up seasons are always shown as calendar years)
+function rbk() { return LEAGUE.rbk || (LEAGUE.rbk = { seed: (Math.random() * 1e9) | 0, L: {}, F: {}, tm: null, stk: {}, pbw: {}, news: [], chase: [] }); }
+const rbOn = () => !!season && !exhibition && !tut && !pstStash && !!LEAGUE && LEAGUE.year >= 1;
+
+// ---- the made-up history (Phase 2: fast, no game engine, no per-player objects, nothing but the top 5s kept) ----
+const rbGauss = r => Math.sqrt(-2 * Math.log(Math.max(1e-12, r()))) * Math.cos(6.2831853 * r());   // N(0, 1) (a real tail: the season #1s need room above #5)
+const rbGum = r => -Math.log(-Math.log(Math.min(1 - 1e-9, Math.max(1e-9, r()))));   // a tail draw: the best of many
+const rbName = r => `${NAME_FIRST[Math.floor(r() * NAME_FIRST.length)][0]}. ${RB_SURN[Math.floor(r() * RB_SURN.length)]}`;
+function rbKeep(top, s, o) {   // top RB.top by raw score, highest first (a tie keeps the earlier one)
+  if (top.length >= RB.top && s <= top[top.length - 1].s) return;
+  o.s = s; let i = top.length; top.push(o);
+  while (i > 0 && top[i - 1].s < s) { top[i] = top[i - 1]; i--; }
+  top[i] = o; if (top.length > RB.top) top.length = RB.top;
 }
-// one player's line for a game (live or simulated) against every category
-function recLine(name, pos, team, g, p, live, plays) {
-  if (!g.yr || !team) return;
-  RECS.who[name] = team;
-  const base = { k: name + '|' + g.id, who: name, team, pos, yr: g.yr, wk: g.wk, opp: g.opp };
-  if (plays) for (const [id, , f] of REC_PLAY) { const v = f(g); if (v > 0) recAdd('play', id, { ...base, v }, p); }
-  for (const [id, , f, liveOnly] of REC_GAME) { const v = f && (live || !liveOnly) ? f(g) : 0; if (v > 0) recAdd('game', id, { ...base, v }, p); }
+// raw scores -> values: #1 = the anchor (+- RB.jit), the rest by their ratio to #1
+function rbScale(c, top, r, ratio) {
+  if (!top.length) return [];
+  const rec = c.fmt === 'rec', r1 = ratio(top[0]);   // (a best record stays at whole wins)
+  let A = c.a * (1 + (c.cap ? RB.capUp : rec ? 0 : (r() * 2 - 1) * RB.jit));
+  if (!c.cap && Math.abs(rbRound(c, A) - c.a) > 0.03 * c.a) A = c.a;   // (small whole numbers: rounding never takes #1 more than 3% off)
+  return top.map(o => { const k = ratio(o) / r1; let v = c.lo ? A / k : A * k; if (c.cap) v = Math.min(c.cap, v); return Object.assign(o.e, { v: rec ? Math.round(v) : rbRound(c, v) }); });
 }
-const recOn = () => !tut && !exhibition && !pstStash && !!pstGame && !!pstGame.yr;
-function recLive() {   // after every play of a game you play
+let RB_FAKE = null;   // { seed, L: { cat: [entries] }, F: { team: { cat: [entries] } }, lean: { team: { pass, run, def, st, off } }, ms }
+function rbFake() { const s = rbk().seed; if (!RB_FAKE || RB_FAKE.seed !== s) RB_FAKE = rbFakeBuild(s); return RB_FAKE; }
+function rbFakeBuild(seed) {
+  const t0 = performance.now(), T = Object.keys(NFL), nT = T.length, H = RB.hist, year0 = 1 - H, F = { seed, L: {}, F: {}, lean: {} };
+  const r0 = bdRng('rbLean' + seed);
+  for (const t of T) { const p = rbGauss(r0), u = rbGauss(r0), d = rbGauss(r0); F.lean[t] = { pass: p, run: u, def: d, st: rbGauss(r0) * 0.5, off: (p + u) / 2 }; }
+  const pick = (r, side) => { let tot = 0; const w = T.map(t => { const x = Math.exp(0.6 * F.lean[t][side]); tot += x; return x; }); let x = r() * tot; for (let i = 0; i < nT; i++) if ((x -= w[i]) < 0) return T[i]; return T[nT - 1]; };
+  for (const c of RB_CATS) {
+    if (c.arc) continue;
+    const r = bdRng(`rb:${seed}:${c.id}`), top = [], team = rbTeamCat(c), side = c.side || 'off', po = c.sc === 'pg' || c.sc === 'tp';
+    if (c.sc === 's' || c.sc === 'ts') {   // every team's best season leader of its RB.hist seasons, straight from a tail draw (the max of 40 normals ~ 2.06 + 0.4 x Gumbel) + its lean
+      for (let i = 0; i < nT; i++) {
+        const t = T[i], z = 2.06 + 0.4 * rbGum(r) + RB.lean * 3 * F.lean[t][side];
+        if (top.length < RB.top || z > top[top.length - 1].s) rbKeep(top, z, { e: { n: team ? t : '', t, y: year0 + Math.floor(r() * H), p: team ? 'TEAM' : c.pos } });
+      }
+    } else {   // a game mark: each season's best game, straight from a tail draw
+      for (let y = 0; y < H; y++) {
+        const z = rbGum(r);
+        if (top.length < RB.top || z > top[top.length - 1].s) { const t = pick(r, side); rbKeep(top, z, { e: { n: team ? t : '', t, y: year0 + y, w: po ? 'PO' : 1 + Math.floor(r() * RB.games), ...(po ? { r: Math.floor(r() * 4) } : {}), p: team ? 'TEAM' : c.pos } }); }
+      }
+    }
+    const cv = c.cv || (c.sc === 's' ? RB.cv.s : c.sc === 'ts' ? RB.cv.t : RB.cv.g);
+    F.L[c.id] = rbScale(c, top, r, o => 1 + cv * o.s).map(e => { if (!e.n) e.n = rbName(r); return e; });
+  }
+  // careers: a few made-up arcs per position group (length, peak, durability, team success), each arc one holder across its group's lists
+  const arcs = {};
+  for (const g in RB_ARC) {
+    const r = bdRng(`rbArc:${seed}:${g}`), [l0, l1, side] = RB_ARC[g], list = [];
+    for (let i = 0; i < RB.arcs; i++) {
+      const L = l0 + Math.floor(r() * (l1 - l0 + 1)), pk = Math.max(0.4, 1 + 0.2 * rbGauss(r)), dur = 0.7 + 0.3 * r();
+      let vol = 0; for (let k = 0; k < L; k++) vol += 0.55 + 0.45 * Math.sin(Math.PI * Math.min(1, (k + 0.5) / L * 1.1));
+      vol *= pk * dur;
+      const t = pick(r, side), u = Math.exp(0.45 * rbGauss(r) + 0.25 * F.lean[t].off), y0 = year0 + Math.floor(r() * Math.max(1, H - L + 1));
+      list.push({ g, vol, po: vol * u * (0.6 + 0.4 * r()), gp: L * 16.2 * dur, gpo: L * u * (0.5 + r()), pb: L * u * (0.5 + r()), t, y0, y1: Math.min(0, y0 + L - 1), r });
+    }
+    arcs[g] = list;
+  }
+  for (const c of RB_CATS) if (c.arc) {
+    const r = bdRng(`rb:${seed}:${c.id}`), top = [], pc = c.sc === 'pc', key = c.id.endsWith('_gp') ? (pc ? 'gpo' : 'gp') : c.id === 'c_pb' ? 'pb' : pc ? 'po' : 'vol';
+    const pool = c.id === 'c_gp' ? [...arcs.K, ...arcs.QB] : arcs[c.arc];
+    for (const a of pool) rbKeep(top, a[key] * (key === 'vol' || key === 'po' ? 1 + 0.07 * rbGauss(r) : 1), { a });
+    for (const o of top) { const a = o.a; if (!a.n) a.n = rbName(a.r); o.e = { n: a.n, t: a.t, y: a.y1, y0: a.y0, p: c.id === 'c_gp' ? a.g : c.pos }; }
+    F.L[c.id] = rbScale(c, top, r, o => o.s);
+  }
+  F.ms = performance.now() - t0;
+  return F;
+}
+// ---- franchise books (Phase 3): every franchise = the base book x its own noise (RB.fNoise) + its historic lean; never past the league's #5
+// (so the league book really is the best of all of them), and the league's made-up entries of that team are in it ----
+function rbFakeTeam(t) {
+  const F = rbFake(); if (F.F[t]) return F.F[t];
+  const B = {}, lean = F.lean[t] || { pass: 0, run: 0, def: 0, st: 0, off: 0 }, r = bdRng(`rbF:${F.seed}:${t}`), year0 = 1 - RB.hist;
+  for (const c of RB_CATS) {
+    const LL = F.L[c.id], L5 = LL[LL.length - 1], side = c.side || (c.arc ? RB_ARC[c.arc][2] : 'off'), team = rbTeamCat(c), po = c.sc === 'pg' || c.sc === 'tp';
+    const nz = Math.max(RB.fNoise[0] - 0.05, Math.min(RB.fNoise[1], RB.fNoise[0] + (RB.fNoise[1] - RB.fNoise[0]) * (r() + r()) / 2 + RB.lean * lean[side]));
+    const v1 = c.lo ? c.fb / nz : c.fb * nz, top = [{ s: 0 }];
+    while (top.length < RB.top) top.push({ s: top[top.length - 1].s + Math.log(Math.max(1e-9, r())) * RB.fGap });   // (the gaps under #1 straight from the spacings of a top 5: no 40 draws per list)
+    const own = top.map(o => {
+      const k = 1 + RB.cv.f * o.s;
+      let v = c.lo ? v1 / k : v1 * k; if (c.cap) v = Math.min(c.cap, v); v = rbRound(c, v);
+      if (L5 && (c.cap ? rbBetter(c, v, L5.v) : !rbBetter(c, L5.v, v))) v = c.cap && L5.v === c.cap ? c.cap : rbRound(c, c.lo ? L5.v + rbStep(c) : L5.v - rbStep(c));   // (under the league's #5)
+      const e = { v, n: team ? t : '', t, p: team ? 'TEAM' : c.pos };
+      if (c.arc) { const L = RB_ARC[c.arc][0] + Math.floor(r() * (RB_ARC[c.arc][1] - RB_ARC[c.arc][0] + 1)); e.y0 = year0 + Math.floor(r() * Math.max(1, RB.hist - L + 1)); e.y = Math.min(0, e.y0 + L - 1); }
+      else { e.y = year0 + Math.floor(r() * RB.hist); if (c.sc !== 's' && c.sc !== 'ts') { e.w = po ? 'PO' : 1 + Math.floor(r() * RB.games); if (po) e.r = Math.floor(r() * 4); } }
+      if (!e.n) e.n = rbName(r);
+      return e;
+    }).filter(e => c.lo || e.v > 0);
+    B[c.id] = [...LL.filter(e => e.t === t), ...own].sort(rbSort(c)).slice(0, RB.top);
+  }
+  F.F[t] = B;
+  return B;
+}
+function rbTime() {   // how long the whole made-up book takes (league + every franchise), for tuning: rbTime() in the console
+  const t0 = performance.now(); RB_FAKE = rbFakeBuild(rbk().seed); const t1 = performance.now();
+  for (const t of Object.keys(NFL)) rbFakeTeam(t);
+  return { league: +(t1 - t0).toFixed(1), all: +(performance.now() - t0).toFixed(1) };
+}
+// ---- a book = the made-up history + this league's entries (memo per book / category, dropped when an entry goes in or another league loads) ----
+const RB_MEMO = new Map();
+let RB_VER = 0;   // bumps whenever any book changes (the record ribbon's cache)
+function rbList(c, book) {
+  const B = rbk(), key = book + '|' + c.id, m = RB_MEMO.get(key);
+  if (m && m.B === B) return m.l;
+  const fake = book === 'L' ? rbFake().L[c.id] : NFL[book] ? rbFakeTeam(book)[c.id] : [], live = ((book === 'L' ? B.L : B.F[book]) || {})[c.id] || [];
+  const l = [...fake, ...live].sort(rbSort(c)).slice(0, RB.top);
+  RB_MEMO.set(key, { B, l });
+  return l;
+}
+const rbKey = (c, e) => c.streak ? `${e.t}|${e.y0}|${e.w0}` : c.sc === 'c' || c.sc === 'pc' ? e.n : c.sc === 's' || c.sc === 'ts' ? `${e.n}|${e.y}` : `${e.n}|${e.y}|${e.w}|${e.r == null ? '' : e.r}`;
+// a candidate for one book: in if it beats the book's last kept entry (the same holder's same game / season / career / streak is replaced; repl = also by a
+// worse number, for marks that can drop). Returns { rank, old (the #1 before, someone else), broke, tie } (broke / tie only when he wasn't #1 already) or null.
+function rbTry(c, e, book, repl) {
+  if (!book || (book !== 'L' && !NFL[book]) || !Number.isFinite(e.v) || (!c.lo && e.v <= 0)) return null;
+  e.v = rbRound(c, e.v);
+  const list = rbList(c, book), last = list[list.length - 1];
+  if (!repl && list.length >= RB.top && !rbBetter(c, e.v, last.v) && !list.some(x => x.y >= 1 && x.n === e.n)) return null;   // (the quick no)
+  const k = rbKey(c, e), same = list.find(x => x.y >= 1 && rbKey(c, x) === k);   // (live entries only: made-up years are <= 0)
+  if (same && (same.v === e.v || (!repl && !rbBetter(c, e.v, same.v)))) return null;
+  const others = same ? list.filter(x => x !== same) : list, wasTop = !!same && list[0] === same;
+  const fits = others.length < RB.top || rbBetter(c, e.v, others[others.length - 1].v);
+  if (!fits && !same) return null;
+  const S = rbk(), store = book === 'L' ? S.L : (S.F[book] || (S.F[book] = {})), live = store[c.id] || (store[c.id] = []), li = live.findIndex(x => rbKey(c, x) === k);
+  if (li >= 0) live.splice(li, 1);
+  if (fits) live.push(e);
+  RB_MEMO.delete(book + '|' + c.id); RB_VER++;
+  const now = rbList(c, book), rank = now.indexOf(e) + 1;
+  store[c.id] = live.filter(x => now.includes(x)); if (!store[c.id].length) delete store[c.id];
+  if (!rank) return null;
+  const old = others[0];
+  return { rank, old, broke: !wasTop && rank === 1 && (!old || rbBetter(c, e.v, old.v)), tie: !wasTop && !!old && old.v === e.v };
+}
+const rbScopeWord = c => c.sc === 'g' || c.sc === 'tg' ? 'single-game' : c.sc === 's' || c.sc === 'ts' ? 'season' : c.sc === 'c' ? 'career' : 'playoff';
+// a #1 fell (or was tied): the home-screen line (league marks for anyone, franchise marks for your team only) + the Post
+function rbNote(c, book, res, e) {
+  if (!res || res.rank > 2 || !(res.broke || res.tie)) return;
+  const S = rbk(), lg = book === 'L', me = myTeamCode();
+  if (!lg && e.t !== me) return;
+  const old = res.old, sw = rbScopeWord(c), who = rbTeamCat(c) ? teamFull(e.t) : `${rbShort(e.n)} (${e.t})`, oldWho = old ? rbHolder(c, old) : '';
+  const what = /^LONGEST /.test(c.l) ? `a ${rbFmt(c, e.v)}-yard ${c.l.slice(8).toLowerCase()}` : `${rbFmt(c, e.v)} ${c.l.toLowerCase()}`;
+  const txt = `${who}: ${what}, ${res.broke ? 'breaks' : 'ties'} ${old ? oldWho + "'s " : 'the '}${lg ? 'league' : 'franchise'} ${sw} record${old ? ` (${rbFmt(c, old.v)})` : ''}.`;
+  if (!S.news.includes(txt)) { S.news.push(txt); if (S.news.length > RB.newsMax) S.news.shift(); }
+  try { const P = postS(); (P.notes || (P.notes = [])).push({ k: 'record', w: lg ? 9 : 6, team: NFL[e.t] ? e.t : null, big: lg, sl: { p: who, team: NFL[e.t] ? pTeam(e.t) : '', what: c.l.toLowerCase(), val: rbFmt(c, e.v), old: old ? oldWho : 'the old mark', was: old ? rbFmt(c, old.v) : '', book: lg ? 'league' : 'franchise', scope: sw,
+    Book: lg ? 'League' : 'Franchise', Scope: sw.replace(/(^|-)([a-z])/g, (m, a, b) => a + b.toUpperCase()), What: c.l.toLowerCase().replace(/\b[a-z]/g, m => m.toUpperCase()) } }); } catch (err) {}
+}
+// ---- live tracking (Phase 4) ----
+// one player's line for one game (played or simulated) against every game mark of the league book and his franchise's
+function rbGameLine(name, pos, team, g, yr, wk, rd, live) {
+  const out = [], isPO = wk === 'PO';
+  if (!name || !team || !yr) return out;
+  for (const c of RB_CATS) {
+    if (c.sc !== (isPO ? 'pg' : 'g') || (live && c.live === false) || (c.q && !c.q(g))) continue;
+    const v = c.f(g); if (!(v > 0)) continue;
+    const e = { v, n: name, t: team, y: yr, w: wk, p: pos }; if (isPO) e.r = rd;
+    for (const book of ['L', team]) { const res = rbTry(c, { ...e }, book, !live); if (res) { out.push({ c, book, res, e: { ...e, v: rbRound(c, v) } }); rbNote(c, book, res, e); } }
+  }
+  return out;
+}
+const recOn = () => rbOn() && !!pstGame && !!pstGame.yr;
+const RB_CALLED = new Set();   // marks already called on the field this game
+function recLive() {   // after every play of a game you play: a game mark falling right now gets its call (trophy over him, the old holder named, the crowd)
   if (!recOn()) return;
   try {
+    if (RB_CALLED.gid !== pstGame.id) { RB_CALLED.clear(); RB_CALLED.gid = pstGame.id; }
+    let call = null;
     for (const p of allPlayers()) {
       const s = p && p.src; if (!s || !s.name) continue;
       const e = PST[s.name], g = e && e.games[e.games.length - 1];
-      if (g && g.id === pstGame.id) recLine(s.name, s.tag, pstGame.b && (ROSTER[pstGame.b] || []).includes(s) ? pstGame.b : pstGame.a, g, p, true, true);
+      if (!g || g.id !== pstGame.id) continue;
+      for (const x of rbGameLine(s.name, s.tag, g.tm || pstGame.a, g, pstGame.yr, pstGame.wk, pstGame.rd, true)) {
+        if (x.res.rank !== 1 || !(x.res.broke || x.res.tie) || !x.res.old) continue;
+        const k = x.book + x.c.id + s.name;
+        if (RB_CALLED.has(k)) continue; RB_CALLED.add(k);
+        if (!call || (x.book === 'L' && call.x.book !== 'L')) call = { p, x };
+      }
+    }
+    if (call && !pstStash) {
+      const { p, x } = call, fav = p.team === 'off' ? (aiOff() ? 'opp' : 'you') : (aiOff() ? 'you' : 'opp');
+      popup(p, 'NEW RECORD!', RB.color, fav, true, true, { k: 'trophy', c: RB.color });
+      try { celebNote('rec', p); } catch (err) {}   // (a record fell on this play: its celebration is bigger, celebHype)
+      showTopCallout(`${rbShort(x.e.n).toUpperCase()} ${x.res.broke ? 'BREAKS' : 'TIES'} ${rbHolder(x.c, x.res.old).toUpperCase()}'S ${x.book === 'L' ? 'LEAGUE' : 'TEAM'} RECORD: ${rbFmt(x.c, x.e.v)} ${x.c.l}`, RB.color);      try { crowdCheer(x.book === 'L' ? 0.9 : 0.7, fav, false, true, x.book === 'L'); } catch (err) {}
+      if (rec && !rec.replaying) rec.big = true;
     }
   } catch (err) {}
 }
-function recFinal() {   // the game is over (pstFinish): every line that played, then saved
+function recFinal() {   // the game is over (pstFinish): every line that played (rates like passer rating are only judged now), then saved
   if (!recOn()) return;
   try {
     for (const [name, e] of Object.entries(PST)) {
       const g = e.games[e.games.length - 1];
-      if (g && g.id === pstGame.id) recLine(name, e.pos, pstGame.b && (ROSTER[pstGame.b] || []).some(s => s.name === name) ? pstGame.b : pstGame.a, g, null, true, true);
+      if (g && g.id === pstGame.id) rbGameLine(name, e.pos, g.tm || (pstGame.b && (ROSTER[pstGame.b] || []).some(s => s.name === name) ? pstGame.b : pstGame.a), g, pstGame.yr, pstGame.wk, pstGame.rd, false);
     }
     recSave();
   } catch (err) {}
 }
-function recSim(p, l, g, mine) {   // a simulated league game's line for one starter (pstSimGame): single-game records only
-  try { recLine(p.name, p.tag, mine ? g.h : g.a, l, null, false, false); } catch (err) {}
+function recSim(p, l, tm, yr, wk) {   // a simulated game's line for one starter (pstSimGame)
+  if (!rbOn()) return;
+  try { rbGameLine(p.name, p.tag, tm, l, yr, wk, wk === 'PO' && po ? po.round : null, false); } catch (err) {}
 }
-function recTeamGame(g, wk) {   // a regular-season game's final score (yours and every simulated one): team points, margin, and the season records
-  if (!season || exhibition || tut || !LEAGUE || g.hs == null || g.rcd) return;
-  g.rcd = 1;
-  const yr = LEAGUE.year, T = RECS.tm[yr] || (RECS.tm[yr] = {});
-  for (const [t, o, pf, pa] of [[g.h, g.a, g.hs, g.as], [g.a, g.h, g.as, g.hs]]) {
-    const e = { k: `${yr}|${wk}|${t}`, who: t, team: t, pos: 'TEAM', yr, wk, opp: o };
-    recAdd('game', 'pts', { ...e, v: pf }, null);
-    if (pf > pa) recAdd('game', 'margin', { ...e, v: pf - pa }, null);
-    const s = T[t] || (T[t] = { w: 0, l: 0, t: 0, pf: 0, pa: 0 });
-    if (pf > pa) s.w++; else if (pf < pa) s.l++; else s.t++;
-    s.pf += pf; s.pa += pa;
+function recTeamGame(g, wk) { rbTeamGame(g, wk); }   // (old name: every regular-season final score)
+function rbYards(g) {   // your played game's team yards (game.ty) onto the schedule entry; a simulated one of yours falls back to an estimate from the points
+  try { if (g && g.hy == null && game && game.ty && !game.simAll) { const y = game.ty, you = y.you.rush + y.you.pass, op = y.opp.rush + y.opp.pass, mine = g.h === season.team; g.hy = mine ? you : op; g.ay = mine ? op : you; } } catch (e) {}
+}
+// a final score (yours and every simulated one; wk = 'PO' in the playoffs): team game marks, this season's team totals, win streaks
+function rbTeamGame(g, wk) {
+  if (!rbOn() || g.hs == null || g.rbd) return;
+  g.rbd = 1;
+  const yr = LEAGUE.year, S = rbk(), isPO = wk === 'PO', rd = isPO && po ? po.round : null;
+  if (!isPO && (!S.tm || S.tm.yr !== yr)) S.tm = { yr, T: {} };
+  for (const [t, pf, pa, yd] of [[g.h, g.hs, g.as, g.hy], [g.a, g.as, g.hs, g.ay]]) {
+    const yds = yd != null ? yd : Math.round(LSIM.yBase + pf * LSIM.yPerPt), tg = { pts: pf, mar: pf > pa ? pf - pa : 0, yds };
+    for (const c of RB_CATS) if (c.sc === (isPO ? 'tp' : 'tg')) {
+      const v = c.f(tg); if (!(v > 0)) continue;
+      const e = { v, n: t, t, y: yr, w: wk, p: 'TEAM' }; if (isPO) e.r = rd;
+      for (const book of ['L', t]) rbNote(c, book, rbTry(c, { ...e }, book, true), e);
+    }
+    if (!isPO) { const s = S.tm.T[t] || (S.tm.T[t] = { w: 0, l: 0, t: 0, pf: 0, pa: 0, yd: 0, g: 0 }); s.g++; s.pf += pf; s.pa += pa; s.yd += yds; if (pf > pa) s.w++; else if (pf < pa) s.l++; else s.t++; }
+    const k = S.stk[t] || (S.stk[t] = { n: 0 });   // win streaks run on through the playoffs and into the next season
+    if (pf > pa) {
+      if (!k.n) { k.y0 = yr; k.w0 = isPO ? 'PO' + rd : wk; }
+      k.n++;
+      const c = RB_BY.t_stk, e = { v: k.n, n: t, t, y: yr, y0: k.y0, w0: k.w0, p: 'TEAM' };
+      if (k.n >= 3) for (const book of ['L', t]) rbNote(c, book, rbTry(c, { ...e }, book, false), e);
+    } else k.n = 0;
   }
 }
-function recSave() { try { if (!pstStash) { localStorage.setItem(pstKey(REC_KEY), JSON.stringify(RECS)); localStorage.setItem(pstKey(LGHL_KEY), JSON.stringify(LGHL)); } } catch (e) {} }
-// SEASON and CAREER tabs: summed from every stat line there is (PST yours, LPST the league's), so players who left the team keep theirs
-function recTotals() {
-  const out = { season: {}, career: {} }, teamOf = {};
-  for (const id of [...REC_TOT.map(c => c[0]), 'team']) out.season[id] = [], out.career[id] = [];
-  for (const t of Object.keys(ROSTER)) for (const p of ROSTER[t] || []) teamOf[p.name] = t;
-  const me = myTeamCode(), names = new Set([...Object.keys(PST), ...Object.keys(LPST)]);
+// seasons and careers: the season so far (counting marks weekly, rates and team records once it's over), careers whenever they move.
+// mode: 'wk' (after a week), 'end' (the regular season is over: locks the season), 'po' (after a playoff round: playoff careers, Paper Bowl wins)
+const RB_SUMK = 'py pt pc pa pi sq sy cy ca ct ry rc rt ky uy icy kt ut dt tk sk ic tfl ff pk fg fa xp fl'.split(' ');
+function rbSum(gs) { const s = { gp: 0 }; for (const k of RB_SUMK) s[k] = 0; for (const g of gs) { s.gp += g.gp || 1; for (const k of RB_SUMK) if (g[k]) s[k] += g[k]; } return s; }
+function rbWeek(mode) {
+  if (!rbOn()) return;
+  const t0 = performance.now(), yr = LEAGUE.year, S = rbk(), me = myTeamCode(), teamOf = {}, chase = [], isPO = mode === 'po', final = mode === 'end';
+  for (const t of Object.keys(ROSTER)) for (const p of ROSTER[t] || []) if (p && p.name) teamOf[p.name] = t;
+  const names = new Set([...Object.keys(PST), ...Object.keys(LPST)]);
   for (const name of names) {
-    const gs = pstGames(name).filter(g => g.yr); if (!gs.length) continue;
-    const pos = (PST[name] || LPST[name]).pos, team = teamOf[name] || RECS.who[name] || '', by = new Map();
-    for (const g of gs) { if (!by.has(g.yr)) by.set(g.yr, []); by.get(g.yr).push(g); }
-    const all = pstSum(gs), sums = [...by].map(([yr, l]) => [yr, pstSum(l)]);
-    for (const [id, , f] of REC_TOT) {
-      const c = f(all) || 0;
-      if (c > 0) out.career[id].push({ k: name, who: name, team, pos, v: c, yr: gs[0].yr, yr2: gs[gs.length - 1].yr, gp: all.gp });
-      for (const [yr, s] of sums) { const v = f(s) || 0; if (v > 0) out.season[id].push({ k: name + yr, who: name, team, pos, v, yr, gp: s.gp }); }
+    const gs = pstGames(name);
+    if (!gs.length || gs[gs.length - 1].yr !== yr && !gs.some(g => g.yr === yr)) continue;   // (careers only move for men who played this season)
+    const ent = PST[name] || LPST[name], pos = ent.pos, poL = gs.filter(g => g.wk === 'PO');
+    const reg = gs.filter(g => g.wk !== 'PO'), cur = reg.filter(g => g.yr === yr && !g.gp), lastL = (isPO ? poL : cur)[(isPO ? poL : cur).length - 1];
+    const team = (lastL && lastL.tm) || teamOf[name] || '';
+    if (!team) continue;
+    const pbw = S.pbw[name] || {}, byT = (lines, f) => { const o = {}; for (const g of lines) { const t = g.tm || team; (o[t] || (o[t] = [])).push(g); } return o; };
+    if (!isPO) {
+      if (cur.length) {
+        const sm = rbSum(cur);
+        for (const c of RB_CATS) {
+          if (c.sc !== 's' || (c.lock && !final) || (c.q && !c.q(sm))) continue;
+          const v = c.f(sm); if (c.lo ? !(v >= 0) : !(v > 0)) continue;
+          const e = { v, n: name, t: team, y: yr, p: pos };
+          for (const book of ['L', team]) rbNote(c, book, rbTry(c, { ...e }, book, !!c.lock), e);
+          if (mode === 'wk' && season.week > RB.chaseWk && RB_CHASE.has(c.id) && sm.gp) {   // on pace for a season mark?
+            const pace = v / sm.gp * RB.games;
+            for (const book of team === me ? ['L', team] : ['L']) {
+              const top = rbList(c, book).find(x => !(x.n === name && x.y === yr));
+              if (top && pace >= top.v && v < top.v) chase.push({ mine: team === me, k: pace / top.v, txt: `${rbShort(name)} (${team}) is on pace for ${rbFmt(c, pace)} ${c.l.toLowerCase()}: needs ${rbFmt(c, top.v - v + (c.fmt === 'h' ? 0.5 : 1))} more to break the ${book === 'L' ? 'league' : 'franchise'} season mark (${rbFmt(c, top.v)}, ${rbHolder(c, top)}).` });
+            }
+          }
+        }
+      }
+      const C = rbSum(reg), T = byT(reg); C.pb = Object.values(pbw).reduce((a, b) => a + b, 0);
+      for (const c of RB_CATS) if (c.sc === 'c' && c.id !== 'c_pb') {
+        const v = c.f(C); if (v > 0) { const e = { v, n: name, t: team, y: yr, y0: reg[0].yr, p: pos }; rbNote(c, 'L', rbTry(c, { ...e }, 'L', false), e); }
+        for (const t in T) { const sm = rbSum(T[t]), v2 = c.f(sm); if (v2 > 0) { const e = { v: v2, n: name, t, y: yr, y0: T[t][0].yr, p: pos }; rbNote(c, t, rbTry(c, { ...e }, t, false), e); } }
+      }
+    } else if (poL.length) {   // playoff careers + Paper Bowl wins
+      const C = rbSum(poL), T = byT(poL), c0 = RB_BY.c_pb, pb = Object.values(pbw).reduce((a, b) => a + b, 0);
+      for (const c of RB_CATS) if (c.sc === 'pc') {
+        const v = c.f(C); if (v > 0) { const e = { v, n: name, t: team, y: yr, y0: poL[0].yr, p: pos }; rbNote(c, 'L', rbTry(c, { ...e }, 'L', false), e); }
+        for (const t in T) { const v2 = c.f(rbSum(T[t])); if (v2 > 0) { const e = { v: v2, n: name, t, y: yr, y0: T[t][0].yr, p: pos }; rbNote(c, t, rbTry(c, { ...e }, t, false), e); } }
+      }
+      if (pb > 0) { const e = { v: pb, n: name, t: team, y: yr, y0: (reg[0] || poL[0]).yr, p: pos }; rbNote(c0, 'L', rbTry(c0, { ...e }, 'L', false), e); for (const t in pbw) { const e2 = { ...e, v: pbw[t], t }; rbNote(c0, t, rbTry(c0, { ...e2 }, t, false), e2); } }
     }
   }
-  for (const yr in RECS.tm) for (const t in RECS.tm[yr]) {
-    const s = RECS.tm[yr][t], n = s.w + s.l + s.t;
-    if (n >= RECORDS.teamMin) out.season.team.push({ k: yr + t, who: t, team: t, pos: 'TEAM', v: s.w + s.t / 2 + (s.pf - s.pa) / 100000, txt: `${s.w}-${s.l}${s.t ? '-' + s.t : ''}`, yr: +yr, gp: n });
+  if (!isPO && S.tm && S.tm.yr === yr) for (const [t, s] of Object.entries(S.tm.T)) for (const c of RB_CATS) {   // team seasons
+    if (c.sc !== 'ts' || c.streak || (c.lock && !final) || (c.q && !c.q(s))) continue;
+    const v = c.f(s); if (c.lo ? !(v >= 0) : !(v > 0)) continue;
+    const e = { v, n: t, t, y: yr, p: 'TEAM' };
+    for (const book of ['L', t]) rbNote(c, book, rbTry(c, { ...e }, book, !!c.lock), e);
   }
-  for (const k of ['season', 'career']) for (const id in out[k]) out[k][id].sort((a, b) => b.v - a.v);
-  out.me = me;
-  return out;
+  chase.sort((a, b) => b.mine - a.mine || b.k - a.k);
+  S.chase = mode === 'wk' ? [...new Set(chase.map(x => x.txt))].slice(0, RB.chaseMax) : [];
+  S.ms = performance.now() - t0;
 }
+function rbPaperBowl(champ) {   // the Paper Bowl is over: a win for everyone on the champion's roster who played in it, then the playoff careers
+  if (!rbOn()) return;
+  const S = rbk(), yr = LEAGUE.year;
+  for (const p of ROSTER[champ] || []) {
+    if (!p || !p.name || !pstGames(p.name).some(x => x.yr === yr && x.wk === 'PO' && x.rd === 3 && !x.gp)) continue;
+    const w = S.pbw[p.name] || (S.pbw[p.name] = {}); w[champ] = (w[champ] || 0) + 1;
+  }
+  rbWeek('po');
+}
+// the record ribbon on a player card: the #1s he holds right now (league first, then any franchise's)
+const RB_HOLD = new Map();
+function rbHolds(name) {
+  if (!name || !LEAGUE) return null;
+  const m = RB_HOLD.get(name), B = rbk();
+  if (m && m.ver === RB_VER && m.B === B) return m.r;
+  let lg = 0, fr = 0;
+  for (const c of RB_CATS) {
+    if (rbTeamCat(c)) continue;
+    if (((B.L || {})[c.id] || []).some(e => e.n === name) && rbList(c, 'L')[0].n === name) lg++;
+    for (const t in B.F) if ((B.F[t][c.id] || []).some(e => e.n === name) && rbList(c, t)[0].n === name) fr++;
+  }
+  const r = lg || fr ? { lg, fr } : null;
+  RB_HOLD.set(name, { ver: RB_VER, B, r });
+  return r;
+}
+function recSave() { try { if (!pstStash) { localStorage.setItem(pstKey(REC_KEY), lsPacked(RECS)); localStorage.setItem(pstKey(LGHL_KEY), lsPacked(LGHL)); } } catch (e) {} }
 
 // --- extended stats: the same lines carry ~100 more counters. Hot path = plain adds on the cached line (px); nothing is built per frame, lines drop their
 // zeros when saved (pstFinish), and every derived number (ratings, rates, AV, grades) is only computed when the stats page draws it.
@@ -845,8 +1221,8 @@ function lpstSave() {
   for (const e of Object.values(LPST)) {   // (fold old seasons)
     const old = e.games.filter(g => !g.gp && g.yr < yr);   // (the richer lines would crowd out storage: only this season keeps game-by-game lines)
     if (!old.length) continue;
-    const by = {};
-    for (const g of old) { const s = by[g.yr] || (by[g.yr] = { yr: g.yr, gp: 0 }); s.gp++; for (const k in g) if (typeof g[k] === 'number' && k !== 'yr') s[k] = PST_MAX.has(k) ? Math.max(s[k] || 0, g[k]) : (s[k] || 0) + g[k]; }
+    const by = {};   // (one line per season, team and regular season / playoffs: the record book's franchise careers and playoff marks need them apart)
+    for (const g of old) { const po = g.wk === 'PO', key = `${g.yr}|${g.tm || ''}|${po ? 'P' : ''}`, s = by[key] || (by[key] = Object.assign({ yr: g.yr, gp: 0 }, g.tm ? { tm: g.tm } : {}, po ? { wk: 'PO' } : {})); s.gp += g.gp || 1; for (const k in g) if (typeof g[k] === 'number' && k !== 'yr' && k !== 'rd' && k !== 'gp') s[k] = PST_MAX.has(k) ? Math.max(s[k] || 0, g[k]) : (s[k] || 0) + g[k]; }
     e.games = [...Object.values(by), ...e.games.filter(g => g.gp || g.yr >= yr)];
   }
   try { if (!pstStash) localStorage.setItem(pstKey(LPST_KEY), lsPacked(LPST)); } catch (e) {}
@@ -866,6 +1242,7 @@ function pstSimGame(g, wk) {
     const pa = Math.max(15, Math.round(LSIM.pa + nrm(8))), pc = Math.round(pa * Math.max(0.4, Math.min(0.8, LSIM.cmp + LSIM.cmpStar * ((Q ? Q.stars : 2) - 3) + nrm(0.08))));
     const pi = pois(LSIM.int - 0.1 * ((Q ? Q.stars : 2) - 3)), sq = pois(LSIM.sack), ra = Math.max(12, Math.round(LSIM.plays - pa - sq + nrm(6)));
     off[k] = { pa, pc, pi, sq, ra, pY, passTD };
+    g[k === g.h ? 'hy' : 'ay'] = yds;   // (team yards, for the record book's team marks)
     const plays = pa + sq + ra, dbk = pa + sq, airAvg = 7.4 + nrm(1.2) + 0.2 * ((Q ? Q.stars : 3) - 3);
     for (const p of S) if (p.group !== 'K' && OFF_GROUPS.includes(p.group)) add(p, { gs: 1, sn: plays });
     if (Q) {
@@ -926,11 +1303,12 @@ function pstSimGame(g, wk) {
     const mine = (ROSTER[g.h] || []).includes(p), opp = mine ? g.a : g.h, r = mine ? res(g.hs, g.as) : res(g.as, g.hs);
     const e = LPST[p.name] || (LPST[p.name] = { pos: p.tag, group: p.group, games: [] });
     e.pos = p.tag; e.group = p.group;
-    e.games.push({ yr, wk, opp, res: r, ...nz(l) });
-    if (AWD_POOL) AWD_POOL.push({ p, g: l, k: mine ? g.h : g.a, win: mine ? g.hs > g.as : g.as > g.hs });   // (weekly awards candidates)
-    recSim(p, { yr, wk, opp, id: yr + '.' + wk, ...nz(l) }, g, mine);   // (single-game records)
+    const tm = mine ? g.h : g.a, rd = wk === 'PO' && po ? po.round : undefined;   // (tm = his team that day; rd = the playoff round)
+    e.games.push({ yr, wk, opp, res: r, tm, ...(rd != null ? { rd } : {}), ...nz(l) });
+    if (AWD_POOL) AWD_POOL.push({ p, g: l, k: tm, win: mine ? g.hs > g.as : g.as > g.hs });   // (weekly awards candidates)
+    recSim(p, l, tm, yr, wk);   // (single-game records)
   }
-  try { lgHLAdd(g, wk, lines); } catch (e) {}   // (the game's best stat line, for the halftime show's AROUND THE LEAGUE)
+  if (wk !== 'PO') try { lgHLAdd(g, wk, lines); } catch (e) {}   // (the game's best stat line, for the halftime show's AROUND THE LEAGUE)
 }
 
 function newGame() {
@@ -956,6 +1334,7 @@ function newGame() {
   injuriesNewGame();
   xfNewGame();
   wxNewGame();
+  slNewGame();   // (a new seeded sideline cast at the next reset)
 }
 
 const clampRouteY = y => Math.max(Y_MIN + 2.5 * YD, Math.min(Y_MAX - 2.5 * YD, y));   // routes keep some room from the sideline
@@ -1003,8 +1382,9 @@ function reset() {
   audiblesLeft = 2; defAudLeft = 2;
   tgt = runner = null; playCatcher = null;
   firstDownCall = false; celebReset();   // (last play's celebration never carries into this snap)
+  slReset();   // (sideline people: the chain crew walks to the new spots; see 07-drawing)
   if (ols && ols.length) for (const p of allPlayers()) p.coast = null;
-  xfHit = null; xfAir = 0; xfDrop = false; pickThrown = false;
+  xfHit = null; xfAir = 0; xfDrop = false; pickThrown = false; xfCont = 0; xfPicker = null;
   snaps = []; fgExit = [];
   puntPlay = null; puntRet = false; puntRetPlay = false;   // (a punt return's flag must not outlive it: every later play was scored as a return = 1st and 10 at the spot)
   popups = []; yardsTag = null;
@@ -1124,7 +1504,6 @@ function reset() {
   rateTrenches();
   audiblesLeft = audMax(); defAudLeft = 2; awrReset();   // (defense audibles are their own count; QB awareness: up to 4 audibles; which blitzers he reads; hot routes start fresh)
   loadWear();
-  for (const d of dl) { const k = Object.entries(XFX.shed).find(([n]) => xfOn(d, n)); if (k && d.shedAt < 50) d.shedAt *= k[1]; }   // (X-Factor rushers get off blocks sooner)
 
   ball = { x: qb.x + 6 * S, y: qb.y, z: 0, inAir: false, loose: false, live: false, rot: 0, spin: 0, vx: 0, vy: 0, vz: 0 };
   aim = null;
@@ -1889,6 +2268,7 @@ function applyPlayCfg(c) {
   } catch (e) { /* (a save from before this existed, or a play call that no longer fits: the fresh play stands) */ }
 }
 function audible() {
+  runQ = 0;   // (a new look: a waiting hand-off click is forgotten)
   if (state !== 'pre' || audiblesLeft <= 0 || audibleLocked() || fmBusy()) return;
   audiblesLeft--;
   for (const s of sides) s.recs.forEach((r, i) => { if (r !== rb && !r.isTE) r.x = los - (i ? 1.2 : 0.8) * YD; });
@@ -1923,6 +2303,7 @@ function snap(run = false) {
   if (preSnap && !tut && !exhibition) { preSnap.game.timeouts = game.timeouts; preSnap.play = playCfg(); }   // (the call as it stands at the snap: audibles, hot routes)
   state = 'drop';
   clock = 0;
+  if (SL.on) slFreeze();   // (a crew walk still going stops where it is: nobody on the sideline moves during a play unless he's hit)
   qb.coast = null;
   pstSnap();
   snapFly ={ dur: oo && oo.cfg ? 0.01 : shotgun ? (qbDepth < SHOTGUN.depth ? SNAP_FLY.pistol : SNAP_FLY.gun) : SNAP_FLY.center };   // (1v1: he snaps it to himself, the ball is already in his hands)
@@ -1975,8 +2356,11 @@ function snap(run = false) {
 }
 
 // Run play: the QB hands it off at the mesh, or (sometimes, from an offset back) pitches it.
+const RUN_QUEUE = 3;   // s a hand-off clicked while the formation is still setting waits for everyone to be set (then it goes; it used to be dropped)
+let runQ = 0;          // when that click was made (performance.now(); 0 = none)
 function handoff() {
-  if (fmBusy()) return;
+  if (fmBusy()) { runQ = performance.now(); return; }   // (online the guest sees the jog end late: his click on the back landed here and "did nothing")
+  runQ = 0;
   if (state === 'pre') snap(true);
   aim = null;
   isRunPlay = true;
@@ -2083,6 +2467,7 @@ function handoff() {
     meshState().plan = null; meshState().sx = null; meshState().v = 0;
     msg = 'Pitch!';
   } else msg = 'Handoff...';
+  abilRunBlocks();   // (abilities on the run blocks: Seal Block, Run Stuffer, Human Wall, Lead Wall)
 }
 // tight ends in the formation: a star TE rated from+ stars lifts the odds (full effect at 5 stars): zero = share of the
 // no-TE snaps that go away, two = extra chance of two tight ends

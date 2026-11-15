@@ -21,6 +21,8 @@ const NEWS = {
           body: ['At {rec}, {team} hold the division lead with the season rolling on.', 'The {div} runs through {team} for now.'] },
   potw: { head: ['{p} Takes Player of the Week', '{p} Was the Best in the League This Week', '{team} {pos} {p} Earns Player of the Week'],
           body: ['{p} of {team} had a monster day: {line}.', 'The {pos} was untouchable. {p}: {line}.'] },
+  record: { head: ['{p} Rewrites the Record Book', 'History! {p} Breaks the {Book} {Scope} Mark', 'New {Book} Record: {val} {What}', '{p} Erases {old} From the Books', 'Move Over, {old}: {p} Sets a New Standard'],
+            body: ['{p} put up {val} {what}, a new {book} {scope} record. The old mark of {was} belonged to {old}.', 'The {book} {scope} record for {what} now reads {val}, and it belongs to {p}. {old} held it before.', 'Nobody in {book} history had done it: {val} {what}. Sorry, {old}.'] },
   milestone: { head: ['{p} Passes {what}', 'Milestone: {p} Reaches {what}', '{p} Hits {what} for the Season'],
                body: ['The {team} {pos} crossed {what} this week, {left}.', '{p} keeps climbing: {what} and counting.'] },
   newTeam: { big: true, head: ['{coach} Takes Over the {team}', 'New Era: {team} Hand the Keys to {coach}', '{team} Hire {coach} as Head Coach'],
@@ -263,7 +265,199 @@ const TUT_STEPS = [
 
 // --- changelog entries (CHANGELOG_LINES, the renumbering, GAME_VERSION and the popup are in js/13-post-online.js)
 // Newest version first. Add a new entry at the top of CHANGELOG with every update and bump GAME_VERSION by 0.1 (pre-release numbering: v0.9 -> v0.10 -> v0.11 ...; v1.0 only for the full release).
+// made-up colleges for the draft board (a prospect's school comes from a hash of his name: never stored)
+const DRAFT_SCHOOLS = ['BAYOU STATE', 'GREAT LAKES TECH', 'NORTH PRAIRIE', 'COASTAL A&M', 'RED RIVER', 'IRON VALLEY', 'SUMMIT STATE', 'PINE RIDGE', 'DESERT POLY', 'HARBOR CITY', 'OLD DOMINION HILLS', 'TWIN FORKS',
+  'CEDAR FALLS STATE', 'GULF SHORE', 'HIGH PLAINS', 'MILL CREEK', 'CANYON STATE', 'LAKESHORE', 'EAST TIMBER', 'COPPER MOUNTAIN', 'RIVERBEND', 'STONE HARBOR', 'BLUE MESA', 'WEST DELTA', 'GRANITE STATE TECH',
+  'MAGNOLIA', 'SILVER LAKE', 'FORT ASH', 'PALMETTO BAY', 'BIG SKY NORTH', 'CAPITAL CITY', 'THREE RIVERS', 'SAGEBRUSH', 'MAPLE GROVE', 'SOUTH RIDGE', 'TIDEWATER', 'ELK RAPIDS', 'SUNCOAST', 'BLACK HILLS TECH', 'WINDWARD'];
 const CHANGELOG = [
+  { v: "v0.39", secs: [
+    ["CELEBRATIONS", [
+      "Celebrations have weight now. Every move builds up, hits a peak and follows through: at the peak the players freeze for a few frames, the camera punches in, the screen jolts and an ink burst pops around the player.",
+      "Hype: how big a celebration gets depends on the moment (late and close, a comeback, the playoffs, a long score, a broken tackle, a Star Factor, a record). Big moments run longer, add slow motion, a second move, more team celebrations and confetti. In a blowout they stay small, and the little ones after a first down stay quick.",
+      "Celebrations have sound: claps, snaps, slaps, thuds, whooshes and grunts on the beats of every move, in replays too.",
+      "A player who just ran 60 yards or more puts his hands on his knees to get his breath first. Defenders standing nearby react: hands on hips, a slap of the turf, a shake of the head.",
+      "TAUNTS setting (gameplay): how often a celebration is a taunt at a defender, or OFF.",
+      "TEST MODE has a CELEBRATIONS entry: pick any move, force it on the next event or play it right now, with speed, loop, camera, mirror, cast size and a hype slider.",
+    ]],
+    ["GOAL POST", [
+      "The goal post is a prop now. Anything that hits it makes the crossbar and the uprights ring like a spring and settle, with a metal clang and a pop from the crowd.",
+      "Goalpost celebrations start with a real sprint: the player builds up to his own top speed, plants and leaps.",
+      "Post hug, reworked: he runs at the pad, leaps, wraps his arms and legs round it (the pad squishes), slides down and gives it two pats.",
+      "Nine new dunks: an alley-oop bounced off the turf by a teammate, a double alley-oop with a tip, a self lob, a windmill, a reverse, a 360, a hang and swing into a flex (the biggest shake), a too-easy finger roll, and a miss that clangs off the bar while the teammates laugh.",
+    ]],
+    ["HANDSHAKES AND GROUP CELEBRATIONS", [
+      "14 two-player handshakes, with a sound on every contact: a dap and pull-in, high-low, snap and point, a six-beat chain, a mid-air shoulder bump, a chest bump that sends one of them stumbling, forearms, a foot tap ending in a heel click, three mirrored poses, rock-paper-scissors (the loser goes down hard), behind the back, a salute, air drums on the shoulder pads, and a lineman's helmet slap.",
+      "13 group celebrations for three to six players: sharks circling, bowling, a team photo, a row boat, dominoes, leapfrog, tug of war, a mosh, a human cannon, a relay, statues, the spotlight and a line dance.",
+      "Group celebrations are never the same twice. Each one is a chain of beats that are rolled every time: bowling can be a strike, a spare with a second roll or a gutter ball the pins laugh at; the photo takes one to three poses, maybe with a photobomber or a retake. Endings vary too: a scatter, a group hug, everyone pointing at the scorer, or he walks off while they carry on.",
+      "The players in them are not copies of each other: parts go by build (the heaviest are the pins and the cannon, the fastest leap and run), everyone has his own energy and timing, one may be off the beat and catch up, one may fall over, one may arrive late at a sprint. Formations change with how many are in it and where they are standing.",
+      "Replays and online games show exactly the version that was played.",
+    ]],
+    ["FIRST DOWNS, DANCES AND TAUNTS", [
+      "8 first-down celebrations: the fin, a point at the chains with the ball, a sky point, a flex or a stare over the tackler, hauling the chains in hand over hand, a spin into a point, and a quiet flip of the ball to the official.",
+      "15 dances: the running man, the robot, a backslide, the sprinkler, the lawnmower, the shopping cart, the Charleston, the twister, the worm, a toprock into a freeze, heel clicks, squat kicks (a big man goes over on his back), a shimmy, a disco point and a pogo.",
+      "12 taunts, each aimed at the nearest defender: shush (on the road the home crowd goes quiet), an ear cup, a bye-bye wave, a check of the watch, too small, brushed shoulders, night-night over a man on the turf, a point at the scoreboard, ice cold, zipped lips, taking out the trash, and looking around for anybody. The man it is aimed at answers: a shake of the head, a slap of the turf, a shove at the air.",
+      "Who does what goes by build: linemen and power backs get the strength moves, fast skill players the agile ones.",
+    ]],
+    ["CROWD", [
+      "The crowd reacts to the celebration itself: it rises as the player builds up and pops on the move's peak, louder the bigger the moment. The biggest ones start a stomp-stomp-clap.",
+      "On the road your scores get boos, an ooh and your own fans' cheer underneath. A turnover is a gasp, then the explosion. A sack gets a deep OHHH. Playoff and Paper Bowl wins get fireworks.",
+      "The sidelines react at the peak too: the bench jumps, the head coach pumps a fist, the cheerleaders go up for a lift.",
+      "Fixed: the stadium's biggest reaction, for a play that decides a close game late, never played.",
+    ]],
+  ] },
+  { v: "v0.38", secs: [
+    ["SIDELINES", [
+      "The sidelines are alive. The frozen people painted in front of the stands are gone: everyone there is now animated, the size and build of a player, and solid.",
+      "Both benches are real and full: the players on your roster who are not on the field sit in number order with a few reserves (offense and defense swap between series, a couple stand at the ends), and get up to cheer big plays. Around them: the head coach and coordinators with headsets and play sheets, trainers, a water person, a tablet tech, ball boys and the kicker warming up into the net.",
+      "New things to run into: benches, water coolers and buckets (they tip over and splash), towel bins, the kicking net, tablet carts, a blue medical tent with its cart, orange yard markers every 10 yards. Players slide off them; nothing causes a fumble or an injury.",
+      "Cameramen (two on foot, one on a rail dolly on each sideline) follow the play with their cameras, not their legs: they swing late, overshoot a little and catch up, and only walk slowly to a new spot when the play drifts out of their picture (the dolly rolls slower still). Touchdowns, sacks, picks and fumbles set off their flashes. Also new: a sideline reporter with a microphone, a medic by the tent, security guards, a down judge in stripes with the chain crew, and a mascot.",
+      "Injuries are shown. A minor one limps to the bench with a trainer, a worse one is helped into the medical tent by two trainers, and for a severe one the big medical cart drives out, he is lifted onto its bed and rides to the tent with the two trainers, the players around him take a knee, and nobody celebrates. The tent lights up while someone is inside. Play never waits for it.",
+      "Cheerleaders stay on their boxes (real boxes now, and nothing knocks them off). The yard markers are never hidden behind people. The chain crew moves faster, and is simply put in place when nobody can see either end of its walk.",
+      "Performance mode shows fewer cameramen and a calmer bench; at its lowest level only the props, the seated bench and a simple fade for injuries remain.",
+    ]],
+    ["TEAM RATINGS", [
+      "A side's star rating is now one base formula for every team, every mode, every season: starters (weighted by spot), coordinator, head coach, depth, abilities and Star Factors, veterans, rookies, empty spots and who is out. Potential never counts.",
+      "It no longer depends on how the other teams rate, and the difficulty never changes the stars you see.",
+    ]],
+    ["DIFFICULTY AND CREDITS", [
+      "Adaptive difficulty pays credits like the presets do: the harder it has climbed, the more each game pays (in between two presets = in between their pay).",
+      "Adaptive difficulty also climbs as your team gets better (your offense and defense ratings), not only with how you play.",
+    ]],
+    ["CELEBRATIONS", [
+      "The chest bump is far more violent: a crouch, a charge, a big leap, a smack in the air with a flash, shock ring and sparks, a camera jolt and a thud, a knock-back and a roar. New fist bump: cocked back, driven in, a burst on contact, then blown up.",
+      "The first-down point uses both arms, locked straight at the marker.",
+      "A man still on the turf, on a knee, sitting or pinned gets up first, then celebrates (he never misses it any more).",
+      "Teammates going to their marks walk, jog or run with their legs and arms moving at that pace instead of sliding.",
+    ]],
+    ["SCREENS", [
+      "The salary cap bar is back on the roster. AUTO is gone from the roster's simple list; on the in-game depth chart's simple list it sits bottom right.",
+      "Credits and XP: the box turns to whichever one is flying in or out of it, then turns back.",
+      "The record book scrolls (mouse wheel; the arrows jump a screenful).",
+      "The PLAYER STATS button glows and bobs after a scrimmage or PvP game.",
+      "Saga Watch says what a saga changed in general terms (spirits, form, stock, availability) instead of exact numbers.",
+    ]],
+    ["ON THE FIELD", [
+      "I-formation: the fullback and tailback stack in a straight line behind the QB, a step deeper each.",
+      "On 4th down the QB always dives instead of sliding (the computer QB dives for the marker too).",
+      "Fixed two footballs showing on a QB slide: only the one in his arms is drawn.",
+    ]],
+  ] },
+  { v: "v0.37", secs: [
+    ["SIDELINE PEOPLE", [
+      "A chain crew works the road sideline: one pole on the line to gain, one 10 yards back, and the down box on the line of scrimmage. After each play they walk to the new spots and the box flips to the new down. Goal to go, the poles are parked. They step off for kicks and are back on their spots for the next play.",
+      "The home bench is alive: the head coach with his clipboard and headset, staff, and bench players in team gear (a long coat in the cold).",
+      "Cheerleaders on both sidelines in their team's colours, with clap, pom-pom, high-kick line, toe-touch, spin, wave and lift routines. They cheer their team's big plays (bigger plays, bigger routines; a lift for a touchdown or a win) and slump when the other team scores. The bench reacts too.",
+      "Run out of bounds into them and they stagger, hop aside or get knocked flat, then get up and walk back. It never changes a play, a spot or the clock, and nobody is ever pushed back in bounds.",
+      "They show up in replays, highlights and the end-of-game reel, and online. Settings > EXTRAS > SIDE: ALL / CREW / OFF. Performance mode shows fewer of them. The animation library has a SIDELINE tab.",
+    ]],
+  ] },
+  { v: "v0.36", secs: [
+    ["NEW ABILITIES", [
+      "Every player's ability is new: 114 of them across QB, WR, TE, RB, OL, DL, LB, CB, S and kickers, plus 5 for any position (Home Cooking, Revenge Game, Prime Time, Rain Man, Chemistry). Kickers have abilities now too.",
+      "FITS are small boosts that are always on (Quick Release, Soft Hands, Ball Security, Long Arms...). ABILITIES are bigger and always on; some only work in their situation: the last 2 minutes, 4th down, the red zone, inside the 3, Q4 with the lead.",
+      "STAR FACTORS turn on in games: each one has its own trigger (4 completions in a row, 3 broken tackles, a sack or 2 pressures...) and its own knockout. While one is on he gets its big effect (every throw on the money, the first tackle every carry misses, his man never gets home...) plus +2 on one rating.",
+      "Your old abilities were swapped for the closest new one of the same tier, in every save. Players keep their ratings.",
+      "Upgrading an ability (shop, red star) moves it up its own line: Pocket Feel -> Ice Veins -> Untouchable, Soft Hands -> Mosser -> Moss Mode.",
+    ]],
+    ["STAR FACTOR RULES", [
+      "Halftime drops a lit Star Factor to half-charged. After a knockout he needs 1.5x the trigger to come back. A turnover drains your stars' progress a little.",
+      "Clutch stars (Laser Mode, Vise Grip, Unstoppable, Unblockable, Lockdown, Automatic) light up by themselves in the last 2 minutes of a game within 8. In the playoffs every star starts half-charged.",
+      "Simulated drives turn stars on and off too, and simulated field goals count for kickers.",
+      "Balanced from 60 simulated games: the rare ones light more easily (Heat Seeker, Double Team Magnet, Wall Swatter, Ball Punch, Big Hitter, the ball-hawk corners and safeties, Moon Shot), the ones that stayed on all game are harder (Fortress, Human Wall, Freight Train, Unblockable, Eraser), and most stars now have a knockout that really happens (Laser Mode: 2 incompletions in a row; Freight Train: a tackle for loss).",
+      "Field goals and extra points now feel the wind and the rain a little (Wind Read, Weatherman and Automatic shrug it off).",
+    ]],
+    ["LOOKS", [
+      "Before the snap a gold ring under each star fills toward his Star Factor. When it lights: a STAR FACTOR banner, a crowd pop and the star's own doodle. A lit star beating one of your men puts a red ring under your man; Tunnel Vision shows its open receiver in green.",
+      "Every ability's tip (player card ?, tips page, shop, red star, the Star Factors panel, the XP tour) now says exactly what it does, and for Star Factors: ON, OFF and the rating it boosts.",
+    ]],
+    ["RECORD BOOK", [
+      "RECORDS (on the Hall of Fame) is now a full record book: LEAGUE or any FRANCHISE (yours first), with GAME, SEASON, CAREER, TEAM and PLAYOFFS tabs. Tap a record for its top 5; ties share a spot. Gold rows were set in your league.",
+      "80 records, close to the real pro marks: 547-yard games, 5,400-yard seasons, 88,000-yard careers, passer rating, completion %, a QBR of our own, fewest picks, sacks, tackles for loss, forced fumbles, pancakes, longest plays, kicking, team points / yards / win streaks / best record, and the Paper Bowl.",
+      "Every new career starts with 40 years of made-up league history (made-up names). Every franchise has its own book: some teams are known for passing, some for defense.",
+      "Records count for everyone in the league, and simulated games count exactly like played ones. Simulated playoff games now keep every player's stats.",
+      "A record falling in your game gets a trophy over the player, a call naming the old holder and a crowd pop. The home screen tells you about records that fell anywhere, and after week 8 who is chasing one. The Post writes about the big ones, and record holders wear a gold RECORD ribbon on their card.",
+    ]],
+  ] },
+  { v: "v0.35", secs: [
+    ["DRAFT DAY", [
+      "The draft is a board now: every round is a wall of pick cards (team, pick number, the rookie's face, position and stars) that fills in one pick at a time. NEXT PICK plays a single pick, SIM TO MY PICK jumps to your turn, and the arrows flip back through earlier rounds. Click a card for the player's page.",
+      "PROSPECTS shows the class that is left at any time (scout between picks); DRAFT only lights up while you are on the clock. Every pick is made at its real slot, traded picks included.",
+      "Roster spots: for every 2 spots you buy (offense or defense), every other team gains one on a random side.",
+    ]],
+    ["GAME SCREEN", [
+      "Settings moved out of the pause menu: a gear sits beside the pause / play icon while the game is paused.",
+      "The two click-to-show lines (player names, Star Factor tips) are bigger, much bigger on a phone.",
+      "Halftime reel: no more fade to black between plays. Each play fades straight into the next one.",
+      "Buttons behind any popup hold still (TEAM UPGRADES on the roster, are-you-sure boxes, scouting and poaching popups).",
+      "Fixed: COULD NOT SAVE (STORAGE FULL). Saves, player stats and records are now stored packed (about 6 times smaller); old ones are packed the first time the game loads.",
+    ]],
+  ] },
+  { v: "v0.34", secs: [
+    ["BALL TRACKING", [
+      "Receivers and defenders now read a pass in the air by their ratings (catching, awareness, coverage). Good ones find it sooner and judge where it lands at once; poor ones misjudge a deep ball's depth and have to adjust late.",
+      "No more running to the spot and waiting: a receiver who is early works back to the ball and meets it on its way down, or gathers smoothly into the catch. Momentum counts: nobody turns on a dime, and a ball thrown behind a man at full speed makes him plant before he can come back for it. Defenders judge what they can reach off the speed and direction they already have.",
+    ]],
+    ["DRAFT BOARD", [
+      "FRONT OFFICE > DRAFT BOARD: next spring's class is on the board from week 1 and moves every week (simmed weeks too). Prospects rise and fall on their weekly form; each row shows his rank, this week's move, school, stars now, the potential range your scouts put on him (better scouts = a narrower range) and his trend line.",
+      "Tabs BIG BOARD and MOCK DRAFT (the projected order, every team picking by its own grades), position filters, your projected picks and how strong your scouts think the class is. Click a prospect for his card, this week's stat line and your scout's note. Kickers stay off the board unless one is generational.",
+      "The other teams now draft on their own scouts: a team's grade of a prospect is the board's view read through its scouts and front office, plus its needs and the position's value. Poor scouts miss more.",
+    ]],
+    ["TRADE VALUES", [
+      "A player is worth the surplus he brings while a team controls him: production minus salary, year by year, discounted, with the chance he retires. Stars are worth far more than several average players, cheap rookie deals are gold, overpaid veterans are worth little. Position matters (QB most, then edge and tackle, running backs and kickers least), and each position ages on its own curve.",
+      "Contenders pay for help this season, rebuilders for later years; need and cap room still count. Every old safeguard (cap, roster spots, stars a team keeps) is unchanged.",
+      "Draft picks follow the projected order (team rating early, the real record as the season goes on, updated weekly) and the class: a strong top of the board lifts early picks, as each team's own scouts see it, so teams can disagree. Picks two or more years out are an average class at a discount. The trade screen tags every pick: proj #N and the class strength.",
+    ]],
+  ] },
+  { v: "v0.33", secs: [
+    ["SCREENS", [
+      "Roster: TEAM UPGRADES and HALL OF FAME are back (bottom right). AUTO is a small button in the view's bottom left. On a phone one finger drags the formation view around.",
+      "Front office: a DRAFT CLASS button where TEAM UPGRADES was (coming soon).",
+      "Player card: FOCUS / MENTOR / MENTOREE / BATTLE WIN tags sit top right of the BIO note. The ability button only shows when he qualifies, right under his ability: UPGRADE: ABILITY, then UPGRADE: STAR FACTOR (an ability first).",
+      "The credits / XP box turns to the currency a page spends (credits on free agency, hiring and TEAM UPGRADES; XP on a player's card). A bought roster spot and a new player's card wait for the credits to land.",
+      "SETTINGS in the pause menu. Anything that would change the game being played (injuries, difficulty, weather, sim defense, quarter length...) is locked until it ends.",
+      "The ? on a scout's popup explains scouts, not the facilities. All tours updated for the new buttons.",
+    ]],
+    ["GAME", [
+      "Banners slide in under the timeout, audible and replay buttons, which stay usable. The 4th-down / extra-point dim covers the top bar too.",
+      "Celebrate with a right click (a double tap on a phone). Celebrations have sound: the spike, a dropped ball and landings off a jump or flip.",
+      "Kick and punt rushers line up further apart and staggered, not in a perfect row.",
+      "Clean releases off press and rises in adaptive difficulty are no longer announced.",
+      "Phones keep the stands and the sideline (only what is off-screen is skipped).",
+    ]],
+    ["SHOWS", [
+      "The halftime / pregame show is paper: torn-strip bar and captions, taped note cards, a note-paper ticker, a RE-ENACTMENT stamp.",
+      "The end-of-game reel behind the result screen is silent, cuts without fades, and the headline keeps the final score.",
+    ]],
+  ] },
+  { v: "v0.32", secs: [
+    ["HIGHLIGHTS", [
+      "Halftime and end-of-game reels: a much smoother camera. It glides after the play on a spring instead of chasing it, the lead on a runner and the hold on a big block ease in and out, and every zoom (the push-in at a moment, a pass in the air, a new angle, a hit) blends into one smooth move.",
+      "Cuts are softer: the picture now darkens into a cut and comes back out of it, and a cut to another part of the same play dips lightly instead of popping.",
+      "Around the league clips show the whole play: all 22 players (the line locked up, the quarterback and back, receivers with their men, linebackers and safeties who turn and chase), from a wider shot. Performance mode's lowest level keeps the old close-up.",
+    ]],
+    ["CELEBRATIONS", [
+      "One fixed order: a player on the turf always gets up first (your own players no longer lie there waiting for your click), stands a beat, then leaves the crowd, then celebrates.",
+      "Getting to open space: a few steps is a walk, further is a run, he builds up and eases down, steps clear of men on the ground, looks further for room, and a scorer stays in the end zone. A slow get-up no longer costs him the celebration.",
+    ]],
+    ["ONLINE", [
+      "Run plays: a click on the back while the formation was still setting was thrown away (the guest sees it set a moment late, so it hit him the most). It now waits and goes as soon as everyone is set, offline too.",
+      "Guest clicks on the field are matched to the host's view: with a different zoom (the mouse wheel, a phone against a computer) a click on the back or the quarterback used to land beside him.",
+      "Run plays are sent at the fast rate, like a pass being aimed, so the carrier answers sooner. Both players need this version.",
+    ]],
+  ]},
+  { v: "v0.31", secs: [
+    ["SCOUTS", [
+      "Every team has two scouts now: one for offense, one for defense (your franchise only; SCOUTS in the settings turns the whole system off and brings back the plain draft SCOUT button). Yours start at 1 to 3 stars.",
+      "Your scouts set how close the draft's SCOUT read of a prospect's potential and value is: a 1-star scout is worse than the old scouting, a 5-star one is nearly exact. Kickers belong to the offense scout.",
+      "The next draft class exists from the start of the season. Assign each scout on the FACILITIES campus (bottom right): ONE position group, or up to 3 prospects by name. His reads on those are sharper, and each scout has a specialty group too.",
+      "Scouting reports: through the season your scouts may report a GENERATIONAL or an UNDERRATED prospect on the home screen, and those prospects carry a badge in the draft. Better scouts find more and raise fewer false alarms.",
+      "Hire and fire scouts like the rest of the staff: SCOUTS on the staff screen, and two more tabs on the hiring board. Their pay counts against the staff budget.",
+    ]],
+    ["FRONT OFFICE", [
+      "The FRONT OFFICE title is a menu: pick any team to see its head coach, coordinators (with their tendencies, favorite formation and go-to calls), trainers and scouts.",
+      "POACH: from another team's front office, offer a coordinator, trainer or scout more salary plus credits up front. Better staff and winning teams are harder to pry loose. If he says yes he takes over your job, your old man goes to the hiring board and the other team hires from it. If he says no, he won't talk for 6 weeks.",
+    ]],
+  ] },
   { v: "v0.30", secs: [
     ["FACILITIES", [
       "MEDICAL / REHAB is about injuries now. Each level = less time out, fewer injuries, less extra risk when playing hurt and less potential lost (on top of the practice injury cut and faster rehab it already gave). Select it for the INJURY REPORT beside the campus: who is out and for how long (a range, exact from LV 4).",
@@ -279,7 +473,10 @@ const CHANGELOG = [
       "The wall in front of the stands is three times as tall, with the stands on top of it, and a loose ball below its top bounces back off it.",
       "Sharper text in games on big screens (name tags, the down and distance, everything else): the game is drawn at up to 1.5x the pixels. Performance mode keeps its own limits.",
       "A knockout hit on a receiver has its own sound: the big hit, a sharp crack and a deep thud.",
-      "Celebrations are led into and out of (he gathers himself, then eases back to standing and holds a beat), so they run longer and flow. A ball he has put down stays where he left it instead of sliding along with him. The hurdle wings sit on the body, not round the helmet.",
+      "Celebrations are led into and out of (he gathers himself, then eases back to standing and holds a beat), so they run longer and flow. A ball he has put down stays where he left it instead of sliding along with him. The hurdle wings sit on the body, not round the helmet. Your players celebrate on a click or a tap anywhere on the field (either mouse button) instead of the X key, and a player in a crowd first jogs out into open space so you can see him.",
+      "Field goal, extra point and punt blocking now works like the offensive and defensive lines: every rusher picks a power or finesse move when he gets his hands on his man, works it, counters when it stalls, and a bull rush walks the blocker back; a blocker with nobody helps next door, and a man who gets free can be picked up by the next protector. Rushers no longer all throw their hands up together: only some try it, each at his own moment, and only with a look at the ball.",
+      "Fixed: a quarterback rolling out before he crossed the line could run off the field without the play ending. The sideline is out of bounds for him too now.",
+      "Scrimmage: the settings gear is in the top left. Fixed: the PLAYER STATS button after a scrimmage (two-player games included) only worked along its top edge.",
       "The crowd erupts at the plays that decide a game: a late stop or turnover that seals it, a go-ahead score in the last minute, and the final whistle of a one-score game or any overtime win.",
       "Fixed: after a play the camera could pan to an unrelated player (the scorer of an earlier touchdown, by then lined up somewhere else). It now stays with the ball, the ball carrier or the celebration.",
       "Adaptive difficulty now moves week to week on how you actually played (the result and margin, turnovers, your yards per play and completion rate, the points you allowed) measured against how good the opponent was. A big day against a strong team raises it, a poor one against a weak team eases it, and years played count for less.",

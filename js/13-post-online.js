@@ -852,7 +852,7 @@ const clScroll = d => { if (offPop && offPop.log) offPop.scroll = Math.max(0, Ma
 function drawChangelog(P) {
   const c = CL_CARD, v = CL_VIEW;
   ctx.save();
-  ctx.fillStyle = 'rgba(30,25,10,0.5)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(30,25,10,0.5)'; ctx.fillRect(0, 0, W, H); uiModal();
   ctx.save(); ctx.translate(4, 6); tornPath(c); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill(); ctx.restore();
   tornPath(c); ctx.fillStyle = '#fffdf4'; ctx.fill();
   ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.arc(W / 2, c.y + 10, 7, 0, Math.PI * 2); ctx.fill();
@@ -920,7 +920,7 @@ function drawStart() {
     ctx.fillStyle = RES.line; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('NO HIGHLIGHTS SAVED YET', W - 225, H - 120); ctx.restore();
   }
 }
-const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-14 STEP-69';
+const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-15 SIDE-37';
 let hlFlash = -1e9;   // when the main menu's HIGHLIGHT button was last clicked
 let quickMenu = false;   // QUICK PLAY (START_BTNS.ex) drop down: EXHIBITION / 1V1 / ONLINE take the place of FRANCHISE / CAREER / TUTORIAL (same buttons, same size)
 function startClick(p) {
@@ -1314,7 +1314,7 @@ function unslim(v, ps) {
 // what changed on a player since the last send: { set: {prop: value}, del: [props that went away] }
 // properties only the host's own simulation reads (measured: drawing a whole game never touches them), so they are never sent: steering targets, last-frame
 // movement, run yardage, shed / break timers...
-const ONL_HOST_ONLY = new Set(['kp', 'kpB', 'kpRide', 'kpRideT', 'cx', 'cy', 'sx', 'sy', 'mpx', 'mpy', 'mvx', 'mvy', 'ranYd', 'gs', 'rel', 'hipT', 'brkT', 'shedAt', 'sealK', 'rushV', 'wk',   // (rvx / rvy stay: the guest's own aim line reads them in maxThrow)
+const ONL_HOST_ONLY = new Set(['bt', 'celWalk','kp', 'kpB', 'kpRide', 'kpRideT', 'cx', 'cy', 'sx', 'sy', 'mpx', 'mpy', 'mvx', 'mvy', 'ranYd', 'gs', 'rel', 'hipT', 'brkT', 'shedAt', 'sealK', 'rushV', 'wk',   // (rvx / rvy stay: the guest's own aim line reads them in maxThrow)
   // what drawPlayer itself eases and stamps every drawn frame (neck, eyes, stance, turn, kick arms, the tackle pose): the guest's own drawing keeps its own. They were
   // over half of every snapshot, and the host's clock stamps kept resetting the guest's easing
   'yawAt', 'yaw', 'headAt', 'headW', 'stAt', 'stKey', 'stB', 'ezT', 'hkE', 'kaE', 'knE', 'faceAt', 'faceShow', 'gPose', 'gPoseT', 'gLegs',
@@ -1357,6 +1357,7 @@ function onlGlobals(ps) {
     tp: twoP ? { fl: twoP.flipped, to: twoP.to } : null,
     mt: { you: MATCH.you, opp: MATCH.opp, yk: MATCH.youKit, ok: MATCH.oppKit, home: MATCH.home },
     bm: bulletMode, pm: patMode, fp: fourthPending, hh: halfHold, pz: paused, ko: !!kickoffPlay, pr: puntRet, prp: puntRetPlay,
+    vz: Math.round(userZoom * (TOUCH ? TOUCH_ZOOM : 1) * 1000) / 1000, vc: Math.round(viewCenterY()),   // (the host's own view: his wheel zoom / phone zoom and the field's middle on his screen, see onlPtOut)
     ud: ix(ud), tg: ix(tgt), rn: ix(runner), mi: MIRROR,   // (mi: the host's screen direction: the guest translates his taps / keys when his own differs)
     nm: { cbT: ix(cbT), cbB: ix(cbB), sT: ix(sT), sB: ix(sB), lbW: ix(lbW), lbM: ix(lbM), lbS: ix(lbS) },
     ball: slim(ball, ps), cam: [Math.round(camX), Math.round(camY), Math.round(zoom * passPull * 1000) / 1000], sh: Math.round(shake * 10) / 10,
@@ -1373,8 +1374,9 @@ function onlHostCast(ps, key) {   // (always on the reliable channel: everything
   ONL.castKey = key; ONL.epoch = (ONL.epoch || 0) + 1; ONL.castSeq = ONL.relSeq = ONL.ack = seq;
   ONL.sent = ps.map(onlNewSt); ONL.gSt = { v: {}, s: {}, o: {} };   // (gSt: the globals sent so far; a new cast sends them all again)
   const full = ps.map((p, i) => { onlDelta(p, ps, ONL.sent[i], seq); return onlSince(ONL.sent[i], 0)[0]; });
-  NET.send({ t: 'cast', e: ONL.epoch, n: seq, full, sizes: [ols.length, recs.length, dl.length, back7.length, fgExit.length] });
+  NET.send({ t: 'cast', e: ONL.epoch, n: seq, full, sizes: [ols.length, recs.length, dl.length, back7.length, fgExit.length], sl: slPack() });   // (sl: the whole sideline-people state; events follow as 'sl' messages)
 }
+const onlRunLive = () => state === 'run' || ((state === 'drop' || state === 'pocket') && isRunPlay);   // (a ball carrier steered by keys: the fast rate, like an aimed pass. At the slow rate a run play was drawn a snapshot later and felt sluggish next to a pass play)
 function onlHostTick() {
   const now = performance.now();
   // the guest's finger has been "down" but silent: its release got lost (the guest keeps sending its spot while held), so let go for him
@@ -1384,7 +1386,7 @@ function onlHostTick() {
   let backed = false;
   try { const dc = NET.conn && NET.conn.dataChannel, fc = NET.fast; backed = !!((dc && dc.bufferedAmount > ONL_BACKLOG) || (fc && fc.bufferedAmount > ONL_BACKLOG)); } catch (e) {}
   if (backed) ONL.slowUntil = now + ONL_NET.slowMs;
-  const gap = 1000 / (onlKickerSets() || aim ? ONL_NET.hzFast : now < (ONL.slowUntil || 0) ? ONL_NET.hzSlow : ONL_NET.hz);   // (a kick meter / aim in progress: faster, so it stays smooth)
+  const gap = 1000 / (onlKickerSets() || aim || onlRunLive() ? ONL_NET.hzFast : now < (ONL.slowUntil || 0) ? ONL_NET.hzSlow : ONL_NET.hz);   // (a kick meter / aim in progress: faster, so it stays smooth)
   if (now - ONL.snapAt < gap - 2) return;
   ONL.snapAt = Math.max(ONL.snapAt + gap, now - gap);   // (the leftover carries: the rate holds whatever the screen's refresh rate)
   if (backed) return;
@@ -1412,6 +1414,7 @@ function onlGotCast(m) {
   let i = 0; qb = ps[i++]; rb = ps[i++];
   ols = ps.slice(i, i += sz[0]); recs = ps.slice(i, i += sz[1]); dl = ps.slice(i, i += sz[2]); back7 = ps.slice(i, i += sz[3]); fgExit = ps.slice(i, i += sz[4]);
   ONL.full = m.full; ONL.buf = []; ONL.pos = pos; ONL.epoch = m.e; ONL.rxSeq = m.n; ONL.pred = null;   // (full: only its length is read from here on, "is there a cast")
+  slUnpack(m.sl);   // (the host's sideline people, whole)
 }
 function onlGotSnap(m) {
   const n = ONL.full.length;
@@ -1484,8 +1487,11 @@ function onlGuestStep() {
   const ne = buf[buf.length - 1], gn = ne.g;   // (the reticle and the kick meters follow your own finger / taps: the newest snapshot, not the late picture)
   if (!ne.un) ne.un = { aim: gn.aim ? unslim(gn.aim, ps) : null, kick: gn.kick ? unslim(gn.kick, ps) : null, kof: gn.kof ? unslim(gn.kof, ps) : null };
   aim = ne.un.aim ? { ...ne.un.aim } : null; kick = ne.un.kick ? { ...ne.un.kick } : null; kickoff = ne.un.kof ? { ...ne.un.kof } : null; puntPlay = a.u.pp ? { ...a.u.pp } : null;
-  ONL.hostMirror = gn.mi;
-  if (aim && onlFlip()) { aim.sx = W - aim.sx; aim.cx = W - aim.cx; }   // (the host's aim is in the host's screen frame: into this one)
+  ONL.hostMirror = gn.mi; ONL.hostVz = gn.vz || 1; ONL.hostVc = gn.vc;
+  if (aim) {   // (the host's aim is in the host's screen frame: into this one. Mirrored drive, another zoom)
+    const k = 1 / onlViewK(), f = onlFlip() ? -1 : 1, vc = viewCenterY(), hv = ONL.hostVc || vc;
+    if (f < 0 || Math.abs(k - 1) > 0.001 || hv !== vc) for (const [a, b] of [['sx', 'sy'], ['cx', 'cy']]) { aim[a] = W / 2 + f * (aim[a] - W / 2) * k; aim[b] = vc + (aim[b] - hv) * k; }
+  }
   onlKickAnchor(); { const L = onlKickLocal(); if (L) { if (L.ph === 'power') kick.meter = L.v; else kick.pos = L.v; } }
   onlPredict(now);
 }
@@ -1528,6 +1534,15 @@ const onlFlip = () => !!(ONL.on && ONL.guest && ONL.hostMirror != null && MIRROR
 const ONL_SWAP = { ArrowLeft: 'ArrowRight', ArrowRight: 'ArrowLeft', KeyA: 'KeyD', KeyD: 'KeyA', KeyJ: 'KeyL', KeyL: 'KeyJ' };
 const onlKeyOut = code => onlFlip() && ONL_SWAP[code] ? ONL_SWAP[code] : code;   // (left / right in the host's frame)
 const onlPtX = p => (onlFlip() && !overPauseButton(p)) ? W - p.x : p.x;   // (the field and the centred buttons mirror; the fixed pause icon stays where it is)
+// The two screens can show the field at different sizes (each player's own wheel zoom; a phone is zoomed in): the same spot on the field is then a different spot
+// on each screen. A tap on the field is sent as the spot the HOST's screen has that piece of field at (both views share the camera, so it is a plain scale around
+// the view's middle); a tap on a button keeps its screen spot. Sent as it was, a click on the back missed him on the host whenever the zooms differed.
+const onlViewK = () => (ONL.hostVz || 1) / (userZoom * (TOUCH ? TOUCH_ZOOM : 1));   // host pixels per guest pixel on the field
+function onlPtOut(p) {
+  if (overUiBtn(p)) return { x: onlPtX(p), y: p.y };
+  const k = onlViewK(), f = onlFlip() ? -1 : 1, vc = viewCenterY();
+  return { x: W / 2 + f * (p.x - W / 2) * k, y: (ONL.hostVc || vc) + (p.y - vc) * k };
+}
 const ONL_K = { ph: '', t: 0, at: 0, ht: 0 };
 function onlKickAnchor() {
   if (!kick || (kick.phase !== 'power' && kick.phase !== 'aim')) { ONL_K.ph = ''; return; }
@@ -1631,6 +1646,7 @@ function onlMsg(d) {   // NET.onmsg's game messages (true: handled)
   if (d.t === 'snap') { if (ONL.guest) onlGotSnap(d); return true; }
   if (d.t === 'ak') { if (ONL.host && d.e === ONL.epoch && d.n > (ONL.ack || 0) && d.n <= ONL.seq) ONL.ack = d.n; return true; }   // (the guest has this snapshot: the next ones only carry what changed after it)
   if (d.t === 'ev') { onlGotEvent(d); return true; }
+  if (d.t === 'sl') { if (ONL.guest) slNet(d); return true; }   // (one sideline-people event, on the host's sideline clock)
   if (d.t === 'in') { onlHandleInput(d); return true; }
   return false;
 }

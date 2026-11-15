@@ -38,7 +38,7 @@ function restoreWorld() {
   Object.assign(TEAM_EDGE, w.edge); starsByAverage = w.byAvg;
 }
 function endExhibition(screen) {
-  oo = null;
+  oo = null; celTOff();
   if (!exhibition) return;
   restoreWorld();
   Object.assign(MATCH, exhibition.saved);
@@ -52,7 +52,7 @@ function endExhibition(screen) {
 const ACCT_BTN = { x: 30, y: 620, w: 210, h: 70 };   // (start screen, bottom left; the debug tools stack above it)
 const TEST_BTN = { x: 30, y: 540, w: 210, h: 70 };
 const TESTS = [['KICKOFF', 'ko'], ['KICKOFF RETURN', 'kr'], ['PUNT', 'punt'], ['PUNT RETURN', 'pr'], ['FIELD GOAL', 'fg'], ['EXTRA POINT', 'xp'], ['TWO-POINT TRY', 'two'],
-               ['4TH DOWN CHOICE', 'fourth'], ['GOAL LINE', 'goal'], ['PLAY DEFENSE', 'def'], ['ONSIDE KICK', 'onside'], ['OVERTIME', 'ot'], ['INTERCEPTION RETURN', 'intr'], ['1V1: YOU DEFEND WR', 'oo-db'], ['1V1: YOU ARE WR', 'oo-wr'], ['1V1: YOU RUN', 'oo-run'], ['1V1: YOU TACKLE', 'oo-tackle'], ['PLAY OFFENSE', 'off']];
+               ['4TH DOWN CHOICE', 'fourth'], ['GOAL LINE', 'goal'], ['PLAY DEFENSE', 'def'], ['ONSIDE KICK', 'onside'], ['OVERTIME', 'ot'], ['INTERCEPTION RETURN', 'intr'], ['1V1: YOU DEFEND WR', 'oo-db'], ['1V1: YOU ARE WR', 'oo-wr'], ['1V1: YOU RUN', 'oo-run'], ['1V1: YOU TACKLE', 'oo-tackle'], ['PLAY OFFENSE', 'off'], ['CELEBRATIONS', 'celeb']];   // (celeb: a drive with the celebration test panel, see celT)
 const TEST_BTNS = TESTS.map(([label, id], i) => ({ label, id, x: 30 + (i % 4) * 305, y: 120 + Math.floor(i / 4) * 52, w: 290, h: 44 }));
 const TEST_YOU_BTN = { x: W / 2 - 170, y: 545, w: 340, h: 62 };
 function startTestMode() {
@@ -100,8 +100,8 @@ function testClick(p) {
 // ANIMATION LIBRARY (start screen, above TEST MODE): every move, break-tackle reaction, catch, tackle style and celebration, played on a loop with the real
 // drawing / action code (a cloned ball carrier `A` and defender `B` on a small stage). Pick one on the left; REPLAY restarts it. Nothing counts.
 const ANIM_BTN = { x: 30, y: 460, w: 210, h: 70 };
-const ANIM_CATS = ['MOVES', 'REACTIONS', 'CATCHES', 'TACKLES', 'EXTRAS', 'CELEBRATE'];
-const ANIM_TABS = ANIM_CATS.map((c, i) => ({ cat: c, x: 20 + i * 104, y: 64, w: 99, h: 46 }));   // (six tabs, all left of the stage's title)
+const ANIM_CATS = ['MOVES', 'REACTIONS', 'CATCHES', 'TACKLES', 'EXTRAS', 'CELEBRATE', 'SIDELINE'];
+const ANIM_TABS = ANIM_CATS.map((c, i) => ({ cat: c, x: 20 + i * 89, y: 64, w: 85, h: 46 }));   // (seven tabs, all left of the stage's title)
 const ANIM_STAGE = { x: 650, y: 130, w: 610, h: 480, zoom: 2.1 };   // (2.4 before the FIGURE size-up)
 const ANIM_LEN = 2.8;   // seconds a clip plays before it restarts
 const ANIM_ROWS = 10, ANIM_COLW = 196, ANIM_ROWH = 46;
@@ -147,16 +147,22 @@ function animEntries(cat) {
   if (cat === 'REACTIONS') return Object.keys(REEL_ST).map(k => [k.replace(/([A-Z])/g, ' $1').toUpperCase(), (A, B) => { A.moving = true; A.vx = 6 * YD; B.x = A.x + 1.6 * YD; startReel(B, k, A); }]);
   if (cat === 'CATCHES') return Object.keys(CATCH_ST).filter(k => !EXTRA_CATCHES.includes(k)).map(k => [k.replace(/([A-Z])/g, ' $1').toUpperCase(), animCaught(k)]);
   if (cat === 'EXTRAS') return extraEntries();
+  if (cat === 'SIDELINE') return slLibEntries();   // (sideline people: every routine and reaction, see 07-drawing)
   // every celebration move (see celebrations): he holds the ball for a beat, plays it, and the last frame stays up
   if (cat === 'CELEBRATE') return Object.keys(CELEB_MOVES).map(id => [id.replace(/([A-Z])/g, ' $1').toUpperCase(), (A, B) => {
-    const mv = CELEB_MOVES[id], n = celebCastN(mv).pop(), far = [[3, 0.5], [-3, -0.5], [3.6, -0.9], [-3.6, 0.9]];
+    const mv = CELEB_MOVES[id], n = celebCastN(mv).pop(), far = [[3, 0.5], [-3, -0.5], [3.6, -0.9], [-3.6, 0.9], [-4.2, 0]];
     B.x = 1e6; A.hasBall = true; ball.tucked = true;   // (B: off the stage)
     if (mv.dx) A.x = -mv.dx(mv.secs, { dist: 1 }) * YD / 2;
     const mates = far.slice(0, n - 1).map(([x, y]) => Object.assign({}, A, { x: x * YD, y: y * YD, face: x > 0 ? -1 : 1, hasBall: false, big: mv.mate === 'ol', cel: null }));   // (his teammates start a few yards off)
     const c = celebMake(id, A, mates, { t0: clock + 0.5, keep: true, env: { away: 1, goalX: A.x + 1.5 * YD, postX: A.x + 2.2 * YD, mid: A.y, yLo: -1e9, yHi: 1e9 } });
     Object.assign(c.cels[0], { aim: 0.2, dist: 1 }); c.cast.forEach((p, k) => { p.cel = c.cels[k]; });
-    anim.more = mates; anim.zoomK = n > 2 ? 0.6 : n > 1 || mv.marks ? 0.82 : 1; anim.len = mv.secs + 1.6;
-    A.tick = () => celebPlace(c, Math.max(0, Math.min(mv.secs, clock - c.t0)));   // (where everyone is: their jog to the mark, a move's own travel)
+    const mvv = c.mv;   // (the move as played: a seeded move's own version)
+    anim.more = mates; anim.zoomK = mv.gen && n > 2 ? 0.42 : n > 2 ? 0.6 : n > 1 || mv.marks ? 0.82 : 1; anim.len = mvv.secs + 1.6;
+    A.tick = () => {
+      const tm = Math.max(0, Math.min(mvv.secs, celebWarp(mvv, c.cels[0], clock - c.t0))), hc = c.cels[0];
+      celebPlace(c, tm); celebFxMen(c.cast, clock, false);
+      if (hc.b && !hc.ba && clock >= c.t0 && !celebBallAt(mvv, tm, null, hc).hand) hc.ba = [A.x, A.y, A.face];   // (the ball he let go of stays where it was released, as in a game)
+    };   // (where everyone is: their jog to the mark, a move's own travel; and the move's sounds)
   }]);
   return tackleEntries();
 }
@@ -265,14 +271,14 @@ function forceTackle(style, A, B) {
 const TACKLE_STYLES = [['WRAP-UP TACKLE', 'wrap'], ['GATOR ROLL', 'gator'], ['HUG TACKLE', 'hug'], ['FOLD TACKLE (BIG HIT)', 'fold'], ['HIT STICK', 'hitStick'],
                        ['DIVE: WRAP-UP', 'diveWrap'], ['DIVE: GATOR ROLL', 'diveGator'], ['DIVE: HUG', 'diveHug'], ['DIVE: FOLD', 'diveFold'], ['DIVE: HIT STICK', 'diveHit'], ['DIVE (MISSED)', 'diveMiss']];
 const tackleEntries = () => TACKLE_STYLES.map(([label, id]) => [label, (A, B) => forceTackle(id, A, B)]);
-function animCast() {
-  const mk = (src, x, face) => Object.assign({}, src, { x, y: 0, z: 0, vx: 0, vy: 0, svx: 0, svy: 0, speed: 0, run: 0, moving: false, action: null, act: null, face,
+function animCast() { return { A: animMk(rb, 0, 1), B: animMk(cbT, 0, -1) }; }
+function animMk(src, x, face) {   // a clean clone of a live player to stage (the library's two men, the league clips' 22)
+  return Object.assign({}, src, { x, y: 0, z: 0, vx: 0, vy: 0, svx: 0, svy: 0, speed: 0, run: 0, moving: false, action: null, act: null, face,
     hasBall: false, stiff: null, stiffTgt: null, stiffSet: false, truck: false, catchFx: null, catchMode: null, tackling: false, resolved: false, downMiss: false,
     recoverUntil: 0, engaged: false, push: null, stB: 0, breakFx: null, reach: false, cradle: false, cock: false, guard: false, swimLeft: 0, coast: null, cel: null });
-  return { A: mk(rb, 0, 1), B: mk(cbT, 0, -1) };
 }
 function animStart(i) {
-  anim.i = i; anim.t = 0; anim.err = null; anim.asQB = anim.asRB = null; anim.showBall = false; anim.len = 0; anim.more = null; anim.zoomK = 1;
+  anim.i = i; anim.t = 0; anim.err = null; anim.asQB = anim.asRB = null; anim.showBall = false; anim.len = 0; anim.more = null; anim.zoomK = 1; anim.sl = null;
   ball.snapNose = null;
   const e = anim.list[i]; if (!e) return;
   Object.assign(anim, animCast());
@@ -297,7 +303,7 @@ function drawAnims() {
   const now = performance.now(), dt = Math.min(0.05, (now - anim.last) / 1000); anim.last = now;
   ctx.fillStyle = RES.line; ctx.font = 'bold 40px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('ANIMATION LIBRARY', W / 2, 34);
-  for (const t of ANIM_TABS) menuBtn(t, t.cat, t.cat === anim.cat ? SEL : RES.bright, 15);
+  for (const t of ANIM_TABS) menuBtn(t, t.cat, t.cat === anim.cat ? SEL : RES.bright, 13);
   anim.list.forEach((e, n) => menuBtn(animListBtn(n), e[0], n === anim.i ? SEL : RES.bright, animRows() > ANIM_ROWS ? 13 : e[0].length > 15 ? 14 : 17));
   // the stage
   const S0 = ANIM_STAGE;
@@ -327,6 +333,7 @@ function drawAnims() {
       try {
         if (anim.asQB) qb = anim.asQB; if (anim.asRB) rb = anim.asRB;
         for (const p of [B, A, ...(anim.more || [])].sort((a, b) => a.y - b.y)) { p.x -= 0; drawPlayer(p); }
+        if (anim.sl) slLibDraw(anim.sl, anim.t);   // (the SIDELINE tab's people)
         if (anim.showBall && !ball.tucked && !(A.cradle && anim.asQB === A)) drawBallBody();
       } finally { qb = q0; rb = r0; }
     } catch (err) { anim.err = String(err && err.message || err); }
@@ -355,7 +362,7 @@ function animsClick(p) {
 // a fresh game dropped into one situation (yd = yards from your own goal line)
 function startTest(id) {
   if (exhibition) exhibition.testId = id;   // (RESET GAME in the pause menu comes back here)
-  oo = null;
+  oo = null; celTOff();
   simMode = 'none'; results = null; newGame(); STATS = newStats(); game.kickPending = null;
   const spot = (yd, d, togo) => { nextLos = yd * YL; nextDown = d; nextLtg = Math.min(FIELD, nextLos + togo * YL); };
   if (id === 'kr') { game.kickPending = 'BLUE'; reset(); }
@@ -374,6 +381,7 @@ function startTest(id) {
   else if (id === 'fourth') { spot(55, 4, 3); reset(); }
   else if (id === 'goal') { spot(97, 1, 3); reset(); }
   else if (id === 'off') { spot(25, 1, 10); reset(); }   // (a plain drive from your own 25: you run the offense)
+  else if (id === 'celeb') { spot(60, 1, 10); reset(); celT = celTNew(); }   // (a drive from the 40 with the celebration test panel up)
   else if (id === 'ot') {   // tied 21-21 after four: overtime's coin toss, then its kickoff
     game.blue = game.red = 21; game.qs = { blue: [7, 7, 0, 7], red: [7, 0, 14, 0] };
     game.quarter = 4; game.secs = 0;
@@ -467,6 +475,136 @@ function ooClick(p) {
   const b = ooKeys().find(b => inBtn(p, b)); if (!b) return false;
   const list = [null, ...OO_FORCE[b.k]], cur = Math.max(0, list.indexOf(oo.force[b.k] || null));
   oo.force[b.k] = list[(cur + (p.x < b.x + b.w / 2 ? list.length - 1 : 1)) % list.length];
+  return true;
+}
+// --- celebration test panel (TEST MODE > CELEBRATIONS) ---------------------------------------------
+// A normal drive with a panel on the left: pick any CELEB_MOVES id (filtered by kind), then NEXT EVENT (the next celebration of the game is that move at
+// the slider's hype: CELEB.force / forceHype) or PLAY NOW (the play is stopped and staged: the hero behind the line, in the end zone / under the post for
+// the moves that need it, a defender laid at his feet for a `down` move, the nearest teammates brought in as his cast). Speed applies after the whistle only.
+let celT = null;
+const CELT = { x: 10, y: 96, w: 250, rows: 10, rowH: 22, zooms: [1, 1.4, 1.8], speeds: [1, 0.5, 0.25], back: 18, loopGap: 0.5 };   // back: yd behind the line PLAY NOW stages it / s between loops
+const CELT_TAGS = ['ALL', 'SOLO', 'DUO', 'GROUP', 'DUNK', 'DANCE', 'TAUNT', 'FIRST DOWN', 'HANDSHAKE', 'REACTION'];
+const CELT_B = (() => {
+  const X = CELT.x, y1 = CELT.y + 30 + CELT.rows * CELT.rowH + 4, b = (x, y, w) => ({ x, y, w, h: 26 });
+  return { tag: b(X, CELT.y, 250), rows: Array.from({ length: CELT.rows }, (_, i) => ({ x: X, y: CELT.y + 30 + i * CELT.rowH, w: 250, h: CELT.rowH - 2 })),
+    prev: b(X, y1, 122), next: b(X + 128, y1, 122), force: b(X, y1 + 30, 122), play: b(X + 128, y1 + 30, 122),
+    spd: b(X, y1 + 60, 80), loop: b(X + 85, y1 + 60, 80), mir: b(X + 170, y1 + 60, 80),
+    lock: b(X, y1 + 90, 122), zoom: b(X + 128, y1 + 90, 122), big: b(X, y1 + 120, 122), cast: b(X + 128, y1 + 120, 122), hype: b(X, y1 + 150, 250) };
+})();
+const CELT_BOT = CELT_B.hype.y + 26 + 92;   // (the readout's four lines end here)
+const celTNew = () => ({ tag: 0, page: 0, id: 'spike', spd: 0, loop: false, mir: false, lock: true, zoom: 0, big: false, cast: 0, hy: 0.5, force: false, wait: null, played: false, uz0: userZoom });
+function celTOff() { if (!celT) return; userZoom = celT.uz0; celT = null; CELEB.force = CELEB.forceHype = null; }
+const celTSpeed = () => celT && state === 'done' && !(rec && rec.replaying) ? CELT.speeds[celT.spd] : 1;
+const celTSync = () => { CELEB.force = celT.force ? celT.id : null; CELEB.forceHype = celT.force ? celT.hy : null; };
+function celTIs(id, f) {
+  const m = CELEB_MOVES[id], tg = [].concat(m.tag), n = celebCastN(m).pop(), rx = tg.includes('R');
+  return f === 'ALL' || (f === 'SOLO' && n === 1 && !rx) || (f === 'DUO' && n === 2) || (f === 'GROUP' && n > 2) || (f === 'DUNK' && m.needs === 'post') || (f === 'DANCE' && tg.includes('dance')) ||
+    (f === 'TAUNT' && tg.includes('taunt')) || (f === 'FIRST DOWN' && id in CELEB_EVENTS.first.moves) || (f === 'HANDSHAKE' && tg.includes('shake')) || (f === 'REACTION' && rx);
+}
+const celTList = () => Object.keys(CELEB_MOVES).filter(id => celTIs(id, CELT_TAGS[celT.tag]));
+const celTHero = mv => { const tg = [].concat(mv.tag); return tg.includes('S') && !tg.includes('N') && !tg.includes('A') ? ols[2] : recs[0]; };   // (a strength-only move: a lineman)
+const celTCast = mv => { const cn = celebCastN(mv); return Math.max(cn[0], Math.min(cn[cn.length - 1], celT.cast || cn[0])); };
+// what the move needs that the field does not offer right now (PLAY NOW fills every one of them)
+function celTUnmet(mv) {
+  const h = celTHero(mv), out = [];
+  try {
+    if (mv.needs && !CELEB_NEEDS[mv.needs](h, { o: {} }, mv)) out.push(mv.needs);
+    const need = celebCastN(mv)[0] - 1;
+    if (need > 0 && celebMates(h, mv.reach || CELEB.teamRange, CELEB_MATE[mv.mate]).length < need) out.push(`${need} teammate${need > 1 ? 's' : ''}${mv.mate === 'ol' ? ' (OL)' : ''}`);
+  } catch (e) {}
+  return out;
+}
+function celTPlay() {
+  const T = celT, id = T.id, mv = CELEB_MOVES[id];
+  if (!mv || (rec && rec.replaying)) return;
+  celebReset();
+  for (const p of allPlayers()) Object.assign(p, { action: null, act: null, vx: 0, vy: 0, svx: 0, svy: 0, z: 0, moving: false, hasBall: false, coast: null, engaged: false });
+  state = 'done'; runner = null;
+  const h = celTHero(mv), n = celTCast(mv), ez = mv.needs === 'post' || mv.needs === 'goal';
+  h.x = mv.needs === 'post' ? POST_X - 5.5 * YD : mv.needs === 'goal' ? FIELD + 1.5 * YD : Math.max(4 * YL, los - CELT.back * YL);   // (the post moves: a sprint's worth short of it, inside CELEB.postRange)
+  h.y = MID + (mv.needs === 'post' ? 1 * YD : 0); h.face = T.mir ? -1 : 1; h.hasBall = true;
+  Object.assign(ball, { x: h.x, y: h.y, z: 0, vx: 0, vy: 0, vz: 0, inAir: false, loose: false, live: false, tucked: true });
+  // his cast: the nearest go beside him, everyone else of his team stays out of reach
+  const pool = (mv.mate === 'ol' ? ols : [...recs, rb, ...ols]).filter(p => p !== h).slice(0, n - 1), spots = [[-2.4, 1.3], [-2.4, -1.3], [-3.4, 2.4], [-3.4, -2.4], [-4.2, 0]];
+  pool.forEach((p, i) => { p.x = h.x + h.face * spots[i][0] * YD; p.y = h.y + spots[i][1] * YD; p.face = h.face; });
+  for (const p of allPlayers()) if (p !== h && !pool.includes(p) && Math.hypot(p.x - h.x, p.y - h.y) < 10 * YD) p.x = h.x - (ez ? 1 : -1) * (12 + Math.random() * 3) * YD;
+  // a defender for the moves about one: laid at his feet (`down`), or standing a few yards off (a target, and someone to react)
+  const d = back7[0];
+  d.x = h.x + h.face * (mv.needs === 'down' ? 1 : mv.needs === 'post' ? -2 : n > 2 ? -9 : 4.5) * YD;   // (a group: well clear of the formation) d.y = h.y + (mv.needs === 'down' ? 0 : mv.needs === 'post' ? 3 * YD : 0.6 * YD); d.face = -h.face;   // (a post move: out of the run-up's way)
+  if (mv.needs === 'down') { d.action = 'down'; d.act = { t: 5, fall: true, back: false, side: 0, fallTime: 0.4, vx: 0, vy: 0, angle: 0 }; d.lyingKeep = true; }
+  celebBegin({ ev: 'test', hero: h, pri: 9, at: clock, till: clock + 9, o: { tgt: d }, side: false, forceId: id, hyF: T.hy, big: T.big ? 1 : null });
+  const c = celebLive.find(x => x.hero === h);
+  if (c && T.mir && !c.marks) c.starts[0].face = -1;   // (a move that turns him itself: mirrored after it has)
+  T.played = true; T.wait = null;
+}
+function celTTick() {   // (frame(), after the game's step and before the draw)
+  const T = celT;
+  if (!T || paused || results) return;
+  if (!exhibition || exhibition.testId !== 'celeb') { celTOff(); return; }
+  userZoom = CELT.zooms[T.zoom];
+  const live = celebLive.find(c => !c.rx);
+  if (live && T.lock) { camX = live.hero.x; camY = live.hero.y - 0.5 * YD; }
+  if (T.loop && T.played && state === 'done' && !(rec && rec.replaying)) {
+    if (live) T.wait = null;
+    else if (T.wait == null) T.wait = clock + CELT.loopGap;
+    else if (clock >= T.wait) celTPlay();
+  }
+}
+function celTPhase() {
+  const p = allPlayers().find(o => o.cel && !o.cel.i && !o.cel.rx), c = p && p.cel, mv = c && celebMvOf(c);
+  if (!mv) return '-';
+  const r = c.rate || 1, s = clock - c.t0, Wp = celebWarpOf(mv, c.hy), u = s * r, t = celebWarp(mv, c, u);
+  return (s < -(c.ld || 0) ? 'WINDED' : s < 0 ? 'LEAD-IN' : t < Wp.pk ? 'BUILD-UP' : u < Wp.uPk + Wp.fz + 0.12 ? 'PEAK' : t < mv.secs ? 'FOLLOW-THROUGH' : 'EXIT') + `  ${Math.max(0, Math.min(mv.secs, t)).toFixed(2)} / ${mv.secs}s`;
+}
+function drawCelT() {
+  const T = celT, B = CELT_B, list = celTList(), pages = Math.max(1, Math.ceil(list.length / CELT.rows)), mv = CELEB_MOVES[T.id], G = RES.gold, N = RES.bright;
+  T.page = Math.min(T.page, pages - 1);
+  ctx.save();
+  ctx.fillStyle = 'rgba(10,14,12,0.6)'; ctx.fillRect(CELT.x - 6, CELT.y - 6, CELT.w + 12, CELT_BOT - CELT.y + 12);
+  menuBtn(B.tag, `< ${CELT_TAGS[T.tag]} (${list.length}) >`, N, 14);
+  B.rows.forEach((b, i) => { const id = list[T.page * CELT.rows + i]; if (id) menuBtn(b, id.replace(/([A-Z]|\d+)/g, ' $1').toUpperCase(), id === T.id ? G : N, 12); });
+  menuBtn(B.prev, `< PAGE ${T.page + 1}/${pages}`, N, 12); menuBtn(B.next, 'NEXT >', N, 12);
+  menuBtn(B.force, `NEXT EVENT: ${T.force ? 'ON' : 'OFF'}`, T.force ? G : N, 11); menuBtn(B.play, 'PLAY NOW', G, 14);
+  menuBtn(B.spd, `${CELT.speeds[T.spd]}x`, N, 13); menuBtn(B.loop, 'LOOP', T.loop ? G : N, 13); menuBtn(B.mir, 'MIRROR', T.mir ? G : N, 12);
+  menuBtn(B.lock, `CAM LOCK: ${T.lock ? 'ON' : 'OFF'}`, T.lock ? G : N, 11); menuBtn(B.zoom, `ZOOM: ${CELT.zooms[T.zoom]}x`, N, 12);
+  menuBtn(B.big, `S-TIER: ${T.big ? 'ON' : 'AUTO'}`, T.big ? G : N, 11); menuBtn(B.cast, `CAST: ${celTCast(mv)}`, N, 12);
+  menuBtn(B.hype, '', N, 12, q => {   // the hype slider
+    ctx.fillStyle = q.ink; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(`HYPE ${T.hy.toFixed(2)}`, q.x + 8, q.y + q.h / 2 + 1);
+    const bx = q.x + 92, bw = q.w - 104, cy = q.y + q.h / 2;
+    ctx.fillStyle = '#c9c3b0'; ctx.fillRect(bx, cy - 3, bw, 6); ctx.fillStyle = RES.strip; ctx.fillRect(bx, cy - 3, bw * T.hy, 6);
+    ctx.beginPath(); ctx.arc(bx + bw * T.hy, cy, 7, 0, Math.PI * 2); ctx.fillStyle = G; ctx.fill(); ctx.strokeStyle = q.ink; ctx.lineWidth = 2; ctx.stroke();
+  });
+  // the readout: the move, the phase it is in, the sound firing, and what it needs that PLAY NOW will fill in (red)
+  const cn = celebCastN(mv), unmet = celTUnmet(mv), y0 = B.hype.y + 26 + 16, sfxOn = performance.now() - celebDbg.at < 600;
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = 'bold 12px monospace'; ctx.shadowColor = '#000'; ctx.shadowBlur = 3;
+  ctx.fillStyle = '#fff';
+  ctx.fillText(`${T.id}  [${[].concat(mv.tag).join(' ')}]  cast ${cn.join('-')}  ${mv.secs}s`, CELT.x, y0, CELT.w);
+  ctx.fillText(`PHASE: ${celTPhase()}`, CELT.x, y0 + 20, CELT.w);
+  ctx.fillStyle = sfxOn ? '#ffd94a' : '#fff'; ctx.fillText(`SFX: ${sfxOn ? celebDbg.sfx : '-'}`, CELT.x, y0 + 40, CELT.w);
+  ctx.fillStyle = unmet.length ? '#ff6a5a' : '#9be28a';
+  ctx.fillText(unmet.length ? `NEEDS: ${unmet.join(', ')} (auto-filled)` : `NEEDS: ${mv.needs || 'nothing'} (met)`, CELT.x, y0 + 60, CELT.w);
+  ctx.restore();
+}
+function celTClick(p) {
+  const T = celT, B = CELT_B, list = celTList(), pages = Math.max(1, Math.ceil(list.length / CELT.rows)), mv = CELEB_MOVES[T.id];
+  const dir = b => p.x < b.x + b.w / 2 ? -1 : 1, cyc = (v, n, d = 1) => (v + d + n) % n, row = B.rows.findIndex(b => inBtn(p, b));
+  if (inBtn(p, B.tag)) { T.tag = cyc(T.tag, CELT_TAGS.length, dir(B.tag)); T.page = 0; }
+  else if (row >= 0) { const id = list[T.page * CELT.rows + row]; if (id) { T.id = id; T.cast = 0; } }
+  else if (inBtn(p, B.prev)) T.page = cyc(T.page, pages, -1);
+  else if (inBtn(p, B.next)) T.page = cyc(T.page, pages);
+  else if (inBtn(p, B.force)) T.force = !T.force;
+  else if (inBtn(p, B.play)) celTPlay();
+  else if (inBtn(p, B.spd)) T.spd = cyc(T.spd, CELT.speeds.length);
+  else if (inBtn(p, B.loop)) T.loop = !T.loop;
+  else if (inBtn(p, B.mir)) T.mir = !T.mir;
+  else if (inBtn(p, B.lock)) T.lock = !T.lock;
+  else if (inBtn(p, B.zoom)) T.zoom = cyc(T.zoom, CELT.zooms.length);
+  else if (inBtn(p, B.big)) T.big = !T.big;
+  else if (inBtn(p, B.cast)) { const cn = celebCastN(mv), n = celTCast(mv); T.cast = n >= cn[cn.length - 1] ? cn[0] : n + 1; }
+  else if (inBtn(p, B.hype)) T.hy = Math.round(Math.max(0, Math.min(1, (p.x - (B.hype.x + 92)) / (B.hype.w - 104))) * 20) / 20;
+  else return p.x < CELT.x + CELT.w + 6 && p.y > CELT.y - 6 && p.y < CELT_BOT + 6;   // (a click on the panel itself never reaches the field)
+  celTSync();
   return true;
 }
 // --- 1v1 (START > QUICK PLAY > 1V1) ---------------------------------------------------------------
@@ -590,10 +728,10 @@ function drawTeamPicker() {
   paperBg();
   ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.font = 'bold 34px monospace';
-  ctx.fillText(teamPick === 'fav' ? 'Choose Your Favorite Team' : teamPick === 'roster' ? 'VIEW A ROSTER' : teamPick === 'tradeTeam' ? 'SHOW ONE TEAM' : teamPick === 'tradePartner' ? 'TRADE WITH' : teamPick === 'online' ? 'YOUR TEAM' : /^oo:/.test(teamPick) ? `PICK A TEAM: ${ovLabel(teamPick.slice(3))}` : 'SWAP', W / 2, 40);
+  ctx.fillText(teamPick === 'fav' ? 'Choose Your Favorite Team' : teamPick === 'roster' ? 'VIEW A ROSTER' : teamPick === 'front' ? 'VIEW A FRONT OFFICE' : teamPick === 'records' ? 'A FRANCHISE RECORD BOOK' : teamPick === 'tradeTeam' ? 'SHOW ONE TEAM' : teamPick === 'tradePartner' ? 'TRADE WITH' : teamPick === 'online' ? 'YOUR TEAM' : /^oo:/.test(teamPick) ? `PICK A TEAM: ${ovLabel(teamPick.slice(3))}` : 'SWAP', W / 2, 40);
   for (const [conf, b] of Object.entries(PICK_TABS)) menuBtn(b, conf, conf === pickConf ? SEL : RES.bright, 26);
   PICK_DIVS.forEach((div, di) => { const pn = PICK_PANEL(di); resPanel(pn.x, pn.y, pn.w, pn.h, [[`${pickConf} ${div}`, null]], RES.bright); });
-  const cur = /^oo:/.test(teamPick) ? OV.pick[teamPick.slice(3)].team : teamPick === 'online' ? ol.team : teamPick === 'fav' ? career.team : teamPick === 'roster' ? viewTeam() : MATCH[teamPick];
+  const cur = /^oo:/.test(teamPick) ? OV.pick[teamPick.slice(3)].team : teamPick === 'online' ? ol.team : teamPick === 'fav' ? career.team : teamPick === 'roster' ? viewTeam() : teamPick === 'front' ? (staffView.team || MATCH.you) : teamPick === 'records' ? recView.team : MATCH[teamPick];
   for (const b of PICK_BTNS.filter(b => b.conf === pickConf)) {
     const t = NFL[b.key];
     menuBtn(b, '', RES.bright, 20, bb => {
@@ -633,6 +771,8 @@ function teamPickClick(p) {
   else if (b && /^oo:/.test(teamPick)) { OV.slot = teamPick.slice(3); OV.team = b.key; teamPick = null; results.screen = 'oopick'; }   // (1v1: that team's roster, to pick a man)
   else if (b && teamPick === 'fav') { career.team = b.key; teamPick = null; }
   else if (b && teamPick === 'roster') { rosterView.team = b.key === MATCH.you ? null : b.key; rosterView.sel = null; rosterView.page = 0; teamPick = null; }
+  else if (b && teamPick === 'front') { staffView.team = b.key === MATCH.you ? null : b.key; staffView.sel = null; POA = null; teamPick = null; }
+  else if (b && teamPick === 'records') { recView.team = b.key; recView.open = null; recView.page = 0; teamPick = null; }   // (the record book's FRANCHISE tab)
   else if (b && teamPick === 'tradeTeam') { TR.team = b.key; TR.page = 0; TR.v++; teamPick = null; }
   else if (b && teamPick === 'tradePartner') { if (b.key !== season.team) tradePartner(b.key); }
   else if (teamPick === 'tradeTeam' && inBtn(p, PICK_ALL)) { TR.team = null; TR.page = 0; TR.v++; teamPick = null; }
@@ -1156,7 +1296,7 @@ function wxAudio() {
   const on = sndOn() && wxLive() && !(rec && rec.replaying && rec.paused);   // (a paused replay silences the weather too)
   if (!sndOn()) { silenceLoops(); return; }
   // rain: an HTML audio loop (works from a file too)
-  const want = on ? WXI.rain * WX_SND.rain * VOL() * duck : 0;
+  const want = on ? WXI.rain * WX_SND.rain * VOL() * duck * crowdDuck() : 0;   // (crowdDuck: under a celebration's crowd pop)
   if (want > 0.002 && !wxRainEl) { try { wxRainEl = new Audio('audio/rain.mp3'); wxRainEl.loop = true; wxRainEl.volume = 0; } catch (e) {} }
   if (wxRainEl) {
     const v = wxRainEl._v || 0, nv = Math.max(0, Math.min(1, v + Math.max(-WX_SND.fade * dt, Math.min(WX_SND.fade * dt, want - v))));   // (tracked here: phones that ignore .volume read 1 back, so the rain never faded out or paused)
@@ -1177,7 +1317,7 @@ function wxAudio() {
   }
   const t = a.currentTime, gust = 0.7 + 0.25 * Math.sin(t * 0.6) + 0.15 * Math.sin(t * 1.9 + 1);
   const wind = on && !liteGame() && WXI.mph > 7 ? Math.min(1, (WXI.mph - 7) / 27) * 0.3 * gust : 0;   // (performance mode: no wind hiss)
-  wxAud.wg.gain.setTargetAtTime(wind, t, 0.25);
+  wxAud.wg.gain.setTargetAtTime(wind * crowdDuck(), t, 0.25);
   wxAud.wf.frequency.setTargetAtTime(280 + 260 * gust, t, 0.3);
 }
 // --- footsteps: audio/footsteps.mp3 (only its steady stretch, from..to, loops). Two players only: the one you control (vol) and the
@@ -1364,7 +1504,7 @@ function injuryHit(p, kind) {
 function injuryAuto() {
   const c = injuryCall;
   if (!c || !aiOff()) return;
-  if (!c.re && c.s.inj.sev === 0 && keepAllowed(c.s)) c.s.inj.kept = true; else c.s.outGame = true;
+  if (!c.re && c.s.inj.sev === 0 && keepAllowed(c.s)) c.s.inj.kept = true; else { c.s.outGame = true; slExit(c.p, c.s); }   // (he leaves the field: sideline people, 07-drawing)
   injuryCall = null; recalcTeamStars();
 }
 // a game starts: who's available
@@ -1721,29 +1861,142 @@ const HIRE = { budget: 25, perFans: 0, perLevel: 0, poolSize: 5, scout: 1, elsew
 const HIRE_ROLE = { oc: { label: 'OFFENSIVE COORDINATOR', short: 'OC', side: 'off' }, dc: { label: 'DEFENSIVE COORDINATOR', short: 'DC', side: 'def' },
                     to: { label: 'OFFENSE TRAINER', short: 'OFF TRAINER', side: 'off' }, td: { label: 'DEFENSE TRAINER', short: 'DEF TRAINER', side: 'def' } };
 const HIRE_ROLES = ['oc', 'dc', 'to', 'td'];
+// scouts (SCOUT tunables): two more jobs, STAFF[you].sc.off / .def, hired / fired / paid like the others while scoutsOn()
+HIRE_ROLE.so = { label: 'OFFENSE SCOUT', short: 'OFF SCOUT', side: 'off' }; HIRE_ROLE.sd = { label: 'DEFENSE SCOUT', short: 'DEF SCOUT', side: 'def' };
+const SCOUT_ROLES = ['so', 'sd'], isScout = r => r === 'so' || r === 'sd', hireRolesAll = () => scoutsOn() ? [...HIRE_ROLES, ...SCOUT_ROLES] : HIRE_ROLES;
+const salOf = (role, stars) => r1(marketSal(stars) * (isScout(role) ? SCOUT.salK : 1));   // the going rate for that job
+const scoutKnows = sc => String(sc.spec || '').split(' ')[0];   // the position group he knows best ('QB EXPERT' -> 'QB')
+function scoutNew(side, [lo, hi]) {
+  const role = side === 'off' ? 'so' : 'sd', stars = lo + rint(0, Math.round((hi - lo) * 2)) / 2;
+  return { role: HIRE_ROLE[role].label, name: `${pick(NAME_FIRST)} ${pick(NAME_LAST)}`, stars, spec: pick(hireSpecs(role)), trait: '', age: rint(30, 62), sal: r1(salOf(role, stars) * (0.9 + Math.random() * 0.2)), years: rint(1, 3), face: makeFace(Math.random, true) };
+}
+function scoutsOf(team) {   // a team's two scouts { off, def }, made the first time they're asked for (old saves, the other teams, a team you just took over)
+  const s = STAFF[team] || STAFF.KC, mine = !!season && !exhibition && team === season.team;
+  if (!s.sc) s.sc = {};
+  for (const side of ['off', 'def']) if (!s.sc[side]) s.sc[side] = scoutNew(side, mine ? SCOUT.start : SCOUT.ai);
+  return s.sc;
+}
+const scoutFor = p => scoutsOf(season.team)[OFF_GROUPS.includes(p.group) ? 'off' : 'def'];   // your scout who covers that prospect
+const scoutNamed = (sc, p) => !!(sc.asg && sc.asg.names && sc.asg.names.includes(p.name)), scoutGrp = (sc, p) => !!(sc.asg && sc.asg.grp === p.group);
+function scoutErrK(sc, p) {   // x DRAFT.scoutErr: how far off his read of a prospect's potential can be (p = that prospect: his assignment and specialty count)
+  let k = SCOUT.err1 - SCOUT.errStar * (sc.stars - 1);
+  if (p) { k *= scoutNamed(sc, p) ? 1 - SCOUT.plBonus : scoutGrp(sc, p) ? 1 - SCOUT.grpBonus : 1; if (scoutKnows(sc) === p.group) k *= 1 - SCOUT.specBonus; }
+  return Math.max(SCOUT.errMin, k);
+}
+// next spring's draft class: made at the start of the season (kept on LEAGUE.nextClass, used by offToDraft) so the scouts have prospects to watch
+function scoutClass() { if (!LEAGUE.nextClass) LEAGUE.nextClass = genDraftClass(); return LEAGUE.nextClass; }
+const scoutPool = () => OFF && OFF.draft && !OFF.draft.done ? OFF.draft.pool : scoutClass().pool;
+const scoutKind = (p, i) => ptsOf(p) >= SCOUT.gen.pts ? 'gen' : Math.min(7, Math.floor(i / SCOUT.perRound) + 1) - draftValue(scoreOf(p), ptsOf(p)) >= SCOUT.under.rounds ? 'under' : null;   // what he really is (i = his place on the board)
+// a scout works through a share of the prospects on his side he hasn't seen yet (named ones first): a find sets p.flag ('gen' / 'under'), a false alarm too
+function scoutLook(sc, side, pool, share) {
+  const out = [], off = side === 'off', own = p => OFF_GROUPS.includes(p.group) === off, star = sc.stars;
+  let unders = pool.filter(p => own(p) && p.flag === 'under').length; const seen = [];
+  pool.forEach((p, i) => {
+    if (p.seen || !own(p) || !(scoutNamed(sc, p) || Math.random() < share)) return;
+    p.seen = 1;
+    const kind = scoutKind(p, i), f = scoutNamed(sc, p) || scoutGrp(sc, p) ? SCOUT.focus : 0;
+    if (kind === 'gen' && Math.random() < SCOUT.gen.find + SCOUT.gen.findStar * star + f) { p.flag = 'gen'; out.push(p); }
+    else if (kind === 'under' && unders < SCOUT.under.max && Math.random() < SCOUT.under.find + SCOUT.under.findStar * star + f) { p.flag = 'under'; unders++; out.push(p); }
+    else if (!kind) seen.push(p);
+  });
+  if (seen.length && unders < SCOUT.under.max && Math.random() < (SCOUT.wrong - SCOUT.wrongStar * star) * share) { const p = pick(seen); p.flag = 'under'; out.push(p); }   // (a false alarm: he looks the same on the board)
+  return out;
+}
+function scoutWeek() {   // once a week of the season (from homeNews): both scouts file what they found
+  if (!scoutsOn() || !season || season.offseason) return;
+  const tag = `${LEAGUE.year}:${season.week}`; if (LEAGUE.scoutTag === tag) return; LEAGUE.scoutTag = tag;
+  const S = scoutsOf(season.team), pool = scoutClass().pool;
+  for (const side of ['off', 'def']) for (const p of scoutLook(S[side], side, pool, 1 / SCOUT.weeks))
+    (LEAGUE.scoutNews = LEAGUE.scoutNews || []).push(`${S[side].name} (${side === 'off' ? 'offense' : 'defense'} scout): ${p.name}, ${p.tag}, ${p.flag === 'gen' ? 'looks like a GENERATIONAL talent.' : 'is UNDERRATED: better than the board has him.'}`);
+}
+function scoutDraftDay(pool) {   // the draft opens: whoever they had not got to yet is looked at now
+  const S = scoutsOf(season.team);
+  for (const side of ['off', 'def']) scoutLook(S[side], side, pool, 1);
+}
+function scoutDraftOver() {   // the class is gone: named assignments and the prospects' marks go with it
+  for (const sc of Object.values(scoutsOf(season.team))) if (sc.asg && sc.asg.names) sc.asg = null;
+  for (const p of [...Object.values(ROSTER).flat(), ...FA_POOL]) if (p.seen || p.flag) { delete p.seen; delete p.flag; }
+}
+function scoutBadge(b, flag) {   // on a prospect's card in the draft
+  const gen = flag === 'gen', t = gen ? 'GENERATIONAL' : 'UNDERRATED', w = gen ? 112 : 96, x = b.x + b.w - w - 6, y = b.y - 8;
+  ctx.fillStyle = gen ? '#ffd23f' : '#6cc070'; ctx.fillRect(x, y, w, 20); ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, 20);
+  ctx.fillStyle = '#1a1a1a'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(t, x + w / 2, y + 11);
+}
+// the scouts on the FACILITIES campus (bottom right): click one to assign him (one position group, or up to SCOUT.maxPlayers prospects by name)
+const PR_SCOUT = { off: { x: 690, y: 492, w: 275, h: 120 }, def: { x: 975, y: 492, w: 275, h: 120 } };
+let SCU = null;   // the assignment popup: { side, page }
+const SCU_P = { x: 190, y: 66, w: 900, h: 590 }, SCU_PER = 12, SCU_G = [], SCU_R = [];
+const scuGrpBtn = i => SCU_G[i] || (SCU_G[i] = { x: SCU_P.x + 24 + i * 122, y: SCU_P.y + 104, w: 114, h: 40 });   // 0 = GENERAL, then his side's groups
+const scuRow = i => SCU_R[i] || (SCU_R[i] = { x: SCU_P.x + 24 + (i % 2) * 430, y: SCU_P.y + 210 + Math.floor(i / 2) * 46, w: 422, h: 40 });
+const SCU_PREV = { x: SCU_P.x + 24, y: SCU_P.y + SCU_P.h - 62, w: 120, h: 44 }, SCU_NEXT = { x: SCU_P.x + SCU_P.w - 144, y: SCU_P.y + SCU_P.h - 62, w: 120, h: 44 }, SCU_CLOSE = { x: SCU_P.x + SCU_P.w / 2 - 80, y: SCU_P.y + SCU_P.h - 62, w: 160, h: 44 };
+const scoutAsgText = sc => sc.asg && sc.asg.grp ? `GROUP: ${sc.asg.grp}` : sc.asg && sc.asg.names && sc.asg.names.length ? `WATCHING ${sc.asg.names.length} PROSPECT${sc.asg.names.length > 1 ? 'S' : ''}` : 'GENERAL SCOUTING';
+const scuList = side => scoutPool().map((p, i) => ({ p, i })).filter(x => OFF_GROUPS.includes(x.p.group) === (side === 'off'));
+function drawPracScouts() {
+  const S = scoutsOf(MATCH.you);
+  for (const side of ['off', 'def']) {
+    const sc = hireFill(S[side], side === 'off' ? 'so' : 'sd');
+    menuBtn(PR_SCOUT[side], '', RES.bright, 20, b => {
+      ctx.save(); ctx.beginPath(); ctx.rect(b.x + 12, b.y + 14, 64, 70); ctx.clip(); ctx.fillStyle = '#d9e2f2'; ctx.fillRect(b.x + 12, b.y + 14, 64, 70); drawAvatar(sc.face, b.x + 44, b.y + 52, 32, { shirt: side === 'off' ? '#2a62b0' : '#b82a30' }); ctx.restore();
+      ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(b.x + 12, b.y + 14, 64, 70);
+      ctx.fillStyle = RES.dim; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(side === 'off' ? 'OFFENSE SCOUT' : 'DEFENSE SCOUT', b.x + 86, b.y + 22);
+      ctx.fillStyle = RES.line; ctx.font = 'bold 16px monospace'; ctx.fillText(sc.name, b.x + 86, b.y + 42, b.w - 96);
+      starsRow(b.x + 92, b.y + 64, sc.stars, 9);
+      ctx.fillStyle = RES.gold; ctx.font = 'bold 13px monospace'; ctx.fillText(scoutAsgText(sc), b.x + 14, b.y + 100, b.w - 28);
+    });
+  }
+}
+function drawScu() {
+  const side = SCU.side, sc = scoutsOf(MATCH.you)[side], P = SCU_P, L = scuList(side), pages = Math.max(1, Math.ceil(L.length / SCU_PER)), names = sc.asg && sc.asg.names || [];
+  SCU.page = Math.min(SCU.page, pages - 1);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
+  resPanel(P.x, P.y, P.w, P.h, [[`${side === 'off' ? 'OFFENSE' : 'DEFENSE'} SCOUT: ${sc.name}`, 24]], RES.bright);
+  ctx.fillStyle = RES.line; ctx.font = '14px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(`ONE position group (reads ${Math.round(SCOUT.grpBonus * 100)}% tighter), or up to ${SCOUT.maxPlayers} prospects by name (${Math.round(SCOUT.plBonus * 100)}% tighter). ${scoutKnows(sc)} is his specialty.`, P.x + 24, P.y + 76, P.w - 48);
+  ['GENERAL', ...SCOUT.groups[side]].forEach((g, i) => menuBtn(scuGrpBtn(i), g, (i ? sc.asg && sc.asg.grp === g : !sc.asg || !(sc.asg.grp || names.length)) ? SEL : RES.bright, 18));
+  ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.fillText(`NEXT DRAFT CLASS, BEST ON THE BOARD FIRST   (${names.length} / ${SCOUT.maxPlayers} NAMED)`, P.x + 24, P.y + 180);
+  L.slice(SCU.page * SCU_PER, SCU.page * SCU_PER + SCU_PER).forEach((x, j) => menuBtn(scuRow(j), `#${x.i + 1}  ${x.p.tag}  ${x.p.name}  ${x.p.stars}★${x.p.flag ? (x.p.flag === 'gen' ? '  GENERATIONAL' : '  UNDERRATED') : ''}`, names.includes(x.p.name) ? SEL : RES.bright, 15));
+  if (SCU.page > 0) menuBtn(SCU_PREV, '< PREV', RES.bright, 18);
+  if (SCU.page < pages - 1) menuBtn(SCU_NEXT, 'NEXT >', RES.bright, 18);
+  menuBtn(SCU_CLOSE, 'CLOSE', RES.bright, 18);
+}
+function scuClick(pt) {
+  const side = SCU.side, sc = scoutsOf(MATCH.you)[side], L = scuList(side);
+  if (inBtn(pt, SCU_CLOSE) || !inBtn(pt, SCU_P)) { SCU = null; autosaveSoon(); return; }
+  if (SCU.page > 0 && inBtn(pt, SCU_PREV)) { SCU.page--; return; }
+  if (inBtn(pt, SCU_NEXT)) { SCU.page++; return; }
+  const g = ['GENERAL', ...SCOUT.groups[side]].findIndex((x, i) => inBtn(pt, scuGrpBtn(i)));
+  if (g >= 0) { sc.asg = g ? { grp: SCOUT.groups[side][g - 1] } : null; return; }
+  for (let j = 0; j < SCU_PER; j++) {
+    const x = L[SCU.page * SCU_PER + j]; if (!x || !inBtn(pt, scuRow(j))) continue;
+    const names = sc.asg && sc.asg.names ? sc.asg.names : [];
+    if (names.includes(x.p.name)) sc.asg = names.length > 1 ? { names: names.filter(n => n !== x.p.name) } : null;
+    else if (names.length < SCOUT.maxPlayers) sc.asg = { names: [...names, x.p.name] };   // (naming a prospect takes him off a group)
+    return;
+  }
+}
 const COORD_SPEC = {
   oc: { 'PASS-HEAVY': { t: { 0: 'P', 1: 'S' }, text: 'Prefers to pass' }, 'RUN-HEAVY': { t: { 0: 'R', 1: 'S' }, text: 'Prefers to run' }, AGGRESSIVE: { t: { 0: 'P', 1: 'O' }, text: 'Passes, goes for it on 4th' } },
   dc: { 'RUN-STOPPER': { t: { 2: 'H', 3: '3', 5: 'O' }, text: 'Heavy blitz, Cover 3, off corners' }, COVERAGE: { t: { 2: 'L', 3: '4', 5: 'P' }, text: 'Light blitz, Cover 4, press corners' }, 'BLITZ-HAPPY': { t: { 2: 'H', 4: '1', 5: 'P' }, text: 'Blitzes a lot, Cover 0, press' } },
 };
 const r1 = v => Math.round(v * 10) / 10;
 const marketSal = stars => r1(0.8 + 0.55 * stars ** 1.6);
-function hireSpecs(role) { return HIRE_ROLE[role].short.endsWith('TRAINER') ? PRAC_SPEC[HIRE_ROLE[role].side].map(x => x.id) : Object.keys(COORD_SPEC[role]); }
-function hireTraits(role) { return role === 'to' || role === 'td' ? Object.keys(TRAINER_TRAITS) : Object.keys(TRAIT_INFO); }
+function hireSpecs(role) { return isScout(role) ? SCOUT.groups[HIRE_ROLE[role].side].map(g => g + ' EXPERT') : HIRE_ROLE[role].short.endsWith('TRAINER') ? PRAC_SPEC[HIRE_ROLE[role].side].map(x => x.id) : Object.keys(COORD_SPEC[role]); }
+function hireTraits(role) { return isScout(role) ? [''] /* scouts have no trait */ : role === 'to' || role === 'td' ? Object.keys(TRAINER_TRAITS) : Object.keys(TRAIT_INFO); }
 function hireCand(role, minStars = 1) {
   let stars = Math.max(minStars, pick([1, 2, 2, 3, 3, 3, 4, 4, 5])); const coord = role === 'oc' || role === 'dc';
   if (stars > Math.max(1, minStars) && Math.random() < HIRE.half) stars -= 0.5;
   const lo = Math.max(1, stars - rint(0, 1)), hi = Math.min(5, stars + rint(0, 1));
   const t = hireTraits(role);
   return { role, name: `${pick(NAME_FIRST)} ${pick(NAME_LAST)}`, stars, spec: pick(hireSpecs(role)), trait: pick(t), trait2: Math.random() < 0.35 ? pick(t) : null,
-           age: coord ? rint(38, 66) : rint(30, 62), ask: r1(marketSal(stars) * (0.9 + Math.random() * 0.3)), want: rint(1, 4), lo, hi, scouted: false, refused: false, face: makeFace(Math.random, true) };
+           age: coord ? rint(38, 66) : rint(30, 62), ask: r1(salOf(role, stars) * (0.9 + Math.random() * 0.3)), want: rint(1, 4), lo, hi, scouted: false, refused: false, face: makeFace(Math.random, true) };
 }
 function hirePerson(c, sal, years) {   // a candidate who signed: the person who holds the job
   const p = { role: HIRE_ROLE[c.role].label, name: c.name, stars: c.stars, spec: c.spec, trait: c.trait, age: c.age, sal, years, face: c.face };
   if (c.trait2 && c.trait2 !== c.trait) p.trait2 = c.trait2;
   return p;
 }
-const hireGet = role => role === 'oc' || role === 'dc' ? (STAFF[MATCH.you] || STAFF.KC)[role] : prac().tr[HIRE_ROLE[role].side];
-function hireSet(role, p) { if (role === 'oc' || role === 'dc') { STAFF[MATCH.you][role] = p; hireTend(role, p.spec); } else prac().tr[HIRE_ROLE[role].side] = p; recalcTeamStars(); }   // (a new coordinator moves the offense / defense rating)
+const hireGet = role => role === 'oc' || role === 'dc' ? (STAFF[MATCH.you] || STAFF.KC)[role] : isScout(role) ? scoutsOf(MATCH.you)[HIRE_ROLE[role].side] : prac().tr[HIRE_ROLE[role].side];
+function hireSet(role, p) { if (isScout(role)) { scoutsOf(MATCH.you)[HIRE_ROLE[role].side] = p; return; } if (role === 'oc' || role === 'dc') { STAFF[MATCH.you][role] = p; hireTend(role, p.spec); } else prac().tr[HIRE_ROLE[role].side] = p; recalcTeamStars(); }   // (a new coordinator moves the offense / defense rating)
 function hireTend(role, spec) {   // a coordinator's specialty sets the team's play-calling tendencies
   const s = STAFF[MATCH.you], a = (s.tend || TEND_RAW[MATCH.you] || 'P S M 3 0 O').split(' '), cs = COORD_SPEC[role][spec];
   if (cs) for (const [i, v] of Object.entries(cs.t)) a[i] = v;
@@ -1751,7 +2004,7 @@ function hireTend(role, spec) {   // a coordinator's specialty sets the team's p
 }
 function hireFill(p, role) {   // old saves / coordinators from the league: age, salary, specialty, face
   if (p.age == null) p.age = role === 'oc' || role === 'dc' ? rint(38, 66) : rint(30, 62);
-  if (p.sal == null) p.sal = r1(marketSal(p.stars) * (0.85 + Math.random() * 0.3));
+  if (p.sal == null) p.sal = r1(salOf(role, p.stars) * (0.85 + Math.random() * 0.3));
   if (p.years == null) p.years = rint(1, 3);
   if (!p.face) p.face = makeFace(Math.random, true);
   if (p.trait == null) p.trait = pick(hireTraits(role));
@@ -1761,11 +2014,11 @@ function hireFill(p, role) {   // old saves / coordinators from the league: age,
   }
   return p;
 }
-const hireAll = () => HIRE_ROLES.map(r => hireFill(hireGet(r), r));
+const hireAll = () => hireRolesAll().map(r => hireFill(hireGet(r), r));
 const crewPay = () => r1(hireAll().reduce((t, p) => t + p.sal, 0));
 const BUDGET_UP = { cost: 50, step: 5 };   // credits for +step $M of staff budget (hiring screen)
 const BUDGET_UP_BTN = { x: 1000, y: 606, w: 250, h: 40 };
-const staffBudget = () => r1(HIRE.budget + (LEAGUE.staffExtra || 0) + HIRE.perFans * Math.min(1, LEAGUE.fans || 0) + HIRE.perLevel * (Object.values(prac().fac).reduce((t, f) => t + f.lvl, 0) - 4));
+const staffBudget = () => r1(HIRE.budget + (scoutsOn() ? SCOUT.budget : 0) + (LEAGUE.staffExtra || 0) + HIRE.perFans * Math.min(1, LEAGUE.fans || 0) + HIRE.perLevel * (Object.values(prac().fac).reduce((t, f) => t + f.lvl, 0) - 4));
 function hireAppeal() {   // 0 - 1: facilities, record, fans
   let succ = 0.5; try { const T = seasonTable()[season.team]; if (T && T.w + T.l + T.t) succ = winPct(T); } catch (e) {}
   return 0.35 * (Object.values(prac().fac).reduce((t, f) => t + f.lvl, 0) - 4) / 16 + 0.4 * succ + 0.25 * Math.min(1, (LEAGUE.fans || 0) / 0.8);
@@ -1775,6 +2028,7 @@ const buyoutOf = p => p.interim ? 0 : Math.ceil(p.sal * Math.max(0, p.years - 1)
 function hirePool() {
   const H = career.hire || (career.hire = { pool: null });
   if (!H.pool) H.pool = Object.fromEntries(HIRE_ROLES.map(r => [r, Array.from({ length: HIRE.poolSize }, () => hireCand(r))]));
+  for (const r of SCOUT_ROLES) if (!H.pool[r]) H.pool[r] = Array.from({ length: HIRE.poolSize }, () => hireCand(r));   // (pools made before scouts existed)
   return H.pool;
 }
 function hireInterim(role) {
@@ -1784,7 +2038,7 @@ function hireInterim(role) {
 function hireFire(role) {
   const p = hireGet(role), cost = buyoutOf(p);
   if (LEAGUE.coins < cost) { HB.msg = { t: performance.now(), text: `BUYOUT IS ${cost} ¤` }; return; }
-  LEAGUE.coins -= cost; if (cost) spendFx(HIRE_FIRE[HIRE_ROLES.indexOf(role)], cost); hireSet(role, hireInterim(role));
+  LEAGUE.coins -= cost; if (cost) spendFx(HIRE_FIRE[Math.max(0, hirePageRoles().indexOf(role))], cost); hireSet(role, hireInterim(role));
   postNote('coachFire', { team: pTeam(MATCH.you), name: p.name, role: HIRE_ROLE[role].label || HIRE_ROLE[role].short }, { w: 8, team: MATCH.you }); HB.msg = { t: performance.now(), text: `${p.name} FIRED` }; autosaveSoon();
 }
 function hireOffer(c, role, sal, yrs) {
@@ -1794,19 +2048,19 @@ function hireOffer(c, role, sal, yrs) {
   if (LEAGUE.coins < cost) { HB.msg = { t: performance.now(), text: `BUYING OUT ${cur.name}: ${cost} ¤` }; return; }
   if (Math.random() < acceptP(c, sal, yrs)) {
     LEAGUE.coins -= cost; if (cost) spendFx(BN.offer, cost); hireSet(role, hirePerson(c, sal, yrs));
-    { const R = HIRE_ROLE[role], off = role === 'oc' || role === 'to'; postNote('coachHire', { team: pTeam(MATCH.you), name: c.name, role: R.label || R.short, stars: c.stars, side: off ? 'Offense' : 'Defense', sideL: off ? 'offense' : 'defense' }, { w: 9, team: MATCH.you }); }
+    { const R = HIRE_ROLE[role], off = R.side === 'off'; postNote('coachHire', { team: pTeam(MATCH.you), name: c.name, role: R.label || R.short, stars: c.stars, side: off ? 'Offense' : 'Defense', sideL: off ? 'offense' : 'defense' }, { w: 9, team: MATCH.you }); }
     const pool = hirePool(); pool[role] = pool[role].filter(x => x !== c); HB.sel = null;
     HB.msg = { t: performance.now(), text: `${c.name} SIGNED` }; autosaveSoon();
   } else { c.refused = true; HB.msg = { t: performance.now(), text: `${c.name} TURNED YOU DOWN` }; }
 }
 function hireWeek(passed) {   // during the year some candidates sign elsewhere
   const pool = hirePool();
-  for (let w = 0; w < passed; w++) for (const r of HIRE_ROLES) if (pool[r].length && Math.random() < HIRE.elsewhere) pool[r].splice(rint(0, pool[r].length - 1), 1);
+  for (let w = 0; w < passed; w++) for (const r of hireRolesAll()) if (pool[r].length && Math.random() < HIRE.elsewhere) pool[r].splice(rint(0, pool[r].length - 1), 1);
 }
 function hireOffseason() {   // a year goes by: ages, contracts, retirements, poaching, and a new pool
   const lines = [];
-  for (const r of HIRE_ROLES) {
-    const p = hireFill(hireGet(r), r), coord = r === 'oc' || r === 'dc', market = marketSal(p.stars);
+  for (const r of hireRolesAll()) {
+    const p = hireFill(hireGet(r), r), coord = r === 'oc' || r === 'dc', market = salOf(r, p.stars);
     p.age++;
     if (!coord && !p.interim) p.years--;   // (coordinators' contracts run in offStaff)
     let gone = null;
@@ -1823,13 +2077,15 @@ function hireOffseason() {   // a year goes by: ages, contracts, retirements, po
 }
 
 // the staff screen: the four people as cards, the crewPay against the budget
-const HB = { role: 'oc', sel: null, sal: 0, yrs: 2, msg: null };
+const HB = { role: 'oc', sel: null, sal: 0, yrs: 2, msg: null, pg: 0 };   // pg 1 = the staff screen shows the scouts
+const hirePageRoles = () => HB.pg && scoutsOn() ? SCOUT_ROLES : HIRE_ROLES;   // the staff screen's cards: coaches and trainers, or the two scouts
 const HIRE_CARDS = HIRE_ROLES.map((r, i) => ({ x: 30 + i * 308, y: 92, w: 292, h: 506 }));
 const HIRE_BOARD_BTN = { x: 130, y: 625, w: 250, h: 80 };
 const hireFireBtn = i => ({ x: HIRE_CARDS[i].x + 66, y: HIRE_CARDS[i].y + HIRE_CARDS[i].h - 46, w: 160, h: 34 });
 const HIRE_FIRE = HIRE_ROLES.map((r, i) => hireFireBtn(i));
 function hireLines(p, role) {   // what he does for the team
   const coord = role === 'oc' || role === 'dc';
+  if (isScout(role)) return [`POTENTIAL READS OFF BY UP TO ${(DRAFT.scoutErr * scoutErrK(p)).toFixed(1)} PTS`, `${p.spec}: sharper on that group`, `SPOTS A GENERATIONAL TALENT ${Math.round(100 * Math.min(1, SCOUT.gen.find + SCOUT.gen.findStar * p.stars))}%`];
   if (coord) {
     const d = (p.stars - 3) * 0.2, cs = COORD_SPEC[role][p.spec];
     return [`${role === 'oc' ? 'OFFENSE' : 'DEFENSE'} RATING ${d >= 0 ? '+' : ''}${d.toFixed(1)} VS AVERAGE`, cs ? cs.text : '', TRAIT_INFO[p.trait] || ''];
@@ -1856,7 +2112,7 @@ function drawHireCard(b, p, role, i, big) {
   ctx.font = 'bold 14px monospace'; ctx.fillStyle = RES.gold; ctx.fillText(`${p.spec}${p.interim ? '  (INTERIM)' : ''}`, b.x + b.w / 2, b.y + 228, b.w - 16);
   ctx.fillText(traitName(p).toUpperCase(), b.x + b.w / 2, b.y + 248, b.w - 16);
   ctx.fillStyle = RES.line; ctx.font = '14px monospace';
-  const left = p.years, under = p.sal < marketSal(p.stars) * HIRE.poach;
+  const left = p.years, under = p.sal < salOf(role, p.stars) * HIRE.poach;
   ctx.fillText(`AGE ${p.age}   $${p.sal.toFixed(1)}M   ${left} YR${left === 1 ? '' : 'S'} LEFT`, b.x + b.w / 2, b.y + 276, b.w - 12);
   if (under) { ctx.fillStyle = '#c81b1b'; ctx.font = 'bold 13px monospace'; ctx.fillText('UNDERPAID: OTHER TEAMS MAY POACH HIM', b.x + b.w / 2, b.y + 296, b.w - 12); }
   ctx.fillStyle = RES.dim; ctx.font = '13px monospace'; ctx.textAlign = 'left';
@@ -1870,7 +2126,8 @@ function drawHire() {
   ctx.fillStyle = RES.line; ctx.font = 'bold 40px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('COACHING & TRAINING STAFF', W / 2, 46);
   coinBox(26, 22, LEAGUE.coins, RES.bright);
-  HIRE_ROLES.forEach((r, i) => { drawHireCard(HIRE_CARDS[i], hireGet(r), r, i); menuBtn(HIRE_FIRE[i], 'FIRE', RES.bright, 16); });
+  hirePageRoles().forEach((r, i) => { drawHireCard(HIRE_CARDS[i], hireGet(r), r, i); menuBtn(HIRE_FIRE[i], 'FIRE', RES.bright, 16); });
+  if (scoutsOn()) menuBtn(HIRE_PG_BTN, HB.pg ? '< COACHES & TRAINERS' : 'SCOUTS >', RES.bright, 18);
   menuBtn(HIRE_BOARD_BTN, 'HIRING BOARD', RES.bright, 22);
   const pay = crewPay(), bud = staffBudget(), B = { x: 410, y: 636, w: 560, h: 26 };   // (ends before the +5M BUDGET button)
   ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = 'bold 17px monospace';
@@ -1895,7 +2152,8 @@ function hireClick(pt) {
     LEAGUE.coins -= BUDGET_UP.cost; LEAGUE.staffExtra = (LEAGUE.staffExtra || 0) + BUDGET_UP.step; autosaveSoon();
     return;
   }
-  HIRE_ROLES.forEach((r, i) => {
+  if (scoutsOn() && inBtn(pt, HIRE_PG_BTN)) { HB.pg = HB.pg ? 0 : 1; return; }
+  hirePageRoles().forEach((r, i) => {
     if (!inBtn(pt, HIRE_FIRE[i])) return;
     const p = hireGet(r), cost = buyoutOf(p);
     if (p.interim) { HB.msg = { t: performance.now(), text: 'HE IS ONLY AN INTERIM' }; return; }
@@ -1904,7 +2162,9 @@ function hireClick(pt) {
 }
 
 // the hiring board: candidates as cards, scout one, compare him with your man, negotiate and offer
-const BOARD_TABS = HIRE_ROLES.map((r, i) => ({ x: 30 + i * 310, y: 84, w: 300, h: 40 }));
+const BOARD_TABS = [...HIRE_ROLES, ...SCOUT_ROLES].map(() => ({}));   // (4 tabs, or 6 with the scouts: laid out by boardTab)
+const boardTab = (i, n) => Object.assign(BOARD_TABS[i], { x: 30 + i * (1230 / n), y: 84, w: 1230 / n - 10, h: 40 });
+const HIRE_PG_BTN = { x: 1000, y: 656, w: 250, h: 44 };   // staff screen: flips the cards between coaches / trainers and the scouts
 const BOARD_CARD = i => ({ x: 30 + i * 246, y: 134, w: 236, h: 296 });
 const BN = { sal: { m: { x: 1000, y: 478, w: 44, h: 36 }, p: { x: 1190, y: 478, w: 44, h: 36 } }, yrs: { m: { x: 1000, y: 522, w: 44, h: 36 }, p: { x: 1190, y: 522, w: 44, h: 36 } }, offer: { x: 1000, y: 566, w: 234, h: 48 } };
 const BOARD_REROLL = { x: 130, y: 637, w: 270, h: 56 };
@@ -1921,7 +2181,7 @@ const SPEND = { ms: 760, split: 0.3, gap: 40, max: 20, click: 2000 };
 let spendFxs = [], spendClick = null, spendSeen = null, spendLg = null, spendSkip = 0, spendFrame = 0, spendDrawn = -1;
 function spendFx(b, n, xp = false) {   // xp = XP tokens out of the XP box (same show as credits)
   const now = performance.now(), cnt = Math.min(SPEND.max, 3 + n * 2), src = xp && coinAt && coinAt.xx ? [coinAt.xx, coinAt.y] : coinTarget();
-  if (!xp) spendSkip = now;
+  if (!xp) { spendSkip = now; if (xpcOn() && xpcBox.xp) { if (xpcBox.back == null) xpcBox.back = 'xp'; xpcBox.doneAt = null; xpcFlip(false); } }   // (credits leaving: the box shows credits, then turns back)
   spendFxs.push({ b, xp, t0: now, coins: Array.from({ length: cnt }, (_, i) => { const a = Math.random() * Math.PI * 2, d = 40 + Math.random() * 70;
     return { t0: now + i * SPEND.gap, sx: src[0], sy: src[1], mx: src[0] + Math.cos(a) * d, my: src[1] + Math.abs(Math.sin(a)) * d * 0.8 + 20, ox: (Math.random() - 0.5) * 30, oy: (Math.random() - 0.5) * 20 }; }) });
 }
@@ -1964,11 +2224,11 @@ function drawSpendFx() {
 const BOARD_SCOUTS = [];   // (cached so each button keeps its hover / press animation state)
 const BOARD_SCOUT = i => BOARD_SCOUTS[i] || (BOARD_SCOUTS[i] = { x: BOARD_CARD(i).x + 48, y: BOARD_CARD(i).y + 258, w: 140, h: 28 });
 function drawBoard() {
-  paperBg(); hireAll();
+  paperBg(); hireAll(); if (!hireRolesAll().includes(HB.role)) HB.role = 'oc';
   const pool = hirePool()[HB.role], cur = hireGet(HB.role), c = HB.sel && pool.includes(HB.sel) ? HB.sel : null;
   ctx.fillStyle = RES.line; ctx.font = 'bold 36px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('HIRING BOARD', W / 2, 44); coinBox(26, 22, LEAGUE.coins, RES.bright);
-  HIRE_ROLES.forEach((r, i) => menuBtn(BOARD_TABS[i], HIRE_ROLE[r].short, HB.role === r ? SEL : RES.bright, 20));
+  hireRolesAll().forEach((r, i, a) => menuBtn(boardTab(i, a.length), HIRE_ROLE[r].short, HB.role === r ? SEL : RES.bright, a.length > 4 ? 16 : 20));
   const [main] = kitColors(MATCH.you, 'home');
   pool.forEach((p, i) => {   // each candidate is a paper scrap button: lifts on hover, presses in on click, yellow when picked
     const b = BOARD_CARD(i), cx = b.x + b.w / 2, side = HIRE_ROLE[HB.role].side;
@@ -2022,7 +2282,7 @@ function boardClick(pt) {
   if (tourQClick(pt)) return;
   if (inBtn(pt, BACK_BTN)) { results.screen = HB.back || 'hire'; return; }
   const pool = hirePool()[HB.role];
-  HIRE_ROLES.forEach((r, i) => { if (inBtn(pt, BOARD_TABS[i])) { HB.role = r; HB.sel = null; HB.cand = null; } });
+  hireRolesAll().forEach((r, i, a) => { if (inBtn(pt, boardTab(i, a.length))) { HB.role = r; HB.sel = null; HB.cand = null; } });
   if (inBtn(pt, BOARD_REROLL)) {
     if (LEAGUE.coins < HIRE.reroll) { HB.msg = { t: performance.now(), text: `NEED ${HIRE.reroll} ¤ TO REROLL` }; return; }
     LEAGUE.coins -= HIRE.reroll; hirePool()[HB.role] = Array.from({ length: HIRE.poolSize }, () => hireCand(HB.role));
@@ -2088,7 +2348,7 @@ const TOUR_STEPS = {
     { scr: 'home', rect: () => AWH_BOX, text: 'WEEKLY AWARDS: the best offensive and defensive player of the week around the league. Click a card to open him.' },
     { scr: 'home', rect: () => HOME_TEAM, text: 'TEAM: your offense and defense star ratings, plus condition and morale. Tired or unhappy players play worse.' },
     { scr: 'home', rect: () => HOME_COIN, text: 'CREDITS: earned from games, goals and awards. Click the box to flip it to your XP BANK (the spare XP of players at their potential), and click again to flip back.' },
-    { scr: 'home', rect: () => [HOME_BTNS[1], HOME_BTNS[2]], text: 'FRONT OFFICE (coaches, free agents, trades) and ROSTER (your players and their upgrades). CONTINUE moves on to the next game.' },
+    { scr: 'home', rect: () => [HOME_BTNS[1], HOME_BTNS[2]], text: 'FRONT OFFICE (coaches, free agents, trades, the draft class) and ROSTER (your players, their upgrades, TEAM UPGRADES and the HALL OF FAME). CONTINUE moves on to the next game.' },
     { scr: 'staff', enter: () => { staffView.sel = null; }, rect: () => STAFF_CARDS[0], text: 'YOU are the HEAD COACH. Your rating and tendencies lift the whole team and grow as you win.' },
     { scr: 'staff', enter: () => { staffView.sel = null; }, rect: () => [STAFF_CARDS[1], STAFF_CARDS[2]], text: 'The OFFENSIVE and DEFENSIVE COORDINATORS (OC / DC). Their stars add to your team ratings, and their tendencies shape play-calling. Click one for details.' },
     { scr: 'staff', hc: true, enter: () => { staffView.sel = 0; }, rect: () => HC_MAIN_BTN, need: () => !!career.hcMain, text: 'PICK YOUR MAIN ABILITY: click the red button to cycle through the abilities until one fits your style. You must choose one to continue (you can change it later).' },
@@ -2096,7 +2356,8 @@ const TOUR_STEPS = {
     { scr: 'roster', rect: () => [ROSTER_TABS.off, ROSTER_VIEW_TAB], text: 'The left button switches OFFENSE / DEFENSE; the right one switches the offense between SIMPLE (8 cards a page) and FORMATION view. Tired or hurt players play worse, so check back before each game.' },
     { scr: 'roster', enter: () => { rosterUI.view = 'form'; FVS.team = null; }, rect: () => FV.box, text: 'FORMATION VIEW: your players at their spots in each formation. Drag to move, scroll or pinch to zoom (zoom in for more detail), double-tap to fit. The side arrows flip formations, then the special-teams units.' },
     { scr: 'roster', rect: () => FV.box, text: 'DEPTH CHART: the arrow under a card cycles through who else can play that spot. Press START to make him the starter there (a padlock marks it; tap the padlock to unlock). Every formation shares one chart, and each special-teams unit has its own.' },
-    { scr: 'roster', rect: () => [FV_AUTO_BTN, FV.name], text: 'AUTO fills every unlocked spot on this page (or AUTO ALL for the whole chart) with the best fit. Tap the page name to jump to any formation or special-teams unit.' },
+    { scr: 'roster', rect: () => [FV_AUTO_BTN, FV.name], text: 'AUTO (bottom left of the view) fills every unlocked spot on this page (or AUTO ALL for the whole chart) with the best fit. Tap the page name to jump to any formation or special-teams unit.' },
+    { scr: 'roster', rect: () => [BUY_SPOT_BTN, HOF_ROSTER_BTN], text: 'TEAM UPGRADES spends credits on more cap room or another roster spot. HALL OF FAME shows every player you have inducted.' },
   ],
   hire: [
     { scr: 'hire', rect: () => [HIRE_CARDS[0], HIRE_CARDS[1]], text: 'COORDINATORS (OC / DC) lead your offense and defense. Their stars lift your team rating, and their specialty shapes your play-calling.' },
@@ -2112,7 +2373,7 @@ const TOUR_STEPS = {
   ],
   xp: [   // the XP bank, the first time a player banks spare XP (home screen)
     { scr: 'home', enter: () => xpcFlip(true), rect: () => HOME_COIN, text: 'XP BANK (the other face of the credits box: click it to flip): a player who has reached his potential can\'t use his XP any more, so after every game his spare XP is banked here instead.' },
-    { scr: 'roster', enter: () => { rosterView.team = null; rosterView.sel = null; rosterView.page = 0; rosterView.side = 'off'; rosterUI.view = 'simple'; rosterReturn = null; }, rect: () => ROSTER_CARDS.slice(0, 4), text: 'Spend it on a player\'s card: BOOST POTENTIAL raises his ceiling, QUICK UPGRADE buys a waiting +1 at once, and a star player can move up a Star Factor tier.' },
+    { scr: 'roster', enter: () => { rosterView.team = null; rosterView.sel = null; rosterView.page = 0; rosterView.side = 'off'; rosterUI.view = 'simple'; rosterReturn = null; }, rect: () => ROSTER_CARDS.slice(0, 4), text: 'Spend it on a player\'s card: BOOST POTENTIAL raises his ceiling, QUICK UPGRADE buys a waiting +1 at once, and once a player qualifies UPGRADE: ABILITY (then UPGRADE: STAR FACTOR) shows under his ability. A FIT is a small boost that is always on; an ABILITY is a bigger one, always on (some only in their situation); a STAR FACTOR turns on when he gets hot in a game (a big effect + 2 rating points) and off when he cools. Fit first, then ability, then star factor.' },
     { scr: 'home', rect: () => HOME_COIN, text: 'It can also TRAIN a coordinator on his FRONT OFFICE page. The tip under the box shows what a click flips it to.' },
   ],
   prac: [   // FACILITIES (the campus alone)
@@ -2121,6 +2382,7 @@ const TOUR_STEPS = {
     { scr: 'practice', enter: () => { PR.tab = 'fac'; PR.sel = 'rec'; }, rect: () => [PR_CELLS.rec], text: 'Recovery Center: tired players get their legs back faster, in games and between them.' },
     { scr: 'practice', enter: () => { PR.tab = 'fac'; PR.sel = 'lounge'; }, rect: () => [PR_CELLS.lounge, PR_SIDE], text: 'Player Lounge: lifts team morale. Morale gives a small edge on catches and fumbles.' },
     { scr: 'practice', enter: () => { PR.tab = 'fac'; }, rect: () => [{ x: 30, y: 492, w: 618, h: 120 }, PR_UP], text: 'The panel under the campus says what the building does and what the next level costs. UPGRADE spends credits, and upgrades take weeks to build (the crane shows it is going up).' },
+    { scr: 'practice', enter: () => { PR.tab = 'fac'; }, rect: () => [PR_SCOUT.off, PR_SCOUT.def], text: 'SCOUTS (if the SCOUTS setting is on): your offense and defense scouts watch the next draft class all season and report generational or underrated prospects. Click one to assign him a position group or a few prospects by name: his reads on those get sharper.' },
   ],
   pracWeek: [
     { scr: 'practice', enter: () => { PR.tab = 'week'; }, rect: () => ({ x: 30, y: 84, w: 600, h: 530 }), text: "THIS WEEK, left: last week's practice. XP earned, upgrades that became ready, practice injuries, the load you ran and your focus groups." },
@@ -2139,6 +2401,12 @@ const TOUR_STEPS = {
   pracBattles: [
     { scr: 'practice', enter: () => { PR.tab = 'battles'; }, rect: () => ({ x: 30, y: 84, w: 600, h: 530 }), text: 'HEATED COMPETITIONS: a starter and a backup close in rating battle in practice. The winner gains, the loser can sulk.' },
     { scr: 'practice', enter: () => { PR.tab = 'battles'; }, rect: () => [{ x: 650, y: 84, w: 600, h: 270 }, { x: 650, y: 366, w: 600, h: 248 }], text: 'Recent results are logged here, and MENTOR PAIRS show veterans (5+ years) who boost the XP of younger players in their group.' },
+  ],
+  scouts: [   // the scout popup on the facilities campus (its ? while the popup is open)
+    { scr: 'practice', enter: () => { PR.tab = 'fac'; if (!SCU) SCU = { side: 'off', page: 0 }; }, rect: () => ({ x: SCU_P.x + 16, y: SCU_P.y + 50, w: SCU_P.w - 32, h: 44 }), text: () => `YOUR SCOUT: one for the offense, one for the defense. His stars are how close his draft reads are to the truth, and his specialty group reads best of all.` },
+    { scr: 'practice', enter: () => { PR.tab = 'fac'; if (!SCU) SCU = { side: 'off', page: 0 }; }, rect: () => ['GENERAL', ...SCOUT.groups[SCU ? SCU.side : 'off']].map((g, i) => scuGrpBtn(i)), text: () => `ASSIGN A GROUP: he studies one position group and its reads get ${Math.round(SCOUT.grpBonus * 100)}% tighter. GENERAL spreads him over the whole class.` },
+    { scr: 'practice', enter: () => { PR.tab = 'fac'; if (!SCU) SCU = { side: 'off', page: 0 }; }, rect: () => [0, 1, 2, 3].map(scuRow), text: () => `OR NAME PROSPECTS: tap up to ${SCOUT.maxPlayers} players of the next draft class (${Math.round(SCOUT.plBonus * 100)}% tighter). GENERATIONAL / UNDERRATED are flags his reports turn up.` },
+    { scr: 'practice', enter: () => { PR.tab = 'fac'; if (!SCU) SCU = { side: 'off', page: 0 }; }, rect: () => SCU_CLOSE, text: 'He reports on the home screen during the season and again on draft day. Better scouts are on the HIRING BOARD.' },
   ],
   pracAll: [   // the first visit to PRACTICE: every page in turn
     { scr: 'practice', enter: () => { PR.tab = 'week'; }, rect: () => PR_TAB_BTNS, text: 'WELCOME TO PRACTICE. Your team practices after every game by itself. These four pages let you steer it. Tap the ? on any page to replay its tips.' },
@@ -2207,8 +2475,8 @@ function tourQDraw() {   // the "?" button that replays the tutorial of the scre
   if (b) menuBtn(b, '?', RES.bright, 30);
 }
 function tourQClick(pt) {   // true when the "?" was hit
-  const scr = results.screen, id = scr === 'trade' && !TR.sel ? 'trade' : scr === 'tradeb' ? 'trade' : scr === 'hire' || scr === 'board' ? 'hire' : scr === 'practice' ? ({ fac: 'prac', week: 'pracWeek', plan: 'pracPlan', groups: 'pracGroups', battles: 'pracBattles' }[PR.tab] || 'pracWeek') : null;
-  if (!id || !inBtn(pt, id === 'trade' && scr === 'trade' ? TR_HELP_BTN : id.startsWith('prac') ? PRAC_Q_BTN : id === 'hire' ? HIRE_Q_BTN : TOUR_Q_BTN)) return false;
+  const scr = results.screen, id = scr === 'trade' && !TR.sel ? 'trade' : scr === 'tradeb' ? 'trade' : scr === 'hire' || scr === 'board' ? 'hire' : scr === 'practice' ? SCU && PR.tab === 'fac' ? 'scouts' : ({ fac: 'prac', week: 'pracWeek', plan: 'pracPlan', groups: 'pracGroups', battles: 'pracBattles' }[PR.tab] || 'pracWeek') : null;
+  if (!id || !inBtn(pt, id === 'trade' && scr === 'trade' ? TR_HELP_BTN : id.startsWith('prac') || id === 'scouts' ? PRAC_Q_BTN : id === 'hire' ? HIRE_Q_BTN : TOUR_Q_BTN)) return false;
   tourStart(id, true); return true;
 }
 function drawTour() {
@@ -2221,7 +2489,7 @@ function drawTour() {
   rects.forEach(r => ctx.strokeRect(r.x - pad, r.y - pad, r.w + pad * 2, r.h + pad * 2));
   // the note goes wherever it covers the least of what is lit up
   ctx.font = '17px monospace';
-  const lines = wrapLines(st.text, 50), bw = TOUR_BOX.w, bh = 104 + lines.length * 24;
+  const lines = wrapLines(typeof st.text === "function" ? st.text() : st.text, 50), bw = TOUR_BOX.w, bh = 104 + lines.length * 24;
   let best = null;
   for (const x of [20, 370, 720]) for (const y of [10, 170, 330, 440, H - bh - 10]) {
     if (y + bh > H - 4) continue;
@@ -2296,6 +2564,7 @@ function pracSetLoad(side, x) { const r = pracSlider(side); PR.draft[side] = Mat
 function pracClick(pt) {
   if (offPop) return;
   if (tourQClick(pt)) return;
+  if (SCU) { if (PR.tab === 'fac' && scoutsOn()) scuClick(pt); else SCU = null; return; }
   if (inBtn(pt, BACK_BTN)) { results.screen = 'home'; return; }
   if (PR.tab !== 'fac') for (const b of PR_TAB_BTNS) if (inBtn(pt, b)) { PR.tab = b.k; PR.drag = null; return; }
   if (PR.tab === 'groups') {   // FOCUS toggles (up to PRAC_FOCUS.max groups)
@@ -2309,12 +2578,13 @@ function pracClick(pt) {
     return;
   }
   if (PR.tab === 'fac') {   // the campus: pick a building, upgrade it
+    if (scoutsOn()) for (const side of ['off', 'def']) if (inBtn(pt, PR_SCOUT[side])) { SCU = { side, page: 0 }; return; }
     for (const k of Object.keys(PR_CELLS)) if (inBtn(pt, PR_CELLS[k])) { PR.sel = k; if (inBtn(pt, PR_UP) ) break; return; }
     if (inBtn(pt, PR_UP)) pracUpgrade(PR.sel);
     return;
   }
   if (PR.tab !== 'plan') return;
-  if (inBtn(pt, PR_STAFF)) { results.screen = 'hire'; return; }
+  if (inBtn(pt, PR_STAFF)) { HB.pg = 0; results.screen = 'hire'; return; }
   for (const side of ['off', 'def']) if (inBtn(pt, PR_REP[side])) { HB.role = side === 'off' ? 'to' : 'td'; HB.sel = null; HB.cand = null; HB.back = 'hire'; results.screen = 'board'; return; }
   if (inBtn(pt, PR_OK) && (PR.draft.off !== prac().load.off || PR.draft.def !== prac().load.def)) { prac().load = { ...PR.draft }; autosaveSoon(); PR.msg = { t: performance.now(), text: 'TRAINING PLAN SET' }; }
 }
@@ -2441,21 +2711,22 @@ function drawPractice() {
   else if (PR.tab === 'plan') drawPracFac(true);
   else { paperBg(); coinBox(26, 22, LEAGUE.coins, RES.bright); ({ week: drawPracWeek, groups: drawPracGroups, battles: drawPracBattles })[PR.tab](); menuBtn(BACK_BTN, '', RES.bright, 22, backArrow); }
   if (PR.tab !== 'fac') PR_TAB_BTNS.forEach((b, i) => menuBtn(b, PR_TABS[i][1], PR.tab === b.k ? '#f2c230' : RES.bright, 20));
+  if (SCU && PR.tab === 'fac' && scoutsOn()) drawScu(); else SCU = null;
   tourQDraw();
 }
 // small practice tags on your player page (FOCUS group, MENTOR / MENTORED, a recent BATTLE WIN), top right of the bio panel
-function pracTagsDraw(p, x0 = 478, y0 = 118) {
-  const P = prac(), tags = [];
+function pracTagsDraw(p, x0 = 478, y0 = 118, small = false) {   // small = on the BIO sticky note (smaller tags, packed tighter)
+  const P = prac(), tags = [], fs = small ? 12 : 14, th = small ? 18 : 22, gap = small ? 21 : 26;
   if (P.focus.includes(p.group)) tags.push(['FOCUS', '#f2c230']);
   const pairs = pracPairs();
   if (pairs.some(x => x.m === p)) tags.push(['MENTOR', '#6cc070']);
   if (pairs.some(x => x.e === p)) tags.push(['MENTOREE', '#8ecbe8']);
   if (P.hist.slice(0, 3).some(h => h.win === p.name)) tags.push(['BATTLE WIN', '#f08a1c']);
   tags.forEach(([t, c], i) => {
-    const x = x0, y = y0 + i * 26;
-    ctx.font = 'bold 14px monospace'; const w = ctx.measureText(t).width + 16;
-    ctx.fillStyle = c; ctx.fillRect(x + 140 - w, y, w, 22); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(x + 140 - w, y, w, 22);
-    ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(t, x + 140 - w / 2, y + 12);
+    const x = x0, y = y0 + i * gap;
+    ctx.font = `bold ${fs}px monospace`; const w = ctx.measureText(t).width + (small ? 12 : 16);
+    ctx.fillStyle = c; ctx.fillRect(x + 140 - w, y, w, th); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(x + 140 - w, y, w, th);
+    ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(t, x + 140 - w / 2, y + th / 2 + 1);
   });
 }
 const prT = (txt, x, y, col = RES.line, f = 16, w = 560, al = 'left') => { ctx.fillStyle = col; ctx.font = `bold ${f}px monospace`; ctx.textAlign = al; ctx.textBaseline = 'middle'; ctx.fillText(txt, x, y, w); };
@@ -2569,6 +2840,7 @@ function drawPracFac(plan) {   // plan = the TRAINING PLAN tab (load sliders, tr
     if (F.build) { const fr = 1 - F.build.left / F.build.total, bx = tx + 78; ctx.fillStyle = RES.bright; ctx.fillRect(bx, ty + 24, 30, 14); ctx.fillStyle = '#f0a014'; ctx.fillRect(bx, ty + 24, 30 * fr, 14); ctx.strokeRect(bx, ty + 24, 30, 14); ctx.fillStyle = RES.line; ctx.fillText(`${F.build.left}W LEFT`, bx + 36, ty + 31); }
   }
   pracSidePanel(PR.sel);
+  if (scoutsOn()) drawPracScouts();
   // the selected facility
   { const k = PR.sel, F = P.fac[k], D = PRAC_FAC[k], cost = D.cost[F.lvl - 1];
     resPanel(30, 492, 618, 120, [[`${D.name}  LEVEL ${F.lvl} OF ${FAC_MAX}`, 24]], RES.bright);
@@ -2660,7 +2932,7 @@ const keepAllowed = s => !(exhibition && s.inj.sev > 0);
 function injuryClick(pt) {
   const c = injuryCall, keep = !c.re && keepAllowed(c.s) && inBtn(pt, INJ_BTNS.keep);
   if (!(c.re ? inBtn(pt, INJ_BTNS.ok) : keep || inBtn(pt, INJ_BTNS.bench))) return;   // (a refused KEEP click does nothing)
-  if (keep) c.s.inj.kept = true; else c.s.outGame = true;
+  if (keep) c.s.inj.kept = true; else { c.s.outGame = true; slExit(c.p, c.s); }   // (he leaves the field: limps off, is helped to the tent, or the cart comes out)
   injuryCall = null; recalcTeamStars();   // (a player who is out changes the team's star rating)
   game.runoff = game.runoffTotal = 0;   // the injury timeout stops the clock
   msg = msg.replace(/  -  click$/, '') + `  -  ${c.s.short} ${keep ? 'stays in' : 'is out for the game'}  -  click`;
@@ -2731,22 +3003,27 @@ const SET_BTNS = {
   // GAMEPLAY
   inj: { x: SET_X, y: 218, w: 140, h: 38 }, pinj: { x: SET_X + 150, y: 218, w: 140, h: 38 }, wx: { x: SET_X + 300, y: 218, w: 140, h: 38 },   // (pinj = PRACTICE INJURIES)
   simDef: { x: SET_X, y: 262, w: 140, h: 38 }, autoSw: { x: SET_X + 150, y: 262, w: 140, h: 38 }, morale: { x: SET_X + 300, y: 262, w: 140, h: 38 },
-  zoom: { x: SET_X, y: 306, w: 140, h: 38 }, rep: { x: SET_X + 150, y: 306, w: 140, h: 38 }, spd: { x: SET_X + 300, y: 306, w: 140, h: 38 },   // (spd = the SPEED popup)
+  zoom: { x: SET_X, y: 306, w: 80, h: 38 }, rep: { x: SET_X + 90, y: 306, w: 80, h: 38 }, spd: { x: SET_X + 180, y: 306, w: 80, h: 38 }, scouts: { x: SET_X + 270, y: 306, w: 80, h: 38 }, taunt: { x: SET_X + 360, y: 306, w: 80, h: 38 },   // (spd = SIM KICKS; taunt = how often a celebration is a taunt, see CELEB.tauntSet)
   qtr: { x: SET_X, y: 350, w: SET_FULL, h: 58 },
   // SOUND & SHOWS
   volDn: { x: SET_X, y: 434, w: 76, h: 38 }, volUp: { x: SET_X + 364, y: 434, w: 76, h: 38 },
   ht: { x: SET_X, y: 478, w: SET_HALF, h: 38 }, pg: { x: SET_X2, y: 478, w: SET_HALF, h: 38 },
   // EXTRAS
-  dbg: { x: SET_X, y: 542, w: 102, h: 38 }, dark: { x: SET_X + 113, y: 542, w: 102, h: 38 }, post: { x: SET_X + 225, y: 542, w: 102, h: 38 }, lite: { x: SET_X + 338, y: 542, w: 102, h: 38 },   // (lite = PERFORMANCE MODE, see LITE)
+  dbg: { x: SET_X, y: 542, w: 80, h: 38 }, dark: { x: SET_X + 90, y: 542, w: 80, h: 38 }, post: { x: SET_X + 180, y: 542, w: 80, h: 38 }, lite: { x: SET_X + 270, y: 542, w: 80, h: 38 }, side: { x: SET_X + 360, y: 542, w: 80, h: 38 },   // (lite = PERFORMANCE MODE, see LITE; side = SIDELINE people, see 07)
   swap: { x: 665, y: 580, w: 540, h: 56 },   // (swap: touch only, in the controls panel)
 };
 const SET_GROUPS = [['GAME', 94], ['GAMEPLAY', 206], ['SOUND & SHOWS', 422], ['EXTRAS', 530]];   // [header, y of its text]
 const LITE_MODES = ['AUTO', 'ON', 'OFF'];   // SETTINGS.liteMode (performance mode: AUTO = online and two-player games)
+const SL_MODES = ['ALL', 'CREW', 'OFF'];     // SETTINGS.sideline (sideline people: everyone / the chain crew only / nobody; missing = ALL)
+// settings opened from a game's pause menu: the ones that change the game being played are locked until it ends
+const SET_GAME_LOCK = ['inj', 'pinj', 'wx', 'diff', 'dir', 'simDef', 'spd', 'morale', 'qtr', 'scouts', 'post', 'save', 'load', 'dbg'];
+const setInGame = () => !results && typeof game !== 'undefined' && !!game && !game.over;
 const SET_TIP_Y = 598;   // the one-line tip / note under the last group
-const SET_TIPS = { simDef: () => SETTINGS.simDefense ? 'SIM DEFENSE: their drives are simulated' : 'SIM DEFENSE: you play defense on their drives', autoSw: () => 'AUTO SWITCH: on a pass, jump to the defender closest to the ball',
+const SET_TIPS = { taunt: () => (SETTINGS.taunts || 'NORMAL') === 'OFF' ? 'TAUNTS: off = nobody celebrates by taunting the other team' : 'TAUNTS: how often a celebration is a taunt at a defender (looks only)', scouts: () => SETTINGS.scouts !== false ? 'SCOUTS: hire and assign two scouts; they sharpen draft reads' : 'SCOUTS: off = the plain draft SCOUT button, no scouts to hire', simDef: () => SETTINGS.simDefense ? 'SIM DEFENSE: their drives are simulated' : 'SIM DEFENSE: you play defense on their drives', autoSw: () => 'AUTO SWITCH: on a pass, jump to the defender closest to the ball',
   morale: () => 'MORALE: plays and games move each player\'s morale, which scales his ratings (off = always neutral)',
   pinj: () => 'PRACTICE INJ: injuries from practice (needs INJURIES on too)', inj: () => 'INJURIES: game injuries, condition and wear',
-  dir: () => 'DRIVE: which way the offense drives on screen', spd: () => SETTINGS.simST ? 'SIM KICKS: your kickoffs, punts, field goals and returns are simulated' : 'SIM KICKS: you play every kickoff, punt, field goal and return', rep: () => 'REPLAYS: how often replays run', wx: () => 'WEATHER: takes effect next game', ht: () => 'HALFTIME SHOW: choose its segments', pg: () => 'PREGAME SHOW: choose its segments', dbg: () => 'DEBUG: hitboxes, mobile mode, extra tools', dark: () => 'DARK MODE: grey menus instead of white paper', lite: () => 'PERFORMANCE: lighter stands, weather and sound (AUTO = online / 2 players)' };
+  dir: () => 'DRIVE: which way the offense drives on screen', spd: () => SETTINGS.simST ? 'SIM KICKS: your kickoffs, punts, field goals and returns are simulated' : 'SIM KICKS: you play every kickoff, punt, field goal and return', rep: () => 'REPLAYS: how often replays run', wx: () => 'WEATHER: takes effect next game', ht: () => 'HALFTIME SHOW: choose its segments', pg: () => 'PREGAME SHOW: choose its segments', dbg: () => 'DEBUG: hitboxes, mobile mode, extra tools', dark: () => 'DARK MODE: grey menus instead of white paper', lite: () => 'PERFORMANCE: lighter stands, weather and sound (AUTO = online / 2 players)',
+  side: () => 'SIDELINE: chain crew, cheerleaders and the bench (looks only; CREW = chain crew only)' };
 // a settings popup (DEBUG / HALFTIME / PREGAME) is up: the page behind it holds still (menuBtn / hoverAmt / pressDepth check this); the popup's own buttons draw with setPopDraw on
 let setPopDraw = false;
 const settingsPopUp = () => settingsOpen && !diffUI && !!(dbgUI || htUI || spdUI);
@@ -2774,14 +3051,14 @@ const TOUCH_HELP = [
   ['SWIPE DOWN (ball in air)', 'Diving catch'],
   ['SWIPE FORWARD (ball in air)', 'Catch and run'],
   ['SWIPE BACKWARD (ball in air)', 'One-handed catch'],
-  ['PAUSE (top)', 'Pause menu, settings'],
+  ['PAUSE (top) / DOUBLE TAP', 'Pause menu, settings / celebrate after the whistle'],
 ];
 // the debug page: goes over the settings screen (DEBUG, bottom of the settings panel)
 let dbgUI = false;
 const DBG_PANEL = { x: 330, y: 150, w: 620, h: 400 };
 const DBG_BTNS = { hit: { x: 370, y: 230, w: 540, h: 60 }, mobile: { x: 370, y: 310, w: 540, h: 60 }, tools: { x: 370, y: 390, w: 540, h: 60 }, back: { x: 370, y: 470, w: 540, h: 56 } };
 function drawDebug() {
-  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
   resPanel(DBG_PANEL.x, DBG_PANEL.y, DBG_PANEL.w, DBG_PANEL.h, [['DEBUG', null]], RES.bright);
   const Y = IN_GAME_PAPER.yellow;
   menuBtn(DBG_BTNS.hit, `HITBOXES: ${SETTINGS.hitboxes ? 'ON' : 'OFF'}`, Y, 24);
@@ -2801,7 +3078,7 @@ let spdUI = false;
 const SPD_PANEL = { x: 330, y: 170, w: 620, h: 360 };
 const SPD_BTNS = { cDn: { x: 370, y: 262, w: 70, h: 52 }, cUp: { x: 840, y: 262, w: 70, h: 52 }, uDn: { x: 370, y: 372, w: 70, h: 52 }, uUp: { x: 840, y: 372, w: 70, h: 52 }, back: { x: 370, y: 456, w: 540, h: 52 } };
 function drawSpeedSet() {
-  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
   resPanel(SPD_PANEL.x, SPD_PANEL.y, SPD_PANEL.w, SPD_PANEL.h, [['PLAYER SPEED', null]], RES.bright);
   const Y = IN_GAME_PAPER.yellow;
   for (const [lab, key, dn, up] of [['CPU PLAYERS', 'cpuSpeed', SPD_BTNS.cDn, SPD_BTNS.cUp], ['YOUR PLAYERS', 'userSpeed', SPD_BTNS.uDn, SPD_BTNS.uUp]]) {
@@ -2842,7 +3119,7 @@ const HT_BTNS = { master: { x: 370, y: 160, w: 540, h: 54 }, segs: HT_SEGS.map((
 const htSegs = () => htUI === 'pre' ? HT_SEGS.filter(s => ['historic', 'qb', 'def', 'match'].includes(s[0])) : HT_SEGS;
 const htMasterKey = () => htUI === 'pre' ? 'pregame' : 'halftime', htSegKey = () => htUI === 'pre' ? 'pg' : 'ht', htSegOn = k => htUI === 'pre' ? pgOn(k) : htOn(k);
 function drawHtSettings() {
-  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
   const name = htUI === 'pre' ? 'PREGAME SHOW' : 'HALFTIME SHOW';
   resPanel(HT_PANEL.x, HT_PANEL.y, HT_PANEL.w, HT_PANEL.h, [[name, null]], RES.bright);
   const Y = IN_GAME_PAPER.yellow, on = SETTINGS[htMasterKey()] !== false;
@@ -2880,7 +3157,10 @@ function drawSettingsMain() {
   ctx.fillStyle = RES.line; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(`VOLUME ${Math.round(SETTINGS.volume * 100)}%`, bx + bw / 2, by + bh / 2 + 1);
   menuBtn(B.rep, `REPLAYS:\n${SETTINGS.replays}`, Y, 12);   // (two lines: 'TOUCHDOWNS' must fit a third-width scrap)
-  menuBtn(B.spd, `SIM KICKS: ${SETTINGS.simST ? 'ON' : 'OFF'}`, Y, 13);   // (was the SPEED popup: the speeds are now difficulty sliders)
+  menuBtn(B.scouts, `SCOUTS:\n${SETTINGS.scouts !== false ? 'ON' : 'OFF'}`, Y, 12);
+  menuBtn(B.taunt, `TAUNTS:\n${SETTINGS.taunts || 'NORMAL'}`, Y, 12);
+  menuBtn(B.spd, `SIM KICKS:
+${SETTINGS.simST ? 'ON' : 'OFF'}`, Y, 12);   // (was the SPEED popup: the speeds are now difficulty sliders)
   menuBtn(B.qtr, '', Y, 24, q => {   // the quarter length: a slider, 1-8 minutes
     const m = SETTINGS.quarterMin, bx = QTR_BAR.x, bw = QTR_BAR.w, cy = q.y + 40;
     ctx.fillStyle = q.ink; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -2895,18 +3175,23 @@ function drawSettingsMain() {
   menuBtn(B.simDef, `SIM DEFENSE: ${SETTINGS.simDefense ? 'ON' : 'OFF'}`, Y, 14);
   menuBtn(B.autoSw, `AUTO SWITCH: ${SETTINGS.autoSwitch ? 'ON' : 'OFF'}`, Y, 14);
   menuBtn(B.morale, `MORALE: ${SETTINGS.morale !== false ? 'ON' : 'OFF'}`, Y, 14);
-  menuBtn(B.zoom, `CAM ZOOM: ${SETTINGS.camZoom !== false ? 'ON' : 'OFF'}`, Y, 14);
+  menuBtn(B.zoom, `CAM ZOOM:
+${SETTINGS.camZoom !== false ? 'ON' : 'OFF'}`, Y, 12);
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   if (settingsNote && performance.now() - settingsNote.t0 < 2500) { ctx.font = 'bold 17px monospace'; ctx.fillStyle = RES.gold; ctx.fillText(settingsNote.text, SET_X + 220, SET_TIP_Y); }
   else {   // a one-line tip for the button under the mouse
     const hk = !settingsPopUp() && hoverPt && Object.keys(SET_TIPS).find(k => inBtn(hoverPt, B[k]));
     if (hk) { ctx.font = 'bold 13px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(SET_TIPS[hk](), SET_X + 220, SET_TIP_Y, SET_FULL); }
   }
-  menuBtn(B.dbg, 'DEBUG', Y, 17);
-  menuBtn(B.dark, `DARK: ${SETTINGS.darkMode ? 'ON' : 'OFF'}`, Y, 15);
-  menuBtn(B.post, `POST: ${SETTINGS.post !== false ? 'ON' : 'OFF'}`, Y, 15);
-  menuBtn(B.lite, `PERF: ${SETTINGS.liteMode || 'AUTO'}`, Y, 15);
+  menuBtn(B.dbg, 'DEBUG', Y, 15);
+  menuBtn(B.dark, `DARK: ${SETTINGS.darkMode ? 'ON' : 'OFF'}`, Y, 13);
+  menuBtn(B.post, `POST: ${SETTINGS.post !== false ? 'ON' : 'OFF'}`, Y, 13);
+  menuBtn(B.lite, `PERF: ${SETTINGS.liteMode || 'AUTO'}`, Y, 13);
+  menuBtn(B.side, `SIDE: ${SETTINGS.sideline || 'ALL'}`, Y, 13);
   menuBtn(B.ht, 'HALFTIME', Y, 17); menuBtn(B.pg, 'PREGAME', Y, 17);
+  if (setInGame()) for (const k of SET_GAME_LOCK) {   // opened from the pause menu: what would change this game is locked (greyed, a padlock)
+    const b = B[k]; ctx.save(); ctx.fillStyle = 'rgba(120,120,120,0.55)'; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.fillStyle = RES.line; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('🔒', b.x + b.w - 3, b.y + 2); ctx.restore();
+  }
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
   if (TUI.on) {   // phones / tablets: no keys to rebind, the touch controls instead
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; let ty = BIND_LIST.top + 14;
@@ -3067,6 +3352,7 @@ function diffKey(e) {
   const r = diffRows[U.sel]; if (r) { if (r.y < DLIST.top) U.scroll -= DLIST.top - r.y; else if (r.y + r.h > DLIST.bottom) U.scroll += r.y + r.h - DLIST.bottom; }
 }
 function settingsClick(p) {
+  if (!diffUI && !dbgUI && !spdUI && !htUI && setInGame() && SET_GAME_LOCK.some(k => inBtn(p, SET_BTNS[k]))) { note('LOCKED DURING A GAME'); return; }
   if (diffUI) { diffClick(p); return; }
   if (dbgUI) { debugClick(p); return; }
   if (spdUI) { speedClick(p); return; }
@@ -3096,7 +3382,9 @@ function settingsClick(p) {
   }
   else if (inBtn(p, B.zoom)) SETTINGS.camZoom = SETTINGS.camZoom === false;
   else if (inBtn(p, B.spd)) SETTINGS.simST = !SETTINGS.simST;
+  else if (inBtn(p, B.scouts)) SETTINGS.scouts = SETTINGS.scouts === false;   // (off: the draft's plain SCOUT button only, no scouts to hire / assign)
   else if (inBtn(p, B.morale)) { SETTINGS.morale = SETTINGS.morale === false; moraleSync(); }   // (off: every player reads 50 and nothing moves it; the attribute panel still shows)
+  else if (inBtn(p, B.taunt)) { const L = Object.keys(CELEB.tauntSet); SETTINGS.taunts = L[(L.indexOf(SETTINGS.taunts || 'NORMAL') + 1) % L.length]; }   // (looks only: how often a celebration is a taunt)
   else if (inBtn(p, B.autoSw)) SETTINGS.autoSwitch = !SETTINGS.autoSwitch;   // (on defense, a pass in the air switches you to the closest man)
   else if (inBtn(p, B.save) && canSave()) { if (curSlot !== null && curSlot !== undefined) saveToSlot(curSlot); else slotUI = { mode: 'save', scroll: 0, confirm: null }; }   // (one click: saves over the franchise's own slot; the slot picker only when it has none yet)
   else if (inBtn(p, B.load) && hasSave() && !tut) slotUI = { mode: 'load', scroll: 0, confirm: null };
@@ -3104,6 +3392,7 @@ function settingsClick(p) {
   else if (inBtn(p, B.dbg)) dbgUI = true;
   else if (inBtn(p, B.dark)) SETTINGS.darkMode = !SETTINGS.darkMode;
   else if (inBtn(p, B.lite)) SETTINGS.liteMode = LITE_MODES[(LITE_MODES.indexOf(SETTINGS.liteMode || 'AUTO') + 1) % LITE_MODES.length];
+  else if (inBtn(p, B.side)) { SETTINGS.sideline = SL_MODES[(SL_MODES.indexOf(SETTINGS.sideline || 'ALL') + 1) % SL_MODES.length]; slSetting(); }
   else if (inBtn(p, B.post)) SETTINGS.post = SETTINGS.post === false;   // (the Paper Passer Post: newspaper, story arcs and midweek events; franchise only)
   else if (inBtn(p, B.ht)) htUI = 'half';
   else if (inBtn(p, B.pg)) htUI = 'pre';
@@ -3466,7 +3755,7 @@ function slotMetas() {
     const old = localStorage.getItem(SAVE_KEY);   // (the one save from before slots: moves into the first empty slot)
     if (old) {
       const i = Array.from({ length: SLOTS }, (_, k) => k).find(k => !localStorage.getItem(SLOT_KEY(k)));
-      if (i !== undefined) { localStorage.setItem(SLOT_KEY(i), old); m[i] = metaOfData(JSON.parse(old)); localStorage.setItem(SLOT_META, JSON.stringify(m)); localStorage.removeItem(SAVE_KEY); }
+      if (i !== undefined) { localStorage.setItem(SLOT_KEY(i), old); m[i] = metaOfData(lsJson(old)); localStorage.setItem(SLOT_META, JSON.stringify(m)); localStorage.removeItem(SAVE_KEY); }
     }
   } catch (e) {}
   return slotMetaCache = Array.from({ length: SLOTS }, (_, i) => (m && m[i]) || null);
@@ -3481,28 +3770,33 @@ function slotOrder() {
 // simulated lines alone are ~1.4 MB) and the leftovers of slots that hold no save. They used to pile up (and sync to every device)
 // until localStorage was full and new franchises could no longer save. keepBase: a franchise without a slot is still using them.
 const SLOT_DATA_KEYS = [PST_KEY, LPST_KEY, REC_KEY, LGHL_KEY, HOF_KEY, CHOF_KEY];
+const STORE_PACK = [SAVE_KEY, LPST_KEY, PST_KEY, REC_KEY, LGHL_KEY];   // keys stored packed (lzPack; always read them through lsJson). Smallest win last.
+// how full the storage is, for the message when a save doesn't fit
+function storeUsed() { let n = 0; try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); n += k.length + (localStorage.getItem(k) || '').length; } } catch (e) {} return n; }
 function storeTidy(keepBase) {
   try {
     if (!keepBase) for (const b of SLOT_DATA_KEYS) localStorage.removeItem(b);
     const m = slotMetas();
     for (let k = 0; k < SLOTS; k++) if (!m[k] && k !== curSlot && !localStorage.getItem(SLOT_KEY(k))) { for (const b of SLOT_DATA_KEYS) localStorage.removeItem(`${b}.${k}`); }
   } catch (e) {}
-  for (let k = -1; k < SLOTS; k++) {   // (league stats still stored as plain JSON by an older build: packed in place)
-    try { const key = k < 0 ? LPST_KEY : `${LPST_KEY}.${k}`, v = localStorage.getItem(key); if (v && v.length > 2000 && !v.startsWith(LZ_MARK)) localStorage.setItem(key, lzPack(v)); } catch (e) {}
+  // (anything big still stored as plain JSON by an older build is packed in place: saves, player / league stats, records, league clips.
+  // The saves themselves were never packed, ~0.5 MB each: a few franchises filled localStorage and nothing could save any more.)
+  for (const base of STORE_PACK) for (let k = -1; k < SLOTS; k++) {
+    try { const key = k < 0 ? base : `${base}.${k}`, v = localStorage.getItem(key); if (v && v.length > 2000 && !v.startsWith(LZ_MARK)) localStorage.setItem(key, lzPack(v)); } catch (e) {}
   }
 }
 try { storeTidy(true); } catch (e) {}   // (once at load: packs old saves' league stats, frees space before anything tries to save)
 function saveToSlot(i, auto, imported) {   // imported: a save file's data (written as it is; the current franchise and its slot stay as they were)
   if (ONL.on) { console.warn('online: saving is disabled'); return; }
   try {
-    const data = imported || buildSave(), m = slotMetas().slice(), txt = JSON.stringify(data);
+    const data = imported || buildSave(), m = slotMetas().slice(), txt = lsPacked(data);   // (packed: ~6x smaller)
     try { localStorage.setItem(SLOT_KEY(i), txt); }
     catch (e) { storeTidy(curSlot === null); localStorage.setItem(SLOT_KEY(i), txt); }   // (full: clear the leftovers and try once more)
     m[i] = metaOfData(data); localStorage.setItem(SLOT_META, JSON.stringify(m)); slotMetaCache = m;
     if (imported) return;
     curSlot = i; if (!pstStash) { storeTidy(false); pstSaveSlot(i); }   // (the stats are in memory and now go under the slot: drop the slot-less copies first)
     note(auto ? 'AUTOSAVED' : data.live ? 'GAME SAVED (at the last snap)' : 'GAME SAVED');
-  } catch (e) { if (imported) throw e; console.warn('save failed', e); note('COULD NOT SAVE (STORAGE FULL?)'); }
+  } catch (e) { if (imported) throw e; console.warn('save failed', e, 'storage chars used:', storeUsed()); note(/quota|storage/i.test((e && (e.name + e.message)) || '') ? 'COULD NOT SAVE: STORAGE FULL (DELETE AN OLD SAVE)' : 'COULD NOT SAVE'); }
 }
 function importSave(d) {   // a save file's data: checked, then into the first empty slot (none: asks before replacing the oldest)
   const ok = d && d.v === 1 && d.season && d.match && NFL[d.match.you] && d.career && d.world && d.world.roster && d.world.roster[d.match.you];
@@ -3518,9 +3812,10 @@ function autoAssignSlot() {   // a brand-new career: saved at once, to the first
 }
 function loadFromSlot(i) {
   let d = null;
-  try { d = JSON.parse(localStorage.getItem(SLOT_KEY(i))); } catch (e) {}
+  try { d = lsJson(localStorage.getItem(SLOT_KEY(i))); } catch (e) {}
   if (!d || !d.season) { note('NO SAVED GAME'); return; }
   curSlot = i; slotUI = null; suspended = null; resumeRoster = null; pstLoadSlot(i);
+  slNewGame();   // (sideline people: a fresh cast, put on their spots at the next reset; nothing of them is saved)
   { const sd = typeof d.diff === 'string' ? d.diff : d.diff && d.diff.preset || (d.world && d.world.settings && d.world.settings.difficulty); if (DIFFS.includes(sd)) SETTINGS.difficulty = sd; diffLoad(d.diff); }   // (diffLoad: mode / sliders / dynamic state; an old save's name = preset mode)
   { const own = d.setV && d.world && d.world.settings;   // (this save's own settings; a save without them gets a copy of the defaults. Volume and replays stay the global ones)
     const src = own ? d.world.settings : SETTINGS_DEF;
@@ -3538,7 +3833,7 @@ function loadFromSlot(i) {
   } else { resetWorld(); healAll(); }   // (an old save has no rosters in it: everyone starts fresh, from the stock league)
   for (const [i, v] of Object.entries(d.stars || {})) if (ROSTER[MATCH.you][i]) Object.assign(ROSTER[MATCH.you][i], v);
   fillMorale();   // (old saves: morale 50, no rehab, not limited)
-  for (const p of [...Object.values(ROSTER).flat(), ...(FA_POOL || [])]) fill5(p);   // (saves from before the 5th attribute)
+  for (const p of [...Object.values(ROSTER).flat(), ...(FA_POOL || [])]) { fill5(p); abilMigrate(p); }   // (saves from before the 5th attribute / the v0.36 abilities)
   if (career.hcStars == null) career.hcStars = 0.5;
   career.prac = d.career.prac || null; career.tut = d.career.tut || {}; tour = null; PR.draft = null;   // (older saves: a fresh camp)
   recalcTeamStars();   // (older saves: re-rated with the side-rating formula)
@@ -3621,7 +3916,7 @@ function drawSlots() {
   if (U.mode !== 'save') menuBtn(SLOT_NEW, 'NEW\nCAREER', RES.bright, 20, null, !U.confirm);
   if (U.mode !== 'save') menuBtn(IO.btn, 'IMPORT', RES.bright, 24, null, !U.confirm);   // (top left: the save screen writes a file, the load screens read one)
   if (U.confirm) {   // are you sure
-    ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0, 0, W, H); uiModal();
     resPanel(330, 240, 620, 260, [[U.confirm.kind === 'del' ? 'DELETE SAVE?' : U.confirm.kind === 'over' ? 'OVERWRITE SAVE?' : U.confirm.kind === 'imp' ? 'REPLACE A SAVE?' : U.confirm.kind === 'new' ? 'START A NEW CAREER?' : 'LOAD THIS SAVE?', null]], RES.bright);
     ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(U.confirm.kind === 'imp' ? `All slots are full: slot ${SLOTS} (oldest) is replaced.` : U.confirm.kind === 'del' ? `Slot ${slotOrder().indexOf(U.confirm.i) + 1} will be deleted for good.` : U.confirm.kind === 'over' ? `Slot ${slotOrder().indexOf(U.confirm.i) + 1} will be replaced.` : 'Unsaved progress will be lost.', W / 2, 350);
@@ -3674,7 +3969,7 @@ function slotClick(p) {
   placeSlotBtns();
   if (!inSlotView(p)) return;
   const order = slotOrder(), ti = SLOT_TRASH.findIndex(b => inBtn(p, b)), ei = SLOT_EXP.findIndex(b => inBtn(p, b));
-  if (ei >= 0 && slotMetas()[order[ei]] && inSlotView(p)) { let d = null; try { d = JSON.parse(localStorage.getItem(SLOT_KEY(order[ei]))); } catch (e) {} if (!d || !d.season) { ioToast('COULD NOT EXPORT'); return; } const m = metaOfData(d); if (ioExport('save', d, `paper-passer-save-${m.team}-year${m.years}`)) ioToast('SAVE EXPORTED', false); return; }
+  if (ei >= 0 && slotMetas()[order[ei]] && inSlotView(p)) { let d = null; try { d = lsJson(localStorage.getItem(SLOT_KEY(order[ei]))); } catch (e) {} if (!d || !d.season) { ioToast('COULD NOT EXPORT'); return; } const m = metaOfData(d); if (ioExport('save', d, `paper-passer-save-${m.team}-year${m.years}`)) ioToast('SAVE EXPORTED', false); return; }
   if (ti >= 0 && slotMetas()[order[ti]]) { U.confirm = { kind: 'del', i: order[ti] }; return; }
   const pos = SLOT_BTNS.findIndex(b => inBtn(p, b)), i = order[pos], m = pos >= 0 && slotMetas()[i];
   if (pos < 0) return;

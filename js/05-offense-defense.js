@@ -70,7 +70,7 @@ const DEEP_COV = { bonus: 0.55, between: 0.7, trailK: 0.15 };   // trailK = x th
 const COVER_SKILL = { team: 0.035, star: 0.06, lb: 1.8, jam: 2.1, speed: 0.5 };   // (jam: a won jam makes him much better in coverage the rest of the play)
 const ROUTE_END = { after: 0.8, deep: 0.5 };   // a receiver who has run his whole route (not a stop route) while the QB still holds it: after `after` s he goes deep (odds `deep`) or works toward the QB's side
 const COVER_FADE = { after: 2.5, per: 0.07, min: 0.55 };   // coverage skill x (1 - per) for every second a play runs past `after` s (floor min): the longer a play lasts, the worse the coverage
-const covOf = d => (d.cov || 1) * (d.jamWon ? COVER_SKILL.jam : 1) * (tut ? 1 : Math.max(COVER_FADE.min, 1 - COVER_FADE.per * Math.max(0, clock - COVER_FADE.after)));
+const covOf = d => (d.cov || 1) * (d.man && abilOn(d, 'mirror') ? ABIL_FX.mirror : 1) * (d.jamWon ? COVER_SKILL.jam : 1) * (tut ? 1 : Math.max(COVER_FADE.min, 1 - COVER_FADE.per * Math.max(0, clock - COVER_FADE.after)));
 const COVER_YOU_DEF = 1;   // x the computer's coverage speed while you play defense (1 = the original quality)
 const covSpeed = d => (1 + (covOf(d) - 1) * COVER_SKILL.speed) * (1 + passHeat() * PASS_STREAK.cover) * (aiOff() && !tut ? COVER_YOU_DEF : 1);   // (only part of it shows up as straight-line speed)
 const biteMult = d => lookingAt(d) === 'receiver' ? 0.1 : lookingAt(d) === 'qb' ? 1.2 : 0.6;
@@ -103,7 +103,7 @@ const REL = {
   attackBite: 1.4,           // attacked the cushion: x odds his man bites on a head fake (+ SELL.attack on double moves)
   freeAccel: 1.15,           // free release: x accel off the line
   zoneJam: 0.35,             // a zone defender at the line lands his jam this x as often on a man who picked the right release
-  call: true,                // callouts on a clean release vs press
+  call: false,               // callouts on a clean release vs press
 };
 const REL_MOVES = {
   speed:     { type: 'speed', name: 'SPEED RELEASE', steps: [[0.42, 1, 0.45, 1.05, 'burst', 1]] },
@@ -175,7 +175,7 @@ const REL_POSE = {
   nod:      k => ({ R: 0.34 * Math.sin(Math.PI * Math.min(1, k * 2)), ty: 1 }),
 };
 const rpt = (p, a) => (p && p.grp && RATING_AVG[p.grp] && RATING_AVG[p.grp][a] != null ? RATING_AVG[p.grp][a] : 9) + rz(p, a) * RATING.spread;   // rating points (1-15 scale)
-const sellK = r => Math.max(SELL.min, Math.min(SELL.max, rm(r, 'agi', SELL.agi) * rm(r, 'awr', SELL.awr) * rm(r, 'spd', SELL.spd) * (xfOn(r, 'Route Technician') ? SELL.xf : 1)));
+const sellK = r => Math.max(SELL.min, Math.min(SELL.max, rm(r, 'agi', SELL.agi) * rm(r, 'awr', SELL.awr) * rm(r, 'spd', SELL.spd) * (xfOn(r, 'stepAhead') ? SELL.xf : 1)));
 const setRelFx = (r, kind, dur, L = 0) => { r.relFx = { kind, t: clock, dur, L }; };
 const coverMan = (r, yd) => back7.find(d => d.man === r && !d.action && !d.blitz) || back7.filter(d => !d.blitz && !d.action && dist(d, r) < yd * YD).sort((a, b) => dist(a, r) - dist(b, r))[0];
 const REL_ARM_NEAR = 3 * YD;   // a release only throws its arms (swipe / rip / club) with a defender this close to hit them off
@@ -230,7 +230,7 @@ function relDecide(r) {
   R.decided = true;
   if (!R.press || !d || d.jamTried || d.action) { R.res = 'free'; return; }
   const m = R.m, cov = rpt(d, 'cov');
-  const prs = 0.5 * zpt(d, 'str') + 0.5 * zpt(d, 'cov') + (xfOn(d, 'Bottleneck') ? REL.bottleneck : 0) + REL.body * Math.log(jamBody(r, d));
+  const prs = 0.5 * zpt(d, 'str') + 0.5 * zpt(d, 'cov') + (abilOn(d, 'jammer') ? REL.bottleneck : abilOn(d, 'strongJam') ? REL.bottleneck * ABIL_FX.strongJamRel : 0) + REL.body * Math.log(jamBody(r, d));
   let tot = REL.base + relTotal(r, m) + (m.type === 'speed' ? -1 : m.type === 'combo' ? 2 : m.type === 'free' ? 0 : 1) + (R.good ? REL.good : 0) + (R.poor ? REL.poor : 0) - (R.slow ? REL.quick : 0);
   if ((m.type === 'fake' || m.type === 'combo') && cov >= REL.read) tot -= REL.readPen;   // a man who reads it isn't fooled by footwork
   const diff = m.type === 'speed' && 0.5 * (rpt(d, 'str') + cov) < REL.weakPress ? 99 : tot - prs + (Math.random() * 2 - 1) * REL.noise;
@@ -328,7 +328,7 @@ function dblGo(r) {   // the second move: burst
 // the cover men roll against the fake (dir = the fake's direction; null = a stop: they drive downhill on it)
 function dblCheck(r, dir) {
   const q = sellK(r);
-  const rt = 0.45 * zpt(r, 'agi') + 0.3 * zpt(r, 'awr') + 0.25 * zpt(r, 'spd') + SELL.soldPts * (q - 1) + (xfOn(r, 'Route Technician') ? SELL.xfPts : 0);
+  const rt = 0.45 * zpt(r, 'agi') + 0.3 * zpt(r, 'awr') + 0.25 * zpt(r, 'spd') + SELL.soldPts * (q - 1) + (xfOn(r, 'stepAhead') ? SELL.xfPts : 0);
   let any = false;
   for (const d of back7) {
     if (d.blitz || d.action || !(d.man === r || dist(d, r) < SELL.range * YD)) continue;
@@ -471,7 +471,7 @@ function runRoute(r, dt) {
           // the sharper the break, the more speed he sheds (slots lose less), and he's slow to get back up to speed
           // (chop steps coming in already bled some of it: he ends up no slower than the cut alone would leave him)
           const sharp = Math.min(1, (0.5 - cos) / 1.5);
-          const after = (r.chopFrom ?? r.speed) * (1 - (1 - (r.cut || CUT_SLOW)) * (0.5 + 0.5 * sharp) * 1.15 * (1 + WXF.cut * wxP()));   // (slick field: more speed lost on the break)
+          const after = (r.chopFrom ?? r.speed) * (1 - (1 - (r.cut || CUT_SLOW)) * (abilOn(r, 'cleanBreaks') ? ABIL_FX.cleanBreaks : 1) * (0.5 + 0.5 * sharp) * 1.15 * (1 + WXF.cut * wxP()));   // (slick field: more speed lost on the break)
           r.speed = Math.min(r.speed, after);
           r.cutUntil = clock + CUT_REACCEL.base + CUT_REACCEL.sharp * sharp;
           sellCut(r);
@@ -566,6 +566,63 @@ const nearestToBall = () => [...recs, rb].filter(r => r.route && !r.teBlock && !
 // A player who's gotten to the predicted landing spot early doesn't stand there: while the ball's still well short of it he
 // steps back toward the ball itself (then the usual jump/reach for it takes over as it arrives)
 const BALL_MEET = { zone: 1.3, far: 3, step: 0.6, ease: 0.25 };   // waiting at the spot: within zone yd of it, a ball under far yd off draws him step yd toward it; ease = slowest he jogs into the spot when early (x speed, inside TRACK.settle)
+// --- ball tracking ---------------------------------------------------------------------
+// How a man reads a pass in the air (tunables BT in 01-tuning): his skill, this throw's read (made once a throw, kept on p.bt), where he
+// thinks it lands right now, how long it takes him to get somewhere off the momentum he has, and the spot on its path he should meet it at.
+function btSkill(p) {
+  return Math.max(0, Math.min(1, 0.5 + BT.k * (BT.w.ctc * rz(p, 'ctc') + BT.w.awr * rz(p, 'awr') + BT.w.cov * rz(p, 'cov'))));
+}
+const btReadK = p => 1 + BT.read * (1 - 2 * btSkill(p));   // x the time before he locates the ball
+function btRead(p) {
+  const b = p.bt;
+  if (b && b.fx === ball.fx && b.fy === ball.fy && b.T === ball.T) return b;
+  const s = btSkill(p), fl = Math.hypot(ball.tx - ball.fx, ball.ty - ball.fy) || 1, ux = (ball.tx - ball.fx) / fl, uy = (ball.ty - ball.fy) / fl;
+  // the misjudgment: mostly its depth (short / long), a little to either side; worse on deep lobs, small on bullets
+  const mag = BT.err * YD * (1 - s) ** 1.5 * Math.min(1, fl / (BT.errDeep * YL)) * (ball.bullet ? BT.errBullet : 1) * (0.4 + 0.6 * Math.random());
+  const al = (Math.random() < 0.5 ? -1 : 1) * mag * BT.along, ac = (Math.random() * 2 - 1) * mag * (1 - BT.along);
+  const sp = Math.hypot(p.vx || 0, p.vy || 0), away = sp > YD ? Math.max(0, (p.vx * ux + p.vy * uy) / sp) : 0;   // (running away from the passer: his back is to it)
+  return p.bt = { fx: ball.fx, fy: ball.fy, T: ball.T, s, ex: ux * al - uy * ac, ey: uy * al + ux * ac, late: BT.blind * away * (1.5 - s),
+                  lock: BT.lock[0] + (BT.lock[1] - BT.lock[0]) * (1 - s), cp: 1, come: false };
+}
+// how far off the real landing spot his read still is (shrinks smoothly to nothing by his lock point: he adjusts as it comes down)
+function btOff(p) {
+  if (tut) return { x: 0, y: 0 };
+  const b = btRead(p), k = Math.max(0, Math.min(1, (b.lock - ball.p) / (b.lock * 0.6))), e = k * k * (3 - 2 * k);
+  return { x: b.ex * e, y: b.ey * e };
+}
+// seconds for him to get to a spot from the speed and heading he has now (a reversal and a standing start both cost time)
+function btTime(p, x, y, top) {
+  const dx = x - p.x, dy = y - p.y, d = Math.hypot(dx, dy), sp = Math.hypot(p.vx || 0, p.vy || 0), tp = Math.max(YD, top);
+  if (d < 1) return 0;
+  const cos = sp > 0.5 * YD ? (p.vx * dx + p.vy * dy) / (sp * d) : 1, fr = Math.min(1, sp / tp);
+  return d / tp + BT.turn * (1 - cos) / 2 * fr + BT.start * (1 - fr) * Math.min(1, d / (3 * YD));
+}
+// where he goes to catch it: where he thinks it lands, or (when he'd only be standing there waiting) the earliest spot on its way down
+// he can be at with the ball under maxZ: he works back to the ball. Returns { x, y, t = s until the ball is there }.
+function btMeet(p, top, maxZ, R, come, dt) {
+  const b = btRead(p), o = btOff(p), rem = (1 - ball.p) * ball.T;
+  let cp = 1;
+  if (come && !tut && !b.come && rem - btTime(p, ball.tx + o.x, ball.ty + o.y, top) > BT.early) b.come = true;   // (once he's coming back for it he keeps coming)
+  if (come && b.come) {
+    for (let i = 1; i < 24; i++) {
+      const q = ball.p + (1 - ball.p) * i / 24;
+      if (q < BT.from || Math.sin(Math.PI * q) * ball.h + (ball.z0 || 0) * (1 - q) > maxZ * BT.come) continue;
+      const x = ball.fx + (ball.tx - ball.fx) * q + o.x, y = ball.fy + (ball.ty - ball.fy) * q + o.y;
+      if (btTime(p, x, y, top) - R * 0.5 / Math.max(YD, top) + BT.margin <= (q - ball.p) * ball.T) { cp = q; break; }
+    }
+  }
+  b.cp = Math.max(ball.p, Math.min(1, b.cp + (cp - b.cp) * Math.min(1, BT.ease * dt)));   // (the spot slides along the path, never jumps)
+  return { x: ball.fx + (ball.tx - ball.fx) * b.cp + o.x, y: ball.fy + (ball.ty - ball.fy) * b.cp + o.y, t: (b.cp - ball.p) * ball.T };
+}
+// true when the rest of the pass's path comes within R of where he stands with the ball no higher than maxZ
+function btInPath(p, R, maxZ) {
+  for (let i = 0; i <= 12; i++) {
+    const q = ball.p + (1 - ball.p) * i / 12;
+    if (Math.sin(Math.PI * q) * ball.h + (ball.z0 || 0) * (1 - q) > maxZ) continue;
+    if (Math.hypot(ball.fx + (ball.tx - ball.fx) * q - p.x, ball.fy + (ball.ty - ball.fy) * q - p.y) <= R) return true;
+  }
+  return false;
+}
 function ballOrSpot(p, x, y) {
   // (at the spot he waits on it; only a ball nearly on him (within 3 yd) draws him a step to meet it. Stepping toward a far-off ball took him
   //  off the spot, then back onto it, every frame: the jitter on the sideline when the throw sails out of bounds)
@@ -627,7 +684,7 @@ function updateReceiver(r, dt) {
     const d = r.chip.d;
     moveToward(r, d.x - BLOCK_RANGE * 0.8, d.y, Math.max(r.speed, 3 * YD) * dt);
     if (!r.chip.hit && dist(r, d) <= BLOCK_RANGE * 1.15) {
-      r.chip.hit = true; r.chip.until = Math.min(r.chip.until, clock + CHIP.stick);
+      r.chip.hit = true; r.chip.until = Math.min(r.chip.until, clock + (abilOn(r, 'chipAndGo') ? 0 : CHIP.stick));   // (Chip and Go: straight into his route)
       if (!d.shed && d.shedAt < 50) d.shedAt += CHIP.hold * rm(r, 'str', 0.3);
       popup(r, 'CHIP', '#7fe3ff');
     }
@@ -659,15 +716,18 @@ function updateReceiver(r, dt) {
     const d = Math.hypot(l.x - r.x, l.y - r.y);
     // lays out only when running won't get him there in time
     if (l.t < 0.3 && d - Math.hypot(r.vx, r.vy) * l.t > LOOSE_REACH * DIVE_NEED && d <= DIVE_ATTEMPT) startDive(r, l.x, l.y, Math.max(0.15, l.t), DIVE_LUNGE);
-  } else if (r === tgt && state === 'flight' && ball.age > WR_READ * TRACK.read * (1 + ROUTE_MATCH.read * routeMiss(r))) {
-    const bx = ball.tx, by = Math.max(Y_MIN + 4, Math.min(Y_MAX - 4, ball.ty));
+  } else if (r === tgt && state === 'flight' && ball.age > WR_READ * TRACK.read * (1 + ROUTE_MATCH.read * routeMiss(r)) * btReadK(r) + btRead(r).late) {
+    // (where he's going for it: his read of the landing spot, or back up the ball's path when he'd only be waiting on it)
+    const topNow = effTop(r, r.topBase || WR_TOP) * runFade(r);
+    const mp = btMeet(r, topNow, r.catchMode === 'jump' || r.catchMode === 'jumpOne' ? JUMP_REACH : STRIDE_HEIGHT, catchRadius(r), !r.runCatch, dt);
+    const bx = mp.x, by = Math.max(Y_MIN + 4, Math.min(Y_MAX - 4, mp.y));
     const miss = routeMiss(r);   // (off his route: he gets to it a little slower)
     r.speed *= 1 - ROUTE_MATCH.slow * miss * Math.min(1, dt * 6);
     if (r.route.stop && r.leg >= r.path.length && !r.runCatch) { const t = ballOrSpot(r, bx, by); moveToward(r, t.x, t.y, step); }   // hitch/comeback: settle under it
     else {
       // keep running through the catch: ease off to arrive with the ball, but never pull up and wait
       const dx = bx - r.x, dy = by - r.y, d = Math.hypot(dx, dy), hs = Math.hypot(r.vx, r.vy);
-      const remaining = Math.max(0.05, (1 - ball.p) * ball.T);
+      const remaining = Math.max(0.05, mp.t);
       // right under it (even catching on the run): ease in and go at the ball itself, never farther from the spot than the catch radius
       // (running through it and turning back, over and over, looks like a jitter and takes him out of the radius)
       // (once he's in, he stays in: no flipping between running at it and settling under it on the edge of the zone, which was the back-and-forth jitter)
@@ -681,18 +741,30 @@ function updateReceiver(r, dt) {
         holdFace = true;
       }
       const behind = hs > YD && (dx * r.vx + dy * r.vy) < 0 && d < TRACK.overrun * YD;
-      const ux = d > 0.4 * YD && !behind ? dx / d : hs > YD ? r.vx / hs : r.cont.x;
-      const uy = d > 0.4 * YD && !behind ? dy / d : hs > YD ? r.vy / hs : r.cont.y;
+      let ux = d > 0.4 * YD && !behind ? dx / d : hs > YD ? r.vx / hs : r.cont.x;
+      let uy = d > 0.4 * YD && !behind ? dy / d : hs > YD ? r.vy / hs : r.cont.y;
+      // momentum: he can't turn on a dime. His heading swings onto the ball as fast as his speed and agility allow; a ball behind
+      // him makes him plant (shed speed) before he can come back for it
+      if (!settling && hs > BT.mom.min * YD && d > TRACK.settle * YD) {
+        const cur = Math.atan2(r.vy, r.vx), da = wrapAngle(Math.atan2(uy, ux) - cur);
+        const lim = BT.mom.rate * Math.max(0.75, Math.min(1.3, rm(r, 'agi', 0.3))) / Math.max(0.35, hs / Math.max(YD, topNow)) * dt;
+        if (Math.abs(da) > lim) {
+          r.speed = Math.max(BT.mom.min * YD, r.speed - BT.mom.brake * topNow * Math.abs(da) / Math.PI * dt - WR_ACCEL * accelK(r) * dt);
+          ux = Math.cos(cur + Math.sign(da) * lim); uy = Math.sin(cur + Math.sign(da) * lim);
+        }
+      }
       // (catching on the run eases off too when he'd get there early: at full speed he ran past the spot, turned, ran back... the
       //  back-and-forth. On time, d / remaining is already full speed, so he still catches it in stride)
-      const spd = Math.min(r.speed, Math.max(d / remaining, (d > TRACK.settle * YD ? 0.6 : BALL_MEET.ease) * r.speed));
+      // (early: he gathers into it, slowing smoothly over the last BT.gather yd instead of running up and stopping dead)
+      const gk = smooth01((d - TRACK.settle * YD) / ((BT.gather - TRACK.settle) * YD));
+      const spd = Math.min(r.speed, Math.max(d / remaining, (BALL_MEET.ease + (0.6 - BALL_MEET.ease) * gk) * r.speed));
       if (!settling) { r.x += ux * spd * dt; r.y += uy * spd * dt; }
     }
   } else if (picker && r === tgt) {
     moveToward(r, picker.x, picker.y, step);
-  } else if (state === 'flight' && r !== tgt && ball.age > WR_READ * TRACK.read && canPlayBall(r) && nearestToBall() === r) {
-    // the receiver closest to where it's coming down goes for it too, targeted or not
-    const t = ballOrSpot(r, ball.tx, Math.max(Y_MIN + 4, Math.min(Y_MAX - 4, ball.ty)));
+  } else if (state === 'flight' && r !== tgt && ball.age > WR_READ * TRACK.read * btReadK(r) + btRead(r).late && canPlayBall(r) && nearestToBall() === r) {
+    // the receiver closest to where it's coming down goes for it too, targeted or not (to where he reads it landing)
+    const o = btOff(r), t = ballOrSpot(r, ball.tx + o.x, Math.max(Y_MIN + 4, Math.min(Y_MAX - 4, ball.ty + o.y)));
     moveToward(r, t.x, t.y, step);
   } else {   // (everyone else keeps running his route: receivers only block once it's caught, on a run, or when the QB scrambles)
     runRoute(r, dt);
@@ -789,9 +861,9 @@ function updateCarrier(c, top, dt) {
   // ...and waiting on it (not sprinting, still behind the line) lets the blocks hold and the hole develop
   if (isRunPlay && c === rb && !c.sprint && c.x < los + YD && runPatience < 1.5) {
     runPatience += dt;
-    for (const r of dl) if (!r.shed) r.shedAt += RUN_PATIENCE.hold * dt;
+    for (const r of dl) if (!r.shed) r.shedAt += RUN_PATIENCE.hold * dt * (abilOn(c, 'patientEyes') ? ABIL_FX.patientEyes : 1);   // (Patient Eyes: his holes hold longer)
   }
-  c.speed = Math.min(cap, c.speed + RUN_ACCEL * accelK(c) * rbSlowAccel(c) * (clock - (c.catchAt ?? -9) < CATCH_REACCEL.time ? CATCH_REACCEL.accel : 1) * dt);
+  c.speed = Math.min(cap, c.speed + RUN_ACCEL * accelK(c) * (abilOn(c, 'burst') ? ABIL_FX.burst : 1) * rbSlowAccel(c) * (clock - (c.catchAt ?? -9) < CATCH_REACCEL.time ? CATCH_REACCEL.accel : 1) * dt);
   if (c.speed > cap) c.speed = Math.max(cap, c.speed - RUN_ACCEL * 2 * dt);
   // carrying the ball: he runs downfield by default (left arrow / J too); D backs up; A is sprint, not a direction
   const kD = keys.KeyD && !ignoreD;   // (a D pressed for a one-hander in the air isn't "back up" once he has the ball)
@@ -873,7 +945,7 @@ function blockerAvoid(c, d) {
 // already headed), or null.
 const holePlugged = h => [...dl, ...back7].some(d => !d.engaged && !d.action && dist(d, h) < 1.4 * YD);
 function findHole(c, dir) {
-  const bs = [...ols, ...recs, rb].filter(b => b !== c && b.engaged && b.x > c.x + 0.5 * YD && b.x < c.x + 7 * YD * (c === rb ? rbVis(RB_VISION.gap) : 1))
+  const bs = [...ols, ...recs, rb].filter(b => b !== c && b.engaged && b.x > c.x + 0.5 * YD && b.x < c.x + 7 * YD * (c === rb ? rbVis(RB_VISION.gap) : 1) * (abilOn(c, 'vision') ? ABIL_FX.vision : 1))
                                   .sort((a, b) => a.y - b.y);
   let best = null;
   const vis = c === rb ? rbVis(RB_VISION.gap) : 1;   // sharp vision: squeezes through tighter gaps, reads wider ones
@@ -931,7 +1003,8 @@ const EXCH_QB = {
 const RUN_READ = { toss: 1.35, stretch: 1.1, gun: 1.35, pin: 1.2, near: 3 };   // (gun = any other outside run from the shotgun / pistol: the back starts slower there, so the flip is short)
 function runReading(d, c) {
   if (!isRunPlay || c !== rb || kickoffPlay || dl.includes(d) || udCtl(d) || tut) return false;
-  const k = rb.scheme === 'pinPull' ? RUN_READ.pin : rb.runType !== 'outside' ? 0 : rb.scheme === 'sweep' && !shotgun ? RUN_READ.toss : shotgun ? RUN_READ.gun : RUN_READ.stretch;
+  const k = (rb.scheme === 'pinPull' ? RUN_READ.pin : rb.runType !== 'outside' ? 0 : rb.scheme === 'sweep' && !shotgun ? RUN_READ.toss : shotgun ? RUN_READ.gun : RUN_READ.stretch)
+    * (abilOn(d, 'greenDot') ? ABIL_FX.greenDot : 1) * (xfOn(d, 'heatSeeker') ? 0 : 1);   // (Green Dot: reads it early; Heat Seeker: at once)
   return clock < k && dist(d, c) > RUN_READ.near * YD;
 }
 const EXCH_GIVE = 0.22;   // s the empty hands take to come away after a handoff
@@ -1145,7 +1218,7 @@ function runAction(code) {
     const bq = balMove(c, 'moveTime'), bs = Math.min(1.25, balMove(c, 'moveSpeed'));   // (balance: quicker moves, more speed kept through them)
     c.act = { t: 0, dur: 0.45 / bq, vx: c.vx * 0.8 * bs, vy: c.vy * 0.8 * bs };
     c.spinT = clock;
-    c.spinReady = clock + SPIN_COOLDOWN;
+    c.spinReady = clock + SPIN_COOLDOWN * moveCoolK(c);
   } else if (code === 'KeyA' || code === 'Tab') {   // (A: the kickoff kneel; Tab: dive / slide)
     if (kickoffPlay && c === rb && c.x < 0) {   // kickoff returner in the end zone: take a knee (a touchback only if he caught it there)
       c.action = 'kneel'; c.act = { t: 0 }; c.svx = c.svy = 0;
@@ -1162,7 +1235,8 @@ function runAction(code) {
     }
     // QB: slides, unless a dive would get him the first down or the score
     const reachX = c.x + Math.max(0, dx) * 3 * YD;
-    const qbDive = dx > 0.3 && ((c.x < lineToGain && reachX >= lineToGain) || reachX >= FIELD || !!pylonFor(c));
+    const fourth = down === 4 && !kickoffPlay && state === 'run';   // (4th down: the QB always dives, never gives himself up with a slide)
+    const qbDive = fourth || (dx > 0.3 && ((c.x < lineToGain && reachX >= lineToGain) || reachX >= FIELD || !!pylonFor(c)));
     if (c === qb && !qbDive) {
       c.action = 'slide';
       c.act = { t: 0, dur: 0.45, fx: c.x, fy: c.y, tx: c.x + dx * 1.5 * YD, ty: c.y + dy * 1.5 * YD, angle: Math.PI };
@@ -1171,7 +1245,8 @@ function runAction(code) {
       if (pyl) {   // near the front pylon: a full-extension dive for the corner of the end zone
         startDive(c, FIELD + 0.6 * YL, pyl.y, PYLON.dive.dur, PYLON.dive.lunge);
         c.act.pylon = true;
-      } else startDive(c, c.x + dx * 3 * YD, c.y + dy * 3 * YD, 0.4, 2.5 * YD);
+      } else if (c === qb && fourth && dx < 0.3) startDive(c, c.x + 3 * YD, c.y, 0.4, 2.5 * YD);   // (going sideways / back on 4th down: he still dives forward)
+      else startDive(c, c.x + dx * 3 * YD, c.y + dy * 3 * YD, 0.4, 2.5 * YD);
       c.runDive = true;
       if (tut) tutEvent('dive');
     }
@@ -1187,7 +1262,7 @@ function runAction(code) {
     const extra = [...back7, ...dl].filter(o => o !== (ahead && ahead.o) && o.action !== 'down' && !o.hasBall &&
       (o.x - c.x) * dx + (o.y - c.y) * dy > 0 && (o.x - c.x) * dx + (o.y - c.y) * dy < HURDLE.maxGap * YD && Math.abs((o.x - c.x) * -dy + (o.y - c.y) * dx) < 1.4 * YD).length;
     // even with room, a defender in the way can still get a hand on him - likelier the taller the defender
-    if (space && ahead && Math.random() > Math.max(0.1, (HURDLE.userClear - HURDLE.tall * hz(ahead.o) + HURDLE.tallMe * hz(c) - HURDLE.heavy * wz(c)) * rm(c, agil(c), 'hurdle')) * HURDLE.stack ** extra) space = false;   // (a taller hurdler clears more often)   // (a heavier carrier gets less lift)
+    if (space && ahead && !(ahead.o.action === 'dive' && abilOn(c, 'hurdler')) && Math.random() > Math.max(0.1, (HURDLE.userClear - HURDLE.tall * hz(ahead.o) + HURDLE.tallMe * hz(c) - HURDLE.heavy * wz(c)) * rm(c, agil(c), 'hurdle')) * HURDLE.stack ** extra) space = false;   // (a taller hurdler clears more often)   // (a heavier carrier gets less lift)
     c.action = 'hurdle';
     c.act = { t: 0, dur: HURDLE.userDur, vx: c.vx, vy: c.vy, h: HURDLE.userH, user: true, space, mid: space ? null : ahead.o,
               backward: clock - (c.spinT ?? -9) < 0.6, cleared: [] };   // (spin + hurdle = a backwards hurdle)
@@ -1202,7 +1277,7 @@ function runAction(code) {
     const jd = 0.3 / balMove(c, 'moveTime'), bs = Math.min(1.25, balMove(c, 'moveSpeed'));
     c.act = { t: 0, dur: jd, vx: c.vx * 0.6 * bs, vy: side * 1.6 * YD / jd, side };
     c.jukeT = clock;
-    c.jukeReady = clock + JUKE_COOLDOWN;
+    c.jukeReady = clock + JUKE_COOLDOWN * moveCoolK(c);
   }
 }
 
@@ -1977,7 +2052,7 @@ function protCall() {
 function stuntResolve(L) {
   const s = L.stLoop; s.done = true;
   const { A, B, P } = s;
-  if (Math.random() < Math.min(0.95, STUNT.pick * rmo(B, 'blk', 0.6) * rmo(A, 'blk', 0.3) * (1 - 0.2 * dcK))) {
+  if (ols.some(o => abilOn(o, 'captain')) || Math.random() < Math.min(0.95, STUNT.pick * rmo(B, 'blk', 0.6) * rmo(A, 'blk', 0.3) * (1 - 0.2 * dcK))) {   // (Captain: his line always picks it up)
     A.assign = P; B.assign = L; A.lockedTo = B.lockedTo = null;
     L.shedAt = clock + STUNT.held[0] + Math.random() * STUNT.held[1];
     popup(B, 'PICKED UP', '#7fe3ff');
@@ -1998,7 +2073,7 @@ function escapeSack(r) {
   const moves = rm(qb, 'spd', 'moves') / (rm(r, 'spd', 'moveResist') * rm(r, 'str', 0.09)), power = rv(qb, 'str', r, 'str', 'power');
   const chance = Math.min(0.9, Math.max(juked ? 0.55 * moves : 0, spun ? 0.5 * moves : 0, qb.stiff ? 0.4 * power : 0) / rm(r, 'tck', 'tackle') * rm(qb, 'awr', A5.qb.pocket));   // (awareness: he feels the rush and slips it)
   if (!chance || Math.random() >= chance) return false;
-  r.missedQB = clock; qb.escapedAt = clock;
+  r.missedQB = clock; qb.escapedAt = clock; xfEvent(qb.src, 'escape');
   for (const d of back7) if (!d.action) d.slow = Math.max(d.slow || 0, ESCAPE.slow);   // (a broken play: the coverage breaks down behind him, so the shot downfield is there)
   const kind = qb.stiff ? 'stiff' : spun ? 'spin' : 'juke';
   const ico = missReel(qb, r, kind);   // the beaten rusher reacts like a tackler beaten by a ball carrier (juke / spin / stiff-arm reels, iconic ones)
@@ -2014,12 +2089,12 @@ function pocketAction(code) {
   if (code === 'KeyR' && !(p.spinReady > clock)) {
     p.action = 'spin';
     p.act = { t: 0, dur: 0.45, vx: p.vx * 0.5, vy: p.vy * 0.5 };
-    p.spinT = clock; p.spinReady = clock + SPIN_COOLDOWN;
+    p.spinT = clock; p.spinReady = clock + SPIN_COOLDOWN * moveCoolK(p);
   } else if ((code === 'KeyW' || code === 'KeyS') && !(p.jukeReady > clock)) {
     const side = code === 'KeyW' ? -1 : 1;
     p.action = 'juke';
     p.act = { t: 0, dur: 0.3, vx: 0, vy: side * 1.4 * YD / 0.3 };
-    p.jukeT = clock; p.jukeReady = clock + JUKE_COOLDOWN;
+    p.jukeT = clock; p.jukeReady = clock + JUKE_COOLDOWN * moveCoolK(p);
   }
 }
 
@@ -2123,8 +2198,12 @@ function updateLine(dt) {
     if (eng.includes(rb) && !r.rbHit && r.shed) { r.rbHit = true; r.shed = false; r.shedAt = clock + (1 + Math.random() * 0.8) * rbVis(RB_VISION.pickup); }
     // a blitzer who gets picked up is held a moment (the back: briefly; the center: a bit longer)
     if (r.blitz && eng.length && r.shedAt === 99) {
-      r.shedAt = clock + 1.7 * (eng.includes(rb) ? (0.8 + Math.random() * 0.7) * rbVis(RB_VISION.pickup) : 1.3 + Math.random() * 0.8);   // picked-up blitzers stay picked up
-      if (eng.includes(rb)) r.rbHit = true;
+      const ghost = xfOn(r, 'freeBlitz') || (abilOn(r, 'blitzGhost') && r.ghostPid !== runPid && (r.ghostPid = runPid, true));   // (Free Blitz: never picked up; Blitz Ghost: not on the first try)
+      if (ghost) r.shedAt = clock + ABIL_FX.ghost;
+      else {
+        r.shedAt = clock + 1.7 * (eng.includes(rb) ? (0.8 + Math.random() * 0.7) * rbVis(RB_VISION.pickup) : 1.3 + Math.random() * 0.8);   // picked-up blitzers stay picked up
+        if (eng.includes(rb)) r.rbHit = true;
+      }
     }
     r.engaged = eng.length > 0;
     // a won block on a run: the back is past the man and his blocker(s), so the DL isn't getting there. The lineman lets go (the man is
@@ -2542,7 +2621,7 @@ function pressMan(d, dt) {
     const far = r.x - los > JAM_ZONE;
     // past 5 yards he usually doesn't bother: he just glues himself to the man instead
     if (far && Math.random() > JAM.farTry) d.stickUntil = deep ? 0 : clock + JAM.stick;
-    else if (dist(d, r) <= JAM_RANGE * 1.6 && Math.random() < JAM.chance * (deep ? PRESS_DEEP.jam : 1) * rm(d, 'str', 'jam') / rm(r, 'agi', 'jamEvade') * jamBody(r, d) * (xfOn(d, 'Bottleneck') ? XFX.jam : 1)) landJam(r, d);
+    else if (dist(d, r) <= JAM_RANGE * 1.6 && (Math.random() < JAM.chance * (deep ? PRESS_DEEP.jam : 1) * rm(d, 'str', 'jam') / rm(r, 'agi', 'jamEvade') * jamBody(r, d) * (abilOn(d, 'strongJam') ? ABIL_FX.strongJam : 1) || abilOn(d, 'jammer'))) landJam(r, d);   // (Strong Jam: more jams land; Jammer: his always do)
     else {
       d.falseStepUntil = clock + JAM.missStep;
     }
@@ -2927,7 +3006,7 @@ function ballPointFor(d) {
     const pp = ball.p + (1 - ball.p) * i / 30;
     const x = ball.fx + (ball.tx - ball.fx) * pp, y = ball.fy + (ball.ty - ball.fy) * pp;
     if (Math.sin(Math.PI * pp) * ball.h > d.reachZ) continue;
-    if (Math.hypot(x - d.x, y - d.y) <= d.top * TRACK.def * (pp - ball.p) * ball.T + 0.3 * YD) return { x, y };
+    if (btTime(d, x, y, d.top * TRACK.def) <= (pp - ball.p) * ball.T + 0.3 * YD / Math.max(YD, d.top)) return { x, y };   // (off the momentum he has: a man running the other way gets there later)
   }
   return { x: ball.tx, y: ball.ty };
 }
@@ -2961,7 +3040,7 @@ function defendBall(d, dt) {
   if (fooled(d, dt)) return;
   // a deep shot: the safeties read it off the QB's arm and go get it
   const deepShot = d.role === 'S' && !d.blitz && ball.tx > los + DEEP_BALL.air * YL;
-  const react = deepShot ? Math.min(d.react, DEEP_BALL.react) : d.zone.deep && ball.tx > los + 15 * YL ? Math.min(d.react, 0.15) : d.react;
+  const react = (deepShot ? Math.min(d.react, DEEP_BALL.react) : d.zone.deep && ball.tx > los + 15 * YL ? Math.min(d.react, 0.15) : d.react) * btReadK(d) * abilReactK(d);   // (abilities: Click and Close, Zone Eyes, Ball Eyes, Robber, Jump the Route; Tunnel Vision QB = later) (ball skills: a good one finds it sooner)
   if (ball.age <= react) return zoneDefend(d, dt);
   if (deepShot) d.eyes = 'ball';
   const px = d.x, py = d.y;
@@ -3012,6 +3091,7 @@ function defendBall(d, dt) {
   const angleUp = !!tgt && !canTip && !stray && !beaten && !attached && !(covering && dist(d, tgt) < YAC_ANGLE.onMan * YD) && spotD < YAC_ANGLE.near * YD;
   const angleT = angleUp ? { x: ball.tx + Math.min(YAC_ANGLE.cap * YL, spotD * YAC_ANGLE.lead), y: ball.ty + (d.y - ball.ty) * YAC_ANGLE.side } : null;
   let t = angleT ? angleT : beaten || attached || tackleFirst || (covering && !deepShot && !stray) ? onMan : near || stray ? ballPointFor(d) : { x: ball.tx, y: ball.ty };
+  if (t !== onMan && t !== angleT) { const o = btOff(d); if (o.x || o.y) t = { x: t.x + o.x, y: t.y + o.y }; }   // (playing the ball: he goes where he reads it coming down, and corrects as it drops)
   if (t !== onMan && t !== angleT) { const b = ballOrSpot(d, t.x, t.y); if (b.x !== t.x || b.y !== t.y) t = b; }   // (and no standing at the spot with the ball still short of it)
   // same legs as in coverage: no extra burst just because the ball's in the air
   const zt = d.zoneTop || d.top;
@@ -3150,8 +3230,9 @@ function tryPancake(b, d, odds) {
   const table = odds || (olBlock || b.pos === 'TE' ? PANCAKE : WR_PANCAKE);   // a tight end blocks like a lineman
   // momentum: a lineman who's moving (a pull, a climb, a fast release) hits harder, so his speed rating matters too
   const mom = 1 + PANCAKE_MOM.k * Math.min(PANCAKE_MOM.cap, Math.hypot(b.vx || 0, b.vy || 0) / OL_RUN) * (b.spdMult || 1);
-  if (Math.random() >= (table[d.role] || 0) * PANCAKE_SCALE * (olBlock ? rmo(b, 'str', 'block') / rm(d, 'str', 'block') : rv(b, 'str', d, 'str', 'block')) * (olBlock ? mom : 1) / (kickoffPlay ? KICK_COVER.shed : 1)) return false;   // (the kickoff team sheds blocks better)
+  if (!(isRunPlay && xfOn(b, 'bulldozer')) && Math.random() >= abilPanK(b) * (table[d.role] || 0) * PANCAKE_SCALE * (olBlock ? rmo(b, 'str', 'block') / rm(d, 'str', 'block') : rv(b, 'str', d, 'str', 'block')) * (olBlock ? mom : 1) / (kickoffPlay ? KICK_COVER.shed : 1)) return false;   // (the kickoff team sheds blocks better)
   d.tackling = false; d.shed = true; d.engaged = false; d.blockers = null;
+  xfEvent(b.src, 'pancake');
   b.assign = null;                   // and goes looking for someone else
   const L = PANCAKE_LOOK, bsp = Math.hypot(b.vx || 0, b.vy || 0), hx = d.x - b.x, hy = d.y - b.y, hl = Math.hypot(hx, hy) || 1;
   if (bsp >= L.momV * YD && !b.action) {   // momentum: shoulder lowered into him, the hit lands at the contact frame (lowContact)
@@ -3174,7 +3255,7 @@ function tryPancake(b, d, odds) {
 // Stiff arm: he locks the man up at arm's length (slowing down while he does), for a while or only a
 // split second, then the shove either knocks him off or he wraps up. A second man arriving mid-stiff-arm
 // gets a quick shove at reduced odds.
-const stiffOdds = (c, d) => d.sucker ? 1 : Math.min(Math.min(0.8, STIFF.cap * brkK(c, d)), brkK(c, d) * STIFF.win * (d.role === 'LB' ? 0.8 : 1) * (d.hitStick ? HIT_STICK_VS.stiff : 1) * (c.pos === 'TE' ? 1.2 : 1) * rv(c, 'str', d, 'str', 'power') * (c.team === 'off' ? c.stiffEff ?? 1 : 1));   // a missile is hard to hold off
+const stiffOdds = (c, d) => d.sucker || xfOn(c, 'freightTrain') ? 1 : Math.min(Math.min(0.8, STIFF.cap * brkK(c, d)), brkK(c, d) * STIFF.win * (d.role === 'LB' ? 0.8 : 1) * (d.hitStick ? HIT_STICK_VS.stiff : 1) * (c.pos === 'TE' ? 1.2 : 1) * rv(c, 'str', d, 'str', 'power') * (c.team === 'off' ? c.stiffEff ?? 1 : 1)) * (c === playCatcher && abilOn(c, 'rumbler') ? ABIL_FX.rumbler : 1);   // a missile is hard to hold off
 // a tackle at the legs (gator roll, a shoestring dive at the ankles, a man hanging on an ankle) goes in under a stiff arm: the arm can't touch it
 const lowTk = d => !!d && (d.action === 'clasp' || (d.action === 'dive' && (d.tkStyle === 'gator' || d.lowDive)));
 // the hold-off tug-of-war, every frame while a man is held at arm's length: -1 = he tears the arm off and wraps up, 1 = the runner throws him off, 0 = still fighting
@@ -3289,7 +3370,7 @@ function pursuitPoint(d, c, speed, dir, err = 1) {
   // DBs read it better: they look further ahead
   const db = d.role === 'CB' || d.role === 'S', horizon = db ? PURSUIT.dbHorizon : PURSUIT.horizon;
   // everyone allows for the ground he loses getting up to speed toward the spot (the most when he is running the other way: a coverage man coming downfield)
-  const svx = d.svx || 0, svy = d.svy || 0, acc = Math.max(4 * YD, d.accel || 12 * YD), lagK = db ? Math.max(1, PURSUIT.lag) : PURSUIT.lag;
+  const svx = d.svx || 0, svy = d.svy || 0, acc = Math.max(4 * YD, d.accel || 12 * YD), lagK = (db ? Math.max(1, PURSUIT.lag) : PURSUIT.lag) * (abilOn(d, 'sidelineToSideline') ? ABIL_FX.sideline : 1) * (xfOn(d, 'heatSeeker') ? 0 : 1);   // (Sideline to Sideline: better angles; Heat Seeker: perfect ones)
   const maxI = s > YD ? Math.ceil(PURSUIT.leadMax * YD / (s * PURSUIT.step)) : Infinity;   // (the lead is capped)
   for (let i = 0; i * PURSUIT.step <= horizon && i <= maxI; i++) {
     path.push([px, py]);
@@ -3432,11 +3513,7 @@ function pursueMove(d, c, dt) {
         if (rel < -0.3) miss *= BEHIND_MISS;       // from behind there's nothing to juke or truck
         if (clock < (c.boostUntil ?? -9)) miss = Math.min(0.95, miss * POWER_BOOST.break);   // rolling after a won stiff arm / truck
         if (c.guard) miss *= 0.85;              // both arms on the ball: nothing to fight him off with
-        // X-Factor ballcarriers
-        const first = !c.xfSeen; c.xfSeen = true;
-        if (first && (xfOn(c, 'Phenom') || (xfOn(c, "YAC 'Em Up") && c === playCatcher))) miss = Math.max(miss, XFX.breakMiss);
-        if ((juked || spun) && (xfOn(c, 'First One Free') || (xfOn(c, 'Ankle Breaker') && c === playCatcher))) miss = Math.max(miss, XFX.breakMiss);
-        if (xfOn(c, 'Freight Train')) miss = Math.min(0.95, miss * XFX.freight[0] + XFX.freight[1]);
+        const first = !c.xfSeen; c.xfSeen = true;   // (the first tackle attempt on this carrier: several abilities key on it)
         if (kickoffPlay && d.lane !== undefined && !d.isKicker) {   // (kickoff coverage tackles better, and the first man to get a hand on him is the surest: squared up, hot feet)
           miss *= KICK_COVER.tackle * (c.koFirst ? 1 : KICK_COVER.first);
           c.koFirst = true;
@@ -3448,15 +3525,17 @@ function pursueMove(d, c, dt) {
         const tutSure = tut && udCtl(d);   // (your own tackles in the defense steps always stick: no broken tackles, no shrugged-off hits)
         if (tutSure) miss = 0;
         else miss = Math.min(0.95, miss * (1 + WXF.miss * wxP()));   // (wet / snowy: tackles slip off)
+        if (!tutSure) miss = abilMiss(c, d, miss, { juked, spun, hit, first });   // (abilities: may make it sure either way)
         // a held truck is never a sure thing: the strength x tackling ratings can multiply past 100% against a weak tackler (Freight Train / the tutorial excepted)
-        if (c.truck && !d.sucker && !tutSure && !xfOn(c, 'Freight Train')) miss = Math.min(miss, Math.min(TRUCK_MISS.max, TRUCK_MISS.cap * Math.sqrt(brkK(c, d))) * TRUCK_MISS.chain ** Math.max(0, (ofs ? playMoves.truck || 1 : 1) - 1));
+        if (c.truck && !d.sucker && !tutSure && miss < 1) miss = Math.min(miss, Math.min(TRUCK_MISS.max, TRUCK_MISS.cap * Math.sqrt(brkK(c, d))) * TRUCK_MISS.chain ** Math.max(0, (ofs ? playMoves.truck || 1 : 1) - 1));
         // a big hit can be shrugged off (like a truck): rare, likelier for a heavy, strong carrier. He stumbles and loses speed, but keeps the ball
         const hitBreak = !tutSure && hit && ofs && !c.truck && !juked && !spun && Math.random() < Math.min(HIT_BREAK.max, HIT_BREAK.base * power * Math.max(0.3, 1 + HIT_BREAK.weight * wz(c)) * (c === qb ? 0.5 : 1));
         if (hitBreak || Math.random() < miss) {
+          abilBroke(c, d, juked || spun);   // (star factor counts: broken tackles, moves that made him miss, missed tackles)
           const wasDive = d.action === 'dive';   // (read before his reaction replaces the dive)
           if (hitBreak) tackleSfx(true);   // (the hit still lands, he just stays up: no callout)
           msg = hitBreak ? 'Broke the tackle!' : c.truck ? 'Trucked him!' : spun ? 'Spun out of it!' : juked ? 'Juked him!' : d.hitStick ? 'Whiffed on the BOOM!' : 'Broke the tackle!';
-          if (hitBreak) { c.slow = Math.min(0.6, c.slow + HIT_BREAK.slow / balK(c)); c.falterUntil = clock + HIT_BREAK.stumble / balK(c); }
+          if (hitBreak) { c.slow = Math.min(0.6, c.slow + HIT_BREAK.slow / balK(c) / (abilOn(d, 'thumper') ? ABIL_FX.thumper.stun : 1)); c.falterUntil = clock + HIT_BREAK.stumble / balK(c); }
           if (c.truck) {
             // run over: knocked back on his back or driven back onto his seat (rarely the iconic run-over)
             const ico = missReel(c, d, 'truck');

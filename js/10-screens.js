@@ -10,7 +10,7 @@ function tscout() {
 const tsFuzz = (key, amp) => { let h = 7; for (const c of key) h = (h * 31 + c.charCodeAt(0)) % 9973; return Math.round(((h % 101) / 100 * 2 - 1) * amp); };   // (same guess every time you look: no re-rolling by reopening)
 function drawScout() {
   const k = scoutUI.team, t = NFL[k], S = tscout(), sc = !!S.done[k], ok = moveOk(k) || !!OFF.offers[k];   // (job offers: a team that did not call can still be bought for its asking price)
-  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
   resPanel(60, 70, 1160, 600, [[`${teamFull(k)}  ${sc ? 'SCOUTED' : 'ESTIMATES'}`, null]], RES.bright);
   ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.font = 'bold 18px monospace';
   ctx.fillStyle = RES.dim; ctx.fillText('TOP PLAYERS: POTENTIAL', 90, 140);
@@ -186,6 +186,13 @@ function tallyScores() {
 // the same way (stacking over a losing streak; capped at max per game). Credits per game by approval tier
 // (under 1/3: 1, 1/3-2/3: 2, over 2/3: 3), doubled for a win, none for a loss.
 const CREDIT_MULT = { BABY: 0.5, EASY: 0.8, NORMAL: 1, HARD: 1.5, EXTREME: 2, UNFAIR: 2.5 };   // x the credits earned from playing games, by difficulty
+function creditMult() {   // presets = CREDIT_MULT; adaptive = the same table read at its difficulty index D (between two presets = in between); custom = 1
+  if (diffMode() === 'preset') return CREDIT_MULT[SETTINGS.difficulty] ?? 1;
+  if (diffMode() !== 'dynamic') return 1;
+  const D = dynNow(), ks = Object.keys(DIFF_D).sort((a, b) => DIFF_D[a] - DIFF_D[b]);
+  for (let i = 1; i < ks.length; i++) { const a = ks[i - 1], b = ks[i]; if (D <= DIFF_D[b]) { const u = Math.max(0, (D - DIFF_D[a]) / (DIFF_D[b] - DIFF_D[a])); return CREDIT_MULT[a] + (CREDIT_MULT[b] - CREDIT_MULT[a]) * u; } }
+  return CREDIT_MULT[ks[ks.length - 1]];
+}
 const APPROVAL = { step: 0.025, max: 0.12, tiers: [1 / 3, 2 / 3] };
 const approvalTier = () => LEAGUE.approval < APPROVAL.tiers[0] ? 1 : LEAGUE.approval < APPROVAL.tiers[1] ? 2 : 3;
 let approvalAnim = null;   // { from, to, t0 }: the home screen's bar slides from last game's approval to the new one (t0 set when it first shows)
@@ -195,7 +202,7 @@ function approvalAfterGame(margin) {
   setTimeout(() => { if (L.approval !== before) approvalAnim = { from: before, to: L.approval, t0: null }; }, 0);
   L.streak = r === 0 ? 0 : Math.sign(L.streak) === r ? L.streak + r : r;
   L.approval = Math.max(0, Math.min(1, L.approval + Math.sign(L.streak) * Math.min(APPROVAL.max, APPROVAL.step * Math.abs(L.streak))));
-  const mult = diffMode() === 'preset' ? CREDIT_MULT[SETTINGS.difficulty] ?? 1 : 1;   // (difficulty scales the game credits; EXTREME / UNFAIR give no bonus for a loss)
+  const mult = creditMult();   // (difficulty scales the game credits; EXTREME / UNFAIR give no bonus for a loss)
   let pay = Math.max(1, Math.round(approvalTier() * (r > 0 ? 2 : 1) * (po && po.playing ? 2 : 1) * (mult > 1 && r <= 0 ? 1 : mult)));   // (playoff games pay double; a loss pays half of a win)
   if (rivalGame()) pay = r < 0 ? 0 : r > 0 ? pay * RIVAL.pay : pay;   // (a rival: a win pays double, a loss nothing)
   L.coins += pay; L.lastPay = pay;
@@ -229,7 +236,7 @@ function openResults() {
     restoreRoster();   // (a resumed game is over: the roster edits made while you were away apply now)
     if (condStart != null && condStart !== LEAGUE.condition) barAnims.cond = { from: condStart, t0: null };
   }
-  results = { record, screen: 'result', injAlert: !exhibition && SETTINGS.injuries && LEAGUE.injNotes.length ? [...LEAGUE.injNotes] : null };
+  results = { record, screen: 'result', fin: { blue: game.blue, red: game.red }, injAlert: !exhibition && SETTINGS.injuries && LEAGUE.injNotes.length ? [...LEAGUE.injNotes] : null };
   hsEndReel();   // (the game's best plays run behind the result screen)
   if (!exhibition && !tut) { try { results.pay = payOverlayInfo(); } catch (e) { results.pay = null; } }
   if (!exhibition && !tut && season) { try { if (curSlot === null) autoAssignSlot(); else saveToSlot(curSlot, true); } catch (e) {} }   // (every finished game autosaves to the franchise's slot; one without a slot yet gets the first free one)
@@ -428,7 +435,7 @@ function textBtn(b, label, ink = RES.line, size = 22, on = true) {
   UI_BTNS.push(b);
   const now = performance.now(), dt = Math.min(0.1, (now - (b.at || now)) / 1000);
   b.at = now;
-  const still = (!!offPop && !popBtnDraw) || ((!!tour || tutPrompt === 'ask' || tutPrompt === 'coach' || tutPrompt === 'ready' || !!(tut && tut.defAsk)) && !tourBtnDraw);
+  const still = uiBehind() || (!!offPop && !popBtnDraw) || ((!!tour || tutPrompt === 'ask' || tutPrompt === 'coach' || tutPrompt === 'ready' || !!(tut && tut.defAsk)) && !tourBtnDraw);
   const over = on && !still && hoverPt && inBtn(hoverPt, b);
   b.hov = (b.hov || 0) + ((over ? 1 : 0) - (b.hov || 0)) * Math.min(1, dt * 12);
   const d = on && !still ? pressDepth(b) : 0;
@@ -615,6 +622,12 @@ function dmFrame() {   // once a frame, before anything is drawn
   dmOn = on;
   for (const k of Object.keys(DM_WRAP)) { if (on) ctx[k] = DM_WRAP[k]; else delete ctx[k]; }
 }
+// any popup: uiModal() is called right after a popup dims the screen (every full-screen dim does). A button drawn BEFORE this
+// frame's dim while a popup was up last frame is behind it and holds still (uiBehind); the ones drawn after the dim are the popup's own.
+const UI_MODAL = { was: false, now: false };
+function uiModal() { UI_MODAL.now = true; }
+function uiModalFrame() { UI_MODAL.was = UI_MODAL.now; UI_MODAL.now = false; }   // (once a frame, where UI_BTNS turns over)
+const uiBehind = () => UI_MODAL.was && !UI_MODAL.now;
 // (the field and everything on it keeps its own colours, even where a menu draws it)
 const dmHeld = f => function () { dmHold++; try { return f.apply(this, arguments); } finally { dmHold--; } };
 drawPlayer = dmHeld(drawPlayer); drawField = dmHeld(drawField); drawBall = dmHeld(drawBall);
@@ -630,7 +643,7 @@ function menuBtn(b, label, bg, size = 24, face, on = true) {
   UI_BTNS.push(b);
   const now = performance.now(), dt = Math.min(0.1, (now - (b.at || now)) / 1000);
   b.at = now; if (b === BACK_BTN || b === WEEK_BACK || b === HOME_BACK) { backDrawn = now; backBtnNow = b; }
-  const still = (!!offPop && !popBtnDraw) || (settingsPopUp() && !setPopDraw) || ((!!tour || tutPrompt === 'ask' || tutPrompt === 'coach' || tutPrompt === 'ready' || !!(tut && tut.defAsk)) && !tourBtnDraw);   // (a popup or tutorial tip is up: the buttons behind it hold still)
+  const still = uiBehind() || (!!offPop && !popBtnDraw) || (settingsPopUp() && !setPopDraw) || ((!!tour || tutPrompt === 'ask' || tutPrompt === 'coach' || tutPrompt === 'ready' || !!(tut && tut.defAsk)) && !tourBtnDraw);   // (a popup or tutorial tip is up: the buttons behind it hold still)
   const over = on && !still && hoverPt && inBtn(hoverPt, b);
   b.hov = (b.hov || 0) + ((over ? 1 : 0) - (b.hov || 0)) * Math.min(1, dt * 12);
   const paper = bg === SEL ? '#fff3a0' : !bg || bg === RES.bright || bg === RES.bg ? '#fffdf4' : bg;
@@ -722,6 +735,7 @@ function drawFace(cx, cy, r, fill = '#ffd23a', mood = null) {   // the morale sm
 const xpcBox = { xp: false, t0: -1e9, back: null, doneAt: null };   // xp = the face showing; back = the face to go back to after an XP flight
 let xpPending = 0;   // bank XP still in the air (the box counts up as the tokens land)
 const xpcOn = () => !!season && !exhibition && !tut && !(typeof ONL !== 'undefined' && ONL.on);   // your franchise only
+const scoutsOn = () => SETTINGS.scouts !== false && xpcOn();   // the scouts system (SCOUT): setting on (an old settings file has none: on) + your franchise only
 const xpBank = () => career.xpBank || 0;
 function xpBankAdd(xp) {   // spare XP -> the bank (x XPC.rate); returns what went in
   if (!xpcOn() || !(xp > 0)) return 0;
@@ -767,8 +781,21 @@ function xpIcon(cx, cy, r, rot = 0, g = ctx) {
   for (const dy of [-0.3, 0.3]) { g.beginPath(); g.moveTo(-r * 0.5, (dy + 0.22) * r); g.lineTo(0, (dy - 0.22) * r); g.lineTo(r * 0.5, (dy + 0.22) * r); g.stroke(); }
   g.restore();
 }
+// pages that only spend one currency turn the box to it when you arrive (a click still flips it until the page changes)
+const COIN_CR_ONLY = ['fa', 'resign', 'hire', 'board'];
+let coinFaceKey = null;
+function coinAutoFace() {
+  if (!results || !xpcOn()) return;
+  const s = results.screen, own = s === 'roster' && viewTeam() === MATCH.you;
+  const face = COIN_CR_ONLY.includes(s) || (s === 'roster' && rosterView.tu) ? false : own && (rosterView.sel != null || rosterView.side === 'upg') ? true : null;
+  const key = s + ':' + (rosterView.tu ? 't' : '') + (rosterView.sel != null ? 'p' : '') + (rosterView.side === 'upg' ? 'u' : '');
+  if (key === coinFaceKey) return;
+  coinFaceKey = key;
+  if (face !== null && xpPending <= 0) { xpcBox.back = null; xpcFlip(face); }
+}
 function coinBox(x, y, n, bg) {   // ONE box, top right on every screen that shows it: credits on one face, the XP bank on the other (a click flips it)
   if (x < 900) { x = COIN_SPOT.x; y = COIN_SPOT.y; }
+  if (n === LEAGUE.coins) coinAutoFace();
   const B = xpcBox, on = n === LEAGUE.coins && xpcOn(), k = on ? Math.min(1, (performance.now() - B.t0) / (XPC.flip * 1000)) : 1;
   const xp = on && (k < 0.5 ? !B.xp : B.xp), sx = k < 1 ? Math.max(0.05, Math.abs(Math.cos(Math.PI * k))) : 1;   // (the flip: the box closes on the old face and opens on the new one)
   ctx.save();
@@ -974,7 +1001,12 @@ function drawSeasonTiles(x, y, w, h) {
   if (S.streak) { ctx.fillStyle = S.streak[0] === 'W' ? RES.gold : RES.dim; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     ctx.fillText(`${S.streak[0] === 'W' ? 'WON' : S.streak[0] === 'L' ? 'LOST' : 'TIED'} ${S.streak.slice(1)} STRAIGHT`.replace(' 1 STRAIGHT', ' LAST GAME'), x + w - 20, y + h - 18); }
 }
-function drawResults() {
+function drawResults() {   // (the reel behind it plays each clip with its own scoreboard: this screen always reads the final score, results.fin)
+  const f = results && results.fin, sb = game.blue, sr = game.red;
+  if (f) { game.blue = f.blue; game.red = f.red; }
+  try { drawResultsNow(); } finally { if (f) { game.blue = sb; game.red = sr; } }
+}
+function drawResultsNow() {
   if (hl && hl.bg) { ctx.save(); ctx.globalAlpha = HLREEL.bgPaper; paperBg(); ctx.restore(); }   // (the game's reel is playing behind this screen: the paper lets it through)
   else paperBg();
   coinBox(1120, 16, LEAGUE.coins, RES.bright);   // (the credits: top right)
@@ -1011,7 +1043,12 @@ function drawResults() {
   drawMomentum(L, U.graph.y, LW, U.graph.h);
 
   // season tiles (an exhibition doesn't count: a button to this game's player stats instead)
-  if (exhibition) menuBtn({ ...EX_STATS_BTN, y: U.tiles.y, h: 80 }, 'PLAYER STATS ▸', RES.bright, 28);
+  if (exhibition) {   // (pulses and bobs so it is seen after a scrimmage / PvP game: a soft gold glow behind it)
+    const t = performance.now() / 1000, pul = 0.5 + 0.5 * Math.sin(t * 4.2), b = { ...EX_STATS_BTN, y: U.tiles.y + Math.sin(t * 3) * 3, h: 80 };
+    ctx.save(); ctx.shadowColor = `rgba(255,200,50,${0.45 + 0.45 * pul})`; ctx.shadowBlur = 12 + 18 * pul; ctx.fillStyle = `rgba(255,205,60,${0.25 + 0.25 * pul})`;
+    ctx.beginPath(); ctx.roundRect(b.x - 4 - 3 * pul, b.y - 4 - 3 * pul, b.w + 8 + 6 * pul, b.h + 8 + 6 * pul, 14); ctx.fill(); ctx.restore();
+    menuBtn(b, 'PLAYER STATS ▸', RES.bright, 28);
+  }
   else if (pg) drawPoPanel(L, U.tiles.y, LW, U.tiles.h, lostPO);
   else if (season && season.team === MATCH.you) drawSeasonTiles(L, U.tiles.y, LW, U.tiles.h);
   else {
@@ -1077,7 +1114,7 @@ function drawPayOverlay() {
   if (P.t0 == null && !results.injAlert) { P.t0 = performance.now(); coinPending += P.total; }
   const el = P.t0 == null ? -1 : performance.now() - P.t0, end = A.start + n * A.row + A.end;
   ctx.save();
-  ctx.fillStyle = 'rgba(30,25,10,0.6)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(30,25,10,0.6)'; ctx.fillRect(0, 0, W, H); uiModal();
   const rh = 62, gap = 10, h = 96 + n * (rh + gap) + 90, y0 = Math.max(10, Math.round((H - h) / 2)), x = W / 2 - 340;
   resPanel(W / 2 - 380, y0, 760, h, [['CREDITS EARNED', null]], RES.bright);
   coinBox(1120, 16, LEAGUE.coins, RES.bg);
@@ -1116,7 +1153,7 @@ function drawPayOverlay() {
 function drawMenus() {
   ({ start: drawStart, franchise: drawCareer, result: drawResults, pgx: drawPgx, week: drawWeekEnd, home: drawHome, matchup: drawMatchup, roster: drawRoster, staff: drawStaff, playoffs: drawPlayoffs,
      awards: drawAwards, pbowl: drawPbowl, resign: drawResign, draft: drawDraft, fa: drawFA, offers: drawOffers, trade: drawTrade, tradeb: drawTradeB, toffers: drawTOffers,
-     exhibition: () => drawMatchup(true), exstats: drawExStats, hof: drawHof, trophy: drawTrophyRoom, scrap: drawScrap, post: drawPost, pawards: drawPAwards, records: drawRecords, chof: drawCoachHof, practice: drawPractice, hire: drawHire, board: drawBoard, test: drawTest, onevone: drawOneVOne, oopick: drawOvPick, anims: drawAnims, coach: drawCoachEd, online: drawOnline, onresult: drawOnResult })[results.screen]();
+     exhibition: () => drawMatchup(true), exstats: drawExStats, hof: drawHof, trophy: drawTrophyRoom, scrap: drawScrap, post: drawPost, pawards: drawPAwards, dboard: drawDBoard, records: drawRecords, chof: drawCoachHof, practice: drawPractice, hire: drawHire, board: drawBoard, test: drawTest, onevone: drawOneVOne, oopick: drawOvPick, anims: drawAnims, coach: drawCoachEd, online: drawOnline, onresult: drawOnResult })[results.screen]();
   if (teamPick) drawTeamPicker();
   drawTutPrompt();
   tourWatch(); drawTour();
@@ -1157,6 +1194,7 @@ function drawCardShows() {
   if (!results || !season || exhibition) { cardShows = []; return; }
   if (offPop || tour || settingsOpen) return;   // (a popup first: the show waits for it)
   const c = cardShows[0], now = performance.now(), S = CARD_SHOW;
+  if (c.t0 == null && spendFxs.some(f => now < f.t0 + f.coins.length * SPEND.gap + SPEND.ms)) return;   // (credits / XP still flying from the spend: the card waits for them to land)
   if (c.t0 == null) c.t0 = now;
   const t = (now - c.t0) / 1000, T1 = S.pop + S.hold, T2 = T1 + S.crumple, T3 = T2 + S.fly, cx = W / 2, cy = H / 2 - 10;
   if (t >= T3) { cardShows.shift(); if (cardShows.length) drawCardShows(); return; }
@@ -1206,17 +1244,20 @@ function flyXP(amt, from) {   // banked XP flies to the box as tokens (it is alr
     coinFly.push({ xp: amt / n, off, t0: now + off, done: false, sx: src[0], sy: src[1], mx: src[0] + Math.cos(a) * d, my: src[1] + Math.sin(a) * d * 0.7 });
   }
 }
-function xpFlyTick(now) {   // the box around an XP flight: it flips to XP as the first token leaves and back once the last has landed; no box on the page = no show
-  const B = xpcBox, xs = coinFly.filter(c => c.xp);
+function xpFlyTick(now) {   // the box turns to whatever is flying to it or out of it: credits while credits are in the air, XP while XP tokens are; back once it's all landed
+  const B = xpcBox, xs = coinFly.filter(c => c.xp), cr = coinFly.filter(c => !c.xp);
+  if (xpcOn() && xpcBoxSeen() && cr.some(c => now >= c.t0)) { if (B.back == null) B.back = B.xp ? 'xp' : 'cr'; xpcFlip(false); B.doneAt = null; return; }   // (credits landing: the credits face)
   if (!xs.length) {
     xpPending = 0;
-    if (B.back != null) { if (B.doneAt == null) B.doneAt = now; if (now - B.doneAt > XPC.hold * 1000) { xpcFlip(B.back === 'xp'); B.back = null; B.doneAt = null; } }
+    const busy = cr.length || (typeof spendFxs !== 'undefined' && spendFxs.some(f => !f.xp && now - f.t0 < SPEND.ms + f.coins.length * SPEND.gap));
+    if (B.back != null && !busy) { if (B.doneAt == null) B.doneAt = now; if (now - B.doneAt > XPC.hold * 1000) { xpcFlip(B.back === 'xp'); B.back = null; B.doneAt = null; } }
     return;
   }
   B.doneAt = null;
   if (!xs.some(c => now >= c.t0)) return;   // (still waiting: behind the credits, or its own short delay)
   if (!xpcOn() || !xpcBoxSeen()) { coinFly = coinFly.filter(c => !c.xp); xpPending = 0; return; }   // (nowhere to land: skipped, it's banked already)
-  if (B.back == null) { B.back = B.xp ? 'xp' : 'cr'; xpcFlip(true); }
+  if (B.back == null) B.back = B.xp ? 'xp' : 'cr';
+  xpcFlip(true);
 }
 function drawCoinFly() {
   COIN_FLY.to = coinTarget();
@@ -1482,7 +1523,7 @@ function poMvp() {   // the Paper Bowl MVP of the champion, from the box score g
 }
 function drawPoCard() {   // trophy presentation (your title): trophy, score, MVP
   const g = po.rounds[3][0], win = po.champ, ws = win === g.h ? g.hs : g.as, ls = win === g.h ? g.as : g.hs, opp = win === g.h ? g.a : g.h, w = 720, h = 430, x = (W - w) / 2, y = 120, mvp = poMvp();
-  ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, 0, W, H); uiModal();
   resPanel(x, y, w, h, [[pbName(), null]], RES.bright);
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   laurel(W / 2 - 70, y + 120, 54, -1); laurel(W / 2 + 70, y + 120, 54, 1); trophy(W / 2, y + 120, 62, RES.gold);
@@ -1565,7 +1606,7 @@ function drawScrap() {   // season in review: a scrapbook page for one title
 const INJ_ALERT_OK = { x: W / 2 - 110, y: 470, w: 220, h: 64 };
 function drawInjAlert() {
   const n = results.injAlert;
-  ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0, 0, W, H); uiModal();
   const cx = W / 2;   // (a clipboard: brown board, steel clip, a lined sheet)
   ctx.fillStyle = RES.shade; ctx.fillRect(cx - 296, 158, 600, 420);
   ctx.fillStyle = '#8a5a2b'; ctx.fillRect(cx - 300, 152, 600, 420); ctx.strokeStyle = RES.line; ctx.lineWidth = 3; ctx.strokeRect(cx - 300, 152, 600, 420);
@@ -2078,7 +2119,7 @@ function drawHome() {
   // (no upgrade arrow next to PRACTICE, ever: practice news waits inside the screen)   // (news from practice: a battle, an injury, a new mentor pairing)
   menuBtn(MENU_NEXT, season.offseason ? (offHomeStage() === 'resign' ? 'RE-SIGN ▸' : offHomeStage() === 'fa' ? 'FREE\nAGENCY ▸' : 'OFFSEASON ▸') : wk > SEASON_WEEKS ? 'PLAYOFFS ▸' : 'CONTINUE ▸', IN_GAME_PAPER.green, HOME_FS);
   if (homeLeave) {   // ARE YOU SURE? before leaving the franchise for the main menu
-    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
     resPanel(340, 200, 600, 300, [['ARE YOU SURE?', null]], RES.bright);
     ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('Going back to the main menu leaves', W / 2, 310); ctx.fillText('this franchise. Unsaved progress will', W / 2, 342);
@@ -2145,10 +2186,11 @@ const BUY_SPOT_BTN = { x: 826, y: 620, w: 200, h: 80 };   // roster, beside HALL
 function buySpot() {
   const side = rosterView.side, n = spotsOf(MATCH.you, side);
   if (side === 'upg' || n >= SPOT.max || LEAGUE.coins < SPOT.cost) return;
-  LEAGUE.coins -= SPOT.cost; LEAGUE.spots = LEAGUE.spots || { off: ROSTER_SPOTS, def: ROSTER_SPOTS }; LEAGUE.spots[side] = n + 1;
+  LEAGUE.coins -= SPOT.cost; LEAGUE.spots = LEAGUE.spots || { off: ROSTER_SPOTS, def: ROSTER_SPOTS }; LEAGUE.spots[side] = n + 1; leagueSpots();
   upgradeSfx(); autosaveSoon();
   const pg = Math.floor(n / ROSTER_CARDS.length), cur = rosterView.page || 0;
-  rosterView.buy = { side, idx: n, t0: performance.now(), slide: pg !== cur ? { from: cur, to: pg } : null };   // (scroll to its page first if it isn't on screen, then the paper uncrumples)
+  const hold = (Math.min(SPEND.max, 3 + SPOT.cost * 2) - 1) * SPEND.gap + SPEND.ms;   // (the credits' flight (spendFx) lands first, then the paper moves)
+  rosterView.buy = { side, idx: n, t0: performance.now() + hold, slide: pg !== cur ? { from: cur, to: pg } : null };   // (scroll to its page first if it isn't on screen, then the paper uncrumples)
   rosterView.page = pg;
 }
 const rosterSide = (team, side) => {
@@ -2426,7 +2468,7 @@ function drawCapBar(team, x, y, w, skip = [], low = false, plus = []) {   // low
 }
 const tradeStr = p => p.trade ? `RND ${p.trade} PICK` : '-';
 // (a draft prospect's value is a scout's guess, ????? until you scout him)
-const valueStr = p => results && results.screen === 'draft' && !p.drafted ? (p.scout ? `~${tradeStr({ trade: p.scout.val })}` : '?????') : season && p.stars && p.at ? pickPackage(tvPlayer(p)) : tradeStr(p);   // (a player: the draft picks he would fetch)
+const valueStr = p => results && (results.screen === 'draft' || results.screen === 'dboard') && !p.drafted ? (p.scout ? `~${tradeStr({ trade: p.scout.val })}` : '?????') : season && p.stars && p.at ? pickPackage(tvPlayer(p)) : tradeStr(p);   // (a player: the draft picks he would fetch)
 const heightStr = ht => `${Math.floor(ht / 12)}'${ht % 12}"`;
 // the KR bookmark: a ribbon hanging from the top edge (gold when he's the returner, a pencil outline when not)
 function drawBookmark(b, on, big, label = 'KR') {
@@ -2535,7 +2577,7 @@ function drawRoster() {
   const pages = rosterPages(ps, rosterView.side, team), pg = Math.min(rosterView.page || 0, pages - 1);
   const upgView = rosterView.side === 'upg', nUpg = team === MATCH.you ? upgTotal(team) : 0;
   const spots = rosterView.pos ? 0 : spotsOf(team, rosterView.side), buy = rosterView.buy && rosterView.buy.side === rosterView.side && !rosterView.statsOnly ? rosterView.buy : null, tNow = performance.now();
-  const slideK = buy && buy.slide ? (tNow - buy.t0) / (SPOT.slide * 1000) : 1;   // (0..1 while the list scrolls to the bought spot's page)
+  const slideK = buy && buy.slide ? Math.max(0, (tNow - buy.t0) / (SPOT.slide * 1000)) : 1;   // (0..1 while the list scrolls to the bought spot's page)
   const crumpK = buy ? Math.max(0, Math.min(1, (tNow - buy.t0 - (buy.slide ? SPOT.slide * 1000 : 0)) / (SPOT.crumple * 1000))) : 1;
   if (buy && crumpK >= 1 && slideK >= 1) rosterView.buy = null;
   const drawPage = (pgI, dx) => ROSTER_CARDS.forEach((b0, i) => {
@@ -2551,21 +2593,27 @@ function drawRoster() {
   if (!rosterView.statsOnly && (nUpg > 0 || (upgView && team === MATCH.you))) menuBtn(UPG_BTN, upgView ? 'BACK TO\nROSTER' : `${nUpg} UPGRADE${nUpg === 1 ? '' : 'S'}`, '#7fd48f', upgView ? 22 : 21);
   if (!rosterView.statsOnly && team === MATCH.you && upgView && nUpg > 0) menuBtn(UPG_ALL_BTN, 'UPGRADE\nALL', '#7fd48f', 16);
   ROSTER_ARROWS.forEach((b, i) => menuBtn(b, i ? '▸' : '◂', RES.bright, 30));   // (formation view: they flip formation / special-teams pages)
-  const autoOn = rosterAutoOn(team);   // (no cap bar, TEAM UPGRADES or HOF here: the credits box opens TEAM UPGRADES, the Hall of Fame is on the home screen)
-  if (autoOn) menuBtn(FV_AUTO_BTN, FVS.autoDD ? 'AUTO ▴' : 'AUTO ▾', FVS.autoDD ? SEL : RES.bright, 26);
+  const autoOn = rosterAutoOn(team);   // (AUTO = a small overlay in the view's bottom left, like the zoom / pan hint)
+  if (autoOn) menuBtn(FV_AUTO_BTN, FVS.autoDD ? 'AUTO ▴' : 'AUTO ▾', FVS.autoDD ? SEL : RES.bright, formView() ? 16 : 22);
+  if (!dcg && !rosterView.statsOnly) drawCapBar(team, 150, 636, 480, [], true);   // (the salary cap, bottom left beside BACK)
+  if (!dcg && !rosterView.statsOnly) {   // bottom right: TEAM UPGRADES (yours) and the HALL OF FAME
+    if (team === MATCH.you && season && !exhibition) menuBtn(BUY_SPOT_BTN, 'TEAM\nUPGRADES', RES.bright, 20);
+    menuBtn(HOF_ROSTER_BTN, 'HALL OF\nFAME', '#2b2b2b', 22);
+  }
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
   if (formView()) fvOverlay(team);   // (the page quick-pick list, over everything)
   else if (FVS.autoDD && autoOn) fvAutoItems().forEach(it => menuBtn(it.b, it.label, RES.bright, 16));
   if (rosterView.tu) drawTeamUpg(team, spots);
 }
 // TEAM UPGRADES popup (roster screen): +CAP.step $M of cap room, or one more roster spot on the side shown
-const TU = { box: { x: 370, y: 170, w: 540, h: 360 }, cap: { x: 400, y: 260, w: 230, h: 180 }, spot: { x: 650, y: 260, w: 230, h: 180 }, close: { x: 560, y: 456, w: 160, h: 56 } };
+const TU = { box: { x: 370, y: 162, w: 540, h: 388 }, cap: { x: 400, y: 260, w: 230, h: 180 }, spot: { x: 650, y: 260, w: 230, h: 180 }, close: { x: 560, y: 456, w: 160, h: 56 } };
 function drawTeamUpg(team, spots) {
   const B = TU.box, side = rosterView.side === 'def' ? 'DEFENSE' : 'OFFENSE';
-  ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0, 0, W, H); uiModal();
   ctx.fillStyle = RES.bg; ctx.fillRect(B.x, B.y, B.w, B.h); penOutline(B.x, B.y, B.w, B.h, 41, RES.line, 3);
-  ctx.fillStyle = RES.line; ctx.font = 'bold 28px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('TEAM UPGRADES', B.x + B.w / 2, B.y + 40);
-  ctx.font = 'bold 15px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(`${LEAGUE.coins} ¤ TO SPEND`, B.x + B.w / 2, B.y + 70);
+  ctx.fillStyle = RES.line; ctx.font = 'bold 28px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('TEAM UPGRADES', B.x + B.w / 2, B.y + 44);
+  ctx.font = 'bold 15px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(`${LEAGUE.coins} ¤ TO SPEND`, B.x + B.w / 2, B.y + 76);
+  { const nb = LEAGUE.spotBuys || 0, to = SPOT.leagueEvery - nb % SPOT.leagueEvery; ctx.font = 'bold 12px monospace'; ctx.fillText(`EVERY ${SPOT.leagueEvery} SPOTS YOU BUY, EVERY OTHER TEAM GAINS ONE (NEXT: ${to} MORE)`, B.x + B.w / 2, B.y + B.h - 16); }
   const capNow = LEAGUE.cap || CAP.start, capMax = capNow >= CAP.max, capCan = !capMax && LEAGUE.coins >= capCost();
   const spMax = spots >= SPOT.max, spCan = !spMax && LEAGUE.coins >= SPOT.cost;
   const card = (b, can, l1, l2, l3, cost) => menuBtn(b, '', RES.bright, 18, bb => {
@@ -2771,9 +2819,11 @@ function fvCands(team, pg, i, cur, holder) {   // the slot's list: the man in it
   const busy = p => holder && holder.has(p) && holder.get(p) !== k;
   return [cur, ...L.filter(p => !busy(p)).sort(by), ...L.filter(busy).sort(by)];
 }
-const FV_AUTO_BTN = { x: 1050, y: 620, w: 200, h: 80 };   // AUTO: the roster screen's bottom right button (where HOF was); your franchise only
+const FV_AUTO_BTN = { x: FV.box.x + 10, y: FV.box.y + FV.box.h - 44, w: 110, h: 34 };   // AUTO: small overlay in the view's bottom left (across from the zoom / pan hint); your franchise only
 const FV_AUTO_B = [{}, {}];
-const rosterAutoOn = team => depthOwn(team) && !rosterView.statsOnly && rosterView.side !== 'upg';
+const FV_AUTO_SPOTS = { form: { ...FV_AUTO_BTN }, simple: { x: 1050, y: 632, w: 200, h: 68 } };   // formation view = the overlay; the in-game depth chart's simple list = bottom right
+// AUTO: your team, formation view (roster or depth chart) or the depth chart's simple list (never the roster's simple list); it also moves the button to that view's spot
+const rosterAutoOn = team => { const fv = formView(); Object.assign(FV_AUTO_BTN, fv ? FV_AUTO_SPOTS.form : FV_AUTO_SPOTS.simple); return depthOwn(team) && !rosterView.statsOnly && rosterView.side !== 'upg' && (fv || !!dcg); };
 const fvAutoItems = () => ['AUTO THIS PAGE', 'AUTO ALL'].map((label, i) => ({ i, label, b: Object.assign(FV_AUTO_B[i], { x: FV_AUTO_BTN.x - 10, y: FV_AUTO_BTN.y - (2 - i) * 42, w: 210, h: 38 }) })).filter(it => it.i === 1 || formView());   // (the simple list has no page: AUTO ALL only)
 function fvAuto(team, all) {   // AUTO: every slot gets its best-fit named man, written as locks (depthFill); ALL = every formation and special-teams page
   if (all) { depthAutoFull(team); for (const pg of fvPages()) depthFill(team, pg); }
@@ -2918,7 +2968,7 @@ function fvOverlay(team) {
   if (FVS.autoDD) fvAutoItems().forEach(it => menuBtn(it.b, it.label, RES.bright, 16));
   if (!FVS.pick) return;
   const L = fvPickItems(), P = fvPages(), last = L[L.length - 1], top = 112, bot = (last.b ? last.b.y + last.b.h : last.y) + 12;
-  ctx.fillStyle = 'rgba(20,16,8,0.35)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(20,16,8,0.35)'; ctx.fillRect(0, 0, W, H); uiModal();
   ctx.fillStyle = RES.bright; ctx.fillRect(W / 2 - 216, top, 432, bot - top); ctx.strokeStyle = RES.line; ctx.lineWidth = 3; ctx.strokeRect(W / 2 - 216, top, 432, bot - top);
   for (const it of L) {
     if (it.head) { ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(it.head, W / 2 - 200, it.y + 12); continue; }

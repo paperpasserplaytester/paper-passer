@@ -600,7 +600,7 @@ function drawTutorial() {
 const DEF_ASK = { play: { x: W / 2 - 290, y: 440, w: 270, h: 76 }, sim: { x: W / 2 + 20, y: 440, w: 270, h: 76 } };
 function drawDefAsk() {
   ctx.save();
-  ctx.fillStyle = 'rgba(30,25,10,0.55)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(30,25,10,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
   const card = { x: W / 2 - 360, y: 150, w: 720, h: 400 };
   ctx.save(); ctx.translate(4, 6); tornPath(card); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill(); ctx.restore();
   tornPath(card); ctx.fillStyle = '#fffdf4'; ctx.fill();
@@ -623,7 +623,7 @@ function drawTutPrompt() {
   if (!tutPrompt || teamPick) return;
   ctx.save();
   if (tutPrompt === 'coach' && results.screen === 'home') {   // the hiring: the old coach is out, you're in
-    ctx.fillStyle = 'rgba(30,25,10,0.45)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(30,25,10,0.45)'; ctx.fillRect(0, 0, W, H); uiModal();
     const card = { x: W / 2 - 360, y: 130, w: 720, h: 470 };
     ctx.save(); ctx.translate(4, 6); tornPath(card); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill(); ctx.restore();
     tornPath(card); ctx.fillStyle = '#fffdf4'; ctx.fill();
@@ -644,7 +644,7 @@ function drawTutPrompt() {
     ctx.fillStyle = RES.dim; ctx.font = '15px monospace';
     ctx.fillText('click anywhere to continue', W / 2, 562);
   } else if (tutPrompt === 'ask' && results.screen === 'home') {
-    ctx.fillStyle = 'rgba(30,25,10,0.45)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(30,25,10,0.45)'; ctx.fillRect(0, 0, W, H); uiModal();
     const card = { x: W / 2 - 330, y: 190, w: 660, h: 320 };
     ctx.save(); ctx.translate(4, 6); tornPath(card); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill(); ctx.restore();
     tornPath(card); ctx.fillStyle = '#fffdf4'; ctx.fill();
@@ -662,7 +662,7 @@ function drawTutPrompt() {
     menuBtn(TUT_ASK.no, 'SKIP', RES.bright, 26);
     tourBtnDraw = false;
   } else if (tutPrompt === 'ready' && results.screen === 'home') {   // the franchise intro is done: on to the football tutorial?
-    ctx.fillStyle = 'rgba(30,25,10,0.45)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(30,25,10,0.45)'; ctx.fillRect(0, 0, W, H); uiModal();
     const card = { x: W / 2 - 330, y: 190, w: 660, h: 320 };
     ctx.save(); ctx.translate(4, 6); tornPath(card); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill(); ctx.restore();
     tornPath(card); ctx.fillStyle = '#fffdf4'; ctx.fill();
@@ -877,6 +877,7 @@ canvas.addEventListener('pointerdown', e => {
   if (!TUI.on || e.pointerType !== 'touch' || !e.isTrusted || tapHold) return;
   const p = pointerPos(e);
   if (!menuTouch(p)) return;
+  if (fvLive() && inBtn(p, FV.box) && !ROSTER_ARROWS.some(b => inBtn(p, b)) && !(depthOwn(viewTeam()) && inBtn(p, FV_AUTO_BTN))) return;   // (the roster formation view: one finger pans it, so the press goes through at once with its own pointer id)
   e.stopImmediatePropagation();
   tapHold = { id: e.pointerId, p, lp: layPt(e), moved: false };
 }, true);
@@ -899,6 +900,7 @@ window.addEventListener('pointercancel', e => { if (tapHold && tapHold.id === e.
 canvas.addEventListener('pointerdown', e => {
   if (ONL.on && ONL.guest && !results) return;   // (online guest: the host plays every tap, aim and click. Running them here too started a second, local throw / snap on the phone that fought the host's)
   if (oo && !paused && e.button === 0 && ooClick(pointerPos(e))) return;   // (1v1 practice: the force-animation buttons)
+  if (celT && !paused && !results && e.button === 0 && celTClick(pointerPos(e))) return;   // (test mode: the celebration panel)
   if (slotUI) { if (e.button === 0) slotClick(pointerPos(e)); return; }
   if (settingsOpen) { if (e.button === 0) settingsClick(pointerPos(e)); return; }
   if (HT && !hl) { if (e.button === 0) { if (!inBtn(pointerPos(e), HS_BAR.skip)) hsNext(); else hsBarHit(pointerPos(e)) && hsBarClick(pointerPos(e)); } return; }   // (a halftime card: NEXT / SKIP)
@@ -940,7 +942,7 @@ canvas.addEventListener('pointerdown', e => {
     if (results.screen === 'practice') { if (e.button === 0) pracClick(pointerPos(e)); return; }
     if (results.screen === 'hire') { if (e.button === 0) hireClick(pointerPos(e)); return; }
     if (results.screen === 'board') { if (e.button === 0) boardClick(pointerPos(e)); return; }
-    if (e.button === 0 && results.screen === 'home' && inBtn(pointerPos(e), HOME_BTNS[1])) { results.screen = 'staff'; staffView.sel = null; return; }
+    if (e.button === 0 && results.screen === 'home' && inBtn(pointerPos(e), HOME_BTNS[1])) { results.screen = 'staff'; staffView.sel = null; staffView.team = null; return; }
     if (results.screen === 'staff') { if (e.button === 0) staffClick(pointerPos(e)); return; }
     if (results.screen === 'trade' || results.screen === 'tradeb') { if (e.button === 0) tradeClick(pointerPos(e)); return; }
     if (results.screen === 'toffers') { if (e.button === 0) offersClick(pointerPos(e)); return; }
@@ -954,6 +956,7 @@ canvas.addEventListener('pointerdown', e => {
     if (results.screen === 'hof') { if (e.button === 0) hofClick(pointerPos(e)); return; }
     if (results.screen === 'post') { if (e.button === 0) postClick(pointerPos(e)); return; }
     if (results.screen === 'pawards') { if (e.button === 0) pawardsClick(pointerPos(e)); return; }
+    if (results.screen === 'dboard') { if (e.button === 0) dboardClick(pointerPos(e)); return; }
     if (results.screen === 'records') { if (e.button === 0) recClick(pointerPos(e)); return; }
     if (results.screen === 'chof') { if (e.button === 0) chofClick(pointerPos(e)); return; }
     if (results.screen === 'result' && results.pay && !results.injAlert) { if (e.button === 0) payClick(); return; }
@@ -1004,6 +1007,7 @@ canvas.addEventListener('pointerdown', e => {
   }
   if (e.button === 0 && finishShowing() && inBtn(pointerPos(e), finishBtn())) { finishReplay(); return; }   // (FINISH: same as tapping the replay to continue)
   if (e.button === 0 && overPauseButton(pointerPos(e))) { if (noPause()) return; paused = !paused; resetAsk = false; pauseGoals = false; aim = null; return; }
+  if (e.button === 0 && pauseGearOn() && inBtn(pointerPos(e), PAUSE_GEAR)) { settingsOpen = true; return; }   // (the gear beside the pause icon)
   if (paused) {
     const p = pointerPos(e), hit = b => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
     if (e.button === 0 && !ONL.on && dcShown() && hit(DC_BTN)) { if (dcWhich()) dcOpen(); return; }   // (DEPTH CHART: before the snap only)
@@ -1025,7 +1029,12 @@ canvas.addEventListener('pointerdown', e => {
     return;
   }
   if (rec && rec.replaying && e.button === 0 && !finalReplay() && !halfShown()) { const p = pointerPos(e); if (tipClick(p)) { pressAt = 0; replayLeft = null; return; } pressAt = performance.now(); replayLeft = { sx: p.x, sy: p.y, moved: false }; return; }   // (a replay takes the click before anything under it: a pre-kick / pre-snap replay of the last play used to hand it to the kick meter, PAT switch or kick target)
-  if (celebGo()) return;   // (one of your players has a celebration waiting: any click or tap, either button, starts it)
+  if (e.button === 2 && celebGo()) return;   // (one of your players has a celebration waiting: a RIGHT click starts it)
+  if (e.pointerType === 'touch' && e.button === 0) {   // (on a phone: a double tap)
+    const now = performance.now(), dbl = now - celebTapAt < CELEB_DBL_TAP;
+    celebTapAt = dbl ? 0 : now;
+    if (dbl && celebGo()) return;
+  }
   if (e.button === 0 && !paused && !showKeys && tipClick(pointerPos(e))) return;   // (the names / star tips toggle with a click)
   if (halfShown()) { if (e.button === 0 && inBtn(pointerPos(e), HALF_OK_BTN)) halfOK(); return; }   // halftime: only OK moves on
   if (halfHold && !(rec && rec.replaying)) { if (e.button === 0 && replayBtnShowing() && inBtn(pointerPos(e), REPLAY_BTN) && replayBtnOn() && playSettled() && !bannerUp()) { startReplay(); rec.fromClick = true; } else if (e.button === 0 && state === 'done' && !(rec && (rec.replaying || rec.rewind)) && playSettled() && !bannerUp()) halfGo = true; return; }   // (the card isn't up yet: the play is still settling, or a replay is playing)
@@ -1064,7 +1073,7 @@ canvas.addEventListener('pointerdown', e => {
   }
   if (e.button === 0 && iceOpen() && inBtn(pointerPos(e), pvpTO().def)) { iceKick(false); return; }   // (two players: the defense ices the kicker)
   if ((state === 'kick' || (state === 'kickoff' && kick && kick.userKo)) && e.button === 0) { kickClick(); return; }
-  if (e.button === 0 && replayBtnShowing() && inBtn(pointerPos(e), REPLAY_BTN)) { if (replayBtnOn() && playSettled() && !bannerUp()) { startReplay(); rec.fromClick = true; } return; }
+  if (e.button === 0 && replayBtnShowing() && inBtn(pointerPos(e), REPLAY_BTN)) { if (replayBtnOn() && playSettled()) { startReplay(); rec.fromClick = true; } return; }
   if (e.button === 0 && pvpOn() && (state === 'pre' || state === 'done') && !(rec && rec.replaying) && (inBtn(pointerPos(e), pvpTO().off) || inBtn(pointerPos(e), pvpTO().def))) {
     callTimeout(false, inBtn(pointerPos(e), pvpTO().def));
     return;
@@ -1254,6 +1263,7 @@ canvas.addEventListener('wheel', e => {
   if (settingsOpen) { bindScroll = Math.max(0, Math.min(bindMax(), bindScroll + e.deltaY * (e.deltaMode === 1 ? 38 : 1))); return; }   // scrolls the settings keybinds
   if (results && results.screen === 'roster' && fvWheel(e)) return;
   if (results && results.screen === 'tradeb' && !offPop && tbWheel(e)) return;   // (the offer builder's player cards page)   // (the roster's formation view zooms)
+  if (results && results.screen === 'records' && !teamPick) { recWheel(e.deltaY); return; }   // (the record book's list scrolls)
   if (results && results.screen === 'week') { weekScroll = Math.max(0, Math.min(weekMax, weekScroll + Math.sign(e.deltaY) * WEEK_ROW)); return; }   // end-of-week player list
   if (results && results.screen === 'home') {   // over the schedule strip: scroll through the season
     const p = pointerPos(e), d = (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) * (e.deltaMode === 1 ? 38 : 1);
@@ -1491,7 +1501,7 @@ function speedStep(dt) {
 }
 function frame(now, bg) {   // bg: stepped by the background ticker (a hidden online tab), which must not start a second rAF chain
   try { spendWatch(); } catch (e) {}   // (credits spent since last frame: animate them into the clicked button; reads last frame's buttons)
-  UI_BTNS_PREV = UI_BTNS; UI_BTNS = [];
+  UI_BTNS_PREV = UI_BTNS; UI_BTNS = []; uiModalFrame();
   { const s = inSave(); if (s !== setScope) { setScope = s; if (!s) { useDefaults(); QUARTER_SECS = SETTINGS.quarterMin * 60; } } }   // (back to the menu / an exhibition / franchise setup: the defaults apply)
   if (pstStash && !exhibition) pstExhibitionOff();   // (left the exhibition: the franchise's stats come back)
   if (!bg) requestAnimationFrame(frame);   // (first, so a bug thrown below shows up in the console but can't stop the loop and freeze the whole game)
@@ -1507,7 +1517,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   else if (HT) { if (!settingsOpen) hsTick(); }   // (the halftime show's cards: the game stays stopped)
   else if (!showKeys && !paused && !results && !settingsOpen && !injuryShowing() && !ONL.guest && !(ONL.on && (ONL.away || ONL.lost))) {    // (online guest: the host steps the game, onlGuestStep below draws its snapshots)   // the keybinds page, the pause button, settings, an injury timeout and the result screen stop the game
     if (rec && rec.replaying) replayTick(dt);
-    else { stepAcc += dt; if (stepAcc >= STEP_MIN) { GRAV_K = 1; speedStep(Math.min(stepAcc * SPEED_BASE, 0.07)); stepAcc = 0; } }   // (the game steps about 60 times a second whatever the screen's refresh rate: a 120 / 144 Hz monitor ran every per-frame roll, reaction and AI decision twice as often)
+    else { stepAcc += dt; if (stepAcc >= STEP_MIN) { GRAV_K = 1; speedStep(Math.min(stepAcc * SPEED_BASE * celTSpeed(), 0.07)); stepAcc = 0; } }   // (the game steps about 60 times a second whatever the screen's refresh rate: a 120 / 144 Hz monitor ran every per-frame roll, reaction and AI decision twice as often)
   }
   try { if (ONL.host && !results) onlHostTick(); if (ONL.guest && !results) onlGuestStep(); }
   catch (err) { console.warn('online: snapshot dropped', err); }   // (a bad snapshot never crashes the game loop)
@@ -1519,6 +1529,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   updateCrowd(dt);
   wxAudio();
   stepAudio();
+  try { celTTick(); celebFxTick(); } catch (e) {}   // (celebration sounds, the peak's jolt and the crowd, off whatever clock the cast is drawn by)
   const page = pageKey();   // (the canvas still holds the old page here: that's what crumples)
   if (lastPage !== null && page !== lastPage) {
     // credits spent on the click that changed the page: the old page holds (coins flying into the button it was) until they land, then crumples
@@ -1597,6 +1608,7 @@ reset();
   olAutoJoin();
 }
 // the stock league as it loads (before any franchise touches it): main-menu exhibitions and test mode play with these teams
+try { recalcTeamStars(); } catch (e) {}   // (the stock league rated by the side-rating formula before it is snapshotted)
 const DEFAULT_WORLD = { roster: JSON.parse(JSON.stringify(ROSTER)), stars: JSON.parse(JSON.stringify(TEAM_STARS)), edge: { ...TEAM_EDGE }, byAvg: starsByAverage,
                         staff: JSON.parse(JSON.stringify(STAFF)) };
 // a brand-new career starts from the stock league: all 32 rosters, team ratings, coaches, free agents, tendencies and return tags as the game
@@ -2046,9 +2058,10 @@ for (const [type, k] of [['pointerdown', 'pd'], ['pointermove', 'pm'], ['pointer
     } else ONL.gPid = null;
   }
   if (k === 'pd') onlSendKm();   // (a tap can be the kick's click: the meter value this guest saw goes first)
-  const hx = Math.round(onlPtX(p));   // (the host's frame)
-  { const pm = { t: 'in', k, x: hx, y: Math.round(p.y), q: ONL.pq = (ONL.pq || 0) + 1 }; if (k === 'pm') NET.sendFast(pm); else NET.send(pm); }   // (q: the order they were made in. A drag's moves may be lost (the next one replaces them): the fast channel; down / up always arrive)
-  ONL.gLastP = { x: hx, y: Math.round(p.y) }; ONL.gClient = { x: e.clientX, y: e.clientY };
+  if (k === 'pd') ONL.gUi = overUiBtn(p);   // (a press on a button stays a screen spot for the whole gesture; one on the field is scaled into the host's view)
+  const hp = ONL.gUi ? { x: onlPtX(p), y: p.y } : onlPtOut(p), hx = Math.round(hp.x), hy = Math.round(hp.y);   // (the host's frame)
+  { const pm = { t: 'in', k, x: hx, y: hy, q: ONL.pq = (ONL.pq || 0) + 1 }; if (k === 'pm') NET.sendFast(pm); else NET.send(pm); }   // (q: the order they were made in. A drag's moves may be lost (the next one replaces them): the fast channel; down / up always arrive)
+  ONL.gLastP = { x: hx, y: hy }; ONL.gClient = { x: e.clientX, y: e.clientY };
   if (k === 'pu') setTimeout(() => { if (ONL.gLastP && ONL.gPid == null) NET.send({ t: 'in', k: 'pu', x: ONL.gLastP.x, y: ONL.gLastP.y }); }, 150);   // (the release is sent twice: the host ignores the second one, a lost first one no longer leaves the aim stuck)
   if (mouse) e.stopImmediatePropagation();
 }, true);

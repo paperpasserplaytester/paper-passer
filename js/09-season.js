@@ -51,7 +51,7 @@ const LEAGUE = {
   // team condition: your offensive stars' average
   get condition() { const ss = yourStars(true); return ss.length ? Math.round(ss.reduce((t, s) => t + condOf(s), 0) / ss.length) : 100; },
   get offense() { return teamStars(MATCH.you).off; }, get defense() { return teamStars(MATCH.you).def; },
-  get nextOffense() { return oppStars(MATCH.opp).off; }, get nextDefense() { return oppStars(MATCH.opp).def; },
+  get nextOffense() { return teamStars(MATCH.opp).off; }, get nextDefense() { return teamStars(MATCH.opp).def; },   // (the shown rating: the difficulty never changes it)
   // your team's stars from ROSTER (first QB, RB, WR, TE, DL, two LBs; the kicker is unnamed)
   get roster() {
     // (third: his ROSTER entry, for condition / injuries)
@@ -257,7 +257,7 @@ function seasonGameDone(blue, red) {
   coachGame(blue, red);   // (coach XP from the result; goals done this week boost the players' XP below)
   upgradeGame();   // (and XP toward attribute upgrades)
   for (const q of ROSTER[season.team]) if (q.newWk > 0) q.newWk--;   // (the NEW tag lasts two games)
-  if (g) { if (g.h === season.team) { g.hs = blue; g.as = red; } else { g.hs = red; g.as = blue; } season.last = season.week; season.lastPO = null; season.played = (season.played || 0) + 1; try { recTeamGame(g, season.week); } catch (e) {} }
+  if (g) { if (g.h === season.team) { g.hs = blue; g.as = red; } else { g.hs = red; g.as = blue; } season.last = season.week; season.lastPO = null; season.played = (season.played || 0) + 1; rbYards(g); try { recTeamGame(g, season.week); } catch (e) {} }
   let myG = g;   // (the first week of the loop is the one you played)
   do {
     const awk = season.week; AWD_POOL = [];
@@ -266,6 +266,7 @@ function seasonGameDone(blue, red) {
     season.week++;
     leagueWeek(season.team);   // (teams cut and sign free agents as the weeks go by)
   } while (season.week <= SEASON_WEEKS && !gameOf(season.week));
+  try { rbWeek(season.week > SEASON_WEEKS ? 'end' : 'wk'); } catch (e) { console.warn('record book', e); }   // (season marks so far / locked once the regular season is over, careers)
   lpstSave(); recSave();
   season.facts = postGameFacts(blue, red);
   try { postIssue('wk'); } catch (e) { console.warn('post', e); }   // (the Paper Passer Post: this week's paper)
@@ -354,6 +355,7 @@ function seasonSkipLoop(w, withStats) {
     season.sched[season.week - 1].forEach(x => { simGameScore(x); if (withStats) { try { pstSimGame(x, season.week); recTeamGame(x, season.week); } catch (e) { console.warn('skip sim', e); } } });   // (a new franchise passes withStats: those games get every player's box score too, so the whole league has real stats from day one)
     if (gameOf(season.week)) season.last = season.week;
   }
+  if (withStats) try { rbWeek('wk'); } catch (e) {}
   lpstSave();
   seasonMatch();
 }
@@ -494,6 +496,7 @@ const poYours = () => { const g = po.over ? null : poPending()[0]; return g && p
 function poSimGame(g) {
   simGameScore(g);
   while (g.hs === g.as) { if (Math.random() < 0.5) g.hs += 3; else g.as += 3; }   // (no ties in the playoffs)
+  try { pstSimGame(g, 'PO'); rbTeamGame(g, 'PO'); } catch (e) {}   // (every player's playoff line + the team marks: simulated playoff games count like played ones)
 }
 // a game's in: the round may be over (next round / the Paper Bowl champion)
 function poAfter() {
@@ -506,8 +509,10 @@ function poAfter() {
       season.beatOld = po.rounds.some(rg => rg.some(x => poHas(x, season.team) && poWon(x) === season.team && (career.past || []).some(p => poHas(x, p.team))));   // (the title run went through a team you left: blood ring)
     }
     if (po.champ === season.team) { LEAGUE.coins += PO.cup; payToFly += PO.cup; autosaveSoon(); }   // (the credits fly in when the next screen with the box shows)
+    try { rbPaperBowl(po.champ); } catch (e) {}   // (Paper Bowl wins + playoff career marks)
     return;
   }
+  try { rbWeek('po'); } catch (e) {}   // (playoff career marks after each round)
   po.round++; poBuild();
 }
 function poPlay(g) {
@@ -521,6 +526,7 @@ function poGameDone(blue, red) {
   if (!g) return;
   if (g.h === season.team) { g.hs = blue; g.as = red; } else { g.hs = red; g.as = blue; }
   season.played = (season.played || 0) + 1; season.lastPO = po.round;
+  rbYards(g); try { rbTeamGame(g, 'PO'); } catch (e) {}   // (team playoff marks, win streaks)
   try { postIssue('po', g); } catch (e) { console.warn('post', e); }   // (the Post's playoff edition)
   poAfter();
 }
@@ -782,7 +788,7 @@ function drawOffPop() {
   if (!P.btns) P.btns = [{ label: 'OK' }];
   if (P.log) { drawChangelog(P); return; }   // (the changelog: its own scrolling card)
   ctx.save();
-  ctx.fillStyle = 'rgba(30,25,10,0.5)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(30,25,10,0.5)'; ctx.fillRect(0, 0, W, H); uiModal();
   if (P.goals) {   // weekly goals: the same torn-paper rows as the pause menu's GOALS page, on the dimmed screen
     const g = P.goals, n = g.list.length, h = 70 + n * 92 + 40 + 96, y0 = Math.max(20, Math.round((H - h) / 2)) + 70, x = W / 2 - 300;
     const card = P.card || (P.card = { x: W / 2 - 380, y: y0 - 70, w: 760, h });
@@ -927,7 +933,7 @@ const PB_MVP = { pts: { 'PASS YDS': 0.04, 'PASS TD': 4, 'INT': -2, 'RUSH YDS': 0
 function pbReal(team) {
   const out = {};
   for (const p of ROSTER[team] || []) {
-    const e = PST[p.name], g = e && [...e.games].reverse().find(x => !x.gp && x.yr === LEAGUE.year && x.wk === 'PO' && x.rd === 3); if (!g) continue;
+    const g = [...pstGames(p.name)].reverse().find(x => !x.gp && x.yr === LEAGUE.year && x.wk === 'PO' && x.rd === 3); if (!g) continue;   // (yours from PST, a simulated final from LPST: the record book reads the same lines)
     const v = k => g[k] || 0, G = p.group, rec = [['REC', v('rc')], ['REC YDS', v('ry')], ['REC TD', v('rt')]], run = [['CARRIES', v('ca')], ['RUSH YDS', v('cy')], ['RUSH TD', v('ct')]];
     out[p.name] = G === 'QB' ? [['CMP/ATT', `${v('pc')}/${v('pa')}`], ['PASS YDS', v('py')], ['PASS TD', v('pt')], ['INT', v('pi')], ...(v('ca') ? run : [])]
       : G === 'RB' ? [...run, ...rec] : G === 'WR' || G === 'TE' ? [...rec, ...(v('ca') ? run : [])]
@@ -1251,7 +1257,7 @@ function pbClick(pt) {
   if (inBtn(pt, BACK_BTN)) results.screen = 'awards';
   else if (inBtn(pt, MENU_NEXT)) offAfterPb();
 }
-const offDetail = () => !!results && (results.screen === 'pbowl' || results.screen === 'fa' || results.screen === 'resign' || results.screen === 'draft' || results.screen === 'trade');
+const offDetail = () => !!results && (results.screen === 'pbowl' || results.screen === 'fa' || results.screen === 'resign' || results.screen === 'draft' || results.screen === 'dboard' || results.screen === 'trade');
 // what the player page adds in the offseason: the box score (over the attributes), his honors, the STATS button
 function offDetailExtras(team, p) {
   if (results.screen === 'pbowl') {
@@ -1329,7 +1335,7 @@ function rookieFor(old) {
 function vacate(team, p) {
   const R = ROSTER[team], at = R.indexOf(p);
   if (at < 0) return;
-  postAlumni(p, team, 'left');
+  postAlumni(p, team, 'left'); abilMoved(p, team);
   // (your team: nobody fills in, the open position is played by an unnamed backup on the field)
   if (team !== MATCH.you && p.group !== 'K' && R.filter(q => q.group === p.group).length <= (STARTERS[p.group] || 0)) R[at] = rookieFor(p); else R.splice(at, 1);   // (a team without a kicker finds one in free agency)
 }
@@ -1879,7 +1885,7 @@ function faClick(pt) {
 // --- the draft: 6 rounds, one pick a round, between re-signing and free agency. Every team drafts (the others are simulated),
 // worst record first. A class of rookies is made up each year (some classes are much stronger than others); when you're on the
 // clock you see the 24 best left. Skip a round and its pick carries to next year's draft once (LEAGUE.carry = the rounds).
-// State: OFF.draft = { pool (sorted by stock), cands, round, slot (your place in each round), left (your picks left this round), used, scouts, ... }.
+// State: OFF.draft = { pool (sorted by stock), round, plans (every round's slots), pi (the slot on the clock), turn (it is yours), view ('board' | 'pool'), used, scouts, ... }.
 const DRAFT = {
   rounds: 6, show: 24, scouts: 3, scoutBonus: 3,   // rookies shown per pick; scouts a round (+scoutBonus for each of your coordinators with the Scout trait)
   kickerPenalty: 14,   // the computer teams' draft appeal of a kicker drops by this (they rarely take one early; most end up free agents)
@@ -1897,8 +1903,8 @@ const DRAFT = {
 };
 const DRAFTTUT_KEY = 'pocketPasser.draftTut';
 const DRAFT_TIPS = {
-  intro: ['THE DRAFT', 'Six rounds, one pick each. Every team drafts and the worst record picks first. When you are on the clock you see the 24 best rookies left. Skip a round and that pick carries over to next year (once).'],
-  list: ['THE BOARD', 'Click a rookie to open his page. OFFENSE and DEFENSE sort the board (click again for everyone), and the arrows flip through the screens. His potential shows ????? until you scout him.'],
+  intro: ['THE DRAFT', 'Six rounds, one pick each. Every team drafts and the worst record picks first. The board shows every pick as it is made: NEXT PICK plays one, SIM TO MY PICK jumps to your turn. PROSPECTS is the class that is left. Skip a round and that pick carries over to next year (once).'],
+  list: ['THE PROSPECTS', 'Click a rookie to open his page. OFFENSE and DEFENSE sort the board (click again for everyone), and the arrows flip through the screens. His potential shows ????? until you scout him.'],
   page: ['A ROOKIE', 'SCOUT (a few a round) shows a guess at his potential and value. DRAFT signs him to his rookie deal: young, cheap, 3-4 years. Only drafting him shows his true potential.'],
   scout: ['SCOUTED', 'A scout is usually close but not exact. The gold outlined stars are the most he is likely to reach; the empty boxes on his attributes are his room to grow. Better rookies tend to have more potential.'],
   full: ['ROSTER FULL', 'There is no open spot on his side of the ball. Go back, open ROSTER and DROP a player, then come back and draft him.'],
@@ -1961,31 +1967,39 @@ function uniqueNum(R, p) {
   if (nums.has(String(p.num))) { let n = 1; while (nums.has(String(n))) n++; p.num = String(n); }
 }
 // another team's pick: the best stock left plus its need at the position (a rookie only makes the roster if he starts or beats its weakest man there)
-function draftAI(k) {
-  const D = OFF.draft, R = ROSTER[k]; let best = null, bs = -1e9;
-  const fo = foSkill(k), [n0, n1] = FRONT_OFFICE.draftNoise, noise = n0 + (n1 - n0) * (1 - fo);   // (a bad front office drafts on hunches: big misses on who's good)
-  for (const r of D.pool.slice(0, 40)) {
-    const G = R.filter(q => q.group === r.group), weak = G.length ? Math.min(...G.map(scoreOf)) : 0;
-    const s = r.stock + (G.length < (STARTERS[r.group] || 0) ? 3 : scoreOf(r) > weak ? 0.5 + LEAN.draft * leanBias(k, r.group) : -2.5) + (Math.random() * 2 - 1) * noise - (r.group === 'K' ? DRAFT.kickerPenalty : 0) + ((r.potential || r.stars) - r.stars) * MGMT.pot * (fo - 0.5) * 2;   // (a good front office likes high potential; a poor one takes low)
+// (its own grade of him: the board's perceived score read by its scouts and front office, boardGrade; + need + position value. got = who it already
+//  took in a mock, gk = the class's generational kicker, live = draft day: a little luck on top, so a mock is never exactly right)
+function draftChoice(k, pool, got, gk, live) {
+  const R = ROSTER[k], fo = foSkill(k); let best = null, bs = -1e9;
+  for (const r of pool.slice(0, 40)) {
+    const G = R.filter(q => q.group === r.group), dup = got ? got.filter(q => q.group === r.group).length : 0, weak = G.length ? Math.min(...G.map(scoreOf)) : 0;
+    const s = boardGrade(k, r) + (G.length + dup < (STARTERS[r.group] || 0) ? 3 : !dup && scoreOf(r) > weak ? 0.5 + LEAN.draft * leanBias(k, r.group) : -2.5) + (boardPos({ gk }, r) - 1) * BOARD.posDraft
+      + (live ? (Math.random() * 2 - 1) * BOARD.dayNoise : 0) - (r.group === 'K' && r.name !== gk ? DRAFT.kickerPenalty : 0) + ((r.potential || r.stars) - r.stars) * MGMT.pot * (fo - 0.5) * 2;   // (a good front office likes high potential; a poor one takes low)
     if (s > bs) { bs = s; best = r; }
   }
+  return best;
+}
+function draftAI(k) {
+  const D = OFF.draft, R = ROSTER[k], best = draftChoice(k, D.pool, null, D.gk, true);
   if (!best) return;
-  D.pool.splice(D.pool.indexOf(best), 1);
+  D.pool.splice(D.pool.indexOf(best), 1); delete best.bd;
   D.n++; if (D.n <= 32 || best.stars >= 3.5) postWire('draft', best, k, { n: D.n }); D.log.push(`${D.n} ${k} ${best.short} ${best.tag}`); if (D.log.length > 4) D.log.shift();
   best.drafted = true;
   const side = OFF_GROUPS.includes(best.group), G = R.filter(q => q.group === best.group);
   const weakest = [...G].sort((a, b) => scoreOf(a) - scoreOf(b))[0];
-  if (G.length < (STARTERS[best.group] || 0) && rosterSide(k, side ? 'off' : 'def').length < ROSTER_SPOTS) { uniqueNum(R, best); R.splice(depthAt(R, best), 0, best); return; }
-  if (!weakest || scoreOf(best) <= scoreOf(weakest) || payroll(k) - payOf(weakest) + best.salary > capOf(k)) return;   // (he doesn't make it)
+  if (G.length < (STARTERS[best.group] || 0) && rosterSide(k, side ? 'off' : 'def').length < spotsOf(k, side ? 'off' : 'def')) { uniqueNum(R, best); R.splice(depthAt(R, best), 0, best); return best; }
+  if (!weakest || scoreOf(best) <= scoreOf(weakest) || payroll(k) - payOf(weakest) + best.salary > capOf(k)) return best;   // (he doesn't make it)
   R.splice(R.indexOf(weakest), 1); if (!weakest.rookie) faRelease(weakest, k);
   uniqueNum(R, best); R.splice(depthAt(R, best), 0, best);
+  return best;
 }
 function offToDraft() {
-  const C = genDraftClass(), D = OFF.draft = { pool: C.pool, q: C.q, label: C.label, order: draftOrder(), round: 0, n: 0, log: [], mine: [], shown: {}, page: 0, side: null, sel: null, cands: [], tut: !!OFF.tut, carry: LEAGUE.carry || [] };
+  const C = scoutClass(); if (!C.bd) boardInit(C); LEAGUE.nextClass = null; if (scoutsOn()) scoutDraftDay(C.pool);   // (the class the league watched all season, in board order)
+  const D = OFF.draft = { pool: C.pool, q: C.q, label: C.label, gk: C.gk, id: C.id, bd: 1, wk: C.wk, order: draftOrder(), round: 0, n: 0, log: [], mine: [], shown: {}, page: 0, side: null, sel: null, plans: {}, pi: 0, view: 'board', tut: !!OFF.tut, carry: LEAGUE.carry || [] };
   LEAGUE.carry = []; D.year = LEAGUE.year;
   D.slot = D.order.indexOf(season.team);
   results.screen = 'draft';
-  const go = () => { dTip('intro'); dTip('list'); draftRound(); };
+  const go = () => { dTip('intro'); draftRound(); };
   let asked = null;
   try { asked = localStorage.getItem(DRAFTTUT_KEY); } catch (e) {}
   // (the tutorial is for the first draft only: once it has run, the setting flips to off for every later draft)
@@ -1994,124 +2008,236 @@ function offToDraft() {
     btns: [{ label: 'TUTORIAL', green: true, on: () => { D.tut = true; try { localStorage.setItem(DRAFTTUT_KEY, 'on'); } catch (e) {} go(); } },
            { label: 'SKIP', on: () => { try { localStorage.setItem(DRAFTTUT_KEY, 'off'); } catch (e) {} go(); } }] });
 }
-// a round starts: the teams ahead of you pick, then it's your turn (once, or twice with a pick carried over)
-function draftRound() {
-  const D = OFF.draft, me = season.team;
-  if (++D.round > DRAFT.rounds) { draftFinish(); return; }
-  // (traded picks: whoever owns the slot picks in it; you may hold none, one or several picks in a round, all taken at your first slot)
-  D.owners = D.order.map(k => pickOwner(D.year, D.round, k));
-  const mine = D.owners.reduce((a, o, s) => o === me ? [...a, s] : a, []);
-  D.slot = mine.length ? mine[0] : D.order.length;
-  for (let s = 0; s < D.slot; s++) draftAI(D.owners[s]);
-  const xk = `${D.year}:${D.round}`, xe = (LEAGUE.xp || {})[xk];   // (the extra slot a skipped round left: its owner picks once more this round)
-  if (xe) { delete LEAGUE.xp[xk]; if (xe.owner !== me) draftAI(xe.owner); }
-  D.left = mine.length + (xe && xe.owner === me ? 1 : 0); D.used = 0; D.scouts = draftScouts();
-  D.page = 0; D.sel = null; D.cands = D.pool.slice();   // (the whole class that is left, whatever round it is)
+// pick by pick (the draft board): every round is a plan of slots, D.plans[round] = [{ o: the slot's original team, k: who owns it now,
+// x: an extra slot a skipped round left (last in the round), p: the rookie taken (a small copy: draftSlim), n: his overall number, skip }],
+// D.pi = the slot on the clock, D.turn = that slot is yours. draftStep() makes ONE computer pick (false = it is your turn or the draft is
+// over): NEXT PICK = one step, SIM TO MY PICK = steps until your slot (draftSim). Every pick is made at its real slot; a slot's owner is
+// read again when it comes up, so a trade made mid-round counts.
+const draftSlim = p => ({ name: p.name, short: p.short, tag: p.tag, group: p.group, stars: p.stars, face: p.face, num: p.num });
+const draftCur = () => { const D = OFF.draft; return (D.plans && D.plans[D.round]) || []; };
+let draftPop = null;   // the cell that was just filled: { r, i, t0 } (it pops in; never saved)
+function draftRound() {   // the next round's slots (false = that was the last round: the draft is over)
+  const D = OFF.draft;
+  if (++D.round > DRAFT.rounds) { draftFinish(); return false; }
+  const plan = D.order.map(o => ({ o, k: pickOwner(D.year, D.round, o) }));
+  const xk = `${D.year}:${D.round}`, xe = (LEAGUE.xp || {})[xk];   // (the extra slot a skipped round left: its owner picks once more, at the end of the round)
+  if (xe) { delete LEAGUE.xp[xk]; plan.push({ o: xe.owner, k: xe.owner, x: 1 }); }
+  (D.plans || (D.plans = {}))[D.round] = plan; D.pi = 0; D.used = 0; D.turn = false; D.viewR = D.round;
+  D.scouts = draftScouts(); D.page = 0; D.sel = null;
   if (D.round === 2) dTip('round2');
-  if (!D.left) draftRoundEnd();   // (you traded your pick away: on to the next round)
+  return true;
 }
-function draftRoundEnd() {
+function draftPass(e) {   // you pass on the slot on the clock (a round with no pick made carries one to next year, once)
+  const D = OFF.draft;
+  if (!D.used && D.carryR !== D.round) { D.carryR = D.round; LEAGUE.carry.push(D.round); xpAdd(D.year + 1, D.round); }
+  e.skip = 1; D.turn = false; D.pi++;
+}
+function draftStep() {
   const D = OFF.draft, me = season.team;
-  for (let s = D.slot + 1; s < D.order.length; s++) if (D.owners[s] !== me) draftAI(D.owners[s]);
-  draftRound();
+  if (!D || D.done || D.turn) return false;
+  if (D.pi >= draftCur().length && !draftRound()) return false;
+  const e = draftCur()[D.pi];
+  if (!e) return true;   // (an empty round: on to the next one)
+  if (!e.x) e.k = pickOwner(D.year, D.round, e.o);
+  e.me = e.k === me ? 1 : 0;
+  if (e.me) {
+    if (!D.skipAll && D.passR !== D.round) { D.turn = true; return false; }
+    draftPass(e); return true;
+  }
+  const p = draftAI(e.k);
+  if (p) { e.p = draftSlim(p); e.n = D.n; } else e.skip = 1;
+  draftPop = { r: D.round, i: D.pi, t0: performance.now() }; D.pi++; D.viewR = D.round;
+  return true;
+}
+function draftSim() { let n = 0; while (draftStep() && ++n < 600) {} const D = OFF.draft; if (D && !D.done) D.viewR = D.round; }
+function draftMineAhead() {   // do you still hold a pick from here on
+  const D = OFF.draft, me = season.team, plan = draftCur();
+  for (let i = D.pi; i < plan.length; i++) if ((plan[i].x ? plan[i].k : pickOwner(D.year, D.round, plan[i].o)) === me) return true;
+  for (let r = D.round + 1; r <= DRAFT.rounds; r++) { const x = (LEAGUE.xp || {})[`${D.year}:${r}`]; if ((x && x.owner === me) || D.order.some(o => pickOwner(D.year, r, o) === me)) return true; }
+  return false;
+}
+function draftFix(D) {   // a save from before the board, made while you were on the clock: your picks first, then the teams still to pick
+  if (D.plans) return;
+  D.plans = {}; D.view = D.view || 'pool'; D.viewR = D.round;
+  if (!D.round) return;
+  const me = season.team, own = D.owners || D.order.map(k => pickOwner(D.year, D.round, k)), plan = [];
+  for (let i = 0; i < (D.left || 0); i++) plan.push({ o: me, k: me, x: 1, me: 1 });
+  for (let s = (D.slot || 0) + 1; s < D.order.length; s++) if (own[s] !== me) plan.push({ o: D.order[s], k: own[s], x: 1 });
+  D.plans[D.round] = plan; D.pi = 0; D.turn = !!(plan[0] && plan[0].me);
 }
 function draftTake(p) {   // you pick him
-  const D = OFF.draft, me = season.team, R = ROSTER[me];
+  const D = OFF.draft, me = season.team, R = ROSTER[me], e = draftCur()[D.pi];
   D.pool.splice(D.pool.indexOf(p), 1);
-  p.drafted = true; delete p.scout; D.n++; D.mine.push(p); postWire('draft', p, me, { n: D.n });
+  p.drafted = true; delete p.scout; delete p.bd; D.n++; D.mine.push(p); postWire('draft', p, me, { n: D.n });
   uniqueNum(R, p); R.splice(depthAt(R, p), 0, p);
   moveMood(p, 1); recalcTeamStars(); cardShowAdd(p, me, 'DRAFTED');
-  D.sel = null; D.used++; D.left--; D.page = 0;
-  if (D.left > 0) D.cands = D.pool.slice(); else draftRoundEnd();
+  if (e) { e.p = draftSlim(p); e.n = D.n; draftPop = { r: D.round, i: D.pi, t0: performance.now() }; }
+  D.sel = null; D.used++; D.pi++; D.turn = false; D.page = 0; D.view = 'board'; D.viewR = D.round;   // (back to the board: the next pick is yours to play or sim)
 }
 function xpAdd(year, round) { (LEAGUE.xp || (LEAGUE.xp = {}))[`${year}:${round}`] = { owner: season.team, orig: season.team }; }   // a skipped pick becomes an extra slot in next year's round: tradeable (picksOf, x: true)
-function draftSkip(all) {   // pass on the rest of this round (or the whole draft); a round with no pick made carries one to next year
-  const D = OFF.draft;
-  if (!D.used) { LEAGUE.carry.push(D.round); xpAdd(D.year + 1, D.round); }
-  if (!all) { draftRoundEnd(); return; }
-  for (let s = D.slot + 1; s < D.order.length; s++) if (D.owners[s] !== season.team) draftAI(D.owners[s]);
-  for (let r = D.round + 1; r <= DRAFT.rounds; r++) {
-    const own = D.order.map(k => pickOwner(D.year, r, k));
-    if (own.includes(season.team)) { LEAGUE.carry.push(r); xpAdd(D.year + 1, r); }
-    own.forEach(o => { if (o !== season.team) draftAI(o); });
-  }
-  draftFinish();
+function draftSkip(all) {   // pass on your picks in this round (or in the whole draft: the rest is simulated)
+  const D = OFF.draft, e = draftCur()[D.pi];
+  D.passR = D.round; if (all) D.skipAll = true;
+  if (D.turn && e) draftPass(e);
+  D.view = 'board';
+  if (all) draftSim();
 }
 function draftFinish() {
   const D = OFF.draft;
   D.done = true; OFF.draftDone = true;
   for (const key of Object.keys(LEAGUE.picks || {})) if (+key.split(':')[0] <= D.year) delete LEAGUE.picks[key];   // (this year's picks are spent)
-  D.pool.forEach(r => { r.salary = CAP.minPay; r.years = 2; r.trade = 7; delete r.fresh; r.from = null; r.undrafted = true; FA_POOL.push(r); });   // (everyone nobody drafted joins free agency)
-  recalcTeamStars();
+  D.pool.forEach(r => { r.salary = CAP.minPay; r.years = 2; r.trade = 7; delete r.fresh; delete r.bd; r.from = null; r.undrafted = true; FA_POOL.push(r); });   // (everyone nobody drafted joins free agency)
+  recalcTeamStars(); if (scoutsOn()) scoutDraftOver();
   const lines = D.mine.length ? D.mine.slice(0, 8).map(p => `${p.name} (${p.tag}, ${p.stars} stars)`) : ['You made no picks.'];
   if (LEAGUE.carry.length) lines.push(`Picks carried to next year: ${LEAGUE.carry.map(r => 'round ' + r).join(', ')}.`);
   offPopShow({ title: `DRAFT OVER: ${D.label} CLASS`, lines, btns: [{ label: 'OK', on: () => { dTip('end'); offFinishFA(); autosaveSoon(); } }] });   // (the draft is in: autosave)
 }
 const DRAFT_SCOUT_BTN = { x: 660, y: 618, w: 230, h: 62 }, DRAFT_PICK_BTN = { x: 910, y: 618, w: 250, h: 62 };
-const draftList = () => { const D = OFF.draft; return D.cands.filter(p => (!D.side || OFF_GROUPS.includes(p.group) === (D.side === 'off')) && (!D.pos || D.pos === 'ALL' || p.group === D.pos)); };
+// the board: where a round's slots sit (8 across), px between cells, the team band's height, s a new pick takes to pop in
+const DRAFT_GRID = { x: 58, y: 92, w: 1164, h: 516, cols: 8, gap: 6, band: 22, pop: 0.3 };
+const DRAFT_SIM_BTN = { x: 20, y: 12, w: 200, h: 60 }, DRAFT_VIEW_BTN = { x: 228, y: 12, w: 150, h: 60 };   // (top left: the credits / XP boxes are top right)
+const DRAFT_ARROWS = [{ x: 4, y: 300, w: 46, h: 90 }, { x: 1280 - 50, y: 300, w: 46, h: 90 }];               // (the round shown)
+const draftList = () => { const D = OFF.draft; return D.pool.filter(p => (!D.side || OFF_GROUPS.includes(p.group) === (D.side === 'off')) && (!D.pos || D.pos === 'ALL' || p.group === D.pos)); };
 // the title is a position dropdown, like FREE AGENTS (the side buttons grey the other side's positions out)
 const draftDDItems = () => FA_POSITIONS.filter(p => p === 'ALL' || !OFF.draft.side || OFF_GROUPS.includes(p) === (OFF.draft.side === 'off'))
   .map((pos, i) => ({ label: pos, pos, b: { x: ROSTER_TITLE_BTN.x, y: ROSTER_TITLE_BTN.y + ROSTER_TITLE_BTN.h + 4 + i * 38, w: ROSTER_TITLE_BTN.w, h: 36 } }));
+function draftCells(r) {
+  const G = DRAFT_GRID, plan = (OFF.draft.plans || {})[r] || [], rows = Math.max(4, Math.ceil(plan.length / G.cols));
+  const cw = (G.w - G.gap * (G.cols - 1)) / G.cols, rh = (G.h - G.gap * (rows - 1)) / rows;
+  return plan.map((e, i) => ({ e, i, b: { x: G.x + (i % G.cols) * (cw + G.gap), y: G.y + Math.floor(i / G.cols) * (rh + G.gap), w: cw, h: rh } }));
+}
+// one slot of the board: the team's band (round.pick, team), then the rookie's card (face, name, position, stars), ON THE CLOCK, or the logo waiting
+function drawDraftCell(c, r) {
+  const D = OFF.draft, me = season.team, G = DRAFT_GRID, { e, i, b } = c, cur = r === D.round && i === D.pi && !D.done, mine = e.k === me;
+  const col = kitColors(e.k, 'home')[0], cx = b.x + b.w / 2, by = b.y + G.band, bh = b.h - G.band, cy = by + bh / 2;
+  const pk = draftPop && draftPop.r === r && draftPop.i === i ? Math.max(0, Math.min(1, (performance.now() - draftPop.t0) / (G.pop * 1000))) : 1;
+  const hov = !!e.p && hoverPt && inBtn(hoverPt, b) && !uiBehind();
+  ctx.save();
+  if (pk < 1) { const k = 0.55 + 0.45 * (1 - Math.pow(1 - pk, 3)) + 0.12 * Math.sin(Math.PI * pk); ctx.translate(cx, b.y + b.h / 2); ctx.scale(k, k); ctx.translate(-cx, -(b.y + b.h / 2)); }
+  ctx.fillStyle = 'rgba(40,25,5,0.22)'; ctx.fillRect(b.x + 3, b.y + 4, b.w, b.h);
+  ctx.fillStyle = cur ? RES.strip : e.p ? RES.bright : RES.bg; ctx.fillRect(b.x, b.y, b.w, b.h);
+  if (!e.p && !cur) { ctx.fillStyle = RES.shade; ctx.fillRect(b.x, b.y, b.w, b.h); }
+  ctx.fillStyle = col; ctx.fillRect(b.x, b.y, b.w, G.band);
+  ctx.fillStyle = paperInk(col); ctx.font = 'bold 13px monospace'; ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left'; ctx.fillText(e.n ? `#${e.n}` : `${r}.${i + 1}`, b.x + 6, b.y + G.band / 2 + 1);
+  ctx.textAlign = 'right'; ctx.fillText(e.k + (e.x ? ' +' : ''), b.x + b.w - 6, b.y + G.band / 2 + 1);
+  ctx.save(); ctx.beginPath(); ctx.rect(b.x, by, b.w, bh); ctx.clip();
+  if (e.p) {
+    drawPortrait(e.p, b.x + 30, cy + 20, 1.5, e.k);
+    ctx.fillStyle = RES.line; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = 'bold 13px monospace'; ctx.fillText(e.p.short || e.p.name, b.x + 58, cy - 24, b.w - 62);
+    ctx.font = 'bold 17px monospace'; ctx.fillText(e.p.tag, b.x + 58, cy - 2);
+    drawStar(b.x + 66, cy + 22, 8, '#ffd23f', '#8a5a00', 1.5);
+    ctx.fillStyle = RES.line; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = 'bold 15px monospace'; ctx.fillText(String(e.p.stars), b.x + 79, cy + 23);
+    ctx.globalAlpha = 0.9; drawLogo(e.k, b.x + b.w - 19, b.y + b.h - 19, 30); ctx.globalAlpha = 1;
+  } else {
+    ctx.globalAlpha = cur ? 1 : 0.4; drawLogo(e.k, cur ? b.x + 34 : cx, cy, cur ? 50 : 56); ctx.globalAlpha = 1;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    if (cur) {
+      ctx.fillStyle = RES.line; ctx.font = 'bold 14px monospace';
+      ctx.globalAlpha = 0.6 + 0.4 * Math.sin(performance.now() / 260);
+      ctx.fillText(mine ? 'YOUR' : 'ON THE', b.x + 34 + (b.w - 34) / 2, cy - 9); ctx.fillText(mine ? 'PICK' : 'CLOCK', b.x + 34 + (b.w - 34) / 2, cy + 9); ctx.globalAlpha = 1;
+    } else if (e.skip) { ctx.fillStyle = RES.dim; ctx.font = 'bold 13px monospace'; ctx.fillText(mine ? 'PASSED' : 'NO PICK', cx, by + bh - 12); }
+  }
+  ctx.restore();
+  ctx.strokeStyle = mine ? '#1f8a3b' : hov ? RES.gold : RES.line; ctx.lineWidth = mine ? 3.5 : hov ? 3 : 1.5; ctx.strokeRect(b.x, b.y, b.w, b.h);
+  ctx.restore();
+}
+function drawDraftBoard() {
+  const D = OFF.draft, e = draftCur()[D.pi], r = D.viewR = Math.max(1, Math.min(D.round || 1, D.viewR || D.round || 1));
+  ctx.fillStyle = RES.line; ctx.font = 'bold 36px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('NFL DRAFT', W / 2, 38);
+  ctx.font = 'bold 13px monospace'; ctx.fillStyle = D.turn ? '#1f8a3b' : RES.dim;
+  ctx.fillText(`ROUND ${r}/${DRAFT.rounds}   ${D.label} CLASS   ${D.turn ? 'YOU ARE ON THE CLOCK' : e ? `ON THE CLOCK: ${e.k}` : 'END OF THE ROUND'}`, W / 2, 66);
+  for (const c of draftCells(r)) drawDraftCell(c, r);
+  if (D.round > 1) DRAFT_ARROWS.forEach((b, i) => { const on = i ? r < D.round : r > 1; menuBtn(b, i ? '▸' : '◂', RES.bright, 30, null, on); });
+  if (!D.turn) menuBtn(DRAFT_SIM_BTN, draftMineAhead() ? 'SIM TO\nMY PICK ▸▸' : 'SIM TO\nTHE END ▸▸', RES.bright, 20);
+  menuBtn(DRAFT_VIEW_BTN, 'PROSPECTS', RES.bright, 19);
+  offCapBar();
+  menuBtn(MENU_NEXT, D.turn ? 'MAKE\nPICK ▸' : 'NEXT\nPICK ▸', D.turn ? IN_GAME_PAPER.green : RES.bright);
+}
+function draftBoardClick(pt) {
+  const D = OFF.draft;
+  if (inBtn(pt, DRAFT_VIEW_BTN)) { D.view = 'pool'; D.page = 0; dTip('list'); return; }
+  if (!D.turn && inBtn(pt, DRAFT_SIM_BTN)) { draftSim(); return; }
+  if (inBtn(pt, OFF_ROSTER_BTN)) { offOpenRoster(); return; }
+  if (inBtn(pt, OFF_TRADE_BTN)) { tradeOpen('draft'); return; }
+  if (inBtn(pt, MENU_NEXT)) { if (D.turn) { D.view = 'pool'; D.page = 0; dTip('list'); } else draftStep(); return; }
+  if (D.round > 1 && inBtn(pt, DRAFT_ARROWS[0])) { if (D.viewR > 1) D.viewR--; return; }
+  if (D.round > 1 && inBtn(pt, DRAFT_ARROWS[1])) { if (D.viewR < D.round) D.viewR++; return; }
+  const c = draftCells(D.viewR).find(q => inBtn(pt, q.b));
+  if (!c) return;
+  if (c.e.p) { const q = (ROSTER[c.e.k] || []).find(x => x.name === c.e.p.name); if (q) { D.sel = q; D.selK = c.e.k; } }   // (his card, if he made the team)
+  else if (D.turn && D.viewR === D.round && c.i === D.pi) { D.view = 'pool'; D.page = 0; }
+}
 function drawDraft() {
   if (!OFF || !OFF.draft || !season) { results.screen = 'home'; return; }
   const D = OFF.draft, me = season.team;
+  draftFix(D);
   paperBg();
   if (D.sel) { drawDraftPage(D.sel); return; }
+  if (D.view !== 'pool') { drawDraftBoard(); return; }
   const list = draftList(), pages = Math.ceil(list.length / OFFSEASON.perPage) || 1;
   D.page = Math.min(D.page, pages - 1);
   menuBtn(ROSTER_TITLE_BTN, '', RES.bright, 20, b => {
     ctx.fillStyle = RES.line; ctx.font = 'bold 36px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(`${D.pos && D.pos !== 'ALL' ? D.pos : 'NFL DRAFT'} ${D.dd ? '▴' : '▾'}`, b.x + b.w / 2, b.y + 30);
+    ctx.fillText(`${D.pos && D.pos !== 'ALL' ? D.pos : 'PROSPECTS'} ${D.dd ? '▴' : '▾'}`, b.x + b.w / 2, b.y + 30);
     ctx.font = 'bold 13px monospace'; ctx.fillStyle = RES.dim;
-    ctx.fillText(`ROUND ${D.round}/${DRAFT.rounds}  PICK ${D.slot + 1} (#${(D.round - 1) * D.order.length + D.slot + 1})  SCOUTS ${D.scouts}  ${D.label} CLASS`, b.x + b.w / 2, b.y + 58);
+    ctx.fillText(`ROUND ${D.round}/${DRAFT.rounds}  PICK ${D.pi + 1} (#${D.n + 1})  SCOUTS ${D.scouts}  ${D.label} CLASS`, b.x + b.w / 2, b.y + 58);
   });
   menuBtn(ROSTER_TABS.off, D.side === 'off' ? 'OFFENSE' : D.side === 'def' ? 'DEFENSE' : 'ALL', D.side ? SEL : RES.bright, 26);   // (one button: ALL > OFFENSE > DEFENSE)
-  ctx.font = 'bold 12px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(D.log.length ? `JUST PICKED: ${D.log.join('   ')}` : '', W / 2, 88);
-  list.slice(D.page * OFFSEASON.perPage, (D.page + 1) * OFFSEASON.perPage).forEach((p, i) => rosterCard(p, ROSTER_CARDS[i], me, null, `${fmtM(p.salary)} ${p.years}Y`));
+  menuBtn(DRAFT_VIEW_BTN, 'BOARD', RES.bright, 22);
+  ctx.font = 'bold 12px monospace'; ctx.fillStyle = D.turn ? '#1f8a3b' : RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText((D.turn ? 'YOU ARE ON THE CLOCK   ' : '') + (D.log.length ? `JUST PICKED: ${D.log.join('   ')}` : ''), W / 2, 88);
+  list.slice(D.page * OFFSEASON.perPage, (D.page + 1) * OFFSEASON.perPage).forEach((p, i) => { rosterCard(p, ROSTER_CARDS[i], me, null, `${fmtM(p.salary)} ${p.years}Y`); if (p.flag && scoutsOn()) scoutBadge(ROSTER_CARDS[i], p.flag); });
   if (pages > 1) {
     ROSTER_ARROWS.forEach((b, i) => menuBtn(b, i ? '▸' : '◂', RES.bright, 30));
     ctx.font = 'bold 16px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`SCREEN ${D.page + 1} / ${pages}`, W / 2, 620);
   }
   offCapBar();
-  menuBtn(MENU_NEXT, 'SKIP\nROUND ▸', RES.bright);
+  menuBtn(MENU_NEXT, D.turn ? 'SKIP\nROUND ▸' : 'DRAFT\nBOARD ▸', RES.bright);
   if (D.dd) draftDDItems().forEach(it => menuBtn(it.b, it.label, (D.pos || 'ALL') === it.pos ? SEL : RES.bright, 20));
 }
 function drawDraftPage(p) {
   const D = OFF.draft, me = season.team;
-  drawPlayerPage(me, p, null);
-  const spot = faHasSpot(me, p), can = !p.scout && D.scouts > 0;
+  drawPlayerPage(p.drafted ? D.selK || me : me, p, null);
+  if (p.drafted) return;   // (a pick already made: just his card)
+  const spot = faHasSpot(me, p), can = !p.scout && D.scouts > 0, mine = spot && D.turn;
   menuBtn(DRAFT_SCOUT_BTN, p.scout ? 'SCOUTED' : `SCOUT\n${D.scouts} LEFT`, can ? RES.bright : CARD_GRAY, 20, null, can);
-  menuBtn(DRAFT_PICK_BTN, `DRAFT\n${fmtM(p.salary)} / ${p.years}Y`, spot ? IN_GAME_PAPER.green : CARD_GRAY, 19, null, spot);
+  if (scoutsOn()) { const sc = scoutFor(p); ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.line; ctx.fillText(`${sc.name.toUpperCase()}: READS WITHIN ${(DRAFT.scoutErr * scoutErrK(sc, p)).toFixed(1)} PTS${p.flag ? (p.flag === 'gen' ? '   REPORT: GENERATIONAL' : '   REPORT: UNDERRATED') : ''}`, 130, 636, 510); }
+  menuBtn(DRAFT_PICK_BTN, D.turn ? `DRAFT\n${fmtM(p.salary)} / ${p.years}Y` : 'NOT YOUR\nPICK YET', mine ? IN_GAME_PAPER.green : CARD_GRAY, 19, null, mine);
   if (!spot) { ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#c81b1b'; ctx.fillText('NO ROSTER SPOT: BACK, THEN ROSTER > DROP', 130, 660); }
 }
 function draftClick(pt) {
   const D = OFF.draft, me = season.team;
+  draftFix(D);
   if (D.sel) {
     const p = D.sel;
     if (helpClick(pt, p)) return;
     if (inBtn(pt, BACK_BTN)) { D.sel = null; return; }
+    if (p.drafted) return;
     if (inBtn(pt, DRAFT_SCOUT_BTN) && !p.scout && D.scouts > 0) {
       D.scouts--;
-      const sc = scoreOf(p), pts = Math.max(sc, Math.min(ATTR_TOTAL, ptsOf(p) + Math.round((Math.random() + Math.random() - 1) * DRAFT.scoutErr)));
+      const sc = scoreOf(p), pts = Math.max(sc, Math.min(ATTR_TOTAL, ptsOf(p) + Math.round((Math.random() + Math.random() - 1) * DRAFT.scoutErr * (scoutsOn() ? scoutErrK(scoutFor(p), p) : 1))));   // (scouts on: your scout for his side sets how close the guess is)
       p.scout = { pts, val: draftValue(sc, pts) };
       dTip('scout');
       return;
     }
-    if (inBtn(pt, DRAFT_PICK_BTN)) {
+    if (inBtn(pt, DRAFT_PICK_BTN) && D.turn) {
       if (!faHasSpot(me, p)) { dTip('full'); offPopShow({ title: 'ROSTER FULL', lines: wrapLines(`There is no open ${OFF_GROUPS.includes(p.group) ? 'offensive' : 'defensive'} roster spot for ${p.name}. Go back, open the ROSTER and DROP a player first.`, 54) }); return; }
       if (p.salary > capRoom(me)) { offPopShow({ title: 'NOT ENOUGH CAP', lines: wrapLines(`You need ${fmtM(p.salary - capRoom(me))} more cap room to draft ${p.name}. Drop a player to free up salary.`, 54) }); return; }
-      offPopShow({ title: 'DRAFT HIM?', lines: [`${p.name} (${p.tag}, ${p.stars} stars)`, `${fmtM(p.salary)} a year for ${p.years} years`, `Round ${D.round}, pick ${D.slot + 1}.`],
+      offPopShow({ title: 'DRAFT HIM?', lines: [`${p.name} (${p.tag}, ${p.stars} stars)`, `${fmtM(p.salary)} a year for ${p.years} years`, `Round ${D.round}, pick ${D.pi + 1} (#${D.n + 1} overall).`],
         btns: [{ label: 'CANCEL' }, { label: 'OK', green: true, on: () => draftTake(p) }] });
     }
     return;
   }
+  if (D.view !== 'pool') { draftBoardClick(pt); return; }
   if (D.dd) {
     const it = draftDDItems().find(i => inBtn(pt, i.b));
     if (it) { D.pos = it.pos; D.page = 0; }
     D.dd = false; return;
   }
   if (inBtn(pt, ROSTER_TITLE_BTN)) { D.dd = true; return; }
+  if (inBtn(pt, DRAFT_VIEW_BTN)) { D.view = 'board'; return; }
   const list = draftList(), pages = Math.ceil(list.length / OFFSEASON.perPage) || 1;
   if (inBtn(pt, ROSTER_TABS.off)) {
     D.side = !D.side ? 'off' : D.side === 'off' ? 'def' : null; D.page = 0;
@@ -2125,9 +2251,219 @@ function draftClick(pt) {
   const i = ROSTER_CARDS.findIndex(b => inBtn(pt, b)), p = i >= 0 ? list[D.page * OFFSEASON.perPage + i] : null;
   if (p) { D.sel = p; dTip('page'); if (!faHasSpot(me, p)) dTip('full'); return; }
   if (inBtn(pt, MENU_NEXT)) {
-    offPopShow({ title: 'SKIP?', lines: wrapLines(D.used ? 'Pass on your other pick this round.' : 'A round you skip carries one pick to next year\'s draft. It expires there if you do not use it.', 54),
+    if (!D.turn) { D.view = 'board'; return; }
+    offPopShow({ title: 'SKIP?', lines: wrapLines('A round you skip carries one pick to next year\'s draft. It expires there if you do not use it.', 54),
       btns: [{ label: 'CANCEL' }, { label: 'THIS ROUND', on: () => draftSkip(false) }, { label: 'ALL ROUNDS', on: () => draftSkip(true) }] });
   }
+}
+
+// --- the draft board (BOARD tunables in 01-tuning): the next class through the season. boardClass() = the visible class (the one being drafted, else
+// next spring's), every prospect with p.bd = { pv, r, h }. boardWeek() (from leagueWeek, so simmed weeks too) = one form roll each, then the board is
+// re-ranked (the pool array itself is kept in board order). A team's grade (boardGrade) = perceived score + a fixed hash(team, prospect) x its scout error.
+const boardTrue = p => BOARD.rating * scoreOf(p) + (1 - BOARD.rating) * ptsOf(p);
+const boardHype = p => boardTrue(p) + bdGauss('hype:' + p.name) * BOARD.hypeErr;
+const boardForm = (p, wk) => boardTrue(p) + bdGauss(`form:${p.name}:${wk}`) * BOARD.noise;   // (never stored: the same every time it's asked)
+const boardSchool = p => DRAFT_SCHOOLS[Math.floor(bdHash('sch:' + p.name) * DRAFT_SCHOOLS.length)];
+const boardPos = (C, p) => p.group === 'K' ? (C && C.gk === p.name ? BOARD.kGenK : TRADE.pos.K[0]) : TRADE.pos[tradeKey(p)][0];   // position value: the trade table
+const boardPv = p => p.bd ? p.bd.pv : p.stock;
+const boardVal = (C, p) => boardPv(p) * (1 + (boardPos(C, p) - 1) * BOARD.posK);
+const boardList = C => C.pool.filter(p => p.group !== 'K' || p.name === C.gk);   // (kickers are off the board, but for one generational one)
+const boardLive = C => !!OFF && C === OFF.draft;                                 // the class is being drafted right now
+function boardSort(C, free) {   // re-rank; free = no limit on how far anyone moves
+  const by = (a, b) => boardVal(C, b) - boardVal(C, a), was = new Set(boardList(C)), want = boardList(C);
+  if (free) want.sort(by);
+  else for (let it = 0; it < BOARD.maxMove; it++)   // (maxMove rounds of neighbours swapping, each man in one swap a round: nobody moves more than maxMove places)
+    for (let j = it % 2; j + 1 < want.length; j += 2) if (boardVal(C, want[j + 1]) > boardVal(C, want[j])) { const t = want[j]; want[j] = want[j + 1]; want[j + 1] = t; }
+  for (const k of C.pool.filter(p => !was.has(p)).sort(by)) { const i = want.findIndex(p => !was.has(p) ? false : boardVal(C, p) < boardVal(C, k)); want.splice(i < 0 ? want.length : i, 0, k); }   // (the kickers nobody ranks: slotted in by value, for draft day)
+  C.pool.splice(0, C.pool.length, ...want);
+}
+function boardInit(C) {   // (also an old save's class, quietly)
+  const ks = C.pool.filter(p => p.group === 'K' && boardTrue(p) >= BOARD.kGen).sort((a, b) => boardTrue(b) - boardTrue(a));
+  C.gk = ks.length ? ks[0].name : ''; C.id = C.id || Math.floor(Math.random() * 1e9); C.bd = 1;
+  const fresh = C.pool.filter(p => !p.bd);
+  for (const p of fresh) p.bd = { pv: Math.round(boardHype(p) * 100) / 100, r: 0, h: [] };
+  boardSort(C, true);
+  boardList(C).forEach((p, i) => { if (fresh.includes(p)) p.bd.h.push(i + 1); });
+}
+function boardClass() {
+  if (!xpcOn() || !LEAGUE) return null;
+  const C = OFF && OFF.draft && !OFF.draft.done ? OFF.draft : scoutClass();
+  if (!C.bd) boardInit(C);
+  return C;
+}
+function boardWeek() {   // a week of the season went by
+  if (!xpcOn() || !season || season.offseason) return;
+  const C = boardClass(), wk = season.week - 1;
+  if (!C || boardLive(C) || (C.wk || 0) >= wk) return;
+  C.wk = wk;
+  const hw = BOARD.hype * Math.max(0, 1 - (wk - 1) / BOARD.hypeWeeks);
+  boardList(C).forEach((p, i) => { p.bd.r = i + 1; });
+  for (const p of C.pool) p.bd.pv = Math.round((p.bd.pv + BOARD.ema * (hw * boardHype(p) + (1 - hw) * boardForm(p, wk) - p.bd.pv)) * 100) / 100;
+  boardSort(C);
+  boardList(C).forEach((p, i) => { p.bd.h.push(i + 1); if (p.bd.h.length > BOARD.hist) p.bd.h.shift(); });
+  BD_CF = null;
+}
+// that week's stat line, made up on demand from a seeded stream (his name + the week) and that week's form
+function boardStatLine(p, wk) {
+  if (!wk) return 'NO GAMES YET';
+  const r = bdRng(`st:${p.name}:${wk}`), z = (boardForm(p, wk) - boardTrue(p)) / BOARD.noise, q = Math.max(0, Math.min(1.2, (boardTrue(p) - 18) / 26 + z * 0.12));
+  const n = (lo, hi) => Math.round(lo + (hi - lo) * r()), v = (lo, hi) => Math.max(0, Math.round(lo + (hi - lo) * q + (r() - 0.5) * (hi - lo) * 0.3));
+  if (r() < 0.07) return 'BYE WEEK';
+  switch (p.group) {
+    case 'QB': { const att = n(24, 42), cmp = Math.min(att, Math.round(att * (0.5 + 0.22 * q + (r() - 0.5) * 0.08))); return `${cmp}/${att}, ${Math.round(cmp * (9.5 + 5 * q + r() * 2))} YDS, ${v(0, 4.4)} TD, ${Math.max(0, Math.round(2.2 - 2 * q + (r() - 0.5) * 2))} INT`; }
+    case 'RB': { const car = n(10, 26); return `${car} CAR, ${Math.round(car * (2.8 + 3.4 * q + r()))} YDS, ${v(0, 2.6)} TD`; }
+    case 'WR': case 'TE': { const rec = v(2, p.group === 'TE' ? 7 : 9); return `${rec} REC, ${Math.round(rec * (8 + 7 * q + r() * 4))} YDS, ${v(0, 2)} TD`; }
+    case 'OL': return `${v(0, 5)} PANCAKES, ${Math.max(0, Math.round(1.6 - 1.6 * q + (r() - 0.5)))} SACKS ALLOWED, GRADE ${Math.round(52 + 38 * Math.min(1, q) + (r() - 0.5) * 6)}`;
+    case 'DL': return `${v(1, 6)} TKL, ${(v(0, 5) / 2).toFixed(1)} SACKS, ${v(0, 3)} TFL`;
+    case 'LB': return `${v(3, 12)} TKL, ${(v(0, 3) / 2).toFixed(1)} SACKS, ${v(0, 1.4)} INT`;
+    case 'CB': case 'S': return `${v(2, p.group === 'S' ? 9 : 6)} TKL, ${v(0, 3.2)} PBU, ${v(0, 1.5)} INT`;
+    default: { const fa = n(1, 4), fg = Math.min(fa, Math.round(fa * (0.6 + 0.4 * q))); return `${fg}/${fa} FG, LONG ${n(34, 44) + Math.round(12 * q)}`; }
+  }
+}
+// how far off team k's read of a prospect can be (points): its scout for his side (SCOUTS off: the DRAFT.scoutErr baseline) + a poor front office's hunches
+function boardErr(k, p) {
+  const sc = scoutsOn() ? scoutsOf(k)[OFF_GROUPS.includes(p.group) ? 'off' : 'def'] : null, [n0, n1] = FRONT_OFFICE.draftNoise;
+  return DRAFT.scoutErr * (sc ? scoutErrK(sc, p) : 1) * BOARD.gradeK + (season && k === season.team ? 0 : (n0 + (n1 - n0) * (1 - foSkill(k))) * BOARD.foK);
+}
+const boardGrade = (k, p) => boardPv(p) + (k ? bdSym(`g:${k}:${p.name}`) * boardErr(k, p) : 0);   // (no team = the public board)
+function boardRange(k, p) {   // [lowest, highest] potential stars team k's scouts put on him: the better the scout, the narrower
+  if (p.scout) { const s = starsOfScore(p.scout.pts); return [s, s]; }
+  const e = boardErr(k, p) * (scoutsOn() ? 1 : BOARD.rangeOff), c = ptsOf(p) + bdSym(`pot:${k}:${p.name}`) * e * 0.6, lo = Math.max(scoreOf(p), c - e);
+  return [starsOfScore(lo), starsOfScore(Math.max(lo, Math.min(ATTR_TOTAL, c + e)))];
+}
+function boardSeenQ(k) {   // team k's read of the whole class (-1..1)
+  const C = boardClass(); if (!C) return 0;
+  const e = (boardErr(k, { group: 'QB', name: '' }) + boardErr(k, { group: 'DL', name: '' })) / 2;
+  return C.q + bdSym(`q:${k}:${C.id}`) * BOARD.qErr * e;
+}
+const boardLabel = (v, cuts) => ['WEAK', 'AVERAGE', 'STRONG', 'LOADED'][cuts.filter(t => v >= t).length];
+function boardGenSeen(k, C) {   // does team k know of a generational prospect near the top of the board?
+  return boardList(C).slice(0, BOARD.genTop).some(p => {
+    if (season && k === season.team && scoutsOn()) return p.flag === 'gen';   // (your scouts' report, right or wrong)
+    if (ptsOf(p) < SCOUT.gen.pts) return false;
+    if (!k) return true;
+    const st = scoutsOn() ? scoutsOf(k)[OFF_GROUPS.includes(p.group) ? 'off' : 'def'].stars : 2.5;
+    return bdHash(`gen:${k}:${p.name}`) < SCOUT.gen.find + SCOUT.gen.findStar * st;
+  });
+}
+// the class factor on a pick in the coming draft, as team k's scouts see that part of the board (band 0 top 5, 1 rest of round 1, 2 round 2, 3 later)
+let BD_CF = null;
+const boardBand = (round, slot) => round === 1 ? (slot <= BOARD.bands[0] ? 0 : 1) : round === 2 ? 2 : 3;
+function boardFactor(k, band) {
+  const C = boardClass(); if (!C || boardLive(C)) return 1;   // (no class to look at / it is being drafted)
+  if (!BD_CF || BD_CF.C !== C || BD_CF.wk !== C.wk) BD_CF = { C, wk: C.wk, m: {} };
+  const key = k || '*'; let f = BD_CF.m[key];
+  if (!f) {
+    const L = boardList(C), ends = [0, ...BOARD.bands, L.length], e = k ? (boardErr(k, { group: 'QB', name: '' }) + boardErr(k, { group: 'DL', name: '' })) / 2 : 0;
+    f = BD_CF.m[key] = ends.slice(1).map((end, b) => {
+      const part = L.slice(ends[b], end); if (!part.length) return 1;
+      const mean = part.reduce((t, p) => t + boardGrade(k, p), 0) / part.length + (k ? bdSym(`band:${k}:${C.id}:${b}`) * e * BOARD.bandErr : 0);
+      return Math.max(BOARD.bandLo, Math.min(BOARD.bandHi, 1 + BOARD.bandK * (mean - BOARD.bandBase[b]) / BOARD.bandSd[b] + (!b && boardGenSeen(k, C) ? BOARD.genLift : 0)));
+    });
+  }
+  return f[band];
+}
+// a mock draft: the projected order, every team picking with its own grades (built when the tab opens)
+function boardMock(C) {
+  const yr = tradeYears()[0], S = projSlots(), order = Object.keys(S).sort((a, b) => S[a] - S[b]), pool = C.pool.slice(), got = {}, out = [];
+  for (let r = 1; r <= BOARD.mockRounds; r++) for (const o of order) {
+    const k = pickOwner(yr, r, o), p = draftChoice(k, pool, got[k] || (got[k] = []), C.gk);
+    if (!p) continue;
+    pool.splice(pool.indexOf(p), 1); got[k].push(p); out.push({ n: out.length + 1, k, o, p });
+  }
+  return out;
+}
+
+// --- the draft board screen ('dboard'; FRONT OFFICE > DRAFT BOARD): BIG BOARD | MOCK DRAFT, position chips, a row = rank, weekly move, position, name,
+// school, stars now + your scouts' potential range, rank trend. A row opens the player card with this week's stat line and the scout's note.
+const DB = { tab: 0, pos: 'ALL', page: 0, sel: null, mock: null, back: 'staff' };
+const DB_TABS = [{ x: 60, y: 104, w: 220, h: 44 }, { x: 290, y: 104, w: 220, h: 44 }], DB_POS = ['ALL', 'QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'CB', 'S'];
+const DB_CHIPS = DB_POS.map((g, i) => ({ x: 544 + i * 68, y: 104, w: 62, h: 44 })), DB_ROWS = [];
+const dbRow = i => DB_ROWS[i] || (DB_ROWS[i] = { x: 60, y: 160 + i * 42, w: 1160, h: 38 });
+const DB_PREV = { x: 500, y: 640, w: 90, h: 52 }, DB_NEXT = { x: 690, y: 640, w: 90, h: 52 };
+function dboardOpen(back) { DB.back = back; DB.sel = null; DB.page = 0; DB.mock = null; results.screen = 'dboard'; }
+function dboardRows(C) {   // what the open tab lists: [{ p, rk, pick }]
+  const rank = new Map(boardList(C).map((p, i) => [p, i + 1])), ok = p => DB.pos === 'ALL' || p.group === DB.pos;
+  if (!DB.tab) return boardList(C).filter(ok).map(p => ({ p, rk: rank.get(p) }));
+  if (!DB.mock || DB.mock.C !== C || DB.mock.wk !== C.wk || DB.mock.n !== C.pool.length) DB.mock = { C, wk: C.wk, n: C.pool.length, list: boardMock(C) };
+  return DB.mock.list.filter(e => ok(e.p)).map(e => ({ p: e.p, rk: rank.get(e.p), pick: e }));
+}
+function dbSpark(x, y, w, h, hist) {   // rank trend: up = climbing the board
+  if (hist.length < 2) { ctx.fillStyle = RES.dim; ctx.fillRect(x, y + h / 2 - 1, w, 2); return; }
+  const lo = Math.min(...hist), hi = Math.max(...hist), sp = Math.max(4, hi - lo);
+  ctx.strokeStyle = hist[hist.length - 1] <= hist[0] ? '#2e8b57' : '#c81b1b'; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.beginPath();
+  hist.forEach((r, i) => { const px = x + w * i / (hist.length - 1), py = y + h * (r - lo + (sp - (hi - lo)) / 2) / sp; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+  ctx.stroke(); ctx.lineJoin = 'miter';
+}
+function drawDBoard() {
+  const C = boardClass();
+  if (!C || !season) { results.screen = 'home'; return; }
+  const me = season.team, yr = tradeYears()[0];
+  paperBg();
+  if (DB.sel && !C.pool.includes(DB.sel)) DB.sel = null;
+  if (DB.sel) { drawDBoardPage(C, DB.sel); return; }
+  ctx.fillStyle = RES.line; ctx.font = 'bold 40px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(`${nflYear(yr)} DRAFT BOARD`, W / 2, 38);
+  // the strip: your projected picks, the class as your scouts see it, the week
+  const S = projSlots(), n = Object.keys(S).length, mine = picksOf(me).filter(a => a.year === yr && !a.x), q = boardSeenQ(me), lvl = BOARD.str.filter(t => q >= t).length;
+  ctx.font = 'bold 15px monospace'; ctx.textAlign = 'left'; ctx.fillStyle = RES.line;
+  ctx.fillText(`YOUR PICKS: ${mine.length ? mine.map(a => `R${a.round} #${(a.round - 1) * n + (S[a.orig] || 16)}`).join('  ') : 'NONE'}`, 60, 82, 600);
+  ctx.fillText(`CLASS: ${boardLabel(q, BOARD.str)}`, 690, 82);
+  for (let i = 0; i < 4; i++) { ctx.fillStyle = i <= lvl ? RES.gold : RES.bright; ctx.fillRect(860 + i * 24, 74, 20, 15); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.strokeRect(860 + i * 24, 74, 20, 15); }
+  ctx.fillStyle = RES.dim; ctx.textAlign = 'right'; ctx.fillText(boardLive(C) ? 'DRAFT DAY' : season.offseason || !C.wk ? 'PRESEASON' : `AFTER WEEK ${C.wk}`, 1220, 82);
+  DB_TABS.forEach((b, i) => menuBtn(b, i ? 'MOCK DRAFT' : 'BIG BOARD', DB.tab === i ? SEL : RES.bright, 20));
+  DB_CHIPS.forEach((b, i) => menuBtn(b, DB_POS[i], DB.pos === DB_POS[i] ? SEL : RES.bright, 16, i ? bb => { ctx.fillStyle = POS_COL[DB_POS[i]]; ctx.fillRect(bb.x + 6, bb.y + bb.h - 8, bb.w - 12, 3); } : null));
+  const rows = dboardRows(C), per = BOARD.rows, pages = Math.max(1, Math.ceil(rows.length / per));
+  DB.page = Math.min(DB.page, pages - 1);
+  if (!rows.length) { ctx.fillStyle = RES.dim; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center'; ctx.fillText('NOBODY HERE', W / 2, 360); }
+  rows.slice(DB.page * per, DB.page * per + per).forEach((e, i) => {
+    const p = e.p, own = e.pick && e.pick.k === me;
+    menuBtn(dbRow(i), '', own ? SEL : RES.bright, 16, b => {
+      const cy = b.y + b.h / 2 + 1, d = p.bd.r && e.rk ? p.bd.r - e.rk : 0, [lo, hi] = boardRange(me, p);
+      ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.fillStyle = b.ink; ctx.font = 'bold 20px monospace';
+      if (e.pick) { ctx.fillText(`#${e.pick.n}`, b.x + 12, cy); drawLogo(e.pick.k, b.x + 86, cy - 1, 30); ctx.font = 'bold 13px monospace'; ctx.fillText(e.pick.k + (e.pick.o !== e.pick.k ? ` (${e.pick.o})` : ''), b.x + 106, cy, 90); }
+      else {
+        ctx.fillText(String(e.rk), b.x + 14, cy);
+        ctx.font = 'bold 15px monospace'; ctx.fillStyle = d > 0 ? '#2e8b57' : d < 0 ? '#c81b1b' : RES.dim; ctx.fillText(d > 0 ? `▲${d}` : d < 0 ? `▼${-d}` : '-', b.x + 76, cy);
+      }
+      ctx.fillStyle = POS_COL[p.group] || RES.line; ctx.fillRect(b.x + 204, cy - 12, 50, 23);
+      ctx.fillStyle = '#ffffff'; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.fillText(p.tag, b.x + 229, cy);
+      ctx.textAlign = 'left'; ctx.fillStyle = b.ink; ctx.font = 'bold 18px monospace'; ctx.fillText(p.name.toUpperCase(), b.x + 268, cy, 250);
+      if (p.flag && scoutsOn()) { ctx.font = 'bold 12px monospace'; ctx.fillStyle = p.flag === 'gen' ? RES.gold : '#2e8b57'; ctx.fillText(p.flag === 'gen' ? 'GEN' : 'UNDER', b.x + 526, cy); }
+      ctx.font = 'bold 13px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(boardSchool(p), b.x + 574, cy, 190);
+      starsRow(b.x + 786, cy, p.stars, 8); potRow(b.x + 786, cy, p.stars, hi, 8);
+      ctx.fillStyle = b.ink; ctx.font = 'bold 13px monospace'; ctx.fillText(lo === hi ? `POT ${lo}` : `POT ${lo}-${hi}`, b.x + 880, cy);
+      dbSpark(b.x + 1000, b.y + 8, 144, b.h - 16, p.bd.h);
+    });
+  });
+  if (pages > 1) { menuBtn(DB_PREV, '◂', RES.bright, 26); menuBtn(DB_NEXT, '▸', RES.bright, 26); }
+  ctx.font = 'bold 16px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`${DB.page + 1} / ${pages}`, W / 2, 667);
+  menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
+}
+function drawDBoardPage(C, p) {   // his card + this week's line + the scout's note
+  const me = season.team, rk = boardList(C).indexOf(p) + 1, d = p.bd.r && rk ? p.bd.r - rk : 0, sc = scoutsOn() ? scoutFor(p) : null, wk = boardLive(C) ? 0 : C.wk || 0;
+  drawPlayerPage(me, p, null);
+  const move = d > 0 ? `UP ${d} THIS WEEK` : d < 0 ? `DOWN ${-d} THIS WEEK` : 'HOLDING', [lo, hi] = boardRange(me, p);
+  const L = [[boardSchool(p), RES.line], [rk ? `BOARD #${rk}, ${move}` : 'NOT ON THE BOARD', RES.line], [`POTENTIAL ${lo === hi ? lo : `${lo}-${hi}`} STARS`, RES.gold], ['', null],
+    ...wrapLines(`${wk ? `WEEK ${wk}: ` : ''}${boardStatLine(p, wk)}`, DB_NOTE.chars).map(t => [t, RES.line])];
+  if (sc) L.push(['', null], ...wrapLines(`${sc.name.toUpperCase()}: READS WITHIN ${(DRAFT.scoutErr * scoutErrK(sc, p)).toFixed(1)} PTS. ${p.flag ? (p.flag === 'gen' ? 'REPORT: GENERATIONAL.' : 'REPORT: UNDERRATED.') : p.seen ? 'NOTHING UNUSUAL.' : 'NOT WATCHED YET.'}`, DB_NOTE.chars).map(t => [t, RES.dim]));
+  ctx.font = 'bold 13px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  L.forEach(([t, col], i) => { if (t) { ctx.fillStyle = col; ctx.fillText(t, DB_NOTE.x, DB_NOTE.y + i * DB_NOTE.dy, DB_NOTE.w); } });
+}
+const DB_NOTE = { x: 992, y: 528, w: 250, dy: 17, chars: 30 };   // the prospect's note: right column of the card page, under his stars (where DRAFT / SIGN sit on other screens)
+function dboardClick(pt) {
+  const C = boardClass();
+  if (!C) { results.screen = 'home'; return; }
+  if (DB.sel) { if (helpClick(pt, DB.sel)) return; if (inBtn(pt, BACK_BTN)) DB.sel = null; return; }
+  if (inBtn(pt, BACK_BTN)) { results.screen = DB.back || 'staff'; return; }
+  const t = DB_TABS.findIndex(b => inBtn(pt, b));
+  if (t >= 0) { DB.tab = t; DB.page = 0; return; }
+  const c = DB_CHIPS.findIndex(b => inBtn(pt, b));
+  if (c >= 0) { DB.pos = DB_POS[c]; DB.page = 0; return; }
+  const rows = dboardRows(C), per = BOARD.rows, pages = Math.max(1, Math.ceil(rows.length / per));
+  if (pages > 1 && inBtn(pt, DB_PREV)) { DB.page = (DB.page - 1 + pages) % pages; return; }
+  if (pages > 1 && inBtn(pt, DB_NEXT)) { DB.page = (DB.page + 1) % pages; return; }
+  for (let i = 0; i < per; i++) if (inBtn(pt, dbRow(i))) { const e = rows[DB.page * per + i]; if (e) DB.sel = e.p; return; }
 }
 
 // --- the other teams sign what is left, then the new year
@@ -2203,58 +2539,57 @@ function recalcTeamStars() {
   const noName = (t, off) => active(t, off).length < needed(off);   // (a starting slot with nobody named on the roster)
   const cap = (t, off, s) => noName(t, off) ? Math.min(NO_NAME_MAX, s) : s;
   for (const [side, off] of [['off', true], ['def', false]]) {
-    // the formula's raw scores, then stretched around the league's average (SIDE_STRETCH) so good and bad sides read clearly apart
-    const raw = {};
-    for (const t of teams) { TEAM_EDGE[t + side] = edge(t, off); if (!TEAM_STARS[t]) TEAM_STARS[t] = { off: 3, def: 3 }; }
-    if (!formulaOn()) {   // (main-menu games and a franchise's first season: the league's starting ranking, 1-5 by rank of each side's edge)
-      teams.map(t => [t, TEAM_EDGE[t + side]]).sort((a, b) => a[1] - b[1]).forEach(([t], i, all) => TEAM_STARS[t][side] = (STOCK_STARS[t] && STOCK_STARS[t][side]) || cap(t, off, rankStars(i, all.length)));
-      continue;
-    }
-    for (const t of teams) raw[t] = sideRating(t, off, true);
-    const nfl = teams.filter(t => NFL[t]), vs = (nfl.length ? nfl : teams).map(t => raw[t]), mean = vs.reduce((a, b) => a + b, 0) / (vs.length || 1);
-    const sd = Math.max(SIDE_STRETCH.minSd, Math.sqrt(vs.reduce((a, b) => a + (b - mean) ** 2, 0) / (vs.length || 1)));
+    // one base formula for every team, every mode, the whole career: nothing is ranked or stretched against the rest of the league, and the difficulty never shows here
     for (const t of teams) {
-      const s = SIDE_STRETCH.mid + (mean - SIDE_STRETCH.mid) * SIDE_STRETCH.drift + (raw[t] - mean) / sd * SIDE_STRETCH.perSd + SIDE_MIX.hcK * (hcStars(t) - 3);
-      TEAM_STARS[t][side] = cap(t, off, Math.max(1, Math.min(5, Math.round(s * 2) / 2)));
+      TEAM_EDGE[t + side] = edge(t, off); if (!TEAM_STARS[t]) TEAM_STARS[t] = { off: 3, def: 3 };
+      TEAM_STARS[t][side] = cap(t, off, sideRating(t, off));
     }
   }
 }
-// mid = stars of a league-average side, perSd = stars per standard deviation of the raw scores (bigger = more spread),
-// minSd = floor on that deviation, drift = how much the league's overall level (raw average away from mid) still shows
-const SIDE_STRETCH = { mid: 2.8, perSd: 0.9, minSd: 0.08, drift: 0.5 };
 const NO_NAME_MAX = 4.5;   // the most stars a side can have with a no-name (unrostered) starter in its lineup
-// --- side rating: one formula for every team, offense and defense, the whole career
-// Rating = clamp 1-5 (round to a half star (0.65 P + 0.20 C + 0.10 H + 0.05 D + X))
-//  P = starters' stars weighted by SIDE_W (an empty slot = max(best backup - 0.5, 1.5)), C = coordinator stars (3 if none),
-//  H = head coach stars (3 if none; yours = career.hcStars), D = average best backup in the key groups (missing = 1),
-//  X = 0.1 per X-Factor starter, at most 0.3
-// (the head coach: hcK = team-rating stars per head-coach star away from 3, a small nudge; H only weights a neutral 3 into the base)
-const SIDE_MIX = { P: 0.65, C: 0.2, H: 0.1, hcK: 0.03, D: 0.05, xf: 0.1, xfMax: 0.3, empty: 1.2, emptyCut: 0.75, noDepth: 1 };
+// --- side rating: one base formula for every team, offense and defense, every mode, the whole career (never relative to other teams, never the difficulty)
+// raw = P x starters' stars (weighted by SIDE_W; an empty slot = max(best backup - emptyCut, empty)) + C x coordinator + H x 3 + D x depth
+//       + hcK x (head coach - 3) + ability bonus (per starter by tier, capped) + veterans - rookies - injured starters
+// stars = clamp 1-5 (half stars) of SIDE_SCALE.mid + (raw - SIDE_SCALE.base) x SIDE_SCALE.per. Potential is never counted.
+const SIDE_MIX = { P: 0.62, C: 0.15, H: 0.08, D: 0.08, hcK: 0.05, empty: 1.2, emptyCut: 0.75, noDepth: 1,
+                   ab: { X: 0.1, S: 0.05, F: 0.02 }, abMax: 0.35,   // ability tiers of the starters (X = a Star Factor)
+                   vetYrs: 6, vet: 0.025, vetMax: 0.15,              // starters with vetYrs+ years in the league
+                   rook: 0.04, rookMax: 0.2,                         // rookie starters
+                   inj: 0.06, injMax: 0.25 };                        // would-be starters who are out (hurt, benched, suspended): on top of their backups playing
+const SIDE_SCALE = { mid: 3, base: 2.8, per: 3.5 };    // raw score that rates 3 stars / stars per raw point (fixed: calibrated once on the stock league)
 // weight per starting slot (offense sums to 13.25 with K and P, defense to 10.75); the punter slot uses the kicker
 const SIDE_W = { QB: [2.5], RB: [1], WR: [1.25, 1.25], TE: [0.75, 0.5], OL: [1, 1, 1, 1, 1], K: [0.5], P: [0.5],
                  DL: [1, 1, 1, 1], LB: [0.75, 0.75, 0.75], CB: [1.25, 1.25], S: [1, 1] };
 const SIDE_SLOTS = { off: ['QB', 'RB', 'WR', 'TE', 'OL', 'K', 'P'], def: ['DL', 'LB', 'CB', 'S'] };
-const SIDE_DEPTH = { off: ['OL', 'WR'], def: ['DL', 'CB'] };
-// the side-rating formula runs from a franchise's second season on (never in main-menu exhibitions / test mode)
+const SIDE_DEPTH = { off: ['OL', 'WR', 'RB'], def: ['DL', 'CB', 'LB'] };
+// (formulaOn: from a franchise's second season on; only the player-card note and other season rules read it now, the side rating is always the formula)
 function formulaOn() { return !!season && !exhibition && (LEAGUE.year || 1) > 1; }
 function hcStars(t) { return season && !exhibition && t === season.team ? (career.hcStars != null ? career.hcStars : 0.5) : 3; }
 function sideRating(t, off, unrounded) {
-  const side = off ? 'off' : 'def', R = ROSTER[t] || [];
-  const at = g => R.filter(p => p.group === (g === 'P' ? 'K' : g) && !isOut(p)).sort((a, b) => b.stars - a.stars);
-  let sum = 0, wt = 0, xf = 0;
+  const side = off ? 'off' : 'def', R = ROSTER[t] || [], M = SIDE_MIX;
+  const grp = g => R.filter(p => p.group === (g === 'P' ? 'K' : g));
+  const at = g => grp(g).filter(p => !isOut(p)).sort((a, b) => b.stars - a.stars);
+  let sum = 0, wt = 0, ab = 0, vet = 0, rook = 0, inj = 0;
   for (const g of SIDE_SLOTS[side]) {
     const ps = at(g), n = SIDE_W[g].length, back = ps[n];
     SIDE_W[g].forEach((w, i) => {
       const p = ps[i];
-      sum += w * (p ? p.stars : Math.max((back ? back.stars : 0) - SIDE_MIX.emptyCut, SIDE_MIX.empty)); wt += w;
-      if (p && p.tier === 'X' && g !== 'P') xf++;
+      sum += w * (p ? p.stars : Math.max((back ? back.stars : 0) - M.emptyCut, M.empty)); wt += w;
+      if (!p || g === 'P') return;
+      if (p.ability && M.ab[p.tier]) ab += M.ab[p.tier];
+      const yp = typeof yrsPro === 'function' ? yrsPro(p) : 3;
+      if (yp >= M.vetYrs) vet += M.vet; else if (p.rookie || yp === 0) rook += M.rook;
     });
+    if (g !== 'P') inj += grp(g).sort((a, b) => b.stars - a.stars).slice(0, n).filter(isOut).length * M.inj;
   }
   const st = typeof STAFF !== 'undefined' && STAFF[t], co = st ? (off ? st.oc : st.dc) : null;
-  const C = co ? co.stars : 3, H = unrounded ? 3 : hcStars(t);   // (stretched: the head coach is added after, unstretched, in recalcTeamStars)
-  const D = SIDE_DEPTH[side].reduce((s, g) => { const b = at(g)[SIDE_W[g].length]; return s + (b ? b.stars : SIDE_MIX.noDepth); }, 0) / SIDE_DEPTH[side].length;
-  const r = SIDE_MIX.P * (sum / wt) + SIDE_MIX.C * C + SIDE_MIX.H * 3 + SIDE_MIX.hcK * (H - 3) + SIDE_MIX.D * D + Math.min(SIDE_MIX.xf * xf, SIDE_MIX.xfMax);
-  return unrounded ? r : Math.max(1, Math.min(5, Math.round(r * 2) / 2));
+  const C = co ? co.stars : 3, H = hcStars(t);
+  const D = SIDE_DEPTH[side].reduce((s, g) => { const b = at(g)[SIDE_W[g].length]; return s + (b ? b.stars : M.noDepth); }, 0) / SIDE_DEPTH[side].length;
+  const raw = M.P * (sum / wt) + M.C * C + M.H * 3 + M.D * D + M.hcK * (H - 3)
+            + Math.min(ab, M.abMax) + Math.min(vet, M.vetMax) - Math.min(rook, M.rookMax) - Math.min(inj, M.injMax);
+  if (unrounded) return raw;
+  const s = SIDE_SCALE.mid + (raw - SIDE_SCALE.base) * SIDE_SCALE.per;
+  return Math.max(1, Math.min(5, Math.round(s * 2) / 2));
 }
 // the other teams sign free agents, best first (good ones go fast: odds by stars); odds = a table by stars, perTeam = most signings each
 function aiPickups(me, odds, perTeam) {
@@ -2271,7 +2606,7 @@ function aiPickups(me, odds, perTeam) {
       const starters = [...G].sort((a, b) => b.stars - a.stars).slice(0, need), floor = starters.length ? starters[starters.length - 1].stars : 0;
       if (G.length >= need && p.stars <= floor) continue;
       if (G.length >= need && leanBias(k, p.group) < 0 && Math.random() < LEAN.skip) continue;   // (its money goes to the side it favors)
-      const side = OFF_GROUPS.includes(p.group), full = R.filter(q => OFF_GROUPS.includes(q.group) === side).length >= ROSTER_SPOTS;
+      const side = OFF_GROUPS.includes(p.group), full = R.filter(q => OFF_GROUPS.includes(q.group) === side).length >= spotsOf(k, side ? 'off' : 'def');
       const out = full ? weakest : null;
       if (full && !out) continue;
       if (!aiCanPay(k, p, out ? payOf(out) : 0)) continue;   // (keeps cap back for its empty starting slots)
@@ -2305,12 +2640,12 @@ const leanBias = (k, g) => { const l = leanOf(k); return !l ? 0 : OFF_GROUPS.inc
 // teams top up their rosters: positions without a star yet (fewer than the starters needed, or a best man under 3 stars) come first, then backups
 function aiFill(me, most) {
   for (const k of Object.keys(ROSTER).filter(k => NFL[k] && k !== me)) {
-    const R = ROSTER[k], total = ROSTER_SPOTS * 2;
+    const R = ROSTER[k], total = spotsOf(k, 'off') + spotsOf(k, 'def');
     if (!AI_FILL[k]) AI_FILL[k] = Math.max(STARTER_TOTAL + AI_DEPTH.extra, Math.round(total * (AI_ROSTER.share[0] + Math.random() * (AI_ROSTER.share[1] - AI_ROSTER.share[0]))));
     for (let added = 0; added < most && R.length < AI_FILL[k]; added++) {
       const empty = g => R.filter(q => q.group === g).length < (STARTERS[g] || 0);
       const needy = g => { const G = R.filter(q => q.group === g), st = [...G].sort((a, b) => b.stars - a.stars).slice(0, STARTERS[g] || 0); return G.length < (STARTERS[g] || 0) || !st.length || st[0].stars < 3; };
-      const ok = p => R.filter(q => OFF_GROUPS.includes(q.group) === OFF_GROUPS.includes(p.group)).length < ROSTER_SPOTS && aiCanPay(k, p);
+      const ok = p => R.filter(q => OFF_GROUPS.includes(q.group) === OFF_GROUPS.includes(p.group)).length < spotsOf(k, OFF_GROUPS.includes(p.group) ? 'off' : 'def') && aiCanPay(k, p);
       const best = list => Math.random() < FRONT_OFFICE.fillRandom * (1 - foSkill(k)) ? pick(list) : [...list].sort((a, b) => b.stars - a.stars || a.salary - b.salary)[0];   // (a bad front office grabs whoever)
       const fav = list => { const f = list.filter(p => leanBias(k, p.group) > 0); return f.length && Math.random() < LEAN.fill ? f : list; };   // (depth goes to the side it favors)
       const p = best(FA_POOL.filter(p => empty(p.group) && ok(p))) || best(fav(FA_POOL.filter(p => needy(p.group) && ok(p)))) || best(fav(FA_POOL.filter(ok)));
@@ -2336,6 +2671,7 @@ function offAIPickups(me) {
 // during the season: now and then a team cuts a player (mostly a weak or old one; a roster spot is refilled by a rookie), and the other
 // teams grab the best free agents quickly. Called once per week that goes by. Team ratings are redone.
 function leagueWeek(me) {
+  try { boardWeek(); } catch (e) { console.warn('board', e); }   // (the draft board: this week's prospect form)
   for (const k of Object.keys(ROSTER)) for (const q of ROSTER[k]) if (q.susp > 0) q.susp--;   // (saga suspensions: one game served a week)
   if (FA_POOL.length < 10) for (let i = 0; i < 14; i++) FA_POOL.push(genFreeAgent());
   for (const k of Object.keys(ROSTER).filter(k => NFL[k] && k !== me)) {
@@ -2510,13 +2846,12 @@ function tenureTally() {   // once per season, when the Paper Bowl rings are han
 }
 const isPast = k => (career.past || []).some(p => p.team === k);
 const redStar = () => !!career && (career.hcStars || 0) >= 6;   // the 6th (red) coach star
-function tierGive(p, to) {   // his ability moves up to tier `to` (S / X) on the roster entry: the boost grows by the difference
-  const was = p.tier;
-  p.tier = to; if (to === 'X') p.xf = undefined;
-  for (const [k, v] of Object.entries(SIG_BOOST[p.ability] || {})) {
-    const a = k !== 'cut' ? k : ATTRS[p.group].includes('agi') ? 'agi' : 'spd', d = v * (SIG_TIER[to] - SIG_TIER[was]);
-    if (p.at && a in p.at) { p.at[a] += d; (p.boost ||= {})[a] = (p.boost[a] || 0) + d; }
-  }
+function tierGive(p, to) {   // his ability moves up to tier `to` (S / X) on the roster entry: it becomes the next id of its line (abilUp), one tier at a time
+  abilMigrate(p);
+  if (!p.ability) giveAbility(p, true);
+  let guard = 3;
+  while (p.ability && TIER_IX[p.tier] < TIER_IX[to] && guard--) { const n = abilUp(p.ability, p.group); if (!n) break; p.ability = n; p.tier = ABIL_DEFS[n].tier; }
+  if (p.tier === 'X') p.xf = undefined;
 }
 function redGive(p) { tierGive(p, 'X'); career.redUsed = LEAGUE.year; }   // red star: his ability becomes a star factor (X) now
 function facTier(k) {   // a team's hidden facility tier 1-5 (rolled once, kept in the league)
@@ -2539,6 +2874,7 @@ function moveArrive(old, team) {   // after newSeason
   const tier = facTier(team), up = [];
   if (career.prac) for (const [n, f] of Object.entries(career.prac.fac)) { const hit = Math.random() < MOVE.facUp; f.lvl = hit ? tier : 1; f.build = null; if (hit && tier > 1) up.push(n.toUpperCase()); }
   career.tenure = null; tenureOf();
+  if (STAFF[team]) STAFF[team].sc = null;   // (the scouts you find there are new to you: scoutsOf rolls them at SCOUT.start)
   const dv = NFL[team].conf;   // (same division as the team you left: its other teams are now rivals)
   if (isPast(team)) (career.redeem = career.redeem || {})[team] = true;   // (back on a team you left: your first title here glows silver)
   career.rivals = NFL[old].conf === dv ? Object.keys(NFL).filter(k => NFL[k].conf === dv && k !== team && ROSTER[k]) : [];

@@ -102,6 +102,19 @@ function cardNote(b, tilt, body) {   // a yellow sticky note taped on at the top
 }
 let cardStatsOnly = false;   // a retired player's card (the new-season popup): nothing but STATS and BACK
 const RETIRE_FX = { gap: 0.16, drop: 0.38, stamp: 0.2, from: 260 };   // retirement cards: seconds between cards, the drop, the RETIRED stamp; px they fall from
+function rbRibbon(x, y, rh) {   // the gold record-book ribbon: RECORD, then how many league (LG) / franchise (TM) #1s he holds
+  const w = 62, h = 84;
+  ctx.save();
+  ctx.fillStyle = RES.shade; ctx.beginPath(); ctx.moveTo(x + 4, y + 4); ctx.lineTo(x + w + 4, y + 4); ctx.lineTo(x + w + 4, y + h + 4); ctx.lineTo(x + w / 2 + 4, y + h - 18); ctx.lineTo(x + 4, y + h + 4); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = RB.color; ctx.strokeStyle = RB.ink; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w / 2, y + h - 22); ctx.lineTo(x, y + h); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = RB.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = 'bold 13px monospace'; ctx.fillText('RECORD', x + w / 2, y + 16, w - 6);
+  ctx.font = 'bold 12px monospace';
+  if (rh.lg) ctx.fillText(`LG ${rh.lg}`, x + w / 2, y + 34);
+  if (rh.fr) ctx.fillText(`TM ${rh.fr}`, x + w / 2, y + (rh.lg ? 50 : 34));
+  ctx.restore();
+}
 function drawPlayerCard(team, p, kr) {
   const od = offDetail();   // (offseason screens: the same card for draft / FA / re-sign / trade / Paper Bowl players, their action buttons sit in the right column)
   const C = CARD, own = team === MATCH.you && !od && !cardStatsOnly, g = p.group, at = ATTRS[g], { main, trim } = sideKit(team, p), INK = '#3b3320', DIM = 'rgba(59,51,32,0.6)';
@@ -136,8 +149,8 @@ function drawPlayerCard(team, p, kr) {
   if (own) {
     drawBookmark(CARD_KR, p === kr, true);
     drawBookmark(CARD_HOF, HOF.some(h => h.p.name === p.name), true, 'HOF');
-    if (season && !exhibition && !tut && career.prac) pracTagsDraw(p, 150, 592);
   }
+  { const rh = !exhibition && rbHolds(p.name); if (rh) rbRibbon(own ? CARD_HOF.x - 70 : CARD_KR.x, CARD_KR.y, rh); }   // (a record holder, any team: league / franchise #1s he holds)
 
   // the pentagon: rings, spokes, the position average (dotted), his potential (gold dashes), his ratings (pencil)
   const avg = cardAvgs(g), showPot = own || (od && (results.screen === 'fa' || results.screen === 'resign' || (results.screen === 'draft' && !!p.scout))), sp = shownPotential(p), potA = showPot ? potAttrs(p, sp.pts) : null;
@@ -224,6 +237,7 @@ function drawPlayerCard(team, p, kr) {
       ctx.font = 'bold 14px monospace'; ctx.fillStyle = DIM; ctx.fillText(k, 16, y);
       ctx.font = 'bold 17px monospace'; ctx.fillStyle = INK; const ls = wrapLines(String(v), 20); ls.forEach((l, i) => ctx.fillText(l, 16, y + 22 + i * 20, w - 24)); y += 22 + ls.length * 20 + 14;
     });
+    if (own && season && !exhibition && !tut && career.prac) pracTagsDraw(p, w - 150, 12, true);   // (FOCUS / MENTOR / MENTOREE / BATTLE WIN: top right of the BIO note)
   });
   if (own) drawHonors(p, 70, 574, 280, 11, 5);
   // right note: condition, mood, X-Factor
@@ -474,66 +488,88 @@ function hofClick(pt) {
   if (career && season && inBtn(pt, TROPHY_BTN)) { trView.page = 0; trView.sel = null; results.screen = 'trophy'; return; }
   if (inBtn(pt, BACK_BTN)) { results.screen = hofReturn; hofReturn = 'roster'; }
 }
-// --- the records screen (RECORDS on the Hall of Fame): tabs SINGLE PLAY / SINGLE GAME / SEASON / CAREER, LEAGUE or MY TEAM; a row is a category with its #1,
-// click it to open the top 5. Records held by your team's players are gold. Data: see "records" next to the stats code.
+// --- the records screen = the RECORD BOOK (RECORDS on the Hall of Fame): LEAGUE / FRANCHISE (the team button opens the team picker; default = yours)
+// x GAME / SEASON / CAREER / TEAM / PLAYOFFS. A row = a category's #1 (value, holder, team, season); tap it for the top 5 (ties share a rank: T-2).
+// Gold rows = set in this league; ★ = your team (league book). Pages when the open lists run long. Data, tracking, made-up history: "records" in 03.
 const REC_BTN = { x: 1040, y: 620, w: 220, h: 80 };
-const REC_TABS = [['play', 'SINGLE PLAY'], ['game', 'SINGLE GAME'], ['season', 'SEASON'], ['career', 'CAREER']].map(([t, l], i) => ({ t, l, x: 190 + i * 250, y: 66, w: 230, h: 54 }));
-const REC_SCOPE = [['league', 'LEAGUE'], ['mine', 'MY TEAM']].map(([t, l], i) => ({ t, l, x: 880 + i * 190, y: 10, w: 180, h: 46 }));
-const REC_ROW = { y: 134, h: 28 };
-const recView = { tab: 'play', scope: 'league', open: null, data: null };
-function recOpen() { recView.open = null; try { recView.data = recTotals(); } catch (e) { recView.data = null; } }
-const recCats = () => recView.tab === 'play' ? REC_PLAY : recView.tab === 'game' ? REC_GAME : [...REC_TOT, ...(recView.tab === 'season' ? [['team', 'BEST TEAM SEASON']] : [])];
-function recList(id) {
-  const v = recView, d = v.data;
-  if (v.tab === 'play' || v.tab === 'game') return ((v.scope === 'mine' ? RECS.mine : RECS)[v.tab][id] || []);
-  const l = (d && d[v.tab][id]) || [];
-  return (v.scope === 'mine' ? l.filter(e => e.team === d.me) : l).slice(0, RECORDS.top);
-}
-function recRows() {   // [{ id, label, e, rank, y }]: the category rows, with #2-#5 under the open one
-  const rows = []; let y = REC_ROW.y;
-  for (const [id, label] of recCats()) {
-    const l = recList(id);
-    rows.push({ id, label, e: l[0], rank: 1, y }); y += REC_ROW.h;
-    if (recView.open === id) for (let r = 1; r < l.length; r++) { rows.push({ id, label: '', e: l[r], rank: r + 1, y, sub: true }); y += REC_ROW.h; }
+const REC_BOOKS = [['L', 'LEAGUE'], ['F', 'FRANCHISE']].map(([t, l], i) => ({ t, l, x: 400 + i * 200, y: 12, w: 190, h: 48 }));
+const REC_TEAM_BTN = { x: 812, y: 12, w: 408, h: 48 };
+const REC_TABS = [['g', 'GAME'], ['s', 'SEASON'], ['c', 'CAREER'], ['t', 'TEAM'], ['p', 'PLAYOFFS']].map(([t, l], i) => ({ t, l, x: 60 + i * 234, y: 70, w: 220, h: 50 }));
+const REC_ROW = { y: 136, h: 30, per: 15, wheel: 2 };   // wheel = rows a notch of the mouse wheel scrolls
+const REC_GROUPS = { g: [['', ['g']]], s: [['', ['s']]], c: [['', ['c']]], t: [['SINGLE GAME', ['tg']], ['SEASON', ['ts']]], p: [['SINGLE GAME', ['pg', 'tp']], ['CAREER', ['pc']]] };
+const recView = { tab: 'g', book: 'L', team: null, open: null, page: 0 };
+function recOpen() { recView.open = null; recView.page = 0; recView.team = myTeamCode(); }
+const recBook = () => recView.book === 'L' ? 'L' : (NFL[recView.team] ? recView.team : myTeamCode());
+const recRank = (c, l, i) => { const v = l[i].v; return (l.some((x, j) => j !== i && x.v === v) ? 'T-' : '#') + (l.filter(x => rbBetter(c, x.v, v)).length + 1); };
+function recRows() {
+  const rows = [], book = recBook();
+  for (const [head, scs] of REC_GROUPS[recView.tab]) {
+    if (head) rows.push({ head });
+    for (const c of RB_CATS) if (scs.includes(c.sc)) {
+      const l = rbList(c, book);
+      rows.push({ c, e: l[0], tie: l.length ? l.filter(x => x.v === l[0].v).length : 0 });
+      if (recView.open === c.id) for (let i = 1; i < l.length; i++) rows.push({ c, e: l[i], rk: recRank(c, l, i), sub: true });
+    }
   }
   return rows;
 }
+// the list scrolls (mouse wheel: recWheel; the arrows jump a screenful); recView.page = the first row shown
+function recPage() { const all = recRows(), max = Math.max(0, all.length - REC_ROW.per); recView.page = Math.max(0, Math.min(Math.round(recView.page), max)); return { rows: all.slice(recView.page, recView.page + REC_ROW.per), pages: max > 0 ? 2 : 1, max, n: all.length }; }
+function recWheel(d) { recView.page = (recView.page || 0) + Math.sign(d) * REC_ROW.wheel; recPage(); }
+function recWhen(c, e) {
+  if (c.sc === 'c' || c.sc === 'pc' || c.streak) return e.y0 != null && e.y0 !== e.y ? `${rbYear(e.y0)}-${rbYear(e.y)}` : `${rbYear(e.y)}`;
+  if (e.w === 'PO') return `${rbYear(e.y)} ${PO_ROUNDS[e.r] || 'PLAYOFFS'}`;
+  return e.w ? `${rbYear(e.y)} WK ${e.w}` : `${rbYear(e.y)}`;
+}
 function drawRecords() {
   paperBg();
-  const v = recView, me = v.data ? v.data.me : myTeamCode();
-  ctx.fillStyle = RES.line; ctx.font = 'bold 44px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('RECORDS', 560, 34);
-  REC_SCOPE.forEach(b => menuBtn(b, b.l, v.scope === b.t ? SEL : RES.bright, 22));
-  REC_TABS.forEach(b => menuBtn(b, b.l, v.tab === b.t ? SEL : RES.bright, 26));
-  resPanel(70, 128, 1140, 490, [], RES.bright);
-  const tn = t => t && NFL[t] ? shortName(t) : (t || '-'), when = e => e.yr2 ? `${pstYear(e.yr)}-${pstYear(e.yr2)}` : `${pstYear(e.yr)}${e.wk ? (e.wk === 'PO' ? ' PLAYOFFS' : ' WK ' + e.wk) : ''}`;
-  for (const r of recRows()) {
-    const e = r.e, y = r.y + REC_ROW.h / 2, mine = e && e.team === me;
-    if (mine) { ctx.fillStyle = '#fff1b8'; ctx.fillRect(80, r.y + 1, 1120, REC_ROW.h - 2); }
+  const v = recView, me = myTeamCode(), book = recBook();
+  ctx.fillStyle = RES.line; ctx.font = 'bold 38px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText('RECORD BOOK', 60, 37, 330);
+  REC_BOOKS.forEach(b => menuBtn(b, b.l, v.book === b.t ? SEL : RES.bright, 22));
+  if (v.book === 'F') menuBtn(REC_TEAM_BTN, '', RES.bright, 20, bb => {
+    drawLogo(book, bb.x + 30, bb.y + bb.h / 2, 38);
+    ctx.fillStyle = RES.line; ctx.font = 'bold 19px monospace'; ctx.textAlign = 'left'; ctx.fillText(`${teamFull(book)} ▾`.toUpperCase(), bb.x + 60, bb.y + bb.h / 2 + 1, bb.w - 70); ctx.textAlign = 'center';
+  });
+  REC_TABS.forEach(b => menuBtn(b, b.l, v.tab === b.t ? SEL : RES.bright, 24));
+  resPanel(60, 128, 1160, REC_ROW.per * REC_ROW.h + 16, [], RES.bright);
+  const { rows, pages, max, n } = recPage();
+  rows.forEach((r, i) => {
+    const y0 = REC_ROW.y + i * REC_ROW.h, y = y0 + REC_ROW.h / 2;
     ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-    ctx.fillStyle = r.sub ? RES.dim : RES.line; ctx.font = 'bold 14px monospace';
-    ctx.fillText(r.sub ? `   #${r.rank}` : `${recView.open === r.id ? '▾' : '▸'} ${r.label}`, 90, y, 270);
-    if (!e) { ctx.fillStyle = RES.dim; ctx.fillText('-', 372, y); continue; }
-    ctx.fillStyle = RES.line; ctx.font = 'bold 15px monospace';
-    ctx.fillText(`${mine ? '★ ' : ''}${e.who}`, 372, y, 250);
-    ctx.fillStyle = RES.dim; ctx.font = 'bold 13px monospace';
-    ctx.fillText(e.pos === 'TEAM' ? 'TEAM' : `${tn(e.team)} ${e.pos || ''}`, 632, y, 190);
-    ctx.fillStyle = RES.gold; ctx.font = 'bold 17px monospace'; ctx.textAlign = 'right';
-    ctx.fillText(e.txt || `${e.v}${v.tab === 'play' ? ' YD' : ''}`, 900, y, 90);
-    ctx.fillStyle = RES.dim; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'left';
-    ctx.fillText(when(e), 915, y, 150);
-    ctx.fillText(e.opp ? `VS ${tn(e.opp)}` : e.gp ? `${e.gp} GAMES` : '', 1072, y, 125);
+    if (r.head) { ctx.fillStyle = RES.dim; ctx.font = 'bold 15px monospace'; ctx.fillText(r.head, 84, y + 2); const hw = ctx.measureText(r.head).width; ctx.strokeStyle = RES.dim; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(96 + hw, y + 2); ctx.lineTo(1196, y + 2); ctx.stroke(); return; }
+    const { c, e } = r, mine = e && book === 'L' && e.t === me;
+    if (e && e.y >= 1) { ctx.fillStyle = 'rgba(255,205,60,0.32)'; ctx.fillRect(70, y0 + 2, 1140, REC_ROW.h - 4); }   // (set in this league)
+    if (!r.sub && i && !rows[i - 1].head) { ctx.strokeStyle = 'rgba(120,110,90,0.25)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(80, y0); ctx.lineTo(1200, y0); ctx.stroke(); }
+    ctx.fillStyle = r.sub ? RES.dim : RES.line; ctx.font = 'bold 15px monospace';
+    ctx.fillText(r.sub ? `      ${r.rk}` : `${v.open === c.id ? '▾' : '▸'} ${c.l}`, 84, y, 380);
+    if (!e) { ctx.fillStyle = RES.dim; ctx.fillText('-', 520, y); return; }
+    ctx.fillStyle = RES.gold; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'right';
+    ctx.fillText(rbFmt(c, e.v), 598, y, 128);
+    ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = 'bold 16px monospace';
+    ctx.fillText(`${mine ? '★ ' : ''}${rbHolder(c, e)}${!r.sub && r.tie > 1 ? `  +${r.tie - 1} TIED` : ''}`, 618, y, 268);
+    ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace';
+    if (!rbTeamCat(c)) ctx.fillText(`${NFL[e.t] ? shortName(e.t).toUpperCase() : e.t || ''}${e.p ? '  ' + e.p : ''}`, 900, y, 120);
+    ctx.fillText(recWhen(c, e), 1030, y, 176);
+  });
+  if (pages > 1) {   // a scroll bar down the right of the panel, the arrows jump a screenful
+    const th = REC_ROW.per * REC_ROW.h, bh = Math.max(30, th * REC_ROW.per / n), by = REC_ROW.y + (th - bh) * v.page / max;
+    ctx.fillStyle = 'rgba(120,110,90,0.18)'; ctx.fillRect(1206, REC_ROW.y, 8, th); ctx.fillStyle = RES.dim; ctx.fillRect(1206, by, 8, bh);
+    ROSTER_ARROWS.forEach((b, i) => menuBtn(b, i ? '▸' : '◂', RES.bright, 30)); ctx.fillStyle = RES.dim; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center'; ctx.fillText(`ROWS ${v.page + 1}-${Math.min(n, v.page + REC_ROW.per)} OF ${n}  (scroll for more)`, 680, 618);
   }
   ctx.fillStyle = RES.dim; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(v.tab === 'play' ? 'SINGLE PLAY: GAMES YOU PLAY ONLY (LEAGUE GAMES ARE SIMULATED)  -  CLICK A ROW FOR THE TOP 5' : v.tab === 'game' ? 'SINGLE GAME: YOUR GAMES + SIMULATED LEAGUE STAR LINES  -  CLICK A ROW FOR THE TOP 5' : 'SUMMED FROM EVERY STAT LINE, PLAYERS WHO LEFT KEEP THEIRS  -  CLICK A ROW FOR THE TOP 5', 640, 640, 880);
+  ctx.fillText(`QUALIFIED = ${RB.q.pa * RB.games} ATT / ${Math.ceil(RB.q.ca * RB.games)} CARRIES / ${RB.q.fa * RB.games} FGA   GOLD = SET IN YOUR LEAGUE   ★ = YOUR TEAM   TAP A ROW FOR THE TOP 5`, 690, 650, 900);
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
 }
 function recClick(pt) {
-  const t = REC_TABS.find(b => inBtn(pt, b)); if (t) { recView.tab = t.t; recView.open = null; return; }
-  const s = REC_SCOPE.find(b => inBtn(pt, b)); if (s) { recView.scope = s.t; return; }
+  const t = REC_TABS.find(b => inBtn(pt, b)); if (t) { recView.tab = t.t; recView.open = null; recView.page = 0; return; }
+  const b = REC_BOOKS.find(b => inBtn(pt, b)); if (b) { recView.book = b.t; recView.open = null; recView.page = 0; return; }
+  if (recView.book === 'F' && inBtn(pt, REC_TEAM_BTN)) { teamPick = 'records'; pickConf = NFL[recBook()].conf.slice(0, 3); return; }
   if (inBtn(pt, BACK_BTN)) { results.screen = 'hof'; return; }
-  const r = recRows().find(r => pt.x >= 80 && pt.x <= 1200 && pt.y >= r.y && pt.y < r.y + REC_ROW.h);
-  if (r) recView.open = recView.open === r.id ? null : r.id;
+  const { rows, pages } = recPage(), a = ROSTER_ARROWS.findIndex(b => inBtn(pt, b));
+  if (a >= 0) { if (pages > 1) { recView.page += (a ? 1 : -1) * (REC_ROW.per - 1); recPage(); } return; }
+  const i = Math.floor((pt.y - REC_ROW.y) / REC_ROW.h), r = pt.x >= 70 && pt.x <= 1210 && i >= 0 ? rows[i] : null;
+  if (r && r.c) recView.open = recView.open === r.c.id ? null : r.c.id;
 }
 // --- coaching Hall of Fame: RETIRE on the head coach page snapshots him into CHOF (own key, per franchise slot), with an induction scene
 const chofView = { page: 0 }, CHOF_ANIM = { dark: 1200, plaque: 1400, hold: 3600 };   // ms: lights go down, the plaque drops in, then click to continue
@@ -643,17 +679,9 @@ function drawHelpIcon(b) {   // the same "?" paper button as the tutorials' (ani
 }
 const ABILITY_ATTR = { acc: 'accuracy', pow: 'arm power', str: 'strength', spd: 'speed', cut: 'agility', agi: 'agility', ctc: 'catching / ball skills', blk: 'pass blocking',
                        rbk: 'run blocking', rst: 'run stopping', tck: 'tackling', sta: 'stamina' };
-function abilityHelp(p) {
-  const k = SIG_TIER[p.tier] || 1;
-  const gain = Object.entries(SIG_BOOST[p.ability] || {}).map(([a, v]) => `+${+(v * k).toFixed(1)} ${ABILITY_ATTR[a] || a}`).join(', ') || 'a small rating boost';
-  if (p.tier === 'X') {
-    const R = XF_RULES[p.ability];   // (the exact triggers for this one star factor, from its rules)
-    const on = R ? R.on.map(c => (XF_ON_TXT[c.e] || (() => c.e))(c)).join(', then ') : 'playing hot';
-    const off = R ? (R.once ? 'it lasts one play, then he cools off (it also knocks every opposing star out of the zone)' : Object.entries(R.off).map(([e, n]) => (XF_OFF_TXT[e] || (() => e))(n)).join(', or ')) : 'he cools off';
-    return { title: 'STAR FACTOR', text: `${abilName(p.ability)}: always on, worth ${gain} on top of his ratings. IN THE ZONE: get ${on} (counted this game). While he is in the zone every rating goes up another step and he gets 3% faster. LEAVES THE ZONE: ${R && !R.once ? 'after ' : ''}${off}.` };
-  }
-  if (p.tier === 'S') return { title: 'ABILITY', text: `${abilName(p.ability)}: always on, worth ${gain} on top of his ratings.` };
-  return { title: 'FIT', text: `${abilName(p.ability)}: always on, worth ${gain} on top of his ratings.` };
+function abilityHelp(p) {   // (all from ABIL_DEFS: abilTip)
+  const t = ABIL_DEFS[p.ability] ? ABIL_DEFS[p.ability].tier : p.tier;
+  return { title: TIER_NAME[t] || 'FIT', text: `${abilTip(p.ability)} (${TIER_NAME[t] || 'FIT'}: ${TIER_SAYS[t] || TIER_SAYS.F})` };
 }
 // a click on a ? button: true if it opened a popup
 function helpClick(pt, p) {
@@ -779,6 +807,8 @@ function rosterClick(pt) {
       if (n) upgradeSfx();
       return;
     }
+    if (!dcg && !rosterView.statsOnly && inBtn(pt, HOF_ROSTER_BTN)) { hofReturn = 'roster'; results.screen = 'hof'; return; }   // HALL OF FAME
+    if (!dcg && own && !rosterView.statsOnly && season && !exhibition && inBtn(pt, BUY_SPOT_BTN)) { if (rosterView.side === 'upg') rosterView.side = rosterUI.side; rosterView.tu = true; return; }   // TEAM UPGRADES popup
     if (own && !rosterView.statsOnly && (upgTotal(team) > 0 || rosterView.side === 'upg') && inBtn(pt, UPG_BTN)) { rosterView.side = rosterView.side === 'upg' ? 'off' : 'upg'; rosterView.page = 0; return; }
     const pages = rosterPages(ps, rosterView.side, team), a = formView() ? -1 : ROSTER_ARROWS.findIndex(b => inBtn(pt, b));
     if (a >= 0) { rosterView.page = ((rosterView.page || 0) + (a ? 1 : -1) + pages) % pages; return; }
@@ -1152,8 +1182,11 @@ function staffDC(c, team, col, INK) {
 function drawStaff() {
   const team = MATCH.you, staff = staffOf(team);
   paperBg();
+  if (staffView.team && (staffView.team === MATCH.you || !foOn() || !STAFF[staffView.team])) staffView.team = null;
+  if (staffView.team) { drawFoView(staffView.team); return; }   // (another team's front office: read-only + POACH)
+  if (staffView.sel == null && foOn()) menuBtn(FO_TITLE_BTN, '', RES.bright, 20);   // (the title is a menu: any team's front office)
   ctx.fillStyle = RES.line; ctx.font = 'bold 40px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  const title = staffView.sel == null ? `${NFL[team].city.toUpperCase()} FRONT OFFICE` : `${NFL[team].city.toUpperCase()} COACHING STAFF`;   // (the folder's role stamp names the role once)
+  const title = staffView.sel == null ? `${NFL[team].city.toUpperCase()} FRONT OFFICE${foOn() ? ' ▾' : ''}` : `${NFL[team].city.toUpperCase()} COACHING STAFF`;   // (the folder's role stamp names the role once)
   ctx.fillText(title, W / 2, 44);
   const tw = ctx.measureText(title).width / 2;
   drawLogo(team, W / 2 - tw - 40, 44, 50); drawLogo(team, W / 2 + tw + 40, 44, 50);
@@ -1171,8 +1204,7 @@ function drawStaff() {
     Object.assign(FO_TR_BTN, { x: 130, y: 636, w: 270, h: 64 }); Object.assign(FO_FA_BTN, { x: 416, y: 636, w: 270, h: 64 });
     Object.assign(FO_HIRE_BTN, { x: 702, y: 636, w: 270, h: 64 }); Object.assign(CAP_UP_BTN, { x: 988, y: 636, w: 262, h: 64 });
     if (season && !exhibition && team === MATCH.you) menuBtn(FO_HIRE_BTN, 'HIRING BOARD', RES.bright, 20);
-    const atMax = (LEAGUE.cap || CAP.start) >= CAP.max, can = LEAGUE.coins >= capCost() && !atMax;
-    menuBtn(CAP_UP_BTN, 'TEAM UPGRADES' + String.fromCharCode(10) + '(CAP ROOM, ROSTER SPOTS)', RES.bright, 16);   // (opens the TEAM UPGRADES popup: +cap room or one more roster spot)
+    menuBtn(CAP_UP_BTN, 'DRAFT BOARD', xpcOn() ? RES.bright : CARD_GRAY, 20, null, xpcOn());   // (where TEAM UPGRADES was: the midseason draft board, your franchise only)
     menuBtn(FO_FA_BTN, 'FREE AGENTS', RES.bright, 20);
     menuBtn(FO_TR_BTN, 'TRADES', RES.bright, 20);
     if (team === MATCH.you) redDot(FO_TR_BTN, offersNew());
@@ -1191,7 +1223,7 @@ const redList = () => (ROSTER[MATCH.you] || []).filter(p => p.ability && p.tier 
 function drawRedPick() {
   const L = redList(), pages = Math.max(1, Math.ceil(L.length / RED_PER));
   redUI.page = Math.min(redUI.page, pages - 1);
-  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
   resPanel(170, 80, 940, 540, [['RED STAR: PICK A PLAYER TO GIVE A STAR FACTOR', null]], '#e01b1b');
   L.slice(redUI.page * RED_PER, redUI.page * RED_PER + RED_PER).forEach((p, i) => {
     menuBtn(RED_ROW(i), `${p.name}  ${p.group}  ${p.stars}★   ${abilName(p.ability)} (${p.tier})  ->  STAR FACTOR`, RES.bright, 18);
@@ -1208,7 +1240,7 @@ function redClick(pt) {
   if (inBtn(pt, RED_NEXT)) { redUI.page++; return; }
   const i = Array.from({ length: RED_PER }, (_, j) => j).find(j => inBtn(pt, RED_ROW(j)));
   const p = i != null ? L[redUI.page * RED_PER + i] : null;
-  if (p) offPopShow({ title: 'RED STAR', lines: [`Give ${p.name} a star factor? (${abilName(p.ability)} becomes a star factor)`, 'One use per season.'], btns: [{ label: 'CANCEL' }, { label: 'OK', green: true, on: () => { redGive(p); redUI.on = false; upgradeSfx(); autosaveSoon(); } }] });
+  if (p) offPopShow({ title: 'RED STAR', lines: [...wrapLines(`Give ${p.name} a star factor? ${abilName(p.ability)} becomes ${abilName(abilAfter(p, 'X'))}. ${abilTip(abilAfter(p, 'X'))}`, 54), 'One use per season.'], btns: [{ label: 'CANCEL' }, { label: 'OK', green: true, on: () => { redGive(p); redUI.on = false; upgradeSfx(); autosaveSoon(); } }] });
 }
 const STAFF_HIRE_BTN = { x: 930, y: 628, w: 290, h: 56 };
 const FO_HIRE_BTN = { x: 20, y: 636, w: 270, h: 64 };   // front office main page: opens the hiring board
@@ -1227,7 +1259,124 @@ function staffNameKey(e) {   // true if the key was taken
   else return false;
   e.preventDefault(); return true;
 }
+// --- front office viewer + poaching: the FRONT OFFICE title is a menu (the roster screen's team picker, teamPick 'front'). Another team's front
+// office (staffView.team) is read-only: head coach, coordinators (with tendencies), trainers, scouts; POACH (tunables POACH) on everyone but the head coach.
+const FO_TITLE_BTN = { x: W / 2 - 380, y: 8, w: 760, h: 72 };
+const FO_CARDS = [{ x: 40, y: 96, w: 390, h: 262 }, { x: 445, y: 96, w: 390, h: 262 }, { x: 850, y: 96, w: 390, h: 262 }, ...[0, 1, 2, 3].map(i => ({ x: 40 + i * 303, y: 372, w: 291, h: 236 }))];
+const FO_POACH = FO_CARDS.map(b => ({ x: b.x + b.w - 118, y: b.y + b.h - 44, w: 106, h: 34 }));
+const FO_ROLES = [null, 'oc', 'dc', 'to', 'td', 'so', 'sd'];   // the card in each slot (0 = the head coach)
+let POA = null, foMsg = null;   // the offer popup { team, role, sal, cred }; a line under the cards { t, text }
+const PO_P = { x: 340, y: 170, w: 600, h: 380 };
+const PO_BTN = { sm: { x: 700, y: 302, w: 44, h: 36 }, sp: { x: 880, y: 302, w: 44, h: 36 }, cm: { x: 700, y: 348, w: 44, h: 36 }, cp: { x: 880, y: 348, w: 44, h: 36 }, cancel: { x: 370, y: 484, w: 200, h: 48 }, offer: { x: 710, y: 484, w: 200, h: 48 } };
+const foOn = () => xpcOn();   // your franchise only
+function foFill(team) {   // another team's staff, filled in the first time it is looked at: a head coach, the coordinators' pay / age / specialty, two trainers, two scouts
+  const s = STAFF[team], t = (s.tend || TEND_RAW[team] || 'P S M 3 0 O').split(' ');
+  if (!s.hc) s.hc = { name: `${pick(NAME_FIRST)} ${pick(NAME_LAST)}`, face: makeFace(Math.random, true) };
+  for (const r of ['oc', 'dc']) { const p = s[r]; if (!p.spec) p.spec = r === 'oc' ? (t[0] === 'P' ? 'PASS-HEAVY' : 'RUN-HEAVY') : t[2] === 'L' ? 'COVERAGE' : t[2] === 'H' && t[4] === '1' ? 'BLITZ-HAPPY' : 'RUN-STOPPER'; hireFill(p, r); }
+  if (!s.tr) s.tr = { off: pracTrainerNew('off'), def: pracTrainerNew('def') };
+  scoutsOf(team);
+  return s;
+}
+const foGet = (team, role) => { const s = foFill(team), side = HIRE_ROLE[role].side; return role === 'oc' || role === 'dc' ? s[role] : isScout(role) ? s.sc[side] : s.tr[side]; };
+function foSet(team, role, p) { const s = STAFF[team], side = HIRE_ROLE[role].side; if (role === 'oc' || role === 'dc') { s[role] = p; recalcTeamStars(); } else if (isScout(role)) s.sc[side] = p; else s.tr[side] = p; }
+const poachNow = () => LEAGUE.year * POACH.yearWeeks + (season.offseason ? POACH.yearWeeks - 1 : season.week);   // a running week count
+const poachLocked = p => (p.lock || 0) > poachNow();
+const poachCredMin = p => POACH.credMin + Math.round(POACH.credStar * p.stars);
+function poachP(p, team, sal, cred) {   // chance he says yes: how far the offer beats his pay, minus his stars and his team's winning
+  let w = 0.5; try { const T = seasonTable()[team]; if (T && T.w + T.l + T.t) w = winPct(T); } catch (e) {}
+  return Math.max(POACH.pMin, Math.min(POACH.pMax, POACH.base + POACH.perRaise * (sal / p.sal - POACH.minRaise) + POACH.perCred * (cred - poachCredMin(p)) - POACH.perStar * (p.stars - 1) - POACH.perWin * (w - 0.5)));
+}
+function poachOpen(team, role) { const p = foGet(team, role); POA = { team, role, sal: r1(p.sal * POACH.minRaise), cred: poachCredMin(p) }; }
+function poachOffer() {
+  const { team, role, sal, cred } = POA, t = foGet(team, role), cur = hireFill(hireGet(role), role), after = r1(crewPay() - cur.sal + sal), cost = cred + buyoutOf(cur), say = text => { foMsg = { t: performance.now(), text }; };
+  if (after > staffBudget()) { say(`OVER BUDGET: ${after}M OF ${staffBudget()}M`); return; }
+  if (LEAGUE.coins < cost) { say(`NEED ${cost} ¤${cost > cred ? ` (${cred} + ${cost - cred} TO BUY OUT ${cur.name})` : ''}`); return; }
+  POA = null;
+  if (Math.random() >= poachP(t, team, sal, cred)) { t.lock = poachNow() + POACH.lockWeeks; say(`${t.name} SAID NO: HE WON'T TALK FOR ${POACH.lockWeeks} WEEKS`); autosaveSoon(); return; }
+  LEAGUE.coins -= cost;
+  const pool = hirePool()[role], rep = pool.length ? pool.splice(rint(0, pool.length - 1), 1)[0] : hireCand(role), short = HIRE_ROLE[role].short;
+  foSet(team, role, hirePerson(rep, rep.ask, rep.want));   // (they fill the job from the hiring pool)
+  if (!cur.interim) pool.push({ role, name: cur.name, stars: cur.stars, spec: cur.spec, trait: cur.trait, trait2: cur.trait2 || null, age: cur.age, ask: r1(cur.sal), want: Math.max(1, cur.years || 1), lo: cur.stars, hi: cur.stars, scouted: true, refused: false, face: cur.face });   // (your old man: on the hiring board)
+  const mine = { ...t, sal, years: POACH.years }; delete mine.lock; delete mine.lines; delete mine.asg;
+  hireSet(role, mine);
+  (LEAGUE.coachNews = LEAGUE.coachNews || []).push(`You hired ${t.name} (${short}, ${t.stars} stars) away from the ${teamFull(team)} for $${sal.toFixed(1)}M a year. ${rep.name} takes over there${cur.interim ? '' : `, and ${cur.name} is on the hiring board`}.`);
+  say(`${t.name} JOINS YOU`); upgradeSfx(); autosaveSoon();
+}
+function foCard(i, team, c, label, lines, role) {
+  const b = FO_CARDS[i], off = label.startsWith('OFF'), col = !role ? '#22305a' : off ? '#2a62b0' : '#b82a30', [main] = kitColors(team, 'home'), big = i < 3;
+  ctx.fillStyle = RES.bright; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.strokeStyle = RES.line; ctx.lineWidth = 2.5; ctx.strokeRect(b.x, b.y, b.w, b.h);
+  ctx.fillStyle = col; ctx.fillRect(b.x + 8, b.y + 8, b.w - 16, 28); ctx.fillStyle = '#fff'; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(label, b.x + 18, b.y + 23, b.w - 36);
+  const ax = b.x + 54, ay = b.y + 86;
+  ctx.save(); ctx.beginPath(); ctx.arc(ax, ay, 40, 0, Math.PI * 2); ctx.fillStyle = mixHex(main, 0.72, 255); ctx.fill(); ctx.clip(); drawAvatar(c.face, ax, ay, 37, { shirt: !role || off ? '#2a62b0' : '#b82a30' }); ctx.restore();
+  ctx.beginPath(); ctx.arc(ax, ay, 40, 0, Math.PI * 2); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = RES.line; ctx.font = `bold ${big ? 20 : 17}px monospace`; ctx.textAlign = 'left'; ctx.fillText(c.name, b.x + 106, b.y + 62, b.w - 116);
+  starsRow(b.x + 114, b.y + 88, c.stars, big ? 11 : 10);
+  ctx.fillStyle = RES.gold; ctx.font = 'bold 13px monospace';
+  if (role) ctx.fillText([c.spec, c.trait ? traitName(c).toUpperCase() : ''].filter(Boolean).join('  /  '), b.x + 106, b.y + 112, b.w - 116);
+  ctx.fillStyle = RES.line; ctx.font = '13px monospace';
+  lines.filter(Boolean).slice(0, big ? 5 : 3).forEach((l, j) => ctx.fillText(l, b.x + 16, b.y + 146 + j * 19, b.w - 32));
+  if (!role) return;
+  ctx.fillStyle = RES.dim; ctx.font = 'bold 13px monospace'; ctx.fillText(`$${c.sal.toFixed(1)}M  ${c.years} YR${c.years === 1 ? '' : 'S'}`, b.x + 16, b.y + b.h - 27);
+  const lock = poachLocked(c);
+  menuBtn(FO_POACH[i], lock ? 'NO' : 'POACH', lock ? CARD_GRAY : '#6cc070', 16, null, !lock);
+}
+function drawFoView(team) {
+  const s = foFill(team), st = staffOf(team), t = (s.tend || TEND_RAW[team] || 'P S M 3 0 O').split(' '), word = { O: 'OFTEN', S: 'SOMETIMES', R: 'RARELY' }, fav = ocFavForm(team);
+  menuBtn(FO_TITLE_BTN, '', RES.bright, 20, b => {
+    ctx.fillStyle = RES.line; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const title = `${NFL[team].city.toUpperCase()} FRONT OFFICE ▾`; ctx.fillText(title, b.x + b.w / 2, b.y + b.h / 2, b.w - 150);
+    const tw = Math.min(b.w - 150, ctx.measureText(title).width) / 2; drawLogo(team, b.x + b.w / 2 - tw - 36, b.y + b.h / 2, 46); drawLogo(team, b.x + b.w / 2 + tw + 36, b.y + b.h / 2, 46);
+  });
+  coinBox(STAFF_COIN.x, STAFF_COIN.y, LEAGUE.coins, RES.bright);
+  foCard(0, team, { name: s.hc.name, face: s.hc.face, stars: hcStars(team) }, 'HEAD COACH', ['TENDENCIES', `PREFERS TO ${t[0] === 'P' ? 'PASS' : 'RUN'}`, `GOES FOR IT ON 4TH: ${word[t[1]] || 'SOMETIMES'}`], null);
+  foCard(1, team, s.oc, 'OFFENSIVE COORDINATOR', [...st[1].lines, `GO-TO CALLS: ${ocCalls(team, fav).map(c => c.n).join(', ')}`], 'oc');
+  foCard(2, team, s.dc, 'DEFENSIVE COORDINATOR', st[2].lines, 'dc');
+  foCard(3, team, s.tr.off, 'OFFENSE TRAINER', [pracSpecOf('off', s.tr.off.spec).text, TRAINER_TRAITS[s.tr.off.trait]], 'to');
+  foCard(4, team, s.tr.def, 'DEFENSE TRAINER', [pracSpecOf('def', s.tr.def.spec).text, TRAINER_TRAITS[s.tr.def.trait]], 'td');
+  if (scoutsOn()) for (const [i, r] of [[5, 'so'], [6, 'sd']]) { const sc = hireFill(s.sc[HIRE_ROLE[r].side], r); foCard(i, team, sc, HIRE_ROLE[r].label, [`READS POTENTIAL WITHIN ${(DRAFT.scoutErr * scoutErrK(sc)).toFixed(1)} PTS`], r); }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 15px monospace'; ctx.fillStyle = RES.dim;
+  ctx.fillText(`YOUR STAFF PAYROLL $${crewPay().toFixed(1)}M OF $${staffBudget().toFixed(1)}M`, W / 2, 630);
+  if (foMsg && performance.now() - foMsg.t < 3500) { ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.fillText(foMsg.text, W / 2, 662); }
+  menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
+  if (POA) drawPoach();
+  drawSpendFx();
+}
+function drawPoach() {
+  const P = PO_P, t = foGet(POA.team, POA.role), cur = hireFill(hireGet(POA.role), POA.role), after = r1(crewPay() - cur.sal + POA.sal), bud = staffBudget(), pr = poachP(t, POA.team, POA.sal, POA.cred), buy = buyoutOf(cur);
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
+  resPanel(P.x, P.y, P.w, P.h, [[`POACH ${t.name}`, 24]], RES.bright);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.line; ctx.font = '15px monospace';
+  ctx.fillText(`${HIRE_ROLE[POA.role].label}, ${t.stars} stars. He makes $${t.sal.toFixed(1)}M with the ${NFL[POA.team].city}.`, P.x + 24, P.y + 70, P.w - 48);
+  ctx.fillText(`He replaces ${cur.name} (${cur.stars} stars, $${cur.sal.toFixed(1)}M)${buy ? `: buyout ${buy} ¤` : ''}.`, P.x + 24, P.y + 94, P.w - 48);
+  ctx.font = 'bold 18px monospace';
+  ctx.fillText('SALARY / YEAR', P.x + 24, PO_BTN.sm.y + 18); ctx.fillText('CREDITS UP FRONT', P.x + 24, PO_BTN.cm.y + 18);
+  ctx.textAlign = 'center'; ctx.fillText(`$${POA.sal.toFixed(1)}M`, 812, PO_BTN.sm.y + 18); ctx.fillText(`${POA.cred} ¤`, 812, PO_BTN.cm.y + 18);
+  for (const k of ['sm', 'cm']) menuBtn(PO_BTN[k], '-', RES.bright, 22); for (const k of ['sp', 'cp']) menuBtn(PO_BTN[k], '+', RES.bright, 22);
+  ctx.textAlign = 'left'; ctx.font = '15px monospace'; ctx.fillStyle = after > bud ? '#c81b1b' : RES.line;
+  ctx.fillText(`STAFF PAYROLL $${crewPay().toFixed(1)}M > $${after.toFixed(1)}M OF $${bud.toFixed(1)}M`, P.x + 24, P.y + 244);
+  ctx.fillStyle = RES.line; ctx.fillText(`CHANCE: ${pr < 0.3 ? 'UNLIKELY' : pr < 0.6 ? 'POSSIBLE' : 'LIKELY'}     A NO LOCKS HIM FOR ${POACH.lockWeeks} WEEKS`, P.x + 24, P.y + 270);
+  menuBtn(PO_BTN.cancel, 'CANCEL', RES.bright, 20); menuBtn(PO_BTN.offer, 'MAKE OFFER', '#6cc070', 20);
+}
+function foClick(pt) {
+  const team = staffView.team;
+  if (POA) {
+    const t = foGet(POA.team, POA.role), lo = r1(t.sal * POACH.minRaise), hi = r1(t.sal * POACH.maxRaise), c0 = poachCredMin(t);
+    if (inBtn(pt, PO_BTN.cancel) || !inBtn(pt, PO_P)) POA = null;
+    else if (inBtn(pt, PO_BTN.sm)) POA.sal = Math.max(lo, r1(POA.sal - POACH.step));
+    else if (inBtn(pt, PO_BTN.sp)) POA.sal = Math.min(hi, r1(POA.sal + POACH.step));
+    else if (inBtn(pt, PO_BTN.cm)) POA.cred = Math.max(c0, POA.cred - 1);
+    else if (inBtn(pt, PO_BTN.cp)) POA.cred = Math.min(c0 + POACH.credMore, POA.cred + 1);
+    else if (inBtn(pt, PO_BTN.offer)) poachOffer();
+    return;
+  }
+  if (inBtn(pt, BACK_BTN)) { staffView.team = null; return; }
+  if (inBtn(pt, FO_TITLE_BTN)) { teamPick = 'front'; pickConf = NFL[team].conf.slice(0, 3); return; }
+  for (let i = 1; i < FO_ROLES.length; i++) if (inBtn(pt, FO_POACH[i]) && (i < 5 || scoutsOn()) && !poachLocked(foGet(team, FO_ROLES[i]))) { poachOpen(team, FO_ROLES[i]); return; }
+}
 function staffClick(pt) {
+  if (staffView.team && (staffView.team === MATCH.you || !foOn() || !STAFF[staffView.team])) staffView.team = null;
+  if (staffView.team) { foClick(pt); return; }
+  if (staffView.sel == null && foOn() && !redUI.on && inBtn(pt, FO_TITLE_BTN)) { teamPick = 'front'; pickConf = NFL[MATCH.you].conf.slice(0, 3); return; }   // (the title: look at any team's front office)
   staffNameOn = false;
   if (staffView.sel >= 1 && inBtn(pt, STAFF_NAME_BTN)) { staffNameOn = true; return; }
   if (redUI.on) { redClick(pt); return; }
@@ -1249,10 +1398,7 @@ function staffClick(pt) {
     if (c && c.stars >= 5 && !c.trait2) { const i = Object.keys(TRAIT_INFO).filter(t => t !== c.trait).findIndex((t, j) => inBtn(pt, traitPickBtn(j))); if (i >= 0) { c.trait2 = Object.keys(TRAIT_INFO).filter(t => t !== c.trait)[i]; upgradeSfx(); autosaveSoon(); return; } }
     else if (c && c.stars >= 3 && (c.tlvl || 1) < 2 && inBtn(pt, TRAIT_UP_BTN)) { c.tlvl = 2; upgradeSfx(); autosaveSoon(); return; }
   }
-  if (staffView.sel == null && inBtn(pt, CAP_UP_BTN)) {   // buy more cap space (asks first)
-    coinGo(false);   // (the roster screen with the TEAM UPGRADES popup open; BACK returns here)
-    return;
-  }
+  if (staffView.sel == null && inBtn(pt, CAP_UP_BTN)) { if (xpcOn() && boardClass()) dboardOpen('staff'); return; }   // DRAFT BOARD
   if (staffView.sel == null) {
     const t = STAFF_CARDS.findIndex(b => inBtn(pt, staffTipBtn(b)));
     if (t >= 0) { staffTip(staffOf(MATCH.you)[t]); return; }
@@ -1561,7 +1707,8 @@ function xpcTierWhy(p) {   // '' when the next tier can be bought for him, else 
 function xpcTierUp(p) {
   const to = xpcTierTo(p);
   if (!to || xpcTierWhy(p)) return;
-  xpcBuy(xpcTierPrice(p), to === 'X' ? 'BUY A STAR FACTOR?' : 'BUY AN ABILITY?', wrapLines(`${p.name}: ${abilName(p.ability)} becomes ${to === 'X' ? 'a STAR FACTOR (a bigger boost, and he can get in the zone in games)' : 'an ABILITY (a bigger boost, always on)'}.`, 50), () => {
+  const nx = abilAfter(p, to);
+  xpcBuy(xpcTierPrice(p), to === 'X' ? 'BUY A STAR FACTOR?' : 'BUY AN ABILITY?', wrapLines(`${p.name}: ${abilName(p.ability)} becomes ${abilName(nx)}, ${to === 'X' ? 'a STAR FACTOR' : 'an ABILITY'}. ${abilTip(nx)}`, 50), () => {
     tierGive(p, to);
     if (to === 'X') {
       p.xfBought = LEAGUE.year; career.xfBuys = (career.xfBuys || 0) + 1;
@@ -1589,14 +1736,18 @@ function drawXpcCard(p) {   // the two bank buttons under a player's upgrade bar
   if (!xpcCanBuy()) return;
   xpcBtn(XPC_POT_BTN, xpcPotOpen(p) ? 'POTENTIAL +½★' : 'POTENTIAL MAX', xpcPotPrice(p), xpcPotOpen(p));
   xpcBtn(XPC_UPG_BTN, xpcUpgOpen(p) ? 'UPGRADE +1' : 'NO ROOM', xpcUpgPrice(p), xpcUpgOpen(p));
-  const to = xpcTierTo(p), why = to ? xpcTierWhy(p) : '';
-  if (to) xpcBtn(XPC_TIER_BTN, why || (to === 'X' ? 'MAKE IT A STAR FACTOR' : 'MAKE IT AN ABILITY'), xpcTierPrice(p), !why, to === 'X');
+  if (xpcTierShown(p)) {   // only when he qualifies: right under his fit / ability on the STATUS note
+    const to = xpcTierTo(p), n = wrapLines(`${abilName(p.ability)}${{ X: ' (STAR FACTOR)', S: ' (ABILITY)', F: ' (FIT)' }[p.tier] || ''}`, 19).length, R = CARD.noteR;
+    Object.assign(XPC_TIER_BTN, { x: R.x + 12, y: R.y + 254 + n * 21 - 8, w: R.w - 24, h: 32 });
+    xpcBtn(XPC_TIER_BTN, to === 'X' ? 'UPGRADE: STAR FACTOR' : 'UPGRADE: ABILITY', xpcTierPrice(p), true, to === 'X');
+  }
 }
+const xpcTierShown = p => !!xpcTierTo(p) && !xpcTierWhy(p);   // (a player needs an ability before a star factor: FIT -> ABILITY -> STAR FACTOR)
 function xpcCardClick(pt, p) {   // true if a bank button took the click
   if (!xpcCanBuy()) return false;
   if (inBtn(pt, XPC_POT_BTN)) { xpcBoostPot(p); return true; }
   if (inBtn(pt, XPC_UPG_BTN)) { xpcQuickUpg(p); return true; }
-  if (xpcTierTo(p) && inBtn(pt, XPC_TIER_BTN)) { xpcTierUp(p); return true; }
+  if (xpcTierShown(p) && inBtn(pt, XPC_TIER_BTN)) { xpcTierUp(p); return true; }
   return false;
 }
 function drawUpgradeBar(p, x = 690, y = 570, w = 480, wrap = 0, noText = false) {   // under the attributes (or on the card): his XP toward the next upgrade; wrap = characters a line holds (0 = one line)
@@ -1627,6 +1778,11 @@ function homeNews() {
   if (up.length && !LEAGUE.upgTipSeen) { LEAGUE.upgTipSeen = 1; offPopShow({ title: 'UPGRADES READY', lines: [...wrapLines(up.slice(0, 8).join(', ') + (up.length > 8 ? ` +${up.length - 8} more` : ''), 54), '', 'Open the player on your ROSTER and press +1.'] }); }
   if (tr.length) offPopShow({ title: 'AROUND THE LEAGUE', lines: tr.slice(0, 5).flatMap(t => wrapLines(t, 54)) });
   LEAGUE.upgNew = []; LEAGUE.tradeNews = []; if (season && !season.offseason) LEAGUE.tradeCards = [];   // (in-season deals were told here: the new-season popup shows the offseason ones)
+  scoutWeek();
+  { const sn = LEAGUE.scoutNews || []; if (sn.length && scoutsOn()) offPopShow({ title: 'SCOUTING REPORT', lines: [...sn.slice(0, 4).flatMap(t => wrapLines(t, 54)), '', 'Assign your scouts on the FACILITIES campus.'] }); LEAGUE.scoutNews = []; }
+  { const R = LEAGUE.rbk, rn = R ? R.news || [] : [], rc = R ? R.chase || [] : [];   // the record book: marks that fell in any game this week, and record chases (after week RB.chaseWk)
+    if (rn.length || rc.length) offPopShow({ title: 'RECORD BOOK', lines: [...rn.slice(-4).flatMap(t => wrapLines(t, 54)), ...(rn.length && rc.length ? [''] : []), ...rc.flatMap(t => wrapLines('CHASE: ' + t, 54))] });
+    if (R) { R.news = []; R.chase = []; } }
   const pn = LEAGUE.pracNews || [];
   if (pn.length) offPopShow({ title: 'PRACTICE BATTLES', lines: pn.slice(0, 4).flatMap(t => wrapLines(t, 54)) });
   LEAGUE.pracNews = [];
@@ -1672,14 +1828,23 @@ const TRADE = {
   accept: 1.05, maybe: 0.92, dice: 4, lock: 1.5, deadline: 10, depth: 0.75, weekly: 3, offseason: 7, aiChance: 0.3, bigKeep: 0.75,   // bigKeep = odds a computer deal with a 4+ star player in it is called off anyway (big trades are rare)   // ratio for a yes / for a dice roll; the d6 needed; ratio a contender wants for a 4+ star QB; the last season.week trades are open; every extra incoming asset counts x depth; computer deals tried a week / in the offseason
   base: [0, 2, 6, 17, 42, 90], pay: [0, 1, 2.5, 7, 16, 28],   // TV and fair $M a year by whole stars (half stars in between)
   hi: 13, lo: 7, attr: 0.1, xf: 0.2, xfStar: 0.5,             // best attribute at least hi / at most lo = +- attr; a superstar ability (S) = + xf, a star factor (X) = + xfStar
-  age: [[23, 1.25], [26, 1.15], [28, 1], [30, 0.8], [32, 0.6], [99, 0.4]],   // x by age (QBs age 3 years slower, RBs 2 faster)
-  pos: { QB: [1.5, 1.5], EDGE: [1.2, 1.2], OT: [1.1, 1.1], WR: [1.1, 1.1], CB: [1.1, 1.1], DT: [1, 1], S: [0.85, 0.8], LB: [0.85, 0.8], G: [0.8, 0.7], TE: [0.9, 0.8], RB: [0.7, 0.6], K: [0.2, 0.15] },   // [value x, fair-salary x]
+  // a player's value = the surplus he brings over the years a team controls him: sum of (production - salary) x discount^year x the chance he still plays
+  prod: [0, 2, 5, 12, 28, 60],                                // production a year (TV) by whole stars: superlinear, one star is worth far more than several average players
+  payTV: 0.7,                                                 // TV a $M of salary costs
+  horizon: 5, resign: 0.35,                                   // years looked ahead; past his contract only this share of a year's surplus counts, at a fair salary (he has to be re-signed)
+  peak: { QB: [27, 35], RB: [23, 27], WR: [24, 30], TE: [25, 30], OL: [25, 31], DL: [24, 30], LB: [24, 29], CB: [24, 30], S: [24, 30], K: [26, 38] },   // [grows toward his potential until, declines after] by position
+  grow: 0.3, decline: { RB: 0.5, QB: 0.3, K: 0.2, def: 0.4 },   // stars a year gained before the peak (never past his potential) / lost after it
+  retire: [35, 0.2],                                          // chance a year he retires: 0 up to this age (retireAge; QBs 3 later), + this for every year past it
+  floor: 0.5, tight: 0.9,                                     // the least a player is worth; x for an incoming player whose salary is more than the team's cap room
+  slotGames: 8,                                               // projected draft slot: team rating at week 0, all record after this many games (redone once a week: projSlots)
+  pos: { QB: [1.9, 1.5], EDGE: [1.25, 1.2], OT: [1.2, 1.1], WR: [1.1, 1.1], CB: [1.1, 1.1], DT: [1, 1], S: [0.85, 0.8], LB: [0.85, 0.8], G: [0.85, 0.7], TE: [0.8, 0.8], RB: [0.65, 0.6], K: [0.2, 0.15] },   // [value x, fair-salary x] (the draft board ranks by the first too)
   tags: { QB: 'QB', RB: 'RB', WR: 'WR', TE: 'TE', LT: 'OT', RT: 'OT', LG: 'G', C: 'G', RG: 'G', LE: 'EDGE', RE: 'EDGE', DT: 'DT', MLB: 'LB', WLB: 'LB', SLB: 'LB', CB: 'CB', SS: 'S', FS: 'S', K: 'K' },
-  mode: { contend: { pick: 0.5, young: 0.9, old: 1.1, star: 1.2, need: 0.25 }, neutral: { pick: 1, young: 1, old: 1, star: 1, need: 0.15 }, rebuild: { pick: 1.8, young: 1.2, old: 0.6, star: 0.9, need: 0.05 } },
+  // now / disc = how a team weighs this season against later ones (a contender wants help now, a rebuilder is happy to wait)
+  mode: { contend: { pick: 0.5, young: 0.95, old: 1.05, star: 1.2, need: 0.25, now: 1.4, disc: 0.78 }, neutral: { pick: 1, young: 1, old: 1, star: 1, need: 0.15, now: 1, disc: 0.85 }, rebuild: { pick: 1.8, young: 1.1, old: 0.8, star: 0.9, need: 0.05, now: 0.6, disc: 0.9 } },   // (the three add up to about the same over five years: only the timing differs)
   needSev: [[0, 1], [1, 0.8], [1.5, 0.65], [2, 0.5], [99, 0]], needK: 2.4, noNeed: 0.95, sugGain: 1, sugPerPos: 2, sugMax: 10,   // a position's weakest starter (stars) -> how big the need is (0-1); a need adds mode.need x needK x that; a player who fills no need x noNeed; suggestions: at least sugGain stars better than your weakest, most per position, most in the list
   pickScale: 0.7, hold: 1.25, holdTop: 1.6,   // pickScale = x every draft pick's trade value; hold / holdTop = x the value a contender / a top-4 team puts on its own 3+ star players when asked to give them up
   surplus: 0.85, bad: -0.25, sweet: 2, sweetCap: 0.5, strapped: 5, shed: 1.1,   // x for a spare at a stocked position; a deal this overpaid (s) needs a sweetener of `sweet` TV per $M a year per year left (at most sweetCap of his TV); under `strapped` $M of cap a team pays x `shed` for dumping salary
-  retireYrs: 8, retireMin: 0.5, unproven: 0.6, mood: 0.1, condHit: 0.3,   // years left to retirement for full value (fewer = down to retireMin); unproven rookie x; morale +-mood; poor condition up to -condHit
+  unproven: 0.6, mood: 0.1, condHit: 0.3,   // unproven rookie x; morale +-mood; poor condition up to -condHit
   attrW: 0.5,                                                 // how much his real attribute total (scoreOf, as stars) counts next to his star rating in his base TV (0 = stars only)
   prone: 0.06, proneMin: 0.6,                                 // each injury he has had takes this off his trade value (x), down to proneMin
   future: [1, 0.85, 0.7, 0.6],                                // pick TV x by years out
@@ -1702,23 +1867,28 @@ function pickPackage(tv) {   // the picks a value would fetch if he were traded 
   return out.length ? out.join(' + ') : 'NOTHING';
 }
 const tradeKey = p => TRADE.tags[p.tag] || 'LB';
-function contractMul(p) {   // a cheap deal for years is a plus, an overpaid one a drag
-  const fair = lerpTab(TRADE.pay, p.stars) * TRADE.pos[tradeKey(p)][1], s = (fair - payOf(p)) / fair;
-  return Math.max(0.6, Math.min(1.4, 1 + 0.5 * s + 0.05 * Math.max(0, (p.years || 1) - 1) * Math.sign(s)));
-}
 function overpay(p) {   // $M a year over a fair deal, once he is overpaid by more than a quarter
   const fair = lerpTab(TRADE.pay, p.stars) * TRADE.pos[tradeKey(p)][1];
   return (fair - payOf(p)) / fair < TRADE.bad ? payOf(p) - fair : 0;
 }
-function tvPlayer(p) {   // his trade value to a neutral team
-  const best = Math.max(...ATTRS[p.group].map(a => p.raw[a])), age = p.age + (p.group === 'QB' ? -3 : p.group === 'RB' ? 2 : 0);
+// his trade value: year by year (TRADE.horizon) his projected stars (growing toward his potential before his position's peak, declining after it) give a
+// production, his salary comes off it (a fair one once his contract is up, and only TRADE.resign of that year), each year discounted and weighed by the
+// chance he hasn't retired. m = the valuing team's { now, disc } (TRADE.mode; none = a neutral team).
+function tvPlayer(p, m) {
+  const best = Math.max(...ATTRS[p.group].map(a => p.raw[a])), M = m || TRADE.mode.neutral, [pv, ps] = TRADE.pos[tradeKey(p)];
   const aStars = Math.max(0.5, Math.min(5, 1 + (scoreOf(p) - 20) / 8)), mixSt = p.stars * (1 - TRADE.attrW) + aStars * TRADE.attrW;   // (attributes count too, not just the star rating)
-  let v = lerpTab(TRADE.base, mixSt) * TRADE.pos[tradeKey(p)][0] * TRADE.age.find(([a]) => age <= a)[1] * contractMul(p);
+  const [a0, a1] = TRADE.peak[p.group] || [24, 30], dec = TRADE.decline[p.group] || TRADE.decline.def, pot = Math.max(mixSt, p.potential || p.stars), ra = retireAge(p) - (p.group === 'QB' ? 3 : 0);
+  let v = 0, alive = 1, st = mixSt;
+  for (let y = 0; y < TRADE.horizon; y++) {
+    if (y) { const age = p.age + y; st = age <= a0 ? Math.min(pot, st + TRADE.grow) : age > a1 ? st - dec : st; alive *= 1 - Math.min(0.9, Math.max(0, (ra + y - TRADE.retire[0]) * TRADE.retire[1])); }
+    const s = Math.max(0.5, Math.min(5, st)), own = y < (p.years || 1), prod = lerpTab(TRADE.prod, s) * pv, net = prod - (own ? payOf(p) : lerpTab(TRADE.pay, s) * ps) * TRADE.payTV;
+    if (!own && net <= 0) continue;   // (nobody re-signs a man who isn't worth it)
+    v += (own ? 1 : TRADE.resign) * net * (y ? Math.pow(M.disc, y) : M.now) * alive;
+  }
+  v = Math.max(TRADE.floor, v);
   if (best >= TRADE.hi) v *= 1 + TRADE.attr; else if (best <= TRADE.lo) v *= 1 - TRADE.attr;
   v *= p.sagaTV || 1;   // (saga news moves it: ARC_FX tv)
   if (p.tier === 'X') v *= 1 + TRADE.xfStar; else if (p.tier === 'S') v *= 1 + TRADE.xf;
-  const left = Math.max(0, TRADE_RETIRE - retireAge(p) - (p.group === 'QB' ? -3 : 0));   // years until he is likely to retire
-  v *= Math.max(TRADE.retireMin, Math.min(1, 0.5 + 0.5 * left / TRADE.retireYrs));   // (little time left: worth less)
   if (p.rookie && !p.proven) v *= TRADE.unproven;   // (an unproven rookie has not shown anything yet)
   if (season && ROSTER[season.team] && ROSTER[season.team].includes(p)) {   // (his mood and health, for your own players)
     v *= 1 + TRADE.mood * (LEAGUE.morale - 50) / 50;
@@ -1756,22 +1926,38 @@ function perfMul(p) {
 let TCX = null;
 function tcx() {
   if (TCX) return TCX;
-  const T = season ? seasonTable() : {}, teams = Object.keys(ROSTER).filter(k => NFL[k]), X = {};
+  const T = season ? seasonTable() : {}, teams = Object.keys(ROSTER).filter(k => NFL[k]), X = {}, S = projSlots();
   const norm = k => { const st = teamStars(k); return (st.off + st.def - 2) / 8; };
-  const strength = k => { const r = T[k], g = r ? r.w + r.l + r.t : 0, w = Math.min(1, g / 8); return (1 - w) * norm(k) + w * (r ? winPct(r) : 0.5); };
-  teams.map(k => [k, strength(k)]).sort((a, b) => a[1] - b[1]).forEach(([k], i) => {
-    const r = T[k], g = r ? r.w + r.l + r.t : 0, pct = g >= 4 ? winPct(r) : null, n = norm(k), ages = [...startersOf(k)].map(p => p.age);
+  teams.forEach(k => {
+    const r = T[k], g = r ? r.w + r.l + r.t : 0, pct = g >= 4 ? winPct(r) : null, n = norm(k), ages = [...startersOf(k)].map(p => p.age), i = (S[k] || 16) - 1;
     const old = ages.length && ages.reduce((t, a) => t + a, 0) / ages.length > 29, hi = pct != null ? pct >= 0.6 : n >= 0.7, lo = pct != null ? pct <= 0.35 : n <= 0.3;
     const rb = rbOf(k);
     X[k] = { slot: i + 1, top: i >= teams.length - 4, mode: rb >= 0.5 || old || lo ? 'rebuild' : hi && rb < 0.2 ? 'contend' : 'neutral', rb, pay: payroll(k), cap: capOf(k) };
   });
   return TCX = X;
 }
-function pickTV(a) {
-  const X = tcx()[a.orig], out = Math.max(0, a.year - tradeYears()[0]);
-  let slot = X ? X.slot : 16;
-  if (out > 0) slot = Math.round(16.5 + (slot - 16.5) * 0.7);   // (a future pick: a bad team's counts as a high pick, a good one's as a late one, but less surely)
-  return pickBase(a.round, slot) * TRADE.future[Math.min(out, 3)] * TRADE.pickScale;
+// every team's projected draft slot (1 = the worst team picks first): its rating at first, its record more and more as the games go by (TRADE.slotGames).
+// Worked out once a week and kept on LEAGUE.slotC, so a pick's value holds still between games.
+function projSlots() {
+  const tag = season ? `${LEAGUE.year}:${season.week}:${season.offseason ? 1 : 0}:${season.team}` : '-', hit = LEAGUE.slotC;
+  if (hit && hit.tag === tag) return hit.m;
+  const T = season ? seasonTable() : {}, teams = Object.keys(ROSTER).filter(k => NFL[k]), m = {};
+  const strength = k => { const st = teamStars(k), r = T[k], g = r ? r.w + r.l + r.t : 0, w = Math.min(1, g / TRADE.slotGames); return (1 - w) * (st.off + st.def - 2) / 8 + w * (r ? winPct(r) : 0.5); };
+  teams.map(k => [k, strength(k)]).sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1)).forEach(([k], i) => { m[k] = i + 1; });
+  LEAGUE.slotC = { tag, m };
+  return m;
+}
+const pickSlot = a => { const s = projSlots()[a.orig] || 16; return a.year > tradeYears()[0] ? Math.round(16.5 + (s - 16.5) * 0.7) : s; };   // (a future pick: a bad team's counts as a high pick, a good one's as a late one, but less surely)
+// a pick = the chart at its projected slot x the class. The coming draft: how the valuing team k's own scouts see that part of the visible class (boardFactor:
+// top 5 / rest of round 1 / round 2 / later; no team = the public board). Later drafts: an average class and TRADE.future's discount (nobody has seen them).
+function pickTV(a, k) {
+  const out = Math.max(0, a.year - tradeYears()[0]), slot = pickSlot(a);
+  return pickBase(a.round, slot) * TRADE.future[Math.min(out, 3)] * TRADE.pickScale * (out ? 1 : boardFactor(k, boardBand(a.round, slot)));
+}
+// the trade screen's tag on a pick: 'proj #N · STRONG' (the class as YOUR scouts see it at that pick; later drafts have no class to look at)
+function pickTag(a) {
+  const slot = pickSlot(a), n = (a.round - 1) * Object.keys(projSlots()).length + slot;
+  return `proj #${n} · ${a.year > tradeYears()[0] || !boardClass() || boardLive(boardClass()) ? 'CLASS ?' : boardLabel(boardFactor(season.team, boardBand(a.round, slot)), BOARD.tag)}`;
 }
 function stockedAt(k, p) {   // his group's weakest starter on team k (0 = a hole)
   const n = STARTERS[p.group] || 1, G = ROSTER[k].filter(q => q.group === p.group).sort((x, y) => y.stars - x.stars);   // (a roster only names its best players: the rest of a lineup is unnamed backups)
@@ -1854,7 +2040,7 @@ function catPopCtl(o) {
       }
       const L = layout(), V = L.V;
       S.scroll = Math.max(0, Math.min(L.max, S.scroll));
-      ctx.save(); ctx.fillStyle = 'rgba(30,25,10,0.55)'; ctx.fillRect(0, 0, W, H); ctx.restore();
+      ctx.save(); ctx.fillStyle = 'rgba(30,25,10,0.55)'; ctx.fillRect(0, 0, W, H); uiModal(); ctx.restore();
       resPanel(CPOP.x, CPOP.y, CPOP.w, CPOP.h, [[o.title, null]], RES.bright);
       popBtnDraw = true;
       if (o.tabs) o.tabs.forEach((t, i) => menuBtn(cpTabBtn(i), t.label, S.tab === i ? SEL : RES.bright, 20));
@@ -1936,7 +2122,7 @@ function needsCats(side) {
     starters.push(...ps.slice(0, n));
   }
   const weak = starters.filter(p => p.group !== 'K').sort((a, b) => a.stars - b.stars).slice(0, 6), co = (STAFF[me] || {})[off ? 'oc' : 'dc'], xf = starters.filter(p => p.tier === 'X');
-  const note = !formulaOn() ? wrapLines('This season the ratings are the league\'s preseason ranks. From your second season on they come from your starters, coordinator and depth.', 90) : [];
+  const note = wrapLines('The rating comes from your starters, coordinator, head coach, depth, abilities, veterans, rookies and who is out. It never depends on other teams or the difficulty.', 90);
   return [
     { name: 'EMPTY STARTING SPOTS', lines: empty.length ? ['An unnamed backup plays each of these and drags the rating down a lot.'] : ['Every starting spot is filled.'], cards: empty },
     { name: 'WEAKEST STARTERS', lines: ['Your lowest rated starters: upgrading them lifts the side the most.'], cards: weak.map(p => ({ p, team: me, sub: `${p.group}  ${p.stars} STARS` })) },
@@ -1956,13 +2142,14 @@ function modeMix(X) {   // a rebuilding team is between 'neutral' and full 'rebu
 }
 function tvFor(a, k, inc) {   // team k's view of an asset (inc: it is coming in, so need / surplus / bad contracts count)
   const X = tcx()[k], m = modeMix(X);
-  if (a.kind === 'pick') return pickTV(a) * m.pick;
-  const p = a.p; let v = tvPlayer(p);
+  if (a.kind === 'pick') return pickTV(a, k) * m.pick;
+  const p = a.p; let v = tvPlayer(p, m);   // (m.now / m.disc: a contender pays for this season, a rebuilder for the later ones)
   if (p.age <= 24) v *= m.young; if (p.age >= 28) v *= m.old; if (p.stars >= 3) v *= m.star;
   if (!inc) {   // (his own star: they hold on to him; a contender, and most of all a top team, keeps its good players over picks)
     if (p.stars >= 3 && (X.top || X.mode === 'contend')) v *= X.top ? TRADE.holdTop : TRADE.hold;
     return p.stars >= TRADE.starKeep ? v * TRADE.loyal : v;
   }
+  if (X.cap - X.pay < payOf(p)) v *= TRADE.tight;   // (no cap room for him as it stands: something else has to go)
   const weak = stockedAt(k, p), sev = needSev(weak), need = sev > 0 && p.stars > weak;
   if (need) v *= 1 + m.need * TRADE.needK * sev; else if (weak >= 3 && weak >= p.stars) v *= TRADE.surplus; else v *= TRADE.noNeed;
   const over = overpay(p);
@@ -2031,7 +2218,7 @@ function tradeMove(list, from, to) {
     if (a.kind === 'pick') { (LEAGUE.picks || (LEAGUE.picks = {}))[pickKey(a.year, a.round, a.orig)] = to; continue; }
     const R = ROSTER[from], p = a.p, i = R.indexOf(p);
     if (i < 0) continue;
-    R.splice(i, 1); delete p.benchNext; if (krTags[from] === p.name) delete krTags[from];
+    R.splice(i, 1); abilMoved(p, from); delete p.benchNext; if (krTags[from] === p.name) delete krTags[from];
     if (season && from === season.team) moraleStarGone(p);   // (you sent a star away: the locker room feels it)
     if (typeof OFF !== 'undefined' && OFF && OFF.expiring) { const ex = OFF.expiring.indexOf(p); if (ex >= 0) { OFF.expiring.splice(ex, 1); delete p.ask; if (OFF.rs) { OFF.rs.chk = (OFF.rs.chk || []).filter(q => q !== p); if (OFF.rs.sel === p) OFF.rs.sel = null; } } }   // (traded away with an expiring deal: gone from the contracts page too; his new team has his deal)
     uniqueNum(ROSTER[to], p); ROSTER[to].splice(depthAt(ROSTER[to], p), 0, p);
@@ -2441,7 +2628,7 @@ function drawTradeB() {
     } else
     list.slice(TR.pg[s] * TB.rows, (TR.pg[s] + 1) * TB.rows).forEach((a, i) => {
       const on = sel.some(x => sameAsset(x, a)), tv = Math.round(trTV(a, s));
-      const txt = a.kind === 'pick' ? `${nflYear(a.year)}  ROUND ${a.round}${a.x ? '  (EXTRA PICK)' : a.orig !== t ? `  (${a.orig})` : ''}`
+      const txt = a.kind === 'pick' ? `${nflYear(a.year)} ROUND ${a.round}${a.x ? ' (EXTRA)' : a.orig !== t ? ` (${a.orig})` : ''}  ${pickTag(a)}`
         : `${a.p.tag.padEnd(3)} ${a.p.short || a.p.name}  ${a.p.stars}★  ${a.p.age}y  ${fmtM(payOf(a.p))}/${a.p.years}y`;
       menuBtn(tbRow(s, i), '', on ? SEL : RES.bright, 16, b => {
         ctx.fillStyle = b.ink; ctx.textBaseline = 'middle'; ctx.font = 'bold 16px monospace';

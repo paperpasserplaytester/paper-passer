@@ -126,6 +126,53 @@ const FOOT = 14 * S;           // a player's feet are drawn this far below his y
 // shoulder-pad half-width and where the pad trim starts (sprite units: slimmer than the old 7 / 11 / 8)
 const FIGURE = { grow: 1.2, tall: 1.1, torso: 6, pads: 9.5, trim: 6.5 };
 const figK = p => ((p && p.size) || 1) * FIGURE.grow;                 // his sprite scale against the old figure
+// sideline people (07-drawing, `// --- sideline people`): chain crew + down judge, both benches (roster players, coaches, trainers, staff), cameramen, cheerleaders,
+// props (`// --- sideline props`) and injury exits (INJURY_EXIT below). Looks only, never part of a play. d* = yd past the sideline
+// a body stands (same y convention as a player's; raised if needed so every collider's inner edge is `gap` yd past the sideline feet); crewSide 0 = top, 1 = bottom
+const SIDELINE = {
+  bake: 30,                                         // Hz the routines' keyframes are baked at (flat pose tables, eases applied while baking)
+  gap: 0.6, body: 0.4,                              // yd: collider inner edge past the sideline feet / a player's radius (added to every collider)
+  dCrew: 1.35, dCoach: 1.3, dBench: 1.75, dStaff: 2.3, crewSide: 1,
+  benchAt: [38, 62], benchSeats: 9, benchLen: 8.5, benchRes: 4, benchMax: 9,   // a side's two benches (offense, defense): yard lines / seats on each / yd the seats span / reserves who always sit there (made-up numbers) / most roster players of a unit shown (number order; those without a seat stand at the bench's ends)
+  scale: 1.06, cartK: 1.5,                          // every sideline person's size against a player's sprite (bare heads read smaller than helmets) / the medical cart's size (sprite, collider and its riders' spots)
+  cheerN: 6, cheerAt: 20.5, cheerGap: 1.15,         // cheerleaders a side (groups of 3, each on its box at cheerAt and its mirror image), yd apart on the box
+  dCam: 2.3,                                        // cameramen: yd past the sideline of their lane (clear of the props by the wall; tunables = CAM_MAN below)
+  flashLen: 0.14, flashSpread: 1.5,                 // camera flashes: s one burst lasts / s the bursts of one moment are spread over
+  liteHz: 15,                                       // performance mode: the bench's poses are sampled at this rate
+  crewSpeed: 7, crewTp: 3,                          // the chain crew's own walking speed (YD/s) / yd past the screen's edge that still counts as on camera (both ends off camera = they are just put there)
+  walkDelay: 0.6, walkSpeed: 4, walkMax: 3.6, park: 4,   // s after the play is set before the crew walks / walking speed of anyone going back to his spot (YD/s; the crew has crewSpeed) / longest walk in s (a long gain: they jog) / goal to go: poles parked this many yd behind the box
+  stagger: 0.08,                                    // s between squad members starting a routine
+  lodLo: 34, lodHi: 70, lodTouch: 1.3, liteLod: 1.5,   // on-screen figure px below which: silhouette / mid detail; x on touch / performance mode
+  sortRange: 2.2, exMax: 14,                         // yd: an out-of-bounds player this close is drawn in the right order against a person; most such people
+  col: [{ along: 0.32, across: 0.28 }, { along: 0.32, across: 0.28 }, { along: 0.34, across: 0.3 }, { along: 0.34, across: 0.3 }, { along: 0.38, across: 0.32 }, { along: 0.3, across: 0.26 }],   // oval collider per kind (pole, box, coach, staff, bench, cheer), YD x figK
+  poleR: 0.12, poleX: 0.45,                         // the chain poles' collider radius / yd in front of the holder
+  bumpV: 3.2, downT: 1.4, hitCool: 1.0, hitD: [0.35, 1.1, 0.9, 0.3],   // YD/s a stagger turns into a knockdown / s on the turf / s between reactions / yd moved by bump, knockdown, hop aside, pole tilt
+  sfxCool: 0.6, sfxVol: 0.35,                       // knockdown thud: s apart at most / x the tackle clip's volume
+  // props (07-drawing, `// --- sideline props`: statics, pre-rendered sprites). Where they stand = SL_LAY
+  markerD: 1.3,                                     // yd past the sideline the orange 10-yard markers stand
+  propQ: 2, propQLite: 1,                           // sprite pixels per world pixel (performance mode: fewer)
+  propWobble: 0.9, propTip: 0.3, splash: 0.9, propCool: 1.2,   // s a bumped prop rocks / takes to tip over / its splash lasts / between reactions
+  bin: 6,                                           // yd per collision bucket along a sideline (slCollide only tests what is in the player's bucket)
+  prof: false,                                      // log the draw / collider cost (averaged over 120 frames) to the console
+};
+// injury exits (07-drawing, `// --- injury exits`): how a hurt player leaves the field in a live game. Speeds in YD/s, times in s, cart spots in sprite units.
+// delay = after the call before anyone moves; jog = trainers running out; walk = going back / the driver to his cart; limp = a minor one, on his own feet;
+// help = a moderate one, an arm over each trainer; cart = the medical cart; tend = trainers down beside him first; lift = getting him onto the cart;
+// unload = the cart stopped at the tent; cartGap = yd behind him (up the screen) the cart stops; seatX / seatH = the driver's seat ahead of the cart's middle / its height;
+// bedX / bedH = the back of the cart; kneeYd / kneeMax = players this close take a knee for a severe one (the nearest few); fade = s the on-field player
+// takes to fade out when the exit is not shown (performance level 2, sideline people off); col = the moving cart's collider half-sizes (yd); benchYd / benchD = where a
+// minor one ends up standing; door / inD = yd past the sideline of the spot in front of the tent / inside it
+// cameramen (07-drawing, slCamTick / slAim): they follow the play with the camera, not their legs. spots = [home yard line, from, to] of each one's stretch (the last = the
+// rail dolly); arc = yd along the sideline the ball can be off a man before he walks; keep = yd he stops short of level with it (+ his own 0..keepVar);
+// react / swing = s before a camera starts to turn / the turn takes (each man gets his own, in range); over = how far a turn overshoots (0 = none); dead = rad the aim
+// can be off before he corrects it; err = rad each man's aim sits off the ball; walk / dolly = top speed in YD/s (eased in and out; no running);
+// delay = s he waits before walking; think = s between looks at the play
+const CAM_MAN = { spots: [[20, 5, 35], [80, 65, 95], [50, 24, 76]], arc: 9, keep: 2.5, keepVar: 2, react: [0.2, 0.5], swing: [0.4, 0.7], over: 1.3, dead: 0.07, err: 0.07,
+  walk: 1.9, dolly: 1.1, delay: [0.5, 1.5], think: 0.25 };
+// (cart spots are in the cart sprite's own units, x from its middle toward its nose: seatX / seatH = the driver; bedX = where the hurt man's feet go (he lies along the bed, head toward the cab),
+// bedH = the deck's height; trX = where the two trainers sit on the bed for the ride back)
+const INJURY_EXIT = { delay: 0.5, jog: 7, walk: 3.4, limp: 2, help: 2.6, cart: 7, tend: 1.3, lift: 1.8, unload: 1.2, cartGap: 0.9, seatX: 13, seatH: 6, bedX: -25, bedH: 12, trX: [5, -22],
+  kneeYd: 6, kneeMax: 5, fade: 1.1, benchYd: 44.4, benchD: 2.6, door: 2.6, inD: 3.4 };
 const figX = (p, x) => x * figK(p);                                    // a sideways offset tied to a spot on the old body -> that spot now
 const figZ = (p, z) => (FOOT + z) * figK(p) * FIGURE.tall - FOOT;      // same for a height (z) on his body (scaled up from his feet)
 const figReach = (p, r) => S * figK(p) * (FIGURE.tall * (r / S + 14) - 14);   // a reach along a laid-out body (dives: stretched from the feet end)
@@ -187,6 +234,19 @@ const KICK_ANIM = { time: 0.28, done: 1.6, follow: 7 * YD, decel: 5 * YD };
 // more than overrun yards turns back for it; on a loose ball he steers at looseAccel; defenders aim for the earliest
 // point on the ball's path they can reach at def x their top speed
 const TRACK = { settle: 1.2, read: 0.6, overrun: 0.8, looseAccel: 11 * YD, def: 1.0 };
+// reading a pass in the air (receivers and the back seven; helpers at `// --- ball tracking` in 05). Skill 0-1 = 0.5 + k x (catching x w.ctc
+// + awareness x w.awr + coverage x w.cov, each as a rating z-score; a man only has the ones his position has).
+//  read = how much skill moves the time before he locates the ball (x 1 -/+ read); blind = extra s for a receiver running away from the passer
+//  err = most yd a poor tracker misjudges the landing spot by (full on throws of errDeep+ yd, x errBullet on bullets; `along` = share of it
+//    along the flight line: depth is what gets misjudged); lock = share of the flight by which a [great, poor] tracker has it dead on
+//  turn / start = s lost reversing at full speed / starting from a standstill (momentum, used to judge what he can get to)
+//  early = s he'd be waiting at the landing spot before he works back to the ball instead; margin = s to spare at the spot he picks;
+//    come = x his catch height the ball must be under there; from = no meeting it before this share of the flight; ease = how fast the spot moves (1/s)
+//  gather = yd out from which a man who's early smoothly slows into the catch (down to BALL_MEET.ease)
+//  mom: rate = rad/s a receiver at full speed can swing his heading toward the ball (x agility, faster when slower), brake = share of his
+//    top speed a second he sheds planting for a reversal, min = yd/s under which he just turns
+const BT = { k: 0.16, w: { ctc: 0.6, awr: 0.4, cov: 0.4 }, read: 0.35, blind: 0.1, err: 2.4, errDeep: 30, errBullet: 0.4, along: 0.75, lock: [0.4, 0.85],
+             turn: 0.35, start: 0.12, early: 0.25, margin: 0.1, come: 0.85, from: 0.35, ease: 7, gather: 4, mom: { rate: 4.5, brake: 1.6, min: 2 } };
 const SPIRAL = { rate: 22, bullet: 1.4 };   // pass spin (radians/s of the laces rolling round; bullets spin faster)
 const CLASP_REACH = 30;     // (sprite units) once the ball is this close to a reaching catcher his hands close around it
 const CLASP_TIME = 0.28;     // seconds a receiver holds a fresh catch out front in both hands before tucking it
@@ -336,7 +396,7 @@ const RELEASE_BASE = 19;     // the ball leaves from the top of the throwing arm
 const CROSS_FIELD = { from: 0.22, span: 0.5, err: 0.5, time: 0.18 };   // throwing from one side of the field to the other: the sideways reach (x field width) it starts at / takes to hit full, extra throw error (x distance) at full, extra hang time (x flight) at full
 const CROSS_BODY = 0.42;      // extra throw error (x distance) throwing back across his body at full speed
 // bullet: 15% faster on short throws up to 35% on long ones, and flatter (easier to bat down)
-const bulletSpeed = dist => BALL_SPEED * (1.15 + 0.2 * Math.min(1, dist / (40 * YL)));
+const bulletSpeed = dist => BALL_SPEED * (1.15 + 0.2 * Math.min(1, dist / (40 * YL))) * (abilOn(thrower(), 'tightSpiral') ? ABIL_FX.tightSpiral : 1);   // (Tight Spiral)
 const CATCH_RADIUS = 1.5 * YD;
 const TUT_CATCH = { radius: 1.6, timing: 2.5 };   // the tutorial's catches: a bigger catch radius, and a jump timing window this many times wider
 const CATCH_GLIDE = 0.12;   // s the ball takes to glide into the hands of whoever catches or picks it
@@ -443,21 +503,24 @@ const MORALE_TEAM = {
   starGone: -6, goneStars: 4.5,  // you trade or cut a 4.5+ star player
   bowl: 15,                      // winning the Paper Bowl
 };
-// X-Factor effects while active (Superstar / Fit abilities are always active)
+// Star Factor effects while lit (code name XFX; Fits / Abilities are in ABIL_FX). All x multipliers unless noted.
 const XFX = {
-  boost: 0.7, speed: 0.02,  // while an X-Factor is on: every rating +boost steps, top speed x(1 + speed), on top of the ability
-  bazooka: 15,           // yards of extra max throw
-  dots: 0.35,             // throw error x (Dots)
-  runGun: 0.15,           // on-the-move throw error x (Run & Gun)
-  shed: { 'Unstoppable Force': 0.7, 'Fearmonger': 0.8, 'Dual Threat': 0.8 },   // x time to get off a pass block
-  jar: 1.6,               // x big-hit knockouts on catches (Reinforcement / Dual Threat)
-  cov: 1.2, pick: 1.4,    // x coverage / interception try (Universal Coverage, Shutdown)
-  jam: 2.2,               // x chance to land the jam (Bottleneck)
-  pbu: 0.65,              // x defender's chance to break up the catch (Double Me)
-  doubleMe: 0.7,        // floor on the catch odds with one defender on him (Double Me)
-  breakMiss: 0.9,         // chance a tackle is broken where the factor says "very likely" (Phenom, YAC 'Em Up, First One Free, Ankle Breaker)
-  freight: [1.5, 0.1],    // Freight Train: miss odds x, + (better chance to break tackles)
+  armCannon: 15,                    // yards of extra max throw (Arm Cannon; his bullets also can't be tipped)
+  tunnel: { react: 1.35 },          // Tunnel Vision: x defenders' reaction time to his throws
+  afterburner: { t: 3, spd: 1.12 }, // Afterburner: s of burst after a catch, x top speed
+  jukeMachine: 1.5,                 // Juke Machine: x the miss odds of every move
+  ballPunch: 4,                     // Ball Punch: x fumble odds on his hits (QB and carrier)
+  boneCrusher: 2,                   // Bone Crusher: x fumble odds (every tackle a hit stick)
+  bigHitter: 2.5,                   // Big Hitter: x knockouts on catches in his zone
+  lockdown: { pick: 0.3 },          // Lockdown: chance a throw at him is picked (else broken up)
+  magnetHands: 2.5, magnetConv: 0.6, // Magnet Hands: x his pick tries; chance a breakup of his becomes a pick (x pickK)
+  houseCall: { spd: 1.12 },         // House Call: x top speed on returns
+  jumpRoute: { react: 0.5, yd: 10 }, // Jump the Route: x reaction on throws under `yd`
+  eraser: { yd: 20, reach: 7 },     // Eraser: deep = 20+ yd throws into his half, from within reach yd of the catch
+  moonShot: 10,                     // Moon Shot: + yards of range
+  unblockable: 1.5,                 // Unblockable: s after the snap he wins every rush move
 };
+const XF_BOOST = { amt: 2, spdPer: 0.012 };   // a lit Star Factor: +amt points (1-15 scale) on his def's `attr`, read through rz / effTop only (never saved; stars, value, asks untouched); spdPer = top speed per point when attr is spd
 const XF_CAP_BASE = 4;    // difficulty's "X-Factors at once": per-team cap = this x the slider, only when the slider is below 1 (never more X-Factors than a team owns)
 const XF_SIM = 0.35;     // edge (in star steps) each active X-Factor adds to its side of a simulated drive
 
@@ -813,6 +876,58 @@ const HANDFIGHT = { slow: 0.92, slot: 0.96, catch: 0.85, swat: 0.45 };
 const PUSH_OFF = { rate: 1.2, every: 0.8, stun: 0, shove: 0.06 * YD, upset: 1.2, range: 1.5, near: 3.5 * YD };   // (subtle: a tiny shove, no freeze on the defender's feet, only close to the catch point (near))
 // the push-off only counts while they're still tangled up (within range x hand-fight range); once he's clear it's gone
 const pushedOff = d => clock < (d.pushedUntil || 0) && !!tgt && dist(d, tgt) <= HANDFIGHT_RANGE * PUSH_OFF.range;
+// Scouts (your franchise only: scoutsOn(); SETTINGS.scouts off = the old draft scouting, no scout UI). Every team has two, an offense and a defense
+// one, at STAFF[team].sc.off / .def (saved with the world; made on first use by scoutsOf, so old saves need nothing). Hired / fired on the hiring board.
+const SCOUT = {
+  start: [1, 3], ai: [1.5, 4.5],                 // stars (half stars) of your scouts on a new career / a new team; of the other teams' scouts
+  budget: 4,                                     // $M added to the staff budget while scouts are on (two more salaries to carry)
+  salK: 0.45,                                    // a scout's pay = a coach's market salary x this ($M a year, counts against the staff budget)
+  err1: 1.5, errStar: 0.3, errMin: 0.1,          // his potential guess is off by up to DRAFT.scoutErr x (err1 - errStar x (stars - 1)): 1 star is worse than the old scouting, 3 a little better
+  grpBonus: 0.3, specBonus: 0.15, plBonus: 0.6,  // share of that error cut for his assigned position group / the group he knows best / a prospect assigned by name
+  weeks: 14, perRound: 32,                       // weeks of the season it takes a scout to get through his side of the class; board places per round
+  maxPlayers: 3,                                 // prospects one scout can be assigned by name
+  groups: { off: ['QB', 'RB', 'WR', 'TE', 'OL', 'K'], def: ['DL', 'LB', 'CB', 'S'] },
+  gen: { pts: 54, find: 0.25, findStar: 0.15 },  // GENERATIONAL = true potential points of at least this; chance he spots one = find + findStar x stars
+  under: { rounds: 2, find: 0.12, findStar: 0.1, max: 4 },   // UNDERRATED = really worth a pick this many rounds earlier than the board has him; most of them one scout reports
+  focus: 0.25,                                   // + to both odds for his assigned group / his named prospects
+  wrong: 0.5, wrongStar: 0.1,                    // chance of one false alarm a draft = wrong - wrongStar x stars
+};
+// Draft board (your franchise; `// --- the draft board` in 09-season): next spring's class exists from week 1 (scoutClass / LEAGUE.nextClass, one class
+// ahead only). No college games: every prospect gets one form roll a week (boardWeek, from leagueWeek). Kept per prospect: p.bd = { pv (perceived score),
+// r (last week's rank), h (rank history) }. Form, stat lines, schools and each team's grades come from hashes of his name: nothing else is stored.
+const BOARD = {
+  rating: 0.55,                                  // a prospect's true score = his rating x this + his potential points x the rest
+  noise: 5, ema: 0.2,                            // a week's form = true score + about +-noise (x up to 3); perceived score moves this share of the way to it each week
+  hype: 0.6, hypeErr: 4, hypeWeeks: 12,          // preseason hype (true score + about +-hypeErr): its weight in week 1, fading to 0 by hypeWeeks
+  maxMove: 12, hist: 18,                         // most board places a prospect moves in a week; weeks of rank history kept (the trend line)
+  posK: 0.12, posDraft: 3,                      // how much of the trade position value (TRADE.pos) counts in the board order; points a team adds per 1.0 of it when it picks
+  kGen: 39, kGenK: 0.9,                         // a kicker is only on the board with a true score of at least this (one a class at most); his position value then
+  gradeK: 1, foK: 0.5, dayNoise: 1.5,            // a team's grade is off by up to DRAFT.scoutErr x its scout's error x gradeK + its front office's hunches (FRONT_OFFICE.draftNoise) x foK; random points on draft day
+  rangeOff: 2,                                   // SCOUTS off: the board's potential range is this much wider
+  qErr: 0.12, str: [-0.3, 0.2, 0.55],            // your read of the class (q, -1..1) is off by up to qErr per point of scout error; WEAK below / AVERAGE / STRONG / LOADED above
+  mockRounds: 2, rows: 11,                       // rounds in the mock draft; rows a page
+  // the class as a pick sees it: bands = last board place of the top 5 / round 1 / round 2 (the rest = later); base / sd = an average class's mean grade there and its spread
+  bands: [5, 32, 64], bandBase: [43.2, 38.8, 34.2, 24], bandSd: [2.5, 1.8, 1.6, 1.1],   // (measured over 150 classes)
+  bandK: 0.12, bandLo: 0.75, bandHi: 1.4,        // a pick's value x (1 + bandK per spread above average), kept inside lo..hi
+  bandErr: 0.4,                                  // a team's read of a whole band is off by up to its scout error x this (so teams disagree on a class)
+  genLift: 0.2, genTop: 8,                      // a generational prospect a team knows of in the board's top genTop adds this to the top band only
+  tag: [0.93, 1.07, 1.22],                       // the trade screen's pick tag: WEAK below / AVERAGE / STRONG / LOADED above (class factor)
+};
+const bdHash = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } h ^= h >>> 15; h = Math.imul(h, 2246822507); h ^= h >>> 13; h = Math.imul(h, 3266489909); h ^= h >>> 16; return (h >>> 0) / 4294967296; };   // 0-1, the same for the same text
+const bdSym = s => bdHash(s + '+') + bdHash(s + '-') - 1;                           // -1..1, mostly near 0
+const bdGauss = s => (bdHash(s + 'a') + bdHash(s + 'b') + bdHash(s + 'c') - 1.5) * 2;   // about -3..3 (like gauss)
+const bdRng = s => { let a = Math.floor(bdHash(s) * 4294967296); return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };   // a seeded random stream
+// Poaching (another team's front office > POACH): a coordinator, trainer or scout, never a head coach. The offer = a salary ($M a year, against your
+// staff budget) + credits up front (+ the buyout of the man he replaces).
+const POACH = {
+  minRaise: 1.15, maxRaise: 2.5, step: 0.1,      // the salary offer: at least / at most x his pay now; the +/- step ($M)
+  credMin: 2, credStar: 1, credMore: 10,         // the least credits = credMin + credStar x his stars (3-7; a signing costs 3-25); how far above it you can go
+  base: 0.4, perRaise: 0.8, perCred: 0.03,       // chance at the minimum offer; + per 100% more salary; + per extra credit
+  perStar: 0.07, perWin: 0.3,                    // - per star above 1; - x (his team's win share - 0.5)
+  pMin: 0.03, pMax: 0.95,
+  lockWeeks: 6, yearWeeks: 30,                   // a no: he won't hear another offer for this many weeks (yearWeeks = the week count's length of a year)
+  years: 2,                                      // the contract he signs
+};
 // XP bank (your franchise only, never scrimmage / 1v1 / online / test mode / tutorial): players at their potential bank their spare XP, and the bank
 // buys development. Bank + display: xpBankAdd / coinBox / flyXP (10-screens); spending: xpc* in the player upgrades block (11-cards-trades).
 const XPC = {
@@ -1341,7 +1456,7 @@ const balK = c => Math.max(0.6, Math.min(1.6, rm(c, 'bal', A5.rb.stumble)));   /
 const balMove = (c, k) => Math.max(0.7, Math.min(1.4, rm(c, 'bal', A5.rb[k])));
 const attr5 = (p, a, dflt) => p && p.at && p.at[a] != null ? p.at[a] : dflt;
 const qbAwr = () => attr5(qb, 'awr', 9) * moraleMulP(qb);   // (his read: a shaken QB sees the field worse; a fired-up one better)
-const audMax = () => { const b = Math.max(2, Math.min(A5.qb.audMax, 2 + Math.floor((qbAwr() - 10) / A5.qb.audPer + 0.5))); try { return Math.max(1, Math.round(b * diffLvl().audibles)); } catch (e) { return b; } };   // (difficulty: x the awareness limit, yours)
+const audMax = () => { const b = Math.max(2, Math.min(A5.qb.audMax, 2 + Math.floor((qbAwr() - 10) / A5.qb.audPer + 0.5))); const w = abilOn(qb, 'audibleWizard') ? ABIL_FX.audibleWizard.aud : 0; try { return Math.max(1, Math.round(b * diffLvl().audibles)) + w; } catch (e) { return b + w; } };   // (Audible Wizard: +2)   // (difficulty: x the awareness limit, yours)
 // fewer picks: the target's awareness (adjusts to a bad ball), the QB's (the computer's QB a lot more)
 const pickK = () => {
   let k = 1;
@@ -1361,7 +1476,7 @@ function scrambleAwr(ax, ay) {
 function awrFeetIn(p) {
   if (!p || p.team !== 'off' || attr5(p, 'awr', null) == null) return false;
   const L = landingSpot(p), over = Math.max(0, Y_MIN + OOB_FOOT - Math.min(p.y, L.y), Math.max(p.y, L.y) - (Y_MAX - OOB_FOOT), Math.max(p.x, L.x) - (FIELD + ENDZONE - OOB_FOOT));
-  if (over <= 0 || over > A5.wr.feetRoom * YD || Math.random() >= Math.min(0.7, A5.wr.feet * rm(p, 'awr', A5.wr.feetK))) return false;
+  if (over <= 0 || over > A5.wr.feetRoom * YD || (!abilOn(p, 'toeTapper') && Math.random() >= Math.min(0.7, A5.wr.feet * rm(p, 'awr', A5.wr.feetK)) + (abilOn(p, 'sidelineSense') ? ABIL_FX.sidelineSense : 0))) return false;   // (Toe Tapper: always; Sideline Sense: +10%)
   // (no snapping him back inside the line any more: the catch counts where he is, then he's out of bounds at the spot)
   popup(p, 'FEET IN!', '#7dff8a');
   return true;
@@ -1382,7 +1497,7 @@ function awrSticks() {
 const HOT = { routes: ['slant', 'go', 'out', 'curl', 'post', 'hitch', 'drag', 'corner', 'comeback'],
   smart: { man: ['slant', 'comeback', 'whip', 'go'], zone: ['curl', 'dig', 'stick', 'hitch'], blitz: ['slant', 'hitch', 'stick'] } };
 let hotUsed = new Set();
-const hotMax = () => Math.max(1, Math.min(3, 1 + Math.floor((qbAwr() - 9) / A5.qb.hotPer + 0.5)));
+const hotMax = () => Math.max(1, Math.min(3, 1 + Math.floor((qbAwr() - 9) / A5.qb.hotPer + 0.5))) + (abilOn(qb, 'audibleWizard') ? ABIL_FX.audibleWizard.hot : 0);
 function hotList(r) {
   if (attr5(r, 'awr', 0) < A5.wr.smart) return HOT.routes;
   const key = shellKey(coverage), sm = back7.some(d => d.blitz) ? HOT.smart.blitz : key === 'c0' || key === 'c1' ? HOT.smart.man : HOT.smart.zone;
@@ -1406,7 +1521,7 @@ function hotRouteClick(pt) {
 }
 // --- stadium pulse (never shown, except a light shake when you're the road team): a loud home crowd hurts the road offense a little
 // (QB spray, drops) and lifts the home team (more on defense). Level 0..1 from the game situation, not the sound settings.
-const PULSE = { base: 0.3, tense: 0.45, red: 0.25, third: 0.12, err: 0.07, drop: 0.05, homeDef: 0.04, homeOff: 0.015, calm: 0.1, shake: 2.6, shakeFrom: 0.55 };
+const PULSE = { base: 0.3, tense: 0.45, red: 0.25, third: 0.12, err: 0.07, drop: 0.05, homeDef: 0.04, homeOff: 0.015, calm: 0.1, shake: 2.6, shakeFrom: 0.55, beat: 290 };   // (beat: ms a beat of the crowd's stomp-stomp-clap, crowdChant)
 function pulseLvl() {
   if (!MATCH.home || tut || state === 'sim' || game.over) return 0;
   const imp = Math.max(0, Math.min(1, (gameImpact() - CROWD_IMPACT.min) / (CROWD_IMPACT.max - CROWD_IMPACT.min)));
@@ -1446,7 +1561,7 @@ function iceKick(cpu) {
   msg = `${cpu ? 'They' : 'The defense'} called timeout to ice the kicker  -  click to lock the power`;
 }
 // the meters' opacity on a big kick, after the first click (poise keeps more of them on screen)
-const kickFade = () => !kick || !kick.nv || kick.phase === 'power' ? 1 : Math.max(0.08, 1 - Math.min(0.92, ICE.fade * kick.nv / kickPoise(rb) * 0.5) * (1 + Math.sin(clock * ICE.rate * Math.PI * 2 + 1.3 * Math.sin(clock * 2.1))));
+const kickFade = () => !kick || !kick.nv || kick.phase === 'power' || kAb(rb, 'iceProof') || kAb(rb, 'automatic') ? 1 : Math.max(0.08, 1 - Math.min(0.92, ICE.fade * kick.nv / kickPoise(rb) * 0.5) * (1 + Math.sin(clock * ICE.rate * Math.PI * 2 + 1.3 * Math.sin(clock * 2.1))));
 // --- QB awareness you can see: red arrows on the blitzers he reads before the snap, OPEN calls (and a raised arm) on open men after it
 function awrReset() {
   for (const d of back7) d.awrSeen = Math.random() < Math.max(0, Math.min(1, (qbAwr() - A5.qb.blitzFrom) / A5.qb.blitzSpan)) * (aiOff() ? 1 : diffX('info'));   // (difficulty: a share of the reads his awareness gives)
@@ -2020,31 +2135,6 @@ for (const g of Object.keys(ATTRS)) {
 // Signature abilities (Madden 27, week 5): never activated, just attribute points added on top of the ratings
 // (after the league averages, so they're a real edge). Points are for a SUPERSTAR; SIG_TIER scales them.
 // 'cut' = the change-of-direction attribute: agi for receivers, spd for backs / QBs / defenders.
-// what each ability is CALLED on screen (the keys above stay the internal ids that rules and boosts look up)
-const ABIL_SHOW = {
-  'Inside Deadeye': 'Needle Threader', 'Sideline Deadeye': 'Chalk Painter', 'Pocket Deadeye': 'Cool Under Fire', 'Dots': 'Laser Show',
-  'Gift-Wrapped': 'Bow On Top', 'Run & Gun': 'Scramble Drill', 'Fearless': 'Ice Veins', 'Pro Reads': 'Chess Master',
-  'Bazooka': 'Rocket Arm', 'Truzz': 'Iron Hands', 'Brick Wall': 'Fortress',
-  'Reach For It': 'Stretch Goal', 'Freight Train': 'Runaway Rig', 'Bruiser': 'Wrecking Crew', 'Arm Bar': 'Door Slammer',
-  'First One Free': 'Phantom Step', 'Juke Box': 'Dance Floor', 'Ankle Breaker': 'Shoe Snatcher', 'Phenom': 'Wunderkind',
-  'Backfield Mismatch': 'Mismatch Magnet',
-  'Acrobat': 'Circus Catch', 'Double Me': 'Bracket Buster', 'Short In Elite': 'Quick Slant Ace', 'Mid In Elite': 'Seam Surgeon',
-  'Short Out Elite': 'Sideline Sniper', 'Mid Out Elite': 'Boundary Boss', 'Deep Out Elite': 'Deep Corner King',
-  'Matchup Nightmare': 'Mismatch Menace', 'Slot-O-Matic': 'Slot Machine', 'Route Technician': 'Route Wizard',
-  'Runoff Elite': 'Vertical Threat', 'Quick Jump': 'Rocket Release', 'YAC \'Em Up': 'Yards Galore', 'Out My Way': 'Move Aside',
-  'Pass Protector': 'Pocket Guard', 'Secure Protector': 'Safe Harbor', 'Edge Protector': 'Edge Keeper', 'Tough Nut': 'Hard Shell',
-  'Run Protector': 'Lane Maker', 'Puller Elite': 'Trap Master', 'Screen Protector': 'Screen Shield', 'Post Up': 'Anchor Point',
-  'Linchpin': 'Keystone', 'All Day': 'Clean Sheet',
-  'Edge Threat': 'Corner Cutter', 'El Toro': 'Raging Bull', 'Unpredictable': 'Wild Card', 'Inside Stuff': 'Gap Plugger',
-  'Run Stopper': 'Brick Wall D', 'No Outsiders': 'Closed Door', 'Swim Club': 'Deep End', 'Max Effort': 'All Gas',
-  'B.O.G.O.': 'Two For One', 'Under Pressure': 'Heat Seeker', 'Fearmonger': 'Dread Bringer',
-  'Unstoppable Force': 'Avalanche', 'Relentless': 'Never Quit', 'Momentum Shift': 'Tide Turner', 'Dual Threat': 'Double Trouble',
-  'Enforcer': 'Sheriff', 'Reinforcement': 'Backup Plan', 'Demoralizer': 'Spirit Crusher', 'Bottleneck': 'Choke Point',
-  'Secure Tackler': 'Wrap Artist', 'Lurker': 'Shadow Stalker', 'Universal Coverage': 'Blanket Cover', 'Mid Zone KO': 'Middle Lock',
-  'Deep Out Zone KO': 'Deep Zone Lock', 'Short Route KO': 'Short Stop', 'Medium Route KO': 'Mid Stop', 'Deep Route KO': 'Long Stop',
-  'Shutdown': 'Lockdown Lane', 'On The Ball': 'Ball Hawk Eyes', 'Inside Shade': 'Inside Umbrella', 'Ironman': 'Iron Will',
-};
-const abilName = a => ABIL_SHOW[a] || a;
 const SIG_TIER = { X: 1.5, S: 1, F: 0.5 };   // X-FACTOR, SUPERSTAR, FIT (no official ability: his best-matching one)
 const SIG_BOOST = {
   // QB
@@ -2076,27 +2166,6 @@ const SIG_BOOST = {
   'Deep Out Zone KO': { ctc: 2 }, 'Short Route KO': { ctc: 2 }, 'Medium Route KO': { ctc: 2 }, 'Deep Route KO': { ctc: 2 },
   'Shutdown': { ctc: 1, spd: 1 }, 'On The Ball': { spd: 2 }, 'Inside Shade': { spd: 2 }, 'Ironman': { tck: 1, ctc: 1 },
 };
-// abilities a made-up player (rookie / extra free agent) can get, by group; giveAbility rolls one with the same boost as a real one
-const WR_ABILITIES = ['Acrobat', 'Double Me', 'Short In Elite', 'Mid In Elite', 'Short Out Elite', 'Mid Out Elite', 'Deep Out Elite', 'Matchup Nightmare', 'Slot-O-Matic', 'Route Technician', 'Runoff Elite', 'Quick Jump', 'YAC \'Em Up', 'Out My Way'];
-const DB_ABILITIES = ['Enforcer', 'Reinforcement', 'Demoralizer', 'Bottleneck', 'Secure Tackler', 'Lurker', 'Universal Coverage', 'Mid Zone KO', 'Deep Out Zone KO', 'Short Route KO', 'Medium Route KO', 'Deep Route KO', 'Shutdown', 'On The Ball', 'Inside Shade', 'Ironman'];
-const ABILITY_POOL = {
-  QB: ['Inside Deadeye', 'Sideline Deadeye', 'Pocket Deadeye', 'Dots', 'Gift-Wrapped', 'Run & Gun', 'Fearless', 'Pro Reads', 'Bazooka', 'Truzz', 'Brick Wall'],
-  RB: ['Reach For It', 'Freight Train', 'Bruiser', 'Arm Bar', 'First One Free', 'Juke Box', 'Ankle Breaker', 'Phenom', 'Backfield Mismatch'],
-  WR: WR_ABILITIES, TE: WR_ABILITIES, LB: DB_ABILITIES, CB: DB_ABILITIES, S: DB_ABILITIES,
-  OL: ['Pass Protector', 'Secure Protector', 'Edge Protector', 'Tough Nut', 'Run Protector', 'Puller Elite', 'Screen Protector', 'Post Up', 'Linchpin', 'All Day'],
-  DL: ['Edge Threat', 'El Toro', 'Unpredictable', 'Inside Stuff', 'Run Stopper', 'No Outsiders', 'Swim Club', 'Max Effort', 'B.O.G.O.', 'Under Pressure', 'Fearmonger', 'Unstoppable Force', 'Relentless', 'Momentum Shift', 'Dual Threat'],
-};
-const ABILITY_TIER_ODDS = { star: { X: 0.12, S: 0.33 }, good: { S: 0.12 } };   // 4+ stars / 3+ stars: chance of a star factor / ability (everyone else gets a fit)
-function giveAbility(p, fitOnly) {   // (fitOnly: rookies never get a star factor or an ability, only a fit)
-  const pool = ABILITY_POOL[p.group]; if (!pool) return;
-  const o = fitOnly ? {} : p.stars >= 4 ? ABILITY_TIER_ODDS.star : p.stars >= 3 ? ABILITY_TIER_ODDS.good : {}, r = Math.random();
-  const tier = r < (o.X || 0) ? 'X' : r < (o.X || 0) + (o.S || 0) ? 'S' : 'F', ability = pick(pool);
-  Object.assign(p, { ability, tier });
-  for (const [k, v] of Object.entries(SIG_BOOST[ability] || {})) {
-    const a = k !== 'cut' ? k : ATTRS[p.group].includes('agi') ? 'agi' : 'spd';
-    if (a in p.at) { p.at[a] += v * SIG_TIER[tier]; (p.boost ||= {})[a] = (p.boost[a] || 0) + v * SIG_TIER[tier]; }
-  }
-}
 // each team's abilities in ROSTERS order: 'Ability TIER'
 const SIGS = {
   ARI: 'Inside Deadeye F;Reach For It F;Acrobat F;Mid In Elite F;YAC \'Em Up X;Mid In Elite F;Pass Protector F;Post Up F;Edge Threat S;Quick Jump S;Inside Stuff F;Lurker F;Mid Zone KO F;On The Ball F;Reinforcement X;Enforcer F',
@@ -2141,6 +2210,442 @@ for (const [team, s] of Object.entries(SIGS)) s.split(';').forEach((e, i) => {
     if (a in p.at) { p.at[a] += v * SIG_TIER[tier]; (p.boost ||= {})[a] = (p.boost[a] || 0) + v * SIG_TIER[tier]; }
   }
 });
+// --- abilities (v0.36 overhaul) ----------------------------------------------------------------------------
+// ONE table for every Fit (F, small, always on), Ability (S, bigger, always on; `gate` = only in its situation) and
+// Star Factor (X, activated: `on` / `off` conditions counted by xfEvent, a big effect + XF_BOOST.amt on `attr` while lit).
+// Ids are camelCase (old saves hold the old Madden names: abilMigrate turns them into these). `up` = the id one tier
+// higher (string, or { group: id }); `pos` = groups that can roll it ('*' = any). Effect sizes live in ABIL_FX.
+// Conditions: { e: event, n: count, v: min value, sum (count adds v), c (in a row: a miss / any `r` event resets it), r: [reset events],
+// drive (reset at a change of possession), all (e is a list: each needs n) }. On = any condition met; off = any met.
+const ABIL_ANY = ['QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'CB', 'S', 'K'];
+const ab = (tier, pos, name, tip, o = {}) => ({ tier, pos: pos === '*' ? ABIL_ANY : pos.split(' '), name, tip, ...o });
+const ABIL_DEFS = {
+  // QB
+  quickRelease: ab('F', 'QB', 'Quick Release', 'Throw motion 10% faster.', { up: 'clutchGene' }),
+  tightSpiral: ab('F', 'QB', 'Tight Spiral', 'Bullets fly 5% faster.', { up: 'moonball' }),
+  pocketFeel: ab('F', 'QB', 'Pocket Feel', 'Pressure hurts his accuracy 10% less.', { up: 'iceVeins' }),
+  iceVeins: ab('S', 'QB', 'Ice Veins', 'Last 2 min of a half or OT: pressure never hurts his accuracy.', { gate: 'late2', up: 'untouchable' }),
+  offPlatform: ab('S', 'QB', 'Off-Platform', 'No accuracy lost throwing on the run or across his body.', { up: 'untouchable' }),
+  moonball: ab('S', 'QB', 'Moonball', 'Lobs of 40+ yd give his target a bigger catch radius.', { up: 'armCannon' }),
+  audibleWizard: ab('S', 'QB', 'Audible Wizard', '+2 audibles and +1 hot route a game.', { up: 'tunnelVision' }),
+  clutchGene: ab('S', 'QB', 'Clutch Gene', '4th down: his target catches 10% more, defenders break up 10% less.', { gate: 'fourth', up: 'laserMode' }),
+  laserMode: ab('X', 'QB', 'Laser Mode', 'Every throw is perfectly accurate.', { attr: 'acc', clutch: true,
+    on: [{ e: 'comp', n: 4, c: true, r: ['inc', 'int', 'sackT'] }], off: [{ e: 'int', n: 2 }, { e: 'inc', n: 2, c: true, r: ['comp'] }],
+    onT: '4 completions in a row', offT: '2 interceptions or 2 incompletions in a row' }),
+  untouchable: ab('X', 'QB', 'Untouchable', 'The first sack attempt every play becomes an escape.', { attr: 'awr',
+    on: [{ e: 'escape', n: 2 }, { e: 'scramble', n: 1, v: 15 }], off: [{ e: 'sackT', n: 3 }],
+    onT: '2 escaped sacks or a 15+ yd scramble', offT: '3 sacks' }),
+  tunnelVision: ab('X', 'QB', 'Tunnel Vision', 'His open receiver glows and defenders react a beat late.', { attr: 'awr',
+    on: [{ e: 'conv3', n: 2 }], off: [{ e: 'int', n: 1 }], onT: '2 third downs converted passing', offT: '1 interception' }),
+  armCannon: ab('X', 'QB', 'Arm Cannon', '+15 yd of throw range, and his bullets can\'t be tipped.', { attr: 'pow',
+    on: [{ e: 'comp', n: 1, v: 40 }], off: [{ e: 'deepInc', n: 3, c: true, r: ['comp'] }], onT: 'one 40+ yd completion', offT: '3 deep incompletions in a row' }),
+  // WR
+  cleanBreaks: ab('F', 'WR', 'Clean Breaks', 'Loses 10% less speed on his cuts.', { up: 'deepThreat' }),
+  softHands: ab('F', 'WR', 'Soft Hands', 'Catch odds +3%.', { up: 'mosser' }),
+  sidelineSense: ab('F', 'WR', 'Sideline Sense', 'Gets his feet in 10% more often.', { up: 'toeTapper' }),
+  mosser: ab('S', 'WR', 'Mosser', 'Contested catches +15% when he is taller or jumps higher.', { up: 'mossMode' }),
+  toeTapper: ab('S', 'WR', 'Toe Tapper', 'Always gets his feet in on sideline and end-line catches.', { up: 'viseGrip' }),
+  redZoneThreat: ab('S', 'WR', 'Red Zone Threat', 'Inside the 20: contested catches +15%.', { gate: 'rz20', up: 'mossMode' }),
+  deepThreat: ab('S', 'WR', 'Deep Threat', '+5% top speed once he is 20+ yd downfield.', { up: 'afterburner' }),
+  yacMonster: ab('S', 'WR', 'YAC Monster', 'First tackle after a catch: +20% to break it.', { up: 'stepAhead' }),
+  mossMode: ab('X', 'WR', 'Moss Mode', 'Wins every jump ball against a shorter defender.', { attr: 'ctc',
+    on: [{ e: 'contWin', n: 1 }], off: [{ e: 'contLoss', n: 2 }], onT: 'win a contested catch', offT: '2 contested catches lost' }),
+  viseGrip: ab('X', 'WR', 'Vise Grip', 'No drops, even when hit at the catch.', { attr: 'ctc', clutch: true,
+    on: [{ e: 'catch', n: 3, drive: true }], off: [{ e: 'drop', n: 2 }, { e: 'tgtInc', n: 3, c: true, r: ['catch'] }], onT: '3 catches in one drive', offT: '2 drops or 3 targets in a row without a catch' }),
+  stepAhead: ab('X', 'WR', 'Step Ahead', 'A free step of separation on every route break.', { attr: 'agi',
+    on: [{ e: 'catch', n: 2, v: 15 }], off: [{ e: 'tgtInc', n: 4, c: true, r: ['catch'] }], onT: '2 catches of 15+ yd', offT: '4 targets in a row without a catch' }),
+  afterburner: ab('X', 'WR', 'Afterburner', 'A speed burst for 3 s after every catch.', { attr: 'spd',
+    on: [{ e: 'recYds', n: 50, sum: true }], off: [{ e: 'catchStuff', n: 2 }], onT: '50 receiving yd', offT: 'tackled for no gain after a catch twice' }),
+  // TE
+  sealBlock: ab('F', 'TE', 'Seal Block', 'Run blocks 5% better.', { up: 'kickWall' }),
+  bigTarget: ab('F', 'TE', 'Big Target', 'Catch radius +5%.', { up: 'seamBuster' }),
+  chipAndGo: ab('F', 'TE', 'Chip and Go', 'No release delay after a chip block.', { up: 'securityBlanket' }),
+  securityBlanket: ab('S', 'TE', 'Security Blanket', '3rd down: always open on routes under 8 yd against zone.', { gate: 'third', up: 'goalLineMagnet' }),
+  seamBuster: ab('S', 'TE', 'Seam Buster', 'Contested catches over the middle +10%.', { up: 'matchupNightmare' }),
+  kickWall: ab('S', 'TE', 'Kick Wall', 'Better pass protection, and holds up FG / PAT protection.', { up: 'humanWall' }),
+  rumbler: ab('S', 'TE', 'Rumbler', 'Stiff arms +20% after a catch.', { up: 'goalLineMagnet' }),
+  matchupNightmare: ab('X', 'TE', 'Matchup Nightmare', 'Linebackers and safeties can\'t win a catch battle against him.', { attr: 'ctc',
+    on: [{ e: 'catchVsLbS', n: 3 }], off: [{ e: 'incVsLbS', n: 2 }], onT: '3 catches against an LB / S', offT: '2 incompletions with an LB / S on him' }),
+  goalLineMagnet: ab('X', 'TE', 'Goal Line Magnet', 'Inside the 10: open on the first read every play.', { attr: 'awr',
+    on: [{ e: 'rzCatch', n: 1 }], off: [{ e: 'rzFail', n: 1 }], onT: 'a red zone catch', offT: 'a red zone drive ends without points' }),
+  humanWall: ab('X', 'TE', 'Human Wall', 'His man never pressures the QB or makes the run tackle.', { attr: 'str',
+    on: [{ e: 'cleanBlock', n: 6, c: true, r: ['blockFail'] }], off: [{ e: 'blockFail', n: 1 }], onT: '6 clean blocks in a row', offT: 'allows a sack or a tackle for loss' }),
+  // RB
+  ballSecurity: ab('F', 'RB', 'Ball Security', 'Fumbles 10% less.', { up: 'bellCow' }),
+  vision: ab('F', 'RB', 'Vision', 'Sees holes earlier.', { up: 'patientEyes' }),
+  burst: ab('F', 'RB', 'Burst', 'Acceleration +5%.', { up: 'jukeBox' }),
+  bellCow: ab('S', 'RB', 'Bell Cow', 'Breaks more tackles with every carry in a drive.', { up: 'freightTrain' }),
+  jukeBox: ab('S', 'RB', 'Juke Box', 'Juke and spin cooldowns are halved.', { up: 'jukeMachine' }),
+  goalLineBack: ab('S', 'RB', 'Goal Line Back', 'Inside the 3: his truck always beats one defender.', { gate: 'in3', up: 'freightTrain' }),
+  closer: ab('S', 'RB', 'Closer', 'Q4 with the lead: no in-play fatigue and half the fumbles.', { gate: 'q4lead', up: 'secondWind' }),
+  hurdler: ab('S', 'RB', 'Hurdler', 'Always clears a low-diving defender.', { up: 'jukeMachine' }),
+  patientEyes: ab('S', 'RB', 'Patient Eyes', 'His holes stay open longer.', { up: 'unstoppable' }),
+  screenSpecialist: ab('S', 'RB', 'Screen Specialist', 'Blockers hold longer on screens and his routes.', { up: 'secondWind' }),
+  unstoppable: ab('X', 'RB', 'Unstoppable', 'The first tackle attempt every carry misses.', { attr: 'bal', clutch: true,
+    on: [{ e: 'brk', n: 3 }], off: [{ e: 'runShort', n: 3, c: true, r: ['runOk'] }], onT: '3 broken tackles', offT: '3 carries in a row of 2 yd or less' }),
+  jukeMachine: ab('X', 'RB', 'Juke Machine', 'No move cooldowns, and every move fools tacklers more.', { attr: 'spd',
+    on: [{ e: 'moveMiss', n: 2 }], off: [{ e: 'tflT', n: 2 }], onT: '2 jukes / spins that make a tackler miss', offT: '2 tackles for loss' }),
+  freightTrain: ab('X', 'RB', 'Freight Train', 'Wins every truck against DBs, and his stiff arms always work.', { attr: 'str',
+    on: [{ e: 'run', n: 1, v: 15 }], off: [{ e: 'fumT', n: 1 }, { e: 'tflT', n: 1 }], onT: 'a 15+ yd run', offT: 'a fumble or a tackle for loss' }),
+  secondWind: ab('X', 'RB', 'Second Wind', 'No stamina drain or in-play fatigue, and he can\'t fumble.', { attr: 'bal',
+    on: [{ e: 'rushYds', n: 40, sum: true }], off: [{ e: 'fumT', n: 1 }, { e: 'tflT', n: 2 }], onT: '40 rushing yd', offT: 'a fumble or 2 tackles for loss' }),
+  // OL
+  strongBase: ab('F', 'OL', 'Strong Base', 'Bull rushes against him work 10% less.', { up: 'anchor' }),
+  quickFeet: ab('F', 'OL', 'Quick Feet', 'Speed rushes against him work 10% less.', { up: 'brickWall' }),
+  roadGrader: ab('F', 'OL', 'Road Grader', 'Pancake odds +5%.', { up: 'pancakeMachine' }),
+  brickWall: ab('S', 'OL', 'Brick Wall', 'Never loses to a quick win.', { up: 'fortress' }),
+  anchor: ab('S', 'OL', 'Anchor', 'A bull rush never drives him back.', { up: 'fortress' }),
+  puller: ab('S', 'OL', 'Puller', 'Faster on pulls (pin & pull, counter, trap).', { up: 'leadWall' }),
+  captain: ab('S', 'OL', 'Captain', 'His line always picks up stunts and blitzes.', { up: 'fortress' }),
+  pancakeMachine: ab('S', 'OL', 'Pancake Machine', 'Double pancake odds on runs.', { up: 'bulldozer' }),
+  fortress: ab('X', 'OL', 'Fortress', 'His man never pressures the QB.', { attr: 'blk',
+    on: [{ e: 'noPress', n: 6, c: true, r: ['pressA'] }], off: [{ e: 'sackA', n: 1 }], onT: '6 plays in a row without allowing pressure', offT: 'allows a sack' }),
+  bulldozer: ab('X', 'OL', 'Bulldozer', 'Every run block he wins is a pancake.', { attr: 'rbk',
+    on: [{ e: 'pancake', n: 2 }], off: [{ e: 'tflA', n: 2 }], onT: '2 pancakes', offT: 'allows 2 tackles for loss' }),
+  leadWall: ab('X', 'OL', 'Lead Wall', 'Blocks two men on pulls and at the second level.', { attr: 'str',
+    on: [{ e: 'teamRush', n: 50, sum: true }], off: [{ e: 'manStop', n: 2 }], onT: '50 team rushing yd', offT: 'his man makes 2 run stops' }),
+  // DL
+  getOff: ab('F', 'DL', 'Get-Off', 'Faster off the ball at the snap.', { up: 'speedRusher' }),
+  longArms: ab('F', 'DL', 'Long Arms', 'Sheds blocks 5% sooner.', { up: 'runStuffer' }),
+  motor: ab('F', 'DL', 'Motor', 'Never fades late in the game.', { up: 'finisher' }),
+  speedRusher: ab('S', 'DL', 'Speed Rusher', 'His first rush move each drive always wins.', { up: 'unblockable' }),
+  stripSack: ab('S', 'DL', 'Strip Sack', 'Triple fumble odds on his sacks.', { up: 'ballPunch' }),
+  battedBall: ab('S', 'DL', 'Batted Ball', 'Tips more passes at the line, even more against short QBs.', { up: 'wallSwatter' }),
+  runStuffer: ab('S', 'DL', 'Run Stuffer', 'Sheds run blocks faster: more tackles for loss.', { up: 'doubleTeamMagnet' }),
+  finisher: ab('S', 'DL', 'Finisher', '3rd and long, and the last 2 min: a stronger rush.', { gate: 'finish', up: 'unblockable' }),
+  kickSwatter: ab('S', 'DL', 'Kick Swatter', 'Much better odds to block field goals and extra points.', { up: 'wallSwatter' }),
+  unblockable: ab('X', 'DL', 'Unblockable', 'Wins every rush move inside 1.5 s.', { attr: 'prs', clutch: true,
+    on: [{ e: 'sack', n: 1 }, { e: 'press', n: 3 }], off: [{ e: 'rushNone', n: 6, c: true, r: ['press', 'sack'] }], onT: 'a sack or 3 pressures', offT: '6 rushes in a row without pressure' }),
+  ballPunch: ab('X', 'DL', 'Ball Punch', 'Every hit on the QB or the carrier has big fumble odds.', { attr: 'str',
+    on: [{ e: 'forcedFum', n: 1 }, { e: 'qbHit', n: 2 }], off: [{ e: 'runAt10', n: 3 }], onT: 'force a fumble or 2 QB hits', offT: '3 runs of 10+ yd at him' }),
+  wallSwatter: ab('X', 'DL', 'Wall Swatter', 'Tips every pass thrown through his lane.', { attr: 'prs',
+    on: [{ e: 'bat', n: 1 }], off: [{ e: 'compOver', n: 5, c: true, r: ['bat'] }], onT: 'a batted pass', offT: '5 completions in a row over his lane' }),
+  doubleTeamMagnet: ab('X', 'DL', 'Double Team Magnet', 'Always draws a double team, freeing another rusher.', { attr: 'prs',
+    on: [{ e: 'tfl', n: 1 }, { e: 'press', n: 2 }], off: [{ e: 'rushAllowed', n: 100, sum: true }], onT: 'a tackle for loss or 2 pressures', offT: '100 rushing yd allowed' }),
+  // LB
+  downhill: ab('F', 'LB', 'Downhill', 'Fills run gaps faster.', { up: 'goalLineStand' }),
+  sureTackler: ab('F', 'LB', 'Sure Tackler', 'Misses 10% fewer arm tackles.', { up: 'thumper' }),
+  zoneEyes: ab('F', 'LB', 'Zone Eyes', 'Reacts faster to throws into his zone.', { up: 'greenDot' }),
+  thumper: ab('S', 'LB', 'Thumper', 'His hit sticks have big fumble odds and stun the carrier.', { up: 'boneCrusher' }),
+  greenDot: ab('S', 'LB', 'Green Dot', 'Reads run or pass a beat early.', { up: 'heatSeeker' }),
+  blitzGhost: ab('S', 'LB', 'Blitz Ghost', 'His blitz is never picked up on the first try.', { up: 'freeBlitz' }),
+  goalLineStand: ab('S', 'LB', 'Goal Line Stand', 'Inside the 5: run tackles in his reach always stick.', { gate: 'in5', up: 'boneCrusher' }),
+  sidelineToSideline: ab('S', 'LB', 'Sideline to Sideline', 'Better pursuit angles.', { up: 'heatSeeker' }),
+  heatSeeker: ab('X', 'LB', 'Heat Seeker', 'Reads run or pass at once and takes perfect pursuit angles.', { attr: 'cov',
+    on: [{ e: 'stop2', n: 2 }], off: [{ e: 'runAt10', n: 3 }], onT: '2 run stops of 2 yd or less', offT: '3 runs of 10+ yd' }),
+  boneCrusher: ab('X', 'LB', 'Bone Crusher', 'Every tackle is a hit stick with fumble odds.', { attr: 'tck',
+    on: [{ e: 'tkl', n: 5 }], off: [{ e: 'missTk', n: 3 }], onT: '5 tackles', offT: '3 missed tackles' }),
+  freeBlitz: ab('X', 'LB', 'Free Blitz', 'His blitzes are never picked up.', { attr: 'spd',
+    on: [{ e: 'sack', n: 1 }, { e: 'blitzHit', n: 1 }], off: [{ e: 'blitzComp', n: 3, c: true, r: ['blitzHit', 'sack'] }], onT: 'a sack, or a QB hit on a blitz', offT: '3 completions in a row against his blitz' }),
+  // CB
+  mirror: ab('F', 'CB', 'Mirror', 'Man coverage +5%.', { up: 'shutdown' }),
+  clickAndClose: ab('F', 'CB', 'Click and Close', 'Breaks on throws faster.', { up: 'ballhawk' }),
+  strongJam: ab('F', 'CB', 'Strong Jam', 'Wins 10% more press jams.', { up: 'jammer' }),
+  shutdown: ab('S', 'CB', 'Shutdown', 'In man coverage his receiver catches 10% less.', { up: 'lockdown' }),
+  ballhawk: ab('S', 'CB', 'Ballhawk', 'More breakups become pick tries, and he can pick it one-handed.', { up: 'magnetHands' }),
+  jammer: ab('S', 'CB', 'Jammer', 'His press jams always delay the release.', { up: 'lockdown' }),
+  antiMoss: ab('S', 'CB', 'Anti-Moss', 'No height penalty on jump balls.', { up: 'magnetHands' }),
+  pickSix: ab('S', 'CB', 'Pick Six', 'A speed boost on interception returns.', { up: 'houseCall' }),
+  lockdown: ab('X', 'CB', 'Lockdown', 'His receiver can\'t catch: every throw at him is a breakup / pick roll.', { attr: 'cov', clutch: true,
+    on: [{ e: 'covInc', n: 3, c: true, r: ['covCatch'] }], off: [{ e: 'tdA', n: 1 }, { e: 'allowed', n: 60, sum: true }], onT: '3 targets in a row without a catch allowed', offT: 'a TD or 60 yd allowed' }),
+  magnetHands: ab('X', 'CB', 'Magnet Hands', 'Every ball he touches becomes a pick try.', { attr: 'ctc',
+    on: [{ e: 'int', n: 1 }, { e: 'pbu', n: 2 }], off: [{ e: 'covCatch', n: 2, v: 20 }], onT: 'an interception or 2 breakups', offT: '2 catches of 20+ yd allowed' }),
+  houseCall: ab('X', 'CB', 'House Call', 'Every return gets a speed burst and breaks the first tackle.', { attr: 'spd',
+    on: [{ e: 'int', n: 1 }, { e: 'pbu', n: 2 }], off: [{ e: 'retStuff', n: 1 }], onT: 'an interception or 2 breakups', offT: 'tackled on a return for no gain' }),
+  // S
+  range: ab('F', 'S', 'Range', 'Covers more ground on deep balls.', { up: 'centerFielder' }),
+  alleyFill: ab('F', 'S', 'Alley Fill', 'Run support speed +5%.', { up: 'enforcer' }),
+  ballEyes: ab('F', 'S', 'Ball Eyes', 'Reads the QB\'s eyes faster.', { up: 'robber' }),
+  robber: ab('S', 'S', 'Robber', 'In zone, jumps short routes over the middle.', { up: 'jumpTheRoute' }),
+  centerFielder: ab('S', 'S', 'Center Fielder', 'A bigger defend radius on deep balls.', { up: 'eraser' }),
+  enforcer: ab('S', 'S', 'Enforcer', 'Catches in his area: +20% to be hit loose.', { up: 'bigHitter' }),
+  eraser: ab('X', 'S', 'Eraser', 'Every deep ball into his half is defended.', { attr: 'cov',
+    on: [{ e: 'deepDef', n: 3 }], off: [{ e: 'covCatch', n: 1, v: 30 }], onT: '3 deep incompletions in his zone', offT: 'a 30+ yd catch over him' }),
+  bigHitter: ab('X', 'S', 'Big Hitter', 'Every catch in his zone is hit loose at high odds.', { attr: 'tck',
+    on: [{ e: 'bigHit', n: 1 }, { e: 'forcedFum', n: 1 }], off: [{ e: 'missTk', n: 3 }], onT: 'a big hit or a forced fumble', offT: '3 missed tackles' }),
+  jumpTheRoute: ab('X', 'S', 'Jump the Route', 'Jumps every short route he reads.', { attr: 'cov',
+    on: [{ e: 'int', n: 1 }, { e: 'pbu', n: 1 }], off: [{ e: 'dblMove', n: 2 }], onT: 'an interception or a breakup', offT: 'beaten by 2 double moves' }),
+  // K / P / returners
+  smoothSwing: ab('F', 'K', 'Smooth Swing', 'Kick meter 5% slower.', { up: 'bigLeg' }),
+  hangTime: ab('F', 'K', 'Hang Time', 'His punts hang longer.', { up: 'coffinCorner' }),
+  windRead: ab('F', 'K', 'Wind Read', 'Wind moves his kicks 10% less.', { up: 'weatherman' }),
+  bigLeg: ab('S', 'K', 'Big Leg', '+8 yd of field goal range and no long-kick fade.', { up: 'moonShot' }),
+  iceProof: ab('S', 'K', 'Ice Proof', 'Icing does nothing; a steady meter in the last 2 min and OT.', { up: 'automatic' }),
+  weatherman: ab('S', 'K', 'Weatherman', 'Rain and wind affect his kicks half as much.', { up: 'automatic' }),
+  coffinCorner: ab('S', 'K', 'Coffin Corner', 'Better odds to down his punts inside the 10.', { up: 'pinPoint' }),
+  returnMan: ab('S', 'WR RB CB S', 'Return Man', 'Returning a kick: the first cover man always misses.', { up: { WR: 'afterburner', RB: 'unstoppable', CB: 'houseCall', S: 'jumpTheRoute' } }),
+  automatic: ab('X', 'K', 'Automatic', 'A perfect meter: wind and icing are ignored.', { attr: 'kac', clutch: true,
+    on: [{ e: 'fgMade', n: 2 }, { e: 'fgMade', n: 1, v: 45 }], off: [{ e: 'fgMiss', n: 2 }], onT: '2 made field goals or one from 45+', offT: '2 misses' }),
+  moonShot: ab('X', 'K', 'Moon Shot', '+10 yd of range and every kickoff is a touchback.', { attr: 'kpw',
+    on: [{ e: 'fgMade', n: 1, v: 45 }, { e: 'fgMade', n: 2, v: 40 }], off: [{ e: 'kickBlocked', n: 1 }], onT: 'a 45+ yd field goal or two from 40+', offT: 'a blocked kick' }),
+  pinPoint: ab('X', 'K', 'Pin Point', 'His punts land on the yard line he aims at.', { attr: 'poi',
+    on: [{ e: 'puntIn10', n: 1 }], off: [{ e: 'puntTB', n: 1 }, { e: 'puntRet', n: 1, v: 15 }], onT: 'a punt downed inside the 10', offT: 'a touchback or a 15+ yd return' }),
+  // any position (Abilities)
+  homeCooking: ab('S', '*', 'Home Cooking', 'Plays better the louder the home crowd gets.', { gate: 'home', any: true }),
+  revengeGame: ab('S', '*', 'Revenge Game', 'Plays better against a team he used to play for.', { gate: 'revenge', any: true }),
+  primeTime: ab('S', '*', 'Prime Time', 'Playoffs and the Paper Bowl: plays much better (his Star Factor starts on).', { gate: 'playoff', any: true }),
+  rainMan: ab('S', '*', 'Rain Man', 'Plays better in rain and snow.', { gate: 'wet', any: true }),
+  chemistry: ab('S', 'QB WR TE', 'Chemistry', 'A QB and a receiver who both have it: catch bonus on throws between them.', { any: true }),
+};
+const ABIL_ATTR_NAME = { acc: 'ACCURACY', awr: 'AWARENESS', pow: 'THROW POWER', ctc: 'CATCHING', agi: 'ROUTE RUNNING', spd: 'SPEED', str: 'STRENGTH', bal: 'BALANCE',
+                         blk: 'PASS BLOCK', rbk: 'RUN BLOCK', prs: 'PASS RUSH', tck: 'TACKLING', cov: 'COVERAGE', kac: 'ACCURACY', kpw: 'KICK POWER', poi: 'POISE' };
+// how an old (Madden-named) ability turns into the new one: group -> old id -> [F, S, X] (a group's '*' row = anything not listed)
+const ABIL_MIGRATE = {
+  QB: { '*': ['quickRelease', 'clutchGene', 'laserMode'], 'Sideline Deadeye': ['tightSpiral', 'offPlatform', 'laserMode'], 'Pocket Deadeye': ['pocketFeel', 'iceVeins', 'laserMode'],
+        'Dots': ['tightSpiral', 'moonball', 'laserMode'], 'Gift-Wrapped': ['tightSpiral', 'moonball', 'laserMode'], 'Run & Gun': ['quickRelease', 'offPlatform', 'untouchable'],
+        'Fearless': ['pocketFeel', 'iceVeins', 'untouchable'], 'Brick Wall': ['pocketFeel', 'iceVeins', 'untouchable'], 'Truzz': ['pocketFeel', 'iceVeins', 'untouchable'],
+        'Pro Reads': ['quickRelease', 'audibleWizard', 'tunnelVision'], 'Bazooka': ['tightSpiral', 'moonball', 'armCannon'] },
+  RB: { '*': ['ballSecurity', 'goalLineBack', 'freightTrain'], 'Freight Train': ['ballSecurity', 'bellCow', 'freightTrain'], 'Bruiser': ['ballSecurity', 'bellCow', 'freightTrain'],
+        'Arm Bar': ['ballSecurity', 'bellCow', 'freightTrain'], 'First One Free': ['burst', 'jukeBox', 'unstoppable'], 'Juke Box': ['burst', 'jukeBox', 'jukeMachine'],
+        'Ankle Breaker': ['vision', 'hurdler', 'jukeMachine'], 'Phenom': ['vision', 'patientEyes', 'secondWind'], 'Backfield Mismatch': ['vision', 'screenSpecialist', 'secondWind'] },
+  WR: { '*': ['softHands', 'mosser', 'mossMode'], 'Short In Elite': ['cleanBreaks', 'yacMonster', 'stepAhead'], 'Slot-O-Matic': ['cleanBreaks', 'yacMonster', 'stepAhead'],
+        'Ankle Breaker': ['cleanBreaks', 'yacMonster', 'stepAhead'], 'Mid In Elite': ['cleanBreaks', 'redZoneThreat', 'viseGrip'], 'Short Out Elite': ['sidelineSense', 'toeTapper', 'stepAhead'],
+        'Mid Out Elite': ['sidelineSense', 'toeTapper', 'viseGrip'], 'Deep Out Elite': ['sidelineSense', 'deepThreat', 'afterburner'], 'Route Technician': ['cleanBreaks', 'deepThreat', 'stepAhead'],
+        'Runoff Elite': ['cleanBreaks', 'deepThreat', 'afterburner'], 'Quick Jump': ['cleanBreaks', 'deepThreat', 'afterburner'], "YAC 'Em Up": ['softHands', 'yacMonster', 'afterburner'],
+        'Out My Way': ['softHands', 'yacMonster', 'viseGrip'] },
+  TE: { '*': ['bigTarget', 'seamBuster', 'matchupNightmare'], 'Out My Way': ['sealBlock', 'kickWall', 'humanWall'], "YAC 'Em Up": ['bigTarget', 'rumbler', 'goalLineMagnet'],
+        'Arm Bar': ['bigTarget', 'rumbler', 'goalLineMagnet'], 'Short In Elite': ['chipAndGo', 'securityBlanket', 'goalLineMagnet'], 'Short Out Elite': ['chipAndGo', 'securityBlanket', 'goalLineMagnet'],
+        'Slot-O-Matic': ['chipAndGo', 'securityBlanket', 'goalLineMagnet'] },
+  OL: { '*': ['strongBase', 'brickWall', 'fortress'], 'Edge Protector': ['quickFeet', 'brickWall', 'fortress'], 'Secure Protector': ['strongBase', 'anchor', 'fortress'],
+        'Tough Nut': ['strongBase', 'anchor', 'fortress'], 'Post Up': ['strongBase', 'anchor', 'bulldozer'], 'Run Protector': ['roadGrader', 'pancakeMachine', 'bulldozer'],
+        'Puller Elite': ['roadGrader', 'puller', 'leadWall'], 'Screen Protector': ['quickFeet', 'puller', 'leadWall'], 'Linchpin': ['quickFeet', 'captain', 'fortress'],
+        'All Day': ['quickFeet', 'captain', 'fortress'] },
+  DL: { '*': ['getOff', 'speedRusher', 'unblockable'], 'El Toro': ['longArms', 'finisher', 'doubleTeamMagnet'], 'Relentless': ['longArms', 'finisher', 'doubleTeamMagnet'],
+        'Inside Stuff': ['longArms', 'runStuffer', 'doubleTeamMagnet'], 'Run Stopper': ['longArms', 'runStuffer', 'doubleTeamMagnet'], 'No Outsiders': ['longArms', 'runStuffer', 'doubleTeamMagnet'],
+        'Secure Tackler': ['longArms', 'runStuffer', 'doubleTeamMagnet'], 'Max Effort': ['motor', 'finisher', 'unblockable'], 'B.O.G.O.': ['longArms', 'stripSack', 'ballPunch'],
+        'Fearmonger': ['longArms', 'stripSack', 'ballPunch'], 'Dual Threat': ['longArms', 'stripSack', 'ballPunch'], 'Under Pressure': ['getOff', 'battedBall', 'wallSwatter'],
+        'Momentum Shift': ['motor', 'kickSwatter', 'doubleTeamMagnet'] },
+  LB: { '*': ['zoneEyes', 'greenDot', 'heatSeeker'], 'Enforcer': ['sureTackler', 'thumper', 'boneCrusher'], 'Reinforcement': ['sureTackler', 'thumper', 'boneCrusher'],
+        'Secure Tackler': ['sureTackler', 'thumper', 'boneCrusher'], 'Out My Way': ['sureTackler', 'thumper', 'boneCrusher'], 'Bottleneck': ['downhill', 'goalLineStand', 'boneCrusher'],
+        'Demoralizer': ['downhill', 'blitzGhost', 'freeBlitz'], 'Short Route KO': ['zoneEyes', 'sidelineToSideline', 'heatSeeker'], 'Medium Route KO': ['zoneEyes', 'sidelineToSideline', 'heatSeeker'],
+        'Deep Route KO': ['zoneEyes', 'sidelineToSideline', 'heatSeeker'], 'Ironman': ['zoneEyes', 'sidelineToSideline', 'heatSeeker'] },
+  CB: { '*': ['strongJam', 'antiMoss', 'houseCall'], 'Shutdown': ['mirror', 'shutdown', 'lockdown'], 'Universal Coverage': ['mirror', 'shutdown', 'lockdown'],
+        'Short Route KO': ['mirror', 'shutdown', 'lockdown'], 'Medium Route KO': ['mirror', 'shutdown', 'lockdown'], 'Deep Route KO': ['mirror', 'shutdown', 'lockdown'],
+        'Bottleneck': ['strongJam', 'jammer', 'lockdown'], 'Lurker': ['clickAndClose', 'ballhawk', 'magnetHands'], 'On The Ball': ['clickAndClose', 'ballhawk', 'magnetHands'],
+        'Mid Zone KO': ['clickAndClose', 'ballhawk', 'magnetHands'], 'Deep Out Zone KO': ['clickAndClose', 'ballhawk', 'magnetHands'], 'Inside Shade': ['clickAndClose', 'ballhawk', 'magnetHands'],
+        'Ironman': ['clickAndClose', 'pickSix', 'houseCall'] },
+  S: { '*': ['alleyFill', 'enforcer', 'bigHitter'], 'Deep Route KO': ['range', 'centerFielder', 'eraser'], 'Deep Out Zone KO': ['range', 'centerFielder', 'eraser'],
+       'Universal Coverage': ['range', 'centerFielder', 'eraser'], 'Shutdown': ['range', 'centerFielder', 'eraser'], 'Lurker': ['ballEyes', 'robber', 'jumpTheRoute'],
+       'Mid Zone KO': ['ballEyes', 'robber', 'jumpTheRoute'], 'Short Route KO': ['ballEyes', 'robber', 'jumpTheRoute'], 'Medium Route KO': ['ballEyes', 'robber', 'jumpTheRoute'],
+       'On The Ball': ['ballEyes', 'robber', 'jumpTheRoute'], 'Inside Shade': ['ballEyes', 'robber', 'jumpTheRoute'] },
+  K: { '*': ['smoothSwing', 'bigLeg', 'automatic'] },
+};
+const ABIL_ROLL = { any: 0.15, k: { S: 0.2 } };   // new players: chance an Ability roll is an any-position one; kickers' Ability odds (by name hash: stock kickers get a stable one)
+const TIER_IX = { F: 0, S: 1, X: 2 };
+const abilHash = s => { let h = 2166136261; for (const c of String(s)) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return (h >>> 0) / 4294967296; };
+const abilDef = id => ABIL_DEFS[id] || null;
+const abilName = id => (ABIL_DEFS[id] || {}).name || id;
+function abilPool(group, tier, any) {   // every id of this tier a man of this group can roll (any = the any-position ones only / none)
+  return Object.keys(ABIL_DEFS).filter(k => { const d = ABIL_DEFS[k]; return d.tier === tier && d.pos.includes(group) && (any == null || !!d.any === any); });
+}
+function abilUp(id, group) {   // the id one tier up (the same line), or the group's first star factor
+  const d = ABIL_DEFS[id], u = d && d.up;
+  const to = typeof u === 'string' ? u : u && u[group];
+  return to && ABIL_DEFS[to] ? to : (ABIL_MIGRATE[group] || {})['*'] ? ABIL_MIGRATE[group]['*'][TIER_IX[d ? d.tier : 'F'] + 1] || null : null;
+}
+// an old save's / the stock data's Madden-named ability -> the new id of the same tier (players keep their tier); kickers without one get a stable roll
+function abilMigrate(p) {
+  if (!p || !p.group) return;
+  if (p.group === 'K' && !p.ability) { const r = abilHash(p.name || 'K'), t = r < ABIL_ROLL.k.S && (p.stars || 0) >= 3.5 ? 'S' : 'F', pool = abilPool('K', t, false); Object.assign(p, { ability: pool[Math.floor(abilHash((p.name || '') + 'k') * pool.length)], tier: t }); return; }
+  if (!p.ability || ABIL_DEFS[p.ability]) { if (p.ability && ABIL_DEFS[p.ability].tier !== p.tier) p.tier = ABIL_DEFS[p.ability].tier; return; }
+  const M = ABIL_MIGRATE[p.group]; if (!M) { delete p.ability; delete p.tier; return; }
+  const row = M[p.ability] || M['*'], t = TIER_IX[p.tier] != null ? p.tier : 'F';
+  p.ability = row[TIER_IX[t]]; p.tier = t;
+}
+for (const ps of Object.values(ROSTER)) for (const p of ps) abilMigrate(p);
+// a new player's ability (rookie / made-up free agent): fitOnly = rookies only ever get a Fit. No rating points (the ability's effect is the edge).
+const ABILITY_TIER_ODDS = { star: { X: 0.12, S: 0.33 }, good: { S: 0.12 } };   // 4+ stars / 3+ stars: chance of a star factor / ability (everyone else gets a fit)
+function giveAbility(p, fitOnly) {
+  if (!ABIL_ANY.includes(p.group)) return;
+  const o = fitOnly ? {} : p.stars >= 4 ? ABILITY_TIER_ODDS.star : p.stars >= 3 ? ABILITY_TIER_ODDS.good : {}, r = Math.random();
+  const tier = r < (o.X || 0) ? 'X' : r < (o.X || 0) + (o.S || 0) ? 'S' : 'F';
+  const anyP = tier === 'S' ? abilPool(p.group, 'S', true) : [], own = abilPool(p.group, tier, false);
+  const ability = anyP.length && (Math.random() < ABIL_ROLL.any || !own.length) ? pick(anyP) : pick(own);
+  Object.assign(p, { ability, tier });
+}
+// what an ability says on screen (player card ?, tips page, shop, red star): Fit / Ability = its effect + when; Star Factor = effect, ON, OFF, the boost
+const TIER_NAME = { F: 'FIT', S: 'ABILITY', X: 'STAR FACTOR' };
+const TIER_SAYS = { F: 'A small boost, always on.', S: 'A bigger boost, always on (some only in their situation).', X: 'Turns on in games when he gets hot, turns off when he cools; a big effect plus a rating boost while it is on.' };
+function abilTip(id) {
+  const d = ABIL_DEFS[id]; if (!d) return '';
+  if (d.tier !== 'X') return `${d.name}: ${d.tip}`;
+  return `${d.name}: ${d.tip} ON: ${d.onT}. OFF: ${d.offT}. +${XF_BOOST.amt} ${ABIL_ATTR_NAME[d.attr] || d.attr} while active.`;
+}
+function abilAfter(p, to) {   // the id he would have after moving up to tier `to` (shop / red star previews)
+  let id = p.ability, g = 3;
+  while (id && ABIL_DEFS[id] && TIER_IX[ABIL_DEFS[id].tier] < TIER_IX[to] && g--) id = abilUp(id, p.group);
+  return id;
+}
+// effect sizes (x = multiplier, + = added). Fits are small, Abilities bigger; Star Factor effects are under xf*.
+const ABIL_FX = {
+  quickRelease: 0.9, tightSpiral: 1.05, pocketFeel: 0.9, offPlatform: 0, moonball: { yd: 40, r: 1.25 }, audibleWizard: { aud: 2, hot: 1 },
+  clutchGene: { add: 0.1, pbu: 0.9 }, chemistry: 0.05,
+  cleanBreaks: 0.9, softHands: 0.03, sidelineSense: 0.1, mosser: 0.15, redZone: 0.15, deepThreat: { yd: 20, spd: 1.05 }, yacMonster: 0.2,
+  sealBlock: 1.05, leadWall: 1.6, dtm: { self: 1.5, free: 0.7 }, bigTarget: 1.05, seamBuster: { k: 0.1, w: 7 }, blanket: { yd: 8 }, kickWall: { pro: 1.15, kpro: 0.8 }, rumbler: 1.2,
+  ballSecurity: 0.9, burst: 1.05, bellCow: { per: 0.03, max: 0.18 }, jukeBox: 0.5, closer: 0.5, patientEyes: 1.35, screen: 1.35, vision: 1.4,
+  strongBase: 0.9, quickFeet: 0.9, roadGrader: 1.05, pancakeMachine: 2, puller: 1.1,
+  speedRush: 0.9, getOff: { t: 0.6, spd: 1.2 }, longArms: 0.95, runStuffer: 0.75, stripSack: 3, battedBall: { k: 1.6, short: 1.5 }, finisher: 0.8, kickSwatter: 1.8,
+  ghost: 0.12, downhill: 1.08, sureTackler: 0.9, zoneEyes: 0.8, thumper: { fum: 2.5, stun: 0.6 }, greenDot: 0.6, glStand: 0.97, sideline: 0.6,
+  mirror: 1.05, clickClose: 0.8, strongJam: 1.1, strongJamRel: 0.35, shutdown: 0.1, ballhawk: 1.6, ballhawkConv: 0.2, pickSix: 1.1,
+  range: 1.08, alleyFill: 1.05, ballEyes: 0.85, robber: 1.3, centerFielder: 1.25, enforcer: 1.2,
+  smoothSwing: 0.95, hangTime: 1.12, windRead: 0.9, bigLeg: 8, weatherman: 0.5, coffin: 0.6, returnMan: true,
+  home: 0.5, revenge: 0.4, prime: 0.7, rain: 0.5,   // rating steps (rz) for the any-position Abilities (home x the crowd's pulse)
+};
+const ABIL_GATE_WET = 0.2;   // Rain Man: weather intensity (wxP) that counts as wet
+const ABIL_ST = { drive: 0 };   // per-game ability state that isn't on a player: drive = possession count (wearRest)
+// Ability situations (gate): p = the live player
+const abLead = p => (p && p.team === 'def' ? -1 : 1) * ((game.blue || 0) - (game.red || 0));   // (the offense on the field is BLUE)
+const ABIL_GATE = {
+  late2: () => (game.quarter === 2 || game.quarter >= 4) && game.secs <= lateS(120),
+  fourth: () => down === 4, third: () => down === 3,
+  rz20: () => FIELD - los <= 20 * YL, in3: () => FIELD - los <= 3 * YL, in5: () => FIELD - los <= 5 * YL, in10: () => FIELD - los <= 10 * YL,
+  q4lead: p => game.quarter >= 4 && abLead(p) > 0,
+  finish: () => (down === 3 && lineToGain - los >= 7 * YL) || ABIL_GATE.late2(),
+  home: p => !!MATCH.home && (p.team === 'off') === (MATCH.home === 'you'),
+  revenge: p => { const s = p.src, opp = p.team === 'off' ? MATCH.opp : MATCH.you; return !!(s && s.exTeams && s.exTeams.includes(opp)); },
+  playoff: () => !!MATCH.playoff, wet: () => wxP() > ABIL_GATE_WET,
+};
+// does live player p have ability `id` working right now? (Fit / Ability: always, inside its gate; Star Factor: only while lit)
+function abilOn(p, id) {
+  const s = p && p.src;
+  if (!s || s.ability !== id || tut || xf1v1()) return false;
+  const d = ABIL_DEFS[id];
+  if (!d) return false;
+  if (d.tier === 'X') return !!(s.xf && s.xf.on && !s.xf.hidden);
+  return !d.gate || ABIL_GATE[d.gate](p);
+}
+const abilAny = (p, ...ids) => ids.some(id => abilOn(p, id));
+const ABIL_EX_MAX = 6;   // teams a player remembers having left (Revenge Game)
+function abilMoved(p, team) { if (!p || !team) return; const e = p.exTeams || (p.exTeams = []); if (!e.includes(team)) e.push(team); if (e.length > ABIL_EX_MAX) e.shift(); }   // (saved on the roster entry: from v0.36 on)
+const abHt = p => (p && (p.ht || (p.src && p.src.ht))) || 0;
+// the any-position Abilities: rating steps added to everything (inside rz)
+function abilRz(p) {
+  const s = p && p.src, d = s && ABIL_DEFS[s.ability];
+  if (!d || !d.any || tut) return 0;
+  const id = s.ability, F = ABIL_FX;
+  if (id === 'homeCooking') return abilOn(p, id) ? F.home * pulseLvl() : 0;
+  return abilOn(p, id) ? (id === 'revengeGame' ? F.revenge : id === 'primeTime' ? F.prime : id === 'rainMan' ? F.rain : 0) : 0;
+}
+// catch modifiers for receiver r with defender `cover` (null = open) at the catch: pbu = x breakup odds, cont = x contested catch odds,
+// add = + catch odds, sure = catch floor, noPbu = no breakup roll, lock = the cover man's Lockdown (breakup / pick roll instead)
+function abilCatchFx(r, cover, onHim, kind) {
+  const F = ABIL_FX, o = { pbu: 1, cont: 1, add: 0, sure: 0, noPbu: false, lock: false }, q = thrower();
+  const jump = kind === 'jump' || kind === 'jumpOne';
+  if (abilOn(r, 'softHands')) o.add += F.softHands;
+  if (abilOn(q, 'clutchGene')) { o.add += F.clutchGene.add; o.pbu *= F.clutchGene.pbu; }
+  if (abilOn(q, 'chemistry') && abilOn(r, 'chemistry')) o.add += F.chemistry;
+  if (abilOn(r, 'securityBlanket') && cover && !cover.man && (r.x - los) / YL < F.blanket.yd) o.noPbu = true;
+  if (abilOn(r, 'viseGrip')) o.sure = 0.995;
+  if (abilOn(r, 'goalLineMagnet') && ABIL_GATE.in10()) o.noPbu = true;   // (Goal Line Magnet: open every play inside the 10)
+  if (!cover) return o;
+  const taller = abHt(r) > abHt(cover), anti = abilOn(cover, 'antiMoss');
+  if (onHim) {
+    if (abilOn(r, 'mosser') && (taller || jump) && !anti) o.cont *= 1 + F.mosser;
+    if (abilOn(r, 'redZoneThreat')) o.cont *= 1 + F.redZone;
+    if (abilOn(r, 'seamBuster') && Math.abs(r.y - MID) < F.seamBuster.w * YD) o.cont *= 1 + F.seamBuster.k;
+  }
+  if (abilOn(cover, 'shutdown') && cover.man === r) o.add -= F.shutdown;
+  if (abilOn(r, 'mossMode') && jump && taller && !anti) { o.noPbu = true; o.sure = Math.max(o.sure, 0.99); }
+  if (abilOn(r, 'matchupNightmare') && (cover.role === 'LB' || cover.role === 'S')) { o.noPbu = true; o.sure = Math.max(o.sure, 0.97); }
+  if (abilOn(cover, 'lockdown') && (cover.man === r || onHim) && !o.noPbu) o.lock = true;
+  return o;
+}
+const moveCoolK = p => xfOn(p, 'jukeMachine') ? 0 : abilOn(p, 'jukeBox') ? ABIL_FX.jukeBox : 1;   // juke / spin cooldowns
+const abReturning = c => !!(kickoffPlay || (typeof puntRet !== 'undefined' && puntRet) || state === 'picked');
+// a tackle attempt's break odds after abilities (c = carrier, d = tackler, o = { juked, spun, hit, first }); 1 = sure miss, 0 = sure tackle
+function abilMiss(c, d, miss, o) {
+  const F = ABIL_FX, move = o.juked || o.spun, s = c.src;
+  if (abilOn(d, 'sureTackler') && !o.hit) miss *= F.sureTackler;
+  if (move && xfOn(c, 'jukeMachine')) miss = Math.min(0.95, miss * XFX.jukeMachine);
+  if (o.first && c === playCatcher && abilOn(c, 'yacMonster')) miss += F.yacMonster;
+  if (abilOn(c, 'bellCow') && s && s.bcD === ABIL_ST.drive) miss += Math.min(F.bellCow.max, F.bellCow.per * Math.max(0, (s.bcN || 0) - 1));
+  miss = Math.min(0.95, miss);
+  if (abilOn(d, 'goalLineStand') && isRunPlay && !abReturning(c)) miss = Math.min(miss, 1 - F.glStand);
+  if (o.first && abReturning(c) && (abilOn(c, 'returnMan') || xfOn(c, 'houseCall'))) miss = 1;
+  if (o.first && c.truck && abilOn(c, 'goalLineBack')) miss = 1;
+  if (c.truck && xfOn(c, 'freightTrain') && (d.role === 'CB' || d.role === 'S')) miss = 1;
+  if (o.first && xfOn(c, 'unstoppable') && !abReturning(c)) miss = 1;
+  return miss;
+}
+// top speed x from abilities (inside effTop)
+function abilSpdK(p) {
+  if (!p || !p.src || tut) return 1;
+  const F = ABIL_FX; let k = 1;
+  if (p.team === 'off' && !p.hasBall && abilOn(p, 'deepThreat') && p.x - los >= F.deepThreat.yd * YL) k *= F.deepThreat.spd;
+  if (p.hasBall && xfOn(p, 'afterburner') && clock - (p.catchAt ?? -9) < XFX.afterburner.t) k *= XFX.afterburner.spd;
+  if (p.hasBall && abReturning(p)) { if (xfOn(p, 'houseCall')) k *= XFX.houseCall.spd; if (state === 'picked' && abilOn(p, 'pickSix')) k *= F.pickSix; }
+  if (p.team === 'def' && state === 'run' && isRunPlay) { if (abilOn(p, 'alleyFill')) k *= F.alleyFill; if (abilOn(p, 'downhill')) k *= F.downhill; }
+  if (p.pulling && abilOn(p, 'puller')) k *= F.puller;
+  if (p.team === 'def' && clock < F.getOff.t && abilOn(p, 'getOff')) k *= F.getOff.spd;
+  if (p.team === 'def' && state === 'flight' && abilOn(p, 'range') && (ball.tx || 0) - los >= F.deepThreat.yd * YL) k *= F.range;
+  return k;
+}
+// x a defender's reaction time to a throw (defendBall)
+function abilReactK(d) {
+  const F = ABIL_FX, air = ((ball.tx || 0) - los) / YL; let k = 1;
+  if (abilOn(d, 'clickAndClose')) k *= F.clickClose;
+  if (abilOn(d, 'zoneEyes') && !d.man) k *= F.zoneEyes;
+  if (abilOn(d, 'ballEyes')) k *= F.ballEyes;
+  if (abilOn(d, 'robber') && !d.man && air < XFX.jumpRoute.yd && Math.abs((ball.ty || MID) - MID) < F.seamBuster.w * YD) k /= F.robber;
+  if (xfOn(d, 'jumpTheRoute') && air < XFX.jumpRoute.yd) k *= XFX.jumpRoute.react;
+  if (xfOn(thrower(), 'tunnelVision')) k *= XFX.tunnel.react;
+  return k;
+}
+const abilPanK = b => (abilOn(b, 'roadGrader') ? ABIL_FX.roadGrader : 1) * (isRunPlay && abilOn(b, 'pancakeMachine') ? ABIL_FX.pancakeMachine : 1);   // pancake odds x
+const abilBatK = d => ball.bullet && xfOn(thrower(), 'armCannon') ? 0 : xfOn(d, 'wallSwatter') ? 99 : abilOn(d, 'battedBall') ? ABIL_FX.battedBall.k * (abHt(qb) < abHt(d) ? ABIL_FX.battedBall.short : 1) : 1;   // tip odds x
+// pass pro extras, once the line knows its men (end of rateTrenches)
+function abilProt() {
+  const F = ABIL_FX, tes = recs.filter(r => r.teBlock || r.pos === 'TE');
+  for (const o of ols) { const d = o.assign; if (d && dl.includes(d) && abilOn(o, 'anchor')) d.push = 0; }
+  for (const t of tes) { const d = t.assign; if (!d || d.shedAt >= 50) continue; if (xfOn(t, 'humanWall')) d.shedAt = 99; else if (abilOn(t, 'kickWall')) d.shedAt *= F.kickWall.pro; }
+  const dtm = dl.find(d => xfOn(d, 'doubleTeamMagnet'));
+  if (dtm) { if (dtm.shedAt < 50) dtm.shedAt *= F.dtm.self; const o = dl.filter(d => d !== dtm && d.shedAt < 50).sort((a, b) => a.shedAt - b.shedAt)[0]; if (o) o.shedAt *= F.dtm.free; }
+  if (rb && rb.route && abilOn(rb, 'screenSpecialist')) for (const d of dl) if (d.shedAt < 50) d.shedAt *= F.screen;
+}
+// run blocks: one pass at the handoff (shed times are absolute play-clock seconds)
+function abilRunBlocks() {
+  const F = ABIL_FX, blk = [...ols, ...recs];
+  const held = (d, k) => { if (d.shedAt != null && d.shedAt < 50) d.shedAt = clock + Math.max(0, d.shedAt - clock) * k; };
+  for (const d of dl) {
+    const on = blk.filter(b => b.assign === d);
+    let k = abilOn(d, 'runStuffer') ? F.runStuffer : 1;
+    if (on.some(b => abilOn(b, 'sealBlock'))) k *= F.sealBlock;
+    if (on.some(b => xfOn(b, 'humanWall'))) { d.shedAt = 99; continue; }
+    held(d, k);
+  }
+  for (const o of ols.filter(o => xfOn(o, 'leadWall'))) [...dl, ...back7].filter(d => d.shedAt != null).sort((a, b) => dist(a, o) - dist(b, o)).slice(0, 2).forEach(d => held(d, F.leadWall));
+}
+// kicker abilities: K = a roster entry, a live player (src) or kickP's wrapper
+function kAb(K, id) {
+  const s = K && (K.src || K);
+  if (!s || s.ability !== id || tut || xf1v1()) return false;
+  const d = ABIL_DEFS[id];
+  return !!d && (d.tier !== 'X' || !!(s.xf && s.xf.on && !s.xf.hidden));
+}
+const kRangeYd = K => (kAb(K, 'bigLeg') ? ABIL_FX.bigLeg : 0) + (kAb(K, 'moonShot') ? XFX.moonShot : 0);
+function kickWxLoss(K) {   // odds lost to the weather on a kick
+  if (typeof wxLive !== 'function' || !wxLive() || kAb(K, 'automatic')) return 0;
+  const wk = kAb(K, 'weatherman') ? ABIL_FX.weatherman : kAb(K, 'windRead') ? ABIL_FX.windRead : 1, rk = kAb(K, 'weatherman') ? ABIL_FX.weatherman : 1;
+  return KICK_WX.wind * Math.min(1, (WXI.mph || 0) / 30) * wk + KICK_WX.wet * wxP() * rk;
+}
+function kPuntSpot(k, lx) {   // the punt's landing spot (world x; the ball goes toward 0): Pin Point = right on his aim, Coffin Corner = pulled toward the goal line
+  if (xfOn(k.kicker, 'pinPoint') && k.aimX != null) return k.aimX;
+  if (abilOn(k.kicker, 'coffinCorner') && lx > 0 && lx < 20 * YL) return Math.max(2 * YL, lx * ABIL_FX.coffin);
+  return lx;
+}
+// fumbles: carrier abilities x tackler abilities (abilFumBase: Ball Punch / Bone Crusher make every tackle a fumble chance)
+const abilFumBase = (d, base) => d && (xfOn(d, 'ballPunch') || xfOn(d, 'boneCrusher')) ? Math.max(base, FUMBLE_HIT) : base;
+function abilFumK(c, d, big) {
+  if (xfOn(c, 'secondWind')) return 0;
+  let k = (abilOn(c, 'ballSecurity') ? ABIL_FX.ballSecurity : 1) * (abilOn(c, 'closer') ? ABIL_FX.closer : 1);
+  if (d) k *= (big && abilOn(d, 'thumper') ? ABIL_FX.thumper.fum : 1) * (xfOn(d, 'ballPunch') ? XFX.ballPunch : 1) * (xfOn(d, 'boneCrusher') ? XFX.boneCrusher : 1);
+  return k;
+}
+// a tackle was just broken (star factor counts)
+function abilBroke(c, d, move) {
+  if (c.team === 'off' || abReturning(c)) { xfEvent(c.src, 'brk'); if (move) xfEvent(c.src, 'moveMiss'); }
+  xfEvent(d.src, 'missTk');
+}
 // --- stamina (hidden) and X-Factors -------------------------------------------
 // Wear lives per player for the whole game: on the star's ROSTER entry, or per slot for a bench player.
 const WEAR_MAP = new Map();
@@ -2160,7 +2665,7 @@ function wearPlay() {   // a scrimmage play just ended: everyone on the field ti
     else if (run && ols.includes(p)) k *= WEAR.run.ol * (1 + runHeat() * RUN_STREAK.wear);
     else if (!run && dl.includes(p)) k *= WEAR.rush;
     if (p === qb) k *= Math.max(WEAR.qbMin, WEAR.qb - WEAR.qbSpd * rz(p, 'spd'));
-    if (!run && xfOn(p, 'Relentless')) k = 0;   // (pass-rush moves cost him nothing)
+    if ((!run && abilOn(p, 'motor')) || xfOn(p, 'secondWind')) k = 0;   // (Motor: rushing never wears him down; Second Wind: no stamina drain)
     WEAR_MAP.set(p.wk, Math.min(1, (WEAR_MAP.get(p.wk) || 0) + k));
   }
   // a player who sat this play (subbed out) catches his breath
@@ -2172,78 +2677,104 @@ function wearPlay() {   // a scrimmage play just ended: everyone on the field ti
   for (const side of ['off', 'def']) if (here.some(s => OFF_GROUPS.includes(s.group) === (side === 'off'))) sn[side]++;
   for (const s of here) sn.by[s.name] = (sn.by[s.name] || 0) + 1;
 }
-function wearRest() { for (const [k, v] of WEAR_MAP) WEAR_MAP.set(k, v * (1 - Math.min(RECOVERY.restMax, WEAR.rest * recoveryK(k)))); }   // possession changes: a breather (the trainer and morale speed it up)
+function wearRest() { ABIL_ST.drive++; for (const [k, v] of WEAR_MAP) WEAR_MAP.set(k, v * (1 - Math.min(RECOVERY.restMax, WEAR.rest * recoveryK(k)))); }   // possession changes: a breather (the trainer and morale speed it up)
 
-// X-Factors (Madden 27 triggers, house rules): off at the start of a game; TURN ON by doing `on` (each condition has its
-// own counter: e = event, n = how many, v = min size, c = in a row), TURN OFF when an `off` count is reached
-// (allowed = offensive yards gained against him). Superstar / Fit abilities are simply always on. State: star.xf.
-const XF_AIR5 = { e: 'comp', n: 3, v: 5, c: true };
-const XF_WR_OFF = { drop: 1, tgtInc: 2, idle: 3 };   // (a receiver's zone ends on 1 drop, 2 incompletions thrown to him, or 3 plays without a target)
-const XF_RULES = {
-  'Bazooka': { on: [{ e: 'comp', n: 1, v: 30 }], off: { sackT: 2 } },
-  'Dots': { on: [XF_AIR5], off: { sackT: 2 } }, 'Pro Reads': { on: [XF_AIR5], off: { sackT: 2 } },
-  'Run & Gun': { on: [XF_AIR5], off: { sackT: 2 } }, 'Brick Wall': { on: [XF_AIR5], off: { inc: 3 } },
-  'Truzz': { on: [{ e: 'run', n: 5, v: 1 }], off: { tflT: 1 } },
-  'First One Free': { on: [{ e: 'run', n: 3, v: 10 }], off: { tflT: 1 } },
-  'Freight Train': { on: [{ e: 'run', n: 3, v: 10 }], off: { tflT: 1 } },
-  'Phenom': { on: [{ e: 'run', n: 3, v: 10 }], off: { tflT: 1 } },
-  'Double Me': { on: [{ e: 'catchYds', n: 2, v: 20 }], off: XF_WR_OFF },   // (receivers / tight ends count plain yards, not air yards)
-  "YAC 'Em Up": { on: [{ e: 'catchYds', n: 4, v: 20 }], off: XF_WR_OFF },
-  'Ankle Breaker': { on: [{ e: 'catchYds', n: 3, v: 20 }], off: XF_WR_OFF },
-  'Unstoppable Force': { on: [{ e: 'sack', n: 2 }], off: { allowed: 25 } },
-  'Fearmonger': { on: [{ e: 'sack', n: 2 }], off: { allowed: 50 } },
-  'Relentless': { on: [{ e: 'sack', n: 1 }, { e: 'tfl', n: 1 }], off: { allowed: 50 } },
-  'Dual Threat': { on: [{ e: 'sack', n: 2 }, { e: 'forced', n: 2 }], off: { allowed: 50 } },
-  'Momentum Shift': { on: [{ e: 'sack', n: 2 }], off: {}, once: true },   // lasts 1 play: knocks every opponent out of the zone
-  'Reinforcement': { on: [{ e: 'forced', n: 2 }, { e: 'tfl', n: 2 }], off: { allowed: 25 } },
-  'Universal Coverage': { on: [{ e: 'forced', n: 2 }], off: { allowed: 75 } },
-  'Shutdown': { on: [{ e: 'forced', n: 2 }], off: { allowed: 75 } },
-  'Bottleneck': { on: [{ e: 'forced', n: 2 }], off: { allowed: 75 } },
+// Star Factors (code name X-Factors; tier 'X'): off at the start of a game; TURN ON when any `on` condition of the player's
+// ABIL_DEFS entry is met, TURN OFF (knockout) when any `off` condition is. Fits / Abilities are always on (abilOn).
+// State on the star's roster entry: star.xf = { on, c (on counters), o (off counters), ko (knockouts this game), dr (drive), cl (clutch used) }.
+const XF_RULES = Object.fromEntries(Object.entries(ABIL_DEFS).filter(([, d]) => d.tier === 'X').map(([k, d]) => [k, { on: d.on || [], off: d.off || [], clutch: !!d.clutch }]));
+const XF_FLOW = {
+  again: 1.5, againMax: 2,     // after a knockout he needs again x the trigger to come back (compounds per knockout, at most againMax times)
+  half: 0.5,                   // halftime: a lit star drops to this share of his trigger (half-charged) instead of staying on
+  drain: 0.25,                 // a turnover: every star on that team loses this share of his progress
+  clutchS: 120, clutchPts: 8,  // clutch stars (def `clutch`) turn on by themselves in the last clutchS NFL seconds of Q4 (or OT) within clutchPts
+  prime: 0.5,                  // playoffs / Paper Bowl: every star starts the game with this share of his trigger (Prime Time holders get their Ability)
+  simCont: 0.3, simBrk: 0.5, simPress: 0.2, simPbu: 0.5, simEsc: 0.05, simHit: 0.08, simBat: 0.06, simQbHit: 0.3, simTeLose: 0.12,   // simulated plays: chance a catch / incompletion was contested, a run of 8+ broke a tackle, a pass rush got pressure, an incompletion was a breakup, a dropback had an escaped sack, a catch took a big hit, a passed ball was batted, a pressure hit the QB, a tight end lost his block
 };
 const XF_TEAM = new Map();
 for (const [t, ps] of Object.entries(ROSTER)) for (const s of ps) XF_TEAM.set(s, t);
 // (whose star this is now: the live rosters first, since players move by trade, free agency and the draft after the map was built)
 const xfTeam = s => [MATCH.you, MATCH.opp].find(t => (ROSTER[t] || []).includes(s)) || XF_TEAM.get(s);
 let XF_NOTES = [];
-const xfs = s => s.xf || (s.xf = { on: false, c: [], o: {}, life: 0 });
-function xfNewGame() { for (const ps of Object.values(ROSTER)) for (const s of ps) s.xf = { on: false, c: [], o: {}, life: 0 }; XF_NOTES = []; XF_SHOW = []; WEAR_MAP.clear(); }
-function xfOff(s) { const x = xfs(s); if (!x.on) return; x.on = false; x.c = []; x.o = {}; x.life = 0; XF_NOTES.push({ s, on: false }); }
-function xfTick() { for (const ps of Object.values(ROSTER)) for (const s of ps) if (s.xf && s.xf.on && s.xf.life && --s.xf.life <= 0) xfOff(s); }
-// something happened to star `s` (e: comp / catchAir / catchYds / run / sack / tfl / forced / allowed / sackT / inc / tflT / drop / tgtInc / idle)
-const xf1v1 = () => !!(oo && oo.cfg);   // 1v1 practice: no star factors
-function xfEvent(s, e, v = 0) {
-  if (xf1v1()) return;
-  const R = s && s.tier === 'X' && XF_RULES[s.ability];
-  if (!R) return;
-  const x = xfs(s);
-  if (!x.on) {
-    R.on.forEach((c, i) => {
-      if (x.on) return;
-      const ease = diffX('xfEase');   // (difficulty: easier = fewer / shorter feats to get in the zone, both teams; 1 = the house rules)
-      if (e === c.e) { if (v >= (c.v || 0) / ease) x.c[i] = (x.c[i] || 0) + 1; else if (c.c) x.c[i] = 0; }
-      else if (c.c && (e === 'inc' || e === 'sackT')) x.c[i] = 0;
-      if ((x.c[i] || 0) < Math.max(1, Math.round(c.n / ease))) return;
-      if (diffX('xfMax') < 1 && (ROSTER[xfTeam(s)] || []).filter(q => q.xf && q.xf.on).length >= Math.max(1, Math.round(XF_CAP_BASE * diffX('xfMax')))) return;   // (difficulty: fewer at once per team)
-      x.on = true; x.c = []; x.o = {}; x.life = R.once ? 1 : 0;
-      if (state !== 'sim' && ols && ols.length) celebNote('xf', allPlayers().find(p => p.src === s));   // (he celebrates it at the next whistle: see celebrations)
-      XF_NOTES.push({ s, on: true });
-      if (xfTeam(s) === meK() && !xfSimming) goalEvent('xf');   // (lit in a simulated drive: no goal credit)
-      if (R.once) for (const q of ROSTER[xfTeam(s) === MATCH.you ? MATCH.opp : MATCH.you] || []) xfOff(q);
-    });
-    return;
-  }
-  if (e === 'catchAir' || e === 'catchYds' || e === 'tgtInc' || e === 'drop') x.o.idle = 0;   // (targeted)
-  const lim = R.off[e];
-  if (lim == null) return;
-  x.o[e] = (x.o[e] || 0) + (e === 'allowed' ? v : 1);
-  if (x.o[e] >= Math.max(1, Math.round(lim * diffX('xfDur')))) xfOff(s);   // (difficulty: how long the zone lasts, both teams)
+const xfFresh = () => ({ on: false, c: [], o: [], ko: 0, dr: -1, cl: false });
+const xfs = s => { if (!s.xf || !Array.isArray(s.xf.o)) s.xf = xfFresh(); return s.xf; };
+const xfNeedK = x => (x.ko ? XF_FLOW.again ** Math.min(x.ko, XF_FLOW.againMax) : 1) / diffX('xfEase');   // (difficulty: easier = shorter feats, both teams)
+const xfNeed = (c, k) => Math.max(1, Math.round(c.n * k));
+function xfCharge(s, share) {   // set a star's on counters to `share` of what each needs (halftime, playoffs)
+  const R = XF_RULES[s.ability], x = xfs(s); if (!R) return;
+  R.on.forEach((c, i) => { x.c[i] = c.all ? Object.fromEntries(c.e.map(e => [e, xfNeed(c, xfNeedK(x)) * share])) : xfNeed(c, xfNeedK(x)) * share; });
 }
-// in the zone (X-Factor on) / always on (Superstar, Fit): is this live player running `name` right now?
-const xfOn = (p, name) => { const s = p && p.src; return !tut && !xf1v1() && !!s && s.ability === name && (s.tier !== 'X' || !!(s.xf && s.xf.on && !s.xf.hidden)); };   // (a star factor earned this play only starts working next play: hidden until the snap)
-const xfLit = p => { const s = p && p.src; return !tut && !xf1v1() && !!s && s.tier === 'X' && !!(s.xf && s.xf.on && !s.xf.hidden); };   // X-Factor working (not the play it was earned)
-const xfGlowLive = p => { const s = p && p.src; return !tut && !xf1v1() && !!s && s.tier === 'X' && !!(s.xf && s.xf.on && !s.xf.hidden); };
-const xfGlow = p => rec && rec.replaying &&p && p.xfg != null ? p.xfg : xfGlowLive(p);   // (a replay shows the glow he had on that play, recorded per frame)
-const xfCount = (key, off) => (ROSTER[key] || []).filter(s => s.tier === 'X' && s.xf && s.xf.on && OFF_GROUPS.includes(s.group) === off && !isOut(s)).length;
+function xfNewGame() {
+  for (const ps of Object.values(ROSTER)) for (const s of ps) { s.xf = xfFresh(); if (MATCH.playoff && s.tier === 'X') xfCharge(s, XF_FLOW.prime); }
+  XF_NOTES = []; XF_SHOW = []; WEAR_MAP.clear(); ABIL_ST.half = false;
+}
+function xfOff(s, ko) { const x = xfs(s); if (!x.on) return; x.on = false; x.c = []; x.o = []; if (ko) x.ko++; XF_NOTES.push({ s, on: false }); }
+function xfTick() {}   // (kept: one-play star factors are gone)
+const xf1v1 = () => !!(oo && oo.cfg);   // 1v1 practice: no star factors
+// count event e (value v) into conditions `conds` with counters `ctr`; true when one is met (k = x every count needed)
+function xfCount(conds, ctr, e, v, k) {
+  let met = false;
+  conds.forEach((c, i) => {
+    if (c.r && c.r.includes(e)) ctr[i] = 0;
+    if (c.all) {
+      if (!c.e.includes(e)) return;
+      const o = ctr[i] && typeof ctr[i] === 'object' ? ctr[i] : (ctr[i] = {});
+      o[e] = (o[e] || 0) + 1;
+      if (c.e.every(q => (o[q] || 0) >= xfNeed(c, k))) met = true;
+      return;
+    }
+    if (e !== c.e) return;
+    if (v >= (c.v || 0)) ctr[i] = (ctr[i] || 0) + (c.sum ? v : 1); else if (c.c) ctr[i] = 0;
+    if ((ctr[i] || 0) >= xfNeed(c, k)) met = true;
+  });
+  return met;
+}
+function xfTurnOn(s, x) {
+  if (diffX('xfMax') < 1 && (ROSTER[xfTeam(s)] || []).filter(q => q.xf && q.xf.on).length >= Math.max(1, Math.round(XF_CAP_BASE * diffX('xfMax')))) return;   // (difficulty: fewer at once per team)
+  x.on = true; x.c = []; x.o = [];
+  if (state !== 'sim' && ols && ols.length) celebNote('xf', allPlayers().find(p => p.src === s));   // (he celebrates it at the next whistle: see celebrations)
+  XF_NOTES.push({ s, on: true });
+  if (xfTeam(s) === meK() && !xfSimming) goalEvent('xf');   // (lit in a simulated drive: no goal credit)
+}
+// something happened to star `s` (see the event names in ABIL_DEFS' on / off conditions)
+function xfEvent(s, e, v = 0) {
+  if (!s || s.tier !== 'X' || xf1v1() || tut) return;
+  const R = XF_RULES[s.ability]; if (!R) return;
+  const x = xfs(s);
+  if (x.dr !== ABIL_ST.drive) { x.dr = ABIL_ST.drive; R.on.forEach((c, i) => { if (c.drive) x.c[i] = 0; }); R.off.forEach((c, i) => { if (c.drive) x.o[i] = 0; }); }
+  if (!x.on) { if (xfCount(R.on, x.c, e, v, xfNeedK(x))) xfTurnOn(s, x); return; }
+  if (xfCount(R.off, x.o, e, v, diffX('xfDur'))) xfOff(s, true);   // (difficulty: how long it lasts, both teams)
+}
+// 0..1: how close an unlit star is to turning on (the meter); 1 = lit
+function xfProg(s) {
+  const R = s && s.tier === 'X' && XF_RULES[s.ability]; if (!R) return 0;
+  const x = xfs(s); if (x.on) return 1;
+  const k = xfNeedK(x);
+  return Math.min(1, Math.max(0, ...R.on.map((c, i) => { const n = xfNeed(c, k), v = x.c[i]; return c.all ? (v ? c.e.reduce((t, e) => t + Math.min(1, (v[e] || 0) / n), 0) / c.e.length : 0) : (v || 0) / n; })));
+}
+// halftime: lit stars drop to half-charged
+function xfHalftime() { if (ABIL_ST.half) return; ABIL_ST.half = true; for (const t of [MATCH.you, MATCH.opp]) for (const s of ROSTER[t] || []) if (s.xf && s.xf.on) { xfOff(s, false); xfCharge(s, XF_FLOW.half); } }
+// a turnover by team key k: its stars lose some progress
+function xfTurnover(k) {
+  for (const s of ROSTER[k] || []) { const x = s.xf; if (!x || x.on || !Array.isArray(x.c)) continue;
+    x.c = x.c.map(v => v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([e, n]) => [e, n * (1 - XF_FLOW.drain)])) : (v || 0) * (1 - XF_FLOW.drain)); }
+}
+// before each snap: clutch stars light themselves late in a close game
+function xfClutch() {
+  if (tut || xf1v1() || !game || game.over || game.quarter < 4 || game.secs > lateS(XF_FLOW.clutchS) || Math.abs((game.blue || 0) - (game.red || 0)) > XF_FLOW.clutchPts) return;
+  for (const t of [MATCH.you, MATCH.opp]) for (const s of ROSTER[t] || []) {
+    const R = s.tier === 'X' && XF_RULES[s.ability], x = R && xfs(s);
+    if (!R || !R.clutch || x.on || x.cl || isOut(s)) continue;
+    x.cl = true; xfTurnOn(s, x);
+  }
+}
+// working right now (not the play it was earned)
+const xfLit = p => { const s = p && p.src; return !tut && !xf1v1() && !!s && s.tier === 'X' && !!(s.xf && s.xf.on && !s.xf.hidden); };
+const xfAttrK = (p, a) => xfLit(p) && (ABIL_DEFS[p.src.ability] || {}).attr === a ? XF_BOOST.amt / RATING.spread : 0;   // (rating steps the lit Star Factor adds to attribute a)
+const xfGlowLive = p => xfLit(p);
+const xfOn = (p, id) => abilOn(p, id);   // (kept name: a Star Factor earned this play only starts working next play: hidden until the snap)
+const xfGlow = p => rec && rec.replaying && p && p.xfg != null ? p.xfg : xfGlowLive(p);   // (a replay shows the glow he had on that play, recorded per frame)
+const xfLitCount = (key, off) => (ROSTER[key] || []).filter(s => s.tier === 'X' && s.xf && s.xf.on && OFF_GROUPS.includes(s.group) === off && !isOut(s)).length;
 const xfName = s => s.short || s.name || ('#' + s.num);
 // hand out the on / off notices: popups over whoever is on the field (live), or text for the sim's play-by-play
 function xfFlush(text) {
@@ -2255,73 +2786,161 @@ function xfFlush(text) {
 }
 let XF_SHOW = [];
 function xfAnnounce() {
+  xfClutch(); xfFlush();
   const notes = XF_SHOW; XF_SHOW = [];
   for (const n of notes) {
     xfs(n.s).hidden = false;
     const p = allPlayers().find(q => q.src === n.s);
-    if (p) popup(p, n.on ? 'STAR FACTOR!' : 'STAR LOST', n.on ? '#ffd23f' : '#ff6b6b');
+    if (n.on) xfShowOn(n.s, p); else if (p) popup(p, 'STAR LOST', '#ff6b6b');
   }
 }
+// activation feedback: a STAR FACTOR banner, a crowd pop and the star's own doodle over him (the glow is xfGlow)
+const XF_ICON = { laserMode: 'lock', untouchable: 'butter', tunnelVision: 'hands', armCannon: 'impact', mossMode: 'glove', viseGrip: 'glove', stepAhead: 'ankle',
+  afterburner: 'steam', matchupNightmare: 'glove', goalLineMagnet: 'hands', humanWall: 'shield', unstoppable: 'bull', jukeMachine: 'tornado', freightTrain: 'bull',
+  secondWind: 'wings', fortress: 'shield', bulldozer: 'pancake', leadWall: 'shield', unblockable: 'chain', ballPunch: 'punch', wallSwatter: 'finger',
+  doubleTeamMagnet: 'chain', heatSeeker: 'steam', boneCrusher: 'bone', freeBlitz: 'wings', lockdown: 'lock', magnetHands: 'hands', houseCall: 'wings',
+  eraser: 'finger', bigHitter: 'impact', jumpTheRoute: 'hands', automatic: 'lock', moonShot: 'impact', pinPoint: 'lock' };
+const XF_SHOW_FX = { col: '#ffd23f', edge: '#8a5a00', crowd: 0.55 };   // banner colors (the gold star) and the crowd pop
+function xfShowOn(s, p) {
+  const mine = xfTeam(s) === meK();
+  showBanner('STAR FACTOR', XF_SHOW_FX.col, XF_SHOW_FX.edge, `${xfName(s)}  -  ${abilName(s.ability)}`);
+  crowdCheer(XF_SHOW_FX.crowd, mine ? 'you' : 'opp', false, true);
+  if (p) popup(p, 'STAR FACTOR!', XF_SHOW_FX.col, mine ? 'you' : 'opp', true, true, { k: XF_ICON[s.ability] || 'wings', c: XF_SHOW_FX.col });
+}
 let pickThrown = false;   // this play's pass was intercepted
-let xfHit = null, xfAir = 0, xfDrop = false;   // this play: the sacker / tackler, air yards of the catch, a drop
+let xfHit = null, xfAir = 0, xfDrop = false, xfCont = 0, xfPicker = null;   // this play: the sacker / tackler, air yards of the catch, a drop, defenders on the catch, the interceptor
+const xfS = p => p && p.src;
 // a live scrimmage play just ended
 function xfLive(text, next, kind) {
-  xfTick();
-  const S = p => p && p.src, yds = Math.round(((kind === 'td' ? FIELD : next) - los) / YL);
+  const E = (p, e, v) => xfEvent(xfS(p), e, v), yds = Math.round(((kind === 'td' ? FIELD : next) - los) / YL);
   const near = p => p ? [...back7, ...dl].filter(d => dist(d, p) <= 6 * YD).sort((a, b) => dist(a, p) - dist(b, p))[0] : null;
   const sacked = /SACKED/.test(text), inc = !sacked && /incomplete/i.test(text);
-  const pass = !isRunPlay && runner !== qb;
-  // yards gained are charged to the tackler / nearest man and to every defender in on the play (within 8 yd of the ball)
-  const allowed = d => {
-    if (yds <= 0) return;
-    const who = new Set([...back7, ...dl].filter(o => Math.hypot(o.x - ((kind === 'td' ? FIELD : next)), 0) <= 8 * YL || (runner && dist(o, runner) <= 8 * YD)));
-    if (d) who.add(d);
-    for (const o of who) xfEvent(S(o), 'allowed', yds);
-  };
-  if (sacked) { xfEvent(S(qb), 'sackT'); xfEvent(S(qb), 'tflT'); xfEvent(S(xfHit), 'sack'); }   // (a sack is also a loss on a carry for him)
-  else if (pass && tgt && (inc || pickThrown || (kind === 'turnover' && !playCatcher))) {
-    xfEvent(S(qb), 'inc');
-    if (xfDrop) { xfEvent(S(tgt), 'drop'); } else { xfEvent(S(tgt), 'tgtInc'); xfEvent(S(near(tgt)), 'forced'); }
-  } else if (pass && playCatcher && kind !== 'turnover') {
-    xfEvent(S(qb), 'comp', xfAir);
-    xfEvent(S(playCatcher), 'catchAir', xfAir); xfEvent(S(playCatcher), 'catchYds', yds);
-    allowed(xfHit && xfHit.team === 'def' ? xfHit : near(playCatcher));
-  } else if (runner && kind !== 'turnover') {
-    xfEvent(S(runner), 'run', yds);
-    if (yds < 0) { xfEvent(S(runner), 'tflT'); xfEvent(S(xfHit), 'tfl'); } else allowed(xfHit);
+  const pass = !isRunPlay && runner !== qb, rz = FIELD - los <= 20 * YL, depth = thrownPlay ? thrownPlay.depth || 0 : 0;
+  const caught = pass && playCatcher && kind !== 'turnover' && !inc;
+  const cov = tgt ? back7.find(d => d.man === tgt) || near(tgt) : null;
+  const offKey = xfTeam(xfS(qb)) || MATCH.you;
+  // the pass rush and protection
+  if (pass || sacked) {
+    const rushers = [...dl, ...back7.filter(d => d.blitz)];
+    for (const r of rushers) {
+      const got = r === xfHit && sacked, pr = got || (r.shed && dist(r, qb) < 4 * YD) || (playPass && playPass.hit === r);
+      if (got) E(r, 'sack'); else if (pr) E(r, 'press'); else E(r, 'rushNone');
+      if (got || (playPass && playPass.hit === r)) E(r, 'qbHit');
+      if (r.blitz && playPass && playPass.hit === r) E(r, 'blitzHit');
+      if (r.blitz && caught) E(r, 'blitzComp');
+      for (const b of [...ols, ...recs].filter(b => b.assign === r)) { if (got) { E(b, 'sackA'); E(b, 'blockFail'); } if (pr) E(b, 'pressA'); else { E(b, 'noPress'); E(b, 'cleanBlock'); } }
+    }
   }
-  if (pass) for (const r of [...recs, ...(rb.route ? [rb] : [])]) if (r !== tgt && r !== playCatcher) xfEvent(S(r), 'idle');
+  if (sacked) { E(qb, 'sackT'); E(qb, 'tflT'); }
+  else if (pass && tgt && (inc || pickThrown || (kind === 'turnover' && !playCatcher))) {
+    E(qb, pickThrown ? 'int' : 'inc'); if (depth >= XFX.eraser.yd) E(qb, 'deepInc');
+    if (pickThrown && xfPicker) E(xfPicker, 'int');
+    if (xfDrop) E(tgt, 'drop'); else E(tgt, 'tgtInc');
+    if (xfCont) E(tgt, 'contLoss');
+    if (cov) { E(cov, 'covInc'); if (cov.role === 'LB' || cov.role === 'S') E(tgt, 'incVsLbS'); }
+    if (depth >= XFX.eraser.yd) for (const s of back7.filter(d => d.role === 'S' && Math.sign(d.y - MID || 1) === Math.sign(ball.ty - MID || 1))) E(s, 'deepDef');
+  } else if (caught) {
+    E(qb, 'comp', xfAir);
+    E(playCatcher, 'catch', yds); E(playCatcher, 'recYds', yds);
+    if (yds - xfAir <= 0) E(playCatcher, 'catchStuff');
+    if (xfCont) E(playCatcher, 'contWin');
+    if (rz) E(playCatcher, 'rzCatch');
+    if (cov) {
+      E(cov, 'covCatch', yds); E(cov, 'allowed', Math.max(0, yds)); if (kind === 'td') E(cov, 'tdA');
+      if (cov.role === 'LB' || cov.role === 'S') E(playCatcher, 'catchVsLbS');
+      if (cov.role === 'S' && yds >= 20 && /and|stutter|sluggo|double|-up/i.test(String(playCatcher.routeName || playCatcher.route || ''))) E(cov, 'dblMove');
+    }
+    if (down === 3 && next >= lineToGain) E(qb, 'conv3');
+    for (const d of dl) E(d, 'compOver');
+  } else if (runner && kind !== 'turnover') {
+    if (runner === qb && !isRunPlay) E(qb, 'scramble', yds);
+    else {
+      E(runner, 'run', yds); E(runner, 'rushYds', Math.max(0, yds)); E(runner, yds <= 2 ? 'runShort' : 'runOk');
+      for (const o of ols) E(o, 'teamRush', Math.max(0, yds));
+      for (const d of dl) E(d, 'rushAllowed', Math.max(0, yds));
+      if (yds >= 10) for (const d of [xfHit, ...[...dl, ...back7].filter(d => d !== xfHit && dist(d, runner) <= 8 * YD).slice(0, 2)]) E(d, 'runAt10');
+    }
+    if (yds < 0) { E(runner, 'tflT'); E(xfHit, 'tfl'); }
+    if (xfHit && xfHit.team === 'def') {
+      if (yds <= 2) E(xfHit, 'stop2');
+      for (const b of [...ols, ...recs].filter(b => b.assign === xfHit)) { if (yds <= 2) E(b, 'manStop'); if (yds < 0) { E(b, 'tflA'); E(b, 'blockFail'); } else E(b, 'cleanBlock'); }
+    }
+  }
+  if (xfHit && xfHit.team === 'def' && !sacked) E(xfHit, 'tkl');
+  if (kind === 'turnover') { if (rz) for (const r of recs) E(r, 'rzFail'); xfTurnover(offKey); }
+  if (pass) for (const r of [...recs, ...(rb.route ? [rb] : [])]) if (r !== tgt && r !== playCatcher) E(r, 'idle');
+  // Bell Cow: carries this drive
+  if (runner === rb && isRunPlay && rb.src) { const s = rb.src; if (s.bcD !== ABIL_ST.drive) { s.bcD = ABIL_ST.drive; s.bcN = 0; } s.bcN++; }
   if (!aiOff() && !sacked) {   // weekly goals (coaching goals block)
     if (kind === 'td') goalEvent('td');
-    if (pass && playCatcher && kind !== 'turnover') { goalEvent('catch', yds); goalEvent('air', xfAir); }
+    if (caught) { goalEvent('catch', yds); goalEvent('air', xfAir); }
     else if (!pass && runner && kind !== 'turnover') goalEvent('rush', yds);
   }
+  xfFlush();
+}
+// kicks and punts (endPlay): kicker / punter / returner counts
+function xfKickEnd(text, kind) {
+  if (tut) return;
+  if (kind === 'fg' && patMode === null) xfEvent(xfS(rb), 'fgMade', Math.round(kickDistance()));
+  else if (kind === 'fgmiss') xfEvent(xfS(rb), /block/i.test(text) ? 'kickBlocked' : 'fgMiss');
+  const K = kickoff && kickoff.kicker;
+  if (/^Punt/i.test(text) && K) {
+    if (/TOUCHBACK/i.test(text)) xfEvent(xfS(K), 'puntTB');
+    const m = text.match(/returned (\d+) yards/i); if (m) xfEvent(xfS(K), 'puntRet', +m[1]);
+  }
+  if (/returned for no gain/i.test(text)) { const r = allPlayers().find(p => p.hasBall); if (r) xfEvent(xfS(r), 'retStuff'); }
   xfFlush();
 }
 // a play in the other team's simulated drive
 let xfSimming = false;   // (true inside xfSim: a simulated play)
 function xfSim(oKey, dKey, a) { xfSimming = true; try { return xfSimRun(oKey, dKey, a); } finally { xfSimming = false; } }
 function xfSimRun(oKey, dKey, a) {
-  xfTick();
+  if (game.quarter >= 3) xfHalftime();   // (simmed drives never pass through nextPeriod)
+  xfClutch();
   const live = k => (ROSTER[k] || []).filter(s => !isOut(s));
   const O = live(oKey), D = live(dKey), G = (L, ...g) => L.filter(s => g.includes(s.group));
-  const rp = L => L.length ? pick(L) : null;
-  const rec = G(O, 'WR', 'TE'), dbs = G(D, 'CB', 'S', 'LB'), front = G(D, 'DL', 'LB'), q = G(O, 'QB')[0];
-  const allowed = L => { if (a.gain > 0) for (const s of L.filter(s => s.xf && s.xf.on)) xfEvent(s, 'allowed', a.gain); };   // (every star in the zone on that unit gives it up)
-  const tg = rp(rec);
-  if (a.sacked) { xfEvent(q, 'sackT'); xfEvent(q, 'tflT'); xfEvent(rp(G(D, 'DL', 'LB')), 'sack'); }
+  const rp = L => L.length ? pick(L) : null, E = (s, e, v) => xfEvent(s, e, v), F = XF_FLOW, g = a.gain;
+  const rec = G(O, 'WR', 'TE'), dbs = G(D, 'CB', 'S', 'LB'), front = G(D, 'DL', 'LB'), q = G(O, 'QB')[0], OL = G(O, 'OL'), DL = G(D, 'DL');
+  const tg = rp(rec), cov = rp(dbs), rzP = (a.pos || 0) >= 80;
+  if (a.pass && !a.sacked && Math.random() < F.simEsc) E(q, 'escape');
+  if ((a.int || a.lost) && rzP) for (const r of rec) E(r, 'rzFail');
+  if (a.sacked) { E(q, 'sackT'); E(q, 'tflT'); { const sk = rp(front); E(sk, 'sack'); E(sk, 'qbHit'); } const o = rp(OL); E(o, 'sackA'); E(o, 'pressA'); }
   else if (a.pass) {
-    if (a.incompl || a.int) { xfEvent(q, 'inc'); xfEvent(tg, 'tgtInc'); if (Math.random() < 0.8) xfEvent(rp(dbs), 'forced'); }
-    else {
-      const air = a.shot ? a.gain * 0.8 : Math.max(1, a.gain * 0.55 + 2);
-      xfEvent(q, 'comp', air); xfEvent(tg, 'catchAir', air); xfEvent(tg, 'catchYds', a.gain); allowed(dbs);
+    const beat = new Set();   // (a pressure is charged to a random blocker: his lineman, or the tight end)
+    for (const d of DL) { const pr = Math.random() < F.simPress; E(d, pr ? 'press' : 'rushNone'); if (pr) { beat.add(rp([...OL, ...G(O, 'TE')])); if (Math.random() < F.simQbHit) E(d, 'qbHit'); } }
+    for (const o of [...OL, ...G(O, 'TE')]) E(o, beat.has(o) ? 'pressA' : 'noPress');
+    for (const t of G(O, 'TE')) if (beat.has(t)) E(t, 'blockFail');
+    if (a.incompl || a.int) {
+      E(q, a.int ? 'int' : 'inc'); if (a.shot) E(q, 'deepInc');
+      E(tg, 'tgtInc'); if (Math.random() < F.simCont) E(tg, 'contLoss');
+      E(cov, 'covInc'); if (a.int) E(cov, 'int'); else if (Math.random() < F.simPbu) E(cov, 'pbu');
+      if (tg && tg.group === 'TE' && cov && (cov.group === 'LB' || cov.group === 'S')) E(tg, 'incVsLbS');
+      if (a.shot) for (const s of G(D, 'S')) E(s, 'deepDef');
+      if (!a.int && Math.random() < F.simBat) E(rp(DL), 'bat');
+      if (a.int) xfTurnover(oKey);
+    } else {
+      const air = a.shot ? g * 0.8 : Math.max(1, g * 0.55 + 2);
+      E(q, 'comp', air); E(tg, 'catch', g); E(tg, 'recYds', g); if (Math.random() < F.simCont) E(tg, 'contWin');
+      if (rzP) E(tg, 'rzCatch'); if (a.down === 3 && g >= (a.togo || 99)) E(q, 'conv3'); if (Math.random() < F.simHit) E(cov, 'bigHit');
+      if (tg && tg.group === 'TE' && cov && (cov.group === 'LB' || cov.group === 'S')) E(tg, 'catchVsLbS');
+      E(cov, 'covCatch', g); E(cov, 'allowed', Math.max(0, g)); E(cov, 'tkl');
+      for (const d of DL) E(d, 'compOver');
     }
-    for (const r of rec) if (r !== tg) xfEvent(r, 'idle');
-  } else {
+  } else if (a.qbRun) E(q, 'scramble', g);
+  else {
     const b = G(O, 'RB')[0];
-    xfEvent(b, 'run', a.gain);
-    if (a.gain < 0) { xfEvent(b, 'tflT'); xfEvent(rp(front), 'tfl'); } else allowed(front);
+    E(b, 'run', g); E(b, 'rushYds', Math.max(0, g)); E(b, g <= 2 ? 'runShort' : 'runOk');
+    if (g >= 8 && Math.random() < F.simBrk) { E(b, 'brk'); if (Math.random() < 0.5) E(b, 'moveMiss'); }
+    for (const o of OL) E(o, 'teamRush', Math.max(0, g));
+    for (const d of DL) E(d, 'rushAllowed', Math.max(0, g));
+    const t = rp(front); E(t, 'tkl'); if (g <= 2) E(t, 'stop2');
+    if (g < 0) { E(b, 'tflT'); E(t, 'tfl'); E(rp(OL), 'tflA'); }
+    if (g >= 10) for (const d of front) E(d, 'runAt10');
+    if (g >= 6) E(rp(OL), 'pancake');
   }
+  for (const t of G(O, 'TE')) E(t, a.sacked || g < 0 || Math.random() < F.simTeLose ? 'blockFail' : 'cleanBlock');   // (a tight end's block: clean unless it went backward or he lost it)
+  if (a.fum) { E(rp(a.pass ? dbs : front), 'forcedFum'); E(a.pass ? tg : a.qbRun ? q : G(O, 'RB')[0], 'fumT'); }
+  for (const r of rec) if (r !== tg) E(r, 'idle');
   return xfFlush(true);
 }
 // team star ratings (1-5) for offense and defense: each side's stars' average attribute edge over the
@@ -2412,7 +3031,7 @@ function kickerFor(team, role = 'fg') {   // role 'ko' / 'punt' / 'fg' (default:
 // (in the tutorial the practice-squad defense is TUT_DEF steps worse at everything)
 // (and the other team's players are diffLvl().rz steps better / worse: the difficulty)
 const rz = (p, a) => (p && p.at && p.at[a] != null && p.grp ? (p.at[a] - RATING_AVG[p.grp][a]) / RATING.spread : 0) - (tut && p && p.team === 'def' ? TUT_DEF : 0) - (tut && tut.defOn && p && p.team === 'off' ? TUT_BAD_OFF : 0)
-  + (p && p.team === 'def' && p.grp ? diffFor(p).rz : 0) + (xfLit(p) ? XFX.boost : 0);   // (a lit star factor lifts every rating)
+  + (p && p.team === 'def' && p.grp ? diffFor(p).rz : 0) + (p && p.src ? abilRz(p) + xfAttrK(p, a) : 0);   // (any-position Abilities; a lit Star Factor's attribute boost)
 const TUT_DEF = 3;
 const TUT_PICK = { reach: 2.2, high: 30 * S };   // tutorial defense: your jump's pick window x reach, + extra height it still gets (any hand on it = a pick)
 const TUT_BAD_OFF = 6, TUT_BAD_AIM = 3, TUT_PROTECT = 1.4;   // (TUT_PROTECT: seconds a block's hold runs down per second in the defense lessons: the pass protection is awful)
