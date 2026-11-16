@@ -19,6 +19,17 @@ function ballSpot(w, R, look, top, maxZ = JUMP_REACH, handX = 0, high = false) {
   }
   return best || def;
 }
+// a diving pick's target: the point on the pass's remaining path (low enough: DIVE_PICK.z) nearest the defender, and s until the ball is there
+function pickDiveSpot(d) {
+  let best = null, bd = Infinity;
+  for (let i = 0; i <= 24; i++) {
+    const p = ball.p + (1 - ball.p) * i / 24, z = Math.sin(Math.PI * p) * ball.h + (ball.z0 || 0) * (1 - p);
+    if (z > DIVE_PICK.z) continue;
+    const x = ball.fx + (ball.tx - ball.fx) * p, y = ball.fy + (ball.ty - ball.fy) * p, dd = Math.hypot(x - d.x, y - d.y);
+    if (dd < bd - 0.05 * YD) { bd = dd; best = { x, y, z, t: (p - ball.p) * ball.T }; }
+  }
+  return best;
+}
 function updateFlight(dt) {
   const bx0 = ball.x, by0 = ball.y;   // (where it was last frame: the body check sweeps the whole step, so a fast ball can't skip over a defender)
   ball.age += dt;
@@ -89,12 +100,15 @@ function updateFlight(dt) {
       continue;
     }
     if (d.rolled || d.action || d.diveRolled || ball.p < DIVE_PICK.late || d.eyes === 'receiver' || !facingPlay(d) || guardsOther(d)) continue;
-    const dd = dist(d, ball);
-    if (dd <= PICK_RANGE || dd > DIVE_PICK.range * YD || dd > gap || ball.z > DIVE_PICK.z) continue;
+    // where the pass comes closest to him low enough to dive at, and when: he waits on his feet until it is a dive's flight away (DIVE_PICK.lead), then lays
+    // out timed to it (startDive's arrive), never early at a spot the ball is still well short of
+    const sp = pickDiveSpot(d);
+    if (!sp) continue;
+    const ds = Math.hypot(sp.x - d.x, sp.y - d.y);
+    if (ds <= PICK_RANGE || ds > DIVE_PICK.range * YD || ds > Math.hypot(tgt.x - sp.x, tgt.y - sp.y) || sp.t > DIVE_PICK.lead) continue;
     d.diveRolled = true;
     if (Math.random() >= DIVE_PICK.chance * (1 + DB_SKILL.dive * (dbSkill(d) - 1))) continue;
-    // lay out toward where the ball's headed, not where it is now
-    startDive(d, (ball.x + ball.tx) / 2, (ball.y + ball.ty) / 2, DIVE_PICK.dur, DIVE_PICK.range * YD);
+    startDive(d, sp.x, sp.y, DIVE_PICK.dur, DIVE_PICK.range * YD, Math.max(0.12, sp.t));
     d.divePick = true;
   }
 
@@ -136,7 +150,7 @@ function updateFlight(dt) {
             if (gd > 0.25 * YD) { const v = Math.min(gd / (JUMP_TIME * 0.55), 1.1 * (d.top || 8 * YD)); d.vx = gx / gd * v; d.vy = gy / gd * v; }
             else { d.vx = d.svx; d.vy = d.svy; }
             if (gd > 0.25 * YD) d.face = Math.sign(sp.x - d.x) || d.face;   // (turned to the ball for the leap)
-          } else if (dd > PICK_RANGE * 0.87) startDive(d, ball.x, ball.y, DB_DIVE.dur, DIVE_LUNGE);
+          } else if (dd > PICK_RANGE * 0.87) { const sp = pickDiveSpot(d); if (sp && sp.t < DIVE_PICK.lead * 1.5) startDive(d, sp.x, sp.y, DB_DIVE.dur, DIVE_LUNGE, Math.max(0.12, sp.t)); else startDive(d, ball.x, ball.y, DB_DIVE.dur, DIVE_LUNGE); }   // (timed to where the ball will be)
         }
         if (dd <= PICK_RANGE && ball.z <= d.reachZ * 0.75 && facingPlay(d)) {
           // thrown right into his chest with no receiver near: he should catch it
@@ -2505,21 +2519,23 @@ const SIDE_LOCK = 0.7;
 const UD_STAND = 1.2;
 const CATCH_CLIP = { range: 2.4 };   // yd: both the target and the defender this close to the ball in the air = their hitboxes pass through each other
 const colMass = p => (p.wt || COLLIDE.wt) * (p.grp && p.at && p.at.str != null ? rm(p, 'str', 'block') ** COLLIDE.strPow : 1) * (p.action === 'down' ? COLLIDE.downMass : 1);
+// (colSkip's tests, top level: it runs for every pair of players every frame, and used to make three new functions and an array each time)
+const colAir = p => (p.z || 0) > COLLIDE.jump * S;
+const colBusy = p => p.action === 'down' || p.action === 'getup' || p.action === 'wrap' || p.action === 'dive' || p.action === 'sit';
+const colPinned = p => p.action === 'dive' || p.action === 'hurdle' || p.action === 'hurdled' || p.action === 'wrap' || p.action === 'clasp';
+const colLow = p => p.action === 'down' || p.action === 'getup' || p.action === 'sit' || p.action === 'reel' || p.helpTarget;
 function colSkip(a, b) {
-  const air = p => (p.z || 0) > COLLIDE.jump * S;
-  if (air(a) || air(b) || a.tackling || b.tackling || a.stiffBy === b || b.stiffBy === a) return true;
+  if (colAir(a) || colAir(b) || a.tackling || b.tackling || a.stiffBy === b || b.stiffBy === a) return true;
   if (state === 'flight' && a.team !== b.team && (a === tgt || b === tgt) && ball && Math.hypot(a.x - ball.x, a.y - ball.y) < CATCH_CLIP.range * YD && Math.hypot(b.x - ball.x, b.y - ball.y) < CATCH_CLIP.range * YD) return true;   // (the point of catch: the receiver and the DB contesting it can overlap, no bumping each other off the spot)
   if (a.clipMate === b || b.clipMate === a) {   // a tackler and the man he took down clip through each other until they've walked apart
-    const busy = p => p.action === 'down' || p.action === 'getup' || p.action === 'wrap' || p.action === 'dive' || p.action === 'sit';
-    if (busy(a) || busy(b)) return true;
+    if (colBusy(a) || colBusy(b)) return true;
     if (Math.hypot(a.x - b.x, a.y - b.y) >= COLLIDE.r * 2) { a.clipMate = b.clipMate = null; return false; }
     return 'clip';   // (both up again and still overlapping: a very slow drift apart, never a jump)
   }
-  for (const p of [a, b]) if (p.action === 'dive' || p.action === 'hurdle' || p.action === 'hurdled' || p.action === 'wrap' || p.action === 'clasp') return true;   // (a tackler riding the runner down is pinned to him: pushing them apart every frame slid the pair across the turf)
-  const low = p => p.action === 'down' || p.action === 'getup' || p.action === 'sit' || p.action === 'reel' || p.helpTarget;
+  if (colPinned(a) || colPinned(b)) return true;   // (a tackler riding the runner down is pinned to him: pushing them apart every frame slid the pair across the turf)
   // (anyone on the turf / getting up / reeling: only a slow soft nudge, never the hard shove or the tunnel snap. A man arriving at the pile
   //  used to be shoved / snapped off the tackled carrier or his tackler: the post-tackle teleport)
-  if (low(a) || low(b)) return 'soft';
+  if (colLow(a) || colLow(b)) return 'soft';
   if (a.action === 'getup' || b.action === 'getup') return 'soft';
   if (state === 'done') return 'soft';
   if (((a === qb && b === rb) || (a === rb && b === qb)) && a.x < los && b.x < los && !kickoffPlay && state !== 'kickoff' && state !== 'punt') return true;   // (the one exception: the QB and the back clip through each other in the backfield)
@@ -2531,13 +2547,14 @@ function separatePlayers(dt) {
   // (no body collisions at all once the play is dead: nobody gets pushed, slid or snapped after the whistle)
   if (state === 'pre' || state === 'done' || state === 'sim' || state === 'kick' || (kickoff && kickoff.forming) || (rec && rec.replaying)) { for (const p of all) p.cx = null; return; }
   const R = COLLIDE.r * 2, k = Math.min(1, COLLIDE.ease * dt);
+  const ms = new Array(all.length);   // (each man's mass, worked out once a call, the first time a pair needs it: it was once per pair)
   for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
     const a = all[i], b = all[j];
     const sk = colSkip(a, b);
     if (sk === true) continue;
     const soft = sk === 'soft' || sk === 'clip';
     let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
-    let ma = colMass(a), mb = colMass(b);
+    let ma = ms[i] !== undefined ? ms[i] : (ms[i] = colMass(a)), mb = ms[j] !== undefined ? ms[j] : (ms[j] = colMass(b));
     // (a blocker locked up on his man is never moved by a teammate: a back or receiver running past slides round him instead of
     //  shoving him off his block and dragging him along on the route)
     if (a.team === b.team && !!a.engaged !== !!b.engaged) { if (a.engaged) { ma = 1; mb = 0; } else { ma = 0; mb = 1; } }
@@ -2624,6 +2641,7 @@ function hipHands(dt) {
 }
 function update(dt) {
   if (dt <= 0) return;
+  DIFF_FRAME++;   // (a new game step: diffLvl's kept row is rebuilt)
   if (tut && tut.defAsk) return;   // (the tutorial's "play defense or sim it?" card: nothing moves until you pick)
   clock += dt;
   if (SL.on) slTick(dt);   // (sideline people: their clock; hides the chain crew for kicks)
@@ -2757,7 +2775,7 @@ function update(dt) {
   faceOffPairs();
   sideLock();
   for (const p of allPlayers()) postBump(p);   // (the goal posts' pads are solid for everyone, however he was moved this frame)
-  if (SL.on) slCollide();   // (sideline people are solid too: after celebrations / coasts have moved everyone; slides out, never back in bounds)
+  if (SL.on) slCollide(dt);   // (sideline people are solid too: after celebrations / coasts have moved everyone; slides out, never back in bounds)
   updateBall(dt);
   if (state !== 'flight') ball.nose = null;  // the spiral look is only for a pass in the air
   if (state === 'loose') updateLoose();
@@ -2811,6 +2829,10 @@ function update(dt) {
     } else if (holder.hasBall && holder.catchFx && holder.catchFx.style === 'helmetPin' && clock >= holder.catchFx.t && clock - holder.catchFx.t < HELMET_PIN.hold && (!a || a === 'jump')) {
       // helmet catch: pinned against his helmet with one hand
       ball.tucked = false; ball.x = holder.x + figX(holder, HELMET_PIN.x) * holder.face; ball.y = holder.y; ball.z = holder.z + figZ(holder, HELMET_PIN.z);
+    } else if (holder.hasBall && holder.catchFx && holder.catchFx.style === 'pickJuggle' && clock >= holder.catchFx.t && clock - holder.catchFx.t < PICK_JUGGLE.dur && (!a || a === 'jump' || a === 'swat')) {
+      // a juggled pick (looks only, v0.43): bobbled twice over his head, then pulled down into his hands
+      const e = clock - holder.catchFx.t, b = Math.abs(Math.sin(e * Math.PI / PICK_JUGGLE.bob)), dn = smooth01((e - PICK_JUGGLE.down) / (PICK_JUGGLE.dur - PICK_JUGGLE.down));
+      ball.tucked = false; ball.x = holder.x + figX(holder, (4 + 4 * dn) * S) * holder.face; ball.y = holder.y; ball.z = holder.z + figZ(holder, (25 + PICK_JUGGLE.h * b * (1 - dn) - 16 * dn) * S); ball.rot = e * 9;
     } else if (clasp) {
       // just caught: still out in front of his chest in both hands
       ball.x = holder.x + figX(holder, 12 * S) * holder.face; ball.y = holder.y; ball.z = holder.z + figZ(holder, 9 * S);
@@ -2928,7 +2950,7 @@ function update(dt) {
   // (and while you steer him in a live play, a DB / backer is never in the locked-up hand-fight pose: flipping between that pose and his run
   // every frame, e.g. moving right at the snap next to a receiver, was the rocking back and forth)
   if (ud && (aiOff() || pvpDef()) && LIVE_STATES.has(state) && !dl.includes(ud) && !ud.blitz && defDir()) { ud.engaged = false; ud.sideTo = null; }
-  if (ud && (aiOff() || pvpDef()) && !LIVE_STATES.has(state)) {
+  if (ud && (aiOff() || pvpDef()) && !LIVE_STATES.has(state) && !ud.celWalk) {   // (walking out to open space to celebrate: his legs run)
     const still = (ud.gs || 0) < (state === 'pre' ? 0.6 : 1.2) * YD && !['dive', 'jump', 'down', 'getup', 'spin', 'hurdle'].includes(ud.action);
     // (pre-snap with a key held: he keeps his speed, so he can really move)
     if (still && !(state === 'pre' && defDir())) { ud.moving = false; ud.stride = null; ud.svx = ud.svy = 0; if (state !== 'pre') { ud.vx = ud.vy = 0; if (ud.action && !ud.act) ud.action = null; } }
@@ -2945,7 +2967,7 @@ function update(dt) {
       p.run += dt * LOCK_FEET.rate; p.stride = p.stride == null ? LOCK_FEET.amp : p.stride + (LOCK_FEET.amp - p.stride) * Math.min(1, dt * STRIDE.smooth);
       continue;
     }
-    if (state === 'done' && p === ud && !p.action && !(p.coast && p.coast.v > 0)) { p.svx = p.svy = 0; p.moving = false; p.vx = p.vy = 0; p.stride = null; continue; }   // (the defender you drive stops with the whistle: no jogging in place on held keys)
+    if (state === 'done' && p === ud && !p.action && !p.celWalk && !(p.coast && p.coast.v > 0)) { p.svx = p.svy = 0; p.moving = false; p.vx = p.vy = 0; p.stride = null; continue; }   // (the defender you drive stops with the whistle: no jogging in place on held keys)
     if (state === 'done' && !p.action && v < 0.6 * YD) { p.moving = false; p.vx = p.vy = 0; p.engaged = false; p.stride = null; continue; }   // (the play is over: nobody keeps running in place)
     if (!churn && !p.engaged && !p.action && v < (p === ud && defLive() ? UD_STAND : 0.3) * YD) { p.moving = false; p.stride = null; continue; }   // (flagged moving but going nowhere: he stands, no frozen half-stride rocking in place)
     p.run += dt * (churn ? 22 : p.engaged ? 6 : Math.min(STRIDE.max, STRIDE.rate * v / YD));

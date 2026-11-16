@@ -71,7 +71,7 @@ function jobOffersClick(pt) {
   const b = PICK_BTNS.find(b => b.conf === pickConf && inBtn(pt, b));
   if (scoutUI.team) { scoutClick(pt); return; }
   if (b && b.key !== season.team) { scoutUI.team = b.key; return; }   // (any team can be looked at; taking the job is in the scouting report)
-  if (inBtn(pt, MENU_NEXT)) { if (moveMode) { moveMode = false; results.screen = 'staff'; } else if (!capBlocked()) offFinish(season.team); }
+  if (inBtn(pt, MENU_NEXT)) { if (moveMode) { moveMode = false; results.screen = 'staff'; } else if (conFired()) offPopShow({ title: 'YOU WERE FIRED', lines: ['Your old team let you go. Pick one of the teams on this screen.'] }); else if (!capBlocked()) offFinish(season.team); }
 }
 // HARD CAP: the new season can't start with a payroll over the cap: you have to drop players first (the ROSTER button on the popup)
 function capBlocked() {
@@ -621,6 +621,7 @@ function dmFrame() {   // once a frame, before anything is drawn
   if (on === dmOn) return;
   dmOn = on;
   for (const k of Object.keys(DM_WRAP)) { if (on) ctx[k] = DM_WRAP[k]; else delete ctx[k]; }
+  dmSwap(on);
 }
 // any popup: uiModal() is called right after a popup dims the screen (every full-screen dim does). A button drawn BEFORE this
 // frame's dim while a popup was up last frame is behind it and holds still (uiBehind); the ones drawn after the dim are the popup's own.
@@ -630,8 +631,10 @@ function uiModalFrame() { UI_MODAL.was = UI_MODAL.now; UI_MODAL.now = false; }  
 const uiBehind = () => UI_MODAL.was && !UI_MODAL.now;
 // (the field and everything on it keeps its own colours, even where a menu draws it)
 const dmHeld = f => function () { dmHold++; try { return f.apply(this, arguments); } finally { dmHold--; } };
-drawPlayer = dmHeld(drawPlayer); drawField = dmHeld(drawField); drawBall = dmHeld(drawBall);
-drawAvatar = dmHeld(drawAvatar); drawBigHelmet = dmHeld(drawBigHelmet); drawLogo = dmHeld(drawLogo);
+// (only while dark mode is on: in light mode the plain functions are called directly. dmFrame swaps them through dmSwap when the mode changes)
+const DM_RAW = { drawPlayer, drawField, drawBall, drawAvatar, drawBigHelmet, drawLogo };
+const DM_HELD = { drawPlayer: dmHeld(drawPlayer), drawField: dmHeld(drawField), drawBall: dmHeld(drawBall), drawAvatar: dmHeld(drawAvatar), drawBigHelmet: dmHeld(drawBigHelmet), drawLogo: dmHeld(drawLogo) };
+function dmSwap(on) { const F = on ? DM_HELD : DM_RAW; drawPlayer = F.drawPlayer; drawField = F.drawField; drawBall = F.drawBall; drawAvatar = F.drawAvatar; drawBigHelmet = F.drawBigHelmet; drawLogo = F.drawLogo; }
 // bg: a menu paper (RES.bright / RES.bg: white), SEL (yellow), or any other colour = coloured construction paper
 // (white ink on dark paper). on = false: no hover or press (a greyed-out button). b.ink = the ink colour, for face().
 const paperInk = c => lum(c) < 0.55 ? '#fff' : RES.line;
@@ -639,7 +642,9 @@ let backBtnNow = null;   // which back button that was (BACK_BTN, WEEK_BACK or t
 let backDrawn = 0;   // when a menu screen last drew its BACK button (Esc presses it)
 let tourBtnDraw = false;   // true while a tutorial tip draws its own buttons (everything else behind it holds still)
 let UI_BTNS = [], UI_BTNS_PREV = [];   // every menuBtn drawn this frame / last frame: a touch on one is the button's, never the joystick's (overUiBtn)
+const MENU_LOCK_GREY = '#a9a9a9';   // a button that can't be pressed here (settings locked during a game)
 function menuBtn(b, label, bg, size = 24, face, on = true) {
+  if (b.lockGrey) { bg = MENU_LOCK_GREY; on = false; }   // (a locked setting: flat grey, no hover or press)
   UI_BTNS.push(b);
   const now = performance.now(), dt = Math.min(0.1, (now - (b.at || now)) / 1000);
   b.at = now; if (b === BACK_BTN || b === WEEK_BACK || b === HOME_BACK) { backDrawn = now; backBtnNow = b; }
@@ -735,7 +740,8 @@ function drawFace(cx, cy, r, fill = '#ffd23a', mood = null) {   // the morale sm
 const xpcBox = { xp: false, t0: -1e9, back: null, doneAt: null };   // xp = the face showing; back = the face to go back to after an XP flight
 let xpPending = 0;   // bank XP still in the air (the box counts up as the tokens land)
 const xpcOn = () => !!season && !exhibition && !tut && !(typeof ONL !== 'undefined' && ONL.on);   // your franchise only
-const scoutsOn = () => SETTINGS.scouts !== false && xpcOn();   // the scouts system (SCOUT): setting on (an old settings file has none: on) + your franchise only
+const scoutsOn = () => SETTINGS.scouts !== false && xpcOn();
+const contractsOn = () => SETTINGS.contracts !== false && xpcOn();   // MANAGE CONTRACTS (CONTRACT): on (an old settings file has none: on) + your franchise only; off = AUTO   // the scouts system (SCOUT): setting on (an old settings file has none: on) + your franchise only
 const xpBank = () => career.xpBank || 0;
 function xpBankAdd(xp) {   // spare XP -> the bank (x XPC.rate); returns what went in
   if (!xpcOn() || !(xp > 0)) return 0;
@@ -1151,7 +1157,7 @@ function drawPayOverlay() {
 }
 
 function drawMenus() {
-  ({ start: drawStart, franchise: drawCareer, result: drawResults, pgx: drawPgx, week: drawWeekEnd, home: drawHome, matchup: drawMatchup, roster: drawRoster, staff: drawStaff, playoffs: drawPlayoffs,
+  ({ start: drawStart, franchise: drawCareer, qsetup: drawQs, result: drawResults, pgx: drawPgx, week: drawWeekEnd, home: drawHome, matchup: drawMatchup, roster: drawRoster, staff: drawStaff, playoffs: drawPlayoffs,
      awards: drawAwards, pbowl: drawPbowl, resign: drawResign, draft: drawDraft, fa: drawFA, offers: drawOffers, trade: drawTrade, tradeb: drawTradeB, toffers: drawTOffers,
      exhibition: () => drawMatchup(true), exstats: drawExStats, hof: drawHof, trophy: drawTrophyRoom, scrap: drawScrap, post: drawPost, pawards: drawPAwards, dboard: drawDBoard, records: drawRecords, chof: drawCoachHof, practice: drawPractice, hire: drawHire, board: drawBoard, test: drawTest, onevone: drawOneVOne, oopick: drawOvPick, anims: drawAnims, coach: drawCoachEd, online: drawOnline, onresult: drawOnResult })[results.screen]();
   if (teamPick) drawTeamPicker();
@@ -2277,7 +2283,7 @@ function moraleEvent(p, ev) {
 }
 function moraleDecayPlay() { moraleDecay(MORALE.decayPlay); }
 // (v0.30, the Player Lounge: morale rests at moraleBase(), above 50 with lounge levels, and climbs back to it faster from below)
-const moraleBase = () => MORALE.neutral + FAC_FX.lounge.base * facLvl('lounge');
+const moraleBase = () => MORALE.neutral + FAC_FX.lounge.base * facLvl('lounge') + originK('morale');   // (+ a LOCKER ROOM LEADER origin early on)
 function moraleDecay(k) {
   if (!moraleOn()) return;
   const b = moraleBase(), up = 1 + FAC_FX.lounge.back * facLvl('lounge');
@@ -2365,10 +2371,10 @@ const contractStr = p => p.salary == null ? 'NOT LISTED' : `$${p.salary}M (${p.y
 const CAP = { start: 250, step: 25, cost: 100, minPay: 0.8, max: 450, penalty: 0.75, nudge: 100, firstOff: 0.5 };   // nudge = credits at which the home screen points you to TEAM UPGRADES (once a franchise); firstOff = x the price of the cap bought after it
 const capCost = () => Math.round(CAP.cost * (LEAGUE.capSale ? CAP.firstOff : 1));   // (LEAGUE.capSale: the first-time discount, gone once used)
 // CAP (kept on one line above):   // $M; +step $M of cap costs `cost` credits (front office)
-const payOf = p => p.salary == null ? CAP.minPay : p.salary;
+const payOf = p => p.salary == null ? CAP.minPay : p.capCut && p.capCut.y === LEAGUE.year ? Math.max(CAP.minPay, p.salary - p.capCut.m) : p.salary;   // (capCut: a signing bonus paid in credits lowers this year's hit, see CONTRACT.pl)
 const payroll = (team, side) => (side ? ROSTER[team].filter(p => OFF_GROUPS.includes(p.group) === (side === 'off')) : ROSTER[team]).reduce((t, p) => t + payOf(p), 0);
 const CAP_LEAGUE_SHARE = 0.5;   // for every $M you add to your own cap, the rest of the league adds this much to theirs (50M -> 25M)
-const capBase = team => team === MATCH.you ? (LEAGUE.cap || CAP.start) : LEAGUE.capHold && LEAGUE.capHold[team] != null ? LEAGUE.capHold[team] : CAP.start + Math.max(0, (LEAGUE.cap || CAP.start) - CAP.start) * CAP_LEAGUE_SHARE;
+const capBase = team => team === MATCH.you ? (LEAGUE.cap || CAP.start) + conPerk('cap') /* (your HC deal's CAP BUMP perk) */ + originK('cap') /* (a CAP WIZARD origin early on) */ :LEAGUE.capHold && LEAGUE.capHold[team] != null ? LEAGUE.capHold[team] : CAP.start + Math.max(0, (LEAGUE.cap || CAP.start) - CAP.start) * CAP_LEAGUE_SHARE;
 const capOf = team => capBase(team);   // (no overage penalty: the hard cap is enforced before the season instead, capBlocked / aiCapCuts)
 function aiCapCuts(me) {
   for (const k of Object.keys(ROSTER).filter(k => NFL[k] && k !== me)) {

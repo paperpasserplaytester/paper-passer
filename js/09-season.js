@@ -10,7 +10,7 @@ const MENU_SCREENS = ['result', 'week', 'home', 'matchup'];
 const nextBtn = () => results.screen === 'result' ? RESULT_BTN : MENU_NEXT;
 function advanceResults() {
   if (onlLobbyActive() && results.screen === 'exhibition' && !teamPick) { onlPlayClick(); return; }   // (the online lobby: only the host's PLAY starts it)
-  if (teamPick || results.screen === 'start' || results.screen === 'franchise' || results.screen === 'test' || results.screen === 'coach' || results.screen === 'online' || results.screen === 'onresult') return;   // (the team picker / start / test screens have their own buttons)
+  if (teamPick || results.screen === 'start' || results.screen === 'franchise' || results.screen === 'qsetup' || results.screen === 'test' || results.screen === 'coach' || results.screen === 'online' || results.screen === 'onresult') return;   // (the team picker / start / test screens have their own buttons)
   if (offPop) { if (offPop.btns && offPop.btns.length === 1) offPopClick({ x: offPop.btns[0].x + 1, y: offPop.btns[0].y + 1 }); return; }   // (Space takes an OK popup)
   if (results.screen === 'result' && results.pay && !results.injAlert) { payClick(); return; }   // (the post-game credits screen)
   if (!MENU_SCREENS.includes(results.screen) && !['exhibition', 'playoffs', 'exstats'].includes(results.screen)) return;   // (Space only moves on from screens that have a continue button: not the animation library, settings pages, etc.)
@@ -1375,7 +1375,8 @@ function offLeague() {
         postRetire(p, k); vacate(k, p); continue;
       }
       if (!exp) continue;
-      if (k === me) { p.ask = askOf(p); OFF.expiring.push(p); continue; }
+      if (k === me && p.walk && contractsOn()) { delete p.walk; faRelease(p, me); vacate(me, p); continue; }   // (PLAYER DEALS > LET HIM WALK)
+      if (k === me) { delete p.walk; p.ask = askOf(p); OFF.expiring.push(p); continue; }
       const ask = askOf(p), fo = foSkill(k);
       ask.salary = Math.round(ask.salary * (1 + MGMT.pay * (0.5 - fo) * 2) * 10) / 10;   // (a poor front office pays too much, a good one less)
       const odds = OFFSEASON.resign[Math.max(1, Math.min(5, Math.round(p.stars)))] * (p.age >= 32 ? 0.7 : 1) * (p.stars <= 2.5 ? Math.max(0.2, 1 + MGMT.extend * (0.5 - fo)) : 1);   // (and keeps bad players; a good one lets them go)
@@ -2217,7 +2218,7 @@ function draftClick(pt) {
     if (p.drafted) return;
     if (inBtn(pt, DRAFT_SCOUT_BTN) && !p.scout && D.scouts > 0) {
       D.scouts--;
-      const sc = scoreOf(p), pts = Math.max(sc, Math.min(ATTR_TOTAL, ptsOf(p) + Math.round((Math.random() + Math.random() - 1) * DRAFT.scoutErr * (scoutsOn() ? scoutErrK(scoutFor(p), p) : 1))));   // (scouts on: your scout for his side sets how close the guess is)
+      const sc = scoreOf(p), pts = Math.max(sc, Math.min(ATTR_TOTAL, ptsOf(p) + Math.round((Math.random() + Math.random() - 1) * DRAFT.scoutErr * (scoutsOn() ? scoutErrK(scoutFor(p), p) : originK('grade') || 1))));   // (scouts on: your scout for his side sets how close the guess is)
       p.scout = { pts, val: draftValue(sc, pts) };
       dTip('scout');
       return;
@@ -2323,7 +2324,7 @@ function boardStatLine(p, wk) {
 // how far off team k's read of a prospect can be (points): its scout for his side (SCOUTS off: the DRAFT.scoutErr baseline) + a poor front office's hunches
 function boardErr(k, p) {
   const sc = scoutsOn() ? scoutsOf(k)[OFF_GROUPS.includes(p.group) ? 'off' : 'def'] : null, [n0, n1] = FRONT_OFFICE.draftNoise;
-  return DRAFT.scoutErr * (sc ? scoutErrK(sc, p) : 1) * BOARD.gradeK + (season && k === season.team ? 0 : (n0 + (n1 - n0) * (1 - foSkill(k))) * BOARD.foK);
+  return DRAFT.scoutErr * (sc ? scoutErrK(sc, p) : season && k === season.team ? originK('grade') || 1 : 1) * BOARD.gradeK +   /* (scouts off: an EX-SCOUT origin reads sharper early on) */ (season && k === season.team ? 0 : (n0 + (n1 - n0) * (1 - foSkill(k))) * BOARD.foK);
 }
 const boardGrade = (k, p) => boardPv(p) + (k ? bdSym(`g:${k}:${p.name}`) * boardErr(k, p) : 0);   // (no team = the public board)
 function boardRange(k, p) {   // [lowest, highest] potential stars team k's scouts put on him: the better the scout, the narrower
@@ -2671,6 +2672,7 @@ function offAIPickups(me) {
 // during the season: now and then a team cuts a player (mostly a weak or old one; a roster spot is refilled by a rookie), and the other
 // teams grab the best free agents quickly. Called once per week that goes by. Team ratings are redone.
 function leagueWeek(me) {
+  try { conWeek(); } catch (e) { console.warn('contracts', e); }   // (another team may call for one of your staff)
   try { boardWeek(); } catch (e) { console.warn('board', e); }   // (the draft board: this week's prospect form)
   for (const k of Object.keys(ROSTER)) for (const q of ROSTER[k]) if (q.susp > 0) q.susp--;   // (saga suspensions: one game served a week)
   if (FA_POOL.length < 10) for (let i = 0; i < 14; i++) FA_POOL.push(genFreeAgent());
@@ -2732,10 +2734,11 @@ function offStaff(me) {   // coordinators' contracts: an extension, or he's gone
   const msgs = [];
   for (const [k, s] of Object.entries(STAFF)) for (const r of ['oc', 'dc']) {
     const c = s[r]; c.years = (c.years == null ? rint(1, 3) : c.years) - 1;
-    if (c.years > 0) continue;
-    if (Math.random() < 0.4) {
+    const mine = k === me && contractsOn(), sour = mine && c.sour && Math.random() < CONTRACT.staff.refuseLeave;   // (MANAGE CONTRACTS: yours leaves when his deal ends unless you extended him)
+    if (c.years > 0 && !sour) continue;
+    if (mine || Math.random() < 0.4) {
       const n = { role: c.role, name: `${pick(NAME_FIRST)} ${pick(NAME_LAST)}`, stars: Math.max(1, Math.min(5, c.stars + rint(-1, 1))), trait: pick(Object.keys(TRAIT_INFO)), years: rint(2, 4), face: makeFace(Math.random, true) };
-      if (k === me) { msgs.push(`${c.role} ${c.name} resigned. ${n.name} is the new one.`); if (career.cxp) career.cxp[r] = 0; }
+      if (k === me) { msgs.push(mine ? `${c.role} ${c.name}'s contract ${sour ? 'was not enough to keep him' : 'ran out'}: he left. ${n.name} is the new one.` : `${c.role} ${c.name} resigned. ${n.name} is the new one.`); if (career.cxp) career.cxp[r] = 0; }
       if (NFL[k] && (k === me || n.stars >= 4 || c.stars >= 4)) postNote('coachMove', { team: pTeam(k), name: n.name, old: c.name, role: r === 'oc' ? 'offensive coordinator' : 'defensive coordinator', stars: n.stars }, { w: k === me ? 9 : 5, team: k });
       s[r] = n;
     } else { c.years = rint(2, 4); if (k === me) msgs.push(`${c.name} (${r.toUpperCase()}) signed an extension.`); }
@@ -2780,6 +2783,7 @@ function offFinishFA() {
   recalcTeamStars();
   OFF.offers = offOffers();   // (this season's record, before the new season replaces it)
   const staff = offStaff(me), lines = [];
+  try { staff.push(...conSeasonEnd(me)); } catch (e) { console.warn('contracts', e); }   // (your head coach pay + incentives, the owner's patience)
   const retired = OFF.retiredYou.map(r => r.text), star = OFF.retiredLg.filter(r => r.p.stars >= 4).slice(0, 3).map(r => `${r.p.name} (${r.k} ${r.p.tag}) retired`);
   offTick(); LEAGUE.year++; dynRoll();
   newSeason(me);
@@ -2811,6 +2815,7 @@ function offFinish(team) {
     MATCH.you = team; LEAGUE.approval = 0.5; LEAGUE.streak = 0;
     newSeason(team);
     moveArrive(old, team);
+    conNewTeam(team);   // (your head coach deal belongs to the team: this one's offer replaces it)
   }
   OFF = null; results.screen = 'home'; saveHonors();
 }
@@ -2915,6 +2920,6 @@ function drawOffers() {
       if (cur) { ctx.strokeStyle = RES.gold; ctx.lineWidth = 3; ctx.strokeRect(bb.x + 1.5, bb.y + 1.5, bb.w - 3, bb.h - 3); }
     }, offered || buyable);
   }
-  menuBtn(MENU_NEXT, moveMode ? 'BACK' : n ? 'REJECT\nALL' : 'CONTINUE ▸', RES.bright, 22);
+  menuBtn(MENU_NEXT, moveMode ? 'BACK' : conFired() ? 'FIRED:\nPICK ONE' : n ? 'REJECT\nALL' : 'CONTINUE ▸', !moveMode && conFired() ? CARD_GRAY : RES.bright, 22);
   if (scoutUI.team) drawScout();
 }

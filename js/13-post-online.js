@@ -462,7 +462,7 @@ function pFlow(txt, x, y, w, lh, font, color, maxLines, align = 'left') {   // d
   return y + n * lh;
 }
 function pFlowBeside(txt, x, y, w, lh, font, color, maxLines, fw, fh) {   // text flowing around a picture floated left (fw x fh)
-  const k = Math.max(1, Math.floor(fh / lh)), a = pWrap(txt, font, w - fw).slice(0, k);
+  const k = Math.max(1, Math.min(maxLines == null ? 99 : maxLines, Math.ceil(fh / lh))), a = pWrap(txt, font, w - fw).slice(0, k);   // (ceil: the full-width lines start below the picture, never across its bottom edge)
   ctx.font = font; ctx.fillStyle = color; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
   a.forEach((l, i) => ctx.fillText(l, x + fw, y + i * lh));
   const rest = String(txt).slice(a.join(' ').length).trim();
@@ -530,12 +530,15 @@ function pClip(it, s, x, y) {
 }
 function pStory(it, s, x, y, w, bottom, o = {}) {   // headline, optional portrait floated left, body; clip button at the bottom
   let yy = y;
+  const hs = o.hs || 22, lh = o.lh || 17, ex = s.big && !o.noExtra ? 21 : 0;
+  if (bottom - y < ex + hs * 1.12 + 4 + 2 * lh + 22) return y;   // (no room for a headline and two lines: the story is left out rather than run over what is below)
+  const hl = Math.max(1, Math.min(o.hl || 3, Math.floor((bottom - y - ex - 4 - 2 * lh - 22) / (hs * 1.12))));
   if (s.big && !o.noExtra) { ctx.fillStyle = PP.red; ctx.fillRect(x, yy, 62, 17); ctx.fillStyle = '#fff'; ctx.font = `bold 12px ${PF}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('EXTRA!', x + 31, yy + 9); yy += 21; }
-  const hs = o.hs || 22; yy = pFlow(s.t, x, yy, w, hs * 1.12, `bold ${hs}px ${PF}`, PP.ink, o.hl || 3) + 4;
+  yy = pFlow(s.t, x, yy, w, hs * 1.12, `bold ${hs}px ${PF}`, PP.ink, hl) + 4;
   if (s.nm) { ctx.font = `italic 11px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(`THE ${s.nm.toUpperCase()} SAGA`, x, yy); yy += 15; }
-  const lh = o.lh || 17, f = `${o.bs || 14}px ${PF}`, avail = Math.max(1, Math.floor((bottom - yy - 20) / lh));
+  const f = `${o.bs || 14}px ${PF}`, avail = Math.max(1, Math.floor((bottom - yy - 20) / lh));
   let ye;
-  if ((s.s || s.lg) && o.pw) { pPortrait(s.s || { n: '' }, x, yy, o.pw, o.ph, s.s ? null : s.lg); ye = Math.max(pFlowBeside(s.b, x, yy, w, lh, f, PP.ink, avail, o.pw + 10, o.ph + 16), yy + o.ph + 18); }
+  if ((s.s || s.lg) && o.pw && yy + o.ph + 18 <= bottom - 20) { pPortrait(s.s || { n: '' }, x, yy, o.pw, o.ph, s.s ? null : s.lg); ye = Math.max(pFlowBeside(s.b, x, yy, w, lh, f, PP.ink, avail, o.pw + 10, o.ph + 16), yy + o.ph + 18); }   // (the picture only where it fits above the bottom)
   else ye = pFlow(s.b, x, yy, w, lh, f, PP.ink, avail);
   pClip(it, s, x + w, ye + 10);
   return ye + 22;
@@ -578,7 +581,7 @@ function pageFront(it) {
   const hx = big ? 164 : 34, hw = big ? W - 164 - 34 : W - 68;
   y = pFlow(h.t, hx, y, hw, 50, `bold 46px ${PF}`, PP.ink, 2, big ? 'left' : 'center');
   pRule(26, y + 8, W - 26, 2); y += 18;
-  const bot = 606, cw = 392;
+  const more = it.st.slice(5), bot = more.length ? 580 : 606, cw = 392;   // (the ALSO INSIDE line takes the bottom strip)
   pRule(437, y, 438, bot - y); pRule(842, y, 843, bot - y);
   let ly = h.s || h.lg ? Math.max(pFlowBeside(h.b, 34, y, cw, 24, `18px ${PF}`, PP.ink, 11, 182, 206), y + 190 + 18, (pPortrait(h.s || { n: '' }, 34, y, 170, 190, h.s ? null : h.lg), 0)) : pFlow(h.b, 34, y, cw, 24, `18px ${PF}`, PP.ink, 11);
   pClip(it, h, 34 + cw, ly + 10); ly += 26;
@@ -588,8 +591,7 @@ function pageFront(it) {
     const e = pStory(it, s, x, y, 380, bot, { hs: 24, pw: 110, ph: 128, bs: 16, lh: 20 });
     if (s2) { pRule(x, e, x + 380, 1); pStory(it, s2, x, e + 8, 380, bot, { hs: 20, bs: 15, lh: 19, hl: 2 }); }
   });
-  const more = it.st.slice(5);
-  if (more.length) { pRule(26, bot - 22, W - 26, 1); ctx.font = `bold 13px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText('ALSO INSIDE:', 130, bot - 8); ctx.fillStyle = PP.ink; ctx.font = `13px ${PF}`; ctx.fillText(more.map(s => s.t).join('   ·   '), 236, bot - 8, W - 280); }
+  if (more.length) { pRule(26, 584, W - 26, 1); ctx.font = `bold 13px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText('ALSO INSIDE:', 34, 598); ctx.fillStyle = PP.ink; ctx.font = `13px ${PF}`; ctx.fillText(more.map(s => s.t).join('   ·   '), 140, 598, W - 180); }
 }
 function pageSports(it) {
   pFrame(it, false);
@@ -625,20 +627,25 @@ function pageWire(it) {
   let y = pSection('TRANSACTION WIRE', 34, 90, 590);
   const wl = it.wire || [];
   if (!wl.length) { ctx.fillStyle = PP.dim; ctx.font = `italic 14px ${PF}`; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('A quiet week on the wire.', 40, y); }
+  const wBot = POST_BOT - 12;   // (lines that would run past the page frame are counted instead)
+  let wMore = 0;
   wl.forEach(w => {
+    if (wMore || y + (w.s && w.s.n ? 52 : 40) > wBot - 20) { wMore++; return; }
     const tag = { trade: 'TRADE', sign: 'SIGNED', cut: 'RELEASED', draft: 'DRAFT', retire: 'RETIRED', hof: 'HALL', injury: 'INJURY', arc: 'SAGA' }[w.k] || 'NEWS';
     const cd = w.s && w.s.n ? 52 : 0;   // (a mini player card when the line is about a man)
     if (cd) pCard(w.s, 40, y, 44, cd, true);
     ctx.font = `bold 11px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(tag, 40 + (cd ? 52 : 0), y + 3);
-    y = Math.max(pFlow(w.t, 118 + (cd ? 18 : 0), y, 500 - (cd ? 18 : 0), 20, `16px ${PF}`, PP.ink, 2), y + cd) + 8;
+    y = Math.max(pFlow(w.t, 118 + cd, y, 500 - cd, 20, `16px ${PF}`, PP.ink, 2), y + cd) + 8;   // (the text starts clear of the tag beside the card)
   });
+  if (wMore) { ctx.font = `italic 13px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(`...and ${wMore} more move${wMore > 1 ? 's' : ''} around the league.`, 40, y); }
   let ry = pSection('RUMOR MILL', 660, 90, 580);
   (it.rum || []).forEach(t => { ry = pFlow('"' + t + '"', 666, ry, 560, 21, `italic 17px ${PF}`, PP.ink, 3) + 10; });
   ry += 4; ry = pSection('SAGA WATCH', 660, ry, 580);
   const P = postS(), arcs = postV.ai === 0 ? P.arcs.filter(a => !a.end).slice(0, 6) : [];
   if (!arcs.length) { ctx.fillStyle = PP.dim; ctx.font = `italic 14px ${PF}`; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(postV.ai === 0 ? 'No sagas in the works.' : 'Sagas are only listed in the latest issue.', 666, ry); }
-  if (arcs.length) { ctx.font = `italic 11px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('click a saga to catch up', 1236, ry - 18); }
+  if (arcs.length) { ctx.font = `italic 11px ${PF}`; ctx.fillStyle = pAcc().t; ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillText('click a saga to catch up', 1232, ry - 18); }   // (inside the section bar, not across its edge)
   arcs.forEach(a => {
+    if (ry + 52 > POST_BOT - 12) return;   // (no room left on the page)
     const y0 = ry;
     const cd = a.p && a.p.n ? 52 : 0; if (cd) pCard(a.p, 666, ry, 44, cd, true);
     const tx = 666 + (cd ? 54 : 0);
@@ -666,7 +673,7 @@ function pageLife(it) {
   }
   if (it.ed) {
     const ey = Math.max(360, Math.max(y, ly) + 4); pSection('EDITORIAL: ' + it.ed.t, 34, ey, 826);   // (below whichever column ran longer)
-    const eb = pFlow(it.ed.b, 40, ey + 34, 810, 30, `italic 24px ${PF}`, PP.ink, 5);
+    const eb = pFlow(it.ed.b, 40, ey + 34, 810, 30, `italic 24px ${PF}`, PP.ink, Math.max(1, Math.min(5, Math.floor((POST_BOT - 30 - (ey + 34)) / 30))));   // (the sign-off stays inside the page frame)
     ctx.font = `bold 12px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('— The Editors', 850, eb + 6);
   }
   const P = postS(), evl = P.evLog || [];
@@ -674,7 +681,7 @@ function pageLife(it) {
 }
 function pageArchive() {
   const P = postS(); pFrame({ yr: LEAGUE.year, n: P.n, kind: 'wk', wk: season.last || 0, by: 'The Archive', rec: '' }, false);
-  const per = 9, pages = Math.max(1, Math.ceil(P.issues.length / per)); postV.ap = Math.min(postV.ap, pages - 1);
+  const per = 8, pages = Math.max(1, Math.ceil(P.issues.length / per)); postV.ap = Math.min(postV.ap, pages - 1);
   let y = pSection('PAST ISSUES (click to read)', 34, 90, W - 68);
   if (!P.issues.length) { ctx.fillStyle = PP.dim; ctx.font = `italic 15px ${PF}`; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('The presses have not rolled yet.', 40, y); }
   P.issues.slice(postV.ap * per, postV.ap * per + per).forEach((it, i) => {
@@ -692,12 +699,12 @@ function pageScrap() {
   pSection('YOUR SCRAPBOOK: clipped stories', 34, 90, W - 68);
   if (!P.scrap.length) { ctx.fillStyle = PP.dim; ctx.font = `italic 15px ${PF}`; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('Nothing clipped yet. Press ✂ CLIP under any story to keep it here.', 40, 128); }
   P.scrap.slice(postV.sp * per, postV.sp * per + per).forEach((c, i) => {
-    const x = 34 + (i % 2) * 620, y = 128 + Math.floor(i / 2) * 250, w = 590;
-    ctx.fillStyle = '#f3ecd5'; ctx.fillRect(x, y, w, 232); ctx.strokeStyle = PP.dim; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, 231);
+    const x = 34 + (i % 2) * 620, y = 128 + Math.floor(i / 2) * 224, w = 590;   // (two rows that end above the page buttons)
+    ctx.fillStyle = '#f3ecd5'; ctx.fillRect(x, y, w, 210); ctx.strokeStyle = PP.dim; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, 209);
     ctx.fillStyle = PP.red; ctx.fillRect(x + w - 40, y - 4, 10, 36);
     ctx.font = `italic 11px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(`No. ${c.n} · ${pstYear(c.yr)}${c.wk ? ' · week ' + c.wk : ''}`, x + 10, y + 8);
     const it = { n: c.n };
-    pStory(it, c, x + 10, y + 22, w - 20, y + 226, { hs: 19, bs: 13, lh: 16, hl: 2, pw: c.s ? 84 : 0, ph: 96, noExtra: false });
+    pStory(it, c, x + 10, y + 22, w - 20, y + 206, { hs: 19, bs: 13, lh: 16, hl: 2, pw: c.s ? 84 : 0, ph: 96, noExtra: false });
   });
   if (pages > 1) { pTabBtn('◂ PREV', 34, 584, 100, () => { postV.sp = (postV.sp - 1 + pages) % pages; }); pTabBtn('NEXT ▸', 1146, 584, 100, () => { postV.sp = (postV.sp + 1) % pages; }); }
 }
@@ -707,13 +714,15 @@ function pTabBtn(label, x, y, w, fn) {
 }
 function postGo(pg) {   // flip to another section with a page-turn (the old page is snapshotted and folded away)
   if (pg === postV.pg || postV.turn) return;
-  try { if (!POST_SNAP) POST_SNAP = document.createElement('canvas'); POST_SNAP.width = W; POST_SNAP.height = H; POST_SNAP.getContext('2d').drawImage(canvas, PAD * RK, 0, W * RK, H * RK, 0, 0, W, H); postV.turn = { t0: performance.now(), dir: pg > postV.pg ? 1 : -1 }; } catch (e) { postV.turn = null; }
+  sndRec('flip');
+  try { if (!POST_SNAP) POST_SNAP = document.createElement('canvas'); POST_SNAP.width = W; POST_SNAP.height = H; POST_SNAP.getContext('2d').drawImage(canvas, PAD * RK, 0, W * RK, H * RK, 0, 0, W, H); snapUnbright(POST_SNAP); postV.turn = { t0: performance.now(), dir: pg > postV.pg ? 1 : -1 }; } catch (e) { postV.turn = null; }
   postV.pg = pg;
 }
 function postOpen() {
   const P = postS();
   if (!P.issues.length) postIssue('pre');
   postV.pg = 0; postV.ai = 0; postV.ap = 0; postV.sp = 0; postV.turn = null;
+  if (P.n > P.read) sndRec('press', 1, { ms: SND_USE.pressMs, fade: 1000 });   // (a new issue: hot off the press)
   P.read = P.n; results.screen = 'post';
 }
 const postUnread = () => { if (!postOn()) return 0; const P = postS(); return Math.max(0, P.n - P.read); };
@@ -920,7 +929,7 @@ function drawStart() {
     ctx.fillStyle = RES.line; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('NO HIGHLIGHTS SAVED YET', W - 225, H - 120); ctx.restore();
   }
 }
-const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-15 SIDE-37';
+const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-15 NETPERF-44';
 let hlFlash = -1e9;   // when the main menu's HIGHLIGHT button was last clicked
 let quickMenu = false;   // QUICK PLAY (START_BTNS.ex) drop down: EXHIBITION / 1V1 / ONLINE take the place of FRANCHISE / CAREER / TUTORIAL (same buttons, same size)
 function startClick(p) {
@@ -976,6 +985,7 @@ const NET_CFG = {
   // acks, pointer moves). A lost packet on the reliable channel holds up everything behind it; here the next snapshot simply takes its place.
   fast: true,         // false = everything on the reliable channel, as before
   fastId: 41,         // the channel's stream id (both sides open the same one themselves: no extra signaling)
+  logCast: false,     // debug: true = the host logs each cast's size (characters) to the console, once per play (set NET_CFG.logCast = true in the console)
   fastMax: 9000,      // characters: a bigger message goes on the reliable channel (a lossy one that size rarely arrives whole)
   statsMs: 4000,      // how often the link is asked whether it is DIRECT or going through a RELAY (the ping badge shows it)
 };
@@ -1032,21 +1042,38 @@ const NET = {
       peer.on('error', err => { NET.why = 'peer ' + err.type; NET._fail(err.type === 'peer-unavailable' ? 'NOTFOUND' : 'TIMEOUT'); });
     }), NET._fail);
   },
-  send(msg) {   // (the JSON channel refuses ~16 KB messages: big ones (a cast) go as numbered parts, put back together by _attach)
+  send(msg, s) {   // s: the message's JSON text when the caller already made it. Returns the characters sent (0 = not sent)
+    // (the JSON channel refuses ~16 KB messages: big ones (a cast) go as numbered parts, put back together by _attach)
     try {
-      if (!NET.conn || !NET.conn.open) return;
-      const s = JSON.stringify(msg); NET._bytes += s.length;
-      if (s.length <= NET_CFG.chunk) { NET.conn.send(msg); return; }
+      if (!NET.conn || !NET.conn.open) return 0;
+      if (s === undefined) s = JSON.stringify(msg);
+      NET._bytes += s.length;
+      if (s.length <= NET_CFG.chunk) { NET._pre = msg; NET._preS = s; try { NET.conn.send(msg); } finally { NET._pre = NET._preS = null; } return s.length; }   // (_pre: PeerJS is handed the text already made, see _attach)
       const id = ++NET._n, n = Math.ceil(s.length / NET_CFG.chunk);
       for (let i = 0; i < n; i++) NET.conn.send({ t: '_part', id, i, n, d: s.slice(i * NET_CFG.chunk, (i + 1) * NET_CFG.chunk) });
+      return s.length;
     } catch (e) { console.warn('net send failed', e); }
+    return 0;
   },
   sendFast(msg) {   // what may be lost: on the fast channel when both sides have it (true), else on the reliable one
     const ch = NET.fast;
     if (ch && NET.fastOk && ch.readyState === 'open') {
-      try { const s = JSON.stringify(msg); if (s.length <= NET_CFG.fastMax) { ch.send(s); NET._bytes += s.length; return true; } } catch (e) {}
+      let s;
+      try { s = JSON.stringify(msg); if (s.length <= NET_CFG.fastMax) { ch.send(s); NET._bytes += s.length; return true; } } catch (e) {}
+      if (s !== undefined) {   // too big for the fast channel: the reliable one (the text is reused, not made again)
+        if (msg.t === 'snap') NET._bigSnap(msg, s.length);
+        NET.send(msg, s); return false;
+      }
     }
     NET.send(msg); return false;
+  },
+  _bigSnap(m, len) {   // console warning (at most one every 2 s): a snapshot over fastMax, and what in it is biggest
+    const now = performance.now(); if (now - (NET._bigAt || 0) < 2000) return;
+    NET._bigAt = now;
+    try {
+      const g = Object.keys(m.g || {}).map(k => [k, JSON.stringify(m.g[k]).length]).sort((a, b) => b[1] - a[1]).slice(0, 4).map(a => a[0] + ' ' + a[1]).join(', ');
+      console.warn('net: snapshot ' + len + ' chars > fastMax ' + NET_CFG.fastMax + ' (sent on the reliable channel). players ' + JSON.stringify(m.d || []).length + '; biggest globals: ' + g);
+    } catch (e) {}
   },
   _fastOpen(c) {   // both devices open the same pre-agreed channel on the link PeerJS made
     NET.fast = null; NET.fastRx = NET.fastOk = false;
@@ -1087,6 +1114,9 @@ const NET = {
   _parts: {},
   _attach(c) {
     NET.conn = c;
+    // (NET.send has already made the message's JSON text to measure it: PeerJS's JSON channel is handed that text instead of stringifying the same object again.
+    //  Anything else it sends, or a PeerJS without this hook, is serialized as before)
+    try { if (c.serialization === 'json' && typeof c.stringify === 'function') { const js = c.stringify; c.stringify = d => (d === NET._pre && NET._preS != null ? NET._preS : js(d)); } } catch (e) {}
     c.on('open', () => { clearTimeout(NET._timer); NET._rx = performance.now(); NET.link = ''; NET.kbps = 0; NET._statAt = 0; NET._fastOpen(c); NET._beat(); if (NET.onopen) NET.onopen(); });
     c.on('data', d => {
       try {
@@ -1300,7 +1330,7 @@ function slim(v, ps, depth = 0) {
   if (t === 'function' || t === 'symbol' || depth > 3) return undefined;
   if (v instanceof Node) return undefined;
   if (Array.isArray(v)) return v.map(x => { const s = slim(x, ps, depth + 1); return s === undefined ? null : s; });
-  if (ps) { const i = ps.indexOf(v); if (i >= 0) return { __p: i }; }
+  if (ps) { const i = ps instanceof Map ? ps.get(v) : ps.indexOf(v); if (i !== undefined && i >= 0) return { __p: i }; }   // (ps: a Map(player -> index) built once a tick, or the plain list)
   const o = {};
   for (const k of Object.keys(v)) { const s = slim(v[k], ps, depth + 1); if (s !== undefined) o[k] = s; }
   return o;
@@ -1314,32 +1344,81 @@ function unslim(v, ps) {
 // what changed on a player since the last send: { set: {prop: value}, del: [props that went away] }
 // properties only the host's own simulation reads (measured: drawing a whole game never touches them), so they are never sent: steering targets, last-frame
 // movement, run yardage, shed / break timers...
-const ONL_HOST_ONLY = new Set(['bt', 'celWalk','kp', 'kpB', 'kpRide', 'kpRideT', 'cx', 'cy', 'sx', 'sy', 'mpx', 'mpy', 'mvx', 'mvy', 'ranYd', 'gs', 'rel', 'hipT', 'brkT', 'shedAt', 'sealK', 'rushV', 'wk',   // (rvx / rvy stay: the guest's own aim line reads them in maxThrow)
+const ONL_HOST_ONLY = new Set(['bt', 'celWalk', 'slDgP', 'slDgOk', 'slU', 'slArr','kp', 'kpB', 'kpRide', 'kpRideT', 'cx', 'cy', 'sx', 'sy', 'mpx', 'mpy', 'mvx', 'mvy', 'ranYd', 'gs', 'rel', 'hipT', 'brkT', 'shedAt', 'sealK', 'rushV', 'wk',   // (rvx / rvy stay: the guest's own aim line reads them in maxThrow)
   // what drawPlayer itself eases and stamps every drawn frame (neck, eyes, stance, turn, kick arms, the tackle pose): the guest's own drawing keeps its own. They were
   // over half of every snapshot, and the host's clock stamps kept resetting the guest's easing
   'yawAt', 'yaw', 'headAt', 'headW', 'stAt', 'stKey', 'stB', 'ezT', 'hkE', 'kaE', 'knE', 'faceAt', 'faceShow', 'gPose', 'gPoseT', 'gLegs',
   'svx', 'svy', 'hsx', 'hsy', 'fpT', 'rbp']);   // (smoothed velocity / heading, the footprint timer, run-blocking assignments: the simulation's own, no drawing reads them)
+// properties whose OBJECT is never changed in place during a play (his roster entry, looks, ratings, the depth chart's backup): the host slims + compares them only
+// when the reference itself changes (a kicker taking the back's spot), not every tick. NOT here on purpose: path (route shifts move its points), fmTo (the jog's timers).
+// The one thing that does change inside src mid-play, the Star Factor's state (src.xf: the glow), goes as its own small property 'sxf'.
+const ONL_STATIC = new Set(['src', 'look', 'at', '_r0']);
+// src (the whole roster entry) goes as a reference: online both devices play the stock world (useDefaultWorld), so the guest already has the entry in its own
+// DEFAULT_WORLD. Sent: { __r: [team, name], d: { fields that differ from the stock entry }, x: [fields gone] }. Not resolvable (no stock world, a walk-on, a
+// name that isn't unique) = the whole entry, as before.
+const ONL_SRC = new WeakMap();   // host: roster entry -> { r: [team, name], b: { field: the stock value as JSON } } or 0
+function onlSrcInfo(s) {
+  let c = ONL_SRC.get(s); if (c !== undefined) return c;
+  c = 0;
+  try {
+    if (exhibition && exhibition.world && s.name) for (const t of [MATCH.you, MATCH.opp]) {
+      if (!(ROSTER[t] || []).includes(s)) continue;
+      const m = (DEFAULT_WORLD.roster[t] || []).filter(q => q.name === s.name);
+      if (m.length === 1) { const o = slim(m[0]), b = {}; for (const k in o) b[k] = JSON.stringify(o[k]); c = { r: [t, s.name], b }; }
+      break;
+    }
+  } catch (e) {}
+  ONL_SRC.set(s, c); return c;
+}
+function onlSrcOut(s, pm) {
+  const o = slim(s, pm), c = onlSrcInfo(s);
+  if (!c || o === undefined) return o;
+  const d = {}; let x = 0;
+  for (const k in o) if (JSON.stringify(o[k]) !== c.b[k]) d[k] = o[k];
+  for (const k in c.b) if (!(k in o)) (x || (x = [])).push(k);
+  const out = { __r: c.r, d }; if (x) out.x = x;
+  return out;
+}
+function onlSrcIn(v, ps) {   // guest: the reference back into an entry of its own (a copy: the stock world is never touched)
+  if (!v || !v.__r) return unslim(v, ps);
+  const m = ((DEFAULT_WORLD.roster[v.__r[0]]) || []).filter(q => q.name === v.__r[1]);
+  if (m.length !== 1) console.warn('net: roster entry not found', v.__r);
+  const e = Object.assign(m.length ? JSON.parse(JSON.stringify(m[0])) : {}, unslim(v.d || {}, ps));
+  if (v.x) for (const k of v.x) delete e[k];
+  return e;
+}
+const onlPut = (p, k, v, ps) => { p[k] = v !== null && typeof v === 'object' ? (k === 'src' ? onlSrcIn(v, ps) : unslim(v, ps)) : v; };   // guest: one received property onto a player
 const ONL_COARSE = new Set(['vx', 'vy', 'svx', 'svy', 'rvx', 'rvy']);   // speeds (px/s): whole numbers are plenty
 const onlRound = v => Math.abs(v) >= 10 ? Math.round(v * 10) / 10 : Math.round(v * 100) / 100;   // (a tenth of a unit is far finer than the eye: 2-3 characters a number less)
 // The host notes, per property, the snapshot number it last changed at (st.s); a snapshot then carries everything that changed since the last one the guest
 // is KNOWN to have (its ack), so a snapshot lost on the fast channel is simply covered by the next. st: v = last value (objects as JSON text), o = the slim
-// object to send again, x = properties that went away (and when), m = seen-this-tick marks.
-const onlNewSt = () => ({ v: {}, s: {}, o: {}, x: {}, m: {} });
-function onlDelta(p, ps, st, seq) {
+// object to send again, x = properties that went away (and when), m = seen-this-tick marks, r = the last object seen for an ONL_STATIC property.
+const onlNewSt = () => ({ v: {}, s: {}, o: {}, x: {}, m: {}, r: {} });
+function onlNote(st, seq, k, r, o) {
+  st.m[k] = seq;
+  if (st.v[k] !== r || !(k in st.v)) { st.v[k] = r; st.s[k] = seq; if (o !== undefined) st.o[k] = o; else if (k in st.o) delete st.o[k]; if (k in st.x) delete st.x[k]; }
+}
+function onlDelta(p, pm, st, seq) {   // pm: Map(player -> index)
   for (const k of Object.keys(p)) {
     if (k[0] === '_' && k[1] === '_') continue;
     if (ONL_HOST_ONLY.has(k)) continue;
     const v = p[k];
     let r, o;
-    if (v !== null && typeof v === 'object') { o = slim(v, ps); if (o === undefined) continue; r = JSON.stringify(o); }
+    if (v !== null && typeof v === 'object') {
+      if (ONL_STATIC.has(k)) {
+        if (st.r[k] === v && k in st.o) { st.m[k] = seq; continue; }   // (the same object as last tick: nothing to slim or compare)
+        st.r[k] = v; o = k === 'src' ? onlSrcOut(v, pm) : slim(v, pm);
+      } else o = slim(v, pm);
+      if (o === undefined) continue; r = JSON.stringify(o);
+    }
     else {
       if (typeof v === 'function' || v === undefined) continue;
       r = typeof v === 'number' ? (v === v && Math.abs(v) !== Infinity ? (ONL_COARSE.has(k) ? Math.round(v) : onlRound(v)) : null) : v;
     }
-    st.m[k] = seq;
-    if (st.v[k] !== r || !(k in st.v)) { st.v[k] = r; st.s[k] = seq; if (o !== undefined) st.o[k] = o; else if (k in st.o) delete st.o[k]; if (k in st.x) delete st.x[k]; }
+    onlNote(st, seq, k, r, o);
   }
-  for (const k in st.m) if (st.m[k] !== seq) { delete st.m[k]; delete st.v[k]; delete st.s[k]; delete st.o[k]; st.x[k] = seq; }
+  { const sx = p.src && p.src.tier === 'X' && p.src.xf; if (sx) { const o = slim(sx); onlNote(st, seq, 'sxf', JSON.stringify(o), o); } }   // (a Star Factor's state: the one part of src that moves mid-play)
+  for (const k in st.m) if (st.m[k] !== seq) { delete st.m[k]; delete st.v[k]; delete st.s[k]; delete st.o[k]; delete st.r[k]; st.x[k] = seq; }
 }
 function onlSince(st, base) {   // [ { changed since snapshot `base` }, [ gone since ] or 0 ]
   const set = {}; let del = 0;
@@ -1349,8 +1428,8 @@ function onlSince(st, base) {   // [ { changed since snapshot `base` }, [ gone s
 }
 const onlHostIsOff = () => !twoP || !twoP.flipped;              // Player 1 (the host) has the ball
 const onlIAmOff = () => ONL.guest ? !onlHostIsOff() : onlHostIsOff();
-function onlGlobals(ps) {
-  const ix = o => ps.indexOf(o);
+function onlGlobals(ps, pm) {
+  const ix = o => { const i = pm.get(o); return i === undefined ? -1 : i; };
   return {
     st: state, msg, los, dn: down, ltg: lineToGain, nl: nextLos,
     gm: { blue: game.blue, red: game.red, quarter: game.quarter, secs: Math.round(game.secs * 10) / 10, timeouts: game.timeouts, over: game.over, runoff: game.runoff, pendingQuarter: game.pendingQuarter, qs: game.qs, ot: game.ot ? slim(game.ot) : null, kickPending: game.kickPending, recvFirst: game.recvFirst },
@@ -1360,21 +1439,30 @@ function onlGlobals(ps) {
     vz: Math.round(userZoom * (TOUCH ? TOUCH_ZOOM : 1) * 1000) / 1000, vc: Math.round(viewCenterY()),   // (the host's own view: his wheel zoom / phone zoom and the field's middle on his screen, see onlPtOut)
     ud: ix(ud), tg: ix(tgt), rn: ix(runner), mi: MIRROR,   // (mi: the host's screen direction: the guest translates his taps / keys when his own differs)
     nm: { cbT: ix(cbT), cbB: ix(cbB), sT: ix(sT), sB: ix(sB), lbW: ix(lbW), lbM: ix(lbM), lbS: ix(lbS) },
-    ball: slim(ball, ps), cam: [Math.round(camX), Math.round(camY), Math.round(zoom * passPull * 1000) / 1000], sh: Math.round(shake * 10) / 10,
+    ball: slim(ball, pm), cam: [Math.round(camX), Math.round(camY), Math.round(zoom * passPull * 1000) / 1000], sh: Math.round(shake * 10) / 10,
     wx: game.wx ? slim(game.wx) : null, wxi: { rain: WXI.rain, snow: WXI.snow, mph: WXI.mph },
     po: popups.map(q => ({ i: ix(q.p), text: q.text, color: q.color, t: Math.round(q.t * 100) / 100, ico: q.ico })),
-    im: impacts.map(q => slim(q, ps)),
+    im: impacts.map(q => slim(q, pm)),
     py: pylons.map(q => ({ a: q.a, down: q.down, dir: q.dir, sideways: q.sideways, ox: q.ox, oy: q.oy })),
     ob: onlObs(),
-    aim: aim ? slim(aim, ps) : null, kick: kick ? slim(kick, ps) : null, kof: kickoff ? slim(kickoff, ps) : null, pp: puntPlay ? slim(puntPlay, ps) : null,
+    aim: aim ? slim(aim, pm) : null, kick: kick ? slim(kick, pm) : null, kof: kickoff ? slim(kickoff, pm) : null, pp: puntPlay ? slim(puntPlay, pm) : null,
   };
 }
-function onlHostCast(ps, key) {   // (always on the reliable channel: everything after it builds on it)
+function onlHostCast(ps, pm, key) {   // (always on the reliable channel: everything after it builds on it)
   const seq = ++ONL.seq;
   ONL.castKey = key; ONL.epoch = (ONL.epoch || 0) + 1; ONL.castSeq = ONL.relSeq = ONL.ack = seq;
   ONL.sent = ps.map(onlNewSt); ONL.gSt = { v: {}, s: {}, o: {} };   // (gSt: the globals sent so far; a new cast sends them all again)
-  const full = ps.map((p, i) => { onlDelta(p, ps, ONL.sent[i], seq); return onlSince(ONL.sent[i], 0)[0]; });
-  NET.send({ t: 'cast', e: ONL.epoch, n: seq, full, sizes: [ols.length, recs.length, dl.length, back7.length, fgExit.length], sl: slPack() });   // (sl: the whole sideline-people state; events follow as 'sl' messages)
+  const full = ps.map((p, i) => { onlDelta(p, pm, ONL.sent[i], seq); return onlSince(ONL.sent[i], 0)[0]; });
+  const m = { t: 'cast', e: ONL.epoch, n: seq, full, sizes: [ols.length, recs.length, dl.length, back7.length, fgExit.length] };
+  // the sideline people (~52 KB) go once: with the first cast, and again only when the cast of people itself is a new one (a new game, the setting, an injury
+  // exit's extra man: SL.cast is then a new object) or the guest says it has none ('slq'). Everything else about them already travels as 'sl' events (slEvent).
+  // sv = which pack this cast belongs with; sn = the sideline clock, so the guest's stays on the host's between events.
+  const slc = SL.on && SL.cast ? SL.cast : null;
+  if (slc !== ONL.slRef) { ONL.slRef = slc; ONL.slV = (ONL.slV | 0) + 1; m.sl = slPack(); }
+  else if (slc) m.sn = Math.round(SL.now * 1000) / 1000;
+  m.sv = ONL.slV | 0;
+  const len = NET.send(m);
+  if (NET_CFG.logCast) console.log('net: cast ' + len + ' chars' + (m.sl !== undefined ? ' (with the sideline pack: ' + JSON.stringify(m.sl).length + ')' : '') + ', ' + ps.length + ' players, src ' + full.reduce((t, f) => t + (f.src ? JSON.stringify(f.src).length : 0), 0));
 }
 const onlRunLive = () => state === 'run' || ((state === 'drop' || state === 'pocket') && isRunPlay);   // (a ball carrier steered by keys: the fast rate, like an aimed pass. At the slow rate a run play was drawn a snapshot later and felt sluggish next to a pass play)
 function onlHostTick() {
@@ -1391,11 +1479,12 @@ function onlHostTick() {
   ONL.snapAt = Math.max(ONL.snapAt + gap, now - gap);   // (the leftover carries: the rate holds whatever the screen's refresh rate)
   if (backed) return;
   const ps = allPlayers(), key = ps.map(p => p.__id || (p.__id = ++ONL.nid)).join(',');
-  if (key !== ONL.castKey) onlHostCast(ps, key);
+  const pm = new Map(); for (let i = 0; i < ps.length; i++) pm.set(ps[i], i);   // (player -> index, once a tick: slim looked each nested object up with indexOf)
+  if (key !== ONL.castKey) onlHostCast(ps, pm, key);
   const seq = ++ONL.seq, base = Math.max(ONL.ack || 0, ONL.castSeq || 0, ONL.relSeq || 0);   // (what the guest surely has: its last ack, the cast, or the last snapshot that went on the reliable channel)
   const d = [], x = []; let gone = false;
-  ps.forEach((p, i) => { onlDelta(p, ps, ONL.sent[i], seq); const r = onlSince(ONL.sent[i], base); d[i] = r[0]; x[i] = r[1]; if (r[1]) gone = true; });
-  const g = onlGlobals(ps); ONL.view = g.ob;
+  ps.forEach((p, i) => { onlDelta(p, pm, ONL.sent[i], seq); const r = onlSince(ONL.sent[i], base); d[i] = r[0]; x[i] = r[1]; if (r[1]) gone = true; });
+  const g = onlGlobals(ps, pm); ONL.view = g.ob;
   // the play's globals go as a delta too: the pylons, score card, weather, names... barely change, and were 1 KB of every snapshot
   const gd = {}, G = ONL.gSt;
   for (const k of Object.keys(g)) { const j = JSON.stringify(g[k]); if (G.v[k] !== j) { G.v[k] = j; G.s[k] = seq; G.o[k] = g[k]; } }
@@ -1410,11 +1499,15 @@ function onlGotCast(m) {
   const ps = m.full.map(f => makePlayer(f.team, f.x || 0, f.y || 0, f.num));
   if (ps.length !== cnt) { console.warn('net: cast size mismatch', ps.length, cnt); return; }
   const pos = new Float64Array(cnt * 3);
-  ps.forEach((p, i) => { const f = m.full[i]; for (const k in f) { const v = f[k]; p[k] = v !== null && typeof v === 'object' ? unslim(v, ps) : v; } pos[i * 3] = +f.x || 0; pos[i * 3 + 1] = +f.y || 0; pos[i * 3 + 2] = +f.z || 0; });
+  ps.forEach((p, i) => { const f = m.full[i]; for (const k in f) onlPut(p, k, f[k], ps); if (f.sxf && p.src) p.src.xf = p.sxf; pos[i * 3] = +f.x || 0; pos[i * 3 + 1] = +f.y || 0; pos[i * 3 + 2] = +f.z || 0; });
   let i = 0; qb = ps[i++]; rb = ps[i++];
   ols = ps.slice(i, i += sz[0]); recs = ps.slice(i, i += sz[1]); dl = ps.slice(i, i += sz[2]); back7 = ps.slice(i, i += sz[3]); fgExit = ps.slice(i, i += sz[4]);
   ONL.full = m.full; ONL.buf = []; ONL.pos = pos; ONL.epoch = m.e; ONL.rxSeq = m.n; ONL.pred = null;   // (full: only its length is read from here on, "is there a cast")
-  slUnpack(m.sl);   // (the host's sideline people, whole)
+  // the host's sideline people: whole when the cast carries them (sl), else the ones this device already has. Not the pack this cast goes with (sv), or none here
+  // while the host has some (sn): ask for it again
+  if ('sl' in m) { slUnpack(m.sl); ONL.slGot = m.sv; }
+  else if (ONL.slGot !== m.sv || (m.sn != null && !SL.cast)) { const now = performance.now(); if (!ONL.slqAt || now - ONL.slqAt > 1500) { ONL.slqAt = now; NET.send({ t: 'slq' }); } }
+  else if (m.sn != null) { SL.now = m.sn; SL.pn = performance.now(); }
 }
 function onlGotSnap(m) {
   const n = ONL.full.length;
@@ -1443,7 +1536,7 @@ function onlApply(e, ps) {
   if (!d) return;
   for (let i = 0; i < ps.length; i++) {
     const p = ps[i], f = d[i];
-    if (f) for (const k in f) { const v = f[k]; p[k] = v !== null && typeof v === 'object' ? unslim(v, ps) : v; }
+    if (f) { for (const k in f) onlPut(p, k, f[k], ps); if (f.sxf && p.src) p.src.xf = p.sxf; }
     if (x && x[i]) for (const k of x[i]) p[k] = undefined;   // (a property the host dropped)
   }
 }
@@ -1646,7 +1739,8 @@ function onlMsg(d) {   // NET.onmsg's game messages (true: handled)
   if (d.t === 'snap') { if (ONL.guest) onlGotSnap(d); return true; }
   if (d.t === 'ak') { if (ONL.host && d.e === ONL.epoch && d.n > (ONL.ack || 0) && d.n <= ONL.seq) ONL.ack = d.n; return true; }   // (the guest has this snapshot: the next ones only carry what changed after it)
   if (d.t === 'ev') { onlGotEvent(d); return true; }
-  if (d.t === 'sl') { if (ONL.guest) slNet(d); return true; }   // (one sideline-people event, on the host's sideline clock)
+  if (d.t === 'sl') { if (ONL.guest) slNet(d); return true; }
+  if (d.t === 'slq') { if (ONL.host && ONL.on) { ONL.slRef = undefined; ONL.castKey = ''; } return true; }   // (the guest has no sideline people: the next cast carries them again)   // (one sideline-people event, on the host's sideline clock)
   if (d.t === 'in') { onlHandleInput(d); return true; }
   return false;
 }
@@ -1685,7 +1779,7 @@ window.addEventListener('contextmenu', e => {
 function onlBeginMatch(c, asHost) {   // c: what the lobby settled on (teams, uniforms, ball, weather); both devices run this on PLAY
   if (ONL.on || !onlLobbyActive()) return;
   ONL.host = !!asHost; ONL.guest = !asHost;
-  ONL.on = true; ONL.buf = []; ONL.full = []; ONL.gPrev = null; ONL.pred = null; ONL.predOff = false; ONL.pq = 0; ONL.gQ = 0; ONL.castKey = ''; ONL.hold = {}; ONL.gHeld = {}; ONL.gDown = false; ONL.seq = 0;
+  ONL.on = true; ONL.buf = []; ONL.full = []; ONL.gPrev = null; ONL.pred = null; ONL.predOff = false; ONL.pq = 0; ONL.gQ = 0; ONL.castKey = ''; ONL.slRef = undefined; ONL.slGot = -1; ONL.hold = {}; ONL.gHeld = {}; ONL.gDown = false; ONL.seq = 0;
   ONL.savedSimDef = SETTINGS.simDefense; SETTINGS.simDefense = false;   // (defense is always played: the saved setting is ignored, and never written back)
   teamPick = null;
   Object.assign(MATCH, { you: c.you, opp: c.opp, youKit: c.yk, oppKit: c.ok, ball: c.ball, home: 'you' }); applyKits();
@@ -1858,7 +1952,7 @@ function onlMsg2(d) {   // phase 4's messages (true: handled)
   }
   if (d.t === 'away') { if (ONL.on && !results) ONL.away = { who: onlOpp(), kind: 'AWAY', until: performance.now() + RECONNECT_SECS * 1000 }; return true; }
   if (d.t === 'back') { if (ONL.away && ONL.away.kind === 'AWAY') ONL.away = null; return true; }
-  if (d.t === 'rejoin') { if (ONL.host && ONL.on) { ONL.away = null; ONL.castKey = ''; NET.send({ t: 'resumed' }); } return true; }
+  if (d.t === 'rejoin') { if (ONL.host && ONL.on) { ONL.away = null; ONL.castKey = ''; ONL.slRef = undefined; NET.send({ t: 'resumed' }); } return true; }
   if (d.t === 'resumed') { ONL.buf = []; ONL.full = []; ONL.lost = null; ONL.joinBusy = false; return true; }
   if (d.t === 'over') { if (ONL.guest && ONL.on) onlShowResult(d.sum); return true; }
   if (d.t === 'rematch') { if (ONL.on) { ONL.rem[onlOpp()] = true; onlRematchCheck(); } return true; }
@@ -1871,7 +1965,7 @@ function onlRematchCheck() {
   const t = ONL.teams;
   onlMatchInit(t.host, t.guest);
   if (twoP && twoP.flipped) flipSides();
-  Object.assign(ONL, { buf: [], full: [], castKey: '', hold: {}, gHeld: {}, gDown: false, seq: 0 });
+  Object.assign(ONL, { buf: [], full: [], castKey: '', slRef: undefined, slGot: -1, hold: {}, gHeld: {}, gDown: false, seq: 0 });
   MATCH.you = t.host; MATCH.opp = t.guest; MATCH.home = 'you'; applyKits();   // (the lobby's uniforms stay)
   game.over = true; paused = false; kick = null; kickoff = null; aim = null; simMode = 'none';
   reset();   // (results stays set until reset sees game.over: a new game, a new coin toss)

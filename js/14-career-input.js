@@ -1,22 +1,52 @@
 // --- new career: your rookie year (a press pass, signature card, sticky-note backstory, pennant wall, difficulty scale)
-// The face, name and team are one laminated press pass that updates live. Name = two signature lines (CAR.first / CAR.last), team = the pennant wall
-// (CAR_PEN, click one), backstory = CAR_BACKS sticky notes (a tiny perk applied in careerClick's CONTINUE), difficulty = a pencil scale (CAR_SLD, drag;
-// the 6 DIFFS, with ADAPTIVE as its own tick = SETTINGS.diffMode 'dynamic'), ROLL THE DICE = career.roll (shuffle animation, then name + face + team).
+// The face and name are one laminated press pass that updates live. Name = two signature lines (CAR.first / CAR.last), origin = ORIGINS sticky notes
+// (4 at a time, CAR_OPG arrows; career.origin, applied by originStart when the season starts), difficulty = "How tough?" cards (CAR_DCARD, the 6 DIFFS,
+// ADAPTIVE tick = SETTINGS.diffMode 'dynamic', CUSTOM SLIDERS = the settings difficulty page), ROLL THE DICE = career.roll (name + face + team).
+// CONTINUE opens the coaching questionnaire (`// --- coaching questionnaire`); the team is pinned in its locker room.
 const CAR_HAND = "'Segoe Script','Bradley Hand','Comic Sans MS',cursive";
-const CAR_BACKS = [   // how'd you get your start? perk = tiny starting bonus
-  { name: ['BACKYARD', 'HERO'], perk: ['+0.5 COACH', 'STAR'], coach: 0.5, coins: 0, paper: '#fff3a0' },
-  { name: ['COLLEGE', 'WALK-ON'], perk: ['+20', 'CREDITS'], coach: 0, coins: 20, paper: '#c8ecff' },
-  { name: ['STREET', 'BALL'], perk: ['+10', 'CREDITS'], coach: 0, coins: 10, paper: '#ffd3e0' },
+const ORIGIN_YEARS = 2;   // "year 1" perks / catches last while LEAGUE.year <= this (the takeover finale + playoffs = year 1, your first full season = year 2)
+// how'd you get your start? (career.origin = id). Instant at the start: coins (credits), coach (HC stars), cxp (HC coach XP), scoutUp (your scouts' stars),
+// coord (OC + DC stars), xpBank, patience (owner pips), job ('weak' = only the weaker half of the league hires you). For the first ORIGIN_YEARS: heal (share
+// of games missed cut), morale (resting point +), cap (+ cap room), budget (+ staff budget $M), wins (+ owner's target), grade (x draft read error, scouts off).
+// need = the system part of it needs ('scouts' / 'contracts'); alt = what replaces those numbers when that system is off (perkOff / catchOff = its text).
+const ORIGINS = [
+  { id: 'slate',   name: ['CLEAN', 'SLATE'],       perk: ['NONE'], catch: ['NONE'], paper: '#e3f2d4' },
+  { id: 'yard',    name: ['BACKYARD', 'HERO'],     perk: ['+0.5 COACH', 'STAR'], catch: ['NONE'], coach: 0.5, paper: '#fff3a0' },
+  { id: 'walkon',  name: ['COLLEGE', 'WALK-ON'],   perk: ['+20', 'CREDITS'], catch: ['NONE'], coins: 20, paper: '#c8ecff' },
+  { id: 'street',  name: ['STREET', 'BALL'],       perk: ['+10', 'CREDITS'], catch: ['NONE'], coins: 10, paper: '#ffd3e0' },
+  { id: 'film',    name: ['FILM ROOM', 'GRINDER'], perk: ['+250 COACH', 'XP'], catch: ['-10 CREDITS'], cxp: 250, coins: -10, paper: '#e3d9ff' },
+  { id: 'scout',   name: ['EX-', 'SCOUT'],         perk: ['SCOUTS', '+1 STAR'], perkOff: ['SHARPER', 'DRAFT GRADES'], catch: ['-10 CREDITS'], scoutUp: 1, coins: -10, need: 'scouts', alt: { scoutUp: 0, grade: 0.7 }, paper: '#ffe2c2' },
+  { id: 'trainer', name: ["TRAINER'S", 'ROOM'],    perk: ['INJURIES', 'HEAL FASTER'], catch: ['-10 CREDITS'], heal: 0.25, coins: -10, paper: '#d4f0ea' },
+  { id: 'kid',     name: ["COACH'S", 'KID'],       perk: ['COORDINATORS', '+0.5 STAR'], catch: ['OWNER WANTS', '+1 WIN'], catchOff: ['-10 CREDITS'], coord: 0.5, wins: 1, need: 'contracts', alt: { wins: 0, coins: -10 }, paper: '#ffeab0' },
+  { id: 'second',  name: ['SECOND', 'CHANCE'],     perk: ['+30', 'CREDITS'], catch: ['OWNER IS', 'IMPATIENT'], catchOff: ['WEAKER TEAMS', 'HIRE YOU'], coins: 30, patience: -2, need: 'contracts', alt: { patience: 0, job: 'weak' }, paper: '#f6d6ff' },
+  { id: 'leader',  name: ['LOCKER ROOM', 'LEADER'], perk: ['+6 TEAM', 'MORALE'], catch: ['-0.5 COACH', 'STAR'], morale: 6, coach: -0.5, paper: '#cfe6ff' },
+  { id: 'cap',     name: ['CAP', 'WIZARD'],        perk: ['+10 CAP', 'ROOM'], catch: ['-3 STAFF', 'BUDGET'], cap: 10, budget: -3, paper: '#ddf5c4' },
+  { id: 'juco',    name: ['JUCO', 'LEGEND'],       perk: ['+60 XP', 'IN THE BANK'], catch: ['WEAKER TEAMS', 'ONLY'], xpBank: 60, job: 'weak', paper: '#ffd9c7' },
 ];
-const CAR_NOTE = i => ({ x: 880 + i * 124, y: 124, w: 112, h: 146 });
-const CAR_DIFF_NAMES = ['DOODLE', 'ROOKIE', 'PRO', 'VETERAN', 'ALL-PRO', 'PLAYBOOK\nLEGEND'];   // (same order as DIFFS)
-const CAR_SLD = { x: 580, y: 604, w: 400 };
+const ORIGIN_SHOW = 4;   // notes on screen at once (CAR_OPG pages through the rest)
+const originBase = () => ORIGINS.find(o => o.id === career.origin) || ORIGINS[0];
+const originSysOn = o => !o.need || (o.need === 'scouts' ? SETTINGS.scouts : SETTINGS.contracts) !== false;   // (the setting itself: also right on the menus, before xpcOn())
+const originOf = () => { const o = originBase(); return originSysOn(o) ? o : { ...o, ...o.alt }; };
+const originK = k => (typeof season !== 'undefined' && season && !exhibition && !tut && LEAGUE.year <= ORIGIN_YEARS && originOf()[k]) || 0;   // a timed perk / catch of your origin (0 outside your franchise or after ORIGIN_YEARS)
+function originStart(team) {   // the instant parts, when the season starts (after newSeason + randomizeWorld)
+  const o = originOf(), S = STAFF[team];
+  if (o.coins) LEAGUE.coins = Math.max(0, (LEAGUE.coins || 0) + o.coins);
+  if (o.coach) { career.hcStars = Math.max(0, (career.hcStars != null ? career.hcStars : 0.5) + o.coach); recalcTeamStars(); }
+  if (o.cxp) coachXP({ hc: o.cxp });
+  if (o.scoutUp && scoutsOn()) { const sc = scoutsOf(team); for (const s of [sc.off, sc.def]) s.stars = Math.min(5, s.stars + o.scoutUp); }
+  if (o.coord && S) { for (const c of [S.oc, S.dc]) if (c) c.stars = Math.min(5, c.stars + o.coord); recalcTeamStars(); }
+  if (o.xpBank) career.xpBank = (career.xpBank || 0) + o.xpBank;
+  if (o.patience && contractsOn()) { const d = hcDeal(); if (d) d.patience = Math.max(1, d.patience + o.patience); }
+}
+const CAR_OPG = { prev: { x: 866, y: 76, w: 46, h: 46 }, next: { x: 1220, y: 76, w: 46, h: 46 } };   // origin page arrows
+const CAR_NOTE = i => ({ x: 870 + i * 100, y: 128, w: 92, h: 150 });
+let carOP = 0;   // first origin note on screen
+const CAR_DCARD = i => ({ x: 458 + i * 133, y: 344, w: 122, h: 148 });   // "How tough?" cards (DIFFS order)
+const CAR_DIFF_ROWS = [['brk', 'their tackle breaks', true], ['pick', 'their picks'], ['pbu', 'their PBUs'], ['punch', 'their punch-outs']];   // "What changes" bars vs PRO (true = flipped: brk is your moves' odds)
+const CAR_WHAT = { x: 458, y: 510, w: 352, h: 196 };   // the "What changes" sticky note
+const CAR_CUSTOM = { x: 834, y: 634, w: 192, h: 62 };   // CUSTOM SLIDERS (the settings difficulty page)
+const CAR_TOUR = { x: 1212, y: 288, w: 44, h: 44 };   // the ? on "How tough?" (TOUR_STEPS.carDiff)
 const CAR_ROLL_MS = 800, CAR_ROLL_APPLY = 360;
-let carPens = null;
-const carPenList = () => carPens || (carPens = Object.keys(ROSTER).filter(k => NFL[k]).map((key, i) => {
-  const c = 450 + 49 + (i % 8) * 98, y = 312 + Math.floor(i / 8) * 54;
-  return { key, c, y, x: c - 46, w: 92, h: 52, tilt: (Math.sin(i * 12.9898) * 43758.5453 % 1) * 0.06 };
-}));
 const carLum = c => { const h = String(c).replace('#', ''); const n = parseInt(h.length === 3 ? h.replace(/./g, '$&$&') : h, 16); return (0.3 * (n >> 16 & 255) + 0.59 * (n >> 8 & 255) + 0.11 * (n & 255)) / 255; };
 const carCols = k => { const [a, b] = NFL[k].home; return carLum(a) > 0.82 ? [b, a] : [a, b]; };
 const carWob = (i, s) => Math.sin(i * 12.9898 + s) * 0.5;
@@ -61,9 +91,48 @@ function carNameLine(first, last, maxW, size) {   // the name as signed on the p
   ctx.font = `bold ${s}px ${CAR_HAND}`; while (ctx.measureText(full).width > maxW && s > 14) { s -= 2; ctx.font = `bold ${s}px ${CAR_HAND}`; }
   return { full, s };
 }
-function carSlide(p) {
-  const idx = Math.max(0, Math.min(DIFFS.length - 1, Math.round((p.x - CAR_SLD.x) / (CAR_SLD.w / (DIFFS.length - 1)))));
-  SETTINGS.diffMode = 'preset'; SETTINGS.difficulty = DIFFS[idx];
+function carPennant(key, cx, y, s, sel, tilt, T) {   // a team pennant hanging from (cx, y), s = scale (the locker room uses it)
+  const [pa, pb] = carCols(key), ink = RES.line;
+  ctx.save(); ctx.translate(cx, y); ctx.rotate(tilt + (sel ? Math.sin(T * 3) * 0.04 : 0)); ctx.scale(s, s);
+  ctx.fillStyle = 'rgba(40,25,5,0.22)'; ctx.beginPath(); ctx.moveTo(-38, 3); ctx.lineTo(42, 3); ctx.lineTo(3, 52); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = pa; ctx.beginPath(); ctx.moveTo(-40, 0); ctx.lineTo(40, 0); ctx.lineTo(0, 48); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = pb; ctx.beginPath(); ctx.moveTo(-40, 0); ctx.lineTo(40, 0); ctx.lineTo(34, 10); ctx.lineTo(-34, 10); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = sel ? ink : 'rgba(34,48,90,0.45)'; ctx.lineWidth = sel ? 2.5 : 1.2; ctx.beginPath(); ctx.moveTo(-40, 0); ctx.lineTo(40, 0); ctx.lineTo(0, 48); ctx.closePath(); ctx.stroke();
+  ctx.restore();
+  drawLogo(key, cx, y + 24 * s, 24 * s);
+  if (sel) { ctx.fillStyle = '#d52b2b'; ctx.beginPath(); ctx.arc(cx, y - 2, 5, 0, 7); ctx.fill(); ctx.strokeStyle = '#7a1010'; ctx.lineWidth = 1; ctx.stroke(); }
+}
+function carDiffFace(cx, cy, r, lvl, col) {   // a pencil doodle face that gets tougher with the level (0 DOODLE .. 5 PLAYBOOK LEGEND)
+  const ink = RES.line;
+  ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.fillStyle = '#fffdf4'; ctx.strokeStyle = ink; ctx.lineWidth = 2.2;
+  ctx.beginPath(); ctx.ellipse(cx, cy, r, r * 0.96, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  if (lvl >= 3) { ctx.fillStyle = col; ctx.globalAlpha = 0.12 + 0.06 * (lvl - 3); ctx.beginPath(); ctx.arc(cx, cy, r - 2, 0, 7); ctx.fill(); ctx.globalAlpha = 1; }   // (red in the face)
+  const ex = r * 0.36, ey = cy - r * 0.18;
+  ctx.lineWidth = 2.2; ctx.fillStyle = ink;
+  for (const sd of [-1, 1]) {
+    if (lvl === 0) { ctx.beginPath(); ctx.arc(cx + sd * ex, ey + 2, r * 0.12, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke(); }   // happy closed eyes
+    else { ctx.beginPath(); ctx.arc(cx + sd * ex, ey, r * (lvl >= 4 ? 0.07 : 0.09), 0, 7); ctx.fill(); }
+    if (lvl >= 2) {   // brows: flat, then angled in
+      const a = [0, 0, 0, 0.25, 0.45, 0.6][lvl];
+      ctx.beginPath(); ctx.moveTo(cx + sd * (ex + r * 0.18), ey - r * 0.22 - a * r * 0.12); ctx.lineTo(cx + sd * (ex - r * 0.16), ey - r * 0.2 + a * r * 0.18); ctx.stroke();
+    }
+  }
+  const my = cy + r * 0.38, mw = r * 0.42;
+  ctx.beginPath();
+  if (lvl === 0) { ctx.arc(cx, my - r * 0.14, mw, 0.15 * Math.PI, 0.85 * Math.PI); ctx.closePath(); ctx.fillStyle = '#e9a3a3'; ctx.fill(); ctx.stroke(); }   // big grin
+  else if (lvl === 1) { ctx.arc(cx, my - r * 0.18, mw * 0.85, 0.2 * Math.PI, 0.8 * Math.PI); ctx.stroke(); }
+  else if (lvl === 2) { ctx.moveTo(cx - mw * 0.7, my - 1); ctx.quadraticCurveTo(cx, my + r * 0.08, cx + mw * 0.7, my - 3); ctx.stroke(); }   // a smirk
+  else if (lvl === 3) { ctx.moveTo(cx - mw * 0.7, my); ctx.lineTo(cx + mw * 0.7, my); ctx.stroke(); }
+  else if (lvl === 4) { ctx.arc(cx, my + r * 0.22, mw * 0.8, 1.2 * Math.PI, 1.8 * Math.PI); ctx.stroke(); }   // frown
+  else {   // gritted teeth
+    ctx.rect(cx - mw * 0.8, my - r * 0.1, mw * 1.6, r * 0.2); ctx.fillStyle = '#fffdf4'; ctx.fill(); ctx.stroke();
+    for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(cx - mw * 0.8 + i * mw * 0.4, my - r * 0.1); ctx.lineTo(cx - mw * 0.8 + i * mw * 0.4, my + r * 0.1); ctx.stroke(); }
+    ctx.beginPath(); ctx.moveTo(cx - mw * 0.8, my); ctx.lineTo(cx + mw * 0.8, my); ctx.stroke();
+  }
+  if (lvl >= 4) { ctx.strokeStyle = '#4a8fd6'; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.moveTo(cx + r * 0.8, cy - r * 0.5); ctx.quadraticCurveTo(cx + r * 0.95, cy - r * 0.2, cx + r * 0.82, cy - r * 0.1); ctx.stroke(); }   // a bead of sweat
+  if (lvl === 5) { ctx.strokeStyle = '#d52b2b'; ctx.lineWidth = 2; for (const sd of [-1, 1]) { ctx.beginPath(); ctx.moveTo(cx + sd * r * 0.6, cy - r * 1.05); ctx.lineTo(cx + sd * r * 0.85, cy - r * 1.3); ctx.moveTo(cx + sd * r * 0.25, cy - r * 1.12); ctx.lineTo(cx + sd * r * 0.3, cy - r * 1.42); ctx.stroke(); } }   // steam
+  ctx.restore();
 }
 function drawCareer() {
   paperBg();
@@ -76,7 +145,7 @@ function drawCareer() {
     if (!(career.roll.t <= now)) career.roll.t = now - CAR_ROLL_MS;   // (a stamp saved from an older page load: just end the roll)
     const e = now - career.roll.t;
     if (!career.roll.done && e > CAR_ROLL_APPLY) {
-      career.roll.done = true; Object.assign(career, randCareer(), { face: makeFace(Math.random, true), team: pick(Object.keys(ROSTER).filter(q => NFL[q])), fav: true, focus: null }); coachSave();
+      career.roll.done = true; Object.assign(career, randCareer(), { face: makeFace(Math.random, true), team: pick(Object.keys(ROSTER).filter(q => NFL[q])), fav: true, hire: 'fav', focus: null }); coachSave();
     }
     if (e > CAR_ROLL_MS) career.roll = null; else roll = e / CAR_ROLL_MS;
   }
@@ -116,8 +185,8 @@ function drawCareer() {
   ctx.strokeStyle = 'rgba(34,48,90,0.35)'; ctx.setLineDash([6, 5]); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(18, 404); ctx.lineTo(342, 404); ctx.stroke(); ctx.setLineDash([]);
   drawLogo(k, 52, 440 - hop * 0.5, 54);
   ctx.textAlign = 'left'; ctx.fillStyle = ink; ctx.font = 'bold 20px monospace'; ctx.fillText(NFL[k].city, 94, 430); ctx.font = 'bold 22px monospace'; ctx.fillStyle = tc; ctx.fillText(NFL[k].nick, 94, 454);
-  const bk = CAR_BACKS[career.back];
-  ctx.fillStyle = RES.dim; ctx.font = `bold 15px ${CAR_HAND}`; ctx.fillText(bk ? 'story: ' + bk.name.join(' ').toLowerCase() : 'story: (pick a note)', 94, 472);
+  const bk = originBase();
+  ctx.fillStyle = RES.dim; ctx.font = `bold 15px ${CAR_HAND}`; ctx.fillText('story: ' + bk.name.join(' ').replace('- ', '-').toLowerCase(), 94, 472);
   carFigure(300, 450, T, hop * 1.2, tc, tc2);
   ctx.fillStyle = ink; for (let i = 0; i < 28; i++) { const bw = 1 + (i * 7 % 3); ctx.fillRect(18 + i * 5.2, 484, bw, 10); }   // a barcode
   ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 6; ctx.strokeRect(1, 1, 358, 498);   // laminate
@@ -151,72 +220,94 @@ function drawCareer() {
     ctx.fillStyle = '#d52b2b'; ctx.font = `bold 17px ${CAR_HAND}`; ctx.textAlign = 'center'; ctx.fillText('sign both lines to go on!', 650, 262);
   }
 
-  // ---- backstory sticky notes
-  ctx.fillStyle = ink; ctx.font = `bold 16px ${CAR_HAND}`; ctx.textAlign = 'center'; ctx.fillText("How'd you get your start?", 1060, 104);
-  CAR_BACKS.forEach((b, i) => {
-    const r = CAR_NOTE(i), sel = career.back === i, hov = hoverPt && inBtn(hoverPt, r), lift = sel ? 8 : hov ? 4 : 0;
-    ctx.save(); ctx.translate(r.x + r.w / 2, r.y + r.h / 2 - lift); ctx.rotate((i - 1) * 0.055 + (sel ? 0 : carWob(i, 3) * 0.04));
+  // ---- origins: sticky notes, ORIGIN_SHOW at a time (◂ ▸ pencil arrows)
+  const pg = Math.max(0, Math.min(ORIGINS.length - ORIGIN_SHOW, carOP));
+  ctx.fillStyle = ink; ctx.font = `bold 17px ${CAR_HAND}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText("How'd you get your start?", 1066, 92);
+  ctx.fillStyle = RES.dim; ctx.font = 'bold 11px monospace'; ctx.fillText(`${pg + 1}-${pg + ORIGIN_SHOW} OF ${ORIGINS.length}`, 1066, 114);
+  [['prev', -1], ['next', 1]].forEach(([k, d]) => {   // pencil arrows
+    const b = CAR_OPG[k], on = d < 0 ? pg > 0 : pg < ORIGINS.length - ORIGIN_SHOW, hov = on && hoverPt && inBtn(hoverPt, b), cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    ctx.save(); ctx.globalAlpha = on ? 1 : 0.25; ctx.strokeStyle = ink; ctx.lineWidth = hov ? 3.4 : 2.6; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(cx - d * 9, cy - 13); ctx.lineTo(cx + d * 9, cy + 1); ctx.lineTo(cx - d * 10, cy + 13); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx - d * 7, cy - 11); ctx.lineTo(cx + d * 8, cy - 1); ctx.stroke(); ctx.restore();
+  });
+  ctx.textBaseline = 'alphabetic';
+  for (let i = 0; i < ORIGIN_SHOW; i++) {
+    const b = ORIGINS[pg + i]; if (!b) break;
+    const r = CAR_NOTE(i), sel = originBase() === b, hov = hoverPt && inBtn(hoverPt, r), lift = sel ? 8 : hov ? 4 : 0, sysOn = originSysOn(b);
+    ctx.save(); ctx.translate(r.x + r.w / 2, r.y + r.h / 2 - lift); ctx.rotate((i - 1.5) * 0.04 + (sel ? 0 : carWob(pg + i, 3) * 0.04));
     ctx.fillStyle = 'rgba(40,25,5,0.25)'; ctx.fillRect(-r.w / 2 + 4, -r.h / 2 + 6, r.w, r.h);
     ctx.fillStyle = b.paper; ctx.fillRect(-r.w / 2, -r.h / 2, r.w, r.h);
-    ctx.fillStyle = 'rgba(0,0,0,0.08)'; ctx.beginPath(); ctx.moveTo(r.w / 2, r.h / 2 - 18); ctx.lineTo(r.w / 2 - 18, r.h / 2); ctx.lineTo(r.w / 2, r.h / 2); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = ink; ctx.textAlign = 'center'; ctx.font = 'bold 15px monospace';
-    b.name.forEach((l, j) => ctx.fillText(l, 0, -r.h / 2 + 34 + j * 20));
-    ctx.fillStyle = RES.dim; ctx.font = `bold 13px ${CAR_HAND}`; ctx.fillText('perk:', 0, 22);
-    ctx.fillStyle = tc; ctx.font = 'bold 14px monospace'; b.perk.forEach((l, j) => ctx.fillText(l, 0, 42 + j * 17));
+    ctx.fillStyle = 'rgba(0,0,0,0.08)'; ctx.beginPath(); ctx.moveTo(r.w / 2, r.h / 2 - 16); ctx.lineTo(r.w / 2 - 16, r.h / 2); ctx.lineTo(r.w / 2, r.h / 2); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = ink; ctx.textAlign = 'center'; ctx.font = 'bold 12px monospace';
+    b.name.forEach((l, j) => ctx.fillText(l, 0, -r.h / 2 + 24 + j * 15));
+    const perk = !sysOn && b.perkOff ? b.perkOff : b.perk, cat = !sysOn && b.catchOff ? b.catchOff : b.catch;
+    ctx.font = `bold 12px ${CAR_HAND}`; ctx.fillStyle = '#2f8f3a'; ctx.fillText('perk:', 0, -14);
+    ctx.font = 'bold 10px monospace'; perk.forEach((l, j) => ctx.fillText(l, 0, -1 + j * 12));
+    ctx.font = `bold 12px ${CAR_HAND}`; ctx.fillStyle = '#c0392b'; ctx.fillText('catch:', 0, 32);
+    ctx.font = 'bold 10px monospace'; cat.forEach((l, j) => ctx.fillText(l, 0, 45 + j * 12));
     if (sel) {   // circled in pencil, with a check
-      ctx.strokeStyle = ink; ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.beginPath(); ctx.ellipse(0, -r.h / 2 + 44, 50, 30, -0.05, 0.2, Math.PI * 2 + 0.6); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(-r.w / 2 + 8, r.h / 2 - 14); ctx.lineTo(-r.w / 2 + 16, r.h / 2 - 5); ctx.lineTo(-r.w / 2 + 30, r.h / 2 - 24); ctx.stroke();
+      ctx.strokeStyle = ink; ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.beginPath(); ctx.ellipse(0, -r.h / 2 + 30, 44, 22, -0.05, 0.2, Math.PI * 2 + 0.6); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-r.w / 2 + 6, r.h / 2 - 12); ctx.lineTo(-r.w / 2 + 13, r.h / 2 - 4); ctx.lineTo(-r.w / 2 + 26, r.h / 2 - 21); ctx.stroke();
     }
-    carTape(0, -r.h / 2 + 2, (i - 1) * 0.1, 40);
+    carTape(0, -r.h / 2 + 2, (i - 1.5) * 0.08, 36);
     ctx.restore();
-  });
-
-  // ---- the pennant wall
-  ctx.fillStyle = ink; ctx.font = `bold 18px ${CAR_HAND}`; ctx.textAlign = 'left';
-  ctx.fillText(`Pin your team: ${teamFull(k)}`, 458, 292);
-  for (let r = 0; r < 4; r++) {   // strings
-    ctx.strokeStyle = 'rgba(120,90,50,0.7)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(446, 308 + r * 54); ctx.quadraticCurveTo(840, 316 + r * 54, 1244, 308 + r * 54); ctx.stroke();
-  }
-  const pens = carPenList();
-  for (const pn of pens) {
-    const sel = pn.key === k, hov = hoverPt && inBtn(hoverPt, pn), [pa, pb] = carCols(pn.key), s = sel ? 1.18 : hov ? 1.08 : 1;
-    ctx.save(); ctx.translate(pn.c, pn.y); ctx.rotate(pn.tilt + (sel ? Math.sin(T * 3) * 0.04 : 0)); ctx.scale(s, s);
-    ctx.fillStyle = 'rgba(40,25,5,0.22)'; ctx.beginPath(); ctx.moveTo(-38, 3); ctx.lineTo(42, 3); ctx.lineTo(3, 52); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = pa; ctx.beginPath(); ctx.moveTo(-40, 0); ctx.lineTo(40, 0); ctx.lineTo(0, 48); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = pb; ctx.beginPath(); ctx.moveTo(-40, 0); ctx.lineTo(40, 0); ctx.lineTo(34, 10); ctx.lineTo(-34, 10); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = sel ? ink : 'rgba(34,48,90,0.45)'; ctx.lineWidth = sel ? 2.5 : 1.2; ctx.beginPath(); ctx.moveTo(-40, 0); ctx.lineTo(40, 0); ctx.lineTo(0, 48); ctx.closePath(); ctx.stroke();
-    ctx.restore();
-    drawLogo(pn.key, pn.c, pn.y + 24 * s, 24 * s);
-    if (sel) { ctx.fillStyle = '#d52b2b'; ctx.beginPath(); ctx.arc(pn.c, pn.y - 2, 5, 0, 7); ctx.fill(); ctx.strokeStyle = '#7a1010'; ctx.lineWidth = 1; ctx.stroke(); }
   }
 
-  // ---- tick boxes (pencil marks)
-  const tick = (b, on, label, lx) => {
-    ctx.fillStyle = ink; ctx.font = `bold 18px ${CAR_HAND}`; ctx.textAlign = 'left'; ctx.fillText(label, lx, b.y + b.h / 2);
-    ctx.fillStyle = '#fffdf4'; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.strokeStyle = ink; ctx.lineWidth = 2.4; ctx.lineJoin = 'round';
-    ctx.beginPath(); ctx.moveTo(b.x - 1, b.y + 1); ctx.lineTo(b.x + b.w + 1, b.y - 1); ctx.lineTo(b.x + b.w - 1, b.y + b.h + 1); ctx.lineTo(b.x + 1, b.y + b.h - 1); ctx.closePath(); ctx.stroke();
-    if (on) { ctx.lineWidth = 4.5; ctx.lineCap = 'round'; ctx.strokeStyle = tc; ctx.beginPath(); ctx.moveTo(b.x + 6, b.y + 18); ctx.lineTo(b.x + 14, b.y + 28); ctx.lineTo(b.x + 36, b.y + 2); ctx.stroke(); ctx.lineCap = 'butt'; }
-  };
-  tick(CAR.check, career.fav, 'Start with favorite team?', 458);
-  tick(CAR.dyn, SETTINGS.diffMode === 'dynamic', 'Adaptive difficulty', 800);
-
-  // ---- the difficulty scale: Doodle ... Playbook Legend
-  const S = CAR_SLD, n = DIFFS.length - 1, dyn = SETTINGS.diffMode === 'dynamic', di = Math.max(0, DIFFS.indexOf(SETTINGS.difficulty));
-  ctx.globalAlpha = dyn ? 0.4 : 1;
-  ctx.fillStyle = ink; ctx.font = `bold 18px ${CAR_HAND}`; ctx.textAlign = 'left'; ctx.fillText('How tough?', 458, S.y + 2);
-  carScribble(S.x, S.x + S.w, S.y, 2, 'rgba(34,48,90,0.75)', 3, 9);
-  ctx.strokeStyle = tc; ctx.lineWidth = 6; ctx.globalAlpha = dyn ? 0.15 : 0.45; ctx.beginPath(); ctx.moveTo(S.x, S.y); ctx.lineTo(S.x + S.w * di / n, S.y); ctx.stroke(); ctx.globalAlpha = dyn ? 0.4 : 1;
-  CAR_DIFF_NAMES.forEach((nm2, i) => {
-    const x = S.x + S.w * i / n, on = i === di;
-    ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, S.y - 8); ctx.lineTo(x, S.y + 8); ctx.stroke();
-    ctx.fillStyle = on ? tc : RES.dim; ctx.font = `bold ${on ? 13 : 12}px monospace`; ctx.textAlign = 'center';
-    nm2.split('\n').forEach((l, j) => ctx.fillText(l, x, S.y + 26 + j * 14));
+  // ---- "How tough?": a taped card per level, what changes vs PRO, adaptive, custom sliders
+  const dyn = SETTINGS.diffMode === 'dynamic', cus = SETTINGS.diffMode === 'custom', di = Math.max(0, DIFFS.indexOf(SETTINGS.difficulty));
+  ctx.fillStyle = ink; ctx.font = `bold 30px ${CAR_HAND}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText('How tough?', 458, 312);
+  const htw = ctx.measureText('How tough?').width;
+  carScribble(456, 462 + htw, 332, 2.4, '#d52b2b', 3, 7);
+  ctx.fillStyle = RES.dim; ctx.font = `bold 14px ${CAR_HAND}`; ctx.textBaseline = 'alphabetic';   // (written on the ruled line)
+  ctx.fillText(dyn ? 'adaptive: it starts near your pick, then the league adjusts to how you play' : cus ? 'custom sliders in use: tap a card to go back to a preset' : 'only ever changes the other team, never yours', 470 + htw, 310); ctx.textBaseline = 'middle';
+  DIFFS.forEach((k, i) => {
+    const r = CAR_DCARD(i), on = i === di, hov = hoverPt && inBtn(hoverPt, r), lift = on ? 12 : hov ? 4 : 0, faded = (dyn || cus) && !on;
+    ctx.save(); ctx.globalAlpha = faded ? 0.55 : 1;
+    ctx.translate(r.x + r.w / 2, r.y + r.h / 2 - lift); ctx.rotate(on ? -0.02 : carWob(i, 7) * 0.05);
+    ctx.fillStyle = `rgba(40,25,5,${on ? 0.32 : 0.2})`; ctx.fillRect(-r.w / 2 + (on ? 6 : 3), -r.h / 2 + (on ? 10 : 4), r.w, r.h);
+    ctx.fillStyle = '#fffdf4'; ctx.fillRect(-r.w / 2, -r.h / 2, r.w, r.h);
+    ctx.strokeStyle = 'rgba(80,130,214,0.22)'; ctx.lineWidth = 1; for (let y = -r.h / 2 + 30; y < r.h / 2; y += 18) { ctx.beginPath(); ctx.moveTo(-r.w / 2, y); ctx.lineTo(r.w / 2, y); ctx.stroke(); }
+    ctx.strokeStyle = 'rgba(214,80,80,0.45)'; ctx.beginPath(); ctx.moveTo(-r.w / 2 + 14, -r.h / 2); ctx.lineTo(-r.w / 2 + 14, r.h / 2); ctx.stroke();
+    ctx.strokeStyle = on ? tc : 'rgba(34,48,90,0.4)'; ctx.lineWidth = on ? 3 : 1.4; ctx.strokeRect(-r.w / 2, -r.h / 2, r.w, r.h);
+    carDiffFace(0, -r.h / 2 + 52, 28, i, '#d52b2b');
+    ctx.fillStyle = on ? tc : ink; ctx.textAlign = 'center'; ctx.font = 'bold 14px monospace';
+    const nm = dn(k).split(' '), lines = nm.length > 1 ? nm : [nm[0]];
+    lines.forEach((l, j) => ctx.fillText(l, 0, r.h / 2 - 34 + j * 16 - (lines.length - 1) * 8));
+    if (k === 'NORMAL') { ctx.fillStyle = RES.dim; ctx.font = `bold 11px ${CAR_HAND}`; ctx.fillText('(default)', 0, r.h / 2 - 9); }
+    if (on) carTape(0, -r.h / 2 + 1, 0.05, 54); else { ctx.fillStyle = '#d52b2b'; ctx.beginPath(); ctx.arc(0, -r.h / 2 + 8, 4, 0, 7); ctx.fill(); }   // picked = taped up, the rest pinned
+    ctx.restore();
   });
-  const hx = S.x + S.w * di / n;   // the pencil on the scale
-  ctx.save(); ctx.translate(hx, S.y - 4); ctx.rotate(0.5); ctx.fillStyle = '#ffd94a'; ctx.fillRect(-4, -34, 8, 30); ctx.fillStyle = '#f2c9a0'; ctx.beginPath(); ctx.moveTo(-4, -4); ctx.lineTo(4, -4); ctx.lineTo(0, 6); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = '#d96a6a'; ctx.fillRect(-4, -40, 8, 6); ctx.strokeStyle = ink; ctx.lineWidth = 1.2; ctx.strokeRect(-4, -34, 8, 30); ctx.restore();
-  ctx.globalAlpha = 1;
-  if (dyn) { ctx.fillStyle = tc; ctx.font = `bold 15px ${CAR_HAND}`; ctx.textAlign = 'center'; ctx.fillText('adaptive: the league adjusts to how you play', S.x + S.w / 2, S.y - 22); }
+  // the "What changes" sticky note: pencil bars vs PRO (DIFFICULTY[level] / DIFFICULTY.NORMAL; PRO = the dashed line)
+  const Wn = CAR_WHAT, dk = DIFFS[di], D0 = DIFFICULTY.NORMAL, D1 = DIFFICULTY[dk] || D0;
+  ctx.save(); ctx.translate(Wn.x + Wn.w / 2, Wn.y + Wn.h / 2); ctx.rotate(-0.012); ctx.translate(-Wn.w / 2, -Wn.h / 2);
+  ctx.fillStyle = 'rgba(40,25,5,0.22)'; ctx.fillRect(4, 6, Wn.w, Wn.h); ctx.fillStyle = '#fff3a0'; ctx.fillRect(0, 0, Wn.w, Wn.h);
+  ctx.fillStyle = ink; ctx.font = `bold 18px ${CAR_HAND}`; ctx.textAlign = 'left'; ctx.fillText(`What changes${dyn ? '' : cus ? ' (custom)' : ` at ${dn(dk)}`}`, 14, 22);
+  carScribble(12, 190, 36, 1.4, '#d52b2b', 2, 4);
+  const bx = 168, bw = 120;
+  CAR_DIFF_ROWS.forEach(([key, label, flip], j) => {
+    const y = 58 + j * 25, ratio = cus || dyn ? 1 : flip ? D0[key] / D1[key] : D1[key] / D0[key], len = bw / 2 * Math.min(2, ratio);
+    ctx.fillStyle = ink; ctx.font = `bold 14px ${CAR_HAND}`; ctx.fillText(label, 14, y);
+    ctx.strokeStyle = 'rgba(34,48,90,0.35)'; ctx.lineWidth = 1; ctx.strokeRect(bx, y - 7, bw, 14);
+    ctx.fillStyle = ratio > 1.02 ? 'rgba(192,57,43,0.55)' : ratio < 0.98 ? 'rgba(47,143,58,0.55)' : 'rgba(34,48,90,0.35)';
+    ctx.beginPath(); ctx.moveTo(bx, y - 6); for (let x = 0; x <= len; x += 6) ctx.lineTo(bx + x, y - 6 + carWob(x + j, 2) * 1.5); ctx.lineTo(bx + len, y + 6); ctx.lineTo(bx, y + 6); ctx.closePath(); ctx.fill();   // a pencil-shaded bar
+    ctx.strokeStyle = ink; ctx.setLineDash([3, 3]); ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(bx + bw / 2, y - 10); ctx.lineTo(bx + bw / 2, y + 10); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = ink; ctx.font = 'bold 12px monospace'; ctx.fillText(`x${ratio.toFixed(2)}`, bx + bw + 6, y + 1);
+  });
+  ctx.fillStyle = RES.dim; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center'; ctx.fillText('PRO', bx + bw / 2, 44); ctx.textAlign = 'left';
+  ctx.fillStyle = ink; ctx.font = `bold 14px ${CAR_HAND}`; ctx.fillText('Player speed never changes.', 14, 180);
+  if (dyn) { ctx.fillStyle = RES.dim; ctx.font = `bold 12px ${CAR_HAND}`; ctx.fillText('(adaptive moves these week to week)', 14, 158); }
+  carTape(Wn.w / 2, 0, -0.04, 70);
+  ctx.restore();
+  // ADAPTIVE tick + its note, CUSTOM SLIDERS
+  const b = CAR.dyn;
+  ctx.fillStyle = ink; ctx.font = `bold 18px ${CAR_HAND}`; ctx.textAlign = 'left'; ctx.fillText('Adaptive difficulty', b.x + b.w + 12, b.y + b.h / 2);
+  ctx.fillStyle = '#fffdf4'; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.strokeStyle = ink; ctx.lineWidth = 2.4; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(b.x - 1, b.y + 1); ctx.lineTo(b.x + b.w + 1, b.y - 1); ctx.lineTo(b.x + b.w - 1, b.y + b.h + 1); ctx.lineTo(b.x + 1, b.y + b.h - 1); ctx.closePath(); ctx.stroke();
+  if (dyn) { ctx.lineWidth = 4.5; ctx.lineCap = 'round'; ctx.strokeStyle = tc; ctx.beginPath(); ctx.moveTo(b.x + 6, b.y + 18); ctx.lineTo(b.x + 14, b.y + 28); ctx.lineTo(b.x + 36, b.y + 2); ctx.stroke(); ctx.lineCap = 'butt'; }
+  ctx.fillStyle = RES.dim; ctx.font = `bold 13px ${CAR_HAND}`;
+  ['the league adjusts to how you play:', 'harder as you win, easier when', 'you struggle'].forEach((l, j) => ctx.fillText(l, b.x, b.y + b.h + 20 + j * 17));
+  menuBtn(CAR_CUSTOM, 'CUSTOM\nSLIDERS', cus ? SEL : RES.bright, 18);
+  menuBtn(CAR_TOUR, '?', RES.bright, 22);
 
   // ---- a roll of the dice: paper scraps shuffle across the page
   if (roll) for (let i = 0; i < 9; i++) {
@@ -271,50 +362,64 @@ function careerClick(p) {
   if (career.focus) return;
   if (inBtn(p, COACH_FACE_BOX)) { coachOpen('franchise'); return; }
   if (career.roll) return;   // (the dice are still rolling)
-  const pen = carPenList().find(q => inBtn(p, q)), note = CAR_BACKS.findIndex((_, i) => inBtn(p, CAR_NOTE(i)));
-  if (pen) { career.team = pen.key; career.fav = true; }   // (pinning a team means you want it)
-  else if (note >= 0) career.back = career.back === note ? null : note;
-  else if (inBtn(p, CAR.check)) career.fav = !career.fav;
-  else if (inBtn(p, CAR.dyn)) { SETTINGS.diffMode = SETTINGS.diffMode === 'dynamic' ? 'preset' : 'dynamic'; saveSettings(); }
-  else if (p.x >= CAR_SLD.x - 24 && p.x <= CAR_SLD.x + CAR_SLD.w + 24 && p.y >= CAR_SLD.y - 30 && p.y <= CAR_SLD.y + 30) { career.dd = true; carSlide(p); }
+  const pg = Math.max(0, Math.min(ORIGINS.length - ORIGIN_SHOW, carOP));
+  const note = [...Array(ORIGIN_SHOW).keys()].findIndex(i => ORIGINS[pg + i] && inBtn(p, CAR_NOTE(i))), card = DIFFS.findIndex((_, i) => inBtn(p, CAR_DCARD(i)));
+  if (note >= 0) career.origin = ORIGINS[pg + note].id;
+  else if (inBtn(p, CAR_OPG.prev)) carOP = Math.max(0, pg - ORIGIN_SHOW);
+  else if (inBtn(p, CAR_OPG.next)) carOP = Math.min(ORIGINS.length - ORIGIN_SHOW, pg + ORIGIN_SHOW);
+  else if (card >= 0) { SETTINGS.diffMode = 'preset'; SETTINGS.difficulty = DIFFS[card]; saveSettings(); }
+  else if (inBtn(p, CAR.dyn) || (p.x > CAR.dyn.x && p.x < CAR.dyn.x + 240 && p.y >= CAR.dyn.y && p.y <= CAR.dyn.y + CAR.dyn.h)) { SETTINGS.diffMode = SETTINGS.diffMode === 'dynamic' ? 'preset' : 'dynamic'; saveSettings(); }
+  else if (inBtn(p, CAR_TOUR)) tourStart('carDiff', true);
+  else if (inBtn(p, CAR_CUSTOM)) { settingsOpen = true; diffUI = { scroll: 0, sel: 0, car: true }; }   // (the settings difficulty page; closing it comes back here)
   else if (inBtn(p, CAR.random)) career.roll = { t: performance.now(), done: false };   // (ROLL THE DICE: shuffles name, face and team; the new look is kept as your coach)
   else if (inBtn(p, BACK_BTN)) results.screen = 'start';
-  else if (inBtn(p, MENU_NEXT)) {   // on to the season
+  else if (inBtn(p, MENU_NEXT)) {   // on to the coaching questionnaire (the season starts when it is signed: careerStart)
     if (!String(career.first || '').trim() || !String(career.last || '').trim()) { career.nameErr = performance.now(); career.focus = String(career.first || '').trim() ? 'last' : 'first'; return; }   // (a coach needs a name)
-    resetWorld();   // (a new career never inherits the rosters of the franchise that was loaded before)
-    careerReset(); leagueReset();   // (nor its bought cap / roster spots, XP bank, coach progress, practice, goals, tips)
-    suspended = null; resumeRoster = null; simMenu = false; simMode = 'none';   // (nor the game you left in the old franchise: with the same team, PLAY used to RESUME it here)
-    curSlot = null; PST = {}; LPST = {}; HOF = []; pstStash = null;   // (nor its stats: nothing may be written to the old save's slot before the new one is assigned)
-    const team = career.fav ? career.team : randomJobTeam();
-    if (MATCH.opp === team) MATCH.opp = MATCH.you;
-    MATCH.you = team;
-    DIFFV = diffNew(); postEvShown = false; HONORS = {}; saveHonors(); OFF = null; offPop = null; cardShows = []; krTags = {}; TR_TAGS = {};   // (a new franchise; LEAGUE itself was wiped by leagueReset above; the old one's returner / trade-block tags go too)
-    newSeason(team);
-    randomizeWorld();   // (every franchise is its own league: ratings, coaches, tendencies, free agents)
-    seasonSkipTo(SEASON_WEEKS, true);   // you take over for the regular-season finale: weeks 1-17 are already played (on VETERAN odds)
-    LEAGUE.coins = 10; payToFly = 0;   // (simmed games pay nothing: a new franchise starts with a base of 10 credits, plus the backstory's perk below)
-    const bk = CAR_BACKS[career.back];   // (your backstory's tiny starting perk)
-    if (bk) { if (bk.coach) { career.hcStars = (career.hcStars != null ? career.hcStars : 0.5) + bk.coach; recalcTeamStars(); } if (bk.coins) LEAGUE.coins = (LEAGUE.coins || 0) + bk.coins; }
-    results.screen = 'home';
-    tutPrompt = 'coach';
-    autoAssignSlot();   // (always its own new slot; every slot full = the save screen opens so you pick one to replace)
-    if (curSlot === null) { slotUI = { mode: 'save', scroll: 0, confirm: null }; note('SLOTS FULL: PICK ONE TO SAVE YOUR NEW FRANCHISE'); }
+    qsOpen(true);
   }
 }
-window.addEventListener('pointermove', e => { if (career.dd && results && results.screen === 'franchise') carSlide(pointerPos(e)); });   // (dragging the difficulty pencil)
-window.addEventListener('pointerup', () => { if (career.dd) { career.dd = false; saveSettings(); } });
+function careerStart() {   // the questionnaire's START SEASON: a new franchise
+  resetWorld();   // (a new career never inherits the rosters of the franchise that was loaded before)
+  careerReset(); leagueReset();   // (nor its bought cap / roster spots, XP bank, coach progress, practice, goals, tips)
+  suspended = null; resumeRoster = null; simMenu = false; simMode = 'none';   // (nor the game you left in the old franchise: with the same team, PLAY used to RESUME it here)
+  curSlot = null; PST = {}; LPST = {}; HOF = []; pstStash = null;   // (nor its stats: nothing may be written to the old save's slot before the new one is assigned)
+  const team = careerTeam();
+  if (MATCH.opp === team) MATCH.opp = MATCH.you;
+  MATCH.you = team;
+  DIFFV = diffNew(); postEvShown = false; HONORS = {}; saveHonors(); OFF = null; offPop = null; cardShows = []; krTags = {}; TR_TAGS = {};   // (a new franchise; LEAGUE itself was wiped by leagueReset above; the old one's returner / trade-block tags go too)
+  newSeason(team);
+  randomizeWorld();   // (every franchise is its own league: ratings, coaches, tendencies, free agents)
+  seasonSkipTo(SEASON_WEEKS, true);   // you take over for the regular-season finale: weeks 1-17 are already played (on VETERAN odds)
+  LEAGUE.coins = 10; payToFly = 0;   // (simmed games pay nothing: a new franchise starts with a base of 10 credits, plus / minus your origin)
+  originStart(team);   // (your origin's instant perk / catch; the timed ones read originK)
+  career.setupDone = true;
+  results.screen = 'home';
+  tutPrompt = 'coach';
+  autoAssignSlot();   // (always its own new slot; every slot full = the save screen opens so you pick one to replace)
+  if (curSlot === null) { slotUI = { mode: 'save', scroll: 0, confirm: null }; note('SLOTS FULL: PICK ONE TO SAVE YOUR NEW FRANCHISE'); }
+}
+// the first team: your hiring preference (career.hire: fav / rebuild / contender / surprise), held to the weaker half if your origin says so (job 'weak')
+function careerTeam() {
+  const weak = originOf().job === 'weak', h = career.hire || 'surprise';
+  if (h === 'fav' && (!weak || jobRank(career.team) < JOB_PREF.weak[1])) return career.team;
+  return randomJobTeam(weak ? (h === 'rebuild' ? 'rebuild' : 'weak') : h === 'fav' ? 'surprise' : h);
+}
 // no favorite team: you get hired by a random team, weighted toward the bad ones (by offense + defense stars,
 // 2-10); a team at JOB_MAX_STARS or better never hires a rookie coach
-function randomJobTeam() {
+// (how good a team is = the average stars of the starters on its actual roster, offense + defense, not its starting rating)
+const jobStrength = k => { const R = ROSTER[k], n = {}, tot = { true: [0, 0], false: [0, 0] };
+  for (const p of R) { const o = OFF_GROUPS.includes(p.group); if (RATED_GROUPS(p.group) && (n[p.group] = (n[p.group] || 0) + 1) <= (STARTERS[p.group] || 0)) { tot[o][0] += p.stars; tot[o][1]++; } }
+  return (tot[true][1] ? tot[true][0] / tot[true][1] : 0) + (tot[false][1] ? tot[false][0] / tot[false][1] : 0); };
+const jobOrder = () => Object.keys(ROSTER).filter(k => NFL[k]).sort((a, b) => jobStrength(a) - jobStrength(b));   // worst first
+const jobRank = k => { const all = jobOrder(); return all.indexOf(k) / all.length; };   // 0 = the worst roster .. ~1 = the best
+// mode (JOB_PREF): 'surprise' = the old pick (weighted to bad rosters), 'rebuild' / 'contender' = an even pick inside that band, 'weak' = the old weights inside the weaker half
+function randomJobTeam(mode = 'surprise') {
   // (never one of the 4 best teams in the league: ranked by their stars' combined edge over the league)
-  // (how good a team is = the average stars of the starters on its actual roster, offense + defense, not its starting rating)
-  const strength = k => { const R = ROSTER[k], n = {}, tot = { true: [0, 0], false: [0, 0] };
-    for (const p of R) { const o = OFF_GROUPS.includes(p.group); if (RATED_GROUPS(p.group) && (n[p.group] = (n[p.group] || 0) + 1) <= (STARTERS[p.group] || 0)) { tot[o][0] += p.stars; tot[o][1]++; } }
-    return (tot[true][1] ? tot[true][0] / tot[true][1] : 0) + (tot[false][1] ? tot[false][0] / tot[false][1] : 0); };
-  const all = Object.keys(ROSTER).filter(k => NFL[k]).sort((a, b) => strength(a) - strength(b));   // worst first
+  const all = jobOrder(), band = JOB_PREF[mode];
   const top7 = new Set(all.slice(-4));
-  const pool = all.filter(k => !top7.has(k)).map(k => [k, strength(k), all.indexOf(k)])
-    .filter(([, s]) => s < JOB_MAX_STARS).map(([k, , i]) => [k, Math.pow(1 - i / all.length, 3) + 0.02]);   // (the worse the roster, the likelier: a good team is rare)
+  const pool = all.filter(k => !top7.has(k)).map(k => [k, jobStrength(k), all.indexOf(k)])
+    .filter(([, s, i]) => s < JOB_MAX_STARS && (!band || (i / all.length >= band[0] && i / all.length < band[1])))
+    .map(([k, , i]) => [k, mode === 'rebuild' || mode === 'contender' ? 1 : Math.pow(1 - i / all.length, 3) + 0.02]);   // (the worse the roster, the likelier: a good team is rare)
   if (!pool.length) return all.filter(k => !top7.has(k))[0];
   let r = Math.random() * pool.reduce((t, [, w]) => t + w, 0);
   for (const [k, w] of pool) if ((r -= w) < 0) return k;
@@ -724,7 +829,7 @@ function startCrumple(rect) {   // rect: crumple only that part of the screen (a
   const K = TOUCH ? 0.4 : 1, DW = W + 2 * PAD;
   const R = rect ? { x: rect.x + 3, y: rect.y + 3, w: rect.w - 6, h: rect.h - 6 } : { x: -PAD, y: 0, w: DW, h: H };   // (inset: the card's torn edge and shadow stay out of the piece)
   crumpleSnap.width = Math.max(2, Math.round(R.w * K)); crumpleSnap.height = Math.max(2, Math.round(R.h * K));
-  crumpleSnap.getContext('2d').drawImage(canvas, (R.x + PAD) * RK, R.y * RK, R.w * RK, R.h * RK, 0, 0, crumpleSnap.width, crumpleSnap.height);
+  crumpleSnap.getContext('2d').drawImage(canvas, (R.x + PAD) * RK, R.y * RK, R.w * RK, R.h * RK, 0, 0, crumpleSnap.width, crumpleSnap.height); snapUnbright(crumpleSnap);
   const r = seeded(Math.floor(Math.random() * 1e6) + 1), pts = [];
   const G = TOUCH ? { ...CRUMPLE, gx: Math.max(5, Math.round(5 * DW / W)), gy: 3, ms: 600 } : { ...CRUMPLE, gx: Math.max(8, Math.round(8 * DW / W)) };   // (phones: fewer, bigger facets, a shorter toss: each facet is a clipped draw, a lot of them at once was a stutter)
   if (rect) Object.assign(G, { gx: 6, gy: 4, ball: 70 });
@@ -748,6 +853,7 @@ function startCrumple(rect) {   // rect: crumple only that part of the screen (a
 // a short crinkle: filtered noise bursts
 function paperSfx() {
   try {
+    if (sndRec('crumple', 1, { ms: SND_USE.crumpleMs, fade: 400 })) return;   // (the recording; the noise burst below = no audio element)
     const a = ac(); if (!a) return;
     const len = 0.35, ac_ = a, buf = ac_.createBuffer(1, ac_.sampleRate * len, ac_.sampleRate), d = buf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (Math.random() < 0.08 ? 1 : 0.25) * (1 - i / d.length);
@@ -927,6 +1033,7 @@ canvas.addEventListener('pointerdown', e => {
     if (tutPrompt) { if (e.button === 0) tutPromptClick(pointerPos(e)); return; }
     if (e.button === 0 && results.screen === 'start') { startClick(pointerPos(e)); return; }
     if (e.button === 0 && results.screen === 'franchise') { careerClick(pointerPos(e)); return; }
+    if (results.screen === 'qsetup') { if (e.button === 0) qsClick(pointerPos(e)); return; }
     if (results.screen === 'coach') { if (e.button === 0) coachClick(pointerPos(e)); return; }
     if (results.screen === 'online') { if (e.button === 0) olClick(pointerPos(e)); return; }
     if (results.screen === 'onresult') { if (e.button === 0) onResultClick(pointerPos(e)); return; }
@@ -1284,6 +1391,7 @@ canvas.addEventListener('pointercancel', e => { if (!aim || aim.pid == null || a
 canvas.addEventListener('contextmenu', e => {
   e.preventDefault();
   if (touchLong) return;   // (a long-press on a phone fires this: not a right-click)
+  if (qsRight()) return;   // (the coaching questionnaire: USE RECOMMENDED)
   if (rec && rec.replaying) return;
   if (performance.now() - celebClickAt < 500 || celebGo() || celebSkip() || aiOff()) return;   // (a celebration: started (the right button's own pointerdown may already have done it) or skipped; on defense: no bullet toggle)
   bulletMode = !bulletMode;
@@ -1335,7 +1443,7 @@ window.addEventListener('keydown', e => {
     if (!e.repeat || e.code === 'Escape') rebinding = null;
     return;
   }
-  if (!olKey(e) && !careerKey(e) && !coachKey(e) && !nickKey(e) && !staffNameKey(e)) { const a = aliasKey(e); if (!e.repeat) heldKeys[e.code] = a; onKeyDown(a); }
+  if (!olKey(e) && !careerKey(e) && !qsKey(e) && !coachKey(e) && !nickKey(e) && !staffNameKey(e)) { const a = aliasKey(e); if (!e.repeat) heldKeys[e.code] = a; onKeyDown(a); }
 });
 const heldKeys = {};   // (what each physical key was read as when it went down: it is let go as that, whatever has changed since (the snap, the drive direction))
 function onKeyDown(e) {
@@ -1499,7 +1607,45 @@ function speedStep(dt) {
     if (p.hasBall && ball) { ball.x += dx * (k - 1); ball.y += dy * (k - 1); }
   }
 }
+// --- the whole picture a touch brighter (was `filter: brightness(1.12)` on the canvas in index.html: a full-screen filter pass every frame on iOS Safari) ---
+// One colour-dodge fill over the finished frame: c / (1 - g) with g = 1 - 1 / k is c x k, clamped, the same sum the CSS filter did. Anything that COPIES the
+// canvas to draw it back later (page crumple, the Post's page turn, the reel's cross-fade) must call snapUnbright on its copy, or that picture is brightened twice.
+const BRIGHT = { k: 1.12 };   // k = brightness (1 = off)
+const brightCol = v => { const s = `color(srgb ${v} ${v} ${v})`, n = Math.round(v * 255); try { const g = document.createElement('canvas').getContext('2d'); g.fillStyle = '#000'; g.fillStyle = s; if (g.fillStyle !== '#000000') return s; } catch (e) {} return `rgb(${n},${n},${n})`; };   // (an exact grey where the browser has color(); the nearest 8-bit one otherwise)
+const BRIGHT_UP = brightCol(+(1 - 1 / BRIGHT.k).toFixed(5)), BRIGHT_DOWN = brightCol(+(1 / BRIGHT.k).toFixed(5));
+function brightPass() {   // (frame(): last, over everything)
+  if (BRIGHT.k === 1) return;
+  dmHold++; ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'color-dodge'; ctx.fillStyle = BRIGHT_UP; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.restore(); dmHold--;
+}
+function snapUnbright(c) {   // a copy of the canvas, taken back to the picture before brightPass (bright spots that clipped stay at full white, as shown)
+  if (BRIGHT.k === 1) return;
+  const g = c.getContext('2d'); g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'multiply'; g.fillStyle = BRIGHT_DOWN; g.fillRect(0, 0, c.width, c.height); g.restore();
+}
+// --- frame-time readout (settings > DEBUG > FRAME TIMES; SETTINGS.perfHud, off by default, kept per device) ---
+// fps + the average / worst ms of the game step (update) and of the painting (draw), over the last PERF_HUD.win ms. Costs two clock reads a frame when off.
+const PERF_HUD = { win: 1000, x: 8, y: 150, font: 15, fontTouch: 20, alpha: 0.78 };   // win = ms a reading covers; x / y = its corner (from the left / up from the bottom); font px (touch = phones)
+const perfS = { t0: 0, uS: 0, uM: 0, uN: 0, dS: 0, dM: 0, dN: 0, l1: '', l2: '' };
+function perfUpd(ms) { if (!SETTINGS.perfHud) return; perfS.uS += ms; perfS.uN++; if (ms > perfS.uM) perfS.uM = ms; }
+function perfDraw(ms, now) {
+  if (!SETTINGS.perfHud) return;
+  const P = perfS; P.dS += ms; P.dN++; if (ms > P.dM) P.dM = ms;
+  if (now - P.t0 < PERF_HUD.win) return;
+  const f = n => n.toFixed(1), lv = liteLevel();
+  P.l1 = `${Math.round(P.dN * 1000 / Math.max(1, now - P.t0))} FPS   UPD ${f(P.uS / Math.max(1, P.uN))} / ${f(P.uM)}   DRAW ${f(P.dS / Math.max(1, P.dN))} / ${f(P.dM)} ms`;
+  P.l2 = `avg / worst   ${gfxMode()}${lv ? ' L' + lv : ''}   ${canvas.width}x${canvas.height} (x${RK.toFixed(2)})`;
+  P.t0 = now; P.uS = P.uM = P.uN = P.dS = P.dM = P.dN = 0;
+}
+function drawPerfHud() {
+  if (!SETTINGS.perfHud || !perfS.l1) return;
+  const fs = TUI.on ? PERF_HUD.fontTouch : PERF_HUD.font, y = H - PERF_HUD.y;
+  ctx.save(); ctx.font = `bold ${fs}px monospace`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  const w = Math.max(ctx.measureText(perfS.l1).width, ctx.measureText(perfS.l2).width) + 16;
+  ctx.globalAlpha = PERF_HUD.alpha; ctx.fillStyle = '#000'; ctx.fillRect(PERF_HUD.x, y, w, fs * 2.7);
+  ctx.globalAlpha = 1; ctx.fillStyle = '#9fe3a8'; ctx.fillText(perfS.l1, PERF_HUD.x + 8, y + fs * 0.75);
+  ctx.fillStyle = '#d8d8d8'; ctx.fillText(perfS.l2, PERF_HUD.x + 8, y + fs * 1.95); ctx.restore();
+}
 function frame(now, bg) {   // bg: stepped by the background ticker (a hidden online tab), which must not start a second rAF chain
+  DIFF_FRAME++;   // (a new frame: diffLvl's kept row is rebuilt)
   try { spendWatch(); } catch (e) {}   // (credits spent since last frame: animate them into the clicked button; reads last frame's buttons)
   UI_BTNS_PREV = UI_BTNS; UI_BTNS = []; uiModalFrame();
   { const s = inSave(); if (s !== setScope) { setScope = s; if (!s) { useDefaults(); QUARTER_SECS = SETTINGS.quarterMin * 60; } } }   // (back to the menu / an exhibition / franchise setup: the defaults apply)
@@ -1513,6 +1659,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   else if (animFrozenAt !== null) { animShift += now - animFrozenAt; animFrozenAt = null; }
   if (pgPending && !settingsOpen) pgTry();   // (the pregame show, once a new game's screen is up)
   if (hl && hl.bg && (!results || (results.screen !== 'result' && results.screen !== 'pgx'))) hlClose();   // (the end-of-game reel ends once the result screen is left for good)
+  const perfU0 = performance.now();
   if (hl) { if (!settingsOpen && !(hl.bg && results.screen !== 'result')) hlStep(dt); }   // (the result screen's highlights: tapes only, the game itself stays stopped)
   else if (HT) { if (!settingsOpen) hsTick(); }   // (the halftime show's cards: the game stays stopped)
   else if (!showKeys && !paused && !results && !settingsOpen && !injuryShowing() && !ONL.guest && !(ONL.on && (ONL.away || ONL.lost))) {    // (online guest: the host steps the game, onlGuestStep below draws its snapshots)   // the keybinds page, the pause button, settings, an injury timeout and the result screen stop the game
@@ -1522,6 +1669,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   try { if (ONL.host && !results) onlHostTick(); if (ONL.guest && !results) onlGuestStep(); }
   catch (err) { console.warn('online: snapshot dropped', err); }   // (a bad snapshot never crashes the game loop)
   if (!ONL.guest) { tallyScores(); otWatch(); }
+  perfUpd(performance.now() - perfU0);
   // pausing (or the keybinds page) fades every sound out; resuming fades them back in
   duck += Math.max(-dt / DUCK.out, Math.min(dt / DUCK.in, (paused || showKeys ? 0 : 1) - duck));
   if (actx && actx.master) actx.master.gain.value = SETTINGS.volume * duck;
@@ -1539,7 +1687,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
     if (hold && crumple) { crumple.t0 += hold; crumple.full = true; }
   }
   lastPage = page;
-  { const lv = liteLevel(), hi = results && (results.screen === 'roster' || results.screen === 'tradeb') ? 2 : !results && !lv && !TUI.on ? 1 : 0; if (hi !== RK_HI || lv !== liteLvl) { RK_HI = hi; liteLvl = lv; fitScreen(); } }   // (the roster / offer builder render at full screen resolution; after the page-change snapshot above: a resize clears the canvas, so doing it first crumpled a blank / wrong page)
+  { const lv = liteLevel(), hi = results && (results.screen === 'roster' || results.screen === 'tradeb') ? 2 : !results && !lv && (!TUI.on || gfxHi()) ? 1 : 0; if (hi !== RK_HI || lv !== liteLvl) { RK_HI = hi; liteLvl = lv; fitScreen(); } }   // (the roster / offer builder render at full screen resolution; after the page-change snapshot above: a resize clears the canvas, so doing it first crumpled a blank / wrong page)
   if (TUI.on && now - lastPaint < paintMin) return;   // (phones: drawn at most ~60 times a second even on a 90 / 120 Hz screen, ~30 when a frame takes too long to paint; the game steps above are unaffected)
   lastPaint = now;
   const paintT0 = performance.now();
@@ -1555,6 +1703,8 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   ioDrawToast();
   drawNetBadge(); drawOnlineHud(); drawOnlineOverlay();
   ctx.restore();
+  brightPass();
+  ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0); perfDraw(performance.now() - paintT0, now); drawPerfHud(); ctx.restore();   // (the readout times the brighten pass too)
   if (TUI.on) {   // how long painting took, smoothed: slow frames drop the paint rate to ~30 (so the game keeps up and the thread isn't always behind), fast ones bring it back
     paintAvg += (performance.now() - paintT0 - paintAvg) * 0.1;
     if (paintAvg > PAINT_SLOW) paintMin = PAINT_MIN_SLOW; else if (paintAvg < PAINT_SLOW * 0.65) paintMin = PAINT_MIN;
@@ -1693,7 +1843,7 @@ function fitScreen() {
   PAD = Math.round((asp * H - W) / 2);
   RK = TUI.on ? RENDER_K : 1;
   if (liteLvl) RK = Math.min(RK, LITE.rk) * (liteLvl > 1 ? LITE.slowRk : 1);   // (performance mode: a phone's canvas at 1x; frames still slow: fewer pixels on every device)
-  if (RK_HI) { const r = layRect(canvas); RK = Math.max(RK, Math.min(RK_HI === 1 ? GAME_RES.max : FV.resMax, (window.devicePixelRatio || 1) * Math.max(1, r.width) / (W + 2 * PAD))); }   // (formation view: sharp at every zoom; in a game: sharper text, GAME_RES)
+  if (RK_HI) { const r = layRect(canvas); RK = Math.max(RK, Math.min(RK_HI === 1 ? (TUI.on ? GAME_RES.touchMax : GAME_RES.max) : FV.resMax, (window.devicePixelRatio || 1) * Math.max(1, r.width) / (W + 2 * PAD))); }   // (formation view: sharp at every zoom; in a game: sharper text, GAME_RES)
   const cw = Math.round((W + 2 * PAD) * RK), ch = Math.round(H * RK);
   if (canvas.width !== cw) canvas.width = cw;
   if (canvas.height !== ch) canvas.height = ch;

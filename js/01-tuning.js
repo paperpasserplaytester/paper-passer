@@ -1,5 +1,5 @@
 const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d', { alpha: false });   // (an opaque canvas: cheaper to composite on phones; not desynchronized, which tore / flickered on PC)
+let ctx = canvas.getContext('2d', { alpha: false });   // (let: fieldCacheDraw points it at its own canvas while the static field is pre-drawn, nothing else ever changes it)   // (an opaque canvas: cheaper to composite on phones; not desynchronized, which tore / flickered on PC)
 // a rating written in words ("3.5 stars", "4*") is drawn with the star icon instead
 {
   const fillText0 = (t, x, y, w) => w === undefined ? CanvasRenderingContext2D.prototype.fillText.call(ctx, t, x, y) : CanvasRenderingContext2D.prototype.fillText.call(ctx, t, x, y, w), STAR_TXT = /(\d(?:\.\d)?)(?:\s*\*|\s+stars?\b)/gi;
@@ -22,7 +22,7 @@ let TOUCH = false;
 let RK_HI = 0;   // 2 = the roster formation view: the canvas renders at the screen's own pixel density (fitScreen / FV.resMax); 1 = in a game: up to GAME_RES.max
 // in a game the canvas is drawn with up to this many pixels per game pixel (never more than the screen really has): sharp name tags, down-and-distance band
 // and every other text on big screens. Costs fill rate (max^2 x the pixels); performance mode ignores it and keeps its own caps (LITE.rk / LITE.slowRk)
-const GAME_RES = { max: 1.5, name: 3 };   // name = name tags' cached image px per world px (they are zoomed with the camera)
+const GAME_RES = { max: 1.5, name: 3, touchMax: 2 };   // touchMax = phones / tablets in GRAPHICS: QUALITY: most canvas px per game px (also capped by the screen's own density; memory x touchMax^2)     // name = name tags' cached image px per world px (they are zoomed with the camera)
 let RK = 1;   // touch mode: the canvas has this share of the pixels (RENDER_K), drawn through a scale of RK: fewer pixels to fill each frame
 const RENDER_K = 1.1;   // (phones: was 0.75; the crowd has its own canvases and keeps its resolution)
 let PAD = 0;   // touch mode on a screen wider than 16:9: logical px of extra view on each side of the 1280-wide game (see fitScreen); everything is drawn shifted by it
@@ -137,15 +137,44 @@ const SIDELINE = {
   scale: 1.06, cartK: 1.5,                          // every sideline person's size against a player's sprite (bare heads read smaller than helmets) / the medical cart's size (sprite, collider and its riders' spots)
   cheerN: 6, cheerAt: 20.5, cheerGap: 1.15,         // cheerleaders a side (groups of 3, each on its box at cheerAt and its mirror image), yd apart on the box
   dCam: 2.3,                                        // cameramen: yd past the sideline of their lane (clear of the props by the wall; tunables = CAM_MAN below)
+  // gap fillers (slFill: open spots in a row, by zone): k = kind, z = [from, to] yard lines (tried in order), d = yd past the sideline, n = how many a side, need = yd clear of anyone /
+  // any prop in that row (band = yd either side of d that counts as the row), tier = performance tier, one = only on the side away from the chain crew; cap = most fillers a row
+  // (l = by the line, d < 2.5; d = back by the wall)
+  fill: { cap: { l: 5, d: 3 }, band: 0.6, items: [
+    { k: 'PHOTO', z: [[-6, 8], [92, 106], [8, 16], [84, 92]], d: 1.75, n: 3, need: 1.6, tier: 1 },
+    { k: 'TVOFF', z: [[56, 66], [34, 44]], d: 1.5, n: 1, need: 1.6, tier: 1, one: 1 },
+    { k: 'GETBACK', z: [[36, 64]], d: 0.95, n: 1, need: 1.8, tier: 2 },
+    { k: 'EVENT', z: [[8, 18], [82, 92], [0, 8]], d: 3.2, n: 2, need: 2.4, tier: 2 },
+    { k: 'GROUNDS', z: [[2, 14], [86, 98]], d: 3.4, n: 1, need: 2.4, tier: 2 }] },
+  // players round sideline people, DEAD BALL ONLY (after the whistle / before the snap; slColP, in the frames slCollide runs): soft = YD added round a person's collider where
+  // a player is steered off, push = YD/s he is eased out at the collider's edge, slow = share of his speed into the person kept while he steers. A man rolls once a play whether
+  // he gets round them: ok + agi x (agility multiplier - 1) - fast x (YD/s over 4), + walk if he is under 4 YD/s, in [min, max]; a miss = no steering (he can still run them over)
+  dodge: { soft: 0.75, push: 2.4, slow: 0.6, ok: 0.5, agi: 0.9, fast: 0.07, walk: 0.4, min: 0.08, max: 0.97 },
+  // men jogging off (stepFormation / the kick's clones): d = yd past the sideline of the gap they aim for by their unit's bench, spread = yd between them along it, arrive = YD
+  // from it that counts as there (gone: the bench man shows); a kick's clones only use it when it is no farther than the old run off the screen (the kick never waits longer).
+  // turnover = after a change of possession / a kick the old units jog off from where they stood (only when the view keeps its picture; the snap never waits)
+  sub: { d: 2.1, spread: 0.85, arrive: 1.3, turnover: true, maxN: 22 },
+  // help-up (host, slHelpPick): a player knocks a sideline person down -> one outcome, weights w (help = he helps him up, sorry = a swerve by without stopping, ignore,
+  // other = a nearby staff member / bench man walks over (within otherR yd, there in time), self = up on his own). opp = x help for the other team's people, neutral = x help
+  // for crew / cameras / vests; hurry = x ignore in a late close game (lateS(late) s left, within close points) or right after a big play. dwHelp / dwMax = extra s on the turf
+  // while a player / a walker gets there; walk = YD/s a helping player steps over; ooh / cheer = crowd (oohSfx on the hit, crowdPop on the pull up)
+  help: { w: { help: 0.4, sorry: 0.17, ignore: 0.13, other: 0.18, self: 0.12 }, opp: 0.2, neutral: 0.75, hurry: 3, late: 120, close: 8, otherR: 7, dwHelp: 0.6, dwMax: 2.4, walk: 4.5, ooh: 0.3, cheer: 0.35 },
+  tvOut: 2.4, tvHold: 4,                          // TV timeout official: yd onto the field he walks in a timeout / at a quarter break / s he stands there (tvSignal)
   flashLen: 0.14, flashSpread: 1.5,                 // camera flashes: s one burst lasts / s the bursts of one moment are spread over
   liteHz: 15,                                       // performance mode: the bench's poses are sampled at this rate
   crewSpeed: 7, crewTp: 3,                          // the chain crew's own walking speed (YD/s) / yd past the screen's edge that still counts as on camera (both ends off camera = they are just put there)
   walkDelay: 0.6, walkSpeed: 4, walkMax: 3.6, park: 4,   // s after the play is set before the crew walks / walking speed of anyone going back to his spot (YD/s; the crew has crewSpeed) / longest walk in s (a long gain: they jog) / goal to go: poles parked this many yd behind the box
   stagger: 0.08,                                    // s between squad members starting a routine
   lodLo: 34, lodHi: 70, lodTouch: 1.3, liteLod: 1.5,   // on-screen figure px below which: silhouette / mid detail; x on touch / performance mode
-  sortRange: 2.2, exMax: 14,                         // yd: an out-of-bounds player this close is drawn in the right order against a person; most such people
+  sortRange: 2.2, exMax: 26,                        // yd: an out-of-bounds player this close is drawn in the right order against a person; most such people
   col: [{ along: 0.32, across: 0.28 }, { along: 0.32, across: 0.28 }, { along: 0.34, across: 0.3 }, { along: 0.34, across: 0.3 }, { along: 0.38, across: 0.32 }, { along: 0.3, across: 0.26 }],   // oval collider per kind (pole, box, coach, staff, bench, cheer), YD x figK
-  poleR: 0.12, poleX: 0.45,                         // the chain poles' collider radius / yd in front of the holder
+  poleR: 0.12, poleX: 0.45,                         // the chain poles' collider radius / (old) yd in front of the holder
+  poleHand: 12.1,                                   // sprite units from the holder's feet to his stick (the STICK marks the spot: he stands this far beside it; the collider uses it too)
+  // the crew during a play (host, slCrewLive): every think s; the box man and the judge follow a gain of gain+ yd past the line, re-aimed when the ball is step yd further on
+  live: { think: 0.4, gain: 12, step: 3 },
+  // getting out of the way (slAvoid, every think s): a player within band yd of a sideline, heading at it faster than v yd/s, is looked ahead s; people within r yd of where he will
+  // cross hop aside (hop yd along the sideline, back yd away from the field), each after his own reaction [from, to] s; late = s into a hop he can still be knocked down
+  avoid: { think: 0.1, band: 4, v: 2.5, ahead: 0.7, r: 1.7, hop: 1.0, back: 0.7, react: [0.02, 0.22], late: 0.12 },
   bumpV: 3.2, downT: 1.4, hitCool: 1.0, hitD: [0.35, 1.1, 0.9, 0.3],   // YD/s a stagger turns into a knockdown / s on the turf / s between reactions / yd moved by bump, knockdown, hop aside, pole tilt
   sfxCool: 0.6, sfxVol: 0.35,                       // knockdown thud: s apart at most / x the tackle clip's volume
   // props (07-drawing, `// --- sideline props`: statics, pre-rendered sprites). Where they stand = SL_LAY
@@ -167,8 +196,13 @@ const SIDELINE = {
 // react / swing = s before a camera starts to turn / the turn takes (each man gets his own, in range); over = how far a turn overshoots (0 = none); dead = rad the aim
 // can be off before he corrects it; err = rad each man's aim sits off the ball; walk / dolly = top speed in YD/s (eased in and out; no running);
 // delay = s he waits before walking; think = s between looks at the play
-const CAM_MAN = { spots: [[20, 5, 35], [80, 65, 95], [50, 24, 76]], arc: 9, keep: 2.5, keepVar: 2, react: [0.2, 0.5], swing: [0.4, 0.7], over: 1.3, dead: 0.07, err: 0.07,
-  walk: 1.9, dolly: 1.1, delay: [0.5, 1.5], think: 0.25 };
+const CAM_MAN = { spots: [[20, 5, 35, 1], [80, 65, 95, 2], [7, -6, 16, 2], [93, 84, 106, 2], [50, 24, 76, 1]], arc: 9, keep: 2.5, keepVar: 2, react: [0.2, 0.5], swing: [0.4, 0.7], over: 1.3, dead: 0.07, err: 0.07,   // (4th = performance tier)
+  walk: 1.9, dolly: 1.1, delay: [0.5, 1.5], think: 0.25,
+  // end-zone crews (behind each end line, between the post pads and the end wall): back = YD past the end line; ys = their spots across the field (share of the width, the far
+  // end mirrored); span = share of the width each may drift; arc = YD the ball can be off across before he steps; walk = YD/s; react = s before a reaction;
+  // runAt / runY = a carrier heading in this many YL from the end line and YD across: he kneels; backAt = this close: he backpedals backYd YD for backT s;
+  // run = carrier speed toward them (YD/s) that counts as heading in; duckV / duckX = a field goal / PAT flying at them faster than duckV YD/s within duckX YL of the end line: that end's crew ducks
+  ez: { back: 3.3, ys: [0.19, 0.36, 0.77], span: 0.06, arc: 4, walk: 1.2, react: [0.05, 0.3], run: 3, runAt: 18, runY: 9, backAt: 5, backYd: 0.9, backT: 1.6, duckV: 6, duckX: 35 } };
 // (cart spots are in the cart sprite's own units, x from its middle toward its nose: seatX / seatH = the driver; bedX = where the hurt man's feet go (he lies along the bed, head toward the cab),
 // bedH = the deck's height; trX = where the two trainers sit on the bed for the ride back)
 const INJURY_EXIT = { delay: 0.5, jog: 7, walk: 3.4, limp: 2, help: 2.6, cart: 7, tend: 1.3, lift: 1.8, unload: 1.2, cartGap: 0.9, seatX: 13, seatH: 6, bedX: -25, bedH: 12, trX: [5, -22],
@@ -780,6 +814,7 @@ const RET_AI = { held: 0.7, wall: 0.2,   // (held / wall: how much a blocked man
  range: 2.8, closing: 1.5, odds: 0.55, cd: 1.0 };
 const KICK_VISE = 0.55;   // yards off the returner's line each kick-coverage man keeps (his side) until contact, so two tacklers close from opposite sides (small: two arriving together leave no gap between them)
 const KICK_ANGLE = 0.7;   // x the outside shade each kick-coverage man takes on his approach (lower = tighter angles straight at the returner)
+const PICK_JUGGLE = { dur: 0.68, bob: 0.22, down: 0.44, h: 7 };   // juggled pick (looks only, v0.43): s it's up over his head, s per bobble, s it starts down into his hands, bobble height (sprite units)
 const HELMET_PIN = { hold: 0.45, x: 3 * S, z: 20 * S };   // helmet catch: the ball stays pinned against his helmet this long (s), x / z = where (ahead of his head, helmet height)
 const HEAD_TOP = { hold: 0.15, dur: 0.45, high: 24 * S, reach: 13 * S };   // head-top catch: held over the helmet hold s, brought in over dur s; ball high above / out toward the defender
 const JUMP_REWARD = { min: 0.5, keep: 0.8, stam: 0.25, freeze: 0.45 };   // jump catch with timing >= min: lands at keep..1 x top speed, +stam, nearby leapers frozen freeze s
@@ -789,7 +824,7 @@ const TWO_HAND_PICK = 1.35;   // x the pick odds once a DB has timed it and gets
 const PICK_DROP_ALONE = 0.25;   // x the drop odds when no receiver is within a few yards of the defender
 // diving pick: a defender reading the ball (late in the throw, past p) lays out for one beyond PICK_RANGE but within range yd,
 // if it's no higher than z; chance = he goes for it; catch = he hangs on once his hands get within hands yd (else it's tipped)
-const DIVE_PICK = { range: 1.9, late: 0.6, z: 20 * S, chance: 0.2, catch: 0.35, hands: 0.7, dur: 0.45 };
+const DIVE_PICK = { range: 1.9, late: 0.6, z: 20 * S, chance: 0.2, catch: 0.35, hands: 0.7, dur: 0.45, lead: 0.32 };   // lead = s before the ball reaches his spot that he lays out (timed: no early dive)
 // interception returns: chance an offensive player's tackle sticks; the defense's blocks whiff this often
 // and otherwise hold a chaser for hold seconds
 // interception returns: blockers whiff whiff of the time, hold their man hold seconds, retry after retry s;
@@ -927,6 +962,30 @@ const POACH = {
   pMin: 0.03, pMax: 0.95,
   lockWeeks: 6, yearWeeks: 30,                   // a no: he won't hear another offer for this many weeks (yearWeeks = the week count's length of a year)
   years: 2,                                      // the contract he signs
+};
+// Contracts (SETTINGS.contracts, gate contractsOn(); code: `// --- contracts` in 11-cards-trades): your head coach deal (credits, paid at the
+// season's end), staff extensions / poach alerts, player extensions. Off = AUTO (the old behaviour, the HC deal renews by itself).
+const CONTRACT = {
+  // the shared NEGOTIATE popup: interest 0-1 = base + perPay x (offer / ask - 1) ...; >= signs he signs, < cold is COLD, < low sours the talks
+  neg: { tries: 3, base: 0.62, signs: 0.6, cold: 0.35, low: 0.2, perPay: 1.6, perYr: 0.06, perBonus: 0.02, chip: 0.05, give: 0.35, floor: 0.15, lockWeeks: 1,
+         payStep: 0.1, payLo: 0.5, payHi: 1.6, bonusMax: 15 },   // give = share of the gap his ask moves toward a WARM counter (never more than floor of the first ask); pay steppers run payLo..payHi x the ask
+  // your deal: pay = credits a season
+  hc: { pay: [10, 30], perStar: 3, perWin: 12, perPO: 3, perOffer: 1, offerMax: 5,   // fair pay = pay[0] + perStar x your stars + perWin x (win share - 0.5) + perPO x playoff runs here + perOffer x job offers (to offerMax)
+        yrs: [3, 4], payStep: 1, bonusStep: 1, bonusMax: 10, bonusK: 0.5,           // signing bonus: credits now; each bonus credit weighs bonusK of a pay credit x the years
+        buyout: 0.5, lapse: 0.85, renegWin: 0.6, extLeft: 2,                        // fired: buyout x pay x seasons left; a deal that runs out is renewed at lapse x fair; RENEGOTIATE needs this win share (or a playoff run); EXTENSION once extLeft or fewer seasons remain
+        perkMax: 2, perkCost: 0.07 },                                               // perks you may hold; interest each one costs
+  perks: { budget: { name: 'STAFF BUDGET', k: 0.1, text: '+10% staff budget' }, fac: { name: 'FACILITY DISCOUNT', k: 0.15, text: '15% off facility upgrades' },
+           cap: { name: 'CAP BUMP', k: 8, text: '+$8M salary cap' }, say: { name: 'FINAL SAY', k: 0.93, text: 'trades: the other team needs 7% less' } },
+  // incentives: hc = credits the owner pays you, pl = credits you pay a player / staffer who has the chip (only if it is hit); goals = coaching goals needed
+  inc: { po: { name: 'PLAYOFFS', hc: 5, pl: 2 }, div: { name: 'DIVISION', hc: 6, pl: 3 }, pb: { name: 'PAPER BOWL', hc: 15, pl: 5 }, goal: { name: 'COACHING GOALS', hc: 4, pl: 0, goals: 12 } },
+  owner: { patience: 3, max: 5, target: 0.5, perStar: 0.04, perTeam: 0.07, hot: 1 },   // pips at signing; target wins = (target + perStar x (your stars - 2)) x games; + perTeam per roster star over 3; a season under it costs a pip, on or over gives one back; 0 pips = fired
+  staff: { extendAt: 1, raise: 1.05, loyalYrs: 3, loyal: 0.9, poachRaise: 1.25,      // EXTEND sticker at this many years left; ask = market x raise (x loyal after loyalYrs seasons with you, x poachRaise when another team is calling)
+           poach: 0.008, poachShort: 2, poachStar: 0.35, poachHC: 2, hcStars: 4,      // weekly odds a team calls for one of yours: x poachShort on a deal of 1 year or less, x (1 + poachStar per star over 3), x poachHC for a 4+ star coordinator
+           refuseLeave: 0.7, refuseMorale: -3, yrs: [1, 4] },                         // REFUSE: odds he leaves when the deal ends, the locker room's morale shift
+  pl: { yrs: [1, 5], bonusM: 0.5, bonusPct: 0.3,                                     // signing bonus: $M off this year's cap hit per credit, at most this share of the salary
+        moraleK: 0.12, contend: 0.06, contendWin: 0.6, ageAt: 30, age: 0.08,         // ask x (1 - moraleK x morale above neutral), - contend on a winning team, - age past ageAt
+        agent: { LOYAL: 0.92, GREEDY: 1.12, 'RING CHASER': 1 }, ringK: 2.5,          // x the ask by agent type; a ring chaser's contender discount x ringK
+        tagK: 1.3, tagCred: 10, agentStars: 3, rows: 8 },                            // franchise tag: 1 year at tagK x his market ask + tagCred credits; your scout reads agents from agentStars stars (or in his specialty)
 };
 // XP bank (your franchise only, never scrimmage / 1v1 / online / test mode / tutorial): players at their potential bank their spare XP, and the bank
 // buys development. Bank + display: xpBankAdd / coinBox / flyXP (10-screens); spending: xpc* in the player upgrades block (11-cards-trades).
@@ -1637,6 +1696,7 @@ const reachK = p => Math.max(0.85, Math.min(1.2, 1 + BODY.catch * hz(p)));
 // kick returner's top speed (x the back's) by his position: ratings are within a position, so a tagged lineman is still a lineman
 const KR_PACE = { RB: 1, WR: 1.02, CB: 1.01, S: 0.98, LB: 0.92, TE: 0.9, QB: 0.88, DL: 0.82, OL: 0.7 };
 const JOB_MAX_STARS = 10;  // franchise without a favorite team: teams with this many off + def stars (or more) never hire you
+const JOB_PREF = { rebuild: [0, 0.34], contender: [0.5, 1], weak: [0, 0.5] };   // a new career's hiring preference / origin catch: the band of the league (0 = worst roster, 1 = best) the first team comes from (the top 4 never hire a rookie)
 const ROSTERS = {
   ARI: 'QB 7 Jacoby Brissett 7 10 12 13;RB 4 Jeremiyah Love 9 12 5 10;WR 14 Michael Wilson 8 13 13 12;WR 17 Kendrick Bourne 5 13 12 11;TE 85 Trey McBride 10 13 14 11;TE 84 Elijah Higgins 7 13 11 9;LT 70 Paris Johnson Jr 13 13 13 12;C 72 Hjalte Froholdt 12 14 12 12;RE 10 Josh Sweat 11 12 12 12;DT 97 Walter Nolen III 11 11 11 12;MLB 1 Mack Wilson Sr 9 12 9 12;MLB 50 Jack Gibbens 8 12 8 12;CB 21 Garrett Williams 9 9 10 13;CB 2 Will Johnson 9 8 11 13;SS 3 Budda Baker 10 12 10 13;FS 28 Andrew Wingard 7 10 10 13',
   ATL: 'QB 9 Michael Penix Jr 2 11 11 14;RB 7 Bijan Robinson 11 15 7 14;WR 5 Drake London 9 13 14 13;WR 4 Jahan Dotson 4 14 12 11;TE 8 Kyle Pitts Sr 8 13 12 10;TE 81 Austin Hooper 9 12 11 8;RG 63 Chris Lindstrom 12 14 14 15;LT 70 Jake Matthews 13 14 13 11;DT 95 Gervon Dexter Sr 12 12 12 10;LE 11 Jalon Walker 10 12 11 13;MLB 0 Divine Deablo 10 13 10 12;MLB 45 Christian Harris 9 12 8 13;CB 24 A.J. Terrell Jr 11 8 11 14;CB 12 Avieon Terrell 8 9 10 13;FS 3 Jessie Bates III 7 13 13 13;SS 31 Xavier Watts 8 11 11 12',

@@ -52,7 +52,7 @@ function endExhibition(screen) {
 const ACCT_BTN = { x: 30, y: 620, w: 210, h: 70 };   // (start screen, bottom left; the debug tools stack above it)
 const TEST_BTN = { x: 30, y: 540, w: 210, h: 70 };
 const TESTS = [['KICKOFF', 'ko'], ['KICKOFF RETURN', 'kr'], ['PUNT', 'punt'], ['PUNT RETURN', 'pr'], ['FIELD GOAL', 'fg'], ['EXTRA POINT', 'xp'], ['TWO-POINT TRY', 'two'],
-               ['4TH DOWN CHOICE', 'fourth'], ['GOAL LINE', 'goal'], ['PLAY DEFENSE', 'def'], ['ONSIDE KICK', 'onside'], ['OVERTIME', 'ot'], ['INTERCEPTION RETURN', 'intr'], ['1V1: YOU DEFEND WR', 'oo-db'], ['1V1: YOU ARE WR', 'oo-wr'], ['1V1: YOU RUN', 'oo-run'], ['1V1: YOU TACKLE', 'oo-tackle'], ['PLAY OFFENSE', 'off'], ['CELEBRATIONS', 'celeb']];   // (celeb: a drive with the celebration test panel, see celT)
+               ['4TH DOWN CHOICE', 'fourth'], ['GOAL LINE', 'goal'], ['PLAY DEFENSE', 'def'], ['ONSIDE KICK', 'onside'], ['OVERTIME', 'ot'], ['INTERCEPTION RETURN', 'intr'], ['1V1: YOU DEFEND WR', 'oo-db'], ['1V1: YOU ARE WR', 'oo-wr'], ['1V1: YOU RUN', 'oo-run'], ['1V1: YOU TACKLE', 'oo-tackle'], ['PLAY OFFENSE', 'off'], ['CELEBRATIONS', 'celeb'], ['MOVE LOOKS', 'moves']];   // (moves: the animation library's stage with the MOVES test panel, see mvT)   // (celeb: a drive with the celebration test panel, see celT)
 const TEST_BTNS = TESTS.map(([label, id], i) => ({ label, id, x: 30 + (i % 4) * 305, y: 120 + Math.floor(i / 4) * 52, w: 290, h: 44 }));
 const TEST_YOU_BTN = { x: W / 2 - 170, y: 545, w: 340, h: 62 };
 function startTestMode() {
@@ -94,7 +94,8 @@ function testClick(p) {
   }
   if (inBtn(p, BACK_BTN)) { endExhibition('start'); return; }
   const t = TEST_BTNS.find(b => inBtn(p, b));
-  if (t) startTest(t.id);
+  if (t && t.id === 'moves') openMoveTest();
+  else if (t) startTest(t.id);
 }
 // --- animation library -----------------------------------------------------------------------
 // ANIMATION LIBRARY (start screen, above TEST MODE): every move, break-tackle reaction, catch, tackle style and celebration, played on a loop with the real
@@ -123,15 +124,83 @@ const animCaught = (style, extra) => (A, B) => {
   A.later = () => { A.hasBall = true; A.oneHanded = one; A.reach = false; A.catchMode = null; A.catchFx = { style, t: clock }; };
   if (extra) extra(A, B);
 };
-const EXTRA_CATCHES = ['helmetPin'];   // (catch styles listed in the EXTRAS tab instead of CATCHES)
+const EXTRA_CATCHES = ['helmetPin', 'pickOneHand', 'pickToeTap', 'pickTipped', 'pickDive', 'pickRun', 'pickAround', 'pickJuggle'];   // (catch styles listed in the EXTRAS tab instead of CATCHES)
+// v0.43 catch / dive / slide / landing / pick / tip looks on the library stage (A = the player, B = the man he plays against); the EXTRAS tab lists them and
+// the MOVES test's dive / slide / land / pick / tip families stage the same clips. Each pins only its own look; the move is the game's own action.
+const mvX = (() => {
+  const t0 = 0.4;   // (= MV_T0, defined further down: this table is built at load)
+  const at = (A, s, f) => { const prev = A.tick; let done = false; A.tick = (t, dt) => { if (prev) prev(t, dt); if (!done && t >= s) { done = true; f(); } }; };
+  const dive = (look, setup) => (A, B) => { A.vx = 7 * YD; at(A, t0, () => { startDive(A, A.x + 3.4 * YD, A.y, 0.45, 2.8 * YD); A.act.look = look; if (setup) setup(A, B); }); };
+  const slide = (post, extra) => (A, B) => { A.vx = 7 * YD; at(A, t0, () => { startDive(A, A.x + 3.4 * YD, A.y, 0.45, 2.8 * YD); A.act.look = 'layout'; A.act.post = post; Object.assign(A.act, extra || {}); }); };
+  const leap = f => (A, B) => { A.hasBall = true; ball.tucked = true; at(A, t0, () => { animAct(A, 'jump', { dur: 0.6, h: 14 * S, over: false }); A.vx = 3 * YD; A.vy = 0; }); f(A, B); };
+  const pick = (style, how) => (A, B) => {   // he picks it: a leap, a dive or a standing grab, then the catch look
+    B.x = A.x + (style === 'pickAround' ? 0.9 : 1.9) * YD; B.face = style === 'pickAround' ? 1 : -1; A.face = 1;   // (round his man: right behind him, both facing the same way)
+    const cAt = how === 'dive' ? t0 + 0.25 : t0 + 0.3;
+    at(A, t0, () => { if (how === 'jump') animAct(A, 'jump', { dur: 0.7, h: 14 * S, over: false }); else if (how === 'dive') startDive(A, A.x + 3 * YD, A.y, 0.5, 2.4 * YD); else { A.moving = how === 'run'; A.vx = how === 'run' ? 6 * YD : 0; } });
+    at(A, cAt, () => {
+      const bk = S * figK(A); A.hasBall = true; A.oneHanded = style === 'pickOneHand'; if (how === 'jump') A.jumpCaught = clock; if (how === 'dive') { A.diveCaught = clock; if (A.act) A.act.post = 'rollOut'; }
+      if (!how || how === 'run') animAct(A, 'swat', { dur: 0.3, pick: true });
+      A.catchFx = { style, t: clock, rx: (B.x - A.x) * A.face / bk, ry: -10 };
+      if (style !== 'pickJuggle') { anim.showBall = true; ball.tucked = false; const c0 = clock, prev = A.tick; A.tick = (t, dt) => { prev(t, dt); const e = Math.min(1, (clock - c0) / 0.6);   // (the ball in his hands, as the game's holder code has it: out in front, then in to his chest)
+        if (clock - c0 < 0.75) { ball.x = A.x + figX(A, (12 - 7 * e) * S) * A.face; ball.y = A.y; ball.z = (A.z || 0) + figZ(A, (style === 'pickOneHand' ? 22 - 12 * e : 9) * S); ball.rot = 0; } else { anim.showBall = false; ball.tucked = true; } }; }
+      if (style === 'pickJuggle') { anim.showBall = true; ball.tucked = false; const c0 = clock; const prev = A.tick; A.tick = (t, dt) => { prev(t, dt); const e = clock - c0, b = Math.abs(Math.sin(e * Math.PI / PICK_JUGGLE.bob)), dn = smooth01((e - PICK_JUGGLE.down) / (PICK_JUGGLE.dur - PICK_JUGGLE.down));
+        if (e < PICK_JUGGLE.dur) { ball.x = A.x + figX(A, (4 + 4 * dn) * S) * A.face; ball.y = A.y; ball.z = (A.z || 0) + figZ(A, (25 + PICK_JUGGLE.h * b * (1 - dn) - 16 * dn) * S); ball.rot = e * 9; } else { anim.showBall = false; ball.tucked = true; } }; }
+    });
+  };
+  const tip = (st, how) => (A, B) => { A.face = 1; B.x = A.x + 1.2 * YD; B.face = 1;
+    at(A, t0, () => { if (how === 'dive') { startDive(A, A.x + 2.6 * YD, A.y, 0.45, 2.4 * YD); A.act.tipOne = true; A.act.look = 'reach'; }
+      else if (how === 'punch') animAct(A, 'swat', { dur: 0.35, punch: true });
+      else { animAct(A, 'swat', { dur: 0.45, tip: true, tipSt: st, one: !!(TIP_ST[st] && TIP_ST[st].one) }); if (st === 'tipSwat') A.engaged = true; } }); };
+  // a throw (A = the QB): the follow-through the game picks, and the ball flying off (wobbling when he was hit as it left)
+  const throwC = (kind) => (A, B) => {
+    A.face = 1; A.hasBall = false; anim.asQB = A; ball.tucked = true;
+    if (kind === 'lane') { B.x = A.x + 1.8 * YD; B.face = -1; at(A, t0 - 0.15, () => animAct(B, 'jump', { dur: JUMP_TIME * 1.4, h: 14 * S, over: false })); }
+    if (kind === 'hit' || kind === 'hitBack') { B.x = A.x + (kind === 'hit' ? 1.4 : -1.4) * YD; B.face = kind === 'hit' ? -1 : 1; }
+    at(A, t0, () => {
+      if (kind === 'hit' || kind === 'hitBack') { const fr = kind === 'hit'; A.action = 'down'; A.act = { t: 0, fall: true, back: fr, side: 0, thr: true, fallTime: 0.4, vx: (fr ? -3 : 3) * YD, vy: 0, angle: fr ? Math.PI : 0 }; startDive(B, A.x, A.y, 0.2, 0.95 * YD); }
+      else animAct(A, 'throw', { dur: 0.4, cross: kind === 'cross', lane: kind === 'lane', side: kind === 'side' });
+      const c0 = clock, wob = kind === 'hit' || kind === 'hitBack', prev = A.tick; anim.showBall = true; ball.tucked = false;
+      A.tick = (t, dt) => { prev(t, dt); const e = clock - c0;
+        if (e < 0.9) Object.assign(ball, { inAir: true, x: A.x + figX(A, 9 * S) + e * 13 * YD, y: A.y, z: figZ(A, (kind === 'side' || kind === 'lane' ? 14 : 22) * S) + (3 * YD * e - 3 * YD * e * e), nose: -0.25 + 0.5 * e, spiral: e * SPIRAL.rate, wob });
+        else { anim.showBall = false; ball.inAir = false; ball.wob = false; } };
+    });
+  };
+  return {
+    throw: { plain: throwC('plain'), cross: throwC('cross'), lane: throwC('lane'), sidearm: throwC('side'), hit: throwC('hit'), hitBack: throwC('hitBack') },
+    dive: { layout: dive('layout'), superman: dive('superman'), scissor: dive('scissor'), spear: dive('spear'), reach: dive('reach'), tuck: dive('tuck'),
+            oneHand: dive('oneHand', A => { A.catchMode = 'diveOne'; A.hand = 1; }), twoHand: dive('twoHand'), sideDive: dive('sideDive'), backOver: dive('backOver') },
+    slide: { skid: slide('skid'), belly: slide('belly'), roll: slide('roll'), rollOut: slide('rollOut'), side: slide('side'), back: slide('back'), out: slide('belly', { out: true }), slap: slide('skid', { slap: true }) },
+    land: { landFeet: leap(A => at(A, t0 + 0.62, () => { A.mvFx = { k: 'landFeet', t: clock, o: 0 }; })), landOneFoot: leap(A => at(A, t0 + 0.62, () => { A.mvFx = { k: 'landOneFoot', t: clock, o: 0 }; })),
+            back: leap(A => at(A, t0 + 0.6, () => { A.z = 0; landOffFeet(A, 'back', -2 * YD, 0, 0); })), roll: leap(A => at(A, t0 + 0.6, () => { A.z = 0; landOffFeet(A, 'roll', YD, 2 * YD, 0); })),
+            chest: leap(A => at(A, t0 + 0.6, () => { A.z = 0; landOffFeet(A, null, 3 * YD, 0, 0); })),
+            flipped: leap((A, B) => at(A, t0 + 0.25, () => { B.x = A.x + 0.6 * YD; A.action = 'down'; A.act = { t: 0, fall: true, back: true, side: 0, fallTime: 0.45, launch: true, launchH: 10, vx: -2 * YD, vy: 0, angle: Math.PI, airHit: 'flipped' }; })),
+            spinAir: leap((A, B) => at(A, t0 + 0.25, () => { B.x = A.x + 0.6 * YD; A.action = 'down'; A.act = { t: 0, fall: true, back: false, side: 0, fallTime: 0.5, launch: true, launchH: 12, vx: 2 * YD, vy: 0, angle: 0, airHit: 'spinAir' }; })) },
+    pick: { possession: pick('possession'), highPoint: pick('highPoint', 'jump'), undercut: pick('undercut'), scoop: pick('scoop'), overShoulder: pick('overShoulder', 'jump'),
+            pickOneHand: pick('pickOneHand', 'jump'), pickToeTap: pick('pickToeTap'), pickTipped: pick('pickTipped'), pickDive: pick('pickDive', 'dive'), pickRun: pick('pickRun', 'run'),
+            pickAround: pick('pickAround'), pickJuggle: pick('pickJuggle') },
+    tip: { lunge: tip('lunge'), backhand: tip('backhand'), chop: tip('chop'), rake: tip('rake'), stretch: tip('stretch'), tipJump: tip('tipJump'), tipSwat: tip('tipSwat'), tipDrop: tip('tipDrop'),
+           pbuOver: tip('pbuOver'), pbuHands: tip('pbuHands'), punch: tip(null, 'punch'), fingertip: tip(null, 'dive') },
+  };
+})();
+const MVX_NAMES = { dive: 'DIVE LOOK', slide: 'SLIDE', land: 'LAND', pick: 'PICK', tip: 'TIP / PBU', throw: 'THROW' };
 function animEntries(cat) {
   if (cat === 'MOVES') return [
     ['RUN', A => { A.moving = true; A.vx = 7 * YD; }],
     ['TRUCK', A => { A.moving = true; A.vx = 7 * YD; A.truck = true; }],
     ['STIFF ARM', (A, B) => { A.moving = true; A.vx = 7 * YD; A.stiff = { t: 0 }; A.stiffTgt = B; A.stiffSet = true; B.x = A.x + 1.3 * YD; }],
-    ['JUKE (DOWN)', A => animAct(A, 'juke', { dur: 0.3, vx: 0, vy: 1.6 * YD / 0.3, side: 1 })],
-    ['JUKE (UP)', A => animAct(A, 'juke', { dur: 0.3, vx: 0, vy: -1.6 * YD / 0.3, side: -1 })],
-    ['SPIN', A => animAct(A, 'spin', { dur: 0.45, vx: 0, vy: 0 })],
+    // v0.43 move looks: each with the reaction it goes with (mvStage, below; the MOVES test runs the same staging)
+    ...[['SPIN: TIGHT', { fam: 'spin', look: 'spinTight', reel: 'spunAround' }], ['SPIN: WIDE', { fam: 'spin', look: 'spinWide', reel: 'spunAround' }],
+        ['SPIN: OFF A TACKLE', { fam: 'spin', look: 'spinTight', grab: true, reel: 'grabFall' }], ['SPIN: GRAB, SPUN DOWN', { fam: 'spin', look: 'spinWide', grab: true, reel: 'grabSpun' }],
+        ['SPIN: STUMBLE', { fam: 'spin', look: 'spinStumble', reel: 'none' }], ['SPIN: STIFF ARM OUT', { fam: 'spin', look: 'spinTight', stiff: true, reel: 'none' }],
+        ['JUKE: PLANT CUT', { fam: 'juke', look: 'plantCut', reel: 'jukeAnkles' }], ['JUKE: JUMP CUT', { fam: 'juke', look: 'jumpCut', reel: 'lungeMiss' }],
+        ['JUKE: STUTTER', { fam: 'juke', look: 'stutter', reel: 'hipsWrong' }], ['JUKE: SHOULDER DIP', { fam: 'juke', look: 'shoulderDip', reel: 'grabAir' }],
+        ['JUKE: DOUBLE', { fam: 'juke', look: 'doubleJuke', reel: 'anklesB', side: -1 }], ['JUKE: DEAD LEG', { fam: 'juke', look: 'deadLeg', reel: 'anklesC' }],
+        ['TRUCK: SHOULDER DOWN', { fam: 'truck', look: 'truckRun', reel: 'none' }], ['TRUCK: RUN HIM OVER', { fam: 'truck', look: 'truckPancake', reel: 'truckBack' }],
+        ['TRUCK: BOUNCE OFF', { fam: 'truck', look: 'truckBounce', reel: 'truckStagger' }], ['TIGHTROPE', { fam: 'run', look: 'tightrope' }],
+        ['GOAL LINE LEAP', { fam: 'run', look: 'goalLeap' }], ['BALL REACH', { fam: 'run', look: 'ballReach' }],
+        ['HURDLE: CLEAN (DUCK)', { fam: 'hurdle', look: 'hurdleClean', reel: 'duck' }], ['HURDLE: HIGH KNEE (KICKED)', { fam: 'hurdle', look: 'hurdleHighKnee', reel: 'kicked' }],
+        ['HURDLE: BACKWARD (GRAB)', { fam: 'hurdle', look: 'hurdleBack', reel: 'grab' }], ['HURDLE: CLIPPED', { fam: 'hurdle', look: 'hurdleClip', reel: 'none' }],
+        ['HURDLE: TACKLED (RISE UP)', { fam: 'hurdle', look: 'hurdleClip', reel: 'riseUp' }]].map(([l, c]) => [l, (A, B) => mvStage(A, B, c)]),
     ['HURDLE', A => animAct(A, 'hurdle', { dur: HURDLE.userDur, vx: 3 * YD, vy: 0, h: HURDLE.userH, user: false, space: true, cleared: [] })],
     ['DIVE', A => startDive(A, A.x + 3 * YD, A.y, 0.4, 2.5 * YD)],
     ['QB SLIDE', A => animAct(A, 'slide', { dur: 0.45, fx: A.x, fy: A.y, tx: A.x + 1.5 * YD, ty: A.y, angle: Math.PI })],
@@ -144,7 +213,8 @@ function animEntries(cat) {
     ['THROW', A => animAct(A, 'throw', { dur: 0.5 })],
     ['FALL (TACKLED)', A => { A.action = 'down'; A.act = { t: 0, fall: true, back: false, side: 0, fallTime: 0.4, vx: 3 * YD, vy: 0, angle: 0 }; }],
   ];
-  if (cat === 'REACTIONS') return Object.keys(REEL_ST).map(k => [k.replace(/([A-Z])/g, ' $1').toUpperCase(), (A, B) => { A.moving = true; A.vx = 6 * YD; B.x = A.x + 1.6 * YD; startReel(B, k, A); }]);
+  if (cat === 'REACTIONS') return [...Object.keys(REEL_ST).map(k => [k.replace(/([A-Z])/g, ' $1').toUpperCase(), (A, B) => { A.moving = true; A.vx = 6 * YD; B.x = A.x + 1.6 * YD; startReel(B, k, A); if (B.act) B.act.skin = null; }]),
+    ...Object.keys(REEL_SKIN).map(k => [k.replace(/([A-Z])/g, ' $1').toUpperCase(), (A, B) => { A.moving = true; A.vx = 6 * YD; B.x = A.x + 1.6 * YD; startReel(B, REEL_SKIN[k].base, A); if (B.act) B.act.skin = k; }])];   // (v0.43 skins: the same timing as their base)
   if (cat === 'CATCHES') return Object.keys(CATCH_ST).filter(k => !EXTRA_CATCHES.includes(k)).map(k => [k.replace(/([A-Z])/g, ' $1').toUpperCase(), animCaught(k)]);
   if (cat === 'EXTRAS') return extraEntries();
   if (cat === 'SIDELINE') return slLibEntries();   // (sideline people: every routine and reaction, see 07-drawing)
@@ -253,6 +323,10 @@ function extraEntries() {
     ['THROW: HIT FROM BEHIND', A => { A.action = 'down'; A.act = { t: 0, fall: true, back: false, side: 0, thr: true, fallTime: 0.4, vx: 3 * YD, vy: 0, angle: 0 }; }],
     ['HURDLE: TUCK (DUCK)', hurdle('tuck', 'duck')], ['HURDLE: SPLIT (GRAB)', hurdle('split', 'grab')], ['HURDLE: SCISSOR (FLINCH)', hurdle('scissor', 'flinch')],
     ['HURDLE: BACKWARD', hurdle('back', 'duck')], ['HURDLE: CLASSIC', hurdle('classic', null)],
+    // v0.43 looks (mvX): catch dives, slides, landings, picks, tips / breakups
+    ...[['dive', ['oneHand', 'twoHand', 'sideDive', 'backOver']], ['slide', ['belly', 'rollOut', 'out', 'slap']], ['land', ['landFeet', 'landOneFoot', 'flipped', 'spinAir']],
+        ['throw', ['lane', 'hit']], ['pick', ['pickOneHand', 'pickToeTap', 'pickTipped', 'pickDive', 'pickRun', 'pickAround', 'pickJuggle']], ['tip', ['tipJump', 'tipSwat', 'tipDrop', 'pbuOver', 'pbuHands', 'punch', 'fingertip']]]
+      .flatMap(([f, ls]) => ls.map(k => [`${MVX_NAMES[f]}: ${k.replace(/([A-Z])/g, ' $1').toUpperCase()}`, (A, B) => mvStage(A, B, { fam: f, look: k })])),
   ];
 }
 // every tackle style on the library stage / in the 1v1 tests: A = the carrier, B = the tackler (wrapTackle's gator dice are forced for the plain / gator ones)
@@ -300,11 +374,15 @@ const animListBtn = n => animListBtn0(animRows() * 1000 + n);
 function drawAnims() {
   if (!anim) return;
   paperBg();
-  const now = performance.now(), dt = Math.min(0.05, (now - anim.last) / 1000); anim.last = now;
+  const now = performance.now(); let dt = Math.min(0.05, (now - anim.last) / 1000); anim.last = now;
+  if (anim.mt && mvT) { dt *= MVT.speeds[mvT.spd]; if (!mvT.loop && anim.t > MVT.len) dt = 0; }   // (the MOVES test: slow motion; loop off = holds the last frame)
   ctx.fillStyle = RES.line; ctx.font = 'bold 40px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('ANIMATION LIBRARY', W / 2, 34);
-  for (const t of ANIM_TABS) menuBtn(t, t.cat, t.cat === anim.cat ? SEL : RES.bright, 13);
-  anim.list.forEach((e, n) => menuBtn(animListBtn(n), e[0], n === anim.i ? SEL : RES.bright, animRows() > ANIM_ROWS ? 13 : e[0].length > 15 ? 14 : 17));
+  ctx.fillText(anim.mt ? 'MOVE LOOKS TEST' : 'ANIMATION LIBRARY', W / 2, 34);
+  if (anim.mt && mvT) drawMoveT();
+  else {
+    for (const t of ANIM_TABS) menuBtn(t, t.cat, t.cat === anim.cat ? SEL : RES.bright, 13);
+    anim.list.forEach((e, n) => menuBtn(animListBtn(n), e[0], n === anim.i ? SEL : RES.bright, animRows() > ANIM_ROWS ? 13 : e[0].length > 15 ? 14 : 17));
+  }
   // the stage
   const S0 = ANIM_STAGE;
   ctx.save();
@@ -315,7 +393,7 @@ function drawAnims() {
   const keepMirror = MIRROR; MIRROR = 1;
   if (anim.A) {
     anim.t += dt; clock += dt;
-    if (anim.t > (anim.len || ANIM_LEN)) animStart(anim.i);   // (len: a clip with its own length, e.g. a celebration)
+    if (anim.t > (anim.mt ? MVT.len : anim.len || ANIM_LEN) && !(anim.mt && mvT && !mvT.loop)) animStart(anim.i);   // (len: a clip with its own length, e.g. a celebration)
     try {
       const { A, B } = anim;
       if (A.moving) A.run += dt * 12;
@@ -349,6 +427,13 @@ function drawAnims() {
 }
 function animsClick(p) {
   if (!anim) return;
+  if (anim.mt && mvT) {   // (the MOVES test: its panel; PREV / NEXT step through the family's looks)
+    if (inBtn(p, BACK_BTN)) { mvtOff(); animLeave(); startTestMode(); return; }
+    if (mvtClick(p)) return;
+    const n = mvtCfg().looks.length;
+    if (inBtn(p, ANIM_PREV)) mvT.look = (mvT.look % n + n - 1) % n; else if (inBtn(p, ANIM_NEXT)) mvT.look = (mvT.look % n + 1) % n; else if (!inBtn(p, ANIM_REPLAY)) return;
+    animStart(0); return;
+  }
   if (inBtn(p, BACK_BTN)) { animLeave(); return; }
   const tab = ANIM_TABS.find(t => inBtn(p, t));
   if (tab) { anim.cat = tab.cat; anim.list = animEntries(tab.cat); animStart(0); return; }
@@ -359,6 +444,141 @@ function animsClick(p) {
   else if (inBtn(p, ANIM_PREV)) animStart((anim.i + len - 1) % len);
   else if (inBtn(p, ANIM_NEXT)) animStart((anim.i + 1) % len);
 }
+// --- moves test (TEST MODE > MOVE LOOKS) + the library's move-look clips --------------------------------------------------------------------------------
+// mvStage(A, B, c) stages one runner look on the library stage (A = the runner, B = the man it beats) with the game's own calls: the move's act, moveLookPick
+// (pinned through MOVE_LOOK.force, or picked by the rules from the rating), then the game's reaction on B (startReel / hurdledBy, its skin pinned or picked).
+// c = { fam spin / juke / truck / hurdle / run, look ('AUTO' = the rules), reel ('AUTO' / 'none' / a REEL_ST style / a REEL_SKIN / a HURDLED_ST kind / 'riseUp'),
+// grab (B in contact as a spin starts), stiff (stiff arm held through a spin), side (juke cut, + = down), rate (agility), wt (lb), sideYd (yd from the sideline) }
+const MV_T0 = 0.4;   // s into a clip the move starts
+function mvStage(A, B, c) {
+  const F = c.fam, look = c.look && c.look !== 'AUTO' ? c.look : null, reelK = c.reel || 'AUTO', ev = [], at = (s, f) => ev.push([s, f]);
+  if (mvX[F]) {   // (catch / dive / slide / landing / pick / tip looks: their own clips, mvX)
+    const lk = mvX[F][look] ? look : Object.keys(mvX[F])[0];
+    Object.assign(A, { hasBall: false, moving: false, vx: 0, x: -1.6 * YD, mvFx: null, mvLast: null, truck: false, mlTight: null, stiff: null });
+    ball.tucked = true; ball.inAir = false; B.x = 1e6; anim.mvInfo = `LOOK: ${lk}`;
+    mvX[F][lk](A, B);
+    return;
+  }
+  const keep = { ...MOVE_LOOK.force }, rate0 = MOVE_LOOK.rate, side0 = MOVE_LOOK.sideYd;
+  Object.assign(A, { hasBall: true, ballSide: 1, moving: true, vx: 6 * YD, x: -2.2 * YD, wt: c.wt || A.wt, mvFx: null, mvLast: null, truck: F === 'truck', stiff: null, mlTight: null });
+  ball.tucked = true; ball.inAir = false; ball.loose = false;
+  B.face = -1; B.x = A.x + (F === 'spin' ? (c.grab ? 1.25 : 2.6) : F === 'hurdle' ? 1.75 : F === 'truck' ? 1.6 : 1.5) * YD; B.y = 0;
+  anim.mvInfo = '';
+  const pick = (fam, a) => {   // (the game's pick, with this clip's pins and rating; everything put back right after)
+    MOVE_LOOK.force[fam] = look && MV_LOOKS[look] ? look : null; if (c.rate != null) MOVE_LOOK.rate = c.rate; if (c.sideYd != null) MOVE_LOOK.sideYd = c.sideYd;
+    try { moveLookPick(A, fam, a, [B]); } finally { Object.assign(MOVE_LOOK.force, keep); MOVE_LOOK.rate = rate0; MOVE_LOOK.sideYd = side0; }
+  };
+  const reel = (pool, fallback) => {   // the beaten man's reaction: the game's own pick from its pool, or the one asked for (a skin keeps its base's timing)
+    if (reelK === 'none') return;
+    const base = reelK === 'AUTO' ? pickOf(pool) : REEL_SKIN[reelK] ? REEL_SKIN[reelK].base : REEL_ST[reelK] ? reelK : fallback;
+    startReel(B, base, A);
+    if (B.act && reelK !== 'AUTO') B.act.skin = REEL_SKIN[reelK] ? reelK : null;
+    anim.mvInfo += `   REACTION: ${(B.act && (B.act.skin || B.act.style)) || '-'}`;
+  };
+  if (F === 'spin') at(MV_T0, () => {
+    const a = { t: 0, dur: 0.45, vx: 1.2 * YD, vy: 0 };
+    A.action = 'spin'; A.act = a; pick('spin', a);
+    if (look === 'spinStumble') { a.look = (A.wt || 0) >= MOVE_LOOK.wideLb ? 'spinWide' : 'spinTight'; a.stum = 0.18; }
+    if (c.stiff) { A.stiff = { t: 0 }; A.stiffTgt = B; }
+    anim.mvInfo = `LOOK: ${a.look}${a.grab ? ' (grab)' : ''}${a.stum != null ? ' + stumble' : ''}`;
+    at(MV_T0 + 0.3, () => reel(REEL_BASE.spin, 'spinGrab'));
+  });
+  if (F === 'juke') at(MV_T0, () => {
+    const sd = c.side || 1, a = { t: 0, dur: 0.3, vx: 1.2 * YD, vy: sd * 1.6 * YD / 0.3, side: sd };
+    A.action = 'juke'; A.act = a; pick('juke', a);
+    anim.mvInfo = `LOOK: ${a.look}`;
+    at(MV_T0 + 0.18, () => reel(REEL_BASE.juke, 'jukeLunge'));
+  });
+  if (F === 'truck' && look !== 'truckRun') at(MV_T0 + 0.25, () => {
+    const pan = reelK === 'AUTO' ? (look ? look === 'truckPancake' : Math.random() < 0.5) : /Back|ico/.test(reelK);
+    A.mvFx = { k: look || (pan ? 'truckPancake' : 'truckBounce'), t: clock, o: 0 };
+    if (reelK !== 'none') { startReel(B, reelK === 'AUTO' ? (pan ? 'truckBack' : 'truckStagger') : reelK, A); if (B.act) B.act.skin = null; }
+    anim.mvInfo = `LOOK: ${A.mvFx.k}   REACTION: ${(B.act && B.act.style) || '-'}`;
+  });
+  if (F === 'hurdle') at(MV_T0, () => {
+    const clip = look === 'hurdleClip' || reelK === 'riseUp', a = { t: 0, dur: HURDLE.userDur, vx: 3 * YD, vy: 0, h: HURDLE.userH, user: true, space: !clip, cleared: [], style: 'classic', backward: look === 'hurdleBack' };
+    A.action = 'hurdle'; A.act = a; pick('hurdle', a);
+    if (!a.look && look) a.look = look;
+    anim.mvInfo = `LOOK: ${a.look || a.style}`;
+    if (!clip && reelK !== 'none') { const k0 = MOVE_LOOK.force.hurdled; MOVE_LOOK.force.hurdled = HURDLED_ST[reelK] ? reelK : null; try { hurdledBy(A, B); } finally { MOVE_LOOK.force.hurdled = k0; } anim.mvInfo += `   UNDER: ${(B.act && B.act.kind) || '-'}`; }
+    if (reelK === 'riseUp') at(MV_T0 + 0.24, () => {   // (the game's tackle on a hurdle with no room: he stands up into him, the runner is flipped over)
+      B.action = 'wrap'; B.act = { t: 0, target: A, ox: 0.35 * YD, oy: 0, angle: 0, rise: 0, fallTime: 0.4 }; B.face = -1;
+      A.action = 'down'; A.act = { t: 0, fall: true, back: true, twist: 0.5, side: 0, fallTime: 0.3, vx: YD, vy: 0, angle: 0 };
+      anim.mvInfo += '   UNDER: riseUp';
+    });
+  });
+  if (F === 'run') {
+    B.x = 1e6;
+    if (look === 'goalLeap') { Object.assign(B, { x: A.x + 2.4 * YD, action: 'down', act: { t: 5, fall: true, back: false, side: 0, fallTime: 0.4, vx: 0, vy: 0, angle: 0 } });
+      at(MV_T0, () => { startDive(A, A.x + 3.2 * YD, A.y, 0.4, 2.5 * YD); A.act.look = 'goalLeap'; A.runDive = true; }); }
+    else if (look === 'ballReach') { B.x = A.x + 1.2 * YD;
+      at(MV_T0, () => { A.action = 'down'; A.act = { t: 0, fall: true, back: false, side: 0, fallTime: 0.4, vx: 2 * YD, vy: 0, angle: 0, reachOut: true };
+        B.action = 'wrap'; B.act = { t: 0, target: A, ox: -0.3 * YD, oy: -0.2 * YD, angle: 0, fallTime: 0.4 }; B.face = 1; }); }
+    else A.mlTight = 1;
+    anim.mvInfo = `LOOK: ${look || 'tightrope'}`;
+  }
+  ev.sort((x, y) => x[0] - y[0]);
+  A.tick = t => { if (!A.action && !A.moving && A.hasBall) A.moving = true; for (let i = 0; i < ev.length; i++) if (ev[i] && t >= ev[i][0]) { const f = ev[i][1]; ev[i] = null; f(); } };
+}
+// the panel (replaces the library's list while the test is open): family, look, rating, weight, reaction, the extras, speed / loop / replay
+let mvT = null;
+const MVT = { x: 20, y: 126, w: 600, h: 40, gap: 48, speeds: [1, 0.5, 0.25], rates: [0.7, 0.85, 1, 1.15, 1.3, 1.45], wts: [195, 215, 235, 255], sides: [1, 3, 12], len: 2.6 };
+const MVT_FAMS = {
+  spin: { looks: ['spinTight', 'spinWide', 'spinStumble'], reels: ['spunAround', 'grabSpun', 'spinGrab', 'grabFall', 'none'] },
+  juke: { looks: ['plantCut', 'jumpCut', 'stutter', 'shoulderDip', 'doubleJuke', 'deadLeg'], reels: ['jukeLunge', 'lungeMiss', 'jukeStumble', 'hipsWrong', 'grabAir', 'jukeAnkles', 'anklesB', 'anklesC', 'none'] },
+  truck: { looks: ['truckRun', 'truckPancake', 'truckBounce'], reels: ['truckBack', 'truckStagger', 'icoTruck', 'none'] },
+  hurdle: { looks: ['hurdleClean', 'hurdleHighKnee', 'hurdleBack', 'hurdleClip'], reels: ['duck', 'grab', 'flinch', 'kicked', 'riseUp', 'none'] },
+  run: { looks: ['tightrope', 'goalLeap', 'ballReach'], reels: [], noAuto: true },
+  dive: { looks: Object.keys(mvX.dive), reels: [], noAuto: true }, slide: { looks: Object.keys(mvX.slide), reels: [], noAuto: true },
+  throw: { looks: Object.keys(mvX.throw), reels: [], noAuto: true }, land: { looks: Object.keys(mvX.land), reels: [], noAuto: true }, pick: { looks: Object.keys(mvX.pick), reels: [], noAuto: true }, tip: { looks: Object.keys(mvX.tip), reels: [], noAuto: true },
+};
+const MVT_FAM_KEYS = Object.keys(MVT_FAMS);
+const mvtNew = () => ({ fam: 0, look: 0, rate: 2, wt: 1, reel: 0, grab: true, stiff: false, side: 1, sideYd: 2, spd: 0, loop: true });
+const mvtRow = (i, half) => ({ x: MVT.x + (half === 2 ? MVT.w / 2 + 4 : 0), y: MVT.y + i * MVT.gap, w: half ? MVT.w / 2 - 4 : MVT.w, h: MVT.h });
+const MVT_B = { fam: mvtRow(0), look: mvtRow(1), rate: mvtRow(2, 1), wt: mvtRow(2, 2), reel: mvtRow(3), x1: mvtRow(4, 1), x2: mvtRow(4, 2), side: mvtRow(5, 1), spd: mvtRow(6, 1), loop: mvtRow(6, 2) };
+function mvtCfg() {
+  const T = mvT, fk = MVT_FAM_KEYS[T.fam], F = MVT_FAMS[fk], looks = F.noAuto ? F.looks : ['AUTO', ...F.looks], reels = ['AUTO', ...F.reels];
+  return { fam: fk, look: looks[T.look % looks.length], reel: F.reels.length ? reels[T.reel % reels.length] : 'none', grab: T.grab, stiff: T.stiff, side: T.side,
+           rate: MVT.rates[T.rate], wt: MVT.wts[T.wt], sideYd: MVT.sides[T.sideYd], looks, reels };
+}
+function openMoveTest() {
+  openAnimLib();
+  mvT = mvtNew(); anim.mt = true; anim.list = [['MOVE LOOKS', (A, B) => mvStage(A, B, mvtCfg())]]; animStart(0);
+}
+function mvtOff() { mvT = null; if (anim) anim.mt = false; for (const k in MOVE_LOOK.force) MOVE_LOOK.force[k] = null; MOVE_LOOK.rate = null; MOVE_LOOK.sideYd = null; }
+function drawMoveT() {
+  const c = mvtCfg(), T = mvT, N = RES.bright, G = SEL, cyc = (b, label, sel) => menuBtn(b, `<  ${label}  >`, sel ? G : N, 16), nm = s => String(s).replace(/([A-Z])/g, ' $1').toUpperCase();
+  cyc(MVT_B.fam, `FAMILY: ${c.fam.toUpperCase()}`);
+  cyc(MVT_B.look, `LOOK: ${nm(c.look)}`, c.look !== 'AUTO');
+  cyc(MVT_B.rate, `AGILITY ${c.rate.toFixed(2)}x`); cyc(MVT_B.wt, `WEIGHT ${c.wt} LB`);
+  if (MVT_FAMS[c.fam].reels.length) cyc(MVT_B.reel, `REACTION: ${nm(c.reel)}`, c.reel !== 'AUTO');
+  if (c.fam === 'spin') { menuBtn(MVT_B.x1, `HAND ON HIP: ${T.grab ? 'ON' : 'OFF'}`, T.grab ? G : N, 15); menuBtn(MVT_B.x2, `STIFF ARM HELD: ${T.stiff ? 'ON' : 'OFF'}`, T.stiff ? G : N, 15); }
+  if (c.fam === 'juke') { menuBtn(MVT_B.x1, `CUT: ${T.side > 0 ? 'DOWN' : 'UP'}`, N, 15); menuBtn(MVT_B.x2, `SIDELINE: ${c.sideYd} YD`, N, 15); }
+  menuBtn(MVT_B.spd, `SPEED: ${MVT.speeds[T.spd]}x`, T.spd ? G : N, 16); menuBtn(MVT_B.loop, `LOOP: ${T.loop ? 'ON' : 'OFF'}`, T.loop ? G : N, 16);
+  ctx.fillStyle = RES.line; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(anim.mvInfo || '', MVT.x, MVT.y + 7 * MVT.gap + 10, MVT.w);
+  ctx.font = '13px monospace';
+  ctx.fillText('AUTO = the game\'s own rules (agility, weight, sideline, defenders).', MVT.x, MVT.y + 7 * MVT.gap + 36, MVT.w);
+  ctx.fillText('Looks only: the move, its length and its result are the game\'s.', MVT.x, MVT.y + 7 * MVT.gap + 56, MVT.w);
+}
+function mvtClick(p) {
+  const T = mvT, c = mvtCfg(), dir = b => p.x < b.x + b.w / 2 ? -1 : 1, cy = (v, n, d) => (v + d + n) % n, B = MVT_B;
+  if (inBtn(p, B.fam)) { T.fam = cy(T.fam, MVT_FAM_KEYS.length, dir(B.fam)); T.look = 0; T.reel = 0; }
+  else if (inBtn(p, B.look)) T.look = cy(T.look % c.looks.length, c.looks.length, dir(B.look));
+  else if (inBtn(p, B.rate)) T.rate = cy(T.rate, MVT.rates.length, dir(B.rate));
+  else if (inBtn(p, B.wt)) T.wt = cy(T.wt, MVT.wts.length, dir(B.wt));
+  else if (inBtn(p, B.reel) && MVT_FAMS[c.fam].reels.length) T.reel = cy(T.reel % c.reels.length, c.reels.length, dir(B.reel));
+  else if (inBtn(p, B.x1) && c.fam === 'spin') T.grab = !T.grab;
+  else if (inBtn(p, B.x2) && c.fam === 'spin') T.stiff = !T.stiff;
+  else if (inBtn(p, B.x1) && c.fam === 'juke') T.side = -T.side;
+  else if (inBtn(p, B.x2) && c.fam === 'juke') T.sideYd = cy(T.sideYd, MVT.sides.length, 1);
+  else if (inBtn(p, B.spd)) { T.spd = cy(T.spd, MVT.speeds.length, 1); return true; }
+  else if (inBtn(p, B.loop)) { T.loop = !T.loop; return true; }
+  else return false;
+  animStart(0);   // (any change restages it)
+  return true;
+}
+
 // a fresh game dropped into one situation (yd = yards from your own goal line)
 function startTest(id) {
   if (exhibition) exhibition.testId = id;   // (RESET GAME in the pause menu comes back here)
@@ -483,26 +703,30 @@ function ooClick(p) {
 // the moves that need it, a defender laid at his feet for a `down` move, the nearest teammates brought in as his cast). Speed applies after the whistle only.
 let celT = null;
 const CELT = { x: 10, y: 96, w: 250, rows: 10, rowH: 22, zooms: [1, 1.4, 1.8], speeds: [1, 0.5, 0.25], back: 18, loopGap: 0.5 };   // back: yd behind the line PLAY NOW stages it / s between loops
-const CELT_TAGS = ['ALL', 'SOLO', 'DUO', 'GROUP', 'DUNK', 'DANCE', 'TAUNT', 'FIRST DOWN', 'HANDSHAKE', 'REACTION'];
+const CELT_TAGS = ['ALL', 'SOLO', 'DUO', 'GROUP', 'DUNK', 'DANCE', 'TAUNT', 'FIRST DOWN', 'HANDSHAKE', 'REACTION', 'DEFENSE'];
+// EVENT: TEST plays the move picked in the list; any other event plays that event's own pool (its pick by the hero's build, needs and hype), with a defender as the hero for the defense's events
+const CELT_EVS = ['test', 'pick', 'pbu', 'sack', 'tfl', 'hit', 'stop', 'block', 'fumForce', 'fumRec', 'safety'];
 const CELT_B = (() => {
   const X = CELT.x, y1 = CELT.y + 30 + CELT.rows * CELT.rowH + 4, b = (x, y, w) => ({ x, y, w, h: 26 });
   return { tag: b(X, CELT.y, 250), rows: Array.from({ length: CELT.rows }, (_, i) => ({ x: X, y: CELT.y + 30 + i * CELT.rowH, w: 250, h: CELT.rowH - 2 })),
     prev: b(X, y1, 122), next: b(X + 128, y1, 122), force: b(X, y1 + 30, 122), play: b(X + 128, y1 + 30, 122),
     spd: b(X, y1 + 60, 80), loop: b(X + 85, y1 + 60, 80), mir: b(X + 170, y1 + 60, 80),
-    lock: b(X, y1 + 90, 122), zoom: b(X + 128, y1 + 90, 122), big: b(X, y1 + 120, 122), cast: b(X + 128, y1 + 120, 122), hype: b(X, y1 + 150, 250) };
+    lock: b(X, y1 + 90, 122), zoom: b(X + 128, y1 + 90, 122), big: b(X, y1 + 120, 122), cast: b(X + 128, y1 + 120, 122), hype: b(X, y1 + 150, 250), ev: b(X, y1 + 180, 250) };
 })();
-const CELT_BOT = CELT_B.hype.y + 26 + 92;   // (the readout's four lines end here)
-const celTNew = () => ({ tag: 0, page: 0, id: 'spike', spd: 0, loop: false, mir: false, lock: true, zoom: 0, big: false, cast: 0, hy: 0.5, force: false, wait: null, played: false, uz0: userZoom });
+const CELT_BOT = CELT_B.ev.y + 26 + 92;   // (the readout's four lines end here)
+const celTNew = () => ({ ev: 0, tag: 0, page: 0, id: 'spike', spd: 0, loop: false, mir: false, lock: true, zoom: 0, big: false, cast: 0, hy: 0.5, force: false, wait: null, played: false, uz0: userZoom });
 function celTOff() { if (!celT) return; userZoom = celT.uz0; celT = null; CELEB.force = CELEB.forceHype = null; }
 const celTSpeed = () => celT && state === 'done' && !(rec && rec.replaying) ? CELT.speeds[celT.spd] : 1;
 const celTSync = () => { CELEB.force = celT.force ? celT.id : null; CELEB.forceHype = celT.force ? celT.hy : null; };
 function celTIs(id, f) {
   const m = CELEB_MOVES[id], tg = [].concat(m.tag), n = celebCastN(m).pop(), rx = tg.includes('R');
   return f === 'ALL' || (f === 'SOLO' && n === 1 && !rx) || (f === 'DUO' && n === 2) || (f === 'GROUP' && n > 2) || (f === 'DUNK' && m.needs === 'post') || (f === 'DANCE' && tg.includes('dance')) ||
-    (f === 'TAUNT' && tg.includes('taunt')) || (f === 'FIRST DOWN' && id in CELEB_EVENTS.first.moves) || (f === 'HANDSHAKE' && tg.includes('shake')) || (f === 'REACTION' && rx);
+    (f === 'TAUNT' && tg.includes('taunt')) || (f === 'FIRST DOWN' && id in CELEB_EVENTS.first.moves) || (f === 'HANDSHAKE' && tg.includes('shake')) || (f === 'REACTION' && rx) ||
+    (f === 'DEFENSE' && (/^d[fg][A-Z]/.test(id) || CELT_EVS.slice(1).some(e => id in CELEB_EVENTS[e].moves)));
 }
 const celTList = () => Object.keys(CELEB_MOVES).filter(id => celTIs(id, CELT_TAGS[celT.tag]));
-const celTHero = mv => { const tg = [].concat(mv.tag); return tg.includes('S') && !tg.includes('N') && !tg.includes('A') ? ols[2] : recs[0]; };   // (a strength-only move: a lineman)
+const celTDef = id => CELT_EVS[celT.ev] !== 'test' || /^d[fg][A-Z]/.test(id);   // (a defense event or a df / dg move: a defender plays it, the QB is the man on the turf)
+const celTHero = (mv, id) => { const tg = [].concat(mv.tag), s = tg.includes('S') && !tg.includes('N') && !tg.includes('A'); return id && celTDef(id) ? (s ? dl[1] : back7[1]) : s ? ols[2] : recs[0]; };   // (a strength-only move: a lineman)
 const celTCast = mv => { const cn = celebCastN(mv); return Math.max(cn[0], Math.min(cn[cn.length - 1], celT.cast || cn[0])); };
 // what the move needs that the field does not offer right now (PLAY NOW fills every one of them)
 function celTUnmet(mv) {
@@ -520,19 +744,19 @@ function celTPlay() {
   celebReset();
   for (const p of allPlayers()) Object.assign(p, { action: null, act: null, vx: 0, vy: 0, svx: 0, svy: 0, z: 0, moving: false, hasBall: false, coast: null, engaged: false });
   state = 'done'; runner = null;
-  const h = celTHero(mv), n = celTCast(mv), ez = mv.needs === 'post' || mv.needs === 'goal';
+  const ev = CELT_EVS[T.ev], def = celTDef(id), h = celTHero(mv, id), n = ev !== 'test' ? Math.max(5, celTCast(mv)) : celTCast(mv), ez = mv.needs === 'post' || mv.needs === 'goal';   // (an event's pool: four teammates brought in, so its team moves can come up)
   h.x = mv.needs === 'post' ? POST_X - 5.5 * YD : mv.needs === 'goal' ? FIELD + 1.5 * YD : Math.max(4 * YL, los - CELT.back * YL);   // (the post moves: a sprint's worth short of it, inside CELEB.postRange)
   h.y = MID + (mv.needs === 'post' ? 1 * YD : 0); h.face = T.mir ? -1 : 1; h.hasBall = true;
   Object.assign(ball, { x: h.x, y: h.y, z: 0, vx: 0, vy: 0, vz: 0, inAir: false, loose: false, live: false, tucked: true });
   // his cast: the nearest go beside him, everyone else of his team stays out of reach
-  const pool = (mv.mate === 'ol' ? ols : [...recs, rb, ...ols]).filter(p => p !== h).slice(0, n - 1), spots = [[-2.4, 1.3], [-2.4, -1.3], [-3.4, 2.4], [-3.4, -2.4], [-4.2, 0]];
+  const pool = (def ? (mv.mate === 'ol' ? dl : [...back7, ...dl]) : mv.mate === 'ol' ? ols : [...recs, rb, ...ols]).filter(p => p !== h).slice(0, n - 1), spots = [[-2.4, 1.3], [-2.4, -1.3], [-3.4, 2.4], [-3.4, -2.4], [-4.2, 0]];
   pool.forEach((p, i) => { p.x = h.x + h.face * spots[i][0] * YD; p.y = h.y + spots[i][1] * YD; p.face = h.face; });
   for (const p of allPlayers()) if (p !== h && !pool.includes(p) && Math.hypot(p.x - h.x, p.y - h.y) < 10 * YD) p.x = h.x - (ez ? 1 : -1) * (12 + Math.random() * 3) * YD;
   // a defender for the moves about one: laid at his feet (`down`), or standing a few yards off (a target, and someone to react)
-  const d = back7[0];
+  const d = def ? qb : back7[0];
   d.x = h.x + h.face * (mv.needs === 'down' ? 1 : mv.needs === 'post' ? -2 : n > 2 ? -9 : 4.5) * YD;   // (a group: well clear of the formation) d.y = h.y + (mv.needs === 'down' ? 0 : mv.needs === 'post' ? 3 * YD : 0.6 * YD); d.face = -h.face;   // (a post move: out of the run-up's way)
-  if (mv.needs === 'down') { d.action = 'down'; d.act = { t: 5, fall: true, back: false, side: 0, fallTime: 0.4, vx: 0, vy: 0, angle: 0 }; d.lyingKeep = true; }
-  celebBegin({ ev: 'test', hero: h, pri: 9, at: clock, till: clock + 9, o: { tgt: d }, side: false, forceId: id, hyF: T.hy, big: T.big ? 1 : null });
+  if (mv.needs === 'down' || (def && ev !== 'test')) { d.x = h.x + h.face * YD; d.y = h.y; d.action = 'down'; d.act = { t: 5, fall: true, back: false, side: 0, fallTime: 0.4, vx: 0, vy: 0, angle: 0 }; d.lyingKeep = true; }
+  celebBegin({ ev, hero: h, pri: 9, at: clock, till: clock + 9, o: { tgt: d }, side: false, forceId: ev === 'test' ? id : null, hyF: T.hy, big: T.big ? 1 : null });
   const c = celebLive.find(x => x.hero === h);
   if (c && T.mir && !c.marks) c.starts[0].face = -1;   // (a move that turns him itself: mirrored after it has)
   T.played = true; T.wait = null;
@@ -568,6 +792,7 @@ function drawCelT() {
   menuBtn(B.spd, `${CELT.speeds[T.spd]}x`, N, 13); menuBtn(B.loop, 'LOOP', T.loop ? G : N, 13); menuBtn(B.mir, 'MIRROR', T.mir ? G : N, 12);
   menuBtn(B.lock, `CAM LOCK: ${T.lock ? 'ON' : 'OFF'}`, T.lock ? G : N, 11); menuBtn(B.zoom, `ZOOM: ${CELT.zooms[T.zoom]}x`, N, 12);
   menuBtn(B.big, `S-TIER: ${T.big ? 'ON' : 'AUTO'}`, T.big ? G : N, 11); menuBtn(B.cast, `CAST: ${celTCast(mv)}`, N, 12);
+  menuBtn(B.ev, `< EVENT: ${CELT_EVS[T.ev] === 'test' ? 'THIS MOVE' : CELT_EVS[T.ev].toUpperCase() + ' (ITS POOL)'} >`, T.ev ? G : N, 12);
   menuBtn(B.hype, '', N, 12, q => {   // the hype slider
     ctx.fillStyle = q.ink; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillText(`HYPE ${T.hy.toFixed(2)}`, q.x + 8, q.y + q.h / 2 + 1);
@@ -576,7 +801,7 @@ function drawCelT() {
     ctx.beginPath(); ctx.arc(bx + bw * T.hy, cy, 7, 0, Math.PI * 2); ctx.fillStyle = G; ctx.fill(); ctx.strokeStyle = q.ink; ctx.lineWidth = 2; ctx.stroke();
   });
   // the readout: the move, the phase it is in, the sound firing, and what it needs that PLAY NOW will fill in (red)
-  const cn = celebCastN(mv), unmet = celTUnmet(mv), y0 = B.hype.y + 26 + 16, sfxOn = performance.now() - celebDbg.at < 600;
+  const cn = celebCastN(mv), unmet = celTUnmet(mv), y0 = B.ev.y + 26 + 16, sfxOn = performance.now() - celebDbg.at < 600;
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = 'bold 12px monospace'; ctx.shadowColor = '#000'; ctx.shadowBlur = 3;
   ctx.fillStyle = '#fff';
   ctx.fillText(`${T.id}  [${[].concat(mv.tag).join(' ')}]  cast ${cn.join('-')}  ${mv.secs}s`, CELT.x, y0, CELT.w);
@@ -602,6 +827,7 @@ function celTClick(p) {
   else if (inBtn(p, B.zoom)) T.zoom = cyc(T.zoom, CELT.zooms.length);
   else if (inBtn(p, B.big)) T.big = !T.big;
   else if (inBtn(p, B.cast)) { const cn = celebCastN(mv), n = celTCast(mv); T.cast = n >= cn[cn.length - 1] ? cn[0] : n + 1; }
+  else if (inBtn(p, B.ev)) T.ev = cyc(T.ev, CELT_EVS.length, dir(B.ev));
   else if (inBtn(p, B.hype)) T.hy = Math.round(Math.max(0, Math.min(1, (p.x - (B.hype.x + 92)) / (B.hype.w - 104))) * 20) / 20;
   else return p.x < CELT.x + CELT.w + 6 && p.y > CELT.y - 6 && p.y < CELT_BOT + 6;   // (a click on the panel itself never reaches the field)
   celTSync();
@@ -1115,7 +1341,7 @@ function wxGround() {
 }
 // rain streaks, snowflakes and wind lines over the field (screen space), plus the weather badge and change notices
 const wxParts = { rain: [], snow: [], wind: [], t: 0 };
-const fxK = () => (TUI.on ? 0.45 : 1) * (liteGame() ? LITE.wx : 1);   // phones / tablets: this share of the particles (rain, snow, wind, footprints) and no gradient glows
+const fxK = () => (TUI.on && !gfxHi() ? 0.45 : 1) * (liteGame() ? LITE.wx : 1);   // phones / tablets: this share of the particles (rain, snow, wind, footprints) and no gradient glows
 function wxDraw() {
   const g = game.wx;
   if (!g || !g.on) return;
@@ -1630,7 +1856,7 @@ function facLvl(k) {
   const F = career.prac.fac[k];
   return F ? Math.max(0, F.lvl - 1) : 0;
 }
-const medWeeks = w => w >= 1 ? Math.max(1, Math.round(w * (1 - FAC_FX.med.out * facLvl('med')))) : w;   // (a layoff, shortened by Medical; never under a game)
+const medWeeks = w => w >= 1 ? Math.max(1, Math.round(w * (1 - FAC_FX.med.out * facLvl('med') - originK('heal')))) : w;   // (a layoff, shortened by Medical; never under a game)
 const PRAC_SPEC = {
   off: [{ id: 'PASSING', groups: ['QB', 'WR', 'TE'], text: 'QB / WR / TE develop faster' }, { id: 'GROUND', groups: ['RB', 'OL', 'TE'], text: 'RB / OL / TE develop faster' },
         { id: 'STRENGTH', groups: ['OL', 'RB', 'TE'], text: 'Strength work: OL / RB / TE develop faster' }, { id: 'SPEED', groups: ['WR', 'RB', 'QB'], text: 'Speed work: WR / RB / QB develop faster' },
@@ -1844,11 +2070,12 @@ function pracGrow(p) {
   const side = OFF_GROUPS.includes(p.group) ? 'off' : 'def', c = pracCalc(p, side, prac().load[side]);
   return 1 + PRAC.growSpec * Math.max(0, c.dev - 0.85) * (0.3 + 0.7 * pracCurve(prac().load[side]));
 }
+const facCost = (D, F) => Math.max(1, Math.round(D.cost[F.lvl - 1] * (1 - conPerk('fac'))));   // (less your HC deal's FACILITY DISCOUNT perk)
 function pracUpgrade(k) {
   const F = prac().fac[k], D = PRAC_FAC[k];
   if (F.build || F.lvl >= FAC_MAX) return;
-  if (LEAGUE.coins < D.cost[F.lvl - 1]) { PR.msg = { t: performance.now(), text: `NEED ${D.cost[F.lvl - 1]} ¤` }; return; }
-  LEAGUE.coins -= D.cost[F.lvl - 1]; F.build = { left: D.wks[F.lvl - 1], total: D.wks[F.lvl - 1] }; autosaveSoon();
+  if (LEAGUE.coins < facCost(D, F)) { PR.msg = { t: performance.now(), text: `NEED ${facCost(D, F)} ¤` }; return; }
+  LEAGUE.coins -= facCost(D, F); F.build = { left: D.wks[F.lvl - 1], total: D.wks[F.lvl - 1] }; autosaveSoon();
 }
 
 // --- staff hiring ----------------------------------------------------------------------------
@@ -2018,7 +2245,7 @@ const hireAll = () => hireRolesAll().map(r => hireFill(hireGet(r), r));
 const crewPay = () => r1(hireAll().reduce((t, p) => t + p.sal, 0));
 const BUDGET_UP = { cost: 50, step: 5 };   // credits for +step $M of staff budget (hiring screen)
 const BUDGET_UP_BTN = { x: 1000, y: 606, w: 250, h: 40 };
-const staffBudget = () => r1(HIRE.budget + (scoutsOn() ? SCOUT.budget : 0) + (LEAGUE.staffExtra || 0) + HIRE.perFans * Math.min(1, LEAGUE.fans || 0) + HIRE.perLevel * (Object.values(prac().fac).reduce((t, f) => t + f.lvl, 0) - 4));
+const staffBudget = () => r1((1 + conPerk('budget')) * (HIRE.budget +(scoutsOn() ? SCOUT.budget : 0) + (LEAGUE.staffExtra || 0) + HIRE.perFans * Math.min(1, LEAGUE.fans || 0) + HIRE.perLevel * (Object.values(prac().fac).reduce((t, f) => t + f.lvl, 0) - 4)) + originK('budget'));   // (+/- your origin early on)   // (x your HC deal's STAFF BUDGET perk)
 function hireAppeal() {   // 0 - 1: facilities, record, fans
   let succ = 0.5; try { const T = seasonTable()[season.team]; if (T && T.w + T.l + T.t) succ = winPct(T); } catch (e) {}
   return 0.35 * (Object.values(prac().fac).reduce((t, f) => t + f.lvl, 0) - 4) / 16 + 0.4 * succ + 0.25 * Math.min(1, (LEAGUE.fans || 0) / 0.8);
@@ -2065,9 +2292,10 @@ function hireOffseason() {   // a year goes by: ages, contracts, retirements, po
     if (!coord && !p.interim) p.years--;   // (coordinators' contracts run in offStaff)
     let gone = null;
     if (p.age >= HIRE.retire && Math.random() < (p.age - HIRE.retire + 1) * 0.15) gone = 'retired';
-    else if (!p.interim && p.sal < market * HIRE.poach && Math.random() < 0.3 + 0.1 * Math.max(0, p.stars - 3) + 0.4 * (HIRE.poach - p.sal / market)) gone = 'was poached by another team (you underpaid him)';
+    else if (!contractsOn() && !p.interim && p.sal < market * HIRE.poach && Math.random() < 0.3 + 0.1 * Math.max(0, p.stars - 3) + 0.4 * (HIRE.poach - p.sal / market)) gone = 'was poached by another team (you underpaid him)';
+    else if (!coord && contractsOn() && !p.interim && p.sour && Math.random() < CONTRACT.staff.refuseLeave) gone = 'left: he never forgave the offer you refused';
     else if (!coord && p.years <= 0) {
-      if (!p.interim && p.sal >= market * 0.95 && Math.random() < 0.7) { p.sal = market; p.years = rint(2, 3); lines.push(`${p.name} (${HIRE_ROLE[r].short}) re-signed at ${market}M.`); }
+      if (!contractsOn() && !p.interim && p.sal >= market * 0.95 && crewPay() - p.sal + market <= staffBudget() && Math.random() < 0.7) { p.sal = market; p.years = rint(2, 3); lines.push(`${p.name} (${HIRE_ROLE[r].short}) re-signed at ${market}M.`); }
       else gone = 'left when his contract ended';
     }
     if (gone) { lines.push(`${p.name} (${HIRE_ROLE[r].short}) ${gone}. An interim fills in: open the hiring board.`); hireSet(r, hireInterim(r)); }
@@ -2329,6 +2557,23 @@ function tourPractice(stage) {   // sets up the demo trade on the builder: 0 = e
 }
 const tourTabs = t => () => { TR.tab = [t, t]; TR.pg = [0, 0]; };
 const TOUR_STEPS = {
+  carDiff: [   // the new career screen's "How tough?" section (its ? button, CAR_TOUR; no season needed: TOUR_FREE)
+    { scr: 'franchise', rect: () => (L => ({ x: Math.min(...L.map(r => r.x)), y: Math.min(...L.map(r => r.y)), w: Math.max(...L.map(r => r.x + r.w)) - Math.min(...L.map(r => r.x)), h: Math.max(...L.map(r => r.y + r.h)) - Math.min(...L.map(r => r.y)) }))(DIFFS.map((_, i) => CAR_DCARD(i))), text: 'HOW TOUGH? Each card is a difficulty level. It only ever changes the other team: their tackling, coverage, picks and hits, never your players. Tap one to pick it. PRO is the default.' },
+    { scr: 'franchise', rect: () => [CAR_WHAT], text: 'WHAT CHANGES compares the level you picked with PRO: how often their tacklers get broken, how often they pick a pass, break one up or punch the ball out. Player speed never changes at any level.' },
+    { scr: 'franchise', rect: () => [{ x: CAR.dyn.x, y: CAR.dyn.y, w: 240, h: 100 }, CAR_CUSTOM], text: 'ADAPTIVE lets the league adjust to how you play, week to week. CUSTOM SLIDERS opens the full difficulty page with every slider.' },
+  ],
+  locker: [   // the questionnaire's locker room (its ? button, QS_LTOUR)
+    { scr: 'qsetup', rect: () => [QS_LWALL], text: 'THE LOCKER ROOM: tap a locker to swing it open and pin that team as your favorite.' },
+    { scr: 'qsetup', rect: () => [QS_REPORT], text: 'The SCOUTING REPORT shows what the pinned team starts with: its stars, cap space, coordinators, best player, home weather and (with contracts on) what the owner expects.' },
+    { scr: 'qsetup', rect: () => (L => ({ x: Math.min(...L.map(r => r.x)), y: Math.min(...L.map(r => r.y)), w: Math.max(...L.map(r => r.x + r.w)) - Math.min(...L.map(r => r.x)), h: Math.max(...L.map(r => r.y + r.h)) - Math.min(...L.map(r => r.y)) }))(QS_HIRE.map((_, i) => QS_HNOTE(i))), text: 'HIRING PREFERENCE decides who hires you: your favorite team, a rebuild, a contender or a surprise. Some origins only get calls from the weaker half of the league.' },
+  ],
+  deals: [   // the front office's filing drawer (MANAGE CONTRACTS on)
+    { scr: 'staff', enter: () => { staffView.sel = null; FOT.tab = 'staff'; }, rect: () => FO_TAB_BTNS, text: 'CONTRACTS: the front office is a filing drawer with three tabs. STAFF is your coaches, MY CONTRACT is your own deal, PLAYER DEALS is where you extend players before they hit free agency.' },
+    { scr: 'staff', enter: () => { FOT.tab = 'staff'; }, rect: () => STAFF_CARDS, text: 'Every folder has a red contract stamp: years left and pay. A yellow EXTEND sticker shows up in a deal\'s last year: click it to negotiate. A man you don\'t extend leaves when his deal ends, and other teams may try to poach him first.' },
+    { scr: 'staff', enter: () => { FOT.tab = 'hc'; }, rect: () => FO_DRAWER, text: 'MY CONTRACT: the owner pays you credits at the end of each season, plus incentives you hit. Meet his win target to keep his patience; run out of it and you are fired (with a buyout). Win and you can RENEGOTIATE or ASK FOR AN EXTENSION, with perks.' },
+    { scr: 'staff', enter: () => { FOT.tab = 'pl'; }, rect: () => FO_DRAWER, text: 'PLAYER DEALS: pick a player to see how his ask is built, then NEGOTIATE. You get 3 counters; a lowball ends the talks for a week. A signing bonus (credits) lowers this year\'s cap hit. One FRANCHISE TAG a year keeps an expiring player for one pricey season.' },
+    { scr: 'staff', enter: () => { FOT.tab = 'staff'; }, rect: () => FO_TAB_BTNS, text: 'Rather not deal with any of it? SETTINGS > DEALS: AUTO hands every contract back to the game.' },
+  ],
   trade: [
     { scr: 'trade', rect: () => TR_NEW_BTN, text: 'HOW A TRADE WORKS: tap NEW TRADE and pick a team (or open a player and tap PROPOSE TRADE). Then add players and picks to each side and PROPOSE.' },
     { scr: 'tradeb', enter: () => tourPractice(0), rect: () => [0, 1].map(s => ({ x: TB.x[s], y: TB.y, w: TB.w, h: 84 })), text: 'Left is what YOU GIVE, right is what YOU GET. Click any row to add or remove it, and use the PICKS / PLAYERS tabs to switch lists.' },
@@ -2416,8 +2661,9 @@ const TOUR_STEPS = {
     { scr: 'practice', enter: () => { PR.tab = 'battles'; }, rect: () => [{ x: 30, y: 84, w: 600, h: 530 }, { x: 650, y: 366, w: 600, h: 248 }], text: 'BATTLES: close starter vs backup fights, plus mentor pairs where veterans coach the young. FACILITIES (its own button on the home screen) upgrades the buildings.' },
   ],
 };
+const TOUR_FREE = ['carDiff', 'locker'];   // tours that run before a franchise exists (the new career screen, the questionnaire)
 function tourStart(id, replay) {
-  if (!results || !season || tour) return;
+  if (!results || (!season && !TOUR_FREE.includes(id)) || tour) return;
   const scr = results.screen, steps = TOUR_STEPS[id].filter(s => id !== 'trade' || scr !== 'tradeb' || s.scr === 'tradeb').filter(s => id !== 'hire' || scr !== 'board' || s.scr === 'board');
   if (!career.tut) career.tut = {};
   career.tut[id] = true; if (!replay) autosaveSoon();
@@ -2462,12 +2708,14 @@ function tourWatch() {   // the first time a tutorial's screen is open in this f
   if (offPop) return;
   pracUnlockWatch();
   if (offPop) return;
+  if (career.tutOff) return;   // (the questionnaire's SHOW PAGE TOURS: off)
   const t = career.tut || {};
   if (!t.xp && results.screen === 'home' && xpcOn() && xpBank() >= 1 && !coinFly.length) { tourStart('xp'); return; }   // (the first XP in the bank: what it is and where it is spent)
   if (!t.pracAll && results.screen === 'practice' && PR.tab !== 'fac') tourStart('pracAll');
   else if (!t.prac && results.screen === 'practice' && PR.tab === 'fac') tourStart('prac');
   else if (!t.trade && !TR.awSel && (results.screen === 'trade' || results.screen === 'tradeb')) tourStart('trade');   // (not when a weekly-award card opened the trade page)
   else if (!t.hire && (results.screen === 'hire' || results.screen === 'board')) tourStart('hire');
+  else if (!t.deals && results.screen === 'staff' && staffView.sel == null && !staffView.team && !NG && contractsOn()) tourStart('deals');   // (the front office's contract tabs)
 }
 const PRAC_Q_BTN = { x: 26, y: 14, w: 50, h: 50 };   // (top left: the credits / XP boxes are top right on every page)
 function tourQDraw() {   // the "?" button that replays the tutorial of the screen you are on
@@ -2499,7 +2747,7 @@ function drawTour() {
   const bx = best ? best.x : 20, by = best ? best.y : 10;
   ctx.fillStyle = '#fffdf4'; ctx.fillRect(bx, by, bw, bh); ctx.strokeStyle = RES.line; ctx.lineWidth = 3; ctx.strokeRect(bx, by, bw, bh);
   ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  ctx.fillText(`${tour.id === 'trade' ? 'TRADE' : tour.id === 'prac' ? 'FACILITIES' : tour.id.startsWith('prac') ? 'PRACTICE' : tour.id === 'home' ? 'FRANCHISE' : 'HIRING'} TUTORIAL   STEP ${tour.i + 1} OF ${tour.steps.length}`, bx + 16, by + 20);
+  ctx.fillText(`${tour.id === 'trade' ? 'TRADE' : tour.id === 'prac' ? 'FACILITIES' : tour.id.startsWith('prac') ? 'PRACTICE' : tour.id === 'home' ? 'FRANCHISE' : tour.id === 'deals' ? 'CONTRACTS' : tour.id === 'carDiff' ? 'DIFFICULTY' : tour.id === 'locker' ? 'LOCKER ROOM' : 'HIRING'} TUTORIAL   STEP ${tour.i + 1} OF ${tour.steps.length}`, bx + 16, by + 20);
   ctx.fillStyle = RES.line; ctx.font = '17px monospace';
   lines.forEach((ln, j) => ctx.fillText(ln, bx + 16, by + 50 + j * 24));
   const yb = by + bh - 46, last = tour.i === tour.steps.length - 1;
@@ -2842,7 +3090,7 @@ function drawPracFac(plan) {   // plan = the TRAINING PLAN tab (load sliders, tr
   pracSidePanel(PR.sel);
   if (scoutsOn()) drawPracScouts();
   // the selected facility
-  { const k = PR.sel, F = P.fac[k], D = PRAC_FAC[k], cost = D.cost[F.lvl - 1];
+  { const k = PR.sel, F = P.fac[k], D = PRAC_FAC[k], cost = facCost(D, F);
     resPanel(30, 492, 618, 120, [[`${D.name}  LEVEL ${F.lvl} OF ${FAC_MAX}`, 24]], RES.bright);
     ctx.fillStyle = RES.line; ctx.font = '15px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     wrapLines(D.text, 40).slice(0, 2).forEach((ln, i) => ctx.fillText(ln, 48, 526 + i * 20));
@@ -3003,8 +3251,8 @@ const SET_BTNS = {
   // GAMEPLAY
   inj: { x: SET_X, y: 218, w: 140, h: 38 }, pinj: { x: SET_X + 150, y: 218, w: 140, h: 38 }, wx: { x: SET_X + 300, y: 218, w: 140, h: 38 },   // (pinj = PRACTICE INJURIES)
   simDef: { x: SET_X, y: 262, w: 140, h: 38 }, autoSw: { x: SET_X + 150, y: 262, w: 140, h: 38 }, morale: { x: SET_X + 300, y: 262, w: 140, h: 38 },
-  zoom: { x: SET_X, y: 306, w: 80, h: 38 }, rep: { x: SET_X + 90, y: 306, w: 80, h: 38 }, spd: { x: SET_X + 180, y: 306, w: 80, h: 38 }, scouts: { x: SET_X + 270, y: 306, w: 80, h: 38 }, taunt: { x: SET_X + 360, y: 306, w: 80, h: 38 },   // (spd = SIM KICKS; taunt = how often a celebration is a taunt, see CELEB.tauntSet)
-  qtr: { x: SET_X, y: 350, w: SET_FULL, h: 58 },
+  zoom: { x: SET_X, y: 306, w: 66, h: 38 }, rep: { x: SET_X + 75, y: 306, w: 66, h: 38 }, spd: { x: SET_X + 150, y: 306, w: 66, h: 38 }, scouts: { x: SET_X + 225, y: 306, w: 66, h: 38 }, deals: { x: SET_X + 300, y: 306, w: 66, h: 38 }, taunt: { x: SET_X + 374, y: 306, w: 66, h: 38 },   // (deals = MANAGE CONTRACTS, see CONTRACT)   // (spd = SIM KICKS; taunt = how often a celebration is a taunt, see CELEB.tauntSet)
+  qtr: { x: SET_X, y: 350, w: 300, h: 58 }, setup: { x: SET_X + 310, y: 350, w: 130, h: 58 },   // (setup = RUN SETUP QUESTIONS again)
   // SOUND & SHOWS
   volDn: { x: SET_X, y: 434, w: 76, h: 38 }, volUp: { x: SET_X + 364, y: 434, w: 76, h: 38 },
   ht: { x: SET_X, y: 478, w: SET_HALF, h: 38 }, pg: { x: SET_X2, y: 478, w: SET_HALF, h: 38 },
@@ -3013,16 +3261,18 @@ const SET_BTNS = {
   swap: { x: 665, y: 580, w: 540, h: 56 },   // (swap: touch only, in the controls panel)
 };
 const SET_GROUPS = [['GAME', 94], ['GAMEPLAY', 206], ['SOUND & SHOWS', 422], ['EXTRAS', 530]];   // [header, y of its text]
-const LITE_MODES = ['AUTO', 'ON', 'OFF'];   // SETTINGS.liteMode (performance mode: AUTO = online and two-player games)
+const LITE_MODES = ['AUTO', 'PERFORMANCE', 'QUALITY'];   // SETTINGS.liteMode = the GRAPHICS setting (see gfxMode / LITE in 07; old saved 'ON' / 'OFF' = PERFORMANCE / QUALITY)
+const GFX_SHORT = { AUTO: 'AUTO', PERFORMANCE: 'PERF', QUALITY: 'QUAL' };   // (the 80 px settings button)
+const gfxNext = () => LITE_MODES[(LITE_MODES.indexOf(gfxMode()) + 1) % LITE_MODES.length];
 const SL_MODES = ['ALL', 'CREW', 'OFF'];     // SETTINGS.sideline (sideline people: everyone / the chain crew only / nobody; missing = ALL)
 // settings opened from a game's pause menu: the ones that change the game being played are locked until it ends
-const SET_GAME_LOCK = ['inj', 'pinj', 'wx', 'diff', 'dir', 'simDef', 'spd', 'morale', 'qtr', 'scouts', 'post', 'save', 'load', 'dbg'];
+const SET_GAME_LOCK = ['setup', 'inj', 'pinj', 'wx', 'diff', 'dir', 'simDef', 'spd', 'morale', 'qtr', 'scouts', 'deals', 'post', 'save', 'load', 'dbg'];
 const setInGame = () => !results && typeof game !== 'undefined' && !!game && !game.over;
 const SET_TIP_Y = 598;   // the one-line tip / note under the last group
-const SET_TIPS = { taunt: () => (SETTINGS.taunts || 'NORMAL') === 'OFF' ? 'TAUNTS: off = nobody celebrates by taunting the other team' : 'TAUNTS: how often a celebration is a taunt at a defender (looks only)', scouts: () => SETTINGS.scouts !== false ? 'SCOUTS: hire and assign two scouts; they sharpen draft reads' : 'SCOUTS: off = the plain draft SCOUT button, no scouts to hire', simDef: () => SETTINGS.simDefense ? 'SIM DEFENSE: their drives are simulated' : 'SIM DEFENSE: you play defense on their drives', autoSw: () => 'AUTO SWITCH: on a pass, jump to the defender closest to the ball',
+const SET_TIPS = { setup: () => 'SETUP QUESTIONS: the coaching questionnaire again (game day, front office, realism, style...)', taunt: () => (SETTINGS.taunts || 'NORMAL') === 'OFF' ? 'TAUNTS: off = nobody celebrates by taunting the other team' : 'TAUNTS: how often a celebration is a taunt at a defender (looks only)', deals: () => SETTINGS.contracts !== false ? 'MANAGE CONTRACTS: you negotiate your deal, staff and player contracts' : 'MANAGE CONTRACTS: auto = the game handles every contract, no talks or alerts', scouts: () => SETTINGS.scouts !== false ? 'SCOUTS: hire and assign two scouts; they sharpen draft reads' : 'SCOUTS: off = the plain draft SCOUT button, no scouts to hire', simDef: () => SETTINGS.simDefense ? 'SIM DEFENSE: their drives are simulated' : 'SIM DEFENSE: you play defense on their drives', autoSw: () => 'AUTO SWITCH: on a pass, jump to the defender closest to the ball',
   morale: () => 'MORALE: plays and games move each player\'s morale, which scales his ratings (off = always neutral)',
   pinj: () => 'PRACTICE INJ: injuries from practice (needs INJURIES on too)', inj: () => 'INJURIES: game injuries, condition and wear',
-  dir: () => 'DRIVE: which way the offense drives on screen', spd: () => SETTINGS.simST ? 'SIM KICKS: your kickoffs, punts, field goals and returns are simulated' : 'SIM KICKS: you play every kickoff, punt, field goal and return', rep: () => 'REPLAYS: how often replays run', wx: () => 'WEATHER: takes effect next game', ht: () => 'HALFTIME SHOW: choose its segments', pg: () => 'PREGAME SHOW: choose its segments', dbg: () => 'DEBUG: hitboxes, mobile mode, extra tools', dark: () => 'DARK MODE: grey menus instead of white paper', lite: () => 'PERFORMANCE: lighter stands, weather and sound (AUTO = online / 2 players)',
+  dir: () => 'DRIVE: which way the offense drives on screen', spd: () => SETTINGS.simST ? 'SIM KICKS: your kickoffs, punts, field goals and returns are simulated' : 'SIM KICKS: you play every kickoff, punt, field goal and return', rep: () => 'REPLAYS: how often replays run', wx: () => 'WEATHER: takes effect next game', ht: () => 'HALFTIME SHOW: choose its segments', pg: () => 'PREGAME SHOW: choose its segments', dbg: () => 'DEBUG: hitboxes, mobile mode, extra tools', dark: () => 'DARK MODE: grey menus instead of white paper', lite: () => ({ AUTO: 'GRAPHICS: AUTO = lighter looks only online / with 2 players, or when frames stay slow there', PERFORMANCE: 'GRAPHICS: PERFORMANCE = lighter stands, weather and sound in every game', QUALITY: 'GRAPHICS: QUALITY = sharpest picture, full stands and weather, never lightened (needs a fast device)' })[gfxMode()],
   side: () => 'SIDELINE: chain crew, cheerleaders and the bench (looks only; CREW = chain crew only)' };
 // a settings popup (DEBUG / HALFTIME / PREGAME) is up: the page behind it holds still (menuBtn / hoverAmt / pressDepth check this); the popup's own buttons draw with setPopDraw on
 let setPopDraw = false;
@@ -3032,7 +3282,7 @@ const KEY_RESET = { x: 840, y: 626, w: 190, h: 36 };
 const placeKeyBtns = () => KEY_BTNS.forEach((b, i) => { b.y = BIND_LIST.top + i * BIND_LIST.row - bindScroll; });
 const inBindView = p => p.y >= BIND_LIST.top && p.y <= BIND_LIST.bottom;
 let rebinding = null, qtrDrag = false;   // rebinding = the action waiting for a key press
-const QTR_BAR = { x: SET_X + 20, w: 400 };
+const QTR_BAR = { x: SET_X + 20, w: 260 };
 function setQtrFromX(x) {
   const m = Math.max(1, Math.min(8, Math.round((1 + (x - QTR_BAR.x) / QTR_BAR.w * 7) * 2) / 2)), old = QUARTER_SECS;   // (half-minute steps)
   if (m === SETTINGS.quarterMin) return;
@@ -3055,8 +3305,8 @@ const TOUCH_HELP = [
 ];
 // the debug page: goes over the settings screen (DEBUG, bottom of the settings panel)
 let dbgUI = false;
-const DBG_PANEL = { x: 330, y: 150, w: 620, h: 400 };
-const DBG_BTNS = { hit: { x: 370, y: 230, w: 540, h: 60 }, mobile: { x: 370, y: 310, w: 540, h: 60 }, tools: { x: 370, y: 390, w: 540, h: 60 }, back: { x: 370, y: 470, w: 540, h: 56 } };
+const DBG_PANEL = { x: 330, y: 110, w: 620, h: 480 };
+const DBG_BTNS = { hit: { x: 370, y: 190, w: 540, h: 60 }, mobile: { x: 370, y: 270, w: 540, h: 60 }, tools: { x: 370, y: 350, w: 540, h: 60 }, perf: { x: 370, y: 430, w: 540, h: 60 }, back: { x: 370, y: 510, w: 540, h: 56 } };   // (perf = the frame-time readout, see PERF_HUD)
 function drawDebug() {
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
   resPanel(DBG_PANEL.x, DBG_PANEL.y, DBG_PANEL.w, DBG_PANEL.h, [['DEBUG', null]], RES.bright);
@@ -3064,11 +3314,13 @@ function drawDebug() {
   menuBtn(DBG_BTNS.hit, `HITBOXES: ${SETTINGS.hitboxes ? 'ON' : 'OFF'}`, Y, 24);
   menuBtn(DBG_BTNS.mobile, `MOBILE MODE: ${TUI.on ? 'ON' : 'OFF'}`, Y, 24);
   menuBtn(DBG_BTNS.tools, `HIDE EXTRA TOOLS: ${SETTINGS.hideTools ? 'ON' : 'OFF'}`, Y, 24);   // (the start screen's ANIMATION LIBRARY + TEST MODE)
+  menuBtn(DBG_BTNS.perf, `FRAME TIMES: ${SETTINGS.perfHud ? 'ON' : 'OFF'}`, Y, 24);   // (fps + update / draw ms in a corner of every screen)
   menuBtn(DBG_BTNS.back, 'DONE', Y, 24);
 }
 function debugClick(p) {
   if (inBtn(p, DBG_BTNS.hit)) { SETTINGS.hitboxes = !SETTINGS.hitboxes; COLLIDE.show = SETTINGS.hitboxes; }
   else if (inBtn(p, DBG_BTNS.tools)) SETTINGS.hideTools = !SETTINGS.hideTools;
+  else if (inBtn(p, DBG_BTNS.perf)) SETTINGS.perfHud = !SETTINGS.perfHud;
   else if (inBtn(p, DBG_BTNS.mobile)) { DEVICE.mobile = !TUI.on; saveDevice(); tuiSet(DEVICE.mobile); }   // (touch controls: on by default on a phone / tablet, off on a PC; this overrides that)
   else if (inBtn(p, DBG_BTNS.back) || !inBtn(p, DBG_PANEL)) dbgUI = false;
   saveSettings();
@@ -3136,11 +3388,13 @@ function htClick(p) {
 }
 function drawSettingsMain() {
   deskBg();
+  if (QS && !QS.full) { drawQs(); return; }   // (RUN SETUP QUESTIONS: the questionnaire, minus the locker room)
   if (diffUI) { drawDiffUI(); return; }
   resPanel(SET_X - 40, 50, 520, 620, [['SETTINGS', null]], RES.bright);
   resPanel(640, 50, 600, 620, [[TUI.on ? 'TOUCH CONTROLS' : 'KEYBINDS  (click, press a key, BKSP clears)', null]], RES.bright);
   const B = SET_BTNS;
   const Y = IN_GAME_PAPER.yellow;   // (the settings buttons are yellow, to stand out from the white panels)
+  { const lock = setInGame(); for (const k of SET_GAME_LOCK) B[k].lockGrey = lock; }   // opened from the pause menu: what would change this game is a flat grey scrap that doesn't move (menuBtn)
   menuBtn(B.inj, `INJURIES: ${SETTINGS.injuries ? 'ON' : 'OFF'}`, Y, 14);
   menuBtn(B.pinj, `PRAC INJ: ${SETTINGS.pracInjuries !== false ? 'ON' : 'OFF'}`, Y, 14);
   menuBtn(B.dir, `DRIVE: ${DRIVE_DIRS[SETTINGS.driveDir || 'left'].toUpperCase()}`, Y, 19);
@@ -3156,19 +3410,22 @@ function drawSettingsMain() {
   ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(bx, by, bw, bh);
   ctx.fillStyle = RES.line; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(`VOLUME ${Math.round(SETTINGS.volume * 100)}%`, bx + bw / 2, by + bh / 2 + 1);
-  menuBtn(B.rep, `REPLAYS:\n${SETTINGS.replays}`, Y, 12);   // (two lines: 'TOUCHDOWNS' must fit a third-width scrap)
-  menuBtn(B.scouts, `SCOUTS:\n${SETTINGS.scouts !== false ? 'ON' : 'OFF'}`, Y, 12);
-  menuBtn(B.taunt, `TAUNTS:\n${SETTINGS.taunts || 'NORMAL'}`, Y, 12);
+  menuBtn(B.rep, `REPLAYS:\n${SETTINGS.replays}`, Y, 10);   // (two lines: 'TOUCHDOWNS' must fit a sixth-width scrap)
+  menuBtn(B.scouts, `SCOUTS:\n${SETTINGS.scouts !== false ? 'ON' : 'OFF'}`, Y, 11);
+  menuBtn(B.deals, `DEALS:\n${SETTINGS.contracts !== false ? 'MANAGE' : 'AUTO'}`, Y, 11);   // (MANAGE CONTRACTS: see CONTRACT / contractsOn)
+  menuBtn(B.taunt, `TAUNTS:\n${SETTINGS.taunts || 'NORMAL'}`, Y, 11);
+  menuBtn(B.setup, 'RUN SETUP\nQUESTIONS', Y, 15);
   menuBtn(B.spd, `SIM KICKS:
-${SETTINGS.simST ? 'ON' : 'OFF'}`, Y, 12);   // (was the SPEED popup: the speeds are now difficulty sliders)
+${SETTINGS.simST ? 'ON' : 'OFF'}`, Y, 10);   // (was the SPEED popup: the speeds are now difficulty sliders)
   menuBtn(B.qtr, '', Y, 24, q => {   // the quarter length: a slider, 1-8 minutes
     const m = SETTINGS.quarterMin, bx = QTR_BAR.x, bw = QTR_BAR.w, cy = q.y + 40;
     ctx.fillStyle = q.ink; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(`QUARTER LENGTH: ${m} MIN`, q.x + q.w / 2, q.y + 16);
     ctx.fillStyle = '#c9c3b0'; ctx.fillRect(bx, cy - 3, bw, 6);
-    ctx.fillStyle = RES.strip; ctx.fillRect(bx, cy - 3, bw * (m - 1) / 7, 6);
+    const lk = B.qtr.lockGrey;   // (locked in a game: the slider is grey too)
+    ctx.fillStyle = lk ? '#8d8d8d' : RES.strip; ctx.fillRect(bx, cy - 3, bw * (m - 1) / 7, 6);
     for (let i = 0; i < 15; i++) { ctx.fillStyle = q.ink; ctx.fillRect(bx + bw * i / 14 - 1, cy - (i % 2 ? 5 : 8), 2, i % 2 ? 10 : 16); }
-    ctx.beginPath(); ctx.arc(bx + bw * (m - 1) / 7, cy, 10, 0, Math.PI * 2); ctx.fillStyle = RES.gold; ctx.fill(); ctx.strokeStyle = q.ink; ctx.lineWidth = 2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(bx + bw * (m - 1) / 7, cy, 10, 0, Math.PI * 2); ctx.fillStyle = lk ? '#c4c4c4' : RES.gold; ctx.fill(); ctx.strokeStyle = q.ink; ctx.lineWidth = 2; ctx.stroke();
   });
   menuBtn(B.save, 'SAVE GAME', canSave() ? Y : '#a9a9a9', 24, null, canSave());
   menuBtn(B.load, 'LOAD GAME', hasSave() && !tut ? Y : '#a9a9a9', 24, null, hasSave() && !tut);
@@ -3176,7 +3433,7 @@ ${SETTINGS.simST ? 'ON' : 'OFF'}`, Y, 12);   // (was the SPEED popup: the speeds
   menuBtn(B.autoSw, `AUTO SWITCH: ${SETTINGS.autoSwitch ? 'ON' : 'OFF'}`, Y, 14);
   menuBtn(B.morale, `MORALE: ${SETTINGS.morale !== false ? 'ON' : 'OFF'}`, Y, 14);
   menuBtn(B.zoom, `CAM ZOOM:
-${SETTINGS.camZoom !== false ? 'ON' : 'OFF'}`, Y, 12);
+${SETTINGS.camZoom !== false ? 'ON' : 'OFF'}`, Y, 10);
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   if (settingsNote && performance.now() - settingsNote.t0 < 2500) { ctx.font = 'bold 17px monospace'; ctx.fillStyle = RES.gold; ctx.fillText(settingsNote.text, SET_X + 220, SET_TIP_Y); }
   else {   // a one-line tip for the button under the mouse
@@ -3186,11 +3443,11 @@ ${SETTINGS.camZoom !== false ? 'ON' : 'OFF'}`, Y, 12);
   menuBtn(B.dbg, 'DEBUG', Y, 15);
   menuBtn(B.dark, `DARK: ${SETTINGS.darkMode ? 'ON' : 'OFF'}`, Y, 13);
   menuBtn(B.post, `POST: ${SETTINGS.post !== false ? 'ON' : 'OFF'}`, Y, 13);
-  menuBtn(B.lite, `PERF: ${SETTINGS.liteMode || 'AUTO'}`, Y, 13);
+  menuBtn(B.lite, `GFX: ${GFX_SHORT[gfxMode()]}`, Y, 13);
   menuBtn(B.side, `SIDE: ${SETTINGS.sideline || 'ALL'}`, Y, 13);
   menuBtn(B.ht, 'HALFTIME', Y, 17); menuBtn(B.pg, 'PREGAME', Y, 17);
-  if (setInGame()) for (const k of SET_GAME_LOCK) {   // opened from the pause menu: what would change this game is locked (greyed, a padlock)
-    const b = B[k]; ctx.save(); ctx.fillStyle = 'rgba(120,120,120,0.55)'; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.fillStyle = RES.line; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('🔒', b.x + b.w - 3, b.y + 2); ctx.restore();
+  if (setInGame()) for (const k of SET_GAME_LOCK) {   // (and a padlock in its corner)
+    const b = B[k]; ctx.save(); ctx.fillStyle = RES.line; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('🔒', b.x + b.w - 3, b.y + 2); ctx.restore();
   }
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
   if (TUI.on) {   // phones / tablets: no keys to rebind, the touch controls instead
@@ -3325,7 +3582,7 @@ function drawDiffUI() {
 }
 function diffClick(p) {
   const D = DBTN, B = SET_BTNS;
-  if (inBtn(p, D.back)) { diffUI = null; return; }
+  if (inBtn(p, D.back)) { if (diffUI.car) settingsOpen = false; diffUI = null; return; }   // (car = opened from the new career screen: straight back to it)
   if (inBtn(p, D.mDyn)) return diffSetMode('dynamic');
   if (inBtn(p, D.mPre)) return diffSetMode('preset');
   if (inBtn(p, D.mCus)) return diffSetMode('custom');
@@ -3340,7 +3597,7 @@ function diffClick(p) {
 }
 function diffKey(e) {
   const U = diffUI, n = diffRows.length;
-  if (e.code === 'Escape') { e.preventDefault(); diffUI = null; return; }
+  if (e.code === 'Escape') { e.preventDefault(); if (U.car) settingsOpen = false; diffUI = null; return; }
   if (e.code === 'ArrowDown') { e.preventDefault(); U.sel = Math.min(n - 1, U.sel + 1); }
   else if (e.code === 'ArrowUp') { e.preventDefault(); U.sel = Math.max(0, U.sel - 1); }
   else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
@@ -3352,6 +3609,7 @@ function diffKey(e) {
   const r = diffRows[U.sel]; if (r) { if (r.y < DLIST.top) U.scroll -= DLIST.top - r.y; else if (r.y + r.h > DLIST.bottom) U.scroll += r.y + r.h - DLIST.bottom; }
 }
 function settingsClick(p) {
+  if (QS && !QS.full) { qsClick(p); return; }
   if (!diffUI && !dbgUI && !spdUI && !htUI && setInGame() && SET_GAME_LOCK.some(k => inBtn(p, SET_BTNS[k]))) { note('LOCKED DURING A GAME'); return; }
   if (diffUI) { diffClick(p); return; }
   if (dbgUI) { debugClick(p); return; }
@@ -3364,6 +3622,7 @@ function settingsClick(p) {
   if (ki >= 0) { rebinding = BIND_ACTIONS[ki][0]; return; }
   if (inBtn(p, KEY_RESET)) { SETTINGS.binds = {}; buildRemap(); }
   else if (inBtn(p, B.qtr)) { qtrDrag = true; setQtrFromX(p.x); }
+  else if (inBtn(p, B.setup)) { qsOpen(false); return; }   // (RUN SETUP QUESTIONS again: `// --- coaching questionnaire`)
   else if (inBtn(p, B.inj)) SETTINGS.injuries = !SETTINGS.injuries;
   else if (inBtn(p, B.pinj)) SETTINGS.pracInjuries = SETTINGS.pracInjuries === false;
   else if (inBtn(p, B.wx)) SETTINGS.weather = SETTINGS.weather === false;   // (takes effect next game)
@@ -3382,6 +3641,7 @@ function settingsClick(p) {
   }
   else if (inBtn(p, B.zoom)) SETTINGS.camZoom = SETTINGS.camZoom === false;
   else if (inBtn(p, B.spd)) SETTINGS.simST = !SETTINGS.simST;
+  else if (inBtn(p, B.deals)) SETTINGS.contracts = SETTINGS.contracts === false;   // (off = AUTO: the game runs every contract)
   else if (inBtn(p, B.scouts)) SETTINGS.scouts = SETTINGS.scouts === false;   // (off: the draft's plain SCOUT button only, no scouts to hire / assign)
   else if (inBtn(p, B.morale)) { SETTINGS.morale = SETTINGS.morale === false; moraleSync(); }   // (off: every player reads 50 and nothing moves it; the attribute panel still shows)
   else if (inBtn(p, B.taunt)) { const L = Object.keys(CELEB.tauntSet); SETTINGS.taunts = L[(L.indexOf(SETTINGS.taunts || 'NORMAL') + 1) % L.length]; }   // (looks only: how often a celebration is a taunt)
@@ -3391,7 +3651,7 @@ function settingsClick(p) {
   else if (inBtn(p, BACK_BTN)) settingsOpen = false;
   else if (inBtn(p, B.dbg)) dbgUI = true;
   else if (inBtn(p, B.dark)) SETTINGS.darkMode = !SETTINGS.darkMode;
-  else if (inBtn(p, B.lite)) SETTINGS.liteMode = LITE_MODES[(LITE_MODES.indexOf(SETTINGS.liteMode || 'AUTO') + 1) % LITE_MODES.length];
+  else if (inBtn(p, B.lite)) SETTINGS.liteMode = gfxNext();
   else if (inBtn(p, B.side)) { SETTINGS.sideline = SL_MODES[(SL_MODES.indexOf(SETTINGS.sideline || 'ALL') + 1) % SL_MODES.length]; slSetting(); }
   else if (inBtn(p, B.post)) SETTINGS.post = SETTINGS.post === false;   // (the Paper Passer Post: newspaper, story arcs and midweek events; franchise only)
   else if (inBtn(p, B.ht)) htUI = 'half';
@@ -3416,7 +3676,7 @@ function leagueReset() {
   for (const [k, d] of Object.entries(Object.getOwnPropertyDescriptors(LEAGUE))) if ('value' in d) delete LEAGUE[k];   // (the getters stay)
   Object.assign(LEAGUE, LEAGUE_NEW());
 }
-const CAREER_KEEP = ['first', 'last', 'face', 'team', 'fav', 'back', 'focus', 'roll', 'sel', 'dd', 'nameErr', 'sig', 'react'];
+const CAREER_KEEP = ['first', 'last', 'face', 'team', 'fav', 'hire', 'origin', 'focus', 'roll', 'sel', 'dd', 'nameErr', 'sig', 'react'];
 function careerReset() { for (const k of Object.keys(career)) if (!CAREER_KEEP.includes(k)) delete career[k]; career.tut = career.tut || {}; }
 function buildSave() {
   syncPre();
@@ -3941,7 +4201,7 @@ function trashIcon(cx, cy, k = 1) {
 }
 function newCareerScreen() {   // (from the start screen's FRANCHISE, or a LOAD screen: possibly from inside a game)
   SETTINGS.diffMode = 'dynamic';   // (ADAPTIVE difficulty is ticked by default on the new career screen)
-  slotUI = null; settingsOpen = false; career.fav = false; Object.assign(career, randCareer()); career.prac = null; career.tut = {}; PR.draft = null;   // (a new coach every time a franchise is set up;"start with favorite team" is off by default; the settings screen the load screen came from closes)
+  slotUI = null; settingsOpen = false; career.fav = false; career.hire = 'surprise'; career.origin = 'slate'; Object.assign(career, randCareer()); career.prac = null; career.tut = {}; PR.draft = null;   // (a new coach every time a franchise is set up;"start with favorite team" is off by default; the settings screen the load screen came from closes)
   if (!results) {
     let record = { w: 0, l: 0, t: 0 };
     try { record = { ...record, ...JSON.parse(localStorage.getItem(RECORD_KEY) || '{}') }; } catch (e) {}
@@ -4112,7 +4372,509 @@ function coachKey(e) {   // arrows / R / Enter on the creator (Esc = BACK, handl
 }
 const coachLook = () => coachLoad() || makeFace(Math.random, true);
 const randCareer = () => ({ first: pick(FIRSTS), last: pick(LASTS), face: coachLook() });   // (a new career: your created coach, or a random one until you make one)
-const career = { ...randCareer(), team: pick(Object.keys(ROSTER).filter(k => NFL[k])), fav: false, focus: null, tut: {} };
+const career = { ...randCareer(), team: pick(Object.keys(ROSTER).filter(k => NFL[k])), fav: false, hire: 'surprise', origin: 'slate', focus: null, tut: {} };   // (team = the pinned favorite; hire = HIRING PREFERENCE; origin = ORIGINS id)
 const CAR = { first: { x: 500, y: 134, w: 330, h: 50 }, last: { x: 500, y: 196, w: 330, h: 50 },   // (the signature lines; see `// --- new career: your rookie year`)
-  check: { x: 722, y: 525, w: 40, h: 40 }, dyn: { x: 1000, y: 525, w: 40, h: 40 }, random: { x: 150, y: 622, w: 240, h: 84 } };
+  dyn: { x: 834, y: 518, w: 40, h: 40 }, random: { x: 150, y: 622, w: 240, h: 84 } };
 
+
+// --- coaching questionnaire (after the new career screen, once per new save; Settings > RUN SETUP QUESTIONS again, minus the locker room)
+// A clipboard on the desk: coloured page tabs on its right edge (QS_PAGES), the coach's face + a speech bubble on the left, ◂ BACK / USE RECOMMENDED / NEXT ▸.
+// Every answer writes straight into SETTINGS (saveSettings) the moment it is tapped; only the locker room (career.team / career.hire) and the page tours
+// (career.tutOff, applied after careerReset through QS.tours) are kept on `career`. Hosts: results.screen 'qsetup' (QS.full, a new career: SIGN = careerStart)
+// or inside the settings overlay (drawSettingsMain / settingsClick: QS.full false, SIGN = DONE). Esc / right-click = USE RECOMMENDED (qsKey / qsRight).
+// Big choices = qsCard (two pencil boxes with a looping doodle demo: QS_DEMO), small ones = qsRow (checkbox / slider / cycler on the ruled lines).
+let QS = null;   // { full, page, turn: { t, dir }, signT, tours, lk (locker room: { key, t }) }
+const QS_SLIDE = () => QS_BOARD.x + QS_BOARD.w - 66;   // how far the clipboard slides left on the locker room page (its tabs stay in a column on the left)
+const QS_TURN = 0.25;   // seconds a page takes to flip up under the clip
+const QS_BOARD = { x: 300, y: 14, w: 640, h: 698 }, QS_PAPER = { x: 322, y: 86, w: 596, h: 610 };
+const QS_PAGES = [   // id, tab label, tab colour, the coach's line
+  { id: 'locker',  tab: 'LOCKER',   col: '#ffd3e0', say: "Pick a locker. Whose colors do you bleed? And who should hire you?" },
+  { id: 'gameday', tab: 'GAME DAY', col: '#c8ecff', say: 'When they have the ball, do you want to coach the defense yourself?' },
+  { id: 'front',   tab: 'OFFICE',   col: '#fff3a0', say: 'How hands-on do you want to be upstairs?' },
+  { id: 'realism', tab: 'REALISM',  col: '#d4f0ea', say: 'How real should Sundays feel?' },
+  { id: 'style',   tab: 'STYLE',    col: '#e3d9ff', say: 'A little swagger never hurt anybody.' },
+  { id: 'general', tab: 'GENERAL',  col: '#ffe2c2', say: 'These ones stick for every save on this device.' },
+  { id: 'help',    tab: 'HELP',     col: '#ddf5c4', say: 'Need a hand finding your way around?' },
+  { id: 'sign',    tab: 'SIGN',     col: '#f6d6ff', say: "Looks good. Sign it and let's go win some games!" },
+];
+const QS_REC = { simDefense: false, contracts: true, scouts: true, injuries: true, weather: true, taunts: 'NORMAL', replays: 'BIG PLAYS', tours: true };   // USE RECOMMENDED (this save's answers; GENERAL's device-wide ones are left as they are)
+const QS_TAB = i => ({ x: QS_BOARD.x + QS_BOARD.w - 6, y: 96 + i * 72, w: 66, h: 66 });
+const QS_BTN = { back: { x: 338, y: 630, w: 136, h: 54 }, rec: { x: 524, y: 630, w: 196, h: 54 }, next: { x: 768, y: 630, w: 136, h: 54 } };
+const QS_CARD = (i, y = 200, h = 300) => ({ x: 350 + i * 284, y, w: 262, h });
+const QS_ROW = i => ({ x: 360, y: 206 + i * 56, w: 530, h: 48 });
+const QS_SIGN = { x: 420, y: 420, w: 400, h: 92 };
+const QS_HELP = { acct: { x: 380, y: 330, w: 220, h: 64 }, keys: { x: 640, y: 330, w: 220, h: 64 } };
+const qsPages = () => QS ? QS_PAGES.filter(p => QS.full || p.id !== 'locker') : QS_PAGES;
+const qsPg = () => qsPages()[QS.page] || qsPages()[0];
+function qsOpen(full) {
+  QS = { full: !!full, page: 0, turn: null, signT: 0, tours: full ? true : !career.tutOff, lk: null };
+  if (full) results.screen = 'qsetup';
+}
+function qsClose() { QS = null; }
+function qsSfx(k) {
+  try {
+    if (k === 'page') sndRec('flip');
+    else if (k === 'sign') sndRec('pencil', 1.3, { ms: SND_USE.signMs, fade: 200, at: Math.random() * SND_USE.penAt });
+    else if (k === 'stamp') CELEB_SFX.stomp(1);
+    else if (k === 'tick') sndRec('pencil', 0.6, { ms: SND_USE.tickMs, fade: 100, at: Math.random() * SND_USE.penAt });
+  } catch (e) {}
+}
+function qsGo(i) {   // flip to page i
+  const n = qsPages().length; i = Math.max(0, Math.min(n - 1, i));
+  if (i === QS.page) return;
+  QS.turn = { t: performance.now(), dir: i > QS.page ? 1 : -1 }; QS.page = i; qsSfx('page');
+}
+function qsSet(k, v) {   // an answer: straight into the settings
+  if (k === 'tours') { QS.tours = v; if (!QS.full) career.tutOff = !v; }
+  else if (k === 'simDefense') { if (typeof ONL !== 'undefined' && ONL.on) return; SETTINGS.simDefense = v; }
+  else { SETTINGS[k] = v; if (k === 'sideline') slSetting(); }
+  saveSettings(); qsSfx('tick');
+}
+function qsRecommend() {   // USE RECOMMENDED: this save's answers -> the sign page
+  for (const [k, v] of Object.entries(QS_REC)) if (k === 'tours') { QS.tours = v; if (!QS.full) career.tutOff = !v; } else if (k !== 'simDefense' || !(typeof ONL !== 'undefined' && ONL.on)) SETTINGS[k] = v;
+  saveSettings(); qsGo(qsPages().length - 1);
+}
+// ---- the little looping doodles on top of a choice card (x, y, w, h = the demo's box; t = seconds)
+function qsMan(x, y, col, ph, down) {   // a pencil stick player: ph = stride phase, down = lying flat
+  const ink = RES.line;
+  ctx.save(); ctx.translate(x, y); if (down) ctx.rotate(Math.PI / 2 * down);
+  ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.lineCap = 'round';
+  const s = Math.sin(ph) * 6;
+  ctx.beginPath(); ctx.moveTo(0, -6); ctx.lineTo(-s, 8); ctx.moveTo(0, -6); ctx.lineTo(s, 8); ctx.moveTo(0, -14); ctx.lineTo(-s * 0.8, -6); ctx.moveTo(0, -14); ctx.lineTo(s * 0.8, -6); ctx.stroke();
+  ctx.fillStyle = col; ctx.fillRect(-4, -18, 8, 13); ctx.strokeRect(-4, -18, 8, 13);
+  ctx.beginPath(); ctx.arc(0, -23, 5, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+function qsTurf(x, y, w, h) {   // a scrap of field: a green wash and pencil yard lines
+  ctx.fillStyle = 'rgba(80,160,90,0.18)'; ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = 'rgba(40,90,50,0.35)'; ctx.lineWidth = 1.2; for (let i = 1; i < 5; i++) { ctx.beginPath(); ctx.moveTo(x + w * i / 5, y + 3); ctx.lineTo(x + w * i / 5 + 2, y + h - 3); ctx.stroke(); }
+}
+function qsStamp(x, y, text, col, rot, k = 1, size = 20) {   // a rubber stamp: k = scale (thumps down from big)
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(k, k);
+  ctx.font = `bold ${size}px monospace`; const w = ctx.measureText(text).width + 16;
+  ctx.globalAlpha = Math.min(1, 0.85 * (2 - k)); ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.strokeRect(-w / 2, -size * 0.75, w, size * 1.5);
+  ctx.lineWidth = 1; ctx.strokeRect(-w / 2 + 3, -size * 0.75 + 3, w - 6, size * 1.5 - 6);
+  ctx.fillStyle = col; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, 0, 1);
+  ctx.restore();
+}
+const QS_DEMO = {
+  defense(x, y, w, h, t) {   // your defender (yellow ring) runs down the ball carrier
+    qsTurf(x, y, w, h); const u = (t % 3) / 3, cy = y + h * 0.6;
+    const cx = x + 20 + u * (w - 60), dx = x + 4 + Math.min(1, u * 1.25) * (w - 56), hit = u > 0.78;
+    qsMan(cx, cy - (hit ? 0 : 0), '#c0453a', t * 12, hit ? Math.min(1, (u - 0.78) * 8) : 0);
+    if (!hit) { ctx.fillStyle = '#8a4b1f'; ctx.beginPath(); ctx.ellipse(cx + 6, cy - 12, 4, 2.5, 0, 0, 7); ctx.fill(); }
+    qsMan(dx, cy + 4, '#3a6fb0', t * 13, hit ? Math.min(0.8, (u - 0.78) * 6) : 0);
+    ctx.strokeStyle = '#f2c94c'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.ellipse(dx, cy + 13, 13, 5, 0, 0, 7); ctx.stroke();
+  },
+  sim(x, y, w, h, t) {   // a drive ticker scrolling by
+    ctx.fillStyle = 'rgba(34,48,90,0.08)'; ctx.fillRect(x, y + h * 0.3, w, h * 0.4);
+    ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+    const L = '1ST & 10   RUN +6   PASS +14   SACK -7   PASS +22   RUN +3   TOUCHDOWN!   ', tw = 7.8 * L.length;
+    ctx.fillStyle = RES.line; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    const off = (t * 70) % tw; ctx.fillText(L, x - off, y + h / 2); ctx.fillText(L, x - off + tw, y + h / 2);
+    ctx.restore();
+    ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.strokeRect(x, y + h * 0.3, w, h * 0.4);
+  },
+  negotiate(x, y, w, h, t) {   // offer vs ask bars meet, then SIGNED
+    const u = (t % 3.2) / 3.2, m = Math.min(1, u / 0.6), cy = y + h * 0.45, mid = x + w * 0.55;
+    ctx.fillStyle = 'rgba(58,111,176,0.6)'; ctx.fillRect(x + 8, cy - 18, (mid - x - 8) * m, 14);
+    ctx.fillStyle = 'rgba(192,69,58,0.6)'; ctx.fillRect(x + w - 8 - (x + w - 8 - mid) * m, cy + 4, (x + w - 8 - mid) * m, 14);
+    ctx.fillStyle = RES.dim; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText('OFFER', x + 8, cy - 28); ctx.textAlign = 'right'; ctx.fillText('ASK', x + w - 8, cy + 30);
+    if (u > 0.62) qsStamp(mid, cy, 'SIGNED', '#2f8f3a', -0.12, Math.max(1, 1.8 - (u - 0.62) * 10));
+  },
+  auto(x, y, w, h, t) {   // a manila folder gets an AUTO stamp
+    const u = (t % 2.6) / 2.6, fx = x + w / 2 - 50, fy = y + 12;
+    ctx.fillStyle = '#e8c98a'; ctx.fillRect(fx, fy + 8, 100, h - 26); ctx.fillRect(fx, fy, 40, 12);
+    ctx.strokeStyle = 'rgba(90,60,20,0.6)'; ctx.lineWidth = 1.5; ctx.strokeRect(fx, fy + 8, 100, h - 26);
+    ctx.fillStyle = 'rgba(90,60,20,0.5)'; ctx.fillRect(fx + 12, fy + 26, 60, 3); ctx.fillRect(fx + 12, fy + 36, 44, 3);
+    if (u > 0.35) qsStamp(x + w / 2, y + h * 0.55, 'AUTO', '#c0392b', -0.15, Math.max(1, 1.8 - (u - 0.35) * 10));
+  },
+  scouts(x, y, w, h, t) {   // a grade range narrows to a read
+    const u = (t % 3) / 3, n = Math.min(1, u / 0.7), cy = y + h / 2, half = (w / 2 - 14) * (1 - 0.82 * n), cx = x + w / 2;
+    ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x + 10, cy); ctx.lineTo(x + w - 10, cy); ctx.stroke();
+    ctx.strokeStyle = '#3a6fb0'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(cx - half + 6, cy - 12); ctx.lineTo(cx - half, cy - 12); ctx.lineTo(cx - half, cy + 12); ctx.lineTo(cx - half + 6, cy + 12);
+    ctx.moveTo(cx + half - 6, cy - 12); ctx.lineTo(cx + half, cy - 12); ctx.lineTo(cx + half, cy + 12); ctx.lineTo(cx + half - 6, cy + 12); ctx.stroke();
+    ctx.fillStyle = RES.dim; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('C', x + 14, cy - 20); ctx.fillText('A', x + w - 14, cy - 20);
+    if (n >= 1) { ctx.fillStyle = '#3a6fb0'; ctx.font = 'bold 18px monospace'; ctx.fillText('B+', cx, cy - 26); }
+  },
+  simple(x, y, w, h, t) {   // a fuzzy grade
+    const cx = x + w / 2, cy = y + h / 2; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (let i = 0; i < 5; i++) { ctx.globalAlpha = 0.18; ctx.fillStyle = RES.line; ctx.fillText('B?', cx + Math.sin(t * 3 + i * 1.3) * 4, cy + Math.cos(t * 2.4 + i) * 3); }
+    ctx.globalAlpha = 1;
+  },
+  hurt(x, y, w, h, t) {   // a tackle, then the medical cart rolls on
+    qsTurf(x, y, w, h); const u = (t % 4) / 4, cy = y + h * 0.62, meet = Math.min(1, u / 0.3), px = x + w * 0.5;
+    const down = u > 0.3 ? Math.min(1, (u - 0.3) * 8) : 0;
+    qsMan(x + 20 + (px - x - 26) * meet, cy, '#c0453a', t * 12, down);
+    qsMan(x + w - 20 - (x + w - 20 - px - 12) * meet, cy, '#3a6fb0', t * 13, 0);
+    if (u > 0.45) {   // the cart
+      const cx = x + w + 40 - Math.min(1, (u - 0.45) * 3) * (w * 0.45);
+      ctx.fillStyle = '#f4efe0'; ctx.strokeStyle = RES.line; ctx.lineWidth = 1.6; ctx.fillRect(cx - 22, cy - 16, 44, 18); ctx.strokeRect(cx - 22, cy - 16, 44, 18);
+      ctx.fillStyle = '#c0392b'; ctx.fillRect(cx - 3, cy - 13, 6, 12); ctx.fillRect(cx - 7, cy - 9, 14, 5);
+      for (const wx of [-14, 14]) { ctx.beginPath(); ctx.arc(cx + wx, cy + 4, 4, 0, 7); ctx.fillStyle = RES.line; ctx.fill(); }
+    }
+  },
+  tough(x, y, w, h, t) {   // a tackle, then he pops right up
+    qsTurf(x, y, w, h); const u = (t % 3) / 3, cy = y + h * 0.62, meet = Math.min(1, u / 0.3), px = x + w * 0.5;
+    const down = u > 0.3 && u < 0.6 ? Math.min(1, (u - 0.3) * 8) : u >= 0.6 ? Math.max(0, 1 - (u - 0.6) * 10) : 0;
+    qsMan(x + 20 + (px - x - 26) * meet, cy, '#c0453a', t * 12, down);
+    qsMan(x + w - 20 - (x + w - 20 - px - 12) * meet, cy, '#3a6fb0', t * 13, 0);
+    if (u > 0.7) { ctx.fillStyle = '#2f8f3a'; ctx.font = `bold 18px ${CAR_HAND}`; ctx.textAlign = 'center'; ctx.fillText('fine!', px - 6, cy - 34); }
+  },
+};
+// ---- page pieces
+function qsCard(r, demo, name, line, picked, rec, t) {   // a big choice: a pencil box with a looping demo on top
+  const ink = RES.line, hov = hoverPt && inBtn(hoverPt, r);
+  ctx.save(); ctx.translate(r.x + r.w / 2, r.y + r.h / 2 - (hov ? 3 : 0)); ctx.rotate(carWob(r.x, 2) * 0.02); ctx.translate(-r.w / 2, -r.h / 2);
+  ctx.fillStyle = 'rgba(40,25,5,0.12)'; ctx.fillRect(3, 4, r.w, r.h);
+  ctx.fillStyle = '#fffdf4'; ctx.fillRect(0, 0, r.w, r.h);
+  ctx.strokeStyle = picked ? '#2a62b0' : ink; ctx.lineWidth = picked ? 4 : 1.8; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(-1, 1); ctx.lineTo(r.w + 1, -1); ctx.lineTo(r.w - 1, r.h + 1); ctx.lineTo(1, r.h - 1); ctx.closePath(); ctx.stroke();
+  if (picked) { ctx.lineWidth = 1.5; ctx.strokeRect(5, 5, r.w - 10, r.h - 10); }
+  const dh = Math.round(r.h * 0.48);
+  ctx.save(); ctx.beginPath(); ctx.rect(10, 10, r.w - 20, dh - 10); ctx.clip(); QS_DEMO[demo](10, 10, r.w - 20, dh - 10, t); ctx.restore();
+  ctx.strokeStyle = 'rgba(34,48,90,0.3)'; ctx.lineWidth = 1; ctx.strokeRect(10, 10, r.w - 20, dh - 10);
+  ctx.fillStyle = picked ? '#2a62b0' : ink; ctx.font = 'bold 19px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(name, r.w / 2, dh + 22);
+  ctx.fillStyle = RES.dim; ctx.font = `bold 13px ${CAR_HAND}`;
+  wrapLines(line, 32).slice(0, 3).forEach((l, j) => ctx.fillText(l, r.w / 2, dh + 48 + j * 17));
+  if (picked) { ctx.strokeStyle = '#2a62b0'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(14, r.h - 22); ctx.lineTo(22, r.h - 12); ctx.lineTo(38, r.h - 32); ctx.stroke(); }
+  ctx.restore();
+  if (rec) qsStamp(r.x + r.w - 56, r.y + r.h - 18, 'RECOMMENDED', '#c0392b', -0.1, 1, 12);
+}
+function qsRow(i, label, kind, val, opts) {   // a small setting on the ruled lines: 'check' (val bool), 'cycle' (val text), 'slider' (val 0-1)
+  const r = QS_ROW(i), ink = RES.line, cy = r.y + r.h / 2, hov = hoverPt && inBtn(hoverPt, r);
+  ctx.fillStyle = ink; ctx.font = `bold 19px ${CAR_HAND}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(label, r.x, cy);
+  if (opts && opts.note) { ctx.fillStyle = RES.dim; ctx.font = `bold 12px ${CAR_HAND}`; ctx.fillText(opts.note, r.x, cy + 18); }
+  const bx = r.x + r.w - 36;
+  if (kind === 'check') {
+    ctx.fillStyle = '#fffdf4'; ctx.fillRect(bx, cy - 16, 32, 32); ctx.strokeStyle = ink; ctx.lineWidth = hov ? 3 : 2.2;
+    ctx.beginPath(); ctx.moveTo(bx - 1, cy - 15); ctx.lineTo(bx + 33, cy - 17); ctx.lineTo(bx + 31, cy + 17); ctx.lineTo(bx + 1, cy + 15); ctx.closePath(); ctx.stroke();
+    if (val) { ctx.strokeStyle = '#2a62b0'; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(bx + 5, cy); ctx.lineTo(bx + 12, cy + 9); ctx.lineTo(bx + 30, cy - 14); ctx.stroke(); ctx.lineCap = 'butt'; }
+  } else if (kind === 'cycle') {
+    const cx = r.x + r.w - 110; ctx.strokeStyle = ink; ctx.lineWidth = hov ? 2.8 : 2; ctx.lineCap = 'round';
+    for (const d of [-1, 1]) { const ax = cx + d * 100; ctx.beginPath(); ctx.moveTo(ax - d * 6, cy - 9); ctx.lineTo(ax + d * 4, cy); ctx.lineTo(ax - d * 6, cy + 9); ctx.stroke(); }
+    ctx.fillStyle = '#2a62b0'; ctx.font = 'bold 17px monospace'; ctx.textAlign = 'center'; ctx.fillText(val, cx, cy + 1);
+    ctx.lineCap = 'butt';
+  } else if (kind === 'slider') {
+    const x0 = r.x + r.w - 230, x1 = r.x + r.w - 20;
+    carScribble(x0, x1, cy, 1.2, 'rgba(34,48,90,0.6)', 2.5, 5);
+    ctx.strokeStyle = '#2a62b0'; ctx.lineWidth = 5; ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.moveTo(x0, cy); ctx.lineTo(x0 + (x1 - x0) * val, cy); ctx.stroke(); ctx.globalAlpha = 1;
+    const hx = x0 + (x1 - x0) * val;
+    ctx.save(); ctx.translate(hx, cy - 4); ctx.rotate(0.5); ctx.fillStyle = '#ffd94a'; ctx.fillRect(-4, -30, 8, 26); ctx.fillStyle = '#f2c9a0'; ctx.beginPath(); ctx.moveTo(-4, -4); ctx.lineTo(4, -4); ctx.lineTo(0, 6); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#d96a6a'; ctx.fillRect(-4, -36, 8, 6); ctx.strokeStyle = ink; ctx.lineWidth = 1.2; ctx.strokeRect(-4, -30, 8, 26); ctx.restore();
+    ctx.fillStyle = ink; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'right'; ctx.fillText(`${Math.round(val * 100)}%`, x0 - 14, cy + 1);
+  }
+}
+const qsRowsOf = id => ({   // [label, kind, value getter, setter on a tap (p = the point), note]
+  realism: [['Weather', 'check', () => SETTINGS.weather !== false, () => qsSet('weather', SETTINGS.weather === false), 'rain, snow and wind in the forecast']],
+  style: [
+    ['Taunts', 'cycle', () => SETTINGS.taunts || 'NORMAL', () => { const L = Object.keys(CELEB.tauntSet); qsSet('taunts', L[(L.indexOf(SETTINGS.taunts || 'NORMAL') + 1) % L.length]); }, 'how often a celebration gets in their face'],
+    ['Instant replays', 'cycle', () => SETTINGS.replays, () => qsSet('replays', REPLAY_MODES[(REPLAY_MODES.indexOf(SETTINGS.replays) + 1) % REPLAY_MODES.length]), 'which plays run back by themselves'],
+  ],
+  general: [
+    ['Volume', 'slider', () => SETTINGS.volume, p => { const x0 = QS_ROW(0).x + QS_ROW(0).w - 230; if (p.x < x0 - 24) return; SETTINGS.volume = Math.round(Math.max(0, Math.min(1, (p.x - x0) / 210)) * 10) / 10; saveSettings(); catchSfx(); }],
+    ['Dark mode', 'check', () => !!SETTINGS.darkMode, () => qsSet('darkMode', !SETTINGS.darkMode), 'grey menus for the night'],
+    ['Graphics', 'cycle', () => gfxMode(), () => qsSet('liteMode', gfxNext()), 'PERFORMANCE = lighter looks for slow devices, QUALITY = sharpest (AUTO = lighter online only)'],
+    ['Sideline people', 'cycle', () => SETTINGS.sideline || 'ALL', () => qsSet('sideline', SL_MODES[(SL_MODES.indexOf(SETTINGS.sideline || 'ALL') + 1) % SL_MODES.length]), 'benches, crews and cheerleaders'],
+  ],
+  help: [['Show page tours', 'check', () => QS.tours, () => qsSet('tours', !QS.tours), 'a quick walk-through the first time you open a page']],
+})[id] || [];
+const qsCardsOf = id => ({   // rows of [left, right] choices: { demo, name, line, on (picked?), set, rec }
+  gameday: [{ q: "Who plays the other team's drives?", y: 220, h: 330, c: [
+    { demo: 'defense', name: 'PLAY DEFENSE', line: 'You control a defender on their drives: tackle, pick, sack.', on: () => !SETTINGS.simDefense, set: () => qsSet('simDefense', false), rec: true },
+    { demo: 'sim', name: 'SIM THEM', line: 'Their drives play out as a quick ticker. You only play offense.', on: () => !!SETTINGS.simDefense, set: () => qsSet('simDefense', true) }] }],
+  front: [
+    { q: 'Contracts', y: 192, h: 180, c: [
+      { demo: 'negotiate', name: 'NEGOTIATE', line: 'You make offers to players, coaches and the owner.', on: () => SETTINGS.contracts !== false, set: () => qsSet('contracts', true), rec: true },
+      { demo: 'auto', name: 'AUTOMATIC', line: 'The front office signs everyone at fair prices.', on: () => SETTINGS.contracts === false, set: () => qsSet('contracts', false) }] },
+    { q: 'Scouting', y: 400, h: 180, c: [
+      { demo: 'scouts', name: 'HIRE SCOUTS', line: 'Two scouts narrow down what each prospect really is.', on: () => SETTINGS.scouts !== false, set: () => qsSet('scouts', true), rec: true },
+      { demo: 'simple', name: 'SIMPLE', line: 'One fuzzy grade per prospect. No staff to manage.', on: () => SETTINGS.scouts === false, set: () => qsSet('scouts', false) }] }],
+  realism: [{ q: 'Injuries', y: 196, h: 268, c: [
+    { demo: 'hurt', name: 'INJURIES ON', line: 'Big hits can knock players out for plays, games or weeks.', on: () => SETTINGS.injuries !== false, set: () => qsSet('injuries', true), rec: true },
+    { demo: 'tough', name: 'INJURIES OFF', line: 'Everyone always gets right back up.', on: () => SETTINGS.injuries === false, set: () => qsSet('injuries', false) }] }],
+})[id] || [];
+function qsPaper(x, y, w, h) {   // the ruled sheet under the clip
+  ctx.fillStyle = 'rgba(30,15,0,0.25)'; ctx.fillRect(x + 4, y + 5, w, h);
+  ctx.fillStyle = '#fffdf4'; ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = 'rgba(80,130,214,0.25)'; ctx.lineWidth = 1; for (let ly = y + 50; ly < y + h - 6; ly += 28) { ctx.beginPath(); ctx.moveTo(x, ly); ctx.lineTo(x + w, ly); ctx.stroke(); }
+  ctx.strokeStyle = 'rgba(214,80,80,0.5)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x + 22, y); ctx.lineTo(x + 22, y + h); ctx.stroke();
+}
+function qsBoard(bx) {   // the clipboard (masonite + a metal clip), at x offset bx
+  const B = QS_BOARD, x = B.x + bx;
+  ctx.fillStyle = 'rgba(20,10,0,0.35)'; ctx.beginPath(); ctx.roundRect(x + 8, B.y + 10, B.w, B.h, 22); ctx.fill();
+  ctx.fillStyle = '#7b4a25'; ctx.beginPath(); ctx.roundRect(x, B.y, B.w, B.h, 22); ctx.fill();
+  ctx.strokeStyle = '#5a3317'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,220,170,0.18)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(x + 5, B.y + 5, B.w - 10, B.h - 10, 18); ctx.stroke();
+}
+function qsClip(bx) {
+  const cx = QS_BOARD.x + bx + QS_BOARD.w / 2, y = QS_BOARD.y + 26;
+  const g = ctx.createLinearGradient(0, y - 18, 0, y + 54); g.addColorStop(0, '#e8ecf1'); g.addColorStop(0.5, '#a7b0bc'); g.addColorStop(1, '#d9dee5');
+  ctx.fillStyle = 'rgba(20,10,0,0.3)'; ctx.beginPath(); ctx.roundRect(cx - 104, y - 12, 212, 70, 12); ctx.fill();
+  ctx.fillStyle = g; ctx.beginPath(); ctx.roundRect(cx - 108, y - 16, 216, 66, 12); ctx.fill(); ctx.strokeStyle = '#6d7684'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = '#7b4a25'; ctx.beginPath(); ctx.ellipse(cx, y + 6, 22, 9, 0, 0, 7); ctx.fill(); ctx.strokeStyle = '#6d7684'; ctx.stroke();   // (the hole in the clip)
+  ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx - 96, y - 8); ctx.lineTo(cx + 96, y - 8); ctx.stroke();
+}
+function qsTabs(bx) {
+  const P = qsPages();
+  P.forEach((pg, i) => {
+    const r = QS_TAB(i), cur = i === QS.page, hov = hoverPt && inBtn(hoverPt, { ...r, x: r.x + bx }), out = cur ? 62 : hov ? 50 : 44;
+    const x = r.x + bx;
+    ctx.fillStyle = 'rgba(20,10,0,0.3)'; ctx.fillRect(x + 3, r.y + 4, out, r.h - 6);
+    ctx.fillStyle = pg.col; ctx.beginPath(); ctx.roundRect(x - 6, r.y, out + 6, r.h - 6, [0, 10, 10, 0]); ctx.fill();
+    ctx.strokeStyle = cur ? RES.line : 'rgba(34,48,90,0.4)'; ctx.lineWidth = cur ? 2.4 : 1.2; ctx.stroke();
+    ctx.save(); ctx.translate(x + out / 2 + 2, r.y + (r.h - 6) / 2); ctx.rotate(Math.PI / 2);
+    ctx.fillStyle = RES.line; ctx.font = `bold ${pg.tab.length > 7 ? 10 : 11}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(pg.tab, 0, 0);
+    ctx.restore();
+  });
+}
+function qsCoach(cx, cy, text) {   // the coach's face + a speech bubble with this page's line
+  drawAvatar(career.face, cx, cy, 78, { shirt: carCols(career.team)[0] });
+  const bx = 22, by = cy - 250, bw = 262, lines = wrapLines(text, 21), bh = 30 + lines.length * 24;
+  ctx.fillStyle = 'rgba(30,15,0,0.25)'; ctx.beginPath(); ctx.roundRect(bx + 4, by + 5, bw, bh, 18); ctx.fill();
+  ctx.fillStyle = '#fffdf4'; ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 18); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(cx - 30, by + bh - 2); ctx.lineTo(cx - 6, by + bh + 34); ctx.lineTo(cx + 6, by + bh - 2); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 18); ctx.stroke();
+  ctx.fillStyle = '#fffdf4'; ctx.fillRect(cx - 28, by + bh - 3, 32, 6);
+  ctx.beginPath(); ctx.moveTo(cx - 30, by + bh); ctx.lineTo(cx - 6, by + bh + 34); ctx.lineTo(cx + 6, by + bh); ctx.stroke();
+  ctx.fillStyle = RES.line; ctx.font = `bold 17px ${CAR_HAND}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  lines.forEach((l, j) => ctx.fillText(l, bx + 16, by + 26 + j * 24));
+}
+function qsTitle(text, sub) {
+  ctx.fillStyle = RES.line; ctx.font = `bold 32px ${CAR_HAND}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(text, 362, 128);
+  carScribble(358, 366 + ctx.measureText(text).width, 150, 2.4, '#d52b2b', 3, text.length);
+  if (sub) { ctx.fillStyle = RES.dim; ctx.font = `bold 15px ${CAR_HAND}`; ctx.fillText(sub, 362, 176); }
+}
+function qsPageBody(id, t, now) {
+  const P = QS_PAGES.find(q => q.id === id);
+  if (id === 'gameday') qsTitle('Game day');
+  else if (id === 'front') qsTitle('Front office');
+  else if (id === 'realism') qsTitle('Realism');
+  else if (id === 'style') qsTitle('Style');
+  else if (id === 'general') qsTitle('General', 'applies to every save');
+  else if (id === 'help') qsTitle('Help');
+  else if (id === 'sign') qsTitle('Sign here');
+  for (const g of qsCardsOf(id)) {
+    ctx.fillStyle = RES.line; ctx.font = `bold 18px ${CAR_HAND}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(g.q, 362, g.y - 16);
+    g.c.forEach((c, i) => qsCard(QS_CARD(i, g.y, g.h), c.demo, c.name, c.line, c.on(), c.rec, t));
+  }
+  const rows = qsRowsOf(id), r0 = id === 'realism' ? 5 : 0;
+  rows.forEach((r, i) => qsRow(i + r0, r[0], r[1], r[2](), { note: r[4] }));
+  if (id === 'help') { menuBtn(QS_HELP.acct, 'ACCOUNT', RES.bright, 20); menuBtn(QS_HELP.keys, 'KEYBINDS', RES.bright, 20); }
+  if (id === 'sign') qsSignPage(t, now);
+  if (id !== 'sign') { ctx.fillStyle = '#2a62b0'; ctx.font = `bold 16px ${CAR_HAND}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('Change this anytime in Settings.', 620, 612); }
+}
+const qsAnswers = () => [   // the sign page's checklist: [label, answer]
+  ...(QS.full ? [['Favorite team', NFL[career.team] ? NFL[career.team].nick : '-'], ['Hiring', (QS_HIRE.find(h => h.id === (career.hire || 'surprise')) || QS_HIRE[3]).short]] : []),
+  ["Their drives", SETTINGS.simDefense ? 'SIM' : 'PLAY DEFENSE'], ['Contracts', SETTINGS.contracts === false ? 'AUTOMATIC' : 'NEGOTIATE'], ['Scouting', SETTINGS.scouts === false ? 'SIMPLE' : 'SCOUTS'],
+  ['Injuries', SETTINGS.injuries === false ? 'OFF' : 'ON'], ['Weather', SETTINGS.weather === false ? 'OFF' : 'ON'], ['Taunts', SETTINGS.taunts || 'NORMAL'], ['Replays', SETTINGS.replays],
+  ['Volume', `${Math.round(SETTINGS.volume * 100)}%`], ['Dark mode', SETTINGS.darkMode ? 'ON' : 'OFF'], ['Graphics', gfxMode()], ['Sideline', SETTINGS.sideline || 'ALL'], ['Page tours', QS.tours ? 'ON' : 'OFF'],
+];
+function qsSignPage(t, now) {
+  const A = qsAnswers(), half = Math.ceil(A.length / 2);
+  A.forEach(([l, v], i) => {
+    const col = i < half ? 0 : 1, x = 362 + col * 280, y = 206 + (i % half) * 26;
+    ctx.strokeStyle = RES.line; ctx.lineWidth = 1.6; ctx.strokeRect(x, y - 8, 14, 14);
+    ctx.strokeStyle = '#2a62b0'; ctx.lineWidth = 2.6; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(x + 2, y); ctx.lineTo(x + 6, y + 5); ctx.lineTo(x + 16, y - 9); ctx.stroke(); ctx.lineCap = 'butt';
+    ctx.fillStyle = RES.dim; ctx.font = `bold 14px ${CAR_HAND}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(l + ':', x + 22, y);
+    ctx.fillStyle = RES.line; ctx.font = 'bold 13px monospace'; ctx.fillText(String(v).slice(0, 14), x + 136, y);
+  });
+  const S = QS_SIGN, sy = S.y + S.h - 24, e = QS.signT ? (now - QS.signT) / 1000 : 0;
+  ctx.fillStyle = RES.line; ctx.font = 'bold 24px monospace'; ctx.textAlign = 'left'; ctx.fillText('X', S.x - 2, sy - 6);
+  ctx.strokeStyle = RES.line; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.moveTo(S.x + 24, sy); ctx.lineTo(S.x + S.w, sy); ctx.stroke();
+  if (!QS.signT) { ctx.fillStyle = 'rgba(34,48,90,0.4)'; ctx.font = `bold 22px ${CAR_HAND}`; ctx.textAlign = 'center'; ctx.fillText('Sign here, coach', S.x + S.w / 2 + 12, sy - 22); }
+  else {   // the signature scribbles on, then APPROVED thumps down
+    const nm = `${career.first || ''} ${career.last || ''}`.trim() || 'Coach', k = Math.min(1, e / 0.7);
+    ctx.save(); ctx.beginPath(); ctx.rect(S.x + 24, S.y - 10, (S.w - 24) * k, S.h); ctx.clip();
+    ctx.fillStyle = '#1d3f8a'; ctx.font = `italic bold 36px ${CAR_HAND}`; ctx.textAlign = 'left'; ctx.fillText(nm, S.x + 40, sy - 18);
+    ctx.strokeStyle = '#1d3f8a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(S.x + 36, sy - 4); ctx.quadraticCurveTo(S.x + 200, sy + 6, S.x + 40 + ctx.measureText(nm).width + 30, sy - 12); ctx.stroke();
+    ctx.restore();
+    if (e > 0.8) qsStamp(S.x + S.w - 70, S.y + 10, 'APPROVED', '#2f8f3a', -0.18, Math.max(1, 2.2 - (e - 0.8) * 12), 26);
+  }
+  ctx.fillStyle = '#2a62b0'; ctx.font = `bold 20px ${CAR_HAND}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('All of this can be changed anytime:', 620, 556); ctx.fillText('pause gear or Settings.', 620, 584);
+}
+function drawQs() {
+  if (!QS) { if (results && results.screen === 'qsetup') results.screen = 'franchise'; return; }
+  deskBg();
+  const now = performance.now(), t = now / 1000, P = qsPages(), pg = qsPg();
+  if (QS.signT && !QS.stamped && now - QS.signT > 800) { QS.stamped = true; qsSfx('stamp'); }
+  // the locker room page: the clipboard slides to the side and the lockers fill the screen
+  const lockOn = pg.id === 'locker', sk = QS.slide = (QS.slide == null ? (lockOn ? 1 : 0) : QS.slide + ((lockOn ? 1 : 0) - QS.slide) * 0.18), bx = -QS_SLIDE() * sk;
+  if (sk < 0.98) qsCoach(150, 470, pg.say);
+  qsBoard(bx); qsTabs(bx);
+  if (sk < 0.5) {
+    qsPaper(QS_PAPER.x + bx, QS_PAPER.y, QS_PAPER.w, QS_PAPER.h);
+    if (!lockOn) {
+      ctx.save(); ctx.translate(bx, 0); qsPageBody(pg.id, t, now); ctx.restore();
+    }
+    // the page turn: the old sheet flips up under the clip
+    if (QS.turn) {
+      const e = (now - QS.turn.t) / 1000 / QS_TURN;
+      if (e >= 1) QS.turn = null;
+      else {
+        const k = 1 - e * e, X = QS_PAPER.x + bx, Y = QS_PAPER.y, Wd = QS_PAPER.w, Hh = QS_PAPER.h * k;
+        ctx.fillStyle = 'rgba(30,15,0,0.25)'; ctx.fillRect(X + 3, Y + Hh, Wd, 10 * k);
+        const g = ctx.createLinearGradient(0, Y, 0, Y + Hh); g.addColorStop(0, '#fffdf4'); g.addColorStop(0.85, '#f6efd8'); g.addColorStop(1, '#e6dcc0');
+        ctx.fillStyle = g; ctx.fillRect(X, Y, Wd, Hh);
+        ctx.strokeStyle = 'rgba(80,130,214,0.2)'; ctx.lineWidth = 1; for (let ly = Y + 50 * k; ly < Y + Hh; ly += 28 * k) { ctx.beginPath(); ctx.moveTo(X, ly); ctx.lineTo(X + Wd, ly); ctx.stroke(); }
+        ctx.strokeStyle = 'rgba(90,70,40,0.35)'; ctx.lineWidth = 1.5; ctx.strokeRect(X, Y, Wd, Hh);
+      }
+    }
+  }
+  qsClip(bx);
+  if (lockOn) qsLocker(t, now, sk);
+  // ◂ BACK / USE RECOMMENDED / NEXT ▸ (the last page: START SEASON / DONE)
+  const last = QS.page === P.length - 1, B = lockOn ? QS_LBTN : QS_BTN;
+  menuBtn(B.back, QS.page ? '◂ BACK' : QS.full ? '◂ CAREER' : '◂ SETTINGS', RES.bright, 18);
+  if (!last) { menuBtn(B.rec, 'USE\nRECOMMENDED', '#fff3a0', 17); menuBtn(B.next, 'NEXT ▸', RES.bright, 20); }
+  else menuBtn(QS_BTN.start, QS.full ? 'START SEASON ▸' : 'DONE ▸', QS.stamped ? '#3f8a5a' : CARD_GRAY, 20, null, !!QS.stamped);
+}
+QS_BTN.start = { x: 600, y: 630, w: 304, h: 54 };
+function qsClick(p) {
+  const P = qsPages(), pg = qsPg(), last = QS.page === P.length - 1, lockOn = pg.id === 'locker', B = lockOn ? QS_LBTN : QS_BTN;
+  const bx = -QS_SLIDE() * (QS.slide || 0);
+  const ti = P.findIndex((_, i) => inBtn(p, { ...QS_TAB(i), x: QS_TAB(i).x + bx }));
+  if (ti >= 0) { qsGo(ti); return; }
+  if (inBtn(p, B.back)) { if (QS.page) qsGo(QS.page - 1); else if (QS.full) { QS = null; results.screen = 'franchise'; } else QS = null; return; }
+  if (!last && inBtn(p, B.rec)) { qsRecommend(); return; }
+  if (!last && inBtn(p, B.next)) { qsGo(QS.page + 1); return; }
+  if (last && inBtn(p, QS_BTN.start)) { if (!QS.stamped) return; const full = QS.full, tours = QS.tours; QS = null; if (full) { careerStart(); career.tutOff = !tours; } return; }
+  if (QS.turn) return;
+  if (lockOn) { qsLockerClick(p); return; }
+  for (const g of qsCardsOf(pg.id)) g.c.forEach((c, i) => { if (inBtn(p, QS_CARD(i, g.y, g.h))) c.set(); });
+  const r0 = pg.id === 'realism' ? 5 : 0;
+  qsRowsOf(pg.id).forEach((r, i) => { if (inBtn(p, QS_ROW(i + r0))) r[3](p); });
+  if (pg.id === 'help') {
+    if (inBtn(p, QS_HELP.acct)) acctOpen();
+    else if (inBtn(p, QS_HELP.keys)) { if (QS.full) settingsOpen = true; else QS = null; }   // (keybinds = the settings page's right side)
+  }
+  if (pg.id === 'sign' && !QS.signT && inBtn(p, { x: QS_SIGN.x - 10, y: QS_SIGN.y - 20, w: QS_SIGN.w + 20, h: QS_SIGN.h + 20 })) { QS.signT = performance.now(); qsSfx('sign'); }
+}
+function qsRight() { if (!QS || (settingsOpen && QS.full)) return false; if (qsPg().id !== 'sign') qsRecommend(); return true; }   // right-click = USE RECOMMENDED
+function qsKey(e) {
+  if (!QS || (settingsOpen && QS.full)) return false;   // (a settings page opened on top of a new career's questionnaire takes the keys)
+  if (e.code === 'Escape') { e.preventDefault(); if (qsPg().id !== 'sign') qsRecommend(); else if (!QS.full) QS = null; return true; }
+  if (e.code === 'ArrowRight') { qsGo(QS.page + 1); return true; }
+  if (e.code === 'ArrowLeft') { qsGo(QS.page - 1); return true; }
+  return false;
+}
+// ---- the locker room (questionnaire tab 1, new careers only): 32 lockers in 4 rows of 8, a pennant on each door; tap one = it swings open
+// (jersey, helmet, logo) and pins your favorite team (career.team). A taped scouting report reads the stock league the career starts from
+// (DEFAULT_WORLD: stars, cap space, coordinators, best player; WX_CLIMATE; the owner when contracts are on). HIRING PREFERENCE = career.hire (careerTeam).
+const QS_HIRE = [   // id, sticky-note text, short answer for the sign page
+  { id: 'fav',       name: ['MY FAVORITE', 'TEAM'], line: 'the team you pinned',           short: 'FAVORITE',  paper: '#fff3a0' },
+  { id: 'rebuild',   name: ['A', 'REBUILD'],        line: 'one of the worst rosters',      short: 'REBUILD',   paper: '#c8ecff' },
+  { id: 'contender', name: ['A', 'CONTENDER'],      line: 'a winning roster',              short: 'CONTENDER', paper: '#ffd3e0' },
+  { id: 'surprise',  name: ['SURPRISE', 'ME'],      line: 'anyone (likelier a bad one)',   short: 'SURPRISE',  paper: '#ddf5c4' },
+];
+const QS_LWALL = { x: 140, y: 74, w: 760, h: 400 };   // the locker wall (8 x 4)
+const QS_LOCK = i => { const w = QS_LWALL.w / 8, h = QS_LWALL.h / 4; return { x: QS_LWALL.x + (i % 8) * w + 3, y: QS_LWALL.y + Math.floor(i / 8) * h + 3, w: w - 6, h: h - 6 }; };
+const QS_HNOTE = i => ({ x: 140 + i * 192, y: 516, w: 178, h: 100 });
+const QS_REPORT = { x: 920, y: 70, w: 340, h: 540 };
+const QS_LBTN = { back: { x: 140, y: 636, w: 160, h: 56 }, rec: { x: 920, y: 636, w: 170, h: 56 }, next: { x: 1104, y: 636, w: 156, h: 56 } };
+const QS_DOOR = 0.32;
+const QS_LTOUR = { x: 880, y: 12, w: 44, h: 44 };   // the locker room's ? (TOUR_STEPS.locker)   // seconds a locker door takes to swing open
+const qsTeams = () => Object.keys(DEFAULT_WORLD.roster).filter(k => NFL[k]);
+function qsJersey(cx, cy, w, k) {   // a hanging jersey in the team's home colours
+  const [a, b] = carCols(k), h = w * 0.9, num = ((DEFAULT_WORLD.roster[k] || []).find(p => p.group === 'QB') || {}).num || 1;
+  ctx.save(); ctx.translate(cx, cy);
+  ctx.strokeStyle = '#9aa3b2'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(0, -h * 0.62); ctx.lineTo(0, -h * 0.5); ctx.moveTo(-w * 0.36, -h * 0.4); ctx.lineTo(0, -h * 0.55); ctx.lineTo(w * 0.36, -h * 0.4); ctx.stroke();   // hanger
+  ctx.fillStyle = a; ctx.strokeStyle = RES.line; ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.moveTo(-w * 0.2, -h * 0.45); ctx.lineTo(-w * 0.5, -h * 0.3); ctx.lineTo(-w * 0.42, -h * 0.08); ctx.lineTo(-w * 0.3, -h * 0.14); ctx.lineTo(-w * 0.3, h * 0.45);
+  ctx.lineTo(w * 0.3, h * 0.45); ctx.lineTo(w * 0.3, -h * 0.14); ctx.lineTo(w * 0.42, -h * 0.08); ctx.lineTo(w * 0.5, -h * 0.3); ctx.lineTo(w * 0.2, -h * 0.45); ctx.quadraticCurveTo(0, -h * 0.32, -w * 0.2, -h * 0.45); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = b; ctx.fillRect(-w * 0.47, -h * 0.24, w * 0.12, h * 0.06); ctx.fillRect(w * 0.35, -h * 0.24, w * 0.12, h * 0.06);   // sleeve stripes
+  ctx.fillStyle = carLum(a) < 0.55 ? '#ffffff' : RES.line; ctx.font = `bold ${Math.round(w * 0.34)}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(num), 0, h * 0.12);
+  ctx.restore();
+}
+function qsLockerDraw(r, k, sel, open, T) {   // one locker: a steel door with a pennant, or swung open on its contents
+  const ink = RES.line;
+  ctx.fillStyle = '#4c535e'; ctx.fillRect(r.x, r.y, r.w, r.h);   // inside
+  if (open > 0) {
+    ctx.fillStyle = '#6a727e'; ctx.fillRect(r.x + 3, r.y + 26, r.w - 6, 2);   // the shelf
+    drawLogo(k, r.x + r.w / 2, r.y + 14, 16);
+    drawBigHelmet(r.x + r.w * 0.26, r.y + r.h - 20, 12, 0, false, k);
+    qsJersey(r.x + r.w * 0.64, r.y + r.h * 0.62, r.w * 0.5, k);
+  }
+  // the door: hinged on the left, it swings out (narrows) as it opens
+  const dw = r.w * (1 - 0.86 * open);
+  ctx.save(); ctx.beginPath(); ctx.moveTo(r.x, r.y); ctx.lineTo(r.x + dw, r.y - 4 * open); ctx.lineTo(r.x + dw, r.y + r.h + 4 * open); ctx.lineTo(r.x, r.y + r.h); ctx.closePath();
+  ctx.fillStyle = sel ? '#e9eef5' : '#dde3ea'; ctx.fill(); ctx.strokeStyle = sel ? ink : 'rgba(34,48,90,0.55)'; ctx.lineWidth = sel ? 2.4 : 1.4; ctx.stroke(); ctx.clip();
+  if (open < 0.5) {
+    ctx.strokeStyle = 'rgba(34,48,90,0.35)'; ctx.lineWidth = 1.2;
+    for (let v = 0; v < 3; v++) { ctx.beginPath(); ctx.moveTo(r.x + dw * 0.22, r.y + 7 + v * 4); ctx.lineTo(r.x + dw * 0.78, r.y + 7 + v * 4); ctx.stroke(); }   // vents
+    ctx.fillStyle = '#9aa3b2'; ctx.fillRect(r.x + dw - 9, r.y + r.h * 0.6, 4, 14);   // handle
+    carPennant(k, r.x + dw / 2, r.y + 24, Math.min(1, dw / 90), sel, carWob(k.charCodeAt(0), 2) * 0.06, T);
+  }
+  ctx.restore();
+}
+const qsLockerOpen = (k, now) => QS.lk && QS.lk.key === k ? Math.min(1, (now - QS.lk.t) / 1000 / QS_DOOR) : 0;
+function qsLocker(t, now, sk) {
+  const ink = RES.line, k = career.team;
+  ctx.save(); ctx.globalAlpha = Math.min(1, sk * 1.3);
+  ctx.fillStyle = ink; ctx.font = `bold 28px ${CAR_HAND}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  const title = `Pin your favorite team: ${NFL[k] ? teamFull(k) : ''}`; ctx.fillText(title, 140, 38);
+  carScribble(138, 146 + Math.min(740, ctx.measureText(title).width), 58, 2.2, '#d52b2b', 3, 4);
+  // the wall: a pencil frame, then the 32 lockers
+  ctx.fillStyle = 'rgba(30,15,0,0.3)'; ctx.fillRect(QS_LWALL.x - 6, QS_LWALL.y - 6, QS_LWALL.w + 16, QS_LWALL.h + 16);
+  ctx.fillStyle = '#c9ced6'; ctx.fillRect(QS_LWALL.x - 10, QS_LWALL.y - 10, QS_LWALL.w + 20, QS_LWALL.h + 20);
+  ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.strokeRect(QS_LWALL.x - 10, QS_LWALL.y - 10, QS_LWALL.w + 20, QS_LWALL.h + 20);
+  qsTeams().forEach((key, i) => {
+    const r = QS_LOCK(i);
+    qsLockerDraw(r, key, key === k, qsLockerOpen(key, now), t);
+    if (key !== k && hoverPt && inBtn(hoverPt, r)) { ctx.strokeStyle = '#2a62b0'; ctx.lineWidth = 2; ctx.strokeRect(r.x - 1, r.y - 1, r.w + 2, r.h + 2); }
+  });
+  // HIRING PREFERENCE
+  ctx.fillStyle = ink; ctx.font = `bold 20px ${CAR_HAND}`; ctx.textAlign = 'left'; ctx.fillText('Hiring preference: who hires you?', 140, 496);
+  if (originOf().job === 'weak') { ctx.fillStyle = '#c0392b'; ctx.font = `bold 13px ${CAR_HAND}`; ctx.fillText(`(${originBase().name.join(' ').replace('- ', '-').toLowerCase()}: only the weaker half of the league will call)`, 476, 497); }
+  QS_HIRE.forEach((h, i) => {
+    const r = QS_HNOTE(i), sel = (career.hire || 'surprise') === h.id, hov = hoverPt && inBtn(hoverPt, r), lift = sel ? 6 : hov ? 3 : 0;
+    ctx.save(); ctx.translate(r.x + r.w / 2, r.y + r.h / 2 - lift); ctx.rotate((i - 1.5) * 0.03);
+    ctx.fillStyle = 'rgba(40,25,5,0.25)'; ctx.fillRect(-r.w / 2 + 4, -r.h / 2 + 5, r.w, r.h);
+    ctx.fillStyle = h.paper; ctx.fillRect(-r.w / 2, -r.h / 2, r.w, r.h);
+    ctx.fillStyle = ink; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    h.name.forEach((l, j) => ctx.fillText(l, 0, -r.h / 2 + 30 + j * 18));
+    ctx.fillStyle = RES.dim; ctx.font = `bold 12px ${CAR_HAND}`; ctx.fillText(h.line, 0, r.h / 2 - 18);
+    if (sel) { ctx.strokeStyle = '#2a62b0'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(-r.w / 2 + 8, -r.h / 2 + 16); ctx.lineTo(-r.w / 2 + 14, -r.h / 2 + 24); ctx.lineTo(-r.w / 2 + 28, -r.h / 2 + 6); ctx.stroke(); ctx.lineWidth = 2; ctx.strokeRect(-r.w / 2 + 3, -r.h / 2 + 3, r.w - 6, r.h - 6); }
+    carTape(0, -r.h / 2 + 1, (i - 1.5) * 0.08, 44);
+    ctx.restore();
+  });
+  qsReport(k, t);
+  menuBtn(QS_LTOUR, '?', RES.bright, 22);
+  ctx.fillStyle = '#2a62b0'; ctx.font = `bold 15px ${CAR_HAND}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('Later on, job offers can move you to another team.', 610, 664);
+  ctx.restore();
+}
+function qsReport(k, t) {   // the taped scouting report on the pinned team (only data a brand-new career has)
+  const R = QS_REPORT, ink = RES.line, ros = DEFAULT_WORLD.roster[k] || [], st = DEFAULT_WORLD.stars[k] || { off: 3, def: 3 }, sf = DEFAULT_WORLD.staff[k] || {}, o = originOf();
+  ctx.save(); ctx.translate(R.x + R.w / 2, R.y + R.h / 2); ctx.rotate(0.012); ctx.translate(-R.w / 2, -R.h / 2);
+  ctx.fillStyle = 'rgba(40,25,5,0.25)'; ctx.fillRect(5, 7, R.w, R.h); ctx.fillStyle = '#fff3a0'; ctx.fillRect(0, 0, R.w, R.h);
+  ctx.fillStyle = ink; ctx.font = `bold 20px ${CAR_HAND}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText('Scouting report', 16, 26);
+  carScribble(14, 180, 42, 1.6, '#d52b2b', 2.4, 6);
+  drawBigHelmet(R.w - 52, 70, 30, 0, true, k); drawLogo(k, 40, 84, 30);
+  ctx.fillStyle = ink; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'left'; ctx.fillText(NFL[k] ? NFL[k].nick : '', 80, 78); ctx.fillStyle = RES.dim; ctx.font = 'bold 12px monospace'; ctx.fillText(NFL[k] ? NFL[k].conf : '', 80, 98);
+  const rows = [['TEAM STARS', `offense ${st.off} / defense ${st.def}`]];
+  rows.push(['CAP SPACE', `$${Math.round(CAP.start + (o.cap || 0) - ros.reduce((s, p) => s + (p.salary == null ? CAP.minPay : p.salary), 0))}M`]);
+  if (sf.oc) rows.push(['COORDINATORS', `OC ${sf.oc.name} (${sf.oc.stars}*), DC ${sf.dc ? `${sf.dc.name} (${sf.dc.stars}*)` : '-'}`]);
+  const best = ros.filter(p => p.stars != null).sort((a, b) => b.stars - a.stars)[0];
+  if (best) rows.push(['BEST PLAYER', `${best.name}, ${best.group} (${best.stars}*)`]);
+  const c = WX_CLIMATE[k];
+  if (c) rows.push(['HOME CLIMATE', c[7] === 'dome' ? 'dome: always indoors' : `rain ${c[0]}%, snow ${c[1]}%, windy ${c[2]}%${c[7] === 'retract' ? ' (retractable roof)' : ''}`]);
+  if (SETTINGS.contracts !== false) rows.push(['THE OWNER', `wants ${conTarget(k, Math.max(0, 0.5 + (o.coach || 0)), st) + (o.wins || 0)} wins a season, patience ${Math.max(1, CONTRACT.owner.patience + (o.patience || 0))} of ${CONTRACT.owner.max}`]);
+  let y = 134;
+  for (const [l, v] of rows) {
+    const L = wrapLines(v, 34).slice(0, 2);
+    ctx.fillStyle = RES.dim; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'left'; ctx.fillText(l, 16, y);
+    ctx.fillStyle = ink; ctx.font = `bold 15px ${CAR_HAND}`; L.forEach((s, j) => ctx.fillText(s, 16, y + 18 + j * 18));
+    y += 26 + L.length * 18;
+    ctx.strokeStyle = 'rgba(80,130,214,0.3)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(10, y - 10); ctx.lineTo(R.w - 10, y - 10); ctx.stroke();
+  }
+  carTape(R.w / 2, 0, 0.03, 80);
+  ctx.restore();
+}
+function qsLockerClick(p) {
+  if (inBtn(p, QS_LTOUR)) { tourStart('locker', true); return; }
+  const T = qsTeams(), i = T.findIndex((_, j) => inBtn(p, QS_LOCK(j)));
+  if (i >= 0) { career.team = T[i]; career.hire = 'fav'; career.fav = true; QS.lk = { key: T[i], t: performance.now() }; qsSfx('tick'); return; }   // (pinning a team means you want it)
+  const h = QS_HIRE.findIndex((_, j) => inBtn(p, QS_HNOTE(j)));
+  if (h >= 0) { career.hire = QS_HIRE[h].id; career.fav = career.hire === 'fav'; qsSfx('tick'); }
+}

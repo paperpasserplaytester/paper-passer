@@ -18,7 +18,19 @@ const wrapAngle = a => Math.atan2(Math.sin(a), Math.cos(a));
 const CROWD_PAD = 14 * YD;   // stands built this far past each end zone (the sideline stands are clipped just past it: 60 yd of never-seen canvas was ~30% of the crowd's memory)
 // wall = how far out from a sideline the ad wall's foot is, wallH = how tall the sideline walls stand (their drawn face; the first row of fans sits on top of it, so a
 // taller wall lifts the whole stand; also the height under which a loose ball comes back off the wall, ballWall), endWall = the end walls' thickness (seen edge-on)
-const CROWD = { x0: -ENDZONE - CROWD_PAD, depth: 18 * YD, wall: 4.4 * YD, wallH: 1.8 * YD, endWall: 0.6 * YD, end: 40 * YD, endOver: 30 * YD, endGap: 0.6 * YD };
+// v0.40 the bowl: bowl.corner = how deep the stands are at the four corners (x their depth at midfield: the rows squeeze together toward the corners and run round them
+// as arcs), bowl.p = how late the squeeze starts (higher = flatter along the middle), bowl.out = the dark outside of the rim. botWallK = the bottom (near) sideline
+// wall's DRAWN height x wallH (seen from behind and above; the collider, ballWall and every limit keep wall / wallH).
+// light = the stadium lights, baked into the crowd canvases (never per frame), one set per sky (crowdLit: cl = open air, ov = rain / snow: the floodlights do the work,
+// in = under a roof): shade = how dark the top rows get, deck = the extra shadow under the upper deck's roof (its share of the depth = deckAt), glow = the light off the
+// field on the front rows, pool = the pools under each light tower (towers a side, poolR yd), tint = the light's colour
+const CROWD = { x0: -ENDZONE - CROWD_PAD, depth: 18 * YD, wall: 4.4 * YD, wallH: 1.8 * YD, endWall: 0.6 * YD, end: 40 * YD, endOver: 30 * YD, endGap: 0.6 * YD,
+  bowl: { corner: 0.66, p: 2.4, out: '#0b1020' }, botWallK: 0.5,
+  light: { towers: 4, poolR: 13, deckAt: 0.3,
+    cl: { shade: 0.34, deck: 0.16, glow: 0.07, pool: 0.05, tint: '255,250,236' },
+    ov: { shade: 0.56, deck: 0.24, glow: 0.13, pool: 0.2, tint: '236,244,255' },
+    in: { shade: 0.44, deck: 0.2, glow: 0.11, pool: 0.15, tint: '255,243,214' } } };
+const crowdLit = () => { const w = typeof game !== 'undefined' && game && game.wx; return !w || !w.on ? 'cl' : w.roof ? 'in' : w.rain > 0 || w.snow > 0 ? 'ov' : 'cl'; };   // (which light set the crowd is baked with)
 let crowdImg = null;
 // the benches stay put: home on the top sideline, the road team on the bottom (TEAMS.off is whoever is "you" right now, so pick by MATCH.home)
 const homeKit = () => MATCH.home === 'you' ? TEAMS.off : TEAMS.def, awayKit = () => MATCH.home === 'you' ? TEAMS.def : TEAMS.off;
@@ -28,7 +40,7 @@ const benchKit = () => [homeKit(), awayKit()].map(t => [t.shell, t.jersey, t.pan
 // runs out of canvas memory and drops to slow software drawing: the pre-snap lag that only a reload cleared)
 const freeCanvas = c => { if (c && c.width) { c.width = 0; c.height = 0; } };
 const CROWD_LOW = 0.5;   // touch devices (mobile Safari runs out of canvas memory on the ~230 MB crowd): every crowd canvas is built at this fraction of its size (memory x CROWD_LOW^2), then drawn back up to full size
-const crowdK = () => { try { return Math.min(IS_MOBILE ? CROWD_LOW : 1, liteOn() ? LITE.crowdK : 1); } catch (err) { return 1; } };   // (IS_MOBILE is defined far below; performance mode: smaller still, see LITE)
+const crowdK = () => { try { return Math.min(IS_MOBILE ? (gfxHi() ? GFX.crowdTouch : CROWD_LOW) : 1, liteOn() ? LITE.crowdK : 1); } catch (err) { return 1; } };   // (IS_MOBILE is defined far below; performance mode: smaller still, see LITE)
 function buildCrowd() {
   if (crowdImg) { for (const v of Object.values(crowdImg)) if (v instanceof HTMLCanvasElement) freeCanvas(v); crowdImg = null; }
   const K = crowdK();
@@ -48,6 +60,33 @@ function buildCrowd() {
     return `rgb(${(n >> 16 & 255) * k | 0},${(n >> 8 & 255) * k | 0},${(n & 255) * k | 0})`;
   };
   const wallEnd = CROWD.wall + CROWD.wallH;
+  // the bowl: q(x) = the stands' depth along a sideline (1 at midfield, bowl.corner at the corners, flat at both ends so the corner arcs carry on from it)
+  const BW = CROWD.bowl, qc = BW.corner, seam0 = -ENDZONE - CROWD.endGap - CROWD.wall - CROWD.endWall - CROWD.x0, seam1 = w - seam0;
+  const bell = u => { u = u < 0 ? -u : u; if (u >= 1) return 0; const e = 1 - Math.pow(u, BW.p); return e * e; };
+  const qAt = x => qc + (1 - qc) * bell((x - w / 2) / ((seam1 - seam0) / 2));
+  const turnAt = x => Math.max(-1, Math.min(1, (w / 2 - x) / (w / 2) * 1.6));   // (how far a fan is turned toward midfield)
+  const lit = crowdLit(), LT = CROWD.light, LS = LT[lit] || LT.cl;
+  // the lights, baked onto what is already painted (source-atop): mode 'top' = far rows at y 0, 'bot' = far rows at the bottom, 'end' = far rows at the right
+  const light = (g, cw, chh, mode, near, far) => {
+    g.save(); g.globalCompositeOperation = 'source-atop';
+    const lin = (a, b) => mode === 'end' ? g.createLinearGradient(a, 0, b, 0) : g.createLinearGradient(0, a, 0, b);
+    let gr = lin(far, near);
+    gr.addColorStop(0, `rgba(5,8,24,${LS.shade})`); gr.addColorStop(0.55, `rgba(5,8,24,${LS.shade * 0.3})`); gr.addColorStop(0.85, 'rgba(5,8,24,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, cw, chh);
+    const dk = far + (near - far) * LT.deckAt; gr = lin(far, dk);   // (under the upper deck's roof)
+    gr.addColorStop(0, `rgba(3,5,16,${LS.deck})`); gr.addColorStop(0.8, `rgba(3,5,16,${LS.deck})`); gr.addColorStop(1, 'rgba(3,5,16,0)');
+    g.fillStyle = gr; if (mode === 'end') g.fillRect(Math.min(far, dk), 0, Math.abs(dk - far), chh); else g.fillRect(0, Math.min(far, dk), cw, Math.abs(dk - far));
+    gr = lin(near, near + (far - near) * 0.42);   // (light coming up off the field)
+    gr.addColorStop(0, `rgba(${LS.tint},${LS.glow})`); gr.addColorStop(1, `rgba(${LS.tint},0)`);
+    g.fillStyle = gr; g.fillRect(0, 0, cw, chh);
+    const n = mode === 'end' ? Math.max(1, LT.towers >> 1) : LT.towers, R = LT.poolR * YD, len = mode === 'end' ? chh : cw;
+    for (let i = 0; i < n; i++) {   // (a pool of light under every tower)
+      const a = len * (i + 0.5) / n, px = mode === 'end' ? near : a, py = mode === 'end' ? a : near, rg = g.createRadialGradient(px, py, R * 0.12, px, py, R);
+      rg.addColorStop(0, `rgba(${LS.tint},${LS.pool})`); rg.addColorStop(1, `rgba(${LS.tint},0)`);
+      g.fillStyle = rg; g.fillRect(px - R, py - R, 2 * R, 2 * R);
+    }
+    g.restore();
+  };
   const layer = () => {
     const c = mkCanvas(w, h);
     const g = c.getContext('2d');
@@ -57,32 +96,40 @@ function buildCrowd() {
   // back: turf and the stand backing
   const back = layer();
   back.rect(0, 0, w, h, '#4c6e45');
-  back.rect(0, wallEnd, w, h - wallEnd, '#141d3a');
+  back.rect(0, wallEnd, w, h - wallEnd, BW.out);   // (outside the rim; the stand itself is the shape under it, filled once the rows are known)
 
   // fans: packed rows, far rows first so near rows overlap them; darker toward the back.
   // Drawn twice from the same seed: seated, and standing with arms up.
-  const rows = Math.floor((h - wallEnd - 50) / 30), topY = 10, bottomY = h - wallEnd - 4;
+  const rows = Math.floor((h - wallEnd - 50) / 30), topY = 10, bottomY = h - wallEnd - 4, stepT = (bottomY - topY - 44) / (rows - 1);
+  { const g = back.g; g.fillStyle = '#141d3a'; g.beginPath(); g.moveTo(0, h - wallEnd);   // the stand under the rows: its rim follows the top row (the bowl's curve)
+    for (let x = 0; x <= w; x += 16) g.lineTo(x, bottomY - ((rows - 1) * stepT + 54) * qAt(x));
+    g.lineTo(w, h - wallEnd); g.closePath(); g.fill();
+    g.save(); g.beginPath(); g.rect(0, 0, w, h - wallEnd); g.clip(); light(g, w, h, 'top', h - wallEnd, 0); g.restore(); }
   const fans = cheering => {
     seed = 90210 + 77;
     const L = layer(), g = L.g;
     for (let r = 0; r < rows; r++) {
-      const yb = topY + 44 + r * ((bottomY - topY - 44) / (rows - 1)), k = 0.55 + 0.45 * r / (rows - 1);
+      const dep = (rows - 1 - r) * stepT, k = 0.55 + 0.45 * r / (rows - 1);
       for (let x = -10 + (r % 2) * 13; x < w + 10; x += 24 + rnd() * 6) {
-        const cx = x + (rnd() - 0.5) * 8, jy = (rnd() - 0.5) * 6 - (cheering ? 5 : 0);
-        drawFan(g, cx, yb + jy, k, cheering, false, [Math.max(-6, Math.min(6, (w / 2 - cx) / (w / 2) * 7)), 2]);   // (everybody turns toward the middle of the field: left of it looks right, right of it looks left)
+        const cx = x + (rnd() - 0.5) * 8, jy = (rnd() - 0.5) * 6 - (cheering ? 5 : 0), tn = turnAt(cx);
+        drawFan(g, cx, bottomY - dep * qAt(cx) + jy, k, cheering, false, [Math.max(-6, Math.min(6, tn * 6)), 2], tn);   // (everybody turns toward the middle of the field: head, eyes and shoulders; the rows squeeze together toward the corners)
       }
     }
+    light(g, w, h, 'top', h - wallEnd, 0);
     return L.c;
   };
   // one fan, feet at (cx, y), shaded by k (darker further back)
-  function drawFan(g, cx, y, k, cheering, back = false, look = [0, 0]) {   // back: the far stands face the field, so we see the backs of their heads (all hair, no face); look = how far the face turns (eyes, mouth) toward the game, from where he sits
+  function drawFan(g, cx, y, k, cheering, back = false, look = [0, 0], turn = 0) {   // turn -1..1 = his body and head turned left / right toward the field   // back: the far stands face the field, so we see the backs of their heads (all hair, no face); look = how far the face turns (eyes, mouth) toward the game, from where he sits
     const skin = shade(pick(skins), k), sh = shade(pick(shirts), k), hair = shade(pick(hairs), k);
     const armsRoll = rnd(), capRoll = rnd(), capCol = shade(pick(caps), k);
     const arms = cheering ? armsRoll < 0.75 : armsRoll < 0.12;
     g.fillStyle = skin;
     if (arms) for (const s of [-1, 1]) g.fillRect(cx + s * 16 - 3, y - (cheering ? 66 : 52), 6, cheering ? 44 : 30);
+    const bx = cx, tw = Math.abs(turn) * 6;
     g.fillStyle = sh;
-    g.fillRect(cx - 14, y - 26, 28, 26);
+    g.fillRect(bx - 14, y - 26, 28, 26);
+    if (tw > 0.6) { g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(turn > 0 ? bx - 14 : bx + 14 - tw, y - 26, tw, 26); }   // (the shoulder turned away from us)
+    cx += turn * 3.5;   // (the head leads the way he is looking)
     g.fillStyle = skin;
     g.beginPath(); g.arc(cx, y - 36, 13, 0, Math.PI * 2); g.fill();
     g.fillStyle = hair;
@@ -91,7 +138,7 @@ function buildCrowd() {
     if (capRoll < 0.28) {
       g.fillStyle = capCol;
       g.beginPath(); g.arc(cx, y - 38, 14, Math.PI, Math.PI * 2); g.fill();
-      if (!back) g.fillRect(cx - 4, y - 40, 18, 4);
+      if (!back) g.fillRect(turn < -0.25 ? cx - 14 : cx - 4, y - 40, 18, 4);
     }
     if (!back) {
       g.fillStyle = 'rgba(0,0,0,0.5)';
@@ -102,14 +149,19 @@ function buildCrowd() {
   const seated = fans(false), standing = fans(true);
   // the far (bottom) stands: the same bowl below the bottom sideline (y = 0 at the sideline, running away from the field): the ad wall
   // first, then the rows, near ones bright and far ones dark (drawn near-first, so the far rows overlap them like everything lower on screen)
+  const stepB = (h - 6 - wallEnd - 52) / (rows - 1);
   const bFans = cheering => {
     seed = 90210 + 311;
     const c = mkCanvas(w, h);
     const g = c.getContext('2d'), y0 = wallEnd + 52, y1 = h - 6;
     for (let r = 0; r < rows; r++) {
-      const yb = y0 + r * ((y1 - y0) / (rows - 1)), k = 1 - 0.45 * r / (rows - 1);
-      for (let x = -10 + (r % 2) * 13; x < w + 10; x += 24 + rnd() * 6) drawFan(g, x + (rnd() - 0.5) * 8, yb + (rnd() - 0.5) * 6 - (cheering ? 5 : 0), k, cheering, true);
+      const k = 1 - 0.45 * r / (rows - 1);
+      for (let x = -10 + (r % 2) * 13; x < w + 10; x += 24 + rnd() * 6) { const cx = x + (rnd() - 0.5) * 8; drawFan(g, cx, y0 + r * stepB * qAt(cx) + (rnd() - 0.5) * 6 - (cheering ? 5 : 0), k, cheering, true, [0, 0], turnAt(cx)); }
     }
+    light(g, w, h, 'bot', wallEnd, h);
+    g.globalCompositeOperation = 'destination-over'; g.fillStyle = BW.out; g.beginPath(); g.moveTo(0, h);   // (under the rows: the dark outside of the rim)
+    for (let x = 0; x <= w; x += 16) g.lineTo(x, y0 + (rows - 1) * stepB * qAt(x) + 12);
+    g.lineTo(w, h); g.closePath(); g.fill(); g.globalCompositeOperation = 'source-over';
     return c;
   };
   const bSeated = bFans(false), bStanding = bFans(true);
@@ -121,22 +173,46 @@ function buildCrowd() {
   // its ad wall runs sideline wall to sideline wall, closing the rectangle)
   const ED = Math.ceil(CROWD.end), EH = Math.ceil(2 * CROWD.depth + FW), eWall = CROWD.wall, eWallEnd = eWall + CROWD.endWall, EY = CROWD.depth, eEnd = wallEnd;
   const endCanvas = () => mkCanvas(ED, EH);
+  // the bowl round the end: the sideline stands' rows carry on as arcs round each corner (centre = the walls' corner), then as columns behind the end line that
+  // spread back out to full spacing; behind them an upper tier that only exists where the bowl is deep (its rim curves back down to the corners)
+  const wy0 = EY - eEnd, wy1 = EY + FW + CROWD.wall + CROWD.wallH * CROWD.botWallK;   // (the end wall's span: top sideline wall's outer edge to the bottom one's, as drawn)
+  const vAt = y => Math.max(-1, Math.min(1, (y - (wy0 + wy1) / 2) / ((wy1 - wy0) / 2)));
+  const c3 = v => { v = v < 0 ? -v : v; return v * v * v; };
+  const offAt = v => 22 + ((v < 0 ? 4 : 52) - 22) * c3(v), stepAt = v => 30 + ((v < 0 ? stepT : stepB) - 30) * c3(v), qeAt = v => qc + (1 - qc) * bell(v);
+  const lowAt = v => offAt(v) + (rows - 1) * stepAt(v) * qeAt(v);   // (how far out the lower bowl's top row is)
+  const rimAt = v => lowAt(v) + 40 + (ED - eWallEnd - 14 - lowAt(v) - 40) * bell(v);
+  const endList = () => {   // every fan's spot (jitter included), sorted so the ones lower on screen are painted last
+    const F = [];
+    for (let y = wy0 + 6, n = 0; y < wy1; y += 22, n++) {
+      const v = vAt(y), lk = [-5, Math.max(-3, Math.min(3, -v * 4))], low = lowAt(v), rim = rimAt(v);
+      for (let j = 0; j < rows; j++) F.push({ x: eWallEnd + offAt(v) + j * stepAt(v) * qeAt(v) + (rnd() - 0.5) * 6, y: y + (rnd() - 0.5) * 6 + (j % 2) * 11, d: offAt(v) + j * stepAt(v) * qeAt(v), lk, back: false });
+      for (let j = 1, d = low + 30; d < rim - 20; j++, d += 30) F.push({ x: eWallEnd + d + (rnd() - 0.5) * 6, y: y + (rnd() - 0.5) * 6 + (j % 2) * 11, d, lk, back: false });
+    }
+    for (const top of [true, false]) for (let j = 0; j < rows; j++) {   // the corners
+      const rho = top ? 4 + j * stepT * qc : 52 + j * stepB * qc, n = Math.max(1, Math.floor(Math.PI / 2 * rho / 25));
+      for (let i = 0; i < n; i++) {
+        const th = (i + 0.5 + (j % 2) * 0.4) / (n + 0.4) * Math.PI / 2, sx = Math.sin(th), cy2 = Math.cos(th);
+        F.push({ x: eWallEnd + rho * sx + (rnd() - 0.5) * 5, y: (top ? wy0 - rho * cy2 : wy1 + rho * cy2) + (rnd() - 0.5) * 5, d: rho, lk: top ? [-5 - sx, 2 * cy2] : [-5, -3 * cy2], back: !top && th < 1.0 });
+      }
+    }
+    return F.sort((a, b) => a.y - b.y);
+  };
   const endFans = cheering => {
     seed = 31337;
-    const c = endCanvas(), g = c.getContext('2d');
-    g.fillStyle = '#141d3a'; g.fillRect(eWallEnd, 0, ED - eWallEnd, EH);
-    const cols = [];
-    for (let x = eWallEnd + 22; x < ED - 14; x += 30) cols.push(x);
-    for (let y = 44; y < EH + 40; y += 22) cols.forEach((x0, i) => {
-      const cx = x0 + (rnd() - 0.5) * 6, jy = (rnd() - 0.5) * 6 - (cheering ? 5 : 0) + (i % 2) * 11;
-      drawFan(g, cx, y + jy, 0.55 + 0.45 * (1 - i / Math.max(1, cols.length - 1)), cheering, false, [-5, Math.max(-3, Math.min(3, (EH / 2 - y) / (EH / 2) * 4))]);   // (toward the field: along the end line's side, and up / down toward the middle)
-    });
+    const c = endCanvas(), g = c.getContext('2d'), F = endList(), span = ED - eWallEnd;
+    g.fillStyle = '#141d3a'; g.beginPath(); g.moveTo(eWallEnd, wy0 - lowAt(-1) - 50);   // the stand: round the top corner, down the curved rim, round the bottom corner
+    for (let a = 0; a <= 1.0001; a += 0.05) g.lineTo(eWallEnd + (lowAt(-1) + 50) * Math.sin(a * Math.PI / 2), wy0 - (lowAt(-1) + 50) * Math.cos(a * Math.PI / 2));
+    for (let y = wy0; y <= wy1; y += 16) g.lineTo(eWallEnd + rimAt(vAt(y)) + 10, y);
+    for (let a = 1; a >= -0.0001; a -= 0.05) { const rr = lowAt(1) + 12 + 38 * a; g.lineTo(eWallEnd + rr * Math.sin(a * Math.PI / 2), wy1 + rr * Math.cos(a * Math.PI / 2)); }
+    g.lineTo(eWallEnd, wy1); g.closePath(); g.fill();
+    for (const f of F) drawFan(g, f.x, f.y - (cheering ? 5 : 0), Math.max(0.5, 1 - 0.5 * f.d / span), cheering, f.back, f.lk, -1);   // (everyone turned toward the field)
+    light(g, ED, EH, 'end', eWallEnd, ED);
+    g.globalCompositeOperation = 'destination-over'; g.fillStyle = BW.out; g.fillRect(eWallEnd, 0, span, EH); g.globalCompositeOperation = 'source-over';   // (under it all: the dark outside of the rim, unlit)
     return c;
   };
   const endSeated = endFans(false), endStanding = endFans(true);
   const endFront = endCanvas(), eg = endFront.getContext('2d');
   // the ad wall (a strip running sideline to sideline), panels along it
-  const wy0 = EY - eEnd, wy1 = EY + FW + eEnd;   // (the wall's span: from the top sideline wall's outer edge to the bottom one's)
   eg.fillStyle = '#0f1a33'; eg.fillRect(eWall, wy0, eWallEnd - eWall, wy1 - wy0);
   eg.fillStyle = '#c9d2e6'; eg.fillRect(eWall, wy0, 5, wy1 - wy0);
   for (let y = wy0, i = 0; y < wy1; y += 260, i++) { eg.fillStyle = ['#1b4aa8', '#e9eef8', '#c8282d', '#f08a2a', '#2a2f3a'][(i + 2) % 5]; eg.fillRect(eWall + 7, y + 8, eWallEnd - eWall - 12, Math.min(244, wy1 - y - 12)); }
@@ -151,10 +227,10 @@ function buildCrowd() {
     for (let j = 0; j < 6; j++) rect(x + 30 + j * 42, CROWD.wall + 9, 28, 6, i % 5 === 1 ? '#1b4aa8' : '#ffffff');
   }
 
-  crowdImg = { back: back.c, seated, standing, bSeated, bStanding, front: front.c, endSeated, endStanding, endFront, k: K, home: homeKey(), kit: benchKit() };
+  crowdImg = { back: back.c, seated, standing, bSeated, bStanding, front: front.c, endSeated, endStanding, endFront, k: K, home: homeKey(), kit: benchKit(), lit };
 }
 function drawCrowd() {
-  if (!crowdImg || crowdImg.home !== homeKey() || crowdImg.kit !== benchKit() || crowdImg.k !== crowdK()) buildCrowd();   // (rebuilt when the home team changes, or performance mode goes on / off)
+  if (!crowdImg || crowdImg.home !== homeKey() || crowdImg.kit !== benchKit() || crowdImg.k !== crowdK() || (crowdImg.lit !== crowdLit() && (state === 'pre' || state === 'done'))) buildCrowd();   // (a new sky = new lights, baked between plays)   // (rebuilt when the home team changes, or performance mode goes on / off)
   const now = animNow(), cheering = now < crowdFx.until;
   const x = CROWD.x0, y = -CROWD.depth;
   // the sideline stands and their ad walls stop where the end walls begin (the walls close into a rectangle round the field; the end stands take the corners)
@@ -178,19 +254,21 @@ function drawCrowd() {
     strip(crowdImg.front, x, y);
   }
   // the far side: the same stands below the bottom sideline (apron, ad wall, then the rows running away from the field)
+  // (the near wall is drawn lower than it stands: we look down on it from behind. The whole stand behind it moves up by the difference; its collider does not)
   const cw = crowdImg.bSeated.width / crowdImg.k, ch = crowdImg.bSeated.height / crowdImg.k, wallEnd = CROWD.wall + CROWD.wallH;
+  const bwH = CROWD.wallH * CROWD.botWallK, bUp = CROWD.wallH - bwH, bEnd = CROWD.wall + bwH;
   if (botVis) {
     const fx = Math.max(x, vL), fw = Math.min(x + cw, vR) - fx;   // (just the visible stretch of each band)
     if (fw > 0) {
-      ctx.fillStyle = '#141d3a'; ctx.fillRect(fx, FW + wallEnd, fw, ch - wallEnd);
-      strip(cheering ? crowdImg.bStanding : crowdImg.bSeated, x, FW + bounce);
-      ctx.fillStyle = '#0f1a33'; ctx.fillRect(fx, FW + CROWD.wall, fw, wallEnd - CROWD.wall);
-      ctx.fillStyle = '#c9d2e6'; ctx.fillRect(fx, FW + wallEnd - 5, fw, 5);
-      const panels = ['#1b4aa8', '#e9eef8', '#c8282d', '#f08a2a', '#2a2f3a'];
+      ctx.fillStyle = '#141d3a'; ctx.fillRect(fx, FW + bEnd, fw, ch - wallEnd);
+      strip(cheering ? crowdImg.bStanding : crowdImg.bSeated, x, FW - bUp + bounce);
+      ctx.fillStyle = '#0f1a33'; ctx.fillRect(fx, FW + CROWD.wall, fw, bwH);
+      ctx.fillStyle = '#c9d2e6'; ctx.fillRect(fx, FW + bEnd - 4, fw, 4);
+      const panels = ['#1b4aa8', '#e9eef8', '#c8282d', '#f08a2a', '#2a2f3a'], ph = Math.max(4, bwH - 11);
       for (let px = Math.max(0, Math.floor((vL - x) / 320)) * 320, i = px / 320; px < cw && x + px < vR; px += 320, i++) {
-        ctx.fillStyle = panels[i % panels.length]; ctx.fillRect(x + px + 8, FW + CROWD.wall + 9, 304, wallEnd - CROWD.wall - 14);
+        ctx.fillStyle = panels[i % panels.length]; ctx.fillRect(x + px + 8, FW + CROWD.wall + 5, 304, ph);
         ctx.fillStyle = i % 5 === 1 ? '#1b4aa8' : '#ffffff';
-        for (let j = 0; j < 6; j++) ctx.fillRect(x + px + 30 + j * 42, FW + CROWD.wall + 12, 28, 6);
+        for (let j = 0; j < 6; j++) ctx.fillRect(x + px + 30 + j * 42, FW + CROWD.wall + 7, 28, Math.min(6, ph - 3));
       }
     }
   }
@@ -433,7 +511,12 @@ function drawEndZoneName(cx, dir) {
 // LITE.hold s) the second step starts and stays for the rest of that game: no stands, no star HUD, and the whole canvas at LITE.slowRk of its pixels.
 const LITE = { crowdK: 0.4, wx: 0.45, rk: 1, slowMs: 24, hold: 2, slowRk: 0.75 };   // crowdK = the stands' canvases at this share of their size (memory x crowdK^2); wx = share of the weather particles
 let liteSlow = false, liteSlowT = 0, liteLvl = 0, frameAvg = 16;   // (liteLvl: what fitScreen last sized the canvas for)
-const liteOn = () => { const m = SETTINGS.liteMode || 'AUTO'; return m === 'ON' || (m === 'AUTO' && !!((typeof ONL !== 'undefined' && ONL.on) || (twoP && !twoP.ai))); };
+// GRAPHICS (the same setting, SETTINGS.liteMode): AUTO = performance mode in online / two-player games only, PERFORMANCE = every game, QUALITY = never (and never the
+// slow-frame step either), with a phone's game canvas up to GAME_RES.touchMax, the stands at GFX.crowdTouch and every weather particle. gfxMode() reads old values too.
+const GFX = { crowdTouch: 1 };   // QUALITY on a phone / tablet: the stands' canvases at this share of their size (1 = full, ~230 MB: lower it if phones run out of memory)
+const gfxMode = () => { const m = SETTINGS.liteMode; return m === 'PERFORMANCE' || m === 'ON' ? 'PERFORMANCE' : m === 'QUALITY' || m === 'OFF' ? 'QUALITY' : 'AUTO'; };
+const gfxHi = () => gfxMode() === 'QUALITY';
+const liteOn = () => { const m = gfxMode(); return m === 'PERFORMANCE' || (m === 'AUTO' && !!((typeof ONL !== 'undefined' && ONL.on) || (twoP && !twoP.ai))); };
 const liteGame = () => liteOn() && !results;   // (in a game: the menus keep their full look)
 const darkOn = () => !!SETTINGS.darkMode && !liteGame();
 function liteTick(ms) {   // once a frame, with this device's real frame time
@@ -456,7 +539,8 @@ const lightGfx = () => liteSlow;
 // NEW one through slEvent, which also puts it on the open tape (rec.sl = start copy + event list; replays rebuild from it) and, hosting online, sends it ('sl').
 // Poses: SL_ROUTINES keyframes are baked at load into flat tables (SIDELINE.bake Hz, eases applied): one lookup + one lerp a channel. Drawing: the visible
 // people of a side are found by binary search on the x-sorted list, posed once into SL.PT, then painted in colour-batched passes (no save / restore, no text).
-const SLK = { POLE: 0, BOX: 1, COACH: 2, STAFF: 3, BENCH: 4, CHEER: 5, TRAINER: 6, WATER: 7, TECH: 8, BALLBOY: 9, KICKER: 10, CAM: 11, REPORTER: 12, MEDIC: 13, GUARD: 14, JUDGE: 15, MASCOT: 16, HURT: 17, CART: 18 };
+const SLK = { POLE: 0, BOX: 1, COACH: 2, STAFF: 3, BENCH: 4, CHEER: 5, TRAINER: 6, WATER: 7, TECH: 8, BALLBOY: 9, KICKER: 10, CAM: 11, REPORTER: 12, MEDIC: 13, GUARD: 14, JUDGE: 15, MASCOT: 16, HURT: 17, CART: 18, PHOTO: 19, TVOFF: 20, GETBACK: 21, EVENT: 22, GROUNDS: 23 };   // (19+: photographer, TV timeout official, get-back coach, event staff, grounds crew)
+const slXk = P => P.k === SLK.HURT || P.k === SLK.CART;   // (the injury exit's temporary people)
 const SL_C = { bob: 0, lean: 1, aL: 2, aR: 3, eL: 4, eR: 5, gL: 6, gR: 7, kn: 8, lift: 9, rot: 10, x1: 11, tw: 12 }, SL_CH = 13;   // (a = arm from straight down, + forward; e = elbow; g = leg; L = far, R = near; x1 = prop: pole tilt / clipboard; tw = turn, 1 side-on .. -1)
 const SL_REST = [0, 0.04, 0.1, -0.08, 0.15, 0.15, 0.04, -0.04, 0.03, 0, 0, 0, 1];
 const SL_EASE = { l: u => u, io: u => u * u * (3 - 2 * u), o: u => 1 - (1 - u) * (1 - u), i: u => u * u };
@@ -485,6 +569,7 @@ const SL_ROUTINES = {
   benchDown: { secs: 2.4, keys: [[0.35, { aL: 2.5, eL: 2.3, aR: 2.45, eR: 2.35, lean: -0.08 }], [1.4, { lean: 0.2, aL: 0.6, eL: 1.2, aR: 0.55, eR: 1.3, bob: 0.5 }], [2.4, { _r: 1 }]] },
   bump:      { secs: 0.9, keys: [[0.12, 'o', { lean: -0.32, aL: 1.7, aR: 2.3, eL: 0.3, eR: 0.2, gL: 0.4, gR: -0.3 }], [0.4, { lean: 0.1, aL: 0.8, aR: 1.1, gL: -0.1, gR: 0.2 }], [0.9, { _r: 1 }]] },
   fall:      { secs: 0.35, keys: [[0.35, 'i', { rot: 1.5, aL: 2.6, aR: 2.2, eL: 0.3, eR: 0.4, gL: 0.5, gR: 0.25, kn: 0.15 }]] },
+  pulledUp:  { secs: 0.9, keys: [[0, { rot: 1.5, aL: 2.6, aR: 2.3, eL: 0.3, eR: 0.15, gL: 0.5, gR: 0.25, kn: 0.15 }], [0.3, 'o', { rot: 0.9, aR: 2.0, eR: 0.05, kn: 0.7 }], [0.6, { rot: 0.15, kn: 0.35, aR: 1.6, aL: 0.5, eL: 0.4 }], [0.9, { _r: 1 }]] },   // (help-up: hand in the helper's, pulled to his feet)
   getup:     { secs: 0.9, keys: [[0, { rot: 1.5, aL: 2.6, aR: 2.2, eL: 0.3, eR: 0.4, gL: 0.5, gR: 0.25, kn: 0.15 }], [0.4, { rot: 0.7, kn: 0.9, aL: 0.4, aR: 0.6, eL: 0.4, eR: 0.3 }], [0.9, { _r: 1 }]] },
   hop:       { secs: 0.45, keys: [[0.08, { kn: 0.45, aL: 1.6, aR: 1.8 }], [0.22, 'o', { kn: 0.05, lift: 7 }], [0.38, 'i', { lift: 0, kn: 0.3 }], [0.45, { _r: 1 }]] },
   sit:       { secs: 4.6, loop: 1, keys: [[0, { gL: 0.7, gR: 0.76, kn: 0.72, lean: 0.1, aL: 0.75, eL: 0.6, aR: 0.8, eR: 0.65 }], [2.3, { lean: 0.16, bob: 0.2 }]] },
@@ -495,6 +580,17 @@ const SL_ROUTINES = {
   ballToss:  { secs: 2.4, loop: 1, keys: [[0, { aR: 0.9, eR: 1.2, x1: 1 }], [0.5, { aR: 0.6, eR: 0.9, kn: 0.12 }], [0.75, 'o', { aR: 1.9, eR: 0.3, kn: 0.03 }], [1.3, { aR: 1.4, eR: 0.9 }], [1.7, { aR: 0.9, eR: 1.2 }]] },
   kickNet:   { secs: 3.4, loop: 1, keys: [[0, {}], [1.2, { gL: 0.25, gR: -0.5, aL: 0.5, aR: -0.5, lean: 0.06 }], [1.45, 'o', { gR: 1.5, gL: -0.1, aL: -0.7, aR: 1.1, lean: -0.14, lift: 2 }], [1.8, { gR: 0.5, lift: 0 }], [2.3, { _r: 1 }]] },
   camHold:   { secs: 3, loop: 1, keys: [[0, { aL: 1.55, eL: 1.25, aR: 1.75, eR: 1.45, lean: 0.06 }], [1.5, { bob: 0.25, lean: 0.09 }]] },
+  camKneel:  { secs: 3.4, keys: [[0, { aL: 1.55, eL: 1.25, aR: 1.75, eR: 1.45, lean: 0.06 }], [0.35, { gL: 0.75, gR: -0.2, kn: 0.75, lean: 0.14, bob: 0.5 }], [2.8, { gL: 0.75, gR: -0.2, kn: 0.75, lean: 0.1 }], [3.4, { gL: 0.04, gR: -0.04, kn: 0.03, lean: 0.06, bob: 0 }]] },   // (end-zone cameraman: down on a knee for a carrier coming in)
+  photoShoot: { secs: 5.4, loop: 1, keys: [[0, { aR: 1.95, eR: 1.95, aL: 1.7, eL: 1.65, lean: 0.08, x1: 1 }], [2.6, { aR: 1.95, eR: 1.95, aL: 1.7, eL: 1.65, bob: 0.3 }], [3.0, { aR: 1.1, eR: 1.4, aL: 0.9, eL: 1.3, lean: 0.12 }], [4.4, { aR: 1.1, eR: 1.4, aL: 0.9, eL: 1.3 }], [4.9, { aR: 1.95, eR: 1.95, aL: 1.7, eL: 1.65, lean: 0.08, bob: 0 }]] },   // (camera to his eye, a look at the screen, back up)
+  tvSignal:  { secs: 4, keys: [[0.3, { aL: 1.25, eL: 1.8, aR: 1.2, eR: 1.85 }], [1.4, { aR: 2.95, eR: 0.05, lean: -0.03 }], [2.6, { aR: 2.95, eR: 0.05 }], [3.2, { aR: 1.2, eR: 1.85, lean: 0.04 }], [4, { _r: 1 }]] },   // (the TV timeout official out on the field: red glove up)
+  getBack:   { secs: 6, loop: 1, keys: [[0, { aL: -0.6, eL: 2.1, aR: -0.55, eR: 2.0 }], [3, { aL: -0.6, eL: 2.1, aR: -0.55, eR: 2.0, lean: 0.06 }], [3.3, 'o', { aL: 1.4, eL: 0.2, aR: 1.5, eR: 0.25, lean: -0.08 }], [3.7, { aL: 1.1, eL: 0.6, aR: 1.2, eR: 0.6 }], [4.0, 'o', { aL: 1.45, eL: 0.15, aR: 1.5, eR: 0.2, lean: -0.08 }], [4.7, { aL: -0.6, eL: 2.1, aR: -0.55, eR: 2.0, lean: 0.04 }]] },   // (hands on hips, then "get back!")
+  rakeIdle:  { secs: 3.2, loop: 1, keys: [[0, { aR: 0.75, eR: 0.5, aL: 0.6, eL: 0.7, lean: 0.18, x1: 1 }], [1.2, { aR: 1.05, eR: 0.2, aL: 0.85, eL: 0.4, lean: 0.24 }], [2.2, { aR: 0.6, eR: 0.7, aL: 0.5, eL: 0.9, lean: 0.14 }]] },
+  towelWipe: { secs: 2, loop: 1, keys: [[0, { aR: 1.0, eR: 1.3, aL: 0.9, eL: 1.4, lean: 0.2, x1: 1 }], [0.5, { aR: 1.3, eR: 0.9, aL: 0.7, eL: 1.6 }], [1.0, { aR: 0.9, eR: 1.4, aL: 1.2, eL: 1.0, lean: 0.24 }], [1.5, { aR: 1.2, eR: 1.0, aL: 0.8, eL: 1.5 }]] },
+  camFall:   { secs: 0.35, keys: [[0, { aL: 1.55, eL: 1.25, aR: 1.75, eR: 1.45 }], [0.35, 'i', { rot: 1.5, aL: 1.9, eL: 1.5, aR: 2.1, eR: 1.6, gL: 0.5, gR: 0.25, kn: 0.15 }]] },   // (knockdowns by kind: a cameraman hugs his camera)
+  photoFall: { secs: 0.8, keys: [[0, { aR: 1.95, eR: 1.95, aL: 1.7, eL: 1.65, x1: 1 }], [0.12, 'o', { aL: 2.95, aR: 2.8, eL: 0.1, eR: 0.15, lean: -0.2 }], [0.35, 'i', { rot: 1.5, gL: 0.6, gR: 0.3, kn: 0.15 }], [0.5, { x1: 0 }], [0.8, { aL: 2.6, aR: 2.2, eL: 0.3, eR: 0.4 }]] },   // (the gear flies: slPaint throws the camera from the hand)
+  mascotFlop: { secs: 1.1, keys: [[0.3, 'i', { rot: 1.5, gL: 1.3, gR: 1.1, aL: 2.8, aR: 2.6, kn: 0.05 }], [0.5, 'o', { lift: 7 }], [0.7, 'i', { lift: 0 }], [0.85, 'o', { lift: 2.5 }], [1.1, 'i', { lift: 0, gL: 0.5, gR: 0.25, kn: 0.15, aL: 2.6, aR: 2.2, eL: 0.3, eR: 0.4 }]] },
+  cheerHelp: { secs: 2.4, keys: [[0.3, { lean: 0.45, kn: 0.35, aR: 1.2, eR: 0.2, aL: 0.9, eL: 0.4 }], [1.3, { lean: 0.42, kn: 0.32 }], [1.8, 'o', { aR: 1.7, eR: 0.3, lean: 0.12, kn: 0.1 }], [2.4, { _r: 1 }]] },   // (her squad mates reach down and pull her up)
+  camDuck:   { secs: 2.2, keys: [[0, { aL: 1.55, eL: 1.25, aR: 1.75, eR: 1.45, lean: 0.06 }], [0.18, 'o', { kn: 0.62, lean: 0.42, gL: 0.35, gR: -0.25, bob: 1.6 }], [1.5, { kn: 0.6, lean: 0.4 }], [2.2, { kn: 0.03, lean: 0.06, gL: 0.04, gR: -0.04, bob: 0 }]] },   // (a kick coming over the posts)
   report:    { secs: 6.4, loop: 1, keys: [[0, { aR: 1.6, eR: 1.6, x1: 1 }], [1.6, { aL: 0.9, eL: 0.6, lean: 0.06 }], [2.4, { aL: 0.2, eL: 0.2 }], [3.6, { aL: 1.3, eL: 0.2, tw: 0.6 }], [4.6, { aL: 0.1, eL: 0.15, tw: 1, lean: 0.03 }]] },
   guardScan: { secs: 7, loop: 1, keys: [[0, { aL: 1.25, eL: 1.8, aR: 1.2, eR: 1.85 }], [2, { tw: 1 }], [2.8, { tw: -1 }], [5, { tw: -1 }], [5.8, { tw: 1 }]] },
   judgeSig:  { secs: 2, keys: [[0.2, { aR: 1.57, eR: 0, lean: 0.06 }], [1.4, { aR: 1.57, eR: 0 }], [1.9, { _r: 1 }]] },
@@ -523,7 +619,7 @@ const SL_CREW = [{ c1: '#1d1f24', cv: '#f2f2f2', cp: '#1d1f24' }, { c1: '#ff7a1a
 const SL_FIG = { leg: 5.6, torso: 15, head: 6.4, arm: 5.8, fore: 5.6, wide: 5.8, slim: 4.4, shoulder: 1.22, pads: 8.6, hr: 5.7, hry: 6.5, legW: 5.2, armW: 3.6 };   // (pads = shoulder half-width of anyone in a kit: FIGURE.torso at the hips)
 const SL_STR = 50, SL_PI2 = Math.PI * 2;   // (+ 48 a camera's flash 0-1, 49 spare)
 // what a hand holds (P.hp; shown while the routine's x1 channel is up): [colour, half width, up from the hand, height] in sprite units
-const SL_HP = [null, ['#8a6a43', 2.6, 5, 7], ['#2a2f3a', 3, 4.4, 6], ['#fff7c2', 3.7, 6.6, 8.8], ['#c8282d', 1.5, 4.6, 5.2], ['#f4f4f0', 1.2, 2.6, 3.2], ['#8a4b22', 2.3, 2.4, 3.2], ['#c8282d', 3.2, 0.4, 5.4]];   // clipboard, tablet, play sheet, microphone, cup, ball, medical bag   // floats a posed person takes in SL.PT: 20 points (x, y) then x, feet y, facing sign, scale, x1, digit, |roll|, turn
+const SL_HP = [null, ['#8a6a43', 2.6, 5, 7], ['#2a2f3a', 3, 4.4, 6], ['#fff7c2', 3.7, 6.6, 8.8], ['#c8282d', 1.5, 4.6, 5.2], ['#f4f4f0', 1.2, 2.6, 3.2], ['#8a4b22', 2.3, 2.4, 3.2], ['#c8282d', 3.2, 0.4, 5.4], ['#1d2026', 2.2, 2.6, 5.2], ['#f4f4f0', 2.4, 0.6, 7.5], ['#8a6a43', 0.7, 13, 17]];   // clipboard, tablet, play sheet, microphone, cup, ball, medical bag, camera body (a photographer's: + the long lens, slPaint), towel, rake handle (+ its head)   // floats a posed person takes in SL.PT: 20 points (x, y) then x, feet y, facing sign, scale, x1, digit, |roll|, turn
 function slBake(R) {   // keyframes -> one flat Float32Array (sample-major, SL_CH channels a sample)
   const B = SIDELINE.bake, n = Math.max(2, Math.round(R.secs * B) + 1), buf = new Float32Array(n * SL_CH), names = Object.keys(SL_C);
   for (let c = 0; c < SL_CH; c++) {
@@ -546,7 +642,8 @@ function slBake(R) {   // keyframes -> one flat Float32Array (sample-major, SL_C
 }
 const SLR = [], SLRI = {};
 for (const id of Object.keys(SL_ROUTINES)) { SLRI[id] = SLR.length; SLR.push(slBake(SL_ROUTINES[id])); }
-const SL_WALK = SLR[SLRI.walk], SL_TF = SL_ROUTINES.fall.secs, SL_TG = SL_ROUTINES.getup.secs, SL_HOP = SL_ROUTINES.hop.secs, SL_TB = SL_ROUTINES.bump.secs, SL_TT = SL_ROUTINES.tilt.secs;
+const SL_FALLK = { [SLK.CAM]: SLRI.camFall, [SLK.PHOTO]: SLRI.photoFall, [SLK.MASCOT]: SLRI.mascotFlop };   // (knockdown by kind; the rest = fall)
+const SL_WALK = SLR[SLRI.walk],SL_TF = SL_ROUTINES.fall.secs, SL_TG = SL_ROUTINES.getup.secs, SL_HOP = SL_ROUTINES.hop.secs, SL_TB = SL_ROUTINES.bump.secs, SL_TT = SL_ROUTINES.tilt.secs;
 // a path walk's leg modes -> the routine posed (2-4 and 11 by the distance covered, the rest by the time in the leg): 1 walk / jog (the stride table), 2 limp, 3 helped along,
 // 4 helping, 5 down on the turf, 6 driving the cart, 7 riding on its back, 8 being lifted on, 9 kneeling beside him, 10 lifting him, 11 ducking into the tent
 const SL_MDI = [-1, -1, SLRI.limp, SLRI.helped, SLRI.helper, SLRI.lying, SLRI.ride, SLRI.rideBack, SLRI.lying, SLRI.kneelBy, SLRI.liftOn, SLRI.tentIn, SLRI.lying];   // (12 = lying on the cart's bed)
@@ -577,13 +674,13 @@ function slSample(r, tt, Q) {   // one baked routine at time tt -> Q (one lookup
   for (let c = 0; c < SL_CH; c++) Q[c] = B[o0 + c] + (B[o1 + c] - B[o0 + c]) * u;
 }
 const slBack = h => 1.5 * h.L / (SIDELINE.walkSpeed * YD) + 0.01;   // (the walk back after a knockdown / hop aside: eased, top speed = walkSpeed)
-function slHitLen(h) { const k = h.k; return k === 0 ? 1.1 : k === 3 ? 1.3 : k === 2 ? SL_HOP + 0.8 + slBack(h) : SL_TF + SIDELINE.downT + SL_TG + slBack(h); }
+function slHitLen(h) { const k = h.k; return k === 0 ? 1.1 : k === 3 ? 1.3 : k === 2 ? SL_HOP + 0.8 + slBack(h) : SL_TF + SIDELINE.downT + (h.dw || 0) + SL_TG + slBack(h); }
 function slWhere(P, w, h, t) {   // where he is at time t (home / walk / hit offset) -> SL_P
   let x = P.hx, y = P.hy, f = P.f, dig = P.dg;
   SL_P.wd = -1; SL_P.hk = -1; SL_P.md = -1; SL_P.up = 0; SL_P.hid = false;
   if (w && w.pa) {
     const pa = w.pa, n = pa.length / 3, tE = pa[(n - 1) * 3];
-    SL_P.hid = (w.hid > 0 && t >= w.hid) || (P.k >= SLK.HURT && t < pa[0]);
+    SL_P.hid = (w.hid > 0 && t >= w.hid) || (slXk(P) && t < pa[0]);
     if (t >= pa[0]) {
       let j = 0, dist = 0;
       while (j < n - 2 && t >= pa[(j + 1) * 3]) { dist += Math.hypot(pa[j * 3 + 4] - pa[j * 3 + 1], pa[j * 3 + 5] - pa[j * 3 + 2]); j++; }
@@ -609,7 +706,7 @@ function slWhere(P, w, h, t) {   // where he is at time t (home / walk / hit off
     const ht = t - h.t0, k = h.k; let e = 0, len, wd = -1;
     if (k === 0 || k === 3) { len = k ? 1.3 : 1.1; e = ht < 0.15 ? slSmooth(ht / 0.15) : ht < 0.6 ? 1 : 1 - slSmooth((ht - 0.6) / (len - 0.6)); }
     else {
-      const t1 = k === 2 ? SL_HOP : SL_TF, t2 = k === 2 ? t1 + 0.8 : t1 + SIDELINE.downT + SL_TG, tb = slBack(h); len = t2 + tb;
+      const t1 = k === 2 ? SL_HOP : SL_TF, t2 = k === 2 ? t1 + 0.8 : t1 + SIDELINE.downT + (h.dw || 0) + SL_TG, tb = slBack(h); len = t2 + tb;
       if (ht < t1) { const q = ht / t1; e = k === 2 ? slSmooth(q) : 1 - (1 - q) * (1 - q); }
       else if (ht < t2) e = 1;
       else if (ht < len) { const s2 = slSmooth((ht - t2) / tb); e = 1 - s2; wd = s2 * h.L; }
@@ -621,8 +718,9 @@ function slWhere(P, w, h, t) {   // where he is at time t (home / walk / hit off
   }
   SL_P.x = x; SL_P.y = y; SL_P.f = f; SL_P.dig = dig;
 }
+const slAim0 = P => P.ez ? (P.ez < 0 ? 0 : Math.PI) : P.s ? -1.5708 : 1.5708;   // (straight at the field: an end-zone man looks along it)
 function slAim(P, a, t) {   // a cameraman's aim at time t (world angle): his last aim record { t0, a0, a1, T }, turned late and a little past the mark
-  if (!a || a.a1 === undefined) return P.s ? -1.5708 : 1.5708;   // (none yet: straight at the field)
+  if (!a || a.a1 === undefined) return slAim0(P);   // (none yet: straight at the field)
   const e = (t - a.t0) / a.T; if (e <= 0) return a.a0; if (e >= 1) return a.a1;
   const q = e - 1, o = CAM_MAN.over;
   return a.a0 + (a.a1 - a.a0) * (1 + (o + 1) * q * q * q + o * q * q);
@@ -633,16 +731,17 @@ function slPose(P, w, a, h, t) {   // position + pose at time t -> SL_P / SL_Q (
   const Q = SL_Q, hk = SL_P.hk, ht = SL_P.ht;
   let done = false, down = false;
   if (hk === 1) {
-    const tl = SL_TF + SIDELINE.downT;
-    if (ht < tl) { slSample(SLR[SLRI.fall], ht, Q); done = down = true; }
-    else if (ht < tl + SL_TG) { slSample(SLR[SLRI.getup], ht - tl, Q); done = down = true; }
+    const tl = SL_TF + SIDELINE.downT + (h.dw || 0), hl = h.hl;   // (dw: longer on the turf while a helper gets there)
+    const up = hl && (hl.o === 1 || hl.o === 4);   // (helped: a hand up for the helper, then pulled to his feet)
+    if (ht < tl) { slSample(SLR[SL_FALLK[P.k] || SLRI.fall], ht, Q); done = down = true; if (up && ht > tl - 0.5) { const e = slSmooth((ht - tl + 0.5) / 0.5); Q[3] += (2.3 - Q[3]) * e; Q[5] += (0.15 - Q[5]) * e; } }
+    else if (ht < tl + SL_TG) { slSample(SLR[up ? SLRI.pulledUp : SLRI.getup], ht - tl, Q); done = down = true; }
     if (down) Q[10] *= h.r;
   } else if (hk === 0 && ht < SL_TB) { slSample(SLR[SLRI.bump], ht, Q); done = true; }
   else if (hk === 2 && ht < SL_HOP) { slSample(SLR[SLRI.hop], ht, Q); done = true; }
   else if (hk === 3 && ht < SL_TT) { slSample(SLR[SLRI.tilt], ht, Q); done = true; }
   if (!done) {
     let r = null, tt = 0;
-    if (a && t >= a.t0) { const R = SLR[a.id]; if (R && (R.loop || t - a.t0 <= R.secs)) { r = R; tt = t - a.t0; } }
+    if (a && a.id !== undefined) { const r0 = a.r0 !== undefined ? a.r0 : a.t0, R = SLR[a.id]; if (t >= r0 && R && (R.loop || t - r0 <= R.secs)) { r = R; tt = t - r0; } }   // (r0: a cameraman's routine riding on his aim record)
     if (!r) { r = SLR[P.idle]; tt = t + P.stg; }
     slSample(r, tt, Q);
   }
@@ -674,7 +773,7 @@ function slPutN(o, j, sx, sy, nx, ny) {   // an axis point (turned) plus an offs
 }
 function slPrep(k, P) {   // SL_P / SL_Q -> slot k of SL.PT (the points the paint passes read)
   const Q = SL_Q, T = SL.PT, o = k * SL_STR, u = S * FIGURE.grow * P.z, tw = Q[12];
-  slX0 = SL_P.x; slYf = SL_P.y + FOOT - (P.up || 0) - SL_P.up; slUx = SL_P.f * u; slUy = u * FIGURE.tall; T[o + 48] = 0;
+  slX0 = SL_P.x; slYf = SL_P.y + FOOT - (P.up || 0) - SL_P.up; slUx = SL_P.f * u; slUy = u * FIGURE.tall; T[o + 48] = 0; T[o + 49] = SL_P.hk === 1 ? SL_P.ht : -1;   // (49: s into a knockdown, -1 none)
   slTw = tw > -0.25 && tw < 0.25 ? (tw < 0 ? -0.25 : 0.25) : tw;
   slRot = Q[10]; if (slRot) { slCr = Math.cos(slRot); slSr = Math.sin(slRot); }
   T[o + 40] = slX0; T[o + 41] = slYf; T[o + 42] = slTw < 0 ? -SL_P.f : SL_P.f; T[o + 43] = u; T[o + 44] = Q[11]; T[o + 45] = SL_P.dig; T[o + 46] = slRot < 0 ? -slRot : slRot; T[o + 47] = tw;
@@ -844,6 +943,17 @@ function slPaint(L, n) {   // the posed slots L[0..n), in colour-batched passes 
   slMode = 0;
   for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR, hp = sp[k].hp; if (!hp || T[o + 44] < 0.5) continue; const u = T[o + 43], D = SL_HP[hp]; slSet(D[0]); ctx.rect(T[o + 20] - D[1] * u, T[o + 21] - D[2] * u, 2 * D[1] * u, D[3] * u); }
   slEnd();
+  for (let j = 0; j < n; j++) {   // held items' detail (close up only): a photographer's long lens, the rake's head; a knocked-down photographer's camera flying off and lying on the turf
+    const k = L[j], o = k * SL_STR, P = sp[k], hp = P.hp, u = T[o + 43], g = T[o + 42], ht = T[o + 49];
+    if (hp === 8 && ht >= 0.1 && ht < SL_TF + SIDELINE.downT + SL_TG * 0.5) {   // (picked up again as he gets up)
+      const q = Math.min(1, (ht - 0.1) / 0.8), x0 = T[o + 20], y0 = T[o + 21], x1 = T[o + 40] - g * 22 * u, y1 = T[o + 41] - 1.5 * u, x = x0 + (x1 - x0) * q, y = y0 + (y1 - y0) * q - 26 * u * 4 * q * (1 - q);
+      slSet('#1d2026'); ctx.rect(x - 2.4 * u, y - 2.2 * u, 4.8 * u, 4.4 * u); slSet('#3a3f4c'); ctx.rect(x + 2.4 * u * (q < 1 ? 1 : -g), y - 1.3 * u, 5 * u, 2.6 * u); continue;
+    }
+    if (lod < 2 || T[o + 44] < 0.5) continue;
+    if (hp === 8) { slSet('#3a3f4c'); ctx.rect(T[o + 20] + (g > 0 ? 1.6 : -7.6) * u, T[o + 21] - 1.9 * u, 6 * u, 2.6 * u); }
+    else if (hp === 10) { slSet('#9a9a9a'); ctx.rect(T[o + 20] - 3.6 * u, T[o + 21] + 3.4 * u, 7.2 * u, 1.4 * u); }
+  }
+  slEnd();
   for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR, P = sp[k]; if (!P.hm) continue; const u = T[o + 43], r = 7.4 * u, hx = T[o + 4], hy = T[o + 5] - 0.8 * u; slSet(P.hm); ctx.moveTo(hx + r, hy); ctx.arc(hx, hy, r, 0, SL_PI2); }   // (a helmet)
   slEnd();
   for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR, P = sp[k]; if (!P.hm || T[o + 46] > 0.6) continue; const u = T[o + 43], g = T[o + 42], hx = T[o + 4], hy = T[o + 5]; slSet('#9a9a9a'); ctx.rect(hx + g * 3.4 * u, hy + 0.6 * u, g * 5 * u, 1.3 * u); ctx.rect(hx + g * 3.4 * u, hy + 3.2 * u, g * 5 * u, 1.3 * u); ctx.rect(hx + g * 7.4 * u, hy - 0.6 * u, g * 1.2 * u, 5.4 * u); }
@@ -986,7 +1096,7 @@ function slVis(C, lvl) {   // who is shown (and solid) on each side: x-sorted pe
   const v = [new Int16Array(0), new Int16Array(0)], cam = [new Int16Array(0), new Int16Array(0)], ppl = C.people;
   for (let s = 0; s < 2; s++) {
     const ids = [], cm = [];
-    for (let i = 3; i < ppl.length; i++) { const P = ppl[i]; if (P.s !== s || (P.tier | 0) > mt || P.k === SLK.JUDGE || P.k >= SLK.HURT || P.k === SLK.TRAINER) continue; if (P.k === SLK.CAM) cm.push(i); else ids.push(i); }
+    for (let i = 3; i < ppl.length; i++) { const P = ppl[i]; if (P.s !== s || (P.tier | 0) > mt || P.k === SLK.JUDGE || slXk(P) || P.k === SLK.TRAINER || P.k === SLK.TVOFF || P.ez) continue; if (P.k === SLK.CAM) cm.push(i); else ids.push(i); }
     ids.sort((a, b) => ppl[a].hx - ppl[b].hx); v[s] = Int16Array.from(ids); cam[s] = Int16Array.from(cm);
   }
   const pv = [new Int16Array(0), new Int16Array(0)], pr = C.props;
@@ -1074,7 +1184,7 @@ function slFrame() {   // once a frame (draw()'s far pass): the source (live or 
   const xs = C.xs;
   if (xs && e.mt >= 1) for (let j = 0; j < xs.length; j++) {
     const i = xs[j], P = ppl[i], w = SL.w[i];
-    if (P.k >= SLK.HURT && !w) continue;
+    if (slXk(P) && !w) continue;
     if (P.k === SLK.CART) {   // (not a body: its sprite, at the spot its record puts it)
       slWhere(P, w, null, t); if (SL_P.hid || SL_P.x < vL - SL_PM || SL_P.x > vR + SL_PM) continue;
       SL.cx = SL_P.x; SL.cy = SL_P.y; SL.cf = SL_P.f; SL.cOn = SL_P.y > Y_MIN && SL_P.y < Y_MAX ? 1 : 2 + P.s;
@@ -1087,6 +1197,14 @@ function slFrame() {   // once a frame (draw()'s far pass): the source (live or 
     if (y > Y_MIN && y < Y_MAX) { if (SL.exN < SIDELINE.exMax) { SL.ex[SL.exN] = k; SL.exY[SL.exN++] = y; } }
     else if (P.s) SL.l1[SL.n1++] = k; else SL.l0[SL.n0++] = k;
     k++;
+  }
+  const ez = C.ez;   // end-zone crews: inside the field's width, so drawn in y order with the players (slExUpTo)
+  if (ez && e.mt >= 0) for (let j = 0; j < ez.length; j++) {
+    const i = ez[j], P = ppl[i]; if (P.hx < vL - M || P.hx > vR + M || SL.exN >= SIDELINE.exMax) continue;
+    slPose(P, SL.w[i], SL.a[i], SL.h[i], lvl >= 2 ? 0 : lvl === 1 ? Math.floor(t * hz) / hz : t);
+    if (SL_P.x < vL || SL_P.x > vR || SL_P.y < vTop - YD || SL_P.y - 3 * YD > vBot) continue;
+    slPrep(k, P); SL.sp[k] = P; SL.PT[k * SL_STR + 48] = slFlashB(i, SL.f, t);
+    SL.ex[SL.exN] = k; SL.exY[SL.exN++] = SL_P.y; k++;
   }
   if (SL.n0 || SL.n1) slPlayers(slExP);
   for (let i = 1; i < SL.exN; i++) { const e = SL.ex[i], y = SL.exY[i]; let j = i - 1; while (j >= 0 && SL.exY[j] > y) { SL.ex[j + 1] = SL.ex[j]; SL.exY[j + 1] = SL.exY[j]; j--; } SL.ex[j + 1] = e; SL.exY[j + 1] = y; }
@@ -1172,9 +1290,37 @@ function slPerson(k, s, x, d, T, cold, rnd) {
   else if (k === SLK.GUARD) { P.c1 = '#e2dc1e'; P.c2 = '#1d1f24'; P.cp = '#1d1f24'; P.idle = SLRI.guardScan; P.cfa = P.c1; }
   else if (k === SLK.JUDGE) { P.c1 = '#f2f2f2'; P.cv = '#1d1f24'; P.c2 = '#1d1f24'; P.cp = '#f2f2f2'; }
   else if (k === SLK.MASCOT) { P.c1 = jer; P.c2 = jer; P.c3 = shell === jer ? trim : shell; P.cs = P.c3; P.hd = 1; P.cf = '#f4f4f4'; P.idle = SLRI.mascotDance; }
+  // the vests and officials filling the gaps (slFill): palette + held item only
+  else if (k === SLK.PHOTO) { P.c1 = '#ff7a1a'; P.cv = '#f4f0d0'; P.c2 = '#25272e'; P.cp = rnd() < 0.5 ? '#1d2230' : ''; P.hp = 8; P.num = String(10 + Math.floor(rnd() * 89)); P.cn = '#1d1f24'; P.idle = SLRI.photoShoot; P.cfa = '#25272e'; }   // (numbered orange vest over dark sleeves, long lens)
+  else if (k === SLK.TVOFF) { P.c1 = '#f2f2f2'; P.cv = '#1d1f24'; P.c2 = '#1d1f24'; P.cp = '#c8282d'; P.cfa = '#c8282d'; P.idle = SLRI.crossed; }   // (official's stripes, red cap and gloves)
+  else if (k === SLK.GETBACK) { P.c1 = jer; P.c2 = '#cdb98f'; P.cp = shell; P.idle = SLRI.getBack; if (cold) P.cfa = jer; }
+  else if (k === SLK.EVENT) { P.c1 = '#9be03a'; P.cv = '#d8d8d8'; P.c2 = '#25272e'; P.cfa = '#1d2230'; P.idle = pk([SLRI.crossed, SLRI.guardScan, SLRI.hips]); }   // (lime event-staff vest)
+  else if (k === SLK.GROUNDS) { P.c1 = '#2f6b3a'; P.c2 = '#25272e'; P.cp = '#2f6b3a'; P.hp = 10; P.idle = SLRI.rakeIdle; if (cold) P.cfa = P.c1; }   // (rake; slFill swaps in a towel in the rain)
   if (!P.cl) P.cl = P.c2;
   if (!P.cfa) P.cfa = P.cs;
   return P;
+}
+// gap fillers (SIDELINE.fill): for each item, the open spots of its row in its zones (nobody / no prop within `need` yd), until n are placed or the row's cap is reached
+function slFill(at, ppl, props, s, T, rnd, cs) {
+  const F = SIDELINE.fill, rowOf = P => (s ? P.hy - Y_MAX : Y_MIN - P.hy) / YD, cnt = { l: 0, d: 0 }, w = game && game.wx, rain = !!(w && w.on && !w.roof && w.rain > 0);
+  for (const it of F.items) {
+    if (it.one && s === cs) continue;
+    const row = it.d < 2.5 ? 'l' : 'd', taken = [];
+    for (const P of ppl) if (P.s === s && !P.ez && Math.abs(rowOf(P) - it.d) < F.band + 0.4) taken.push(P.hx / YL);
+    for (const Q of props) if (Q.s === s && Math.abs((s ? Q.y - FOOT - Y_MAX : Y_MIN - Q.y + FOOT) / YD - it.d) < F.band + 0.9) taken.push(Q.x / YL);
+    let put = 0;
+    for (let z = 0; z < it.z.length && put < it.n && cnt[row] < F.cap[row]; z++) {
+      const [a, b] = it.z[z], st = a + rnd() * 0.5;
+      for (let x = st; x <= b && put < it.n && cnt[row] < F.cap[row]; x += 0.5) {
+        let ok = true; for (let j = 0; j < taken.length; j++) if (Math.abs(taken[j] - x) < it.need) { ok = false; break; }
+        if (!ok) continue;
+        const P = at(SLK[it.k], s, x, it.d, T, { tier: it.tier });
+        if (it.k === 'GROUNDS' && rain) { P.hp = 9; P.idle = SLRI.towelWipe; }
+        taken.push(x); put++; cnt[row]++;
+        if (z + 1 < it.z.length && put * it.z.length >= it.n * (z + 1)) break;   // (spread over the zones: on to the next one)
+      }
+    }
+  }
 }
 function slSetup() {
   let sd = (SL.seed >>> 0) || 1;
@@ -1209,7 +1355,7 @@ function slSetup() {
     }
     for (let q = 0; q < CAM_MAN.spots.length; q++) {   // cameramen: handhelds and (the last one) the rail dolly, each on his own stretch with his own lag, error and distance
       const sp = CAM_MAN.spots[q], dolly = q === CAM_MAN.spots.length - 1, lerp = r => r[0] + (r[1] - r[0]) * rnd();
-      const P = at(SLK.CAM, s, sp[0], SIDELINE.dCam + (dolly ? 0.25 : 0), T, { x0: sp[1] * YL, x1: sp[2] * YL, kr: lerp(CAM_MAN.react) * (dolly ? 1.4 : 1), ks: lerp(CAM_MAN.swing) * (dolly ? 1.3 : 1), ke: (rnd() * 2 - 1) * CAM_MAN.err, kd: lerp(CAM_MAN.delay), co: CAM_MAN.keep + rnd() * CAM_MAN.keepVar, tier: q === 1 ? 2 : 1, f: 1 });
+      const P = at(SLK.CAM, s, sp[0], SIDELINE.dCam + (dolly ? 0.25 : 0), T, { x0: sp[1] * YL, x1: sp[2] * YL, kr: lerp(CAM_MAN.react) * (dolly ? 1.4 : 1), ks: lerp(CAM_MAN.swing) * (dolly ? 1.3 : 1), ke: (rnd() * 2 - 1) * CAM_MAN.err, kd: lerp(CAM_MAN.delay), co: CAM_MAN.keep + rnd() * CAM_MAN.keepVar, tier: sp[3] || 1, f: 1 });
       if (dolly) { P.rail = 1; P.up = Math.round(13 * u); }
     }
     for (const cx of [SIDELINE.cheerAt, 100 - SIDELINE.cheerAt]) {   // cheerleaders: three on each box, never off it
@@ -1217,18 +1363,28 @@ function slSetup() {
       for (let j = 0; j < 3; j++) { const P = at(SLK.CHEER, s, cx + (j - 1) * SIDELINE.cheerGap, 3.3, T, { g, role: j === 1 ? 1 : 0, dp: 1, tier: cx < 50 ? 1 : 2 }); P.hy -= SL_PROPS.box.top * u; }
     }
   }
+  const ez = [], EZ = CAM_MAN.ez;   // end-zone camera crews: behind each end line, mostly staying put (stretch x0..x1 = across the field, in y)
+  for (const e of [-1, 1]) for (let q = 0; q < EZ.ys.length; q++) {
+    const yf = e < 0 ? EZ.ys[q] : 1 - EZ.ys[q], lerp = r => r[0] + (r[1] - r[0]) * rnd();
+    const P = at(SLK.CAM, yf > 0.5 ? 1 : 0, 50, 2, kits[0], { kr: lerp(CAM_MAN.react), ks: lerp(CAM_MAN.swing), ke: (rnd() * 2 - 1) * CAM_MAN.err, kd: lerp(CAM_MAN.delay), co: 0, tier: 0 });
+    P.hx = e < 0 ? -ENDZONE - EZ.back * YD : FIELD + ENDZONE + EZ.back * YD; P.hy = yf * FW; P.ez = e; P.f = -e; P.x0 = (yf - EZ.span) * FW; P.x1 = (yf + EZ.span) * FW;
+    ez.push(ppl.length - 1);
+  }
   const xs = [];
   for (let s = 0; s < 2; s++) { const pj = props.findIndex(q => q.id === 'medcart' && q.s === s), Q = props[pj], P = at(SLK.CART, s, 50, 3, kits[s]); P.hx = Q.x; P.hy = Q.y - FOOT; P.pj = pj; }
   for (let i = 0; i < ppl.length; i++) if (ppl[i].k === SLK.TRAINER || ppl[i].k === SLK.CART) xs.push(i);
   at(SLK.REPORTER, 0, 69.6, 1.75, kits[0]); at(SLK.MEDIC, 0, 47.4, 2.3, kits[0]); at(SLK.MASCOT, 0, 75.5, 2.2, kits[0]); at(SLK.GUARD, 1, 13.5, 2, kits[1]); at(SLK.GUARD, 0, 86.5, 2, kits[0], { tier: 2 });
+  for (let s = 0; s < 2; s++) slFill(at, ppl, props, s, kits[s], rnd, cs);
+  let tv = -1;
+  for (let i = 0; i < ppl.length; i++) if (ppl[i].k === SLK.TVOFF) { tv = i; xs.push(i); }   // (the TV official walks on: drawn with the injury cast, y-sorted while on the field)
   for (let i = 0; i < ppl.length; i++) { const P = ppl[i]; if (P.g < 0 || P.role) continue; for (let j = 0; j < ppl.length; j++) if (ppl[j].g === P.g && ppl[j].role === 1) P.fly = j; }   // (the bases of a lift know their flyer)
   const n = ppl.length;
-  SL.cast = { people: ppl, cs, props, jd, xs };
-  SL.xt = null; SL.tin = [];
+  SL.cast = { people: ppl, cs, props, jd, xs, ez, tv };
+  SL.xt = null; SL.tin = []; SL.ezR = {}; SL.ezK = 0; SL.hp = []; SL.subQ = []; SL.uPend = 0;
   SL.W = new Array(n).fill(null); SL.A = new Array(n).fill(null); SL.H = new Array(n).fill(null);
   SL.R = new Array(props.length).fill(null); SL.F = null; SL.U = 0; SL.rm = [];
   SL.cm = []; SL.cmT = [];
-  for (let i = 0; i < n; i++) { if (ppl[i].k === SLK.CAM || ppl[i].k === SLK.TRAINER) SL.rm.push(i); if (ppl[i].k === SLK.CAM) { SL.cm.push(i); SL.cmT.push(0); } }
+  for (let i = 0; i < n; i++) { if ((ppl[i].k === SLK.CAM && !ppl[i].ez) || ppl[i].k === SLK.TRAINER || ppl[i].k === SLK.TVOFF) SL.rm.push(i); if (ppl[i].k === SLK.CAM) { SL.cm.push(i); SL.cmT.push(0); } }
   slSprites();
   SL.crewOn = 1; SL.crewHid = false; SL.fresh = true; SL.key = slKeyNow(); SL.fl = !!(twoP && twoP.flipped); SL.m = mirrorFor();
   SL.rEnd = [0, 0]; SL.rMag = [0, 0]; SL.rLift = [0, 0]; SL.last = ['', ''];
@@ -1247,15 +1403,55 @@ function slReset() {
   if (!SL.cast || SL.key !== slKeyNow()) slSetup();
   const fl = !!(twoP && twoP.flipped), m = mirrorFor();
   let snap = SL.fresh || SL.crewHid || !SL.crewOn;
-  if (fl !== SL.fl && !snap) { if (m !== SL.m) slRemap(); else snap = true; }   // (the ball changed hands: a mirrored view keeps them where they stand on screen; otherwise the view itself turned round)
-  SL.fl = fl; SL.m = m; SL.fresh = false;
+  let cut = false;
+  const keepPic = fl !== SL.fl && m !== SL.m && !SL.fresh;   // (a change of possession on a mirrored view: the picture stays, so the old units can jog off)
+  if (fl !== SL.fl) { if (m !== SL.m) { if (!snap) slRemap(); } else { snap = true; cut = true; } SL.s0 = null; }   // (the ball changed hands: a mirrored view keeps them where they stand on screen; otherwise the view itself turned round)
+  SL.fl = fl; SL.m = m; SL.fresh = false; SL.ezR = {}; SL.ezK = 0;
   if (!SL.crewOn) slEvent(-1, 3, 1);
   SL.crewHid = false;
   for (let j = 0; j < SL.R.length; j++) { const r = SL.R[j]; if (r && r.k === 1) slEvent(j, 4, null); }   // (anything knocked over is stood back up between plays)
   if (SL.sprK !== benchKit()) slSprites();
-  { const un = slUnits(); if (un !== SL.U) slEvent(-1, 6, un); }
+  { const un = slUnits(); if (un !== SL.U) slEvent(-1, 6, keepPic && slSubOff(un) ? un | SL.U : un); }   // (units jogging off keep their bench empty until they get there)
   if (SL.tin.length) slTentCheck();   // (a change of possession: the other unit comes off the bench)
-  slCrewGo(snap);
+  slCrewGo(snap, cut);
+}
+// --- subs jogging off (before the snap; looks only). slSubTo = where a man jogging off aims: a gap by his unit's bench (SIDELINE.sub), never farther than the old run off
+// the screen (from = where he starts), or that old run when sideline people are off. slSubOff (slReset, a change of possession on a mirrored view) = the old units' stand-ins
+// (fgExit, like a kick's) jog off from where they stood, the world mirrored under them like slRemap; their bench stays empty (SL.U bits held, SL.uPend) until a unit's
+// last man is there (slSubTick: there = gone, the bench man shows). The snap never waits for them (fmTo.tov); it clears fgExit, and the bits go with it
+function slSubTo(x0, un, s, j, n, from) {
+  const D = SIDELINE.sub, old = { x: x0, y: leaveEdge() };
+  if (!SL.on || !SL.cast) return old;
+  const t = { x: (SIDELINE.benchAt[un - 1] + ((j | 0) - ((n || 1) - 1) / 2) * D.spread) * YL, y: slSide(s, D.d) };
+  if (from && Math.hypot(t.x - from.x, t.y - from.y) > Math.hypot(old.x - from.x, old.y - from.y)) return old;
+  if (from) from.slArr = { x: t.x, y: t.y };
+  return t;
+}
+function slSubOff(un) {
+  SL.subQ = [];
+  const D = SIDELINE.sub; if (!D.turnover || !qb || !Array.isArray(ols)) return false;
+  const oldU = SL.U, units = [[[qb, rb, ...ols, ...recs], 1, oldU & 1 ? 0 : 1, oldU & 1 ? 1 : 4], [[...dl, ...back7], 2, oldU & 2 ? 0 : 1, oldU & 2 ? 2 : 8]];
+  for (const [men, u, s, bit] of units) {
+    if (un & bit) continue;   // (that unit is still out there)
+    const list = men.filter(p => p && !p.slOut && !p.coach), n = list.length;
+    list.forEach((p, j) => {
+      if (SL.subQ.length >= D.maxN) return;
+      const x = FIELD - p.x, y = p.y; if (slOffView(p.x, y)) return;   // (nobody sees him: he is just gone. The camera has not been mirrored yet: tested where he stood)
+      const g = Object.assign({}, p, { x, y, team: p.team === 'off' ? 'def' : 'off', face: -(p.face || 1), hasBall: false, action: null, act: null, cel: null, coast: null, celWalk: null, fgTo: null,
+        vx: 0, vy: 0, moving: false, armsUp: false, slU: bit, slDgP: -1 });
+      g.fmTo = Object.assign(slSubTo(x, u, s, j, n, null), { leave: true, tov: true }); g.slArr = { x: g.fmTo.x, y: g.fmTo.y };
+      SL.subQ.push(g);
+    });
+  }
+  if (SL.subQ.length) SL.uPend = 1;
+  return SL.subQ.length > 0;
+}
+function slSubTake() { const q = SL.subQ || []; SL.subQ = []; return q; }   // (reset: becomes fgExit once the new players are placed)
+function slSubTick() {   // (slTick, host) arrivals, and each unit's bench showing again once its last man is off
+  const A = SIDELINE.sub.arrive * YD; let held = 0, gone = false;
+  for (const g of fgExit) { if (!g.slArr) continue; if (Math.hypot(g.x - g.slArr.x, g.y - g.slArr.y) < A) { g.slGone = 1; gone = true; } else held |= g.slU | 0; }
+  if (gone) fgExit = fgExit.filter(g => !g.slGone);
+  if (SL.uPend) { const u = slUnits() | held; if (u !== SL.U) slEvent(-1, 6, u); if (!held) SL.uPend = 0; }
 }
 const SL_X3 = new Float64Array(4);
 const slCrewT = L => Math.min(SIDELINE.walkMax, 1.5 * L / (SIDELINE.crewSpeed * YD));
@@ -1264,16 +1460,28 @@ function slOffCam(s, x) {   // is a spot on sideline s off camera (the view's re
   if (x < camX - half || x > camX + half) return true;
   return s ? camY + (H - FIELD_BOT - vc) / zc < FW - 3 * YD : camY - (vc - TOP_BAR) / zc > YD;
 }
-function slCrewGo(snap) {   // pole A at the line to gain, pole B 10 yd back, the box on the line of scrimmage showing the down, the judge beside it (goal to go: poles parked behind the box)
+const slPoleOff = P => SIDELINE.poleHand * S * FIGURE.grow * P.z;   // px from a holder's feet to his stick
+// The STICKS mark the spots (each holder stands beside his): the front chain stick on the line to gain, the rear one 10 yd behind it (the start of the series), the box's
+// stick on the line of scrimmage showing the down, the judge beside it. Goal to go: the front stick stands on the goal line, the rear one where the series began
+// (SL.s0, kept at each first down; the chain is only drawn while they are 6-11 yd apart). cut = the view itself turned round: everyone is simply put there.
+// Otherwise nobody ever jumps on camera: a man who has to appear (after a kick) walks in from just past the screen's edge.
+function slCrewGo(snap, cut) {
   const C = SL.cast, ppl = C.people, now = SL.now, box = slClampX(los), gtg = lineToGain >= FIELD - 1, jd = C.jd | 0;
-  SL_X3[0] = gtg ? slClampX(box - SIDELINE.park * YL) : slClampX(lineToGain);
-  SL_X3[1] = gtg ? slClampX(box - (SIDELINE.park + 1.4) * YL) : slClampX(lineToGain - 10 * YL);
+  if (down === 1 || SL.s0 == null || SL.s0 > los + 1 || SL.s0 < lineToGain - 10.5 * YL) SL.s0 = los;
+  SL_X3[0] = slClampX(lineToGain);
+  SL_X3[1] = gtg ? slClampX(Math.min(SL.s0, lineToGain - 2 * YL)) : slClampX(lineToGain - 10 * YL);
   SL_X3[2] = box; SL_X3[3] = slClampX(box - 1.5 * YL);
   for (let q = 0; q < 4; q++) {
     if (q === 3 && !jd) break;
-    const i = q < 3 ? q : jd, P = ppl[i], tx = SL_X3[q], ty = P.hy, d1 = i === 2 ? down : 0, fe = q >= 2 || box >= tx - YL ? 1 : -1;
+    const i = q < 3 ? q : jd, P = ppl[i], sx = SL_X3[q], ty = P.hy, d1 = i === 2 ? down : 0, fe = q >= 2 || box >= sx - YL ? 1 : -1;
+    const tx = q < 3 ? sx - fe * slPoleOff(P) : sx;   // (the stick on the spot, the man beside it)
     let tp = snap;
     if (!tp) { slWhere(P, SL.W[i], null, now); tp = slOffCam(P.s, SL_P.x) && slOffCam(P.s, tx) && Math.abs(tx - SL_P.x) > YD; }   // (nobody can see where he is or where he is going: no walk, one event)
+    if (tp && !cut && !slOffCam(P.s, tx)) {   // he has to appear where the camera is looking: in from the nearer edge of the picture, at a jog
+      const half = (W / 2 + PAD) / camZ() + (SIDELINE.crewTp + 1) * YD, ex = tx < camX ? camX - half : camX + half, L = Math.abs(tx - ex);
+      slEvent(i, 0, { fx: ex, fy: ty, tx, ty, t0: now, T: slCrewT(L), L, d0: d1, d1, fs: tx > ex ? 1 : -1, fe, rt: 0 });
+      continue;
+    }
     if (tp) { slEvent(i, 0, { fx: tx, fy: ty, tx, ty, t0: now, T: 0, L: 0, d0: d1, d1, fs: fe, fe, rt: 0, tp: 1 }); continue; }
     const fx = SL_P.x, fy = SL_P.y, d0 = SL_P.dig, L = Math.hypot(tx - fx, ty - fy);
     if (L < 0.05 * YD && d0 === d1) continue;
@@ -1290,9 +1498,13 @@ function slFreeze() {   // the snap: any walk still under way stops where it is 
   if (!SL.cast || (ONL.on && ONL.guest)) return;
   if (SL.xt) SL.xt.live = true;
   const ppl = SL.cast.people, now = SL.now;
+  SL.hp = [];   // (no player steers once the ball is live)
+  for (let i = 0; i < ppl.length; i++) { const h = SL.H[i]; if (h && h.k === 1 && now - h.t0 < slHitLen(h)) { slWhere(ppl[i], SL.W[i], h, now); if (slOffView(SL_P.x, SL_P.y)) slEvent(i, 2, null); } }   // (a knockdown nobody can see is simply over)
   for (let i = 0; i < ppl.length; i++) {
     const w = SL.W[i]; if (!w || w.pa || ppl[i].k === SLK.CAM || now >= (w.rt ? w.rt + w.T : w.t0 + w.T)) continue;   // (an injury exit keeps going: see slExitTick; the cameramen work through the play)
     slWhere(ppl[i], w, null, now); const d = SL_P.dig, f = SL_P.f;
+    if (ppl[i].k === SLK.TVOFF) { slTvHome(i, ppl[i]); continue; }   // (the TV official never stays out on the field for a snap)
+    if (w.hlp) { if (slOffView(SL_P.x, SL_P.y)) slEvent(i, 0, { fx: w.fx, fy: w.fy, tx: w.fx, ty: w.fy, t0: now, T: 0, L: 0, d0: d, d1: d, fs: w.fs, fe: w.fs, rt: 0, tp: 1 }); continue; }   // (a help-up walker: home at once off camera, else he finishes)
     slEvent(i, 0, { fx: SL_P.x, fy: SL_P.y, tx: SL_P.x, ty: SL_P.y, t0: now, T: 0, L: 0, d0: d, d1: d, fs: f, fe: f, rt: 0 });
   }
 }
@@ -1303,26 +1515,91 @@ function slTick(dt) {   // update(): the clock (one number), and hiding the crew
   if (SL.cast && !SL.crewHid && slCrewHide()) { SL.crewHid = true; slEvent(-1, 3, 0); }
   if (SL.xt) slExitTick();
   if (SL.cast && SL.cm.length) slCamTick();
+  if (SL.cast && SL.on && (SL.uPend || fgExit.length)) slSubTick();
+  if (SL.cast && SL.on) { if (!(SL.now < SL.lvT && SL.now > SL.lvT - 5)) slCrewLive(); if (!(SL.now < SL.avT && SL.now > SL.avT - 5)) slAvoid(); }
+}
+// during a play the box man (and the judge) go with a big gain: one ordinary walk record each, re-aimed as the ball gets further on. The chain sticks stay until the play is over
+function slCrewLive() {
+  const A = SIDELINE.live, now = SL.now; SL.lvT = now + A.think;
+  if (!SL.crewOn || SL.crewHid || state !== 'run' || typeof ball === 'undefined' || !ball) return;
+  const bx = slClampX(ball.x); if (bx < los + A.gain * YL) return;
+  const ppl = SL.cast.people, jd = SL.cast.jd | 0;
+  for (let q = 2; q < 4; q++) {
+    if (q === 3 && !jd) break;
+    const i = q === 2 ? 2 : jd, P = ppl[i], w = SL.W[i], h = SL.H[i];
+    if (h && now - h.t0 < slHitLen(h)) continue;
+    const tx = q === 2 ? bx - slPoleOff(P) : slClampX(bx - 1.5 * YL);
+    if (w && !w.pa && Math.abs(w.tx - tx) < A.step * YL && w.tx > los + YL) continue;   // (already heading about there)
+    slWhere(P, w, null, now);
+    const L = Math.abs(tx - SL_P.x); if (L < YL) continue;
+    slEvent(i, 0, { fx: SL_P.x, fy: SL_P.y, tx, ty: P.hy, t0: now, T: 1.5 * L / (SIDELINE.crewSpeed * YD), L, d0: SL_P.dig, d1: SL_P.dig, fs: 1, fe: 1, rt: 0 });
+  }
+}
+// avoidance: anyone on a sideline (crew, bench, staff, cheerleaders) who sees a player coming his way steps / hops clear before he gets there: an ordinary hit
+// record of kind 2 (hop aside, wait, walk back) marked av, so it is taped and sent like every other one. Too late = slCollide still knocks him down
+function slAvoid() {
+  const A = SIDELINE.avoid, now = SL.now; SL.avT = now + A.think;
+  if (state === 'pre' || state === 'done' || state === 'sim') return;
+  slPlayers(slAvoidP);
+}
+function slAvoidP(p) {
+  if (!p || p.slOut) return;
+  const A = SIDELINE.avoid, vy = p.vy || 0, vx = p.vx || 0, s = vy > 0 ? 1 : 0;
+  if ((s ? vy : -vy) < A.v * YD) return;   // (not heading at a sideline)
+  const edge = s ? Y_MAX : Y_MIN, toEdge = s ? edge - p.y : p.y - edge;
+  if (toEdge > A.band * YD) return;
+  const tc = toEdge > 0 ? toEdge / (s ? vy : -vy) : 0; if (tc > A.ahead) return;   // (he will not get there soon)
+  const C = SL.cast, ppl = C.people, now = SL.now, e = SL_VM.get(C), mt = e ? e.mt : 9, R = A.r * YD;
+  for (let i = SL.crewOn ? 0 : 3; i < ppl.length; i++) {
+    const P = ppl[i]; if (P.s !== s || P.rail || P.k === SLK.CAM || slXk(P)) continue;
+    if (i < 3 && s !== C.cs) continue;
+    if ((P.un && (SL.U >> (P.s * 2 + P.un - 1)) & 1) || (P.tier | 0) > mt) continue;
+    const h = SL.H[i]; if (h && now - h.t0 < Math.max(SIDELINE.hitCool, slHitLen(h))) continue;
+    const w = SL.W[i]; if (w && w.pa) continue;
+    if (Math.abs(P.hx - p.x) > 12 * YD && !w) continue;   // (cheap reject: nowhere near)
+    slWhere(P, w, null, now);
+    const d = Math.abs(SL_P.y - edge) + Math.max(0, toEdge), tt = d / Math.hypot(vx, vy), cx = p.x + vx * tt;   // (where he crosses this man's row)
+    if (tt > A.ahead + 0.5 || Math.abs(cx - SL_P.x) > R) continue;
+    const side = SL_P.x >= cx ? 1 : -1, k = (1 - Math.abs(cx - SL_P.x) / R) * 0.5 + 0.5;
+    const dx = side * A.hop * YD * k, dy = (s ? 1 : -1) * A.back * YD * k, L = Math.hypot(dx, dy);
+    slEvent(i, 2, { t0: now + A.react[0] + Math.random() * (A.react[1] - A.react[0]), dx, dy, k: 2, r: side * P.f > 0 ? -1 : 1, L, av: 1 });
+  }
 }
 // the cameramen think (host only, a few times a second each, on their own beat): one aim record when the ball has moved off their aim (the camera turns late and
 // catches up: slAim), one walk record when it has drifted out of their arc (a slow walk / the dolly's slower roll to a spot short of level with it). Nothing else is kept
 function slCamTick() {
   const now = SL.now, M = CAM_MAN, ppl = SL.cast.people, cm = SL.cm, T = SL.cmT;
   if (typeof ball === 'undefined' || !ball) return;
+  const dB = now - (SL.bT || 0); if (dB > 0.05) { SL.bV = dB < 1 ? (ball.x - (SL.bX || 0)) / dB : 0; SL.bX = ball.x; SL.bT = now; }   // (the ball's speed along the field, for the end-zone crews)
   for (let j = 0; j < cm.length; j++) {
     if (now < T[j]) continue;
     T[j] = now + M.think * (0.7 + 0.6 * Math.random());
-    const i = cm[j], P = ppl[i], w = SL.W[i], a = SL.A[i], h = SL.H[i];
+    const i = cm[j], P = ppl[i], w = SL.W[i], h = SL.H[i];
     if (h && now - h.t0 < slHitLen(h)) continue;   // (knocked about: he sorts himself out first)
     slWhere(P, w, null, now);
-    const x = SL_P.x, bx = slClampX(ball.x);
+    const x = SL_P.x, y = SL_P.y, bx = slClampX(ball.x);
+    if (P.ez) slEzThink(i, P, now, SL.bV || 0);
+    const a = SL.A[i];
     if (!a || now >= a.t0 + a.T) {   // (his last turn is done: is the ball still in the picture?)
-      const cur = a ? a.a1 : P.s ? -1.5708 : 1.5708;
-      let d = Math.atan2(ball.y - (ball.z || 0) - (SL_P.y - (P.up || 0) - 16 * S), ball.x - x) + P.ke - cur;
+      const cur = a && a.a1 !== undefined ? a.a1 : slAim0(P);
+      let d = Math.atan2(ball.y - (ball.z || 0) - (y - (P.up || 0) - 16 * S), ball.x - x) + P.ke - cur;
       while (d > Math.PI) d -= SL_PI2; while (d < -Math.PI) d += SL_PI2;
-      if (d > M.dead || d < -M.dead) slEvent(i, 1, { t0: now + P.kr, a0: cur, a1: cur + d, T: P.ks * (0.6 + Math.min(1, (d < 0 ? -d : d) / 1.2)) });
+      if (d > M.dead || d < -M.dead) {
+        const o = { t0: now + P.kr, a0: cur, a1: cur + d, T: P.ks * (0.6 + Math.min(1, (d < 0 ? -d : d) / 1.2)) };
+        if (a && a.id !== undefined && a.r0 !== undefined && now < a.r0 + SLR[a.id].secs) { o.id = a.id; o.r0 = a.r0; }   // (a kneel / duck under way goes on)
+        slEvent(i, 1, o);
+      }
     }
-    if (w && now < w.t0 + w.T) continue;   // (still on his way)
+    if (w && now < (w.rt ? w.rt + w.T : w.t0 + w.T)) continue;   // (still on his way)
+    if (P.ez) {   // an end-zone man steps across (in y), short of level with the ball, within his own stretch
+      const E = M.ez, off = ball.y - y;
+      if (off > E.arc * YD || off < -E.arc * YD) {
+        let ty = ball.y - (off > 0 ? 1 : -1) * E.arc * 0.5 * YD; ty = ty < P.x0 ? P.x0 : ty > P.x1 ? P.x1 : ty;
+        const L = ty > y ? ty - y : y - ty;
+        if (L > 0.6 * YD) slEvent(i, 0, { fx: x, fy: y, tx: x, ty, t0: now + P.kd, T: 1.5 * L / (E.walk * YD), L, d0: 0, d1: 0, fs: 1, fe: 1, rt: 0 });
+      }
+      continue;
+    }
     const off = bx - x;
     if (off > M.arc * YL || off < -M.arc * YL) {
       let tx = bx - (off > 0 ? 1 : -1) * P.co * YL; tx = tx < P.x0 ? P.x0 : tx > P.x1 ? P.x1 : tx;
@@ -1331,6 +1608,37 @@ function slCamTick() {
     }
   }
 }
+// the TV timeout official (host; callTimeout / nextPeriod): one round-trip walk record a few yd onto the field (SIDELINE.tvOut), his tvSignal while he stands there.
+// A snap sends him straight back (slFreeze -> slTvHome: a quick walk, or put home when nobody can see him). Off at performance level 2
+function slTvWalk() {
+  const C = SL.cast; if (!C || !SL.on || (ONL.on && ONL.guest) || (rec && rec.replaying) || liteLevel() >= 2) return;
+  const i = C.tv | 0, P = C.people[i]; if (!P || P.k !== SLK.TVOFF || C.tv < 0) return;
+  const now = SL.now, w = SL.W[i]; if (w && now < (w.rt ? w.rt + w.T : w.t0 + w.T)) return;
+  const ty = P.s ? Y_MAX - SIDELINE.tvOut * YD : Y_MIN + SIDELINE.tvOut * YD, L = Math.abs(ty - P.hy), T = slWalkT(L), t0 = now + 0.4;
+  slEvent(i, 0, { fx: P.hx, fy: P.hy, tx: P.hx, ty, t0, T, L, d0: 0, d1: 0, fs: P.f, fe: P.f, rt: t0 + T + SIDELINE.tvHold });
+  slEvent(i, 1, { id: SLRI.tvSignal, t0: t0 + T });
+}
+function slTvHome(i, P) {   // (SL_P = where he is now)
+  const now = SL.now, x = SL_P.x, y = SL_P.y, L = Math.hypot(P.hx - x, P.hy - y);
+  if (slOffView(x, y) && slOffView(P.hx, P.hy)) { slEvent(i, 0, { fx: P.hx, fy: P.hy, tx: P.hx, ty: P.hy, t0: now, T: 0, L: 0, d0: 0, d1: 0, fs: P.f, fe: P.f, rt: 0, tp: 1 }); return; }
+  slEvent(i, 0, { fx: x, fy: y, tx: P.hx, ty: P.hy, t0: now, T: slWalkT(L) * 0.6, L, d0: 0, d1: 0, fs: P.f, fe: P.f, rt: 0 });
+  slEvent(i, 1, null);
+}
+// end-zone crews' reactions (host, from slCamTick; SL_P = where he is): a carrier heading into their end zone = down on a knee, then a backpedal when he is close;
+// a field goal / PAT flying at them = duck. Each at most once a play (SL.ezR bits, cleared in slReset). A routine rides on his aim record (r0), so the camera keeps turning
+function slEzThink(i, P, now, bvx) {
+  const E = CAM_MAN.ez, e = P.ez, toLine = ((e < 0 ? -ENDZONE : FIELD + ENDZONE) - ball.x) * e, R = SL.ezR || (SL.ezR = {}), rk = () => E.react[0] + Math.random() * (E.react[1] - E.react[0]);
+  let f = R[i] | 0;
+  if (state === 'kick' && !(f & 4) && bvx * e > E.duckV * YD && toLine < E.duckX * YL) { R[i] = f | 4; slCamDo(i, P, 'camDuck', now + rk()); return; }
+  if ((state === 'run' || state === 'picked' || state === 'kickoff') && bvx * e > E.run * YD && Math.abs(ball.y - SL_P.y) < E.runY * YD) {
+    if (!(f & 1) && toLine < E.runAt * YL) { R[i] = (f |= 1); slCamDo(i, P, 'camKneel', now + rk()); }
+    if (!(f & 2) && toLine < E.backAt * YL) { R[i] = f | 2; const x = SL_P.x, y = SL_P.y, L = E.backYd * YD; slEvent(i, 0, { fx: x, fy: y, tx: x + e * L, ty: y, t0: now + rk() * 0.5, T: 0.45, L, d0: 0, d1: 0, fs: 1, fe: 1, rt: now + E.backT }); }
+  }
+}
+function slCamDo(i, P, id, r0) {   // a cameraman's routine on top of his current aim (one anim record)
+  const a = SL.A[i], has = a && a.a1 !== undefined, cur = has ? a.a1 : slAim0(P);
+  slEvent(i, 1, has ? { t0: a.t0, a0: a.a0, a1: a.a1, T: a.T, id: SLRI[id], r0 } : { t0: r0, a0: cur, a1: cur, T: 0.01, id: SLRI[id], r0 });
+}
 function slSetting() {   // settings: SIDELINE cycled (applies next frame; OFF frees the cast)
   if (ONL.on && ONL.guest) { SL.on = !!SL.cast && (SETTINGS.sideline || 'ALL') !== 'OFF'; return; }
   SL.on = slWanted() && typeof game !== 'undefined' && !!game && !game.over && !results;
@@ -1338,23 +1646,27 @@ function slSetting() {   // settings: SIDELINE cycled (applies next frame; OFF f
   if (!SL.cast) { slSetup(); slCrewGo(true); SL.fresh = false; }
 }
 // --- collisions (update, after the goal-post pads): an out-of-bounds player is slid out of a person's oval; the person reacts (host only, one event)
-function slCollide() {
+function slCollide(dt) {
   if (!SL.cast || (rec && rec.replaying) || (ONL.on && ONL.guest)) return;
   const p0 = SIDELINE.prof ? performance.now() : 0;
-  SL.cv = slVis(SL.cast, liteLevel()); SL.ce = SL_VM.get(SL.cast); SL.y0 = Y_MIN - SIDELINE.gap * YD; SL.y1 = Y_MAX + SIDELINE.gap * YD;
+  SL.dt = dt || 0; SL.dead = (state === 'done' || state === 'pre') && SL.dt > 0;   // (players only ever steer round people in a dead ball)
+  const g = (SIDELINE.gap - (SL.dead ? SIDELINE.dodge.soft : 0)) * YD;
+  SL.cv = slVis(SL.cast, liteLevel()); SL.ce = SL_VM.get(SL.cast); SL.y0 = Y_MIN - g; SL.y1 = Y_MAX + g;
   slPlayers(slColP);
   if (SL.xt && SL.xt.cart >= 0) slPlayers(slCartP);
+  if (SL.hp && SL.hp.length) slHelpTick();
   if (p0) SL_PROF.c += performance.now() - p0;
 }
 function slColP(p) {
   if (!p) return;
-  const y = p.y; let s;
+  const y = p.y, C = SL.cast; let s;
+  if (C.ez && (p.x < -ENDZONE - SIDELINE.gap * YD || p.x > FIELD + ENDZONE + SIDELINE.gap * YD) && SL.ce.mt >= 0) { const ez = C.ez; for (let j = 0; j < ez.length; j++) slHitTest(p, ez[j], C.people[ez[j]]); }   // (past an end line: the end-zone crews)
   if (y < SL.y0) s = 0; else if (y > SL.y1) s = 1; else return;   // (the broadphase: nobody inside `gap` of the sideline can touch anyone)
-  const C = SL.cast, ppl = C.people, e = SL.ce, pr = C.props;
+  const ppl = C.people, e = SL.ce, pr = C.props;
   if (SL.crewOn && s === C.cs) for (let i = 0; i < 3; i++) slHitTest(p, i, ppl[i]);
   const b = Math.floor((p.x - e.bx) / e.bw);   // (only what is in his bucket: a handful of people / props, not the sideline)
   if (b >= 0 && b < e.nb) { const L = e.B[s][b]; for (let j = 0; j < L.length; j++) { const c = L[j]; if (c >= 0) slHitTest(p, c, ppl[c]); else slPropTest(p, -c - 1, pr[-c - 1]); } }
-  const rm = SL.rm; for (let j = 0; j < rm.length; j++) { const i = rm[j]; if (ppl[i] && ppl[i].s === s) slHitTest(p, i, ppl[i]); }   // (anyone off his home spot: a walk, a cameraman)
+  const rm = SL.rm; for (let j = 0; j < rm.length; j++) { const i = rm[j]; if (ppl[i] && ppl[i].s === s && !ppl[i].ez) slHitTest(p, i, ppl[i]); }   // (anyone off his home spot: a walk, a cameraman)
 }
 function slPropTest(p, j, P) {   // a prop's collider (oval, or a box): he is slid off it; it rocks, or tips over when he hits it fast
   const r = SL.R[j]; if (r && r.k === 3 && SL.now >= r.t0 && SL.now < r.t1) return;
@@ -1382,15 +1694,33 @@ function slHitTest(p, i, P) {
   if ((P.un && (SL.U >> (P.s * 2 + P.un - 1)) & 1) || (P.tier | 0) > SL.ce.mt || (P.k === SLK.JUDGE && !SL.crewOn)) return;   // (out on the field / not shown at this performance level / away with the crew)
   slWhere(P, SL.W[i], SL.H[i], SL.now);
   const c = SIDELINE.col[P.k] || SIDELINE.col[3], b0 = SIDELINE.body, z = FIGURE.grow * P.z, cx = SL_P.x, cy = SL_P.y, f = SL_P.f;
-  if (slPush(p, P.s, cx, cy, (c.along * z + b0) * YD, (c.across * z + b0) * YD)) { slBump(i, P, slSp, -slNx, -slNy); return; }
-  if (P.k <= SLK.BOX) { const r = (SIDELINE.poleR + b0) * YD; if (slPush(p, P.s, cx + f * SIDELINE.poleX * YD, cy, r, r)) slBump(i, P, slSp, -slNx, -slNy); }   // (the thin pole in front of him)
+  if (SL.dead) slSteer(p, cx, cy, (c.along * z + b0) * YD, (c.across * z + b0) * YD);
+  if (slPush(p, P.ez ? -1 : P.s, cx, cy, (c.along * z + b0) * YD, (c.across * z + b0) * YD)) { slBump(i, P, slSp, -slNx, -slNy, p); return; }
+  if (P.k <= SLK.BOX) { const r = (SIDELINE.poleR + b0) * YD; if (slPush(p, P.s, cx + f * slPoleOff(P), cy, r, r)) slBump(i, P, slSp, -slNx, -slNy, p); }   // (the thin pole in front of him)
+}
+// dead ball: a light steer off a person before he is reached (eased out of a soft ring round the collider, his speed into him trimmed), if he wins his roll this play
+function slSteer(p, cx, cy, a, b) {
+  const D = SIDELINE.dodge, s = D.soft * YD, A = a + s, B = b + s, dx = p.x - cx, dy = p.y - cy, q = dx * dx / (A * A) + dy * dy / (B * B);
+  if (q >= 1 || !slDodgeOK(p)) return;
+  const l = Math.sqrt(q) || 1e-6, e = 1 - l;
+  let nx = dx / (A * A), ny = dy / (B * B); const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
+  const st = Math.min(D.push * YD * SL.dt * (0.4 + 2 * e), s * e);
+  p.x += nx * st; p.y += ny * st;
+  const vn = (p.vx || 0) * nx + (p.vy || 0) * ny;
+  if (vn < 0) { const k = Math.min(1, (1 - D.slow) * (0.5 + e)); p.vx -= vn * nx * k; p.vy -= vn * ny * k; }
+}
+function slDodgeOK(p) {   // (rolled once a play, the first time he comes near someone: agility, speed)
+  if (p.slDgP === runPid) return p.slDgOk;
+  const D = SIDELINE.dodge, sp = Math.hypot(p.vx || 0, p.vy || 0) / YD, agi = typeof mlAgi === 'function' ? mlAgi(p) : 1;
+  const c = Math.max(D.min, Math.min(D.max, D.ok + D.agi * (agi - 1) - D.fast * Math.max(0, sp - 4) + (sp < 4 ? D.walk : 0)));
+  p.slDgP = runPid; p.slDgOk = Math.random() < c; return p.slDgOk;
 }
 let slNx = 0, slNy = 0, slSp = 0;   // (the last push: its normal, out of the thing, and the player's speed going in)
 function slPush(p, sd, cx, cy, a, b) {
   const dx = p.x - cx, dy = p.y - cy, q = dx * dx / (a * a) + dy * dy / (b * b);
   if (q >= 1) return false;
   const l = Math.sqrt(q) || 1e-6; let u = dx / a / l, w = dy / b / l;
-  if (sd ? w < 0 : w > 0) {   // (he is on the field side of it: slide along the sideline only, never toward the field)
+  if (sd >= 0 && (sd ? w < 0 : w > 0)) {   // (he is on the field side of it (sd -1: an end-zone man, pushed straight out): slide along the sideline only, never toward the field)
     const wy = dy / b; u = dx >= 0 ? 1 : -1; w = 0;
     p.x = cx + u * Math.sqrt(Math.max(0, 1 - wy * wy)) * a;
   } else { p.x = cx + u * a; p.y = cy + w * b; }
@@ -1402,21 +1732,85 @@ function slPush(p, sd, cx, cy, a, b) {
   slNx = nx; slNy = ny; slSp = sp;
   return true;
 }
-function slBump(i, P, sp, ax, ay) {   // the person's reaction: away from the player and never toward the field
+function slBump(i, P, sp, ax, ay, p) {   // the person's reaction: away from the player and never toward the field
   const h = SL.H[i], now = SL.now;
-  if (h && now - h.t0 < Math.max(SIDELINE.hitCool, slHitLen(h))) return;
-  if (P.s ? ay < 0 : ay > 0) ay = 0;
+  if (h && now - h.t0 < Math.max(SIDELINE.hitCool, slHitLen(h)) && !(h.av && now - h.t0 < SIDELINE.avoid.late)) return;   // (a hop that began too late: he is hit anyway)
+  if (P.ez) { if (ax * P.ez < 0) ax = 0; } else if (P.s ? ay < 0 : ay > 0) ay = 0;
   let l = Math.hypot(ax, ay); if (l < 1e-6) { ax = -P.f; ay = 0; l = 1; }
   ax /= l; ay /= l;
   if (P.rail) return;   // (the rail cart just stops him)
-  const fast = sp >= SIDELINE.bumpV * YD, k = P.k === SLK.CHEER || P.bn >= 0 ? 2 : P.k <= SLK.BOX ? (fast ? 1 : 3) : (fast ? 1 : 0), d = P.k === SLK.CHEER ? 0 : SIDELINE.hitD[k] * YD;   // (cheerleaders and men sitting down hop aside)
-  slEvent(i, 2, { t0: now, dx: ax * d, dy: ay * d, k, r: ax * P.f > 0 ? -1 : 1, L: d });
+  const fast = sp >= SIDELINE.bumpV * YD, ch = P.k === SLK.CHEER, k = ch ? (fast ? 1 : 2) : P.bn >= 0 ? 2 : P.k <= SLK.BOX ? (fast ? 1 : 3) : (fast ? 1 : 0), d = ch ? 0 : SIDELINE.hitD[k] * YD;   // (men sitting down hop aside; a cheerleader hops, or goes down on her box when he comes in fast)
+  const hr = { t0: now, dx: ax * d, dy: ay * d, k, r: ax * P.f > 0 ? -1 : 1, L: d };
+  if (k === 1 && !ch) slHelpPick(i, P, p, hr);   // (who helps him up: kept on the record)
+  slEvent(i, 2, hr);
+  if (ch && k === 1) { const ppl = SL.cast.people; for (let j = 0; j < ppl.length; j++) if (j !== i && ppl[j].g === P.g) slEvent(j, 1, { id: SLRI.cheerHelp, t0: now + 0.35 + Math.random() * 0.15 }); }   // (her squad helps her up)
   if (k === 1) slThud();
 }
-function slThud() {   // a knockdown: the tackle clip, quietly, at most once every sfxCool s (no new audio)
+function slThud() {   // a knockdown: the tackle clip, quietly, at most once every sfxCool s (no new audio), and a small ooh from the crowd
   if (SL.now - SL.sfxT < SIDELINE.sfxCool && SL.now >= SL.sfxT) return;
   SL.sfxT = SL.now;
   try { clipSfx(pickOf(TACKLE_CLIPS.reg), CLIP_VOL.reg * SIDELINE.sfxVol); } catch (e) {}
+  try { oohSfx(SIDELINE.help.ooh); } catch (e) {}
+}
+// --- help-up (host): the knockdown's outcome goes on its hit record (h.hl = { o, j, pt }: o 1 a player helps him up, 2 sorry (a swerve by), 3 ignored, 4 a sideline man
+// walks over (person j: an ordinary walk record + his cheerHelp), 5 up on his own; pt = when he is pulled up; h.dw = extra s on the turf), so tapes and the guest have it.
+// A helping player gets a short steering target (SL.hp, host only; slHelpTick, dead ball only). The snap never waits: slFreeze finishes it off camera
+function slHurry() {
+  const H = SIDELINE.help, g = game; if (!g) return false;
+  const late = g.secs <= lateS(H.late) && (g.quarter === 2 || (g.quarter >= 4 && Math.abs(g.blue - g.red) <= H.close));
+  return late || !!(rec && rec.big) || (typeof celebBusy === 'function' && celebBusy());
+}
+function slHelpPick(i, P, p, h) {
+  const H = SIDELINE.help; if (!p || !p.team || liteLevel() >= 2 || (ONL.on && ONL.guest)) return;
+  const neutral = P.ez || P.k <= SLK.BOX || P.k === SLK.JUDGE || P.k === SLK.CAM || P.k === SLK.PHOTO || P.k === SLK.EVENT || P.k === SLK.GROUNDS || P.k === SLK.TVOFF || P.k === SLK.GUARD || P.k === SLK.REPORTER;
+  const own = ((p.team === 'off') === (MATCH.home === 'you')) === (P.s === 0), busy = !!(p.cel || p.celWalk || p.coast || p.slOut);
+  const W = H.w, w = [busy ? 0 : W.help * (neutral ? H.neutral : own ? 1 : H.opp), W.sorry * (busy ? 0.5 : 1), W.ignore * (slHurry() ? H.hurry : 1), W.other, W.self];
+  let r = Math.random() * w.reduce((a, b) => a + b, 0), o = 0;
+  while (o < 4 && r >= w[o]) r -= w[o++];
+  o++;
+  const now = SL.now, x = SL_P.x + h.dx, y = SL_P.y + h.dy, pt0 = h.t0 + SL_TF + SIDELINE.downT;   // (where he ends up on the turf / his normal getup)
+  if (o === 4) {
+    const j = slHelper(i, P, x, y, pt0 + H.dwMax);
+    if (j) { const dw = Math.max(0, Math.min(H.dwMax, j.at + 1.3 - pt0)); h.dw = dw; h.hl = { o, j: j.i, pt: pt0 + dw }; slEvent(j.i, 1, { id: SLRI.cheerHelp, t0: pt0 + dw - 1.3 }); (SL.hp || (SL.hp = [])).push({ p: null, pt: pt0 + dw, end: pt0 + dw + 0.5 }); return; }
+    o = 5;
+  }
+  if (o === 1) {
+    h.dw = H.dwHelp; const pt = pt0 + h.dw, dx = p.x - x, dy = p.y - y, l = Math.hypot(dx, dy) || 1;
+    h.hl = { o, j: -1, pt };
+    (SL.hp || (SL.hp = [])).push({ p, x: x + dx / l * 0.9 * YD, y: y + dy / l * 0.9 * YD, fx: x, pt, end: pt + 0.6 });
+    return;
+  }
+  if (o === 2) { const dx = p.x - x, dy = p.y - y, l = Math.hypot(dx, dy) || 1; (SL.hp || (SL.hp = [])).push({ p, x: x + dx / l * 1.7 * YD, y: y + dy / l * 1.7 * YD, fx: x, pt: 0, end: now + 0.7, sorry: 1 }); }
+  h.hl = { o, j: -1, pt: pt0 };
+}
+function slHelper(i, P, x, y, by) {   // the nearest free sideline man who can walk over in time (staff, bench men standing, trainers, water / ball boys, vests): his walk there and back
+  const C = SL.cast, ppl = C.people, H = SIDELINE.help, now = SL.now, e = SL_VM.get(C), mt = e ? e.mt : 9, ok = { [SLK.COACH]: 1, [SLK.STAFF]: 1, [SLK.TRAINER]: 1, [SLK.WATER]: 1, [SLK.BALLBOY]: 1, [SLK.KICKER]: 1, [SLK.GETBACK]: 1, [SLK.EVENT]: 1, [SLK.GUARD]: 1, [SLK.MEDIC]: 1, [SLK.MASCOT]: 1, [SLK.BENCH]: 1 };
+  let best = -1, bd = H.otherR * YD;
+  for (let j = 3; j < ppl.length; j++) {
+    const Q = ppl[j]; if (j === i || !ok[Q.k] || Q.s !== P.s || Q.ez || (Q.k === SLK.BENCH && Q.bn >= 0) || (Q.tier | 0) > mt) continue;
+    if (Q.un && (SL.U >> (Q.s * 2 + Q.un - 1)) & 1) continue;
+    const w = SL.W[j], hh = SL.H[j]; if ((w && (w.pa || now < (w.rt ? w.rt + w.T : w.t0 + w.T))) || (hh && now - hh.t0 < slHitLen(hh))) continue;
+    const d = Math.hypot(Q.hx - x, Q.hy - y); if (d < bd) { bd = d; best = j; }
+  }
+  if (best < 0) return null;
+  const Q = ppl[best]; slWhere(Q, SL.W[best], null, now);
+  const fx = SL_P.x, fy = SL_P.y, sd = fx >= x ? 1 : -1, tx = x + sd * 0.95 * YD, ty = y, L = Math.hypot(tx - fx, ty - fy), T = slWalkT(L), t0 = now + 0.25 + Math.random() * 0.2;
+  if (t0 + T > by - 1.3) return null;
+  slEvent(best, 0, { fx, fy, tx, ty, t0, T, L, d0: Q.dg, d1: Q.dg, fs: SL_P.f, fe: -sd, rt: Math.max(t0 + T, by) + 1.5, hlp: 1 });
+  return { i: best, at: t0 + T };
+}
+function slHelpTick() {   // (slCollide, host) helping players step over (dead ball only); the crowd's small cheer on the pull up
+  const H = SIDELINE.help, L = SL.hp, now = SL.now, dt = SL.dt;
+  for (let n = L.length - 1; n >= 0; n--) {
+    const e = L[n];
+    if (e.pt && !e.ch && now >= e.pt) { e.ch = 1; try { crowdPop(H.cheer); } catch (er) {} }
+    if (now > e.end) { L.splice(n, 1); continue; }
+    const p = e.p; if (!p || !SL.dead || !dt) continue;
+    const dx = e.x - p.x, dy = e.y - p.y, d = Math.hypot(dx, dy), st = Math.min(d, H.walk * YD * dt * (e.sorry ? 1.5 : 1));
+    if (d > 2) { p.x += dx / d * st; p.y += dy / d * st; p.vx = dx / d * st / dt; p.vy = dy / d * st / dt; p.moving = true; }
+    else if (!e.sorry) { p.vx = p.vy = 0; p.moving = false; }
+    p.face = e.fx >= p.x ? 1 : -1;
+  }
 }
 function slRoom(x, y) {   // celebOpenSpot: yd from (x, y) to the nearest sideline person (a body to step clear of)
   const C = SL.cast; if (!C) return 99;
@@ -1452,7 +1846,7 @@ function slSquad(s, m, happy) {
       if (lift && P.fly >= 0) { slEvent(i, 1, { id: SLRI.liftBase, t0: t0 + Tw }); continue; }   // (a base lifts from where she stands: nobody leaves the box)
       slEvent(i, 1, { id: SLRI[id], t0: t0 + (sync ? 0 : c++ * SIDELINE.stagger) });
     } else if (k === SLK.MASCOT) { if (happy) slEvent(i, 1, { id: SLRI.mascotWave, t0 }); }
-    else if ((k === SLK.COACH || k === SLK.STAFF || k === SLK.BENCH || k === SLK.TRAINER || k === SLK.WATER || k === SLK.BALLBOY || k === SLK.KICKER) && (happy || m >= 3)) {   // that side's bench (a man sitting gets up to cheer)
+    else if ((k === SLK.COACH || k === SLK.STAFF || k === SLK.BENCH || k === SLK.TRAINER || k === SLK.WATER || k === SLK.BALLBOY || k === SLK.KICKER || k === SLK.GETBACK) && (happy || m >= 3)) {   // that side's bench (a man sitting gets up to cheer)
       if (k === SLK.COACH && !happy) continue;
       const b = happy ? (k === SLK.COACH && m >= 4 ? 'coachPump' : m >= 2 && k !== SLK.COACH && k !== SLK.STAFF ? 'benchCheer' : 'clap') : 'benchDown';
       slEvent(i, 1, { id: SLRI[b], t0: t0 + Math.random() * 0.3 });
@@ -1522,7 +1916,7 @@ function slExit(p, s) {   // the call is made (he is out): hide the on-field pla
   const H = slPerson(SLK.HURT, side, p.x, 0, T, false, Math.random);
   H.hx = p.x; H.hy = p.y; H.f = p.face || 1; H.num = String(p.num == null ? '' : p.num); H.hm = T.shell || T.jersey; H.cp = ''; H.coat = 0; H.cv = '';
   if (p.look && p.look.skin) { H.cs = p.look.skin; H.cfa = p.look.skin; }
-  const ppl = C0.people.concat([H]), hi = ppl.length - 1, C = { people: ppl, cs: C0.cs, props: C0.props, jd: C0.jd, xs: C0.xs.concat([hi]) };
+  const ppl = C0.people.concat([H]), hi = ppl.length - 1, C = { people: ppl, cs: C0.cs, props: C0.props, jd: C0.jd, xs: C0.xs.concat([hi]), ez: C0.ez, tv: C0.tv };
   SL.cast = C; SL.W.push(null); SL.A.push(null); SL.H.push(null); slCap(ppl.length);
   if (rec && rec.sl && !rec.replaying && rec.sl.c === C0) rec.sl.c = C;   // (the open tape goes on with the bigger cast: same people, one more)
   if (ONL.on && ONL.host) ONL.castKey = '';
@@ -1589,10 +1983,10 @@ function slLibExit(kind) {   // the library: an exit on the stage (kind 0-2), or
   return { people: ppl, W, A, H: Hh, props, R, len, F: null };
 }
 // --- online (host-authoritative: the guest only draws). The cast carries the whole state; 'sl' messages carry each event
-function slPack() { return SL.on && SL.cast ? { p: SL.cast.people, cs: SL.cast.cs, pr: SL.cast.props, jd: SL.cast.jd, xs: SL.cast.xs, W: SL.W, A: SL.A, H: SL.H, R: SL.R, F: SL.F, U: SL.U, c: SL.crewOn, n: Math.round(SL.now * 1000) / 1000 } : null; }
+function slPack() { return SL.on && SL.cast ? { p: SL.cast.people, cs: SL.cast.cs, pr: SL.cast.props, jd: SL.cast.jd, xs: SL.cast.xs, ez: SL.cast.ez, tv: SL.cast.tv, W: SL.W, A: SL.A, H: SL.H, R: SL.R, F: SL.F, U: SL.U, c: SL.crewOn, n: Math.round(SL.now * 1000) / 1000 } : null; }
 function slUnpack(d) {
   if (!d || !d.p) { SL.cast = null; SL.on = false; return; }
-  SL.cast = { people: d.p, cs: d.cs, props: d.pr || [], jd: d.jd | 0, xs: d.xs || null }; SL.W = d.W; SL.A = d.A; SL.H = d.H; SL.R = d.R || []; SL.F = d.F || null; SL.U = d.U || 0; SL.crewOn = d.c; SL.now = d.n; SL.pn = performance.now();
+  SL.cast = { people: d.p, cs: d.cs, props: d.pr || [], jd: d.jd | 0, xs: d.xs || null, ez: d.ez || null, tv: d.tv == null ? -1 : d.tv }; SL.W = d.W; SL.A = d.A; SL.H = d.H; SL.R = d.R || []; SL.F = d.F || null; SL.U = d.U || 0; SL.crewOn = d.c; SL.now = d.n; SL.pn = performance.now();
   SL.on = (SETTINGS.sideline || 'ALL') !== 'OFF'; slCap(d.p.length);
 }
 function slNet(d) {
@@ -1605,10 +1999,11 @@ function slNet(d) {
 function slLibMake(kind, rid, o) {
   let sd = 4242;
   const rnd = () => { sd = (sd + 0x6D2B79F5) | 0; let t = Math.imul(sd ^ (sd >>> 15), 1 | sd); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-  const T = homeKit(), n = o && o.lift ? 3 : 1, people = [], W = [], A = [], H = [];
+  const T = homeKit(), n = o && (o.lift || o.help) ? 3 : 1, people = [], W = [], A = [], H = [];
   for (let j = 0; j < n; j++) { const P = slPerson(kind, 0, 0, 0, T, false, rnd); P.hx = (j - (n - 1) / 2) * (n > 1 ? 1.15 : 2.2) * YD; P.hy = 0; P.f = 1; P.stg = 0; if (kind === SLK.BENCH) P.num = '12'; if (o && o.set) Object.assign(P, o.set); people.push(P); W.push(null); A.push(null); H.push(null); }
   let len = 2.8;
-  if (o && o.hit != null) { const d = SIDELINE.hitD[o.hit] * YD; H[0] = { t0: 0.4, dx: -d, dy: 0, k: o.hit, r: 1, L: d }; len = 0.4 + slHitLen(H[0]) + 0.6; }
+  if (o && o.help) { H[1] = { t0: 0.4, dx: 0, dy: 0, k: 1, r: 1, L: 0 }; people[0].f = 1; people[2].f = -1; for (const j of [0, 2]) A[j] = { id: SLRI.cheerHelp, t0: 0.8 + j * 0.05 }; len = 0.4 + slHitLen(H[1]) + 0.8; }   // (a cheerleader down, her squad helps her up)
+  else if (o && o.hit != null) { const d = SIDELINE.hitD[o.hit] * YD; H[0] = { t0: 0.4, dx: -d, dy: 0, k: o.hit, r: 1, L: d }; len = 0.4 + slHitLen(H[0]) + 0.6; }
   else if (o && o.walk) { const L = 4 * YD, Tw = 1.5 * L / (SIDELINE.walkSpeed * YD); W[0] = { fx: -2 * YD, fy: 0, tx: 2 * YD, ty: 0, t0: 0.3, T: Tw, L, d0: 1, d1: 2, fs: 1, fe: 1, rt: 0.3 + Tw + 0.8 }; len = 0.3 + 2 * Tw + 1.4; }
   else if (o && o.lift) {
     const LB = SLR[SLRI.liftBase], Tw = 0.5;
@@ -1626,8 +2021,8 @@ const SL_LIB_SKIP = { limp: 1, helped: 1, helper: 1, lying: 1, ride: 1, rideBack
 function slLibEntries() {
   const E = [], lab = id => id.replace(/([A-Z])/g, ' $1').toUpperCase();
   const add = (label, kind, rid, o) => E.push([label, (A, B) => { A.x = B.x = 1e6; anim.sl = slLibMake(kind, rid, o); anim.len = anim.sl.len; anim.zoomK = o && o.lift ? 0.8 : 1; }]);
-  const bench = { stand: 1, crossed: 1, hips: 1, shift: 1, benchCheer: 1, benchDown: 1, sit: 1, sitDrink: 1 }, skip = { walk: 1, fall: 1, getup: 1, liftBase: 1, liftFly: 1, bump: 1, hop: 1, tilt: 1 };
-  const who = { pole: SLK.POLE, coach: SLK.COACH, sheet: SLK.STAFF, tablet: SLK.TECH, serve: SLK.WATER, ballToss: SLK.BALLBOY, kickNet: SLK.KICKER, camHold: SLK.CAM, report: SLK.REPORTER, guardScan: SLK.GUARD, judgeSig: SLK.JUDGE, mascotDance: SLK.MASCOT, mascotWave: SLK.MASCOT };
+  const bench = { stand: 1, crossed: 1, hips: 1, shift: 1, benchCheer: 1, benchDown: 1, sit: 1, sitDrink: 1 }, skip = { walk: 1, fall: 1, pulledUp: 1, towelWipe: 1, camFall: 1, photoFall: 1, mascotFlop: 1, cheerHelp: 1, getup: 1, liftBase: 1, liftFly: 1, bump: 1, hop: 1, tilt: 1 };
+  const who = { pole: SLK.POLE, coach: SLK.COACH, sheet: SLK.STAFF, tablet: SLK.TECH, serve: SLK.WATER, ballToss: SLK.BALLBOY, kickNet: SLK.KICKER, camHold: SLK.CAM, camKneel: SLK.CAM, camDuck: SLK.CAM, photoShoot: SLK.PHOTO, tvSignal: SLK.TVOFF, getBack: SLK.GETBACK, rakeIdle: SLK.GROUNDS, towelWipe: SLK.GROUNDS, report: SLK.REPORTER, guardScan: SLK.GUARD, judgeSig: SLK.JUDGE, mascotDance: SLK.MASCOT, mascotWave: SLK.MASCOT };
   for (const id of Object.keys(SL_ROUTINES)) if (!skip[id] && !SL_LIB_SKIP[id]) add(lab(id), id in who ? who[id] : bench[id] ? SLK.BENCH : SLK.CHEER, id, id === 'sheet' ? { set: { hp: 3, hs: 1 } } : null);
   add('CAMERA FLASH', SLK.CAM, 'camHold', { flash: 1 });
   add('CAMERA PAN', SLK.CAM, 'camHold', { pan: 1 }); add('CAMERA DOLLY', SLK.CAM, 'camHold', { pan: 1, dolly: 1 });
@@ -1636,6 +2031,8 @@ function slLibEntries() {
   add('CHAIN WALK', SLK.BOX, null, { walk: 1 }); add('LIFT', SLK.CHEER, null, { lift: 1 });
   for (const id of Object.keys(SL_PROPS)) if (id !== 'tentOpen' && id !== 'tentLit') E.push(['PROP: ' + lab(id), (A, B) => { A.x = B.x = 1e6; anim.sl = slLibProp(id, SL_PROPS[id].hit === 1 ? 1 : 0); anim.len = anim.sl.len; anim.zoomK = 0.8; }]);
   add('BUMP', SLK.BENCH, null, { hit: 0 }); add('KNOCKDOWN', SLK.STAFF, null, { hit: 1 }); add('HOP ASIDE', SLK.CHEER, null, { hit: 2 }); add('POLE TILT', SLK.POLE, null, { hit: 3 });
+  add('KNOCKDOWN (CAMERAMAN)', SLK.CAM, null, { hit: 1 }); add('KNOCKDOWN (PHOTOGRAPHER)', SLK.PHOTO, null, { hit: 1 }); add('KNOCKDOWN (MASCOT)', SLK.MASCOT, null, { hit: 1 }); add('KNOCKDOWN (CHEER, HELPED UP)', SLK.CHEER, null, { help: 1 });
+  add('TOWEL (GROUNDS, RAIN)', SLK.GROUNDS, 'towelWipe', { set: { hp: 9 } }); add('EVENT STAFF', SLK.EVENT, 'guardScan');
   return E;
 }
 function slLibDraw(L, t) {   // (drawAnims, inside the stage's transform; dark mode never greys it)
@@ -1646,7 +2043,7 @@ function slLibDraw(L, t) {   // (drawAnims, inside the stage's transform; dark m
     slCap(L.people.length); let n = 0;
     for (let i = 0; i < L.people.length; i++) {
       const P = L.people[i], w = L.W[i];
-      if (P.k >= SLK.HURT && !w) continue;
+      if (slXk(P) && !w) continue;
       if (P.k === SLK.CART) { slWhere(P, w, null, t); if (!SL_P.hid) { SL.cx = SL_P.x; SL.cy = SL_P.y; SL.cf = SL_P.f; slCartDraw(); } continue; }
       slPose(P, w, L.A[i], L.H[i], t); if (SL_P.hid) continue;
       slPrep(n, P); SL.sp[n] = P; SL.l0[n] = n; if (L.F && P.k === SLK.CAM) SL.PT[n * SL_STR + 48] = slFlashB(i, L.F, t); n++;
@@ -1659,34 +2056,79 @@ function slLibDraw(L, t) {   // (drawAnims, inside the stage's transform; dark m
 // and the RUN circle is coloured in with green pencil, the PASS circle with plain graphite. Shapes are seeded, so they hold still between frames.
 const PENCIL = { amp: 2.4, seg: 70, ell: 0.08, ellN: 19, hatch: 7, hatchW: 2.4, hatchA: 0.6 };   // amp = px a line wanders, seg = px between wobbles, ell = how lumpy a circle is, hatch = px between fill strokes
 function penRnd(seed) { let s = (Math.floor(seed) * 9301 + 49297) % 233280 || 1; return () => (s = (s * 9301 + 49297) % 233280) / 233280; }
+// (the same generator without a new function per line: penSeed, then penNext for each number. One stream at a time: only for a helper that finishes its
+//  own numbers before anything else is drawn, like the four below)
+let PEN_S = 1;
+function penSeed(seed) { PEN_S = (Math.floor(seed) * 9301 + 49297) % 233280 || 1; }
+function penNext() { return (PEN_S = (PEN_S * 9301 + 49297) % 233280) / 233280; }
 function penLine(x0, y0, x1, y1, seed, amp = PENCIL.amp) {   // (adds a wobbly line to the current path)
-  const L = Math.hypot(x1 - x0, y1 - y0) || 1, n = Math.max(1, Math.round(L / PENCIL.seg)), nx = -(y1 - y0) / L, ny = (x1 - x0) / L, r = penRnd(seed);
-  ctx.moveTo(x0, y0);
-  for (let i = 1; i <= n; i++) { const t = i / n, o = (r() - 0.5) * 2 * amp * (i === n ? 0.4 : 1); ctx.lineTo(x0 + (x1 - x0) * t + nx * o, y0 + (y1 - y0) * t + ny * o); }
+  const L = Math.hypot(x1 - x0, y1 - y0) || 1, n = Math.max(1, Math.round(L / PENCIL.seg)), nx = -(y1 - y0) / L, ny = (x1 - x0) / L;
+  penSeed(seed); ctx.moveTo(x0, y0);
+  for (let i = 1; i <= n; i++) { const t = i / n, o = (penNext() - 0.5) * 2 * amp * (i === n ? 0.4 : 1); ctx.lineTo(x0 + (x1 - x0) * t + nx * o, y0 + (y1 - y0) * t + ny * o); }
 }
 function penPoly(pts, seed, amp = PENCIL.amp) {   // (a polyline: each leg wobbles, the joints stay)
-  const r = penRnd(seed); ctx.moveTo(pts[0][0], pts[0][1]);
+  penSeed(seed); ctx.moveTo(pts[0][0], pts[0][1]);
   for (let i = 1; i < pts.length; i++) {
     const [x0, y0] = pts[i - 1], [x1, y1] = pts[i], L = Math.hypot(x1 - x0, y1 - y0) || 1, n = Math.max(1, Math.round(L / PENCIL.seg / 0.6)), nx = -(y1 - y0) / L, ny = (x1 - x0) / L;
-    for (let k = 1; k <= n; k++) { const t = k / n, o = k === n ? 0 : (r() - 0.5) * 2 * amp; ctx.lineTo(x0 + (x1 - x0) * t + nx * o, y0 + (y1 - y0) * t + ny * o); }
+    for (let k = 1; k <= n; k++) { const t = k / n, o = k === n ? 0 : (penNext() - 0.5) * 2 * amp; ctx.lineTo(x0 + (x1 - x0) * t + nx * o, y0 + (y1 - y0) * t + ny * o); }
   }
 }
 function penEllipse(cx, cy, rx, ry, seed) {   // (begins a new path: a lumpy, jagged closed loop)
-  const r = penRnd(seed), n = PENCIL.ellN, ph = r() * Math.PI * 2, pts = [];
-  for (let i = 0; i < n; i++) { const a = ph + i / n * Math.PI * 2, k = 1 + (r() - 0.5) * 2 * PENCIL.ell * (i % 2 ? 1.5 : 0.7); pts.push([cx + Math.cos(a) * rx * k, cy + Math.sin(a) * ry * k]); }
+  penSeed(seed); const n = PENCIL.ellN, ph = penNext() * Math.PI * 2, pts = [];
+  for (let i = 0; i < n; i++) { const a = ph + i / n * Math.PI * 2, k = 1 + (penNext() - 0.5) * 2 * PENCIL.ell * (i % 2 ? 1.5 : 0.7); pts.push([cx + Math.cos(a) * rx * k, cy + Math.sin(a) * ry * k]); }
   ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath();
 }
 function penHatchE(cx, cy, rx, ry, col, seed) {   // (the current path, coloured in with slanted pencil strokes; the path is used up by the clip)
-  const r = penRnd(seed + 5), sp = PENCIL.hatch;
+  penSeed(seed + 5); const sp = PENCIL.hatch;
   ctx.save(); ctx.clip(); ctx.strokeStyle = col; ctx.globalAlpha *= PENCIL.hatchA; ctx.lineWidth = PENCIL.hatchW; ctx.lineCap = 'round';
   ctx.beginPath();
-  for (let x = -rx - ry; x <= rx + ry; x += sp) { const j = (r() - 0.5) * 3, sl = ry * (0.9 + r() * 0.2); ctx.moveTo(cx + x - sl + j, cy + ry * 1.15); ctx.lineTo(cx + x + sl + j, cy - ry * 1.15); }
+  for (let x = -rx - ry; x <= rx + ry; x += sp) { const j = (penNext() - 0.5) * 3, sl = ry * (0.9 + penNext() * 0.2); ctx.moveTo(cx + x - sl + j, cy + ry * 1.15); ctx.lineTo(cx + x + sl + j, cy - ry * 1.15); }
   ctx.stroke(); ctx.restore();
+}
+// the pre-drawn field: everything drawFieldStatic paints (turf, stripes, end zones + names, yard lines, hash marks, sidelines, logo, numbers) never changes within
+// a game (the pencil wobble is seeded), so it is drawn once into its own canvas and only the part on screen is copied each frame. Rebuilt when the home team, the
+// drive direction (MIRROR: the un-mirrored logo / names / numbers), the logo sheet or the canvas resolution (RK: graphics mode, window size) changes.
+// zoom = the camera zoom it is sharp up to (x RK = its px per world px, in steps of `step`); a closer shot than that x up (the pre-snap wheel zoom, a reel's
+// close-up) is drawn live as before, so the picture is never softer; maxPx = most pixels it may hold (x 4 bytes); pad = yd of margin for the sideline stroke
+const FIELD_CACHE = { on: true, zoom: 0.55, up: 1.04, maxPx: 12e6, pad: 0.75, step: 0.05 };
+let fieldImg = null;   // { c, s, hk, mir, logo, tui }
+function fieldCacheDraw() {   // true = the static field was drawn from the cache
+  if (!FIELD_CACHE.on) return false;
+  const m = ctx.getTransform(), on = Math.abs(m.a);
+  if (m.b || m.c || !(on > 0) || !m.d) return false;
+  const M = FIELD_CACHE.pad * YD, ox = ENDZONE + M, w = FIELD + 2 * ox, h = FW + 2 * M;
+  const s = Math.min(Math.ceil(RK * FIELD_CACHE.zoom / FIELD_CACHE.step - 1e-6) * FIELD_CACHE.step, Math.sqrt(FIELD_CACHE.maxPx / (w * h)));
+  if (on > s * FIELD_CACHE.up) return false;
+  const hk = homeKey(), logo = !!LOGOS[hk];
+  let F = fieldImg;
+  if (!F || F.s !== s || F.hk !== hk || F.mir !== MIRROR || F.logo !== logo || F.tui !== TUI.on) {
+    if (F) freeCanvas(F.c);
+    const c = document.createElement('canvas'); c.width = Math.ceil(w * s); c.height = Math.ceil(h * s);
+    const g = c.getContext('2d'), main = ctx;
+    ctx = g;
+    try { g.setTransform(s, 0, 0, s, ox * s, M * s); drawFieldStatic(); } finally { ctx = main; }
+    F = fieldImg = { c, s, hk, mir: MIRROR, logo, tui: TUI.on };
+  }
+  // the part of it on screen (canvas px -> world -> cache px, a pixel of slack each side)
+  const xa = -m.e / m.a, xb = (canvas.width - m.e) / m.a, ya = -m.f / m.d, yb = (canvas.height - m.f) / m.d;
+  const sx0 = Math.max(0, Math.floor((Math.min(xa, xb) + ox) * s) - 1), sx1 = Math.min(F.c.width, Math.ceil((Math.max(xa, xb) + ox) * s) + 1);
+  const sy0 = Math.max(0, Math.floor((Math.min(ya, yb) + M) * s) - 1), sy1 = Math.min(F.c.height, Math.ceil((Math.max(ya, yb) + M) * s) + 1);
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = TUI.on ? 'low' : 'high';
+  if (sx1 > sx0 && sy1 > sy0) ctx.drawImage(F.c, sx0, sy0, sx1 - sx0, sy1 - sy0, sx0 / s - ox, sy0 / s - M, (sx1 - sx0) / s, (sy1 - sy0) / s);
+  // (the canvas state the live drawing leaves behind, for whatever is drawn next)
+  ctx.strokeStyle = ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 4; ctx.font = `bold ${2 * YD}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  return true;
 }
 function drawField() {
   ctx.fillStyle = '#4c6e45';
   ctx.fillRect(-ENDZONE - 60 * YD, -40 * YD, FIELD + 2 * ENDZONE + 120 * YD, FW + 80 * YD);
   if (!lightGfx() || IS_MOBILE) drawCrowd();   // (a slow desktop in performance mode: no stands. A phone always keeps the stands and the sideline: drawCrowd already culls everything off-view)
+  if (!fieldCacheDraw()) drawFieldStatic();
+  wxGround();   // (weather: wet field, snow cover and footprints)
+  drawFieldRest();
+}
+// the part of the field that never changes within a game (drawField: live, or once into FIELD_CACHE's canvas)
+function drawFieldStatic() {
   ctx.fillStyle = '#2f8f3a';
   ctx.fillRect(-ENDZONE, 0, FIELD + 2 * ENDZONE, FW);
 
@@ -1727,8 +2169,8 @@ function drawField() {
 
   drawFieldLogo(FIELD / 2, MID, 4.2 * YD);
   drawFieldNumbers();
-  wxGround();   // (weather: wet field, snow cover and footprints)
-
+}
+function drawFieldRest() {   // (the live part of drawField, over the weather's ground)
   // pylons on the four corners of each end zone (goal line and end line, both sidelines); knocked ones lie flat
   const pw = 0.42 * YD, ph = 1.15 * YD;
   for (const p of pylons) {
@@ -1925,6 +2367,40 @@ const REEL_ST = {
   icoSpin: { dur: 1.15, dist: 1.9, from: 'self', lie: true, down: 1.1, pose: k => { const f = smooth01(rmp(k, 0.6, 1)), g = 0.5 * Math.sin(k * 14) * (1 - f);
     return { tw: Math.cos(rmp(k, 0, 0.7) * Math.PI * 4), R: LIE * f, ty: 1.5 * Math.sin(Math.PI * f), legs: [[-2, g, 0.3], [2, -g, 0.3]], arms: [[2, -10, -2.2, 0.3], [-1, -10.5, -0.9, -0.3]] }; } },
 };
+// v0.43 move looks: other looks on the SAME reaction the game chose (startReel picks one: same length, slide and time down as the style, so nothing about
+// his recovery changes). Same pose format, plus hands: [shoulder x, y, hand x, y, elbow, 'open' (fingers splayed) | 'fist' (closed on air)] (mlHand).
+// A skin that ends on the turf ends where its base does (laid flat face down: R = LIE), so his get-up is the base's.
+const REEL_SKIN = {
+  lungeMiss: { base: 'jukeLunge', pose: k => { const f = smooth01(rmp(k, 0.05, 0.7)), r = smooth01(rmp(k, 0, 0.3));   // both arms shot straight out where the runner was, flat on his stomach
+    return { R: LIE * f, ty: 2.5 * Math.sin(Math.PI * f), legs: [[-2, 0.25 + 0.2 * f, 0.15 * (1 - f) + 0.1], [2, -0.1 * f, 0.1]], hands: [[-1, -10.5, 3 + 6 * r, -13 - 8 * r, -1, 'open'], [2, -9, 6 + 6 * r, -11 - 9 * r, -1, 'open']] }; } },
+  hipsWrong: { base: 'jukeStumble', pose: k => { const f = smooth01(Math.min(rmp(k, 0, 0.2), rmp(1 - k, 0, 0.3))), a = Math.PI / 2 - 2 * Math.PI * smooth01(rmp(k, 0.12, 0.62));   // hips turned the wrong way, feet crossed, one arm windmills once
+    return { tw: 1 - 0.3 * f, R: -0.12 * f + 0.05 * Math.sin(k * 22) * f, legs: [[-2 + 3.2 * f, -0.35 * f, 0.2], [2 - 3.2 * f, 0.35 * f, 0.25]], hands: [[-1, -10.5, -1 - 5 * f, 1 - 6 * f, 1], [2, -9, 2 + 10 * Math.cos(a), -9 + 10 * Math.sin(a), -1, 'open']] }; } },
+  grabAir: { base: 'jukeStumble', pose: k => { const r = smooth01(rmp(k, 0, 0.22)), b = smooth01(rmp(k, 0.55, 0.92)), f = r * (1 - b);   // reaches for the hip, the fist closes on nothing, the arm stays out a beat
+    return { R: 0.3 * f, ty: 1.2 * f, legs: [[-2.5, 0.55 * f, 0.4], [2, -0.45 * f, 0.2 + 0.4 * f]], hands: [[-1, -10.5, -2 - 2 * f, 0, 1], [2, -9, 3 + 9.5 * f, 1 - 2 * f, -1, k < 0.28 ? 'open' : 'fist']] }; } },
+  anklesB: { base: 'jukeAnkles', pose: k => { const n = smooth01(rmp(k, 0, 0.2)), s = smooth01(rmp(k, 0.25, 0.5)), u = smooth01(rmp(k, 0.78, 1)), d = n * (1 - u), sd = s * (1 - u);   // down on one knee, then tipped onto his side
+    return { ty: 5 * d + 3 * sd, sy: 1 - 0.16 * d - 0.36 * sd, R: 0.12 * d - 0.18 * sd, tw: 1 - 0.4 * sd, legs: [[-3, 0.15 * d, 1.5 * d], [3, -1.3 * d + 0.7 * sd, 0.9 * d]],
+             hands: [[-1, -10.5, -2 - 4 * sd, 1 + 7 * sd, 1, sd > 0.5 ? 'open' : null], [2, -9, 6 - sd, 1 + 6 * sd, -1]] }; } },
+  anklesC: { base: 'jukeAnkles', pose: k => { const tg = Math.sin(Math.min(1, k / 0.25) * Math.PI * 3) * (1 - rmp(k, 0, 0.3)), f = smooth01(rmp(k, 0.2, 0.42)), u = smooth01(rmp(k, 0.75, 1)), d = f * (1 - u);   // feet tangled, onto both hands
+    return { R: 1.15 * d + 0.12 * tg, ty: 4 * d, legs: [[-2 + 2.5 * (1 - d) * Math.abs(tg), 0.5 * tg + 0.25 * d, 0.3 + 0.4 * d], [2 - 2.5 * (1 - d) * Math.abs(tg), -0.5 * tg + 0.1 * d, 0.3 + 0.5 * d]],
+             hands: [[-1, -10.5, 3 + 9 * d, -2 - 6 * d, -1, d > 0.6 ? 'open' : null], [2, -9, 6 + 7.5 * d, -1 - 7 * d, -1, d > 0.6 ? 'open' : null]] }; } },
+  grabFall: { base: 'spinGrab', pose: k => { const r = smooth01(rmp(k, 0, 0.12)), f = smooth01(rmp(k, 0.32, 0.55)), u = smooth01(rmp(k, 0.8, 1)), d = f * (1 - u), o = r * (1 - d);   // hand on his hip slides off, open hand closes on air, onto his hands and knees
+    return { R: 0.2 * o + 1.1 * d, ty: 5 * d, tw: 1 - 0.25 * o, legs: [[-1.5, 0.35 * o - 1.05 * d, 0.3 + 1.4 * d], [1.5, -0.3 * o - 0.95 * d, 0.3 + 1.5 * d]],
+             hands: [[-1, -10.5, -3 * (1 - d) + 12 * d, -7.5 * d, 1], [2, -9, 2 + 10 * o + 11.5 * d, -1 * o - 7.5 * d, -1, k < 0.3 || d > 0.6 ? 'open' : 'fist']] }; } },
+  grabSpun: { base: 'spunAround', pose: k => { const r = smooth01(rmp(k, 0, 0.15)), f = smooth01(rmp(k, 0.5, 1)), g = 0.4 * Math.sin(k * 10) * (1 - f);   // grabs the hip, spun round off it, face down
+    return { tw: Math.cos(rmp(k, 0.2, 0.6) * Math.PI * 2), R: LIE * f, legs: [[-2, g, 0.3], [2, -g, 0.3]], hands: [[-1, -10.5, -5 - 2 * f, -8 - 4 * f, 1], [2, -9, 3 + 9 * r * (1 - f) + 6 * f, -4 * r * (1 - f) - 12 * f, -1, k < 0.3 ? 'open' : 'fist']] }; } },
+};
+// which skins go with which runner look (moveLookPick's c.mvLast.k): picked first at MOVE_LOOK.skinBias when the game's reaction has one of them
+const REEL_SKIN_BY = { jumpCut: ['lungeMiss', 'anklesB'], doubleJuke: ['anklesB', 'anklesC', 'hipsWrong'], stutter: ['hipsWrong', 'grabAir'], shoulderDip: ['grabAir', 'hipsWrong'],
+                       deadLeg: ['hipsWrong', 'anklesC'], plantCut: ['jukeAnkles', 'anklesC', 'lungeMiss'], spinOff: ['grabFall', 'grabSpun'] };
+function reelSkinPick(style, c) {
+  const f = MOVE_LOOK.force.reel;
+  if (f) return REEL_SKIN[f] && REEL_SKIN[f].base === style ? f : null;   // (the MOVES test: pinned)
+  const opts = [style, ...Object.keys(REEL_SKIN).filter(k => REEL_SKIN[k].base === style)];
+  if (opts.length < 2) return null;
+  const lk = c && c.mvLast && clock - c.mvLast.t < 1.2 ? REEL_SKIN_BY[c.mvLast.k] : null, pref = lk ? opts.filter(k => lk.includes(k)) : [];
+  const k = pref.length && Math.random() < MOVE_LOOK.skinBias ? pickOf(pref) : pickOf(opts);
+  return k === style ? null : k;
+}
 Object.assign(CHEER_POPUPS, { 'ICONIC': 0.95, 'ICONIC JUKE': 0.95, 'ICONIC SPIN': 0.95, 'ICONIC TRUCK': 0.95, 'ICONIC STIFF ARM': 0.95,
   'SPECTACULAR!': 0.9, 'ONE-HANDED GRAB': 0.85, 'TOE-TAP MOSS': 0.9, 'CAUGHT IN TRAFFIC': 0.85 });
 // how far a diving man is tilted right now (world rotation, as drawPlayer draws the dive) and which way his sprite is mirrored
@@ -1939,27 +2415,45 @@ const heldTuckK = (p, c) => p.action === 'dive' && !p.diveCaught && !p.oneHanded
 // first all the way), legs = [hip x, thigh, knee] of the back / front leg in the air, sp = how far the arms spread off straight ahead (rad), len = arm
 // reach x, lead = one arm leads and the other trails (0-1), land = how he comes down (weights: skid on his chest / roll over / side = onto his hip)
 const DIVE_ST = {
-  layout:   { arch: 0.07,  legs: [[-3.5, 0.05, 0.05], [3.5, -0.05, 0.1]], sp: 0,    len: 1,    lead: 0,    land: { skid: 3, roll: 1 } },             // flat out, full stretch
-  superman: { arch: 0.14,  legs: [[-3, 0.3, 0.1], [3, 0.18, 0.25]],       sp: -0.06, len: 1.12, lead: 0,    land: { skid: 4, side: 1 } },             // chest up, heels high, both arms straight out
-  scissor:  { arch: 0.05,  legs: [[-3, 0.6, 0.95], [3, -0.35, 0.15]],     sp: 0.1,  len: 1,    lead: 0.3,  land: { skid: 2, roll: 2 } },             // one knee driving, the other leg trailing
-  spear:    { arch: -0.1,  legs: [[-3.5, 0.12, 0.05], [3.5, 0, 0.05]],    sp: 0.22, len: 0.92, lead: 0,    land: { skid: 3, roll: 1 } },             // head and shoulder first, arms wide
-  reach:    { arch: 0.08,  legs: [[-3, 0.35, 0.55], [3, -0.1, 0.1]],      sp: 0.04, len: 1.15, lead: 0.85, land: { side: 3, roll: 2, skid: 1 } },    // one arm stretched all the way, turning onto his side
-  tuck:     { arch: -0.14, legs: [[-3, -0.55, 1.25], [3, -0.4, 1.1]],     sp: 0.25, len: 0.82, lead: 0,    land: { roll: 4, side: 1 } },             // knees drawn up, going over his shoulder
+  layout:   { arch: 0.07,  legs: [[-3.5, 0.05, 0.05], [3.5, -0.05, 0.1]], sp: 0,    len: 1,    lead: 0,    land: { skid: 2, belly: 1, roll: 0.5, rollOut: 0.5 } },             // flat out, full stretch
+  superman: { arch: 0.14,  legs: [[-3, 0.3, 0.1], [3, 0.18, 0.25]],       sp: -0.06, len: 1.12, lead: 0,    land: { skid: 2, belly: 2, side: 1 } },             // chest up, heels high, both arms straight out
+  scissor:  { arch: 0.05,  legs: [[-3, 0.6, 0.95], [3, -0.35, 0.15]],     sp: 0.1,  len: 1,    lead: 0.3,  land: { skid: 1, belly: 1, roll: 1, rollOut: 1 } },             // one knee driving, the other leg trailing
+  spear:    { arch: -0.1,  legs: [[-3.5, 0.12, 0.05], [3.5, 0, 0.05]],    sp: 0.22, len: 0.92, lead: 0,    land: { skid: 2, belly: 1, roll: 0.5, rollOut: 0.5 } },             // head and shoulder first, arms wide
+  reach:    { arch: 0.08,  legs: [[-3, 0.35, 0.55], [3, -0.1, 0.1]],      sp: 0.04, len: 1.15, lead: 0.85, land: { side: 3, roll: 1, rollOut: 1, skid: 1 } },    // one arm stretched all the way, turning onto his side
+  tuck:     { arch: -0.14, legs: [[-3, -0.55, 1.25], [3, -0.4, 1.1]],     sp: 0.25, len: 0.82, lead: 0,    land: { roll: 2, rollOut: 2, side: 1 } },             // knees drawn up, going over his shoulder
+  goalLeap: { arch: 0.2,   legs: [[-2.5, 0.22, 0.15], [2.5, 0.16, 0.2]],    sp: 0,    len: 1,    lead: 0,    land: { skid: 1 }, ballUp: true },        // v0.43: over the pile at the goal line, flat at the top, the ball out in both hands over his head
+  // v0.43 catch dives (hands: (raise, bl = the ball in his frame, near = the ball is at his hands) -> [shoulder x, y, hand x, y, elbow, flag, l1, l2] for mlHand;
+  // tw = how far his body is rolled toward the ball in the air (1 = flat, chest down))
+  oneHand:  { arch: 0.2,   legs: [[-2.5, 0.3, 0.35], [2.5, 0.12, 0.15]],    sp: 0,    len: 1.15, lead: 1,    land: { belly: 1, side: 2, roll: 1, rollOut: 1, skid: 1 } },   // laid flat, back arched, one arm at full reach (the one-hander's own arm), the other trailing at his side
+  twoHand:  { arch: 0.1,   legs: [[-1.6, 0.06, 0.05], [1.6, 0.02, 0.05]],   sp: 0,    len: 1,    lead: 0,    land: { belly: 2, skid: 1.6, rollOut: 1.4 },      // both arms straight out, hands together in a diamond, head between his arms
+    hands: (r, bl, near) => { const lo = near && bl.x > 3 ? 1 : 0, hx = near ? bl.x : 1, hy = near ? bl.y : -8 - 24.5 * r;   // (pinkies together under a low ball, thumbs together over a high one)
+      return [[-1, -10.5, hx - 1.4, hy + (lo ? 1.6 : -0.4), 1, null, 8, 8.5], [2, -9, hx + 1.4, hy + (lo ? -1.6 : 0.4), -1, null, 8, 8.5]]; } },
+  sideDive: { arch: 0.04,  legs: [[-1.4, 0.18, 0.1], [1.4, 0.14, 0.1]],    sp: 0,    len: 1,    lead: 0,    land: { side: 3, rollOut: 1.15 }, tw: 0.62,      // across his run: rolled onto his side, chest to the ball, both arms to it, legs together behind
+    hands: (r, bl, near) => { const hx = near ? bl.x : 4.5 * r, hy = near ? bl.y : -8 - 23 * r; return [[-1, -10.5, hx - 1, hy - 1, 1, null, 8, 8.5], [2, -9, hx + 1, hy + 1, -1, null, 8, 8.5]]; } },
+  backOver: { arch: -0.18, legs: [[-2.5, 0.35, 0.6], [2.5, -0.05, 0.2]],    sp: 0,    len: 1,    lead: 0,    land: { back: 3, rollOut: 1.15 }, tw: -0.72,     // a ball from behind / above: chest turned up, the far arm reaching back over him, one-handed
+    hands: (r, bl, near) => [[-1, -10.5, near ? bl.x : -7 * r, near ? bl.y : -8 - 17 * r, 1, near ? 'tips' : 'open', 7, 8], [2, -9, 4, -5, -1, null]] },
 };
 const DIVE_POOL = {   // which looks each kind of dive may get (weights)
   run:    { layout: 2, superman: 2, reach: 1 },            // a ball carrier's dive for yards
   pylon:  { reach: 3, superman: 2 },                       // the corner of the end zone
   tackle: { spear: 3, layout: 2, scissor: 1 },             // a diving tackle
-  ball:   { layout: 2, superman: 1, reach: 2, scissor: 1 },// a pass: catches, tips, picks
+  ball:   { layout: 2, superman: 1, reach: 2, scissor: 1, twoHand: 3 },   // a pass: catches, tips, picks (sideDive / backOver by where the ball is: diveLookPick)
   loose:  { layout: 2, tuck: 2, scissor: 1 },              // a ball on the turf
   short:  { spear: 1, layout: 1 },                         // barely off the ground (under DIVE_SHORT s in the air)
+  goal:   { goalLeap: 1 },                                 // a carrier's dive at the goal line with a body in front of him (mlGoalLeap)
 };
 const DIVE_SHORT = 0.1;
 const pickW = w => { let sum = 0; const ks = Object.keys(w), ws = ks.map(k => sum += w[k]), r = Math.random() * sum; return ks[ws.findIndex(x => r < x)] || ks[0]; };
 function diveLookPick(p, a) {
   if (a.lowHit || p.hitStick || (p.tackling && tkLunge(p.tkStyle))) return null;   // (cut blocks, hit sticks, hug / fold tackles: their own poses)
-  if (a.tipOne || p.catchMode === 'diveOne') return 'reach';
-  const kind = a.pylon ? 'pylon' : p.hasBall || p.runDive ? 'run' : p.tackling ? 'tackle' : a.kin && a.kin.airT < DIVE_SHORT ? 'short' : state === 'fumble' || ball.loose ? 'loose' : 'ball';
+  if (MOVE_LOOK.force.dive && DIVE_ST[MOVE_LOOK.force.dive]) return MOVE_LOOK.force.dive;   // (the MOVES test)
+  if (a.tipOne) return 'reach';
+  if (p.catchMode === 'diveOne') return 'oneHand';
+  const kind = a.pylon ? 'pylon' : (p.hasBall || p.runDive) && mlGoalLeap(p) ? 'goal' : p.hasBall || p.runDive ? 'run' : p.tackling ? 'tackle' : a.kin && a.kin.airT < DIVE_SHORT ? 'short' : state === 'fumble' || ball.loose ? 'loose' : 'ball';
+  if (kind === 'ball' && ball.inAir) {   // (a pass: one from behind him / over his head is reached for back over; a dive straight across his run rolls him onto his side)
+    if ((ball.x - p.x) * p.face < -MOVE_LOOK.backYd * YD) return 'backOver';
+    if (Math.abs(Math.sin(a.angle || 0)) > MOVE_LOOK.sideSin && Math.random() < MOVE_LOOK.sideOdds) return 'sideDive';
+  }
   return pickW(DIVE_POOL[kind]);
 }
 const diveLook = p => p.action === 'dive' && p.act && !p.act.lowHit ? DIVE_ST[p.act.look] || null : null;
@@ -1991,37 +2485,59 @@ function diveHands(p, reach) {
 // slide (only without the ball: a ball carrier's spot stays where the dive put him). Updated by postDive, drawn by postDiveFx / drawDiveSpray.
 // roll = chance of a roll (rollFast at fast yd/s or more); rollDur s, rollYd extra slide; hop / bounce = sprite units up off the turf
 // (on his shoulder mid-roll / the bump as he hits); skidT s the heels stay up; heels = knee bend; spray clumps over sprayT s; streak = yd of scuff
-const POST_DIVE = { roll: 0.25, rollFast: 0.45, fast: 7, rollDur: 0.5, rollYd: 0.8, hop: 3, bounce: 2.5, bounceT: 0.16, skidT: 0.45, heels: 1.3, spray: 7, sprayT: 0.4, streak: 1.4 };
+const POST_DIVE = { roll: 0.25, rollFast: 0.45, fast: 7, rollDur: 0.5, rollYd: 0.8, hop: 3, bounce: 2.5, bounceT: 0.16, skidT: 0.45, heels: 1.3, spray: 7, sprayT: 0.4, streak: 1.4, belly: 0.5, outAt: 0.4, outT: 0.4, scuffT: 0.7, slapIn: 0.1, slapT: 0.55 };   // (v0.43: belly = share of plain skids that are the belly slide; out = s into the slide he starts sitting up, over outT s; scuffT = s the belly slide's pencil scuffs last; slap = the empty-handed dive's palms on the turf, in / held s)
 function postDive(p, a, dt) {
   if (a.pt == null) {   // just landed: decide once
+    wetSfx(SND_USE.wetDive);
     const L = Math.hypot(a.tx - a.fx, a.ty - a.fy), sp = a.kin ? a.kin.v / YD : L / YD / Math.max(0.15, a.dur);
     // (how he lands goes with the look he dove with; a tackler, a ball carrier and anyone after the whistle always skids on his chest: his spot must not move)
+    // (v0.43 looks: belly = a skid, rollOut = a roll, by the same odds: the old skid / roll weights were split between them, so a man rolls (and
+    //  moves) exactly as often as before. side / skid / belly / back never move him)
+    const rolls = s => s === 'roll' || s === 'rollOut', mlSk = () => Math.random() < POST_DIVE.belly ? 'belly' : 'skid';
     if (!a.post) {
       const st = DIVE_ST[a.look], free = !p.tackling && state !== 'done' && !p.runDive && !a.pylon && !p.hasBall;
-      a.post = !free ? 'skid' : st ? pickW(st.land) : Math.random() < (sp >= POST_DIVE.fast ? POST_DIVE.rollFast : POST_DIVE.roll) ? 'roll' : 'skid';
-      if (a.post === 'skid' && free && sp >= POST_DIVE.fast && Math.random() < POST_DIVE.rollFast - POST_DIVE.roll) a.post = 'roll';   // (coming in fast: more of them go over)
+      a.post = !free ? mlSk() : st ? pickW(st.land) : Math.random() < (sp >= POST_DIVE.fast ? POST_DIVE.rollFast : POST_DIVE.roll) ? 'roll' : mlSk();
+      if ((a.post === 'skid' || a.post === 'belly') && free && sp >= POST_DIVE.fast && Math.random() < POST_DIVE.rollFast - POST_DIVE.roll) a.post = Math.random() < 0.5 ? 'roll' : 'rollOut';   // (coming in fast: more of them go over)
+      const f = MOVE_LOOK.force.slide;   // (the MOVES test: a look only; a roll's movement stays the game's)
+      if (f) a.post = f === 'roll' || f === 'rollOut' ? (rolls(a.post) ? f : a.post) : f === 'out' || f === 'slap' ? a.post : rolls(a.post) ? a.post : f;
+      if (f === 'out') a.out = true; if (f === 'slap') a.slap = true;
     }
     a.pt = 0;
-    if (a.post === 'roll' && !p.hasBall) {   // (rolls along the way he was going; barely moving, the way he faces: never a roll on the spot)
+    const inLib = typeof anim !== 'undefined' && anim && (anim.A === p || anim.B === p);   // (the library stage has no sidelines)
+    if (!inLib && !p.tackling && !p.runDive && toSideline(p) < MOVE_LOOK.outYd * YD && !rolls(a.post)) a.out = true;   // (over the sideline: ends sitting up; looks only)
+    if (a.slap == null) a.slap = !p.hasBall && !p.tackling && !p.runDive && !a.lowHit && !a.pin && !rolls(a.post) && (state === 'flight' || state === 'loose' || state === 'done');   // (a dive for the ball that came up empty: palms slap the turf)
+    if (rolls(a.post) && !p.hasBall) {   // (rolls along the way he was going; barely moving, the way he faces: never a roll on the spot)
       const go = POST_DIVE.rollYd * YD * Math.min(1.3, Math.max(0.5, sp / POST_DIVE.fast));
       a.rdx = L > 1 ? (a.tx - a.fx) / L * go : (a.face || p.face || 1) * go; a.rdy = L > 1 ? (a.ty - a.fy) / L * go : 0;
     }
-    if (a.post === 'roll' && !p.hasBall) p.recoverUntil = Math.max(p.recoverUntil || 0, clock + POST_DIVE.rollDur);   // (finishes the roll before getting up)
+    if (rolls(a.post) && !p.hasBall) p.recoverUntil = Math.max(p.recoverUntil || 0, clock + POST_DIVE.rollDur);   // (finishes the roll before getting up)
   }
   a.pt += dt;
   const r = Math.min(1, a.pt / POST_DIVE.rollDur);
   if (a.rdx || a.rdy) { const e = 1 - (1 - r) * (1 - r); p.x += a.rdx * e; p.y += a.rdy * e; }
   const b = a.pt < POST_DIVE.bounceT ? Math.sin(Math.PI * a.pt / POST_DIVE.bounceT) * POST_DIVE.bounce : 0;
-  p.z = Math.max(p.z || 0, (b + (a.post === 'roll' && r < 1 ? Math.abs(Math.sin(2 * Math.PI * smooth01(r))) * POST_DIVE.hop : 0)) * S);
+  p.z = Math.max(p.z || 0, (b + ((a.post === 'roll' || a.post === 'rollOut') && r < 1 ? Math.abs(Math.sin((a.post === 'rollOut' ? 4 : 2) * Math.PI * smooth01(r))) * POST_DIVE.hop : 0)) * S);
 }
 // the landed dive's look this frame: tw = roll (x scale along his body), legs = heels up (skid) / legs up (back); null = not landed
 function postDiveFx(p) {
   const a = p.act;
   if (p.action !== 'dive' || !a || a.pt == null) return null;
   const k = a.pt;
-  if (a.post === 'roll') {
-    const r = Math.min(1, k / POST_DIVE.rollDur), c = Math.cos(2 * Math.PI * smooth01(r)), kick = Math.sin(Math.PI * r);
-    return { tw: Math.abs(c) < 0.25 ? 0.25 * (Math.sign(c) || 1) : c, legs: [[-3, 0.35 * kick, 0.3 + 1.1 * kick], [3, -0.25 * kick, 0.2 + 0.7 * kick]] };
+  if (a.out) {   // slid over the sideline (v0.43): the slide, then he sits up out there, legs out in front
+    const q = mlSlideFx(p, a, k), up = smooth01((k - POST_DIVE.outAt) / POST_DIVE.outT);
+    if (up > 0) { q.up = up; q.legs = legMix(q.legs || [[-3, 0, 0.1], [3, 0, 0.1]], [[-2, -1.25, 0.15], [2, -1.45, 0.2]], up); q.tw = null; }
+    return q;
+  }
+  return mlSlideFx(p, a, k);
+}
+function mlSlideFx(p, a, k) {
+  if (a.post === 'roll' || a.post === 'rollOut') {   // (rollOut, v0.43: twice over in the same time and distance as the one roll, knees tucking each time)
+    const n = a.post === 'rollOut' ? 2 : 1, r = Math.min(1, k / POST_DIVE.rollDur), c = Math.cos(2 * Math.PI * n * smooth01(r)), kick = n > 1 ? Math.abs(Math.sin(2 * Math.PI * smooth01(r))) : Math.sin(Math.PI * r);
+    return { tw: Math.abs(c) < 0.25 ? 0.25 * (Math.sign(c) || 1) : c, legs: [[-3, 0.35 * kick, 0.3 + 1.1 * kick], [3, -0.25 * kick, 0.2 + 0.7 * kick]], hug: n > 1 && r < 1 };
+  }
+  if (a.post === 'belly') {   // (v0.43) flat on his belly, legs straight and together, toes dragging; a bump up as he hits, then settled
+    const u = a.kin && a.kin.Ts ? Math.min(1, k / a.kin.Ts) : Math.min(1, k / POST_DIVE.skidT);
+    return { legs: [[-1.4, 0.04 + 0.04 * (1 - u), 0.05, true], [1.4, 0.02, 0.05, true]], slap: a.slap };
   }
   if (a.post === 'side') {   // comes down on his hip and shoulder and stays half turned, top knee drawn up
     const r = smooth01(k / 0.28);
@@ -2106,7 +2622,7 @@ function startReel(d, style, c, ts = 1, cut = 0) {   // ts = time scale (2 = the
   const msp = Math.hypot(mx, my), carry = msp > YD ? Math.min(MISS_CARRY.max, MISS_CARRY.k * msp / YD) * YD : 0;
   const cdx = carry ? mx / msp * carry : 0, cdy = carry ? my / msp * carry : 0;
   d.face = st.from === 'self' ? (tilt ? tilt.face : Math.sign(ux) || d.face) : (Math.sign(c.x - d.x) || d.face);   // (out of a dive: keeps the dive's mirroring, no flip)
-  d.action = 'reel'; d.act = { t: 0, style, dx: ux / l * st.dist * YD + cdx, dy: uy / l * st.dist * YD + cdy, down, pe: 0, r0: tilt ? d.face * tilt.w : 0, z0, ts, cutT: cut > 0 && !st.lie ? st.dur * cut : null };
+  d.action = 'reel'; d.act = { t: 0, style, skin: reelSkinPick(style, c), dx: ux / l * st.dist * YD + cdx, dy: uy / l * st.dist * YD + cdy, down, pe: 0, r0: tilt ? d.face * tilt.w : 0, z0, ts, cutT: cut > 0 && !st.lie ? st.dur * cut : null };
   d.tackling = false; d.resolved = true; d.hitStick = false; d.engaged = false; d.stiffBy = null; d.push = null; d.svx = d.svy = 0;
   d.downMiss = true;   // (no tackles while he's reeling; cleared when it ends)
   d.recoverUntil = Math.max(d.recoverUntil || 0, clock + (d.act.cutT != null ? d.act.cutT : st.dur) / ts + (st.lie ? down : 0));
@@ -2146,6 +2662,7 @@ function missReel(c, d, kind, base) {
                        : kind === 'truck' ? 'icoTruck' : kind === 'juke' ? 'icoAnkles' : 'icoSpin')
                     : base || pickOf(REEL_BASE[kind]);
   startReel(d, oo && oo.force.reel || style, c);
+  if (kind === 'truck' && c.hasBall) c.mvFx = { k: MOVE_LOOK.force.truck || (/truckStagger/.test(d.act && d.act.style) ? 'truckBounce' : 'truckPancake'), t: clock, o: 0 };   // (move looks: the runner goes through him / both bounce off)
   if (kind !== 'plain') celebNote('miss', c);   // (a move put a man down: see celebrations)
   if (!ico) return false;
   // the move's icon in the iconic color: impact on the man run over, steam off the runner's helmet, broken ankle at the fooled man's feet
@@ -2187,11 +2704,44 @@ const CATCH_ST = {
   highPoint:    { dur: 0.55, pose: k => ({ sy: 1.1, ty: -1, legs: [[-1.5, 0.15, 0.1, true], [1.5, -0.1, 0.1, true]] }) },   // up on his toes, hands at the top of his reach
   undercut:     { dur: 0.6,  pose: k => ({ R: 0.32, ty: 1, legs: [[-2.5, 0.75, 0.6], [2, -0.55, 0.3]] }) },   // jumped the route: stepped in front of him, leaning in
   scoop:        { dur: 0.55, pose: k => ({ R: 0.5, ty: 3, sy: 0.95, legs: [[-2.5, 0.5, 0.9], [2.5, -0.7, 1.2]] }) },   // bent low to scoop a low ball off his shoe tops
+  // v0.43 picks (mlPickLook; hands as mlHand: the last number = how far each hand goes to the ball; c = the catch, c.rx / c.ry = his man's chest then)
+  pickOneHand:  { dur: 0.7,  pose: k => ({ sy: 1.08, R: -0.08, legs: [[-2, 0.45, 0.15], [2, -1.15, 1.55]], hands: [[-1, -10.5, -9.5, -12, 1, 'open'], [2, -11, 4, -30, -1, 'tips', 7, 8, 0.85 * (1 - smooth01((k - 0.55) / 0.45))]] }) },   // mid-leap: one arm straight up, the ball in his fingertips, the other out, legs split
+  pickToeTap:   { dur: 0.75, pose: k => ({ R: -0.3, tx: -1, legs: [[-2, 0.28, 0.05, true], [2, -0.5, 0.1, true]], hands: [[-1, -10.5, 5, -9, -1, null, 5, 5.5, 0.6], [2, -9, 5.5, -6, -1, null, 5, 5.5, 0.6]] }) },   // at the sideline: both toes dragging, pulling it into his chest
+  pickTipped:   { dur: 0.6,  pose: k => { const d = smooth01(k / 0.7); return { R: -0.15 * (1 - d), sy: 1.04, hands: [[-1, -10.5, 5, -20 + 11 * d, -1, null, 5, 5.5, 0.8], [2, -9, 6, -18 + 11 * d, -1, null, 5, 5.5, 0.8]] }; } },   // off his man's hands: eyes up, both hands pull it down to his chest
+  pickDive:     { dur: 0.6,  pose: k => ({}) },   // a diving pick: cradled, then he rolls out (the dive's own rollOut landing)
+  pickRun:      { dur: 0.5,  pose: k => ({ R: 0.2, hands: [[-1, -10.5, 6, -9, -1, null, 5, 5.5, 0.5], [2, -9, 6.5, -7, -1, null, 5, 5.5, 0.5]] }) },   // caught in stride at his chest and straight into the return
+  pickAround:   { dur: 0.75, pose: (k, c) => { const e = smooth01(k / 0.35), d = smooth01((k - 0.55) / 0.45), rx = c && c.rx != null ? c.rx : 12, ry = c && c.ry != null ? c.ry : -10;   // reached round his man from behind, hands meeting in front of his chest
+    return { R: 0.25 * (1 - d), hands: [[-1, -10.5, 3 + (rx - 4) * e * (1 - d), -8 + (ry + 2) * e * (1 - d), -1, null, 7, 7.5, d], [2, -9, 4 + (rx - 2) * e * (1 - d), -6 + (ry + 4) * e * (1 - d), -1, null, 7, 7.5, d]] }; } },
+  pickJuggle:   { dur: 0.8,  pose: k => ({ sy: 1.06, R: -0.1, hands: [[-1, -10.5, 3, -24, 1, 'open', 6, 6.5, 1], [2, -9, 5, -24, -1, 'open', 6, 6.5, 1]] }) },   // bobbled twice over his head, then secured (the ball: updateBall)
 };
+// which v0.43 pick look (null = the old ones): a diving pick rolls out; rarely (x his hands) reached round his man from behind / juggled; a leaping
+// one-hander high up; at the sideline a toe drag; tipped off the receiver pulled down; caught at speed in stride. Looks only (no callout changes).
+function mlPickLook(r, o) {
+  const f = MOVE_LOOK.force.pick;
+  if (f && CATCH_ST[f]) { if (f === 'pickDive' && r.action === 'dive' && r.act) r.act.post = 'rollOut'; return f; }
+  if (o.dive) { if (r.act && r.act.pt == null) r.act.post = 'rollOut'; return 'pickDive'; }   // (he has the ball: a roll in place, no movement)
+  const rcv = tgt && tgt !== r ? tgt : null;
+  if (Math.random() < MOVE_LOOK.pickIcon * rm(r, 'ctc', 'catch')) return rcv && dist(rcv, r) < 1.3 * YD && (r.x - rcv.x) * (qb.x - rcv.x) < 0 ? 'pickAround' : 'pickJuggle';
+  if (o.one && o.jump && ball.z - (r.z || 0) > PICK_LOOK.high * S * 0.8) return 'pickOneHand';
+  if (o.side && Math.random() < MOVE_LOOK.pickToe) return 'pickToeTap';
+  if (ball.tipped) return 'pickTipped';
+  if (!o.jump && Math.hypot(r.vx || 0, r.vy || 0) / YD > MOVE_LOOK.pickRun) return 'pickRun';
+  return null;
+}
 const PICK_BASE = ['possession', 'highPoint', 'undercut', 'possession'];
 // pick looks: ball under low / over high sprite units = scooped / high-pointed; undercut = chance when he's between the QB and the receiver;
 // jumpOne = x ONE_HAND_PICK on a leaping pick; spec = called-out text for a spectacular (iconic) one
 const PICK_LOOK = { low: 9, high: 21, undercut: 0.7, jumpOne: 2, spec: 'SPECTACULAR PICK!' };
+// a spectacular one-hander's look (receivers only; looks only): a dive = stretched low (oneLayout) / heels up (diveOne); a leap = at the sideline
+// (sideOneLeap) / reached back behind him (oneBack) / twisted (jumpOne, oneSpin); on his feet = toes in at the sideline (oneSideline) / off his
+// shoe tops (oneLow) / straight up (oneHigh) / turned round for one behind him (oneSpin) / in stride at speed (oneStride) / across his body (oneAcross)
+const ONE_LOOK = { highH: 20, stride: 5.5, behindYd: 0.6 };   // highH = ball height (sprite units over him) for oneHigh; stride = yd/s for oneStride; behindYd = yd behind him for oneBack / oneSpin
+function oneLook(r, jump, dive, side, lowBall, varied) {
+  const h = ball.z - (r.z || 0), back = (ball.x - r.x) * r.face < -ONE_LOOK.behindYd * YD, sp = Math.hypot(r.vx || 0, r.vy || 0) / YD;
+  if (dive) return lowBall ? 'oneLayout' : 'diveOne';
+  if (jump) return side ? 'sideOneLeap' : back ? 'oneBack' : varied(['jumpOne', 'oneSpin']);
+  return side ? 'oneSideline' : lowBall ? 'oneLow' : h > ONE_LOOK.highH * S ? 'oneHigh' : back ? 'oneSpin' : sp > ONE_LOOK.stride ? 'oneStride' : 'oneAcross';
+}
 // r = the catcher (a receiver, or a defender on a pick), opp = the men around him who'd be contesting it
 function catchAnim(kind, secure, r = tgt, opp = back7) {
   r.catchFx = null;
@@ -2204,19 +2754,21 @@ function catchAnim(kind, secure, r = tgt, opp = back7) {
   const varied = list => { const l = list.filter(s => s !== CATCH_FX.last); const s = pickOf(l.length ? l : list); CATCH_FX.last = s; return s; };   // (never the same spectacular catch twice running)
   let st = null;
   if ((jump || dive || one) && Math.random() < Math.min(CATCH_FX.max, CATCH_FX.spec * (one ? CATCH_FX.oneK : 1) * (topped || near.length >= 2 ? CATCH_FX.contestK : 1) * rm(r, 'ctc', 'catch') * (1 + CATCH_FX.hiCtc * Math.max(0, rm(r, 'ctc', 'catch') - 1)))) {
-    st = one ? (jump && !pick && ball.z - (r.z || 0) > CATCH_FX.helmetZ * S && Math.random() < CATCH_FX.helmet * rm(r, 'ctc', 'catch') ? 'helmetPin' : null)   // (one-handers are plain one-handed catches, rarely the helmet pin)
+    st = one ? (jump && !pick && ball.z - (r.z || 0) > CATCH_FX.helmetZ * S && Math.random() < CATCH_FX.helmet * rm(r, 'ctc', 'catch') ? 'helmetPin' : pick ? null : oneLook(r, jump, dive, side, lowBall, varied))   // (rarely the helmet pin; picks keep their own looks)
        : topped && side ? 'mossToe' : topped ? pickOf(['mossOver', 'mossKnee', 'mossBack'])
        : jump && side && near.length ? 'mossToe'
        : jump && near.length >= 2 ? 'crowd' : null;
   }
   if (oo && oo.force.catch && !pick) st = oo.force.catch;   // (1v1 practice: the style you picked)
   // a pick always gets a look: scooped low / high-pointed / jumped in front of the route (between the QB and his man) / secured in traffic
+  if (!st && pick) st = mlPickLook(r, { one, jump, dive, side });   // (v0.43 pick looks)
   if (!st && pick && !dive) st = jump && r.act && r.act.over ? 'overShoulder' : ball.z < PICK_LOOK.low * S ? 'scoop' : ball.z > PICK_LOOK.high * S ? 'highPoint'
           : (r.x - (tgt ? tgt.x : r.x)) * (qb.x - r.x) > 0 && Math.random() < PICK_LOOK.undercut ? 'undercut' : pickOf(PICK_BASE);
   if (!st) st = r.catchStyle === 'over' || r.catchStyle === 'overBasket' || (jump && r.act && r.act.over) ? 'overShoulder'
           : !dive && (secure || r.catchStyle === 'body' || near.length) ? 'possession' : null;
   if (!st) return null;
-  r.catchFx = { style: st, t: clock };
+  const rv = pick && tgt && tgt !== r ? tgt : null, rbk = S * figK(r);
+  r.catchFx = { style: st, t: clock, rx: rv ? (rv.x - r.x) * r.face / rbk : null, ry: rv ? (rv.y - r.y) / rbk - 10 : null };   // (rx / ry: his man's chest, for pickAround)
   if (pick) { if (CATCH_TEXT[st] && rec && !rec.replaying) rec.big = true; return st; }   // (nobody's knocked over on a pick: those reactions count as missed tackles)
   if (st === 'crowd') { const d = near.find(o => !o.action); if (d) startReel(d, 'stiffShove', r); }   // boxed out on the way down
   if (topped && !topped.action && /^moss/.test(st)) startReel(topped, 'stiffDown', r);   // the man he went over ends up on the turf
@@ -2235,6 +2787,17 @@ const TIP_ST = {
     return { R: 0.35 * s, legs: [[-2.5, 0.6 * s, 0.3 + 0.8 * s], [2, -0.5 * s, 0.4]] }; } },
   stretch:  { one: false, pose: k => { const s = Math.sin(Math.PI * k);   // up on his toes, both hands as high as they go
     return { sy: 1 + 0.1 * s, ty: -1 * s, legs: [[-1.5, 0.15 * s, 0.1, true], [1.5, -0.1 * s, 0.1, true]] }; } },
+  // v0.43 (hands: their own hand spots through mlHand; oneOk = may stand in for a one-handed stab)
+  tipJump:  { one: false, hands: true, pose: k => { const s = Math.sin(Math.PI * k), e = smooth01(Math.min(1, k * 2.5));   // a lineman straight up, both arms all the way up, palms out, fingers spread
+    return { sy: 1 + 0.08 * s, ty: -1 * s, legs: [[-1.5, 0.1 * s, 0.15, true], [1.5, -0.1 * s, 0.15, true]], hands: [[-1, -10.5, -2.5, -11 - 21 * e, 1, 'open', 6, 6.5], [2, -9, 3.5, -10 - 21 * e, -1, 'open', 6, 6.5]] }; } },
+  tipSwat:  { one: false, hands: true, pose: k => { const s = Math.sin(Math.PI * k), u = smooth01(rmp(k, 0.25, 0.75)), up = smooth01(Math.min(1, k * 4));   // still locked on his blocker: one arm breaks free and swats down across him
+    return { R: 0.15 * s, legs: [[-3, 0.35, 0.4], [3, -0.3, 0.35]], hands: [[-1, -10.5, 9, -9, -1], [2, -9, 6 + (2 - 6) * up - 8 * u, -9 - 18 * up + 27 * u, -1, u < 0.5 ? 'open' : null, 6, 6.5]] }; } },
+  tipDrop:  { one: false, oneOk: true, hands: true, pose: k => { const s = Math.sin(Math.PI * k), f = Math.sin(Math.PI * Math.min(1, k * 1.6));   // a linebacker in his drop: hips turned, one hand flicked up at ear height
+    return { tw: 1 - 0.3 * s, R: -0.08 * s, legs: [[-2.5, -0.3 * s, 0.5], [2.5, 0.3 * s, 0.4]], hands: [[-1, -10.5, -3, -1, 1], [2, -9, 4 + 3 * f, -12 - 9 * f, -1, 'open']] }; } },
+  pbuOver:  { one: false, hands: true, pose: k => { const s = Math.sin(Math.PI * Math.min(1, k * 1.3)), u = smooth01(k / 0.6);   // trailing, chest on his back, over his near shoulder with both hands to the ball at his chest
+    return { R: 0.35 * s, legs: [[-2.5, 0.55 * s, 0.4 + 0.6 * s], [2, -0.45 * s, 0.4]], hands: [[-1, -10.5, 11, -14 + 4 * u, -1, null, 6, 6.5, 0.5 * u], [2, -9, 12.5, -11 + 4 * u, -1, null, 6, 6.5, 0.5 * u]] }; } },
+  pbuHands: { one: false, hands: true, pose: k => { const s = Math.sin(Math.PI * k), u = smooth01(rmp(k, 0.2, 0.7));   // both hands swiped down on his man's forearms
+    return { R: 0.2 * s, legs: [[-2.5, 0.35 * s, 0.35], [2.5, -0.35 * s, 0.3]], hands: [[-1, -10.5, 10, -17 + 13 * u, -1, null, 6, 6.5], [2, -9, 11, -15 + 13 * u, -1, null, 6, 6.5]] }; } },
 };
 // the reaching arm of a one-arm tip style (sprite space; bl = the ball, tg = his man or null), drawn over the helmet
 function drawTipArm(t, skin, st, k, bl, bob, tg) {
@@ -2262,7 +2825,7 @@ const HURDLE_PICK = ['classic', 'tuck', 'split', 'scissor', 'tuck'];
 const hurdleStyle = backward => backward ? 'back' : pickOf(HURDLE_PICK);
 // the man being hurdled (action 'hurdled', act.kind): ducks under him (arms over his helmet) / stands up grabbing at air / flinches back covering up.
 // near = yd ahead of the hurdler he has to be; dur s (he's stuck in it: he's been cleared)
-const HURDLED = { near: 2.6, dur: 0.55, kinds: ['duck', 'grab', 'flinch', 'duck'] };
+const HURDLED = { near: 2.6, dur: 0.55, kinds: ['duck', 'grab', 'flinch', 'duck', 'kicked'] };   // (kicked, v0.43: the trail foot catches his helmet: head snapped back, knees buckle, up again in the same 0.55 s)
 const HURDLED_ST = {
   duck:   k => { const f = smooth01(Math.min(rmp(k, 0, 0.3), rmp(1 - k, 0, 0.35)));
     return { R: 0.55 * f, ty: 4 * f, sy: 1 - 0.15 * f, legs: [[-2.5, -0.7 * f, 1.3 * f], [2.5, -0.5 * f, 1.1 * f]], arms: [[2, -10, 1.5 - 3.3 * f, -0.6 * f], [-1, -10.5, 1.6 - 3.6 * f, -0.5 * f]] }; },
@@ -2270,17 +2833,19 @@ const HURDLED_ST = {
     return { R: -0.3 * f, sy: 1 + 0.06 * f, legs: [[-2, 0.2 * f, 0.2], [2, -0.2 * f, 0.2, f > 0.5]], arms: [[2, -10, 1.5 - 3.0 * f + 0.25 * m, -0.3], [-1, -10.5, 1.6 - 3.3 * f - 0.25 * m, -0.3]] }; },
   flinch: k => { const f = smooth01(Math.min(rmp(k, 0, 0.2), rmp(1 - k, 0, 0.4)));
     return { R: -0.35 * f, tx: -2 * f, ty: 2 * f, legs: [[-2.5, 0.5 * f, 0.6 * f], [2, -0.3 * f, 0.4 * f]], arms: [[2, -10, 1.3 - 2.0 * f, -1.2 * f], [-1, -10.5, 1.4 - 2.1 * f, -1.3 * f]] }; },
+  kicked: k => { const s = smooth01(rmp(k, 0.12, 0.26)) * (1 - smooth01(rmp(k, 0.4, 0.65))), d = smooth01(rmp(k, 0.28, 0.55)) * (1 - smooth01(rmp(k, 0.78, 1)));
+    return { R: -0.5 * s - 0.2 * d, ty: 6 * d, sx: 1 + 0.08 * d, sy: 1 - 0.3 * d, legs: legMix([[-2, 0.3 * s, 0.3], [2, -0.2 * s, 0.3]], SIT_LEGS, d), arms: [[2, -10, 1.3 - 1.7 * s + 0.7 * d, -0.3], [-1, -10.5, 1.4 - 1.3 * s + 0.9 * d, -0.2]] }; },
 };
 // a hurdle that clears a man: he reacts underneath it (a man already diving / on the turf / busy doesn't)
 function hurdledBy(c, d) {
   if (!d || d.action || d.engaged || d.hasBall || d.team === c.team || tut) return;
-  d.action = 'hurdled'; d.act = { t: 0, dur: HURDLED.dur, kind: pickOf(HURDLED.kinds) };
+  d.action = 'hurdled'; d.act = { t: 0, dur: HURDLED.dur, kind: HURDLED_ST[MOVE_LOOK.force.hurdled] ? MOVE_LOOK.force.hurdled : pickOf(HURDLED.kinds) };
   d.face = Math.sign(c.x - d.x) || d.face; d.tackling = false;
   celebNote('miss', c);
 }
 // throwing looks: cross = |handLat| past this toward his off-hand side throws across his body (fading away); hitArm = s the throwing arm
 // keeps finishing the throw while he's knocked down (hitAsHeThrows)
-const THROW_LOOK = { cross: 0.35, hitArm: 0.4 };
+const THROW_LOOK = { cross: 0.35, hitArm: 0.4, laneYd: 3, wob: 0.32, wobRate: 0.45 };   // (v0.43 looks: laneYd = a lineman leaping to bat within this many yd = the sidearm sling round him; wob = rad the nose of a hit throw wobbles by, wobRate x the spiral's phase)
 // Successful tackles, more variety (picked when the lunge starts, d.tkStyle):
 //  hug  = squared up chest to chest (often right at the catch): wraps him and drives him over backward, landing on top of him
 //  fold = big-hit version: shoulder into the gut, the runner jackknifes over his back, flips and lands on his back
@@ -2321,11 +2886,22 @@ function poseFx(p, ac) {
   if (p.action === 'swat' && p.act && TIP_ST[p.act.tipSt]) return TIP_ST[p.act.tipSt].pose(ak);
   if (p.action === 'hurdle' && p.act && HURDLE_ST[p.act.style]) return HURDLE_ST[p.act.style](ak);
   if (p.action === 'hurdled' && p.act && HURDLED_ST[p.act.kind]) return HURDLED_ST[p.act.kind](ak);
-  if (p.action === 'throw' && p.act && p.act.cross) { const s = Math.sin(Math.PI * ak); return { R: -0.35 * s, tw: 1 - 0.35 * s, legs: [[-3, 0.5 * s, 0.4 + 1.0 * s], [3, -0.35 * s, 0.15]] }; }   // fading away, back foot kicked up
+  if (p.action === 'throw' && p.act && p.act.cross) {   // across his body (v0.43): hips still facing the roll, shoulders turned back opening through the throw, off his back foot with the front knee up
+    const o = smooth01(ak / 0.6), f = 1 - smooth01((ak - 0.5) / 0.5);
+    return { R: -0.3 * f, tw: 0.45 + 0.55 * o, legs: [[-3, 0.18 * f, 0.25], [3, -0.8 * f, 0.15 + 1.0 * f]] };
+  }
+  if (p.action === 'throw' && p.act && p.act.lane) {   // slung flat round a lineman's hands (v0.43): leaning away from him, legs braced
+    const s = Math.sin(Math.PI * Math.min(1, ak * 1.2));
+    return { R: -0.24 * s, tw: 1 - 0.18 * s, legs: [[-3.5, 0.45 * s, 0.35], [3.5, -0.3 * s, 0.2]] };
+  }
+  if (p.action === 'wrap' && p.act && p.act.rise != null && p.act.t < MOVE_LOOK.rise) {   // riseUp (move looks): the man under a hurdle that the game called a tackle stands up into it
+    const s = Math.sin(Math.PI * Math.min(1, p.act.t / MOVE_LOOK.rise));
+    return { R: -0.18 * s, ty: -6 * s, sy: 1 + 0.08 * s, legs: [[-1.5, 0.2 * s, 0.2, true], [1.5, -0.3 * s, 0.25, true]], arms: [[2, -10, -1.6, -0.3], [-1, -10.5, -1.85, -0.25]] };
+  }
   if ((p.action === 'down' || p.action === 'wrap') && p.act && TK_ST[p.act.tk]) { const st = TK_ST[p.act.tk]; return (p.action === 'wrap' ? st.d : st.c)(Math.min(1, p.act.t / st.dur), p.act.tkDir || 1); }
   if (p.action === 'reel') {
     const a = p.act, st = a && REEL_ST[a.style]; if (!st) return null;
-    const q = st.pose(Math.min(1, a.t / st.dur), a);
+    const q = ((a.skin && REEL_SKIN[a.skin]) || st).pose(Math.min(1, a.t / st.dur), a);   // (a move look's skin: same timing as the style)
     if (a.r0) {   // out of a dive: falling the same way he was laid out = never more upright than he was; else eased from the dive tilt into the pose
       const r = q.R || 0, end = st.pose(1, a).R || 0;
       q.R = Math.sign(end) === Math.sign(a.r0) && Math.abs(end) > 0.5 ? Math.sign(a.r0) * Math.max(Math.abs(r), Math.min(Math.abs(a.r0), LIE)) : a.r0 + (r - a.r0) * smooth01(a.t / REEL_IN.blend);
@@ -2337,10 +2913,11 @@ function poseFx(p, ac) {
   const age = ac - c.t;
   if (age < 0 || age > st.dur) return null;
   const w = smooth01(age / CATCH_FX.ease) * (1 - smooth01((age - st.dur + CATCH_FX.ease * 1.6) / (CATCH_FX.ease * 1.6)));
-  const q = st.pose(age / st.dur);
+  const q = st.pose(age / st.dur, c);
   return { R: (q.R || 0) * w, tx: (q.tx || 0) * w, ty: (q.ty || 0) * w, sx: 1 + ((q.sx || 1) - 1) * w, sy: 1 + ((q.sy || 1) - 1) * w,
            tw: q.tw != null ? 1 + (q.tw - 1) * w : null,
            arms: q.arms && w > 0.6 ? q.arms : null,   // (a catch pose that sets its own arms, e.g. helmetPin)
+           hands: q.hands && w > 0.6 ? q.hands : null,   // (v0.43 pick looks: hand spots, to the ball)
            legs: w > 0.35 && p.action !== 'toedrag' && p.action !== 'toetap' && (p.action || (p.z || 0) > 2 * S) ? q.legs : null };   // (toe tap / drag: the catch's body + arms, the toes' own footwork)   // (back on the ground he runs: his own legs, not the catch's air pose)
 }
 
@@ -2455,6 +3032,20 @@ const CELEB_MOVES = {
     [0.54, 'snap', { nh: [13, 6], fh: [5, 8] }],                                                             // the flick
     [0.82, 'io',   { k: 1.04, sink: 0, R: -0.06, ...CLG.stand, ox: -5, nh: [9, -3], fh: [-9, -3], hd: 0.2 }],   // steps back, arms out, presenting it
     [1.36, 'lin',  {}],
+  ] },
+  // one hand: down on his haunches, the ball stood on its point under one palm and ripped like a top; it keeps spinning by itself while he gets up and shows it off (celebTopBall)
+  topSpin: { tag: 'N', secs: 2.7, pk: 0.66, cast: 1, needs: null, ball: celebTopBall, keys: [
+    [0,    'io',   { nh: [5, -6] }],
+    [0.14, 'out',  { k: 0.92, sink: 1, ...CLG.bend, nh: [8, -1], fh: [-3, 1] }],
+    [0.40, 'io',   { k: 0.8, sink: 3, ...CLG.crouch, R: 0.34, nh: [11, 8.5], fh: [-4, 3], hd: 0.32 }],        // down low: one palm on top of the ball, the other hand on his knee
+    [0.52, 'io',   { nh: [9, 8] }],                                                                            // the wrist wound back...
+    [0.66, 'snap', { nh: [15, 6.5] }, 'snap'],                                                                // ...and ripped
+    [0.80, 'out',  { nh: [14, 1], R: 0.26 }, 'whoosh:0.4'],                                                    // the hand comes off: it spins on its own
+    [1.20, 'io',   { k: 1.03, sink: 0, R: -0.05, ...CLG.stand, ox: -4, nh: [4, -1], fh: [-4, -1], hd: 0.25 }], // up and a step back, watching it
+    [1.55, 'io',   { nh: [11, -2], hd: 0.3 }],                                                                 // points down at it
+    [1.95, 'io',   { nh: [-1, -9], fh: [3, -8], k: 1.03, hd: -0.1 }],                                          // arms folded, a nod: still going
+    [2.50, 'lin',  {}],
+    [2.66, 'io',   { ox: 0 }],
   ] },
   flexDouble: { tag: 'S', secs: 1.0, cast: 1, needs: null, keys: [
     [0.10, 'out',  { k: 0.86, sink: 0.6, ...CLG.wide, fh: [2, 3], nh: [6, 3], R: 0.08 }],                    // feet wide, a quick squash
@@ -2942,24 +3533,30 @@ Object.assign(CELEB_MOVES, {
       [1.14, 'snap', { k: 1.05, sink: 0, ...CLG.stand, nh: [7, -24], fh: [-6, -24] }],
       [1.65, 'lin',  {}],
     ] }] },
-  chestBump: { tag: 'N', secs: 1.35, cast: 2, reach: 3.5, out: 0.12, big: true, marks: celebFaceMarks(0.9), roles: [{ g: 0.34, fx: celebBumpFx, after: celebBumpAfter, keys: [
-    [0.07, 'out',  { k: 0.78, sink: 2.6, ...CLG.crouch, R: 0.2, nh: [-8, 1], fh: [-10, -1] }],               // loaded up low, arms swung back
-    [0.14, 'lin',  { ox: 1.6, R: 0.26 }],                                                                     // a charging step
-    [0.23, 'snap', { k: 1.2, sink: 0, lift: 12, ox: 4, R: -0.3, nh: [-10, -7], fh: [-12, -9], ...CLG.stand, l1: [3, -0.8, 1.1] }],   // launched, chests thrown out, arms flung back
-    [0.28, 'in',   { lift: 13, ox: 5.8, k: 1.26, nh: [8, -25], fh: [4, -27] }],                              // SMACK: squashed thin, arms whip up (celebBumpAfter = the burst)
-    [0.35, 'out',  { lift: 8, ox: -0.5, k: 0.92, R: 0.22, nh: [11, -7], fh: [-11, -5] }],                    // knocked back off each other
-    [0.49, 'in',   { lift: 0, ox: -2.6, k: 0.76, sink: 2.4, ...CLG.crouch, R: 0.1, nh: [7, -3], fh: [-6, -2] }],   // a heavy landing
-    [0.62, 'snap', { k: 1.12, sink: 0.4, ox: -2.6, R: -0.16, hd: -0.45, ...CLG.wide, nh: [9, -21], fh: [-7, -21] }],   // and a roar, both arms flexed
-    [0.82, 'lin',  { k: 1.09 }],
-    [0.97, 'io',   { k: 1, sink: 0, ox: 0, R: 0, hd: 0, ...CLG.stand, nh: [6, -18], fh: [-5, -16] }],
+  // (v0.40: they start 3 yd apart, charge, leave the turf and meet in the air; both are thrown back, stagger and roar. The hit = the 'smash' beat: thud, jolt, impact ring)
+  chestBump: { tag: 'N', secs: 1.85, cast: 2, reach: 4.5, out: 0.14, big: true, marks: celebFaceMarks(1.55), roles: [{ g: 0.5, run: 1, fx: celebBumpFx, after: celebBumpAfter, keys: [
+    [0.08, 'out',  { k: 0.76, sink: 2.8, ...CLG.crouch, R: 0.24, nh: [-8, 1], fh: [-10, -1] }],               // loaded up low, arms swung back
+    [0.20, 'lin',  { ox: 5, R: 0.32, l0: [-4, 0.5, 0.3], l1: [4, -0.6, 0.6] }],                                // two charging steps
+    [0.30, 'snap', { k: 1.22, sink: 0, lift: 15, ox: 9, R: -0.34, nh: [-11, -7], fh: [-13, -9], ...CLG.stand, l1: [3, -0.8, 1.1] }],   // launched, chest thrown out, arms flung back
+    [0.36, 'in',   { lift: 17, ox: 11.5, k: 1.3, nh: [8, -25], fh: [4, -27] }],                               // SMACK, at the top of it
+    [0.41, 'out',  { k: 0.84, ox: 10.5, R: 0.3, nh: [12, -10], fh: [10, -8] }],                               // folded round the hit
+    [0.52, 'out',  { lift: 10, ox: 3, k: 1.02, R: -0.3, nh: [9, -20], fh: [-10, -17] }],                      // thrown back off each other
+    [0.68, 'in',   { lift: 0, ox: -5, k: 0.74, sink: 3, ...CLG.crouch, R: -0.12, nh: [8, -2], fh: [-8, -1] }],   // a heavy landing
+    [0.84, 'io',   { ox: -8.5, k: 0.95, sink: 0.8, R: -0.22, l0: [-5, 0.6, 0.3], l1: [2, -0.3, 0.5], nh: [7, -17], fh: [-8, -19] }],   // staggering back, arms going
+    [1.02, 'snap', { k: 1.14, sink: 0.4, ox: -8, R: -0.18, hd: -0.45, ...CLG.wide, nh: [9, -21], fh: [-7, -21] }],   // and a roar, both arms flexed
+    [1.30, 'lin',  { k: 1.1 }],
+    [1.55, 'io',   { k: 1, sink: 0, ox: 0, R: 0, hd: 0, ...CLG.stand, nh: [6, -18], fh: [-5, -16] }],
   ] }] },
-  fistBump: { tag: 'N', secs: 1.0, cast: 2, reach: 3, out: 0.1, marks: celebFaceMarks(0.8), roles: [{ g: 0.3, fx: celebFistFx, after: celebFistAfter, keys: [
-    [0.08, 'out',  { k: 0.88, sink: 1.4, ...CLG.wide, R: -0.12, nh: [-7, -11], fh: [-4, -6] }],              // the fist cocked way back
-    [0.20, 'snap', { k: 1.04, sink: 0.6, ox: 3.4, R: 0.2, nh: [15, -12], fh: [-6, -8], l1: [5, -0.3, 0.2] }],   // lunges in and drives it forward
-    [0.24, 'in',   { ox: 3.8, nh: [16, -12], k: 0.96 }],                                                     // BOOM: knuckles meet (celebFistAfter = the burst)
-    [0.36, 'out',  { lift: 6, ox: 0.5, R: -0.18, k: 1.14, nh: [9, -27], fh: [-8, -24], al: 1.3, ...CLG.stand, l1: [3, -0.8, 1.1] }],   // blown up: hop back, hands fly open high
+  fistBump: { tag: 'N', secs: 1.3, cast: 2, reach: 4, out: 0.1, marks: celebFaceMarks(1.45), roles: [{ g: 0.45, run: 1, fx: celebFistFx, after: celebFistAfter, keys: [
+    [0.10, 'out',  { k: 0.86, sink: 1.6, ...CLG.wide, R: -0.2, nh: [-10, -12], fh: [-4, -6] }],              // the fist cocked way back
+    [0.22, 'lin',  { ox: 4, R: 0.1, l0: [-4, 0.5, 0.3], l1: [4, -0.6, 0.6] }],                                 // a charging step
+    [0.30, 'snap', { k: 1.06, sink: 0.6, lift: 3, ox: 7.5, R: 0.3, nh: [16, -12], fh: [-7, -8], l1: [5, -0.3, 0.2] }],   // lunges in and drives it forward
+    [0.34, 'in',   { ox: 7.8, nh: [16, -12], k: 0.94 }],                                                     // BOOM: knuckles meet
+    [0.48, 'out',  { lift: 9, ox: 1, R: -0.3, k: 1.16, nh: [9, -27], fh: [-8, -24], al: 1.3, ...CLG.stand, l1: [3, -0.8, 1.1] }],   // blown back: off his feet, hands fly open high
+    [0.66, 'in',   { lift: 0, ox: -4, k: 0.84, sink: 1.8, R: -0.08, ...CLG.bend, nh: [10, -14], fh: [-7, -13], al: 1.15 }],
     [0.52, 'in',   { lift: 0, ox: 0, k: 0.86, sink: 1.4, R: 0, ...CLG.bend, nh: [10, -14], fh: [-7, -13], al: 1.15 }],
-    [0.66, 'io',   { k: 1.04, sink: 0, ...CLG.stand, nh: [6, -18], fh: [-5, -16], al: 1 }],
+    [0.84, 'io',   { k: 1.04, sink: 0, ox: -4, ...CLG.stand, nh: [12, -8], fh: [-5, -4], al: 1 }],              // shakes the sting out of his hand
+    [1.04, 'io',   { ox: 0, R: 0, nh: [6, -18], fh: [-5, -16] }],
   ] }] },
   highFive: { tag: 'N', secs: 0.8, cast: 2, reach: 3, out: 0.08, marks: celebFaceMarks(1.02), roles: [{ g: 0.28, keys: [
     [0.06, 'out',  { k: 0.9, sink: 1, ...CLG.bend, nh: [5, 0] }],
@@ -3421,32 +4018,57 @@ Object.assign(CELEB_MOVES, {
     return grpDone(B, grpEnd(B, t + 0.3), { pk: T1 + 0.26, safe: [0.5, T1] });
   } }),
   // bowling: the heaviest men are the pins. A strike, a spare with a second (mimed) roll, or a gutter ball and the pins laugh at him
-  grpBowling: grpBase([4, 6], { sort: 'heavy', reach: 7, gen: G => {
-    const B = grpB(G), M = B.mates, style = B.pick(['classic', 'twirl']), res = B.pick(['strike', 'spare', 'gutter']);
-    const spots = [[3.2, 0], [4.2, -0.85], [4.2, 0.85], [5.2, -1.7], [5.2, 0], [5.2, 1.7]];
+  grpBowling: grpBase([4, 6], { sort: 'heavy', reach: 8, gen: G => {
+    const B = grpB(G), M = B.mates, style = B.pick(['classic', 'twirl']), res = B.pick(['strike', 'spare', 'gutter']), aim = B.pick(['left', 'mid', 'right']);
+    const hitY = (aim === 'left' ? -0.45 : aim === 'right' ? 0.45 : 0) + (G.rnd() - 0.5) * 0.3;   // (where the ball comes through the pins, yd off the head pin)
+    const spots = [[4.2, 0], [5.2, -0.85], [5.2, 0.85], [6.2, -1.7], [6.2, 0], [6.2, 1.7]];
     M.forEach((i, j) => { B.pos[i] = spots[j]; B.face[i] = -1; });
     B.all(0.2, 'io', PZ.stiff, null, M);
-    const tb = style === 'twirl' ? 0.78 : 0.45, tr = tb + 0.16, th = tr + 0.42, gut = res === 'gutter' ? 1.7 : 0;
+    const tb = (style === 'twirl' ? 0.78 : 0.45) + 0.55, tr = tb + 0.16, th = tr + 0.42, gut = res === 'gutter' ? 1.7 : hitY;
     B.k(0, 0, 'io', { nh: [5, -6] });
     if (style === 'twirl') { B.R[0].fx0 = celebSpinFx; B.k(0, 0.2, 'io', { u: 0 }); B.k(0, 0.62, 'io', { u: 1 }, 'whoosh:0.5'); }
-    const roll = (t, snd) => { B.k(0, t, 'out', { nh: [-7, -2], R: 0.1, ...CLG.stag }); B.k(0, t + 0.16, 'in', { nh: [9, 6], R: 0.35, k: 0.86, sink: 1.6 }, snd); B.k(0, t + 0.4, 'io', { ...PZ.rest, nh: [8, -6] }); };
+    B.k(0, tb - 0.5, 'io', { nh: [6, -10], fh: [5, -9], hd: 0.15 });   // lines it up, both hands on the ball
+    B.mv(0, tb - 0.4, tb + 0.14, 1, 0);                                 // the approach (the pins are 3.2 yd from where he lets go)
+    const roll = (t, snd) => { B.k(0, t, 'out', { nh: [-7, -2], fh: [0, 0.5], R: 0.1, ...CLG.stag }); B.k(0, t + 0.16, 'in', { nh: [9, 6], R: 0.35, k: 0.86, sink: 1.6 }, snd); B.k(0, t + 0.4, 'io', { ...PZ.rest, nh: [8, -6] }); };
     roll(tb, 'whoosh');
-    B.R[0].ball = (t, q, mv, c) => celebWayBall(t, mv, c, [[0, 'n'], [tr, 'h'], [th, [3.2, gut, 0]], [th + 0.5, [6, gut * 1.4 + 0.2, 0]]]);
-    const fall = (i, t) => B.k(i, t, 'in', PZ.back, 'stomp:0.6');
+    B.R[0].ball = (t, q, mv, c) => celebWayBall(t, mv, c, [[0, 'n'], [tr, 'h'], [th, [3.2, gut, 0]], [th + 0.5, [6.2, gut * 1.5 + 0.2, 0]]]);
+    // one pin goes down: when, which way and how all come from where the ball came through (the back rows later, the ones wide of it last and outward). Returns when he is down
+    const drop = (i, t0) => {
+      const p = spots[M.indexOf(i)], off = p[1] - hitY * (p[0] - 1) / 3.2, side = Math.sign(off) || (G.rnd() < 0.5 ? -1 : 1);
+      const t = t0 + (p[0] - 4.2) * 0.13 + Math.min(0.3, Math.abs(off) * 0.12) + G.rnd() * 0.07, how = G.rnd(), far = 0.4 + G.rnd() * 0.6;
+      if (how < 0.22) {   // wobbles, nearly stays up, goes over late
+        B.k(i, t, 'out', { R: 0.18 * side }); B.k(i, t + 0.17, 'io', { R: -0.2 * side }); B.k(i, t + 0.32, 'io', { R: 0.14 * side }); B.k(i, t + 0.52, 'in', PZ.back, 'stomp:0.6');
+        B.mv(i, t + 0.32, t + 0.6, 0.3, side * 0.3, { walk: false }); return t + 0.52;
+      }
+      if (how < 0.46) {   // sent flying: off his feet, arms and legs everywhere, flat on his back further off
+        B.k(i, t + 0.12, 'out', { k: 1.12, sink: 0, lift: 7, R: -0.3, nh: [-6, -20], fh: [-9, -17], l0: [-4, 0.6, 0.4], l1: [4, -0.7, 0.8] }, 'slap:0.6'); B.k(i, t + 0.42, 'in', PZ.back, 'stomp:0.8');
+        B.mv(i, t, t + 0.42, 0.7 + far, side * (0.3 + G.rnd() * 0.6), { walk: false }); return t + 0.42;
+      }
+      if (how < 0.62) { B.k(i, t + 0.22, 'in', PZ.face, 'stomp:0.6'); B.mv(i, t, t + 0.3, -0.3, side * 0.45, { walk: false }); return t + 0.22; }   // clipped from behind: on his face
+      B.k(i, t + 0.18, 'in', PZ.back, 'stomp:0.6'); B.mv(i, t, t + 0.3, far, side * G.rnd() * 0.5, { walk: false }); return t + 0.18;   // straight over backward
+    };
+    const up = (who, t) => who.forEach((i, j) => { const u = t + 0.08 * j; B.k(i, u, 'lin', {}); B.k(i, u + 0.34, 'io', { ...PZ.rest, ...PZ.kneel }); B.k(i, u + 0.66, 'io', PZ.rest); });   // (they get up one after another, to a knee first)
     let t = th, pk = th;
-    if (res === 'strike') { M.forEach((i, j) => fall(i, th + 0.05 * j)); B.k(0, th + 0.25, 'snap', { ...PZ.jump, lift: 4, nh: [6, -24], fh: [-3, 0] }, 'grunt'); B.k(0, th + 0.5, 'in', PZ.land); t = th + 0.9; }
-    else if (res === 'spare') {
-      const left = M.filter((_, j) => j % 2 === 1);
-      M.forEach((i, j) => { if (!left.includes(i)) fall(i, th + 0.05 * j); });
+    if (res === 'strike') {
+      let last = th; M.forEach(i => { last = Math.max(last, drop(i, th)); });
+      B.k(0, th + 0.25, 'snap', { ...PZ.rest, ...PZ.jump, lift: 5, nh: [6, -24], fh: [-3, 0] }, 'grunt'); B.k(0, th + 0.5, 'in', PZ.land);
+      B.k(0, th + 0.8, 'io', { ...PZ.rest, ...PZ.flex }, 'grunt:0.7'); B.k(0, th + 1.5, 'io', { ...PZ.rest, ...PZ.cross });   // a fist, a flex, then arms folded over the wreckage
+      t = last + 1.6; up(M, t); B.k(0, t, 'lin', {}); B.k(0, t + 0.6, 'io', PZ.rest); t += 0.1 * M.length + 0.7;
+    } else if (res === 'spare') {
+      const left = M.filter((_, j) => j % 2 === 1), down = M.filter(i => !left.includes(i));
+      down.forEach(i => drop(i, th));
       left.forEach(i => { B.k(i, th + 0.15, 'io', { R: 0.16 }); B.k(i, th + 0.4, 'io', { R: -0.14 }); B.k(i, th + 0.65, 'io', { R: 0 }); });   // the ones left wobble
-      roll(th + 0.75, 'whoosh:0.6'); pk = th + 1.35;
-      left.forEach((i, j) => fall(i, pk + 0.05 * j)); B.k(0, pk + 0.2, 'back', { ...PZ.rest, ...PZ.flex }, 'grunt'); t = pk + 0.8;
+      B.k(0, th + 0.5, 'io', { ...PZ.rest, ...PZ.woe });   // not all of them...
+      roll(th + 0.95, 'whoosh:0.6'); pk = th + 1.55;
+      let last = pk; left.forEach(i => { last = Math.max(last, drop(i, pk)); });
+      B.k(0, pk + 0.2, 'back', { ...PZ.rest, ...PZ.flex }, 'grunt');
+      t = last + 1.4; up(M, t); B.k(0, t, 'lin', {}); B.k(0, t + 0.6, 'io', PZ.rest); t += 0.1 * M.length + 0.7;
     } else {
       pk = th + 0.4; B.k(0, th + 0.3, 'io', { ...PZ.rest, ...PZ.woe });
-      B.all(pk, 'out', { ...PZ.rest, ...PZ.point, v: 1 }, 'grunt:0.6', M); B.hold(pk + 0.9, M); t = pk + 0.95;   // the pins point and laugh
+      B.all(pk, 'out', { ...PZ.rest, ...PZ.point, v: 1 }, 'grunt:0.6', M); B.hold(pk + 1.3, M); t = pk + 1.35;   // the pins point and laugh
+      B.all(t, 'lin', {}); B.all(t + 0.3, 'io', PZ.rest); t += 0.3;
     }
-    B.all(t, 'lin', {}); B.all(t + 0.3, 'io', PZ.rest);
-    return grpDone(B, grpEnd(B, t + 0.3), { pk, noLate: true });
+    return grpDone(B, grpEnd(B, t), { pk, noLate: true });
   } }),
   // the team photo: a random teammate is the photographer, the rest pose in two rows; one to three poses, maybe a photobomber, maybe a retake
   grpPhoto: grpBase([4, 6], { gen: G => {
@@ -3900,35 +4522,422 @@ Object.assign(CELEB_MOVES, {
 // event -> pri (one celebration a play: 4 the game is won > 3 score > 2 turnover > 1 sack > 0 the rest), cap (quick / score / end: CELEB.quickMax / scoreMax / endMax),
 // turn ('field': he turns to face back up the field; a move's own turn wins), kick (the kicker's own pools), side (runs beside the play's main one),
 // moves { id: pick weight }, team (the pool for a team celebration instead: 3+ teammates within CELEB.teamRange, CELEB.teamOdds), mate ('ol': his partner is a lineman)
+// --- defensive celebrations (v0.43) ---------------------------------------------------------------------------------------------------------------
+// Solo moves for the defense's events (pick, fumRec, fumForce, pbu, sack, tfl, hit, stop, block, safety; a defensive score's td through needs 'd6'), ids df*.
+// The pencil doodles (the box, the fishing line, the key, the lunch bag, the sparkles, the angel, the bell rope, the finger count) are drawn in world space
+// after him (after: over his helmet), through dfW = a sprite point of his pose -> world, in graphite with the doodle icons' boil; particles: celebParts() only.
+const CELEB_DF = { lateS: 300, ink: [52, 52, 60], w: 1.5, over: 1.6, flashT: 0.1, flashK: 1.4, sackMax: 5 };   // lateS = NFL seconds left in the 4th that count as late (dfWatch, x lateS()); line width (sprite units); box corner overshoot; the box's flash at the peak
+const dfW = (p, q, x, y) => { const m = celebMap(q, x, y), sz = figK(p), bk = S * sz; return [p.x + p.face * m[0] * bk, p.y - (p.z || 0) + FOOT * (1 - sz) + m[1] * bk]; };
+const dfBoil = n => { const j = Math.floor(animNow() / 1000 * ICON.boil); return Math.sin(j * 7.31 + n * 3.7) * 0.45; };
+function dfInk(p, a, w = CELEB_DF.w) { const bk = S * figK(p), I = CELEB_DF.ink; ctx.strokeStyle = `rgba(${I[0]},${I[1]},${I[2]},${0.9 * a})`; ctx.lineWidth = w * bk; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; return bk; }
+// the box: traced by both index fingers from the top middle, out along the top, down the sides, in along the bottom (the near hand draws the right half);
+// each finished side runs a little past its corner, like a sketch. snap = the shutter tap on the top corner and a white flash inside
+const DF_BOX = { n: [[1, -28.5], [11, -28.5], [11, -8], [1.5, -8]], f: [[-1, -28.5], [-9, -28.5], [-9, -8], [0, -8]], at: [0.25, 0.6, 0.95, 1.3] };
+function dfBoxAfter(snap) {
+  return (p, q) => {
+    const t = q.t, B = DF_BOX, end = snap ? 2.6 : 2.4, a = t < end - 0.5 ? 1 : Math.max(0, (end - t) / 0.5);
+    if (t < B.at[0] || a <= 0 || !celebParts()) return;
+    const flash = t >= B.at[3] && t < B.at[3] + CELEB_DF.flashT ? CELEB_DF.flashK : 1, bk = dfInk(p, a, CELEB_DF.w * flash);
+    ctx.beginPath();
+    for (const s of ['n', 'f']) {
+      const C = B[s];
+      for (let i = 1; i < 4; i++) {
+        if (t < B.at[i - 1]) break;
+        const done = t >= B.at[i], dx = C[i][0] - C[i - 1][0], dy = C[i][1] - C[i - 1][1], L = Math.hypot(dx, dy) || 1, o = CELEB_DF.over;
+        const e = done ? [C[i][0] + dx / L * o, C[i][1] + dy / L * o] : q[s === 'n' ? 'nh' : 'fh'];
+        const A = dfW(p, q, C[i - 1][0] + dfBoil(i), C[i - 1][1] + dfBoil(i + 4)), E = dfW(p, q, e[0] + dfBoil(i + 8), e[1] + dfBoil(i + 12));
+        ctx.moveTo(A[0], A[1]); ctx.lineTo(E[0], E[1]);
+      }
+    }
+    ctx.stroke();
+    if (snap && t > 1.6 && t < 1.8) {   // the shutter: the inside of the box flashes white
+      const P0 = dfW(p, q, -9, -28.5), P1 = dfW(p, q, 11, -8);
+      ctx.fillStyle = `rgba(255,255,255,${0.55 * (1 - (t - 1.6) / 0.2)})`; ctx.fillRect(Math.min(P0[0], P1[0]), P0[1], Math.abs(P1[0] - P0[0]), P1[1] - P0[1]);
+    }
+  };
+}
+const dfBoxKeys = snap => [
+  [0.25, 'out',  { nh: [1, -28.5], fh: [-1, -28.5], al: 1.5, hd: -0.12, k: 1.03 }, 'whoosh:0.4'],                        // both hands together over the top of his helmet, index fingers out
+  [0.60, 'lin',  { nh: [11, -28.5], fh: [-9, -28.5], al: 1.6 }, 'pencil'],                                               // apart along the top...
+  [0.95, 'lin',  { nh: [11, -8], fh: [-9, -8], al: 1 }, 'pencil'],                                                       // ...straight down...
+  [1.30, 'lin',  { nh: [1.5, -8], fh: [0, -8], hd: 0, k: 1 }, ['pencil', 'pop:0.6']],                                    // ...and together along the bottom: framed
+  ...(snap ? [[1.45, 'out', { nh: [11, -25], al: 1.5 }], [1.6, 'in', { nh: [11, -28], k: 0.98 }, 'shutter'], [1.75, 'io', { nh: [1.5, -8], al: 1, k: 1 }]] : []),
+  ...cbeats(snap ? 1.8 : 1.45, 2, 0.24, (j, t) => [[t, 'in', { hd: 0.2 }], [t + 0.12, 'out', { hd: -0.05 }]]),            // two nods in the frame
+  [snap ? 2.25 : 1.95, 'io', { nh: [3, 2], fh: [0, 0.5], hd: 0 }],                                                      // hands down; the box fades
+];
+// the fishing line: from the rod tip (past his far hand) to the turf in front, a dashed pencil arc that reels in
+function dfLineAfter(p, q) {
+  const t = q.t; if (t < 0.5 || t > 1.95 || !celebParts()) return;
+  const reel = Math.max(0, Math.min(1, (t - 0.7) / 0.75)), up = t > 1.6 ? (t - 1.6) / 0.35 : 0, bk = dfInk(p, 1 - up, 1.1);
+  const tip = dfW(p, q, q.fh[0] + 9, q.fh[1] - 6), gx = p.x + p.face * (2 - 1.4 * reel) * YD, gy = p.y + FOOT;
+  ctx.setLineDash([3 * bk, 2.5 * bk]); ctx.beginPath(); ctx.moveTo(tip[0], tip[1]);
+  ctx.quadraticCurveTo((tip[0] + gx) / 2, Math.max(tip[1], gy) + 0.4 * YD * (1 - reel), gx, gy - up * 2 * YD); ctx.stroke(); ctx.setLineDash([]);
+  const h = dfW(p, q, q.fh[0], q.fh[1]); ctx.beginPath(); ctx.moveTo(h[0], h[1]); ctx.lineTo(tip[0], tip[1]); ctx.lineWidth = 1.4 * bk; ctx.stroke();   // (the rod)
+}
+// pencil sparkle stars at the ball as it's pulled out from behind his helmet
+function dfSparkleAfter(p, q) {
+  const t = q.t - 1.42; if (t < 0 || t > 0.6 || !celebParts()) return;
+  const c = dfW(p, q, q.nh[0], q.nh[1] - 3), bk = dfInk(p, 1 - t / 0.6, 1.1);
+  ctx.beginPath();
+  for (let i = 0; i < 5; i++) { const a = i * 1.26 + 0.4, r = (5 + 9 * t / 0.6) * bk, x = c[0] + Math.cos(a) * r, y = c[1] + Math.sin(a) * r, s = (1.6 + 0.6 * Math.sin(i * 2.3)) * bk;
+    ctx.moveTo(x - s, y); ctx.lineTo(x + s, y); ctx.moveTo(x, y - s); ctx.lineTo(x, y + s); ctx.moveTo(x - s * 0.6, y - s * 0.6); ctx.lineTo(x + s * 0.6, y + s * 0.6); }
+  ctx.stroke();
+}
+// the lunch bag (the sack doodle) on the turf in front of him, where the QB went down
+function dfBagAfter(p, q) {
+  if (q.t < 0.3 || !celebParts()) return;
+  const bk = S * figK(p), a = Math.min(1, (q.t - 0.3) / 0.2) * (q.t > 1.9 ? Math.max(0, (2.2 - q.t) / 0.3) : 1);
+  ctx.save(); ctx.globalAlpha *= a; ctx.translate(p.x + p.face * 1.3 * YD, p.y + FOOT - 0.35 * YD); ctx.scale(0.42 * YD, 0.42 * YD); DOODLE.bag({ c: '#d9b67c' }); ctx.restore();
+}
+// the key: pinched in his hand, then thrown back over his helmet on an arc to the turf 3 yd behind him, where it lies
+function dfKeyAt(x, y, s, rot) { ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.beginPath(); ctx.arc(-1.6 * s, 0, 1.1 * s, 0, Math.PI * 2); ctx.moveTo(-0.5 * s, 0); ctx.lineTo(2.4 * s, 0); ctx.moveTo(1.7 * s, 0); ctx.lineTo(1.7 * s, 0.8 * s); ctx.moveTo(2.3 * s, 0); ctx.lineTo(2.3 * s, 0.6 * s); ctx.stroke(); ctx.restore(); }
+function dfKeyAfter(p, q) {
+  if (q.t < 0.2 || !celebParts()) return;
+  const bk = dfInk(p, 1, 1.1), s = 2.2 * bk, tr = 1.2, tl = 1.75;
+  if (q.t < tr) { const h = dfW(p, q, q.nh[0] + 2, q.nh[1]); dfKeyAt(h[0], h[1], s, 0.3 + 0.8 * Math.max(0, Math.min(1, (q.t - 0.35) / 0.4))); return; }
+  const q0 = celebAtL(q.mv, tr, q.cel), h0 = dfW(p, q0, q0.nh[0], q0.nh[1]), gx = p.x - p.face * 3 * YD, gy = p.y + FOOT, u = Math.min(1, (q.t - tr) / (tl - tr));
+  dfKeyAt(h0[0] + (gx - h0[0]) * u, h0[1] + (gy - h0[1]) * u - 2.2 * YD * 4 * u * (1 - u), s, u < 1 ? u * 9 : 0.2);
+}
+// the bell rope from his hands up out of the picture
+function dfRopeAfter(p, q) { if (q.t < 0.15 || q.t > 1.3 || !celebParts()) return; const h = dfW(p, q, (q.nh[0] + q.fh[0]) / 2, Math.min(q.nh[1], q.fh[1]) - 2), bk = dfInk(p, 1, 1); ctx.beginPath(); ctx.moveTo(h[0], h[1]); ctx.lineTo(h[0] + dfBoil(1) * bk, h[1] - 2.5 * YD); ctx.stroke(); }
+// the sack count: one finger more per beat, up to his sacks this game (CELEB_DF.sackMax)
+const dfSacks = p => { const e = p.src && PST[p.src.name], g = e && e.games[e.games.length - 1]; return Math.max(1, Math.min(CELEB_DF.sackMax, (g && pstGame && g.id === pstGame.id && g.sk) || 1)); };
+function dfCountAfter(p, q) {
+  if (q.t < 0.3 || q.t > 1.9) return;
+  const n = Math.min(dfSacks(p), 1 + Math.floor((q.t - 0.3) / 0.3)), h = dfW(p, q, q.nh[0], q.nh[1]), bk = S * figK(p);
+  ctx.strokeStyle = (TEAMS[p.team] || {}).glove || '#fff'; ctx.lineWidth = 1.5 * bk; ctx.lineCap = 'round'; ctx.beginPath();
+  for (let i = 0; i < n; i++) { const a = -Math.PI / 2 + (i - (n - 1) / 2) * 0.42; ctx.moveTo(h[0] + Math.cos(a) * 1.8 * bk, h[1] + Math.sin(a) * 1.8 * bk); ctx.lineTo(h[0] + Math.cos(a) * 5.6 * bk, h[1] + Math.sin(a) * 5.6 * bk); }
+  ctx.stroke();
+}
+// the snow angel's outline left on the turf
+function dfAngelAfter(p, q) {
+  if (q.t < 0.9 || !celebParts()) return;
+  const bk = dfInk(p, Math.min(1, (q.t - 0.9) / 0.4) * (q.t > 1.9 ? Math.max(0.35, 1 - (q.t - 1.9) / 0.3) : 1), 1.1), cx = p.x, cy = p.y + FOOT - 0.1 * YD, L = 1.3 * YD;
+  ctx.beginPath(); ctx.ellipse(cx - p.face * 0.95 * L, cy, 0.24 * L, 0.2 * L, 0, 0, Math.PI * 2);   // (his head's dent)
+  ctx.moveTo(cx - p.face * 0.75 * L, cy - 0.15 * L); ctx.quadraticCurveTo(cx - p.face * 0.95 * L, cy - 0.7 * L, cx - p.face * 0.2 * L, cy - 0.55 * L); ctx.lineTo(cx, cy - 0.2 * L);   // (the wings)
+  ctx.moveTo(cx - p.face * 0.75 * L, cy + 0.15 * L); ctx.quadraticCurveTo(cx - p.face * 0.95 * L, cy + 0.7 * L, cx - p.face * 0.2 * L, cy + 0.55 * L); ctx.lineTo(cx, cy + 0.2 * L);
+  ctx.moveTo(cx, cy - 0.2 * L); ctx.lineTo(cx + p.face * 0.75 * L, cy - 0.4 * L); ctx.moveTo(cx, cy + 0.2 * L); ctx.lineTo(cx + p.face * 0.75 * L, cy + 0.4 * L);   // (the skirt the legs swept)
+  ctx.moveTo(cx + p.face * 0.75 * L, cy - 0.4 * L); ctx.quadraticCurveTo(cx + p.face * 0.95 * L, cy, cx + p.face * 0.75 * L, cy + 0.4 * L); ctx.stroke();
+}
+const dfWag = (q, t) => { if (q.v) celebWagFx(q, t); };
+Object.assign(CELEB_MOVES, {
+  dfBox: { tag: 'N', secs: 2.4, cast: 1, full: true, needs: null, pk: 1.3, after: dfBoxAfter(false), digit: [['nh', 1, 'arm', 0.25, 1.9], ['fh', 1, 'arm', 0.25, 1.9]], keys: dfBoxKeys(false) },
+  dfBoxSnap: { tag: 'N', secs: 2.6, cast: 1, full: true, needs: null, pk: 1.3, after: dfBoxAfter(true), digit: [['nh', 1, 'arm', 0.25, 2.2], ['fh', 1, 'arm', 0.25, 1.9]], keys: dfBoxKeys(true) },
+  dfNoGood: { tag: 'N', secs: 1.4, cast: 1, needs: null, pk: 0.35, fx: (q, t) => { if (t > 0.15 && t < 1.15) q.yaw = 0.35 * Math.sin(2 * Math.PI * (t - 0.15) / 0.4); }, keys: [   // no good: arms crossed at the wrists, swept out wide, three times
+    ...cbeats(0.15, 3, 0.4, (j, t) => [[t, 'snap', { nh: [12, -12], fh: [11, -11.5], al: 1.05, k: 1.03 }, 'whoosh:0.4'], [t + 0.2, 'out', { nh: [6, -12.5], fh: [-8, -12], al: 1.1, k: 1 }]]),
+    [1.25, 'lin',  {}],
+  ] },
+  dfBinoculars: { tag: 'N', secs: 2.0, cast: 1, full: true, needs: null, pk: 1.65, digit: ['nh', 1, 'arm', 1.65, 1.95],
+    fx: (q, t) => { if (q.v) { q.yaw = (-0.7 + 1.4 * smooth01((t - 0.3) / 1.2)) * q.v; q.R += 0.03 * Math.sin(t * 5) * q.v; } }, keys: [   // rings over his eyes, scanning the field, then a point at the man who threw it
+    [0.25, 'out',  { nh: [7.4, -20.5], fh: [6.2, -19], hd: -0.05, v: 1 }],
+    [1.45, 'lin',  {}],
+    [1.65, 'snap', { nh: [14, -14], al: 1.15, fh: [-3, 0], v: 0, hd: 0 }, 'whoosh:0.5'],
+    [1.9,  'lin',  {}],
+  ] },
+  dfPickPocket: { tag: ['A', 'N'], secs: 1.8, cast: 1, full: true, needs: null, pk: 0.9, dx: t => 0.6 * smooth01(t / 0.9), ball: () => ({ hand: 'n', rot: -0.4 }),
+    fx: (q, t) => { if (q.v) { grpLegs(q, t); q.l0 = [...q.l0.slice(0, 3), 1]; q.l1 = [...q.l1.slice(0, 3), 1]; q.lift += 0.6 * q.v; } if (t > 1.3 && t < 1.75) q.yaw = 0.5 * Math.sin(2 * Math.PI * (t - 1.3) / 0.45); }, keys: [   // tiptoes away, slips it in his pocket, pats it, looks both ways
+    [0.15, 'io',   { nh: [4, 0], fh: [-2, -1], v: 1 }],
+    [0.9,  'io',   { nh: [3, 2.5], fh: [1, -1], v: 0 }, 'scrape:0.5'],
+    [1.05, 'in',   { fh: [3.5, 0.5] }, 'slap:0.4'], [1.15, 'out', { fh: [1, -1] }], [1.25, 'in', { fh: [3.5, 0.5] }, 'slap:0.4'],
+    [1.7,  'lin',  {}],
+  ] },
+  dfFishing: { tag: 'N', secs: 2.2, cast: 1, full: true, needs: null, pk: 0.5, after: dfLineAfter,
+    fx: (q, t) => { if (t > 0.7 && t < 1.45) { const a = (t - 0.7) / 0.25 * 2 * Math.PI; q.nh = [6 + 2 * Math.cos(a), -2 + 2 * Math.sin(a)]; } }, keys: [   // casts from over his shoulder, reels it in, jerks it up
+    [0.25, 'out',  { nh: [-4, -26], fh: [-5, -25], al: 1.4, R: -0.1, tw: 0.85 }],
+    [0.50, 'snap', { nh: [13, -17], fh: [14, -18], al: 1.15, R: 0.12, tw: 1 }, 'whoosh'],
+    [0.65, 'io',   { fh: [11, -12], nh: [6, -2], al: 1, R: 0.04 }],
+    [1.5,  'lin',  {}],
+    [1.7,  'snap', { fh: [8, -21], nh: [6, -20], R: -0.08, k: 1.05 }, 'whoosh'],
+    [1.95, 'lin',  {}],
+  ] },
+  dfBallUp: { tag: 'N', secs: 1.6, cast: 1, needs: 'd6', pk: 0.2, dx: t => 1.2 * smooth01(t / 1.5), fx: celebStepFx, ball: () => ({ hand: 'n', rot: -1.2 }), keys: [   // the ball straight up in one hand, chest out, a slow proud walk
+    [0.2,  'back', { nh: [2.5, -29], al: 1.45, fh: [-1, 1], R: -0.09, k: 1.04, v: 1, hd: -0.1 }, 'whoosh:0.5'],
+    [1.3,  'lin',  {}],
+    [1.55, 'io',   { nh: [5, -6], al: 1, R: 0, k: 1, v: 0, hd: 0 }],
+  ] },
+  dfMagic: { tag: 'N', secs: 2.4, cast: 1, full: true, needs: null, pk: 1.45, after: dfSparkleAfter,
+    ball: t => t < 0.55 ? { hand: 'n', rot: -0.4 } : t < 1.38 ? { hand: 'x' } : { hand: 'n', rot: -1.3 },
+    fx: (q, t) => { if (t > 0.8 && t < 1.12) q.nh = [q.nh[0], q.nh[1] - 2.2 * Math.abs(Math.sin((t - 0.8) * 2 * Math.PI / 0.16))]; }, keys: [   // palms shown, the ball behind his back, a wave, pulled out from behind his helmet, a bow
+    [0.3,  'out',  { nh: [8, -12], fh: [6, -11], k: 1.03 }],
+    [0.55, 'io',   { nh: [-4, -2], fh: [-3, -1], R: -0.05 }, 'whoosh:0.3'],
+    [0.75, 'io',   { nh: [7, -13], fh: [6.5, -10], R: 0 }],
+    [1.15, 'lin',  {}],
+    [1.3,  'io',   { nh: [-5, -22], al: 1.3 }],
+    [1.45, 'snap', { nh: [3, -29], al: 1.45, k: 1.06, hd: -0.1 }, 'pop:0.6'],
+    [1.7,  'lin',  {}],
+    [2.0,  'io',   { R: 0.42, sink: 1.6, ...CLG.bend, nh: [4, -2], fh: [-8, -10], al: 1, k: 0.97, hd: 0.35 }],   // (a bow: from the knees and the neck, not tipped over from his feet)
+    [2.25, 'lin',  {}],
+  ] },
+  dfTimber: { tag: 'S', secs: 1.9, cast: 1, full: true, needs: 'down', turn: 'tgt', pk: 1.0, digit: ['nh', 1, 'arm', 1.35, 1.55], keys: [   // three chops with the axe, a point down at him, a yell
+    [0.15, 'out',  { nh: [-4, -25], fh: [-5, -24], al: 1.35, tw: 0.85, R: -0.08, ...CLG.stag }],
+    ...cbeats(0.3, 3, 0.35, (j, t) => [[t, 'in', { nh: [8, 1], fh: [7, 0], al: 1.05, R: 0.25, tw: 1, k: 0.95 }, 'chop'], [t + 0.2, 'io', { nh: [-4, -25], fh: [-5, -24], al: 1.35, R: -0.08, tw: 0.85, k: 1.02 }]]),
+    [1.35, 'snap', { nh: [11, 3], fh: [-3, 0], al: 1.1, R: 0.12, tw: 1, k: 1, ...CLG.stand }, 'whoosh:0.5'],
+    [1.6,  'io',   { nh: [6.8, -17.5], al: 1, R: -0.05, hd: -0.15 }, 'grunt:1.2'],
+    [1.8,  'lin',  {}],
+  ] },
+  dfLunch: { tag: 'S', secs: 2.2, cast: 1, full: true, needs: 'down', turn: 'tgt', pk: 0.45, after: dfBagAfter,
+    fx: (q, t) => { if (t > 1.25 && t < 1.75) { const a = (t - 1.25) * 4 * Math.PI; q.nh = [4 + 1.6 * Math.cos(a), -2 + 1.6 * Math.sin(a)]; } }, keys: [   // spoons it off the plate, rubs his belly, pats it
+    [0.2,  'io',   { fh: [4.5, -8], nh: [6, -8] }],
+    ...cbeats(0.3, 3, 0.3, (j, t) => [[t, 'io', { nh: [5.5, -9], hd: 0.05 }], [t + 0.15, 'out', { nh: [6.5, -17.5], hd: -0.05 }, 'snap:0.3']]),
+    [1.25, 'io',   { nh: [4, -2], fh: [0, 1], hd: 0 }],
+    [1.85, 'in',   { nh: [4, -1] }, 'slap:0.4'], [1.95, 'out', { nh: [5, -3] }], [2.05, 'in', { nh: [4, -1] }, 'slap:0.4'],
+  ] },
+  dfSackCount: { tag: 'N', secs: 2.2, cast: 1, full: true, needs: null, pk: 0.2, after: dfCountAfter, digit: ['fh', 1, Math.PI, 0.25, 1.9], keys: [   // one arm up, counting his sacks on his fingers, a thumb at his chest
+    [0.2,  'back', { nh: [3, -29], al: 1.45, fh: [5, -9], k: 1.05, hd: -0.1 }, 'pop:0.5'],
+    [1.9,  'lin',  {}],
+  ] },
+  dfHomeRun: { tag: 'N', secs: 2.0, cast: 1, full: true, needs: null, pk: 0.58, digit: ['nh', 1, 'arm', 1.62, 1.95], keys: [   // the swing, a look up after it, a point to the sky
+    [0.2,  'io',   { nh: [-3, -24], fh: [-4, -23], al: 1.3, tw: 0.8, ...CLG.stag }],
+    [0.4,  'io',   { l1: [3, -0.9, 1.3], R: -0.06 }],
+    [0.58, 'snap', { nh: [11, -15], fh: [10, -14], al: 1.15, tw: 1, R: 0.08, l1: [4.5, -0.4, 0.3] }, ['whoosh', 'snap:1.3']],
+    [0.72, 'out',  { nh: [7, -22], fh: [5, -21], al: 1.2, tw: 0.7, R: -0.05 }],
+    [0.95, 'io',   { nh: [5.5, -25], fh: [-3, 0], al: 1.25, tw: 1, hd: -0.25, R: 0, ...CLG.stand }],
+    [1.45, 'lin',  {}],
+    [1.62, 'snap', { nh: [6, -29], al: 1.45, hd: -0.3 }, 'whoosh:0.5'],
+    [1.85, 'lin',  {}],
+  ] },
+  dfRingBell: { tag: ['S', 'N'], secs: 1.6, cast: 1, needs: null, pk: 0.45, after: dfRopeAfter, keys: [   // two pulls on the bell rope, knees bending with each
+    [0.2,  'out',  { nh: [2, -29], fh: [1, -28], al: 1.45, k: 1.04 }],
+    ...cbeats(0.45, 2, 0.45, (j, t) => [[t, 'in', { nh: [3, -11], fh: [2, -10], al: 1, sink: 3, ...CLG.bend, k: 0.94 }, 'bell'], [t + 0.2, 'out', j ? { k: 1, sink: 0, ...CLG.stand } : { nh: [2, -29], fh: [1, -28], al: 1.45, sink: 0, ...CLG.stand, k: 1.04 }]]),
+    [1.35, 'lin',  {}],
+  ] },
+  dfLockKey: { tag: 'N', secs: 2.0, cast: 1, full: true, needs: null, pk: 1.2, after: dfKeyAfter, keys: [   // locked: the key turned twice, then thrown away over his shoulder
+    [0.2,  'io',   { nh: [10, -10], fh: [-3, 0] }],
+    [0.4,  'in',   { nh: [10.5, -11], R: 0.03 }, 'click'], [0.55, 'out', { nh: [10, -10] }], [0.7, 'in', { nh: [10.5, -11] }, 'click'],
+    [0.95, 'out',  { nh: [11, -13], k: 1.03 }],
+    [1.2,  'snap', { nh: [-8, -26], al: 1.5, R: -0.15, tw: 0.85, k: 1.06 }, 'whoosh'],
+    [1.35, 'out',  {}],
+    [1.6,  'io',   { R: 0, tw: 1, al: 1, nh: [3, 2], k: 1 }],
+    [1.8,  'lin',  {}],
+  ] },
+  dfSwat: { tag: ['S', 'N'], secs: 1.6, cast: 1, needs: null, pk: 0.4, fx: dfWag, digit: [['nh', 1, 'arm', 0.75, 0.95], ['nh', 1, -Math.PI / 2, 1.0, 1.45]], keys: [   // up, swatted it down, a point at the kicker, a wag
+    [0.12, 'out',  { k: 0.86, sink: 1.5, ...CLG.bend, nh: [5, -4], fh: [2, -4] }],
+    [0.28, 'snap', { k: 1.12, sink: 0, lift: 7, ...CLG.stand, nh: [5, -29], fh: [-3, -20], al: 1.45 }, 'whoosh'],
+    [0.4,  'in',   { lift: 6, nh: [-1, -4], al: 1.1, R: 0.15 }, 'slap'],
+    [0.55, 'in',   { lift: 0, k: 0.88, sink: 1.2, ...CLG.bend, R: 0.05 }],
+    [0.75, 'snap', { k: 1, sink: 0, ...CLG.stand, nh: [14, -13], al: 1.15, fh: [-3, 0], R: 0 }, 'whoosh:0.5'],
+    [1.0,  'io',   { nh: [9, -16], al: 1, v: 1 }],
+    [1.4,  'io',   { v: 0 }],
+  ] },
+  dfSafety: { tag: 'N', secs: 1.3, cast: 1, needs: null, pk: 0.3, digit: [['nh', 2, 'arm', 0.3, 0.72], ['fh', 2, 'arm', 0.3, 0.72], ['nh', 1, 'arm', 0.88, 1.2], ['fh', 1, 'arm', 0.88, 1.2]], keys: [   // two points: a V of two fingers each, then both down at the end zone
+    [0.15, 'out',  { k: 0.9, sink: 0.6, nh: [5, -4], fh: [2, -4] }],
+    [0.3,  'back', { k: 1.08, sink: 0, nh: [8, -27], fh: [-7, -27], al: 1.4 }, 'whoosh'],
+    [0.7,  'lin',  {}],
+    [0.88, 'snap', { nh: [11, 3], fh: [9, 4], al: 1.1, R: 0.12, k: 0.98 }, 'whoosh:0.6'],
+    [1.15, 'lin',  {}],
+  ] },
+  dfRipOut: { tag: ['S', 'N'], secs: 1.2, cast: 1, needs: null, pk: 0.35, keys: [   // the strip: both hands on an imaginary ball at his chest, ripped down to his hip, a fist up
+    [0.15, 'out',  { nh: [9, -12], fh: [8, -10], k: 1.03, R: -0.05 }],
+    [0.35, 'snap', { nh: [-2, 2], fh: [-1, 3], R: 0.18, tw: 0.75, k: 0.92, sink: 1 }, 'scrape'],
+    [0.55, 'io',   { tw: 1, R: 0.05, sink: 0, k: 1 }],
+    [0.75, 'snap', { nh: [6, -24], al: 1.3, fh: [-3, 0], k: 1.06 }, 'whoosh:0.5'],
+    [1.0,  'lin',  {}],
+  ] },
+  dfWatch: { tag: 'N', secs: 1.8, cast: 1, full: true, needs: 'late', pk: 0.8, digit: ['nh', 1, 'arm', 0.8, 1.15], keys: [   // late in the game: a tap on the watch, a point at the clock, a shrug
+    [0.2,  'io',   { fh: [6, -10], nh: [7.5, -12] }],
+    [0.32, 'in',   { nh: [6.5, -11] }, 'snap:0.4'], [0.42, 'out', { nh: [7.5, -12.5] }], [0.52, 'in', { nh: [6.5, -11] }, 'snap:0.4'],
+    [0.8,  'snap', { nh: [13, -22], al: 1.3, fh: [-3, 0], hd: -0.2 }, 'whoosh:0.5'],
+    [1.15, 'lin',  {}],
+    [1.35, 'io',   { nh: [7, -1], fh: [-5, -1], al: 1, hd: 0.12, k: 1.04 }],
+    [1.6,  'lin',  {}],
+  ] },
+  dfPhone: { tag: 'N', secs: 1.6, cast: 1, needs: null, pk: 1.25, digit: ['nh', 2, -Math.PI / 2, 0.2, 1.15],
+    fx: (q, t) => { if (t > 0.3 && t < 1.1) q.hd += 0.1 * Math.sin((t - 0.3) * 16); }, keys: [   // on the phone (thumb and little finger), nodding, then hangs up hard
+    [0.2,  'out',  { nh: [5, -20.5], hd: 0.1, fh: [-2, 0] }],
+    [1.1,  'lin',  {}],
+    [1.25, 'snap', { nh: [5, 1], hd: 0, k: 0.97 }, 'slap'],
+    [1.45, 'lin',  {}],
+  ] },
+  dfSnowAngel: { tag: 'N', secs: 2.2, cast: 1, full: true, needs: null, pk: 0.4, fx: celebAngelFx, after: dfAngelAfter, keys: [   // down on his back, arms and legs sweeping, the angel left on the turf
+    [0.12, 'out',  { ...PZ.crouch }],
+    [0.4,  'io',   { ...PZ.back, hd: 0.1, v: 1 }, 'stomp:0.6'],
+    [1.75, 'lin',  {}],
+    [1.85, 'io',   { v: 0 }],
+    [2.1,  'io',   { ...PZ.rest }],
+  ] },
+  dfPushups: { tag: 'S', secs: 2.0, cast: 1, full: true, needs: null, pk: 0.6,
+    fx: (q, t) => { if (t > 0.5 && t < 1.55) { const s = Math.sin(Math.PI * ((t - 0.5) % 0.35) / 0.35); q.lift += 3 * s; q.al += 0.22 * s; } }, keys: [   // down on the turf for three push-ups, then pops up
+    [0.15, 'out',  { ...PZ.crouch }],
+    [0.4,  'in',   { ...PZ.face, nh: [8, -6], fh: [7, -8], al: 0.85 }, 'stomp:0.6'],
+    [1.6,  'lin',  {}],
+    [1.8,  'snap', { ...PZ.rest, k: 1.06 }, 'whoosh:0.5'],
+  ] },
+  dfJumper: { tag: 'A', secs: 2.6, cast: 1, full: true, needs: 'd6', pk: 1.75,
+    ball: (t, q, mv, c) => celebWayBall(t, mv, c, [[0, 'n'], ...[0, 1, 2].flatMap(j => { const a = 0.1 + 0.35 * j; return [[a, 'h'], [a + 0.09, [0.32, 0.1, 0]], [a + 0.17, 'n']]; }), [1.75, 'h'], [2.5, [4, 0.2, 0], 44]]), keys: [   // three dribbles, then a jump shot from the end zone, the follow-through held
+    ...cbeats(0.1, 3, 0.35, (j, t) => [[t, 'in', { nh: [7, -1], k: 0.97, sink: 1, ...CLG.bend }, 'thud:0.6'], [t + 0.17, 'out', { nh: [7, -6], k: 1, sink: 0.5 }]]),
+    [1.25, 'io',   { nh: [5, -6], fh: [5, -5], ...CLG.stand, sink: 0 }],
+    [1.45, 'out',  { k: 0.88, sink: 1.5, ...CLG.bend, nh: [5, -12], fh: [4, -11] }],
+    [1.65, 'snap', { k: 1.12, sink: 0, lift: 7, ...CLG.stand, nh: [4, -27], fh: [2, -26], al: 1.4 }, 'whoosh'],
+    [1.75, 'snap', { nh: [7, -27] }, 'snap:0.4'],
+    [1.95, 'in',   { lift: 0, k: 0.92, sink: 0.8 }],
+    [2.3,  'lin',  { k: 1, sink: 0 }],
+  ] },
+});
+// --- defensive group celebrations (v0.43): casts built with grpB (any size in their range; flavor off where they move as one). dg* ids.
+// The cast's other members, as they stand now (the library's stage, or the field): for doodles sized to the whole group
+const dgCast = (p, q) => ((typeof anim !== 'undefined' && anim && anim.more && (anim.A === p)) ? anim.more : allPlayers()).filter(o => o !== p && o.cel && q.cel && o.cel.id === q.cel.id && o.cel.sd === q.cel.sd);
+const dgMirror = G => celebHash(G.sd, 9, 9) < 0.5 ? -1 : 1;   // (the mirror grpMarks will set this one up with: pre-applied where a side must stay a side)
+// the team box: the same tracing as dfBox, but the pencil frame is drawn round his teammates behind him, big enough for all of them
+function dgFrameAfter(p, q) {
+  const t = q.t, B = DF_BOX; if (t < B.at[0] || t > 2.45 || !celebParts()) return;
+  const ms = dgCast(p, q); if (!ms.length) return;
+  const x0 = Math.min(...ms.map(o => o.x)) - YD, x1 = Math.max(...ms.map(o => o.x)) + YD, y0 = Math.min(...ms.map(o => o.y)) + FOOT - 2.9 * YD, y1 = Math.max(...ms.map(o => o.y)) + FOOT + 0.35 * YD;
+  const xm = (x0 + x1) / 2, xn = p.face > 0 ? x1 : x0, xf = p.face > 0 ? x0 : x1, C = { n: [[xm, y0], [xn, y0], [xn, y1], [xm, y1]], f: [[xm, y0], [xf, y0], [xf, y1], [xm, y1]] };   // (the near hand draws the half on his facing side)
+  const a = t < 1.9 ? 1 : Math.max(0, (2.4 - t) / 0.5), bk = dfInk(p, a, 2.2 * (t >= B.at[3] && t < B.at[3] + CELEB_DF.flashT ? CELEB_DF.flashK : 1)), o = 0.3 * YD;
+  ctx.beginPath();
+  for (const s of ['n', 'f']) for (let i = 1; i < 4; i++) {
+    if (t < B.at[i - 1]) break;
+    const u = Math.min(1, (t - B.at[i - 1]) / (B.at[i] - B.at[i - 1])), A = C[s][i - 1], Z = C[s][i], dx = Z[0] - A[0], dy = Z[1] - A[1], L = Math.hypot(dx, dy) || 1, ex = u >= 1 ? o : 0;
+    ctx.moveTo(A[0] + dfBoil(i) * bk, A[1] + dfBoil(i + 3) * bk); ctx.lineTo(A[0] + dx * u + dx / L * ex + dfBoil(i + 6) * bk, A[1] + dy * u + dy / L * ex + dfBoil(i + 9) * bk);
+  }
+  ctx.stroke();
+}
+// the wall: pencil bricks laid on the turf along the line in front of them, from one end to the other as they stomp
+function dgBrickAfter(p, q) {
+  const t = q.t; if (t < 0.95 || !celebParts()) return;
+  const ms = [p, ...dgCast(p, q)], ya = Math.min(...ms.map(o => o.y)) - 0.5 * YD, yb = Math.max(...ms.map(o => o.y)) + 0.5 * YD, xb = p.x + p.face * 1.1 * YD;
+  const u = Math.min(1, (t - 0.95) / 0.95), a = t < 2.3 ? 1 : Math.max(0, (2.7 - t) / 0.4), bk = dfInk(p, a, 1.1), bh = 0.42 * YD, bw = 0.62 * YD, rows = Math.ceil((yb - ya) / bh);
+  ctx.beginPath();
+  for (let r = 0; r < rows * u; r++) {
+    const y = ya + r * bh + FOOT, off = r % 2 ? bw / 2 : 0;
+    for (let c = -1; c <= 1; c++) { const x = xb + (c * bw + off) * p.face; ctx.rect(Math.min(x, x + bw * p.face) + dfBoil(r + c) * bk, y + dfBoil(r * 3 + c) * bk, bw, bh); }
+  }
+  ctx.stroke();
+}
+// two pencil dice: out of his hands, tumbling onto the turf in front of him, then lying there showing their dots
+function dgDieAt(x, y, s, rot, n) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.strokeRect(-s, -s, 2 * s, 2 * s);
+  const P = { 5: [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]], 6: [[-1, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [1, 1]] }[n];
+  for (const [dx, dy] of P) { ctx.beginPath(); ctx.arc(dx * s * 0.55, dy * s * 0.55, s * 0.16, 0, Math.PI * 2); ctx.fill(); }
+  ctx.restore(); ctx.beginPath();
+}
+function dgDiceAfter(p, q) {
+  const t = q.t, tr = 1.4, tl = 1.65; if (t < tr || t > 2.8 || !celebParts()) return;
+  const bk = dfInk(p, t < 2.4 ? 1 : (2.8 - t) / 0.4, 1.1), I = CELEB_DF.ink, q0 = celebAtL(q.mv, tr, q.cel), h0 = dfW(p, q0, q0.nh[0], q0.nh[1]), u = Math.min(1, (t - tr) / (tl - tr));
+  ctx.fillStyle = `rgba(${I[0]},${I[1]},${I[2]},0.9)`;
+  [[0.7, 0.35, 6], [1.0, 0.6, 5]].forEach(([d, oy, n], k) => {
+    const gx = p.x + p.face * d * YD, gy = p.y + FOOT + oy * YD - 0.15 * YD;   // (in front of him, toward the camera: drawn over the men behind)
+    dgDieAt(h0[0] + (gx - h0[0]) * u, h0[1] + (gy - h0[1]) * u - 0.9 * YD * 4 * u * (1 - u), 2.4 * bk, u < 1 ? u * (8 + 3 * k) : 0.15 - 0.3 * k, n);
+  });
+  ctx.stroke();
+}
+const dgFlap = (q, t) => { if (q.v) { const s = Math.sin(t * 34) * q.v; q.nh = [q.nh[0] + 0.6 * s, q.nh[1] + 1.4 * s]; q.fh = [q.fh[0], q.fh[1] - 1.4 * s]; } };   // (hands flapping at his chest: it's hot)
+Object.assign(CELEB_MOVES, {
+  // the team box: he traces it, they pose inside the frame (hands on knees / a flex / arms folded / the rest pointing at him)
+  dgBoxTeam: grpBase([3, 5], { gen: G => {
+    const B = grpB(G), M = B.mates, m = M.length, my = dgMirror(G);
+    M.forEach((i, j) => { B.pos[i] = [(j - (m - 1) / 2) * 1.15, -1.8 * my]; B.face[i] = j < (m - 1) / 2 ? 1 : -1; });   // (a row behind him: further from the camera, whatever the mirror)
+    for (const [t, e, p, s] of dfBoxKeys(false)) B.k(0, t, e, p, s);
+    B.R[0].digit = CELEB_MOVES.dfBox.digit; B.R[0].after = dgFrameAfter;
+    const poses = [{ ...PZ.rest, R: 0.45, sink: 1.2, nh: [4.5, 7.5], fh: [1.5, 7], hd: 0.1 }, { ...PZ.rest, ...PZ.flex }, { ...PZ.rest, nh: [3.5, -6.5], fh: [7, -6], hd: -0.25 }];
+    M.forEach((i, j) => { B.k(i, 0.9, 'back', j < 3 ? poses[j] : { ...PZ.rest, ...PZ.point }, j ? null : 'pop:0.4'); B.k(i, 1.95, 'lin', {}); });
+    return grpDone(B, 2.4, { pk: 1.3, flavor: false });
+  } }),
+  // the wall: linemen shoulder to shoulder facing the offense, hands on each other's pads, down in their stance, two stomps together, linked arms up
+  dgWall: grpBase([3, 6], { tag: ['S', 'N'], mate: 'ol', turn: 'down', gen: G => {
+    const B = grpB(G, 0.6);
+    B.ids.forEach((i, j) => { B.pos[i] = [0, [0, -1, 1, -2, 2, -3][j] * 0.95]; B.face[i] = 1; });
+    B.all(0.3, 'io', { ...PZ.rest, nh: [6, -11], fh: [-3, -11], al: 1.1 });
+    B.all(0.65, 'in', { sink: 2.4, ...CLG.crouch, R: 0.18, k: 0.94 }, 'grunt:0.8');
+    for (const t of [1.0, 1.4]) { B.all(t - 0.15, 'out', { l1: [3.5, -0.75, 1.05], lift: 0.6, k: 0.97 }); B.all(t, 'in', { ...CLG.crouch, lift: 0, k: 0.9 }, 'stomp:1.2'); }
+    B.all(1.9, 'back', { sink: 0, ...CLG.wide, R: -0.05, k: 1.08, nh: [5, -26], fh: [-4, -26], al: 1.35, hd: -0.2 }, ['grunt', 'pop:0.6']);
+    B.hold(2.45); B.R[0].after = dgBrickAfter;
+    return grpDone(B, 2.5, { pk: 1.9, flavor: false });
+  } }),
+  // the huddle bounce: a ring, arms on each other's shoulders, four bounces as one, then they burst out with their arms up
+  dgHuddleBounce: grpBase([4, 8], { gen: G => {
+    const B = grpB(G, 0.6), n = B.n, r = 0.85 + 0.08 * n;
+    B.ids.forEach((i, j) => { const a = Math.PI + j / n * 2 * Math.PI; B.pos[i] = [r + r * Math.cos(a), r * Math.sin(a)]; B.face[i] = B.pos[i][0] > r + 0.05 ? -1 : 1; });
+    B.all(0.3, 'io', { ...PZ.rest, nh: [6, -12], fh: [-3, -12], R: 0.22, hd: 0.15 });
+    for (const t of [0.6, 0.9, 1.2, 1.5]) { B.all(t, 'in', { sink: 2.2, ...CLG.bend, lift: 0, k: 0.92 }, 'stomp:0.5'); B.all(t + 0.15, 'out', { sink: 0, ...CLG.stand, lift: 2.5, k: 1.05 }); }
+    B.all(1.85, 'snap', { ...PZ.rest, ...PZ.jump, R: 0 }, ['whoosh', 'pop:0.7']);
+    B.ids.forEach(i => { const dx = B.pos[i][0] - r, dy = B.pos[i][1], L = Math.hypot(dx, dy) || 1; B.mv(i, 1.8, 2.15, dx / L * 1.3, dy / L * 1.3, { keep: true }); });
+    B.all(2.1, 'in', { ...PZ.land }); B.all(2.3, 'io', { ...PZ.rest });
+    return grpDone(B, 2.35, { pk: 1.85, flavor: false });
+  } }),
+  // the dice: he kneels, shakes them in his cupped hands, blows on them, rolls; they crouch round, then jump back with their arms up
+  dgDice: grpBase([3, 6], { gen: G => {
+    const B = grpB(G, 0.6), M = B.mates, m = M.length, my = dgMirror(G);
+    M.forEach((i, j) => { const a = m > 1 ? (j / (m - 1) - 0.5) * 2.6 : 0; B.pos[i] = [1.5 * Math.sin(a), -(0.45 + 1.0 * Math.cos(a)) * my]; });   // (round behind him, further from the camera: the dice land in front in plain view)
+    B.toHero();
+    B.R[0].fx0 = (q, t) => { if (q.v) { const s = Math.sin(t * 30) * q.v; q.nh = [q.nh[0], q.nh[1] + 1.2 * s]; q.fh = [q.fh[0], q.fh[1] + 1.2 * s]; } };
+    B.k(0, 0.3, 'io', { ...PZ.rest, ...CLG.kneel, sink: 4, nh: [6, -8], fh: [5.5, -7], v: 1 }, 'scrape:0.4');
+    B.k(0, 0.95, 'io', { nh: [6.5, -16.5], fh: [6, -15.5], v: 0, hd: 0.1 }, 'whoosh:0.3'); B.k(0, 1.15, 'lin', {});
+    B.k(0, 1.4, 'snap', { nh: [13, 2], fh: [12, 3], R: 0.3, al: 1.1, hd: 0.25 }, 'scrape:0.6'); B.k(0, 1.65, 'lin', {}, 'snap:0.5');
+    B.k(0, 1.95, 'snap', { ...PZ.rest, ...PZ.up, R: 0 }, 'grunt');
+    B.all(0.35, 'io', { ...PZ.rest, ...PZ.crouch, R: 0.32, hd: 0.2 }, null, M); B.hold(1.55, M);
+    B.all(1.75, 'snap', { ...PZ.rest, ...PZ.jump }, ['pop:0.7', 'whoosh'], M);
+    M.forEach(i => { const p = B.pos[i], L = Math.hypot(p[0], p[1]) || 1; B.mv(i, 1.7, 2.0, p[0] / L * 0.7, p[1] / L * 0.7, { keep: true }); });
+    B.all(2.0, 'in', { ...PZ.land }, null, M); B.all(2.25, 'io', { ...PZ.rest }, null, M); B.hold(2.5);
+    B.R[0].after = dgDiceAfter;
+    return grpDone(B, 2.55, { pk: 1.75, flavor: false });
+  } }),
+  // the hot potato: round the ring it goes, hand to hand, every man flapping it like it burns, the last one spikes it
+  dgHotPotato: grpBase([3, 5], { gen: G => {
+    const B = grpB(G, 0.6), n = B.n, my = dgMirror(G), r = 1.25, pass = 0.22, hold = 0.18, W = [[0, 'n'], [0.4, 'h']];
+    B.ids.forEach((i, j) => { const a = Math.PI + j / n * 2 * Math.PI; B.pos[i] = [r + r * Math.cos(a), r * Math.sin(a) * my]; B.face[i] = B.pos[i][0] > r + 0.05 ? -1 : 1; });
+    B.ids.forEach(i => { B.R[i].fx0 = dgFlap; });
+    B.k(0, 0.1, 'io', { ...PZ.rest, nh: [6, -8], fh: [4, -8], v: 1 }); B.k(0, 0.3, 'lin', {}); B.k(0, 0.42, 'snap', { nh: [11, -10], fh: [10, -9], v: 0 }, 'whoosh:0.4'); B.k(0, 0.7, 'io', { ...PZ.rest, ...PZ.point });
+    let t = 0.4;
+    for (let j = 1; j < n; j++) {
+      const P = B.pos[j], cx = r - P[0], cy = -P[1], L = Math.hypot(cx, cy) || 1, sx = P[0] + cx / L * 0.25, sy = (P[1] + cy / L * 0.25) * my;   // (his hands: a step in from his spot toward the middle; y as it will stand after the mirror)
+      B.k(j, Math.max(0.05, t - 0.2), 'io', { ...PZ.rest, nh: [7, -9], fh: [6, -9] });
+      t += pass; W.push([t, [sx, sy, 20], 6]);
+      B.k(j, t, 'in', { nh: [6, -8], fh: [4, -8], v: 1, k: 0.96 }, 'slap:0.5');
+      if (j < n - 1) { W.push([t + hold, [sx, sy, 20]]); B.k(j, t + hold, 'snap', { nh: [11, -10], fh: [10, -9], v: 0, k: 1 }, 'whoosh:0.4'); B.k(j, t + hold + 0.3, 'io', { ...PZ.rest }); t += hold; }
+      else { W.push([t + hold, [sx, sy, 20]], [t + hold + 0.1, [sx + cx / L * 0.4, sy + cy / L * 0.4 * my, 0]], [t + hold + 0.6, [sx + cx / L * 1.6, sy + cy / L * 1.6 * my, 0], 26]);
+        B.k(j, t + hold, 'out', { nh: [6, -26], al: 1.35, v: 0, k: 1.05 }); B.k(j, t + hold + 0.1, 'snap', { nh: [10, 6], al: 1.1, R: 0.3, k: 0.9 }, ['slap', 'pop:0.6']); B.k(j, t + hold + 0.45, 'io', { ...PZ.rest, ...PZ.up, R: 0 }); t += hold + 0.1; }
+    }
+    B.R[0].ball = (tt, q, mv, c) => celebWayBall(tt, mv, c, W);
+    B.hold(t + 0.7);
+    return grpDone(B, t + 0.75, { pk: t, flavor: false });
+  } }),
+  // the volley: a teammate sets it up with both hands over his forehead, two steps, a leap, the arm whipped down
+  dgVolley: grpBase([2, 2], { reach: 5, gen: G => {
+    const B = grpB(G, 0.5);
+    B.pos[1] = [2.2, 0.35]; B.face[1] = -1;
+    B.k(1, 0.45, 'out', { ...PZ.rest, nh: [5, -27], fh: [3, -27], al: 1.4, k: 1.04 });
+    B.k(1, 0.7, 'snap', { nh: [5, -30], fh: [3, -30], lift: 1.5, k: 1.08 }, 'slap:0.5'); B.k(1, 0.85, 'io', { lift: 0, k: 1 }); B.k(1, 1.5, 'io', { ...PZ.rest, ...PZ.point });
+    B.mv(0, 0.35, 0.75, 0.9, 0); B.k(0, 0.75, 'out', { ...PZ.rest, ...PZ.crouch });
+    B.k(0, 0.92, 'snap', { ...PZ.rest, lift: 11, k: 1.12, nh: [2, -29], fh: [-4, -26], al: 1.4, l1: [3, -0.9, 1.2] }, 'whoosh');
+    B.k(0, 1.05, 'snap', { nh: [12, -6], al: 1.15, R: 0.15, lift: 10 }, ['slap', 'pop:0.6']);
+    B.k(0, 1.3, 'in', { ...PZ.land, R: 0 }); B.k(0, 1.5, 'io', { ...PZ.rest, ...PZ.flex });
+    B.hold(1.9);
+    return grpDone(B, 2.0, { pk: 1.05, flavor: false });
+  } }),
+});
 const CELEB_EVENTS = {
-  td:      { pri: 3, cap: 'score', turn: 'field', moves: { spike: 1, ballSpin: 1, flexDouble: 1, flexOne: 1, backflip: 1, headstand: 1, paperShuffle: 1, goalpostDunk: 1, goalpostHug: 1, teammateDunk: 1,
+  td:      { pri: 3, cap: 'score', turn: 'field', moves: { spike: 1, ballSpin: 1, topSpin: 1, flexDouble: 1, flexOne: 1, backflip: 1, headstand: 1, paperShuffle: 1, goalpostDunk: 1, goalpostHug: 1, teammateDunk: 1,
                         postSelfLob: 0.5, postWindmill: 0.5, postReverse: 0.5, postSpin360: 0.5, postHangSwing: 0.6, postFingerRoll: 0.4, postBounceMiss: 0.25, postAlleyOop: 0.7, postDoubleOop: 0.5,
                         hsChain6: 0.4, hsMirror: 0.4, hsRPS: 0.3, hsShoulderBump: 0.4, hsChestBump: 0.4, hsDrumline: 0.3, hsFootTap: 0.3, hsBehindBack: 0.3,
                         dnRunningMan: 0.5, dnRobot: 0.5, dnBackslide: 0.5, dnSprinkler: 0.5, dnLawnmower: 0.5, dnShoppingCart: 0.4, dnCharleston: 0.5, dnTwister: 0.5, dnWorm: 0.5, dnToprock: 0.5, dnHeelClick: 0.5, dnCossack: 0.6, dnShimmy: 0.5, dnDiscoPoint: 0.5, dnPogo: 0.4,
-                        tnShush: 0.3, tnEarCup: 0.3, tnByeWave: 0.4, tnPointScoreboard: 0.3, tnLookAround: 0.3, tnCold: 0.25 },   // (the post ones only when he is near it: needs 'post')
+                        tnShush: 0.3, tnEarCup: 0.3, tnByeWave: 0.4, tnPointScoreboard: 0.3, tnLookAround: 0.3, tnCold: 0.25, dfBallUp: 0.8, dfJumper: 0.8 },   // (the post ones only when he is near it: needs 'post')
              team: { campfire: 1, goalLineLounge: 1, crossedArms: 1, linemanLift: 1, chestBump: 1, fistBump: 1,
                      grpSharks: 1, grpBowling: 1, grpPhoto: 1, grpRowBoat: 0.8, grpDominoes: 0.8, grpLeapfrog: 0.8, grpTugWar: 0.8, grpMosh: 1, grpCannon: 0.8, grpRelay: 0.6, grpStatue: 0.8, grpSpotlight: 0.8, dnLineDance: 1 } },   // (the seeded group moves: never the same twice)
   tdPass:  { pri: 3, cap: 'score', side: true, mate: 'ol', moves: { doubleFistPump: 1, pointTo: 1, chestBump: 1, fistBump: 1, hsLinemanSlap: 1, hsForearm: 0.6, hsDapPull: 0.6, hsSalute: 0.4 } },   // the QB, as his receiver celebrates
-  two:     { pri: 3, cap: 'score', turn: 'field', moves: { twoFingers: 1, flexOne: 1, ballSpin: 1, dnHeelClick: 0.5, dnDiscoPoint: 0.5, dnShimmy: 0.5, dnPogo: 0.4 } },
+  two:     { pri: 3, cap: 'score', turn: 'field', moves: { twoFingers: 1, flexOne: 1, ballSpin: 1, topSpin: 1, dnHeelClick: 0.5, dnDiscoPoint: 0.5, dnShimmy: 0.5, dnPogo: 0.4 } },
   pat:     { pri: 3, cap: 'score', kick: true, moves: { golfSwing: 1, cash: 1, hsSalute: 0.4, hsHighLow: 0.4 } },
   fg:      { pri: 3, cap: 'score', kick: true, moves: { golfSwing: 1, cash: 1, hsSalute: 0.4, hsHighLow: 0.4 } },
   bigKick: { pri: 3, cap: 'score', kick: true, moves: { kneeSlide: 1, carriedOff: 1, cash: 1 } },             // a late kick that ties or wins it, any kick in overtime (bigKick)
-  safety:  { pri: 3, cap: 'score', moves: { safetySignal: 1, groupFlex: 1 } },
+  safety:  { pri: 3, cap: 'score', moves: { safetySignal: 1, groupFlex: 1, dfSafety: 1 } },
   first:   { pri: 0, cap: 'quick', moves: { flexOne: 1, armWindmill: 1, firstDownPoint: 1, bowlingRoll: 0.2, fdFin: 1, fdPointChains: 1, fdSkyPoint: 0.8, fdFlexOver: 1.2, fdStareDown: 1, fdMoveChains: 0.8, fdSpinPoint: 0.8, fdBallToRef: 0.6, hsHighLow: 0.2, hsSnapPoint: 0.2 } },
   long:    { pri: 0, cap: 'quick', moves: { firstDownPoint: 1, chestPound: 1, hsDapPull: 0.3, hsHighLow: 0.3, tnByeWave: 0.5, tnCheckWatch: 0.5, tnLookAround: 0.5, fdSkyPoint: 0.5 } },              // a gain of CELEB.longYd or more, no score
   catch:   { pri: 0, cap: 'quick', moves: { catchSignal: 1, stickyHands: 1, helmetTap: 1, flexOne: 1, scream: 1, stepOver: 1, tnTooSmall: 0.8, tnPillow: 0.6, fdFin: 0.5 } },   // contested, one-handed, diving or called out
   miss:    { pri: 0, cap: 'quick', moves: { lookBack: 1, shoulderDust: 1, fingerWag: 1, tnBrushShoulders: 1, tnByeWave: 0.8, tnCheckWatch: 0.6, tnLookAround: 0.6, tnTooSmall: 0.5 } },    // a move put a defender down and the play gained CELEB.missYd
   pancake: { pri: 0, cap: 'quick', moves: { flexCrab: 1, pointTo: 1, pancakeFlip: 1, hsLinemanSlap: 0.8 } },       // the blocker, after the whistle
   // defense
-  pick:     { pri: 2, cap: 'quick', moves: { straps: 1, handcuffs: 1, shadowBox: 1, flexDouble: 1, thumbsDown: 1, hsBehindBack: 0.4, hsSalute: 0.3, hsSnapPoint: 0.4, tnShush: 0.6, tnZipLips: 0.6, tnEarCup: 0.4, tnPointScoreboard: 0.4 } },   // not returned for a score (that is td)
-  fumRec:   { pri: 2, cap: 'quick', moves: { ballHigh: 1, pointOtherWay: 1, groupJump: 1 } },
-  fumForce: { pri: 0, cap: 'quick', moves: { punchOut: 1, flexOne: 1 } },                    // the man who knocked it out (beside the recoverer's, when a teammate got it)
-  block:    { pri: 2, cap: 'quick', moves: { armsWave: 1, groupJump: 1, flexDouble: 1 } },                 // a blocked kick: the man who got a hand on it
-  sack:     { pri: 1, cap: 'quick', moves: { flexDouble: 1, bowArrow: 1, groundPound: 1, scream: 1, hsForearm: 0.4, hsChestBump: 0.4, hsLinemanSlap: 0.5, tnPillow: 0.8, tnTrashDump: 0.6, tnCold: 0.5, tnTooSmall: 0.5, dnShimmy: 0.3 } },
-  stop:     { pri: 0, cap: 'quick', moves: { pointOtherWay: 1, deniedX: 1, chestBump: 1, fistBump: 1, hsForearm: 0.6, hsShoulderBump: 0.6, hsChestBump: 0.5, tnShush: 0.5, tnEarCup: 0.5, tnTrashDump: 0.4 } },               // a fourth-down stop or a goal-line stand
-  hit:      { pri: 0, cap: 'quick', moves: { shadowBox: 1, chestPound: 1, flexCrab: 1, tnPillow: 0.8, tnTrashDump: 0.6, tnCold: 0.5 } },   // a hit stick that landed
-  tfl:      { pri: 0, cap: 'quick', moves: { getBack: 1, thumbsDown: 1, fingerWag: 1, tnTooSmall: 0.6, tnZipLips: 0.6, tnBrushShoulders: 0.6, chestPound: 0.4 } },
-  pbu:      { pri: 0, cap: 'quick', moves: { armsWave: 1, fingerWag: 1, straps: 1, tnShush: 0.6, tnZipLips: 0.6, tnTooSmall: 0.5 } },
+  pick:     { pri: 2, cap: 'quick', moves: { straps: 1, handcuffs: 1, shadowBox: 1, flexDouble: 1, thumbsDown: 1, hsBehindBack: 0.4, hsSalute: 0.3, hsSnapPoint: 0.4, tnShush: 0.6, tnZipLips: 0.6, tnEarCup: 0.4, tnPointScoreboard: 0.4,
+                          dfBox: 1, dfBoxSnap: 0.4, dfBinoculars: 1, dfPickPocket: 1, dfFishing: 1, dfMagic: 0.35, dfPhone: 0.35, dfSnowAngel: 0.6 },
+              team: { dgBoxTeam: 1, dgHuddleBounce: 1, dgDice: 1 } },   // (v0.43 group moves: when 3+ teammates are close, CELEB.teamOdds)   // not returned for a score (that is td)
+  fumRec:   { pri: 2, cap: 'quick', moves: { ballHigh: 1, pointOtherWay: 1, groupJump: 1, dfBallUp: 1 }, team: { dgBoxTeam: 1, dgDice: 1, dgHotPotato: 1.2 } },
+  fumForce: { pri: 0, cap: 'quick', moves: { punchOut: 1, flexOne: 1, dfRipOut: 1 } },                    // the man who knocked it out (beside the recoverer's, when a teammate got it)
+  block:    { pri: 2, cap: 'quick', moves: { armsWave: 1, groupJump: 1, flexDouble: 1, dfSwat: 1.2, fingerWag: 0.6, dgVolley: 0.8 } },                 // a blocked kick: the man who got a hand on it
+  sack:     { pri: 1, cap: 'quick', moves: { flexDouble: 1, bowArrow: 1, groundPound: 1, scream: 1, hsForearm: 0.4, hsChestBump: 0.4, hsLinemanSlap: 0.5, tnPillow: 0.8, tnTrashDump: 0.6, tnCold: 0.5, tnTooSmall: 0.5, dnShimmy: 0.3,
+                          dfBox: 0.6, dfBoxSnap: 0.3, dfTimber: 1, dfLunch: 1, dfSackCount: 1, dfHomeRun: 0.8, dfPushups: 0.6 }, team: { dgHuddleBounce: 1 } },
+  stop:     { pri: 0, cap: 'quick', moves: { pointOtherWay: 1, deniedX: 1, chestBump: 1, fistBump: 1, hsForearm: 0.6, hsShoulderBump: 0.6, hsChestBump: 0.5, tnShush: 0.5, tnEarCup: 0.5, tnTrashDump: 0.4, dfBox: 0.6, dfBoxSnap: 0.3, dfLockKey: 1, dfWatch: 0.5 }, team: { dgWall: 1.2, dgHuddleBounce: 0.6 } },               // a fourth-down stop or a goal-line stand
+  hit:      { pri: 0, cap: 'quick', moves: { shadowBox: 1, chestPound: 1, flexCrab: 1, tnPillow: 0.8, tnTrashDump: 0.6, tnCold: 0.5, dfTimber: 0.8, dfHomeRun: 0.8, dfRingBell: 1 } },   // a hit stick that landed
+  tfl:      { pri: 0, cap: 'quick', moves: { getBack: 1, thumbsDown: 1, fingerWag: 1, tnTooSmall: 0.6, tnZipLips: 0.6, tnBrushShoulders: 0.6, chestPound: 0.4, dfPushups: 0.8 } },
+  pbu:      { pri: 0, cap: 'quick', moves: { armsWave: 1, fingerWag: 1, straps: 1, tnShush: 0.6, tnZipLips: 0.6, tnTooSmall: 0.5, dfNoGood: 1.2, dfBox: 0.6, dfPhone: 0.35 } },
   // special teams
   fgMiss:   { pri: 0, cap: 'quick', moves: { armsWave: 1, thumbsDown: 1 } },                 // their field goal missed (a defender near the kick)
   onside:   { pri: 2, cap: 'quick', moves: { ballHigh: 1, pointOtherWay: 1 } },              // whoever comes up with an onside kick
@@ -3965,7 +4974,7 @@ const CELEB_BEATS = {
   golfSwing: [0.72, [[0.72, 'whoosh'], [0.74, 'snap']]], cash: [0.2, [[0.2, 'snap:0.6'], [0.4, 'snap:0.6'], [0.6, 'snap:0.6'], [0.8, 'snap:0.6']]],
   kneeSlide: [0.52, [[0.52, 'scrape:1.3'], [0.52, 'stomp:0.5']]], safetySignal: [0.24, [[0.24, 'clap']]], powerUp: [0.36, [[0.36, 'whoosh'], [0.36, 'grunt']]], waveBye: [0.14, [[0.14, 'whoosh:0.3']]],
   goalpostDunk: [0.5, [[0.12, 'stomp:0.5'], [0.3, 'whoosh'], [0.5, 'post:' + CELEB.post.dunk]]],
-  chestBump: [0.28, [[0.23, 'whoosh'], [0.28, 'bighit'], [0.62, 'grunt']]], fistBump: [0.24, [[0.2, 'whoosh:0.5'], [0.24, 'hit']]], highFive: [0.27, [[0.27, 'clap']]],
+  chestBump: [0.36, [[0.2, 'stomp:0.5'], [0.3, 'whoosh'], [0.36, 'smash'], [0.68, 'stomp'], [1.02, 'grunt:1.3']]], fistBump: [0.34, [[0.26, 'whoosh'], [0.34, 'smash:0.6'], [0.66, 'stomp:0.4']]], highFive: [0.27, [[0.27, 'clap']]],
   teammateDunk: [1.04, [[0.82, 'whoosh'], [1.04, 'pop:0.4']]], linemanLift: [0.86, [[0.62, 'whoosh:0.5']], [[0.36, 'grunt']]], campfire: [0.9, [[0.54, 'snap']]],
   goalLineLounge: [0.36, [[0.36, 'stomp:0.4']]], crossedArms: [0.24, [[0.24, 'slap:0.6']]], bowlingRoll: [1.5, [[0.98, 'whoosh']], [[0.9, 'clap'], [0.97, 'stomp']]],
   groupFlex: [0.24, [[0.24, 'grunt']]], groupJump: [0.22, [[0.22, 'whoosh'], [0.5, 'whoosh']]], carriedOff: [0.95, [], [[0.35, 'grunt']]],
@@ -4009,6 +5018,8 @@ const CELEB_NEEDS = {
   foe: (h, q) => !!(q.foe = (q.o && q.o.tgt && q.o.tgt.team && q.o.tgt.team !== h.team && !lyingDown(q.o.tgt) ? q.o.tgt : null) || allPlayers().filter(o => o.team !== h.team && !lyingDown(o) && !o.slOut && dist(o, h) < CELEB.tauntRange * YD).sort((a, b) => dist(a, h) - dist(b, h))[0]),
   post: (h, q, m) => { const k = m.marks(h, [], celebEnv(h))[0]; return Math.hypot(k.x - h.x, k.y - h.y) < CELEB.postRange * YD; },
   goal: h => Math.abs(h.x - celebEnv(h).goalX) < 5 * YD,
+  late: () => !!game && game.quarter >= 4 && game.secs <= lateS(CELEB_DF.lateS),   // (v0.43: the last minutes of the 4th, or overtime)
+  d6: h => h.team === 'def',                                                      // (v0.43: a defender: a score / recovery of theirs)
   down: (h, q) => !!(q.down = allPlayers().filter(o => o.team !== h.team && lyingDown(o) && Math.abs(o.x - h.x) > 0.5 * YD && Math.abs(o.x - h.x) < CELEB.nearYd * YD && Math.abs(o.y - h.y) < 0.7 * YD)
                                           .sort((a, b) => dist(a, h) - dist(b, h))[0]),
 };
@@ -4070,6 +5081,7 @@ function celebPick(q) {
   const E = CELEB_EVENTS[q.ev], h = q.hero, arch = celebArch(h), last = CELEB_LAST[celebKey(h)], tlast = CELEB_LAST[celebTeamKey(h)];
   const forced = q.forceId || (!q.chained && CELEB.force);   // (test mode: this move, whoever he is; its partners / target are still looked up)
   if (forced && CELEB_MOVES[forced]) { celebCan(CELEB_MOVES[forced], q, null, E); return forced; }
+  if (q.pre && CELEB_MOVES[q.pre] && celebCan(CELEB_MOVES[q.pre], q, arch, E)) return q.pre;   // (picked before the open-space hop: celebTry)
   const tagK = id => { const tg = [].concat(CELEB_MOVES[id].tag); return (tg.includes(arch) ? CELEB.matchW : 1) * (tg.includes('taunt') ? CELEB.tauntK * (CELEB.tauntSet[SETTINGS.taunts] ?? 1) : 1); };
   const from = moves => {   // (never his last move, never the team's last celebration together, unless nothing else can be done here)
     const all = Object.keys(moves).filter(id => tagK(id) > 0 && celebCan(CELEB_MOVES[id], q, arch, E));
@@ -4289,7 +5301,7 @@ function celebBegin(q) {
     for (let r = 0; r < CELEB.group.rolls; r++) { sd = 1 + Math.floor(Math.random() * 1e6); V = celebMvOf({ id, sd, n: mates.length + 1, big, hy }); if (V.combo !== CELEB_LASTC[id]) break; }
     CELEB_LASTC[id] = V.combo;
   }
-  const capS = (CELEB[E.cap + 'Max'] || CELEB.quickMax) * (1 + CELEB.time.capK * hy), span = celebWarpOf(V, hy).span;
+  const capS = Math.max((CELEB[E.cap + 'Max'] || CELEB.quickMax) * (1 + CELEB.time.capK * hy), mv.full ? V.secs : 0), span = celebWarpOf(V, hy).span;   // (full: a v0.43 defensive move longer than its event's cap keeps its own length)
   const dur = Math.min(span, mates.length > 1 ? Math.max(capS, CELEB.group.max * (0.6 + 0.4 * hy)) : capS);   // (a group move may run longer)
   const turn = mv.turn || E.turn, tg = mv.needs === 'down' ? q.down : mv.needs === 'foe' ? q.foe : q.o.tgt, away = h.team === 'off' ? 1 : -1;   // (away: the way his team attacks, in world x, whichever way the screen is mirrored)
   if (turn === 'field') h.face = -away;
@@ -4368,7 +5380,12 @@ function celebTry(q) {
   if (h.action || Math.hypot(h.vx || 0, h.vy || 0) >= CELEB.still * YD) { q.stillT = null; return false; }
   if (q.stillT == null) q.stillT = clock;
   if (clock - q.stillT < (q.hops ? CELEB.open.beat : CELEB.settle)) return false;
-  if ((q.hops || 0) < CELEB.open.hops) {   // out of the crowd, into open space where the move can be seen
+  if (q.pre === undefined && !h.cel) {   // the move is chosen now: one that needs people round him (a man down to step over, a foe to taunt, teammates, the post) stays where he is
+    if (q.hy == null) q.hy = q.hyF != null ? q.hyF : celebHype(q.ev, h);
+    q.pre = celebPick(q) || null;
+  }
+  const preM = q.pre && CELEB_MOVES[q.pre], crowdMove = !!(preM && (preM.needs || preM.marks || preM.gen || celebCastN(preM).pop() > 1));
+  if (!crowdMove && (q.hops || 0) < CELEB.open.hops) {   // out of the crowd, into open space where the move can be seen
     const O = CELEB.open, s = celebOpenSpot(h);
     if (s) {
       const v = s.r >= O.runFrom ? O.run : O.walk;
@@ -4439,7 +5456,7 @@ function celebFxMen(list, ac, live) {   // live: not a replay / the library (tho
     s.u = u; s.t = t; s.n = celebFxN;
     if (!(dt > 0)) continue;
     const g = c.g || 0, q = celebAt(mv, t, c), lift = q.lift || 0;
-    for (const [bt, sfx] of celebBeatsOf(celebRole(mv, c))) if (bt + g > t0 && bt + g <= t) celebSfx(sfx, fav);
+    for (const [bt, sfx] of celebBeatsOf(celebRole(mv, c))) if (bt + g > t0 && bt + g <= t) { celebSfx(sfx, fav); if (!c.i && String(sfx).slice(0, 5) === 'smash' && celebParts()) impacts.push({ x: p.x + p.face * 1.5 * YD, y: p.y - 14 * S, t: 0 }); }
     s.top = Math.max(s.top, lift);
     if (s.lift > CELEB_SND.landAt && lift <= CELEB_SND.landAt && s.top >= CELEB_SND.landLift) {   // back on his feet (or his back) after a jump / flip
       clipSfx(pickOf(TACKLE_CLIPS.reg), CELEB_SND.landVol * (s.top >= CELEB_SND.landBig ? 1.6 : 1));
@@ -4569,8 +5586,8 @@ function celebNoFx(q, t) { q.yaw = t > 0.3 && t < 0.62 ? 0.6 * Math.sin(2 * Math
 function celebBounceFx(q, t) { q.lift += 1.3 * Math.abs(Math.sin(t * 15)) * q.v; }
 function celebHopFx(q, t) { const h = Math.abs(Math.sin(Math.PI * (t - 0.14) / 0.22)) * q.v; q.lift += 2.6 * h; q.k += 0.05 * (h - 0.5) * q.v; q.l1 = [3.5, -0.5 * h, 0.6 * h]; }
 function celebWaveFx(q, t) { q.nh[0] += 3.2 * Math.sin(2 * Math.PI * 3 * (t - 0.14) / 0.5) * q.v; }
-function celebBumpFx(q, t, c) { celebBang(c, t, 0.28, true); if (c && c.big) { q.lift *= 0.6; q.k = 1 + (q.k - 1) * 1.6; if (q.lift > 0.5) q.R -= 0.08; } }   // the belly bump: lower, with a bigger squash
-function celebFistFx(q, t, c) { celebBang(c, t, 0.24, false); }
+function celebBumpFx(q, t, c) { celebBang(c, t, 0.36, true); if (c && c.big) { q.lift *= 0.6; q.k = 1 + (q.k - 1) * 1.6; if (q.lift > 0.5) q.R -= 0.08; } }   // the belly bump: lower, with a bigger squash
+function celebFistFx(q, t, c) { celebBang(c, t, 0.34, false); }
 function celebBang(c, t, at, big) {   // the moment of contact, once per celebration (the hero's cel): a thud and a jolt of the camera
   // (v0.39: the thud and the jolt are the move's own 'bighit' / 'hit' beats now (CELEB_BEATS), so replays and the guest get them once too)
 }
@@ -4679,6 +5696,7 @@ function celebPose(p, ac) {
 // both arms, hand to its spot (drawPlayer's arm chain), the smear copies first; then a ball held in a hand, fingers, and the move's own doodles
 function celebArms(T, skin, q) {
   const held = q.ball && q.ball.hand, mv = q.role;
+  if (q.ball && q.ball.pre) q.ball.pre(q);   // (a move look's carried ball: under his arms, the hand wrapped over it)
   const arm = (s, h, al) => { const sh = CELEB_SH[s], el = (s === 'fh' ? q.fe : q.ne) || (h[0] - sh[0] >= 0 ? -1 : 1); drawArmTo(T, skin, sh[0], sh[1], h[0], h[1], 5 * al, 5.5 * al, el, 4.4); };
   const inHand = h => { ctx.save(); ctx.translate(h[0], h[1]); ctx.rotate(q.ball.rot || 0); drawFootball(6, 3.9, 1, -0.3); ctx.restore(); };
   for (const s of ['fh', 'nh']) {
@@ -4788,7 +5806,12 @@ function celebImpact(p, q, at, dist, h, size) {   // a contact burst between two
     ctx.closePath(); ctx.fill(); ctx.stroke();
   }
   ctx.strokeStyle = celebInk(0.9 * (1 - u)); ctx.lineWidth = (2.6 - 1.6 * u) * S / 2; ctx.beginPath(); ctx.ellipse(0, 0, r * (0.6 + 1.8 * u), r * (0.45 + 1.3 * u), 0, 0, Math.PI * 2); ctx.stroke();   // the shock ring
+  if (u > 0.12) { const u2 = (u - 0.12) / 0.88; ctx.strokeStyle = celebInk(0.6 * (1 - u2)); ctx.lineWidth = (1.8 - 1.2 * u2) * S / 2; ctx.beginPath(); ctx.ellipse(0, 0, r * (0.5 + 2.6 * u2), r * (0.36 + 1.9 * u2), 0, 0, Math.PI * 2); ctx.stroke(); }   // (a second ring chasing the first)
   celebTicks(0, 0, 12, 0, Math.PI * 2 * 11 / 12, r * (0.9 + 1.6 * u), r * (1.5 + 2.6 * u), celebInk(1 - u), 2 * S / 2);
+  if (celebParts() && size >= 8) for (let i = 0; i < 8; i++) {   // dust kicked off the turf under them
+    const sx = (i - 3.5) * r * 0.45 * (0.6 + 1.6 * u), up = (8 + (i * 5) % 7) * S * u * (1 - u) * 2;
+    ctx.fillStyle = `rgba(206,232,170,${0.7 * (1 - u)})`; ctx.fillRect(sx, h * bk - up, 1.8 * S, 1.8 * S);
+  }
   if (celebParts()) for (let i = 0; i < 10; i++) {   // sparks
     const a = i * 2.39 + 0.4, v = r * (1.4 + 0.5 * ((i * 7) % 3)) * u * 2.2;
     ctx.fillStyle = i % 2 ? `rgba(255,214,80,${1 - u})` : `rgba(255,255,255,${1 - u})`;
@@ -4796,8 +5819,8 @@ function celebImpact(p, q, at, dist, h, size) {   // a contact burst between two
   }
   ctx.restore();
 }
-function celebBumpAfter(p, q) { celebImpact(p, q, 0.28, 0.9, (q.cel.big ? 10 : 16) + 13, 9); }   // chests meet up in the air
-function celebFistAfter(p, q) { celebImpact(p, q, 0.24, 0.8, 12, 5.5); }   // knuckles meet at shoulder height
+function celebBumpAfter(p, q) { celebImpact(p, q, 0.36, 1.55, (q.cel.big ? 10 : 17) + 13, 12.5); }   // chests meet up in the air
+function celebFistAfter(p, q) { celebImpact(p, q, 0.34, 1.45, 12, 8); }   // knuckles meet at shoulder height
 function celebSlideAfter(p, q) {   // turf spray off the knees (particles)
   if (!celebParts() || q.t < 0.5 || q.t > 1.15) return;
   const bk = S * figK(p), y = p.y + FOOT, fade = 1 - (q.t - 0.5) / 0.65;
@@ -4940,6 +5963,15 @@ function celebSpinBall(t, q, mv, c) {
   const q0 = celebAtL(mv, ts, c), x0 = celebMap(q0, q0.nh[0], q0.nh[1])[0], sp = Math.max(0, Math.min(D, t - tf));
   return { x: x0 + 1, y: 1, h: 0, rot: 0, top: 44 * sp * (1 - sp / (2 * D)), wob: 0.13 * Math.sin(sp * 9) * Math.min(1, sp * 2), fall: smooth01((t - te) / (mv.secs - te - 0.02)) };
 }
+// the one-handed top: under his palm on the turf, wound back a touch, ripped; it barely slows, walks in a small circle and is still going when he is done
+function celebTopBall(t, q, mv, c) {
+  const ts = 0.4, tf = 0.66, te = mv.secs - 0.12, D = te - tf;
+  if (t < ts) return { hand: 'n', rot: -Math.PI / 2 };
+  const q0 = celebAtL(mv, ts, c), x0 = celebMap(q0, q0.nh[0], q0.nh[1])[0], sp = Math.max(0, Math.min(D, t - tf)), w = Math.max(0, Math.min(1, (t - ts) / (tf - ts)));
+  const dr = Math.min(1, sp / 0.5) * 1.4;
+  return { x: x0 + 1 + dr * Math.cos(sp * 2.1) - dr, y: 1 + dr * 0.6 * Math.sin(sp * 2.1), h: 0, rot: 0, top: t < tf ? -1.4 * w * w : 52 * sp * (1 - sp / (3.2 * D)) - 1.4,
+           wob: (0.05 + 0.1 * sp / D) * Math.sin(sp * 8) * Math.min(1, sp * 2), fall: 0.25 * smooth01((t - te) / (mv.secs - te)) };
+}
 // let go from a hand at tr: straight down from there (fall s), one small bounce, then it lies there; dxf = how far it drifts on the way
 function celebFallBall(t, mv, c, tr, fall, dxf) {
   if (t < tr) return { hand: 'n', rot: -1.2 };
@@ -5046,6 +6078,13 @@ const celebHasBall = () => allPlayers().some(p => p.cel && p.cel.b && !p.action)
 // the upper arm runs at angle a (radians, 0 = straight ahead, + = down) for l1, then the forearm bends
 // by bend for l2 and ends in the glove. Sleeve over the biceps, a darker elbow joint, a slimmer forearm.
 const KICK_EASE = { arms: 9, wind: 0.4, up: 0.3 };   // kicker / holder looks: arms = 1/s blend rate, wind = share of the balance arms shown on the last strides, up = s to rise off the holder's knee
+// small players: under this many canvas px per sprite unit (a player is ~40 units tall) draw() turns plLod on for its players and the smallest details are
+// skipped: the knee crease, the elbow shade, the ear hole and the helmet stripe (~15% of a player's canvas calls). auto = AUTO graphics: only a pulled-back
+// shot (the normal play camera is ~0.9 px per unit at 1x, more on a sharper canvas, so the usual picture is unchanged); perf = performance mode: the normal shot too; the slow-frame step:
+// always. QUALITY: never. Only draw()'s own players: menus, cards, the library and the shows always get full detail.
+const PLAYER_LOD = { auto: 0.75, perf: 1.3 };
+let plLod = false;
+const plLodNow = () => !gfxHi() && (liteSlow || camZ() * RK * S * FIGURE.grow < (liteGame() ? PLAYER_LOD.perf : PLAYER_LOD.auto));
 function drawArm(t, skin, sx, sy, a, l1, bend, l2, glove = 4.4) {
   ctx.save();
   ctx.translate(sx, sy); ctx.rotate(a);
@@ -5053,7 +6092,7 @@ function drawArm(t, skin, sx, sy, a, l1, bend, l2, glove = 4.4) {
   ctx.fillStyle = t.jersey;      ctx.fillRect(-1, -2, 5, 4);            // sleeve
   ctx.translate(3 + l1, 0); ctx.rotate(bend);
   ctx.fillStyle = skin;          ctx.fillRect(-0.6, -1.4, l2 + 0.6, 2.8);   // forearm
-  ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(-1.2, -1.5, 2.2, 3);    // elbow
+  if (!plLod) { ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(-1.2, -1.5, 2.2, 3); }   // elbow
   ctx.fillStyle = t.glove;       ctx.fillRect(l2 - 0.5, -glove / 2, glove, glove);
   ctx.restore();
   // the arm comes out from under the shoulder pad: a pad cap over the joint
@@ -5079,7 +6118,7 @@ function drawLeg(t, hx, hy, a, bend, tip) {
   ctx.fillStyle = t.pants;            ctx.fillRect(-2.5, 0, 5, 5.6);        // thigh
   ctx.translate(0, 5); ctx.rotate(bend);
   ctx.fillStyle = t.pants;            ctx.fillRect(-2.5, -0.6, 5, 2.6);     // knee / lower pant leg
-  ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(-2.5, -0.6, 5, 1.3);     // knee crease
+  if (!plLod) { ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(-2.5, -0.6, 5, 1.3); }   // knee crease
   ctx.fillStyle = t.sock;             ctx.fillRect(-2.5, 2, 5, 3);          // shin
   ctx.fillStyle = t.shoe || '#111';
   if (tip) ctx.fillRect(-1.5, 5, 3.5, 3.5); else ctx.fillRect(-2.5, 5, 6.5, 2);   // shoe, toe forward
@@ -5146,6 +6185,321 @@ function headLook(p, bl, hy, watch) {
   return p.headW;
 }
 
+// --- move looks (v0.43) ---------------------------------------------------------------------------------------------------------------------------------
+// Costumes on runner moves the game already made: never a speed, spot, odds or a move's length. A juke / spin / hurdle gets one look picked as it starts
+// (moveLookPick from runAction: act.look, plain, taped with the act, synced) and is drawn through the celebration pose path (cq in drawPlayer: hand spots,
+// legs, squash / stretch, head, smears), fitted to the move's own length (act.dur). A look with `tail` keeps going that many real seconds after the move is
+// over (p.mvFx = { k, t, o, side }: o = the look's time when the move ended; taped like catchFx); in a tail his legs are his own running legs again.
+// Continuous looks: the truck (p.truck) and the tightrope (on the sideline). Keys ([s, ease, pose]) are written with the ball in the NEAR hand (nh): a
+// ball in the far arm (ballSide < 0) swaps the hands. v = the ball's way toward the other hand (0.5 = between both hands: a spin's switch).
+// legs: false = his own running legs. Picks read ratings and the field only. MOVE_LOOK.force pins one look per family (the MOVES test).
+const MOVE_LOOK = {
+  force: { spin: null, juke: null, hurdle: null, truck: null, reel: null, hurdled: null, dive: null, slide: null, land: null, pick: null, tip: null },   // the MOVES test's pinned look per family (null = picked by the rules below)
+  rate: null, sideYd: null,           // the MOVES test's agility override (x, 1 = average) / yd from the sideline (cutting back in); null = the man's own
+  wideLb: 228, wideAgi: 0.85,         // spinWide: a back this heavy (lb) or this unagile (agility x) spins wide
+  grab: 1.5,                          // yd: a defender this close as the spin starts gets a hand on his hip (jersey stretch; his grab reactions if he's beaten)
+  jumpAgi: 1.22, dblAgi: 1.38, dblOdds: 0.3, dipAgi: 0.82,   // juke: a jump cut / a double juke (at its odds) from this agility; a shoulder dip under dipAgi
+  deadSide: 4, stutterYd: 3.5,        // juke: a dead leg within this many yd of the sideline cutting back in / a stutter when no defender is this close
+  hurdleAgi: 1.1, hurdleNew: 0.65,    // hurdles: the clean (track) style is likelier from this agility; share of hurdles that take a new look (the rest keep split / scissor)
+  stiffLate: 0.15,                    // s: a stiff arm held over the end of a spin comes out of it already locked out
+  tight: 1, tightIn: 0.35,            // tightrope: within this many yd of the sideline (eased in over the last tightIn yd), running along it
+  rise: 0.3,                          // s the man under a hurdle that's tackled stands up into it (riseUp) before his wrap
+  puffT: 0.3, smear: 1,               // s a turf puff lasts / x CELEB.smearSpeed for a move's hand smears
+  skinBias: 0.75,                     // chance a beaten man's reaction is one that goes with the runner's look (else any skin of the game's own reaction)
+  goalYd: 2, goalBody: 2.5,           // goal-line leap: a runner's dive inside this many yd of the goal line with a defender within goalBody yd in front
+  reachYd: 1.5, reachIn: 0.2,         // ball reach: tackled within this many yd short of the goal line / the line to gain; s the arm takes to lock out
+  backYd: 0.6, sideSin: 0.75, sideOdds: 0.6,   // catch dives: a pass this many yd behind his facing = backOver; a dive this square across his facing (|sin|) = sideDive at sideOdds
+  outYd: 0.4,                         // a dive that lands within this many yd of the sideline (or past it) ends sitting up
+  oneFootV: 4.5, catchHit: 0.3,       // landings: a catch coming down faster than this (yd/s) lands on one foot; hit this many s after the catch = at the catch point (spinAir)
+  pickIcon: 0.06, pickRun: 4, pickToe: 0.6,   // picks: chance (x his hands) of an iconic look (reached round his man / juggled); yd/s for a pick in stride; share of sideline picks that are toe drags
+};
+const ML_RUN = { k: 1, R: 0.06, rot: 0, sink: 0, lift: 0, ox: 0, tw: 1, yaw: 0, hd: 0, al: 1, u: 0, v: 0, nh: [6.2, -7.4], fh: [0.6, -1.5], l0: [-3.5, 0.4, 0.15], l1: [3.5, -0.35, 0.1] };   // carrying arm over the ball, free hand at his side
+const ML_SHIELD = { ...ML_RUN, R: 0.44, sink: 1, nh: [4.6, -6.6], fh: [8.4, -10.6] };   // the truck: shoulder down, free forearm across his chest
+const ML_BALL = { ox: -1.5, oy: -2.6, rot: -0.3, k: 0.7 };   // the held ball off the ball hand's spot (tail in the crook of his arm, nose at the fingers) and its size x the ball in the air
+const mlTw = c => Math.abs(c) < 0.25 ? 0.25 * (Math.sign(c) || 1) : c;
+const mlU = (t, a, b) => Math.max(0, Math.min(1, (t - a) / (b - a)));
+function mlSpin(q, t, a, b, turns = 1) {   // a full turn between a and b s (side-on, edge-on, mirrored, round again); the head leads the body into it
+  const u = mlU(t, a, b), th = 2 * Math.PI * turns * smooth01(u);
+  q.tw = mlTw(Math.cos(th)); q.yaw = 0.8 * Math.sin(th + 0.7) * Math.sin(Math.PI * u);
+  return th;
+}
+function mlStride(q, ph, A, kn, up) {   // running legs (drawPlayer's stride): A = thigh swing, kn = knee fold, up = on his toes
+  q.l0 = [-1.5, -A * Math.sin(ph), 0.15 + kn * Math.max(0, Math.cos(ph)), up];
+  q.l1 = [1.5, A * Math.sin(ph), 0.15 + kn * Math.max(0, -Math.cos(ph)), up];
+}
+function mlPump(q, t, t0, amp = 1) { if (t > t0) { const ph = (t - t0) * 26; q.fh = [1.8 + 3.8 * amp * Math.sin(ph), -4 - 2.5 * amp * Math.abs(Math.sin(ph))]; } }   // the free arm pumping (a burst)
+// world-space bits (after him): a turf puff at a foot (sprite x along his facing), age s; turf kicked from under a plant foot (dir = world y sign it flies)
+function mlPuff(p, sx, age) {
+  if (age < 0 || age > MOVE_LOOK.puffT || !celebParts()) return;
+  const bk = S * figK(p), u = age / MOVE_LOOK.puffT, x = p.x + p.face * sx * bk, y = p.y + FOOT;
+  ctx.fillStyle = `rgba(150,170,120,${0.42 * (1 - u)})`;
+  for (let i = 0; i < 3; i++) { const a = i * 2.1 + sx; ctx.beginPath(); ctx.arc(x + Math.cos(a) * 3.5 * u * bk - p.face * i * 2.5 * u * bk, y - (1.5 + 4 * u) * bk * (0.6 + 0.35 * i), (2 + 4.5 * u) * bk * (1 - 0.2 * i), 0, Math.PI * 2); ctx.fill(); }
+}
+function mlSpray(p, sx, age, dir) {
+  if (age < 0 || age > 0.36 || !celebParts()) return;
+  const x0 = p.x + p.face * sx * S * figK(p), y0 = p.y + FOOT;
+  for (let i = 0; i < 7; i++) {
+    const h = Math.abs(Math.sin((i + 1) * 12.9898 + sx * 3.1) * 43758.5453), r1 = h % 1, r2 = (h * 7.13) % 1, a = age - i * 0.022;
+    if (a < 0) continue;
+    const z = (3 + 3 * r2) * YD * a - 12 * YD * a * a; if (z < 0) continue;
+    ctx.fillStyle = i % 3 ? 'rgba(70,120,50,0.9)' : 'rgba(110,85,55,0.9)';
+    ctx.fillRect(x0 - p.face * (0.6 + 1.6 * r1) * YD * a - 1.5 * S, y0 + dir * (2 + 3 * r2) * YD * a - z - 1.5 * S, 3 * S, 3 * S);
+  }
+}
+// the defender whose hand is on his hip as a spin starts (act.grabI = his place in allPlayers; the library stage's B)
+const mlGrabber = p => typeof anim !== 'undefined' && anim && (anim.A === p) ? anim.B : p.act && p.act.grabI >= 0 ? allPlayers()[p.act.grabI] : null;
+function mlGrabStrokes(p, q) {   // two short pencil strokes from his hip to the grabbing hand while they touch: the jersey stretched
+  const a = p.act; if (!a || !a.grab || p.action !== 'spin' || q.t > q.mvl.secs * 0.55 || !celebParts()) return;
+  const d = mlGrabber(p); if (!d || Math.hypot(d.x - p.x, d.y - p.y) > 1.8 * YD) return;
+  const bk = S * figK(p), dx = d.x - p.x, dy = d.y - p.y, hx = p.x + (Math.sign(dx) || p.face) * 3.5 * bk, hy = p.y - (p.z || 0) + FOOT - 13 * bk, L = Math.hypot(dx, dy) || 1, k = Math.min(1, 0.7 * YD / L);   // (from his hip on the grabber's side)
+  const j = Math.floor(animNow() / 1000 * ICON.boil), w = n => Math.sin(j * 7.3 + n * 3.1) * 0.6 * bk;   // (the pencil boil: re-jittered a few times a second)
+  ctx.strokeStyle = 'rgba(58,58,64,0.8)'; ctx.lineWidth = 1.1 * S; ctx.lineCap = 'round'; ctx.beginPath();
+  for (const o of [-1.6, 1.4]) { const x0 = hx + dx * k * 0.25, y0 = hy + o * bk + dy * k * 0.25; ctx.moveTo(x0, y0); ctx.quadraticCurveTo(hx + dx * k * 0.55 + w(o), hy + o * bk * 1.4 + dy * k * 0.55 + w(o + 1), hx + dx * k + w(o + 2), hy + o * bk * 1.8 + dy * k); }
+  ctx.stroke();
+}
+const MV_LOOKS = {
+  // --- spins: a full turn over the move, the free arm folded across his chest, the ball switched at the half turn in front of it (both hands on it)
+  spinTight: { fam: 'spin', secs: 0.45, tail: 0.22, hold: true, keys: [   // agile backs: one pivot on the plant foot, ball high by the facemask, a long first stride out
+    [0, 'io', ML_RUN],
+    [0.07, 'snap', { k: 0.9, sink: 2.2, R: 0.17, nh: [5.8, -11.6], fh: [3.4, -12.2], l0: [-4.6, 0.55, 0.65], l1: [3, -0.2, 0.8] }],
+    [0.18, 'io', { k: 0.97, sink: 1.6, nh: [6, -11.4], fh: [5, -11.2], l0: [-1.8, 0.12, 0.6], l1: [1.8, -0.12, 0.55] }],
+    [0.225, 'io', { nh: [6.6, -11.4], fh: [6.4, -9.2], v: 0.5 }],
+    [0.3, 'io', { nh: [5.8, -11.6], fh: [3.4, -12.2], v: 0, l0: [-2, 0.2, 0.55], l1: [2.2, -0.25, 0.5] }],
+    [0.4, 'out', { k: 1.08, sink: 0.4, R: 0.26, nh: [5.4, -10.4], fh: [-2, -3], l0: [-4.6, 0.65, 0.35], l1: [4.6, -0.75, 0.2] }],
+    [0.67, 'io', ML_RUN]],
+    fx: (q, t) => mlSpin(q, t, 0.04, 0.4), after: (p, q) => { mlPuff(p, 3, q.t - 0.07); mlPuff(p, 4.6, q.t - 0.4); mlGrabStrokes(p, q); } },
+  spinWide: { fam: 'spin', secs: 0.7, tail: 0.2, hold: true, keys: [   // big backs: hips down, three small steps round the circle, the free arm out for balance, then in
+    [0, 'io', ML_RUN],
+    [0.1, 'snap', { k: 0.92, sink: 3, R: 0.1, nh: [5.5, -9.5], fh: [-7.5, -12.5], l0: [-4.2, 0.35, 0.95], l1: [3.8, -0.4, 0.95] }],
+    [0.28, 'io', { fh: [-6.5, -13] }],
+    [0.36, 'io', { nh: [6.2, -10.5], fh: [6.2, -8.4], v: 0.5 }],
+    [0.46, 'io', { nh: [5.4, -9.5], fh: [3.4, -6], v: 0 }],
+    [0.62, 'out', { k: 1.05, sink: 1.2, R: 0.22, l0: [-4.4, 0.6, 0.4], l1: [4.4, -0.7, 0.3] }],
+    [0.9, 'io', ML_RUN]],
+    fx: (q, t) => { mlSpin(q, t, 0.06, 0.62); const u = mlU(t, 0.1, 0.55), s = u > 0 && u < 1 ? Math.sin(3 * 2 * Math.PI * u) : 0; q.l0[2] += 0.55 * Math.max(0, s); q.l1[2] += 0.55 * Math.max(0, -s); q.lift += 0.9 * Math.abs(s); },
+    after: (p, q) => { for (const [x, t0] of [[-3, 0.1], [3, 0.28], [-3, 0.46]]) mlPuff(p, x, q.t - t0); mlGrabStrokes(p, q); } },
+  spinStumble: { fam: 'spin', secs: 0.3, tail: 0.35, hold: true, keys: [   // a stumble the game called during the spin: the plant foot slides, a hand down flat on the turf, two choppy steps out
+    [0, 'io', { ...ML_RUN, nh: [5.8, -11.4], fh: [3.4, -12] }],
+    [0.12, 'out', { k: 0.92, R: 0.62, sink: 4.5, al: 1.1, nh: [3.8, -10.8], fh: [10, 2.5], l0: [-6, 0.95, 0.25], l1: [3, -0.55, 1.35] }],
+    [0.3, 'io', { R: 0.52, sink: 3.6, fh: [10.5, 3] }],
+    [0.48, 'io', { R: 0.34, sink: 2, k: 0.96, al: 1, fh: [3, -3] }],
+    [0.65, 'io', ML_RUN]],
+    fx: (q, t) => { if (t > 0.3) { const s = Math.sin((t - 0.3) * 2 * Math.PI / 0.175); q.lift += 0.8 * Math.abs(s); q.R += 0.06 * s; } }, after: (p, q) => mlPuff(p, -5, q.t - 0.1) },
+  // --- jukes (side = the way he cuts, + = down the screen): all over the juke's own 0.3 s or so, a tail after
+  plantCut: { fam: 'juke', secs: 0.3, tail: 0.15, hold: true, keys: [   // the outside foot planted, knee loaded, turf kicked away from the cut
+    [0, 'io', ML_RUN],
+    [0.08, 'snap', { k: 0.9, sink: 2.6, R: -0.14, tw: 0.8, nh: [5.4, -8.6], fh: [-3.5, -5], l0: [-5.2, 0.5, 1.05], l1: [3, -0.25, 0.45] }],
+    [0.22, 'out', { k: 1.06, sink: 0.6, R: 0.2, tw: 1, fh: [4, -6], l0: [-4.5, 0.6, 0.3], l1: [4.4, -0.7, 0.25] }],
+    [0.45, 'io', ML_RUN]],
+    after: (p, q, m) => mlSpray(p, -5, q.t - 0.08, -m.side) },
+  jumpCut: { fam: 'juke', secs: 0.3, tail: 0.12, hold: true, keys: [   // both feet off together, across in the air, lands wide
+    [0, 'io', ML_RUN],
+    [0.05, 'snap', { k: 0.88, sink: 2.5, R: 0.05, fh: [-1, -3], l0: [-3, 0.3, 0.9], l1: [3, -0.3, 0.9] }],
+    [0.1, 'out', { k: 1.07, sink: 0, lift: 4, fh: [-6, -1], l0: [-1.6, -0.35, 1.05], l1: [1.6, -0.45, 1.05] }],
+    [0.2, 'io', { k: 1.02, lift: 3.4 }],
+    [0.25, 'in', { k: 0.85, lift: 0, sink: 2, l0: [-5, 0.45, 0.45], l1: [5, -0.45, 0.45] }],
+    [0.42, 'io', ML_RUN]],
+    after: (p, q) => { mlPuff(p, -5, q.t - 0.25); mlPuff(p, 5, q.t - 0.25); } },
+  stutter: { fam: 'juke', secs: 0.3, tail: 0.25, hold: true, keys: [   // quick choppy steps on the spot, shoulders shimmying, a head fake, then the burst
+    [0, 'io', ML_RUN],
+    [0.04, 'io', { k: 0.95, sink: 1.8, R: -0.04, nh: [5.6, -9], fh: [4.5, -6.5] }],
+    [0.2, 'io', { k: 0.95, sink: 1.8 }],
+    [0.27, 'snap', { k: 1.06, sink: 0, R: 0.27, l0: [-4.6, 0.65, 0.35], l1: [4.6, -0.75, 0.2] }],
+    [0.55, 'io', ML_RUN]],
+    fx: (q, t, m) => { const c = mlU(t, 0.03, 0.22); if (c > 0 && c < 1) { const ph = c * 5 * 2 * Math.PI, s = Math.sin(ph); mlStride(q, ph, 0.2, 0.75); q.lift += 0.6 * Math.abs(s); q.R += 0.1 * Math.sin(ph * 0.5); q.yaw = -0.45 * m.side * Math.sin(Math.PI * c); }
+      mlPump(q, t, 0.27); } },
+  shoulderDip: { fam: 'juke', secs: 0.3, tail: 0.08, hold: true, keys: [   // the legs keep running; only the upper body dips toward the fake and snaps back
+    [0, 'io', ML_RUN],
+    [0.1, 'out', { R: 0.21, sink: 1.2, tw: 0.82, hd: 0.22, nh: [6, -4.6], fh: [-1, 1.5] }],
+    [0.22, 'snap', { R: 0.08, sink: 0, tw: 1, hd: 0, nh: [6.2, -7.4], fh: [0.6, -1.5] }],
+    [0.38, 'io', ML_RUN]],
+    fx: (q, t, m) => { mlStride(q, (m.p.run || 0) + t * 24, LEG_SWING * 0.9, LEG_KNEE); q.yaw = 0.35 * m.side * Math.sin(Math.PI * mlU(t, 0, 0.22)); } },
+  doubleJuke: { fam: 'juke', secs: 0.3, tail: 0.3, hold: true, keys: [   // a fake one way, a fake the other, then gone the first way
+    [0, 'io', ML_RUN],
+    [0.06, 'snap', { k: 0.9, sink: 2.4, R: -0.1, tw: 0.75, hd: 0.15, fh: [-3, -4], l0: [-5, 0.5, 1.0], l1: [3, -0.25, 0.45] }],
+    [0.13, 'io', { k: 1, sink: 1.2, R: 0.04, tw: 1, hd: 0, l0: [-3, 0.3, 0.6], l1: [3, -0.3, 0.6] }],
+    [0.19, 'snap', { k: 0.9, sink: 2.4, R: -0.1, tw: 0.75, hd: 0.15, fh: [4, -6], l0: [-3, 0.25, 0.45], l1: [5, -0.5, 1.0] }],
+    [0.27, 'out', { k: 1.06, sink: 0.4, R: 0.22, tw: 1, hd: 0, fh: [-2, -3], l0: [-4.6, 0.65, 0.35], l1: [4.6, -0.75, 0.2] }],
+    [0.6, 'io', ML_RUN]],
+    fx: (q, t, m) => { q.yaw = 0.5 * m.side * Math.sin(2 * Math.PI * mlU(t, 0.02, 0.27)); mlPump(q, t, 0.3); },
+    after: (p, q, m) => { mlSpray(p, -5, q.t - 0.06, m.side); mlSpray(p, 5, q.t - 0.19, -m.side); } },
+  deadLeg: { fam: 'juke', secs: 0.3, tail: 0.2, hold: true, keys: [   // near the sideline: the lead leg planted straight and stiff, leaning back, then exploding forward
+    [0, 'io', ML_RUN],
+    [0.08, 'snap', { k: 0.93, R: -0.17, sink: 1, nh: [3, -5], fh: [-4, -1], l0: [-3, 0.25, 0.5], l1: [5, -0.6, 0.02] }],
+    [0.17, 'io', { R: -0.15 }],
+    [0.26, 'snap', { k: 1.07, R: 0.34, sink: 0.4, nh: [5.6, -8.5], fh: [4, -7], l0: [-4.8, 0.7, 0.3], l1: [4.4, -0.75, 0.25] }],
+    [0.5, 'io', ML_RUN]],
+    fx: (q, t) => mlPump(q, t, 0.26), after: (p, q) => mlPuff(p, 5, q.t - 0.08) },
+  // --- the truck (held): head and shoulder down, the free forearm a shield; after he runs a man over: through him (pancake) / both men bounce off (bounce)
+  truckRun: { fam: 'truck', secs: 1, hold: true, legs: false, keys: [[0, 'io', ML_SHIELD]], fx: (q, t, m) => { q.fh = [q.fh[0], q.fh[1] + 0.5 * Math.sin((m.p.run || 0) * 2)]; } },
+  truckPancake: { fam: 'truck', secs: 0, tail: 0.4, hold: true, legs: false, keys: [[0, 'io', ML_SHIELD], [0.1, 'snap', { k: 0.9, fh: [12, -11.5], al: 1.08 }], [0.4, 'io', ML_RUN]] },
+  truckBounce: { fam: 'truck', secs: 0, tail: 0.5, hold: true, legs: false, keys: [[0, 'io', ML_SHIELD], [0.08, 'snap', { k: 0.9, R: -0.12, sink: 0.5, fh: [-3, -9] }],
+    [0.22, 'io', { k: 1.02, R: 0.2, fh: [3, -5] }], [0.34, 'io', { R: 0.02 }], [0.5, 'io', ML_RUN]],
+    fx: (q, t) => { if (t > 0.08 && t < 0.4) q.ox += 1.2 * Math.sin((t - 0.08) * 30) * (0.4 - t); } },
+  // --- the tightrope (running the sideline): short steps on his toes, arms out, the ball held out in one hand
+  tightrope: { fam: 'run', secs: 1, hold: true, keys: [[0, 'io', { ...ML_RUN, R: 0.02, nh: [9, -10.8], fh: [-6.6, -12.4] }]], ball: { ox: 0.6, oy: -0.4, rot: -0.15, k: 0.74 },
+    fx: (q, t, m) => { const ph = m.p.run || 0, b = 0.8 * Math.sin(ph); mlStride(q, ph, LEG_SWING * 0.45, LEG_KNEE * 0.55, true); q.nh[1] += b; q.fh[1] -= b; } },
+  // --- hurdles (the hurdle's own air time; secs 1 = take-off to landing, the tail in real s)
+  hurdleClean: { fam: 'hurdle', secs: 1, tail: 0.15, hold: true, keys: [   // track hurdler: lead leg straight out, trail leg folded, free arm reaching over the lead leg
+    [0, 'io', { ...ML_RUN, k: 0.92, sink: 1.5 }],
+    [0.15, 'out', { k: 1.07, sink: 0, R: 0.32, al: 1.05, fh: [11, -5.5], l0: [-2, 0.95, 1.7], l1: [2.5, -1.4, 0.05] }],
+    [0.8, 'io', { k: 1.03, R: 0.28, l0: [-2, 0.8, 1.5], l1: [2.5, -1.3, 0.1] }],
+    [0.93, 'in', { k: 0.98, R: 0.1, al: 1, fh: [3, -4], l0: [-3.5, 0.3, 0.5], l1: [3.5, -0.5, 0.3] }],
+    [1, 'io', { k: 0.88, sink: 1.5, l0: [-3.5, 0.3, 0.6], l1: [3.5, -0.3, 0.6] }],
+    [1.15, 'io', ML_RUN]],
+    after: (p, q) => { mlPuff(p, -1, q.t); mlPuff(p, 1, q.t - 1); } },
+  hurdleHighKnee: { fam: 'hurdle', secs: 1, tail: 0.15, hold: true, keys: [   // both knees pulled to his chest, arms tucked in
+    [0, 'io', { ...ML_RUN, k: 0.9, sink: 1.8 }],
+    [0.18, 'out', { k: 1.04, sink: 0, R: 0.12, nh: [5.4, -9.5], fh: [4, -9], l0: [-1.5, -1.35, 2.2], l1: [1.5, -1.55, 2.3] }],
+    [0.78, 'io', { k: 1.02 }],
+    [0.95, 'in', { R: 0.05, l0: [-3, 0.2, 0.6], l1: [3, -0.3, 0.5] }],
+    [1, 'io', { k: 0.88, sink: 1.5, l0: [-3.5, 0.3, 0.6], l1: [3.5, -0.3, 0.6] }],
+    [1.15, 'io', ML_RUN]],
+    after: (p, q) => mlPuff(p, 0, q.t - 1) },
+  hurdleBack: { fam: 'hurdle', secs: 1, tail: 0.15, hold: true, keys: [   // after a spin: over him back first, back arched, legs scissoring, turning round to land facing upfield
+    [0, 'io', { ...ML_RUN, k: 0.9, sink: 1.5 }],
+    [0.15, 'out', { k: 1.06, sink: 0, R: -0.6, nh: [5, -11], fh: [-6, -12], l0: [-2, 0.9, 0.6], l1: [2, -0.9, 0.6] }],
+    [0.55, 'io', { R: -0.75 }],
+    [0.9, 'in', { R: -0.1, fh: [1, -4], l0: [-3, 0.3, 0.5], l1: [3, -0.3, 0.5] }],
+    [1, 'io', { k: 0.88, sink: 1.5, R: 0 }],
+    [1.15, 'io', ML_RUN]],
+    fx: (q, t) => { if (t < 1) { const u = mlU(t, 0.12, 0.88), sc = Math.sin(u * Math.PI * 3) * Math.sin(Math.PI * u); q.l0[1] += 0.7 * sc; q.l1[1] -= 0.7 * sc; }
+      q.tw = t < 0.12 ? mlTw(Math.cos(Math.PI * smooth01(t / 0.12))) : t < 0.5 ? -1 : mlTw(-Math.cos(Math.PI * smooth01(mlU(t, 0.5, 0.95)))); },
+    after: (p, q) => mlPuff(p, 0, q.t - 1) },
+  hurdleClip: { fam: 'hurdle', secs: 1, tail: 0, hold: true, keys: [   // not clean (the game said no room): the trail foot catches his pads, he pitches forward
+    [0, 'io', { ...ML_RUN, k: 0.92, sink: 1.5 }],
+    [0.15, 'out', { k: 1.05, sink: 0, R: 0.3, fh: [10, -6], l0: [-2, 0.9, 1.4], l1: [2.5, -1.35, 0.1] }],
+    [0.55, 'io', { R: 0.3, l0: [-2, 0.7, 1.2] }],
+    [0.7, 'snap', { R: 0.55, fh: [7, -2], l0: [-3, 0.15, 0.25] }],
+    [1, 'in', { k: 0.9, R: 0.5, sink: 2, fh: [8, 2.5], al: 1.08, l0: [-3.5, 0.5, 0.8], l1: [3.5, -0.5, 0.9] }]] },
+  hurdleClipLand: { fam: 'hurdle', secs: 0, tail: 0.6, hold: true, legs: false, keys: [   // ...and lands stumbling three steps, the free hand brushing the turf
+    [0, 'io', { ...ML_RUN, k: 0.92, R: 0.5, sink: 2.2, al: 1.08, fh: [8, 2.5] }],
+    [0.2, 'io', { R: 0.42, sink: 1.8, fh: [9, 3.5] }],
+    [0.4, 'io', { R: 0.3, sink: 1, al: 1, fh: [4, -2] }],
+    [0.6, 'io', ML_RUN]],
+    fx: (q, t) => { const s = Math.sin(t * 2 * Math.PI / 0.2); q.R += 0.07 * s; q.lift += 0.6 * Math.abs(s); },
+    after: (p, q) => { mlPuff(p, 8, q.t - 0.05); mlPuff(p, 9, q.t - 0.25); } },
+  // --- jump-catch landings on his feet (v0.43; the ones that put him on the turf are landOffFeet's): tails from the moment he lands, his own legs in them
+  landFeet: { fam: 'land', secs: 0, tail: 0.3, hold: true, tailLegs: true, keys: [   // both feet, a deep squash, the ball pulled in
+    [0, 'io', { ...ML_RUN, k: 0.85, sink: 3.2, R: 0.12, nh: [5.4, -8], fh: [3.6, -6], l0: [-3.6, -0.25, 1.0], l1: [3.6, -0.45, 1.05] }],
+    [0.12, 'out', { k: 1.03, sink: 0.6, R: 0.08, l0: [-3.5, 0.2, 0.4], l1: [3.5, -0.3, 0.35] }],
+    [0.3, 'io', ML_RUN]],
+    after: (p, q) => { mlPuff(p, -3.5, q.t); mlPuff(p, 3.5, q.t); } },
+  landOneFoot: { fam: 'land', secs: 0, tail: 0.5, hold: true, tailLegs: true, keys: [   // down on one foot, two hops to get his balance, the free arm out
+    [0, 'io', { ...ML_RUN, k: 0.88, sink: 2, R: -0.08, fh: [-8.5, -12.5], l0: [-1, 0.08, 0.35], l1: [3, -0.9, 1.45] }],
+    [0.32, 'io', { k: 1, sink: 0.8, R: 0.04, fh: [-6, -9] }],
+    [0.5, 'io', ML_RUN]],
+    fx: (q, t) => { if (t < 0.36) { const h = Math.abs(Math.sin(t * Math.PI / 0.18)); q.lift += 2.6 * h; q.k += 0.04 * (h - 0.5); q.l0 = [q.l0[0], q.l0[1], q.l0[2] + 0.4 * (1 - h)]; } },
+    after: (p, q) => { mlPuff(p, -1, q.t); mlPuff(p, -1, q.t - 0.18); mlPuff(p, -1, q.t - 0.36); } },
+};
+// how a catch landed on his feet looks (moveLookPick for landings): coming down fast or off a contorted catch = on one foot, hopping; else both feet
+const mlLandPick = p => MV_LOOKS[MOVE_LOOK.force.land] && MV_LOOKS[MOVE_LOOK.force.land].fam === 'land' ? MOVE_LOOK.force.land
+  : Math.hypot(p.vx || 0, p.vy || 0) / YD > MOVE_LOOK.oneFootV || (p.catchFx && LAND.awk[p.catchFx.style]) || p.oneHanded ? 'landOneFoot' : 'landFeet';
+// a man brought down in the air: right at the catch = spun round before he lands, else flipped flat onto his far shoulder
+const mlAirHit = c => MOVE_LOOK.force.land === 'spinAir' || MOVE_LOOK.force.land === 'flipped' ? MOVE_LOOK.force.land : c.catchFx && clock - c.catchFx.t < MOVE_LOOK.catchHit ? 'spinAir' : 'flipped';
+const mlBallDraw = q => { const b = q.ball; if (!b || b.x == null) return; ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.rot); drawFootball(7 * b.k, 4.5 * b.k, 1, -0.3); ctx.restore(); };
+const ML_ROLE = {};   // (celebArms' role: no props of its own; the ball goes under the arms through q.ball.pre)
+const mlAgi = c => MOVE_LOOK.rate != null ? MOVE_LOOK.rate : typeof rm === 'function' && c ? rm(c, agil(c), 'moves') : 1;
+function mlNear(c, r, pool) {   // the nearest defender on his feet within r yd: { o, d (yd) } or null
+  let best = null, bd = r * YD;
+  for (const o of pool || [...back7, ...dl]) { if (!o || o === c || o.team === c.team || o.action === 'down' || o.downMiss) continue; const d = Math.hypot(o.x - c.x, o.y - c.y); if (d < bd) { bd = d; best = o; } }
+  return best ? { o: best, d: bd / YD } : null;
+}
+// which look a move gets (fam spin / juke / hurdle; a = the move's act, set up already). Reads agility, weight, the sideline, the defenders; never a result.
+// Sets a.look (and a spin's a.grab / grabI); c.mvLast = { k, t } = what a man he beats reacts to (reelSkinPick)
+function moveLookPick(c, fam, a, pool) {
+  if (!c || !a) return null;
+  const f = MOVE_LOOK.force[fam];
+  let k = null, tag = null;
+  if (fam === 'spin') {
+    const n = mlNear(c, MOVE_LOOK.grab, pool);
+    if (n) { a.grab = true; a.grabI = allPlayers().indexOf(n.o); tag = 'spinOff'; }
+    k = f || ((c.wt || 0) >= MOVE_LOOK.wideLb || mlAgi(c) < MOVE_LOOK.wideAgi ? 'spinWide' : 'spinTight');
+  } else if (fam === 'juke') {
+    const ag = mlAgi(c), n = mlNear(c, MOVE_LOOK.stutterYd, pool), sy = MOVE_LOOK.sideYd != null ? MOVE_LOOK.sideYd : toSideline(c) / YD;
+    const inward = MOVE_LOOK.sideYd != null || (c.y < MID) === ((a.side || 1) > 0);   // (cutting back in toward the middle)
+    k = f || (sy < MOVE_LOOK.deadSide && inward ? 'deadLeg' : ag >= MOVE_LOOK.dblAgi && Math.random() < MOVE_LOOK.dblOdds ? 'doubleJuke'
+          : ag >= MOVE_LOOK.jumpAgi ? 'jumpCut' : !n ? 'stutter' : ag < MOVE_LOOK.dipAgi ? 'shoulderDip' : 'plantCut');
+  } else if (fam === 'hurdle') {
+    k = f || (a.backward ? 'hurdleBack' : a.user && !a.space ? 'hurdleClip' : Math.random() < MOVE_LOOK.hurdleNew ? (Math.random() < (mlAgi(c) >= MOVE_LOOK.hurdleAgi ? 0.7 : 0.4) ? 'hurdleClean' : 'hurdleHighKnee') : null);
+  }
+  if (k && !MV_LOOKS[k]) k = null;
+  a.look = k;
+  c.mvLast = { k: tag || k, t: clock };
+  return k;
+}
+const mlTightW = p => p.mlTight != null ? p.mlTight : state === 'run' && runner === p && Math.abs(p.vx || 0) > 1.5 * Math.abs(p.vy || 0) && Math.abs(p.vx || 0) > 2 * YD
+  ? smooth01((MOVE_LOOK.tight - Math.max(0, toSideline(p) / YD)) / MOVE_LOOK.tightIn) : 0;
+function mlAt(L, t, m) { const q = celebSample(L, L, Math.max(0, Math.min(L.secs + (L.tail || 0), t))); if (L.fx) L.fx(q, t, m); return q; }
+function mlMix(q, b, w) { if (w <= 0) return q; for (const k of CELEB_NUM) q[k] += (b[k] - q[k]) * w; for (const k of CELEB_VEC) q[k] = q[k].map((v, j) => j > 2 ? (w > 0.5 ? b[k][j] : v) : v + (b[k][j] - v) * w); return q; }
+// the move look on him this frame, as a celebration-style pose for drawPlayer (null: none). ac = the animation clock
+function mvPose(p, ac) {
+  const a = p.act, act = p.action === 'juke' || p.action === 'spin' || p.action === 'hurdle';
+  if (!(act && a && a.look) && !(p.mvFx && !p.action) && !(p.hasBall && !p.action)) return null;
+  let L = null, t = 0, tail = false, dtK = 1, w = 1, stum = null;
+  if (act && a && MV_LOOKS[a.look]) {
+    L = MV_LOOKS[a.look]; const dur = a.dur || 1;
+    t = Math.min(1, (a.t || 0) / dur) * L.secs; dtK = L.secs / dur;
+    if (p.action === 'spin' && a.stum != null && a.t >= a.stum) stum = a.t - a.stum;
+  } else if (!p.action && !p.stiff && p.mvFx && MV_LOOKS[p.mvFx.k]) {   // (a stiff arm out: its own arm, no tail)
+    const L0 = MV_LOOKS[p.mvFx.k], s = ac - p.mvFx.t, tt = (p.mvFx.o || 0) + s;
+    if (s >= 0 && tt < L0.secs + (L0.tail || 0)) { L = L0; t = tt; tail = true; }
+  }
+  if (!L && !p.action && !p.stiff && p.hasBall && ball.tucked) {
+    if (p.truck) L = MV_LOOKS.truckRun;
+    else if ((w = mlTightW(p)) > 0.01) L = MV_LOOKS.tightrope;
+  }
+  if (!L) return null;
+  const m = { p, a, side: (act && a && a.side) || (p.mvFx && p.mvFx.side) || 1 }, sm = CELEB.smearDt * dtK;
+  const at = tt => {
+    const q = mlAt(L, tt, m);
+    if (stum != null) { const ts = stum - (t - tt) / dtK, q2 = mlAt(MV_LOOKS.spinStumble, Math.max(0, ts), m), tw = q.tw; mlMix(q, q2, smooth01(ts / 0.08)); q.tw = tw; }
+    if (p.action === 'spin' && p.stiff && a && (a.dur - a.t) < MOVE_LOOK.stiffLate) { const e = smooth01(1 - (a.dur - a.t) / MOVE_LOOK.stiffLate); q.fh = [q.fh[0] + (12.5 - q.fh[0]) * e, q.fh[1] + (-14.5 - q.fh[1]) * e]; q.al += 0.05 * e; }   // (stiff arm held: out of the turn with it already locked out)
+    if (L === MV_LOOKS.tightrope && w < 1) { const n = { ...ML_RUN }; mlStride(n, p.run || 0, LEG_SWING * 0.9, LEG_KNEE); mlMix(n, q, w); return n; }
+    return q;
+  };
+  const q = at(t), q1 = at(t - sm), q2 = at(t - 2 * sm);
+  const far = (p.ballSide || 0) < 0;
+  for (const o of [q, q1, q2]) if (far) { [o.nh, o.fh] = [o.fh, o.nh]; [o.ne, o.fe] = [o.fe, o.ne]; }
+  // smear: a hand moving fast drags two fading copies of its arm (one and two frames back)
+  for (const s of ['fh', 'nh']) if (Math.hypot(q[s][0] - q1[s][0], q[s][1] - q1[s][1]) / CELEB.smearDt > CELEB.smearSpeed * MOVE_LOOK.smear) (q.trail = q.trail || {})[s] = [[q1[s], q1.al], [q2[s], q2.al]];
+  if (p.hasBall && ball.tucked) {   // the ball in the ball hand (slid toward the other one by v), drawn by ML_ROLE over the hands
+    const B = L.ball || ML_BALL, bh = far ? q.fh : q.nh, oh = far ? q.nh : q.fh, v = q.v || 0;
+    q.ball = { hand: 'x', x: bh[0] + (oh[0] - bh[0]) * v + B.ox * (1 - 2 * v), y: bh[1] + (oh[1] - bh[1]) * v + B.oy, rot: B.rot * (1 - 2 * v), k: B.k, pre: mlBallDraw };
+  }
+  q.legs = (tail && !L.tailLegs) || L.legs === false ? null : [q.l0, q.l1];
+  q.mvl = L; q.role = ML_ROLE; q.mv = L; q.cel = null; q.t = t; q.m = m; q.tail = tail;
+  return q;
+}
+// the belly slide's pencil scuffs (v0.43): two short graphite strokes on the turf behind his dragging toes, fading (world space, under him)
+function mlDiveScuff(p) {
+  const a = p.act;
+  if (p.action !== 'dive' || !a || a.pt == null || a.post !== 'belly' || a.pt > POST_DIVE.scuffT || !celebParts()) return;
+  const L = Math.hypot(a.tx - a.fx, a.ty - a.fy), tl = diveTilt(p); if (L < 0.3 * YD || !tl) return;
+  const ux = (a.tx - a.fx) / L, uy = (a.ty - a.fy) / L, bk = S * figK(p), k = a.pt / POST_DIVE.scuffT;
+  const fx = p.x - Math.sin(tl.w) * 15 * bk, fy = p.y + Math.cos(tl.w) * 15 * bk * tl.fore, len = Math.min(L * 0.6, 1.4 * YD) * Math.min(1, a.pt / 0.25);
+  const j = Math.floor(animNow() / 1000 * ICON.boil), w = n => Math.sin(j * 5.1 + n * 2.7) * 0.5 * bk;
+  ctx.strokeStyle = `rgba(58,58,64,${0.7 * (1 - k)})`; ctx.lineWidth = 1.2 * S; ctx.lineCap = 'round'; ctx.beginPath();
+  for (const o of [-1.8, 1.8]) { const px = -uy * o * bk, py = ux * o * bk * 0.6; ctx.moveTo(fx + px, fy + py); ctx.lineTo(fx + px - ux * len + w(o), fy + py - uy * len * 0.6 + w(o + 1)); }
+  ctx.stroke();
+}
+function mvAfter(p, q) { if (q.mvl.after) { ctx.save(); q.mvl.after(p, q, q.m); ctx.restore(); } }
+// a beaten man's reaching hand (REEL_SKIN hands): [shoulder x, y, hand x, y, elbow, 'open' (fingers splayed) | 'fist' (closed on air)]
+// h[6], h[7] = upper / lower arm length (default 5 / 5.5); h[8] = 0..1 the hand's way toward bl (the ball in his frame); 'tips' = three fingertips at full stretch
+function mlHand(T, skin, h, bob, bl) {
+  const k = bl && h[8] ? h[8] : 0, hx = h[2] + (k ? (bl.x - h[2]) * k : 0), hy = h[3] + (k ? (bl.y - h[3]) * k : 0);
+  drawArmTo(T, skin, h[0], h[1] + bob, hx, hy + bob, h[6] || 5, h[7] || 5.5, h[4] || -1, h[5] === 'fist' ? 3.6 : 4.4);
+  if (h[5] !== 'open' && h[5] !== 'tips') return;
+  const a0 = Math.atan2(hy - h[1], hx - h[0]), n = h[5] === 'tips' ? 3 : 4;
+  ctx.save(); ctx.strokeStyle = T.glove; ctx.lineWidth = 1.3; ctx.lineCap = 'round'; ctx.beginPath();
+  for (let i = 0; i < n; i++) { const a = a0 + (i - (n - 1) / 2) * 0.42; ctx.moveTo(hx + Math.cos(a) * 1.4, hy + bob + Math.sin(a) * 1.4); ctx.lineTo(hx + Math.cos(a) * 4.6, hy + bob + Math.sin(a) * 4.6); }
+  ctx.stroke(); ctx.restore();
+}
+// a runner's own dive inside the goal-line leap's range with a body in front of him (diveLookPick's 'goal' kind)
+const mlGoalLeap = p => p.hasBall && FIELD - p.x < MOVE_LOOK.goalYd * YL && FIELD - p.x > -YL && [...back7, ...dl].some(o => o && o.team !== p.team && o.x > p.x && Math.hypot(o.x - p.x, o.y - p.y) < MOVE_LOOK.goalBody * YD);
+// a carrier going down just short of the goal line / the line to gain: reaches the ball out for it (act.reachOut, set once on his fall's first frame)
+const mlReachOut = p => !!p.hasBall && p === runner && !kickoffPlay && [FIELD, lineToGain].some(x => x - p.x > 0 && x - p.x <= MOVE_LOOK.reachYd * YL);
+
 // --- pre-snap stances (looks only). lean = upper body tipped forward from the hips (rad), sink = hips lowered (sprite px),
 // front / back = legs as [hip x, thigh, knee, up on the toes] (see drawLeg), down = hands on the turf.
 // When: goal = yards from the goal line that count as the goal line; short = yards to go (or less) for a 4-point
@@ -5199,6 +6553,7 @@ function stanceOf(p) {   // 'two' | 'three' | 'four' | 'wr' | 'cb' | 's' | 'lb' 
     return null;
   }
   if (state === 'kick' && kick && !kick.kickoff && (kick.phase === 'power' || kick.phase === 'aim' || kick.phase === 'wait' || kick.phase === 'snap')) {   // field goal / PAT (and the old punt)
+    if (kick.kp && !kick.punt && kick.phase === 'snap' && kick.t > KPRO.ks.step && (ols.includes(p) || recs.includes(p))) return 'two';   // (the kick-slide is done: the protection stands up)
     if (ols.includes(p)) return p === ols[2] ? 'four' : 'three';   // (the long snapper: both hands on the ball; punt protection in a lineman's stance too)
     if (recs.includes(p)) return kick.punt && (kick.gunners || []).includes(p) ? 'wr' : 'three';   // (punt gunners: a receiver's stance)
     if (kick.punt && (kick.jam || []).includes(p)) return 'cb';   // (the men on the gunners: a corner's stance)
@@ -5236,6 +6591,9 @@ function jumpAim(p) {   // -> where the pass meets him, as a world offset from h
   return best;
 }
 
+// (drawPlayer's small helpers, kept outside it: it runs ~25 times a frame, and each of these was a new function / object per call)
+const kickEz = (v, to, k) => { v = v || 0; return Math.abs(to - v) < 0.005 ? to : v + (to - v) * k; };
+const LOOK3 = { x: 0, y: 0 };   // (where the ball is from his head: read by headLook at once, never kept)
 function drawPlayer(p) {
   const t = p.coach ? celebCoachKit(TEAMS[p.team]) : TEAMS[p.team];   // (the head coach in a celebration: see celebrations)
   if (p.action === 'jump' && p.act && p.act.over === undefined && !(rec && rec.replaying)) p.act.over = overJumpOK(p);
@@ -5276,7 +6634,7 @@ function drawPlayer(p) {
   const armsOut = !runPump && !armsUp && !oneHand && !stiff && !overShoulder && !cradle && !swim && (locked || (p.reach && reachOn) || (p.reachGoal && p.action === 'down') || (p.action === 'toedrag' && !(p.act && 'was' in p.act)) || p.action === 'wrap' || p.action === 'kneel');
   // breaking: quick chatter steps (arms and feet) into a sharp cut, or one big plant on a milder one
   const ac = rec && rec.replaying ? rec.rt : clock;   // animation clock: the replay's own time during a replay
-  const cq = p.cel ? celebPose(p, ac) : null;   // celebrating: this frame's pose (see celebrations); it owns his body, legs, arms, head and the ball
+  const cq = p.cel ? celebPose(p, ac) : mvPose(p, ac);   // celebrating: this frame's pose (see celebrations); it owns his body, legs, arms, head and the ball (or a runner's move look: see move looks)
   const bf = !p.action && p.breakFx, bage = bf ? ac - bf.t : 9;
   const chop = !!bf && bf.kind === 'chop' && bage < CUT_ANIM.chop, plant = !!bf && bf.kind === 'plant' && bage < CUT_ANIM.plant;
   const striding = p.moving || chop;
@@ -5314,6 +6672,7 @@ function drawPlayer(p) {
   ctx.beginPath(); ctx.ellipse(p.x, p.y + FOOT, Math.max((12 + (p.big ? 2 * bulkOf(p) : 0)) * shLift, DIVE_LOOK.shadowLen * shDive) * S * FIGURE.grow, 4 * S * FIGURE.grow * (0.6 + 0.4 * shLift), 0, 0, Math.PI * 2); ctx.fill();
   drawToeFx(p);
   drawDiveSpray(p);
+  mlDiveScuff(p);
 
   ctx.save();
   const sz = figK(p);   // (his size x FIGURE.grow)
@@ -5322,8 +6681,8 @@ function drawPlayer(p) {
   const gM0 = p.action ? ctx.getTransform() : null;   // (his feet frame: grounded poses are noted against it for a smooth get-up)
   let kneelK = 0;
   // kicker / holder easing (looks only): the holder's hands, the kicker's balance arms and getting up off the knee blend in and out instead of popping
-  { const nowA = animNow(), dA = Math.max(0, Math.min(0.1, (nowA - (p.ezT ?? nowA)) / 1000)), ez = (v, to) => { v = v || 0; const k = 1 - Math.exp(-KICK_EASE.arms * dA); return Math.abs(to - v) < 0.005 ? to : v + (to - v) * k; };
-    p.ezT = nowA; p.hkE = ez(p.hkE, p.action === 'kneel' && p.holding ? 1 : 0); p.kaE = ez(p.kaE, p.kickSwing ? 1 : (p.kickWind || 0) * KICK_EASE.wind);
+  { const nowA = animNow(), dA = Math.max(0, Math.min(0.1, (nowA - (p.ezT ?? nowA)) / 1000)), ezK = 1 - Math.exp(-KICK_EASE.arms * dA);
+    p.ezT = nowA; p.hkE = kickEz(p.hkE, p.action === 'kneel' && p.holding ? 1 : 0, ezK); p.kaE = kickEz(p.kaE, p.kickSwing ? 1 : (p.kickWind || 0) * KICK_EASE.wind, ezK);
     if (p.action !== 'kneel' && p.knE > 0) { p.knE = !p.action ? Math.max(0, p.knE - dA / KICK_EASE.up) : 0; } }
   if (p.action !== 'kneel' && p.knE > 0.01) { kneelK = smooth01(p.knE); ctx.translate(0, 6 * kneelK); }   // (rising off the knee)
   if (p.action === 'kneel') {
@@ -5342,8 +6701,10 @@ function drawPlayer(p) {
     ctx.rotate(tl.w);
     ctx.scale(tl.face, 1);   // mirrored the way he launched: no flipping mid-air if he turns his head to the ball
     { const dv = diveLook(p);   // (his look: the body pitches along the arc, nose up leaving the ground, nose down coming in)
-      if (dv && !pd && p.act.airT > 0) ctx.rotate(-dv.arch * Math.cos(Math.PI * Math.max(0, Math.min(1, (p.act.at || 0) / p.act.airT))) * (tl.e ?? 1)); }
+      if (dv && !pd && p.act.airT > 0) ctx.rotate(-dv.arch * Math.cos(Math.PI * Math.max(0, Math.min(1, (p.act.at || 0) / p.act.airT))) * (tl.e ?? 1));
+      if (dv && dv.tw != null) ctx.scale(mlTw(1 + (dv.tw - 1) * (pd ? Math.max(0, 1 - (p.act.pt || 0) / 0.3) : (tl.e ?? 1))), 1); }   // (v0.43 catch dives: rolled onto his side / chest up in the air, turning flat as he lands)
     if (tl.fore < 1) ctx.scale(1, tl.fore);
+    if (pd && pd.up) { ctx.rotate(-tl.w * pd.up * tl.face); ctx.translate(0, 6 * pd.up); ctx.scale(1, 1 - 0.3 * pd.up); }   // (slid out of bounds: sitting up, v0.43)
     if (pd && pd.tw != null) ctx.scale(pd.tw, 1);   // rolling over along his body
   } else if (lying) ctx.rotate(p.act.angle + Math.PI / 2);
   else if (p.action === 'getup' && p.act.g0) {
@@ -5416,11 +6777,13 @@ function drawPlayer(p) {
     } else {
       ctx.rotate((p.act.back ? -1 : 1) * k * Math.PI / 2 * 0.95 * bounce);
       if (p.act.twist) ctx.scale(1 - Math.abs(p.act.twist) * k, 1);
+      if (p.act.airHit === 'flipped') { ctx.rotate((p.act.back ? -1 : 1) * Math.PI / 2 * 0.95 * (Math.min(1, k0 * 1.7) - k)); ctx.scale(1 - 0.3 * k, 1); }   // (v0.43: hit in the air: turned flat at once, down on his far shoulder)
+      if (p.act.airHit === 'spinAir') ctx.scale(mlTw(Math.cos(2 * Math.PI * smooth01(k0))), 1);   // (v0.43: hit at the catch: spun right round before he lands)
     }
   }
   if (p.action === 'toedrag') ctx.rotate(0.45);
-  if (p.action === 'juke') ctx.rotate(-0.35);
-  if (p.action === 'spin') {
+  if (p.action === 'juke' && !cq) ctx.rotate(-0.35);
+  if (p.action === 'spin' && !cq) {
     const c = Math.cos(p.act.t / p.act.dur * Math.PI * 2);
     ctx.scale(Math.abs(c) < 0.25 ? 0.25 * (Math.sign(c) || 1) : c, 1);
   }
@@ -5439,9 +6802,10 @@ function drawPlayer(p) {
   }
   if (throwing) ctx.rotate(0.15);      // stepping into the throw
   const truck = p.truck && !p.action;
-  if (truck) ctx.rotate(0.35);         // head down, lowering the shoulder
+  if (truck && !cq) ctx.rotate(0.35);         // head down, lowering the shoulder
   if (oneHand && p.action !== 'dive') ctx.rotate(((p.hand || 1) * p.face > 0 ? 1 : -1) * 0.28);   // whole body stretching toward the one-hand reach
-  if (!p.action && (p.hasBall || p.team === 'off') && ac < (p.falterUntil || 0)) { ctx.translate(0, -2.5 * Math.abs(Math.sin(ac * 11)) * S); ctx.rotate(0.36 + 0.2 * Math.sin(ac * 15)); }   // stumbling, fighting for balance (lurching forward, stutter-stepping, arms out)
+  if (cq && cq.mvl) { /* (a move look draws its own stumble / recovery) */ }
+  else if (!p.action && (p.hasBall || p.team === 'off') && ac < (p.falterUntil || 0)) { ctx.translate(0, -2.5 * Math.abs(Math.sin(ac * 11)) * S); ctx.rotate(0.36 + 0.2 * Math.sin(ac * 15)); }   // stumbling, fighting for balance (lurching forward, stutter-stepping, arms out)
   else if (!p.action && (p.hasBall || p.team === 'off') && p.stumbleRec != null && ac - p.stumbleRec >= 0 && ac - p.stumbleRec < STUMBLE.recover) {
     // back on his feet: he comes up out of the lurch through a low, driving lean (accelerating), easing into his normal run
     const e = smooth01((ac - p.stumbleRec) / STUMBLE.recover);
@@ -5451,9 +6815,9 @@ function drawPlayer(p) {
   if (p.exLean && !p.action) ctx.rotate(p.exLean);   // the back's take: low pads on the goal line, the jab step on power / counter / trap
   if (plant) { const k = Math.sin(Math.PI * bage / CUT_ANIM.plant); ctx.translate(0, 2 * k); ctx.rotate(-0.28 * k); }   // sits on the plant foot
   if (p.big) { const k = bulkOf(p); ctx.scale(1 + 0.18 * k, 1 + 0.08 * k); }
-  const tucked = !(cq && cq.ball) && ball.tucked && (p.hasBall || (p === qb && (runner === qb || sackPlay))) && (!p.action || p.action === 'getup' || (p.action === 'down' && p.hasBall) || falling || (p === qb && sackPlay && p.action === 'down') || p.action === 'juke' || p.action === 'spin' || p.action === 'hurdle' || ((p.action === 'dive' || p.action === 'jump') && p.hasBall && heldTuckK(p, ac) >= 1) || (p.action === 'kneel' && !p.holding));   // (a slide is the two-arm cradle instead)
+  const tucked = !(cq && cq.ball) && ball.tucked && (p.hasBall || (p === qb && (runner === qb || sackPlay))) && !(p.action === 'down' && p.act && p.act.reachOut) && !(diveLook(p) && diveLook(p).ballUp) && (!p.action || p.action === 'getup' || (p.action === 'down' && p.hasBall) || falling || (p === qb && sackPlay && p.action === 'down') || p.action === 'juke' || p.action === 'spin' || p.action === 'hurdle' || ((p.action === 'dive' || p.action === 'jump') && p.hasBall && heldTuckK(p, ac) >= 1) || (p.action === 'kneel' && !p.holding));   // (a slide is the two-arm cradle instead)
 
-  if (p.action === 'hurdle' && p.act && p.act.backward && !HURDLE_ST[p.act.style]) ctx.rotate(-0.7 * Math.sin(Math.PI * Math.min(1, p.act.t / p.act.dur)));   // spin-hurdle: goes over leaning backwards
+  if (p.action === 'hurdle' && !cq && p.act && p.act.backward && !HURDLE_ST[p.act.style]) ctx.rotate(-0.7 * Math.sin(Math.PI * Math.min(1, p.act.t / p.act.dur)));   // spin-hurdle: goes over leaning backwards
   if (p.action === 'sit') {   // sat down, legs out (slip / jammed down / ankles): eases down and back up, never a one-frame pop
     const a = p.act && p.act.dur && p.act.t != null ? p.act : null;   // (no timing, e.g. an old replay frame: fully down)
     const upT = a && a.upT || SIT_EASE.up;
@@ -5504,7 +6868,8 @@ function drawPlayer(p) {
   // on the way forward (the recovery) and straightens as the foot plants and pushes back.
   const tip = p.action === 'toetap';
   let legs;
-  if (cq) legs = cq.legs;
+  if (cq && cq.legs) legs = cq.legs;
+  else if (cq && !cq.mvl) legs = cq.legs;
   else if (p.action === 'kneel' || (!p.action && kneelK > 0.01)) legs = [[-3, 0.1 * kneelK, 1.5 * kneelK], [3, -1.5 * kneelK, 0.9 * kneelK]];   // back knee on the turf, front foot planted
   else if ((p.kickSwing && (p.kickK ?? 9) < KICK_ANIM.done) || (!p.kickSwing && p.kickWind > 0 && !p.action)) {
     // kicking: plant leg firm; the kicking leg cocks back at the knee on the last stride, whips through
@@ -5531,10 +6896,8 @@ function drawPlayer(p) {
   else if (p.action === 'hurdle') legs = [[-1.5, 1.0, 1.4], [2, -0.9, 0.5]];   // lead leg reaching out over him, trail knee tucked up   // planted foot out wide, knee loaded to push off
   else if (striding) {
     const A = LEG_SWING * (p.hasBall ? 0.9 : 1) * (chop ? 0.35 : p.stride ?? 1);
-    legs = [0, Math.PI].map((ph, i) => {
-      const f = (chop ? ac * 45 : p.run) + ph;
-      return [i ? 1.5 : -1.5, -A * Math.sin(f), (chop ? 0.5 : 0.15) + LEG_KNEE * (chop ? 0.4 : 1) * Math.max(0, Math.cos(f))];
-    });
+    const f0 = (chop ? ac * 45 : p.run) + 0, f1 = (chop ? ac * 45 : p.run) + Math.PI, kb = chop ? 0.5 : 0.15, kk = LEG_KNEE * (chop ? 0.4 : 1);
+    legs = [[-1.5, -A * Math.sin(f0), kb + kk * Math.max(0, Math.cos(f0))], [1.5, -A * Math.sin(f1), kb + kk * Math.max(0, Math.cos(f1))]];
   } else legs = [[-3.5, 0, 0.05], [3.5, 0, 0.05]];
   if (gNote) p.gLegs = legs.map(l => l.slice(0, 3));
   if (st) {   // stance legs, blended with his normal ones by how far into the stance he is (the later leg is the near one: receivers put the inside foot
@@ -5670,13 +7033,31 @@ function drawPlayer(p) {
     // after a fake: arms folded over an empty belly, running as if he had it
     drawArmTo(t, skin, -1, -10.5 + bob, 5, -2.5, 3.5, 4, 1);
     drawArmTo(t, skin, 2, -9 + bob, 4, -0.5, 3.5, 4, -1);
+  } else if (p.action === 'down' && p.act && p.act.reachOut && p.hasBall) {
+    // ball reach (move looks): going down short of the line, the ball arm locks straight out toward it (world ahead, whatever his fall has turned him to), the
+    // ball held by its back tip in his fingertips; the other arm pinned at his waist
+    const A = p.act, T = A.fallTime || (A.launch ? 0.45 : 0.35), kk = Math.min(1, A.t / T) ** 2;
+    const rot = fx && TK_ST[A.tk] ? (fx.R || 0) : A.gator ? Math.PI / 2 * 0.95 * Math.min(1, A.t / 0.15) : A.side ? (A.back ? -1 : 1) * 0.3 * kk : (A.back ? -1 : 1) * kk * Math.PI / 2 * 0.95;
+    const e = smooth01(Math.min(1, A.t / MOVE_LOOK.reachIn)), ang = -rot - 0.12, ca = Math.cos(ang), sa = Math.sin(ang);
+    const hx = 6.2 + (2 + 16.5 * ca - 6.2) * e, hy = -7.4 + bob + (-9 + 16.5 * sa + 7.4) * e;   // (long enough that the ball clears his helmet once he's laid out)
+    drawArmTo(t, skin, -1, -10.5 + bob, 2.5, -1 + bob, 4.5, 5, -1, 3.6);
+    drawArmTo(t, skin, 2, -9 + bob, hx, hy, 7, 7.5, -1, 4);
+    ctx.save(); ctx.translate(hx + 2.4 * ca * e, hy + 2.4 * sa * e); ctx.rotate(TUCK_BALL.tilt + (ang - TUCK_BALL.tilt) * e); drawFootball(7 * TUCK_BALL.scale, 4.5 * TUCK_BALL.scale, 1, -0.3); ctx.restore();
+  } else if (p.action === 'dive' && p.hasBall && diveLook(p) && diveLook(p).ballUp) {
+    // the goal-line leap (move looks): laid out over the pile, the ball held out in both hands over his head toward the goal line
+    const e = smooth01(Math.min(1, p.act.t / Math.max(0.08, p.act.dur * 0.45))), hx = 5 - 3 * e, hy = -8 + bob - 18.5 * e;   // (straight up past his helmet in his own frame: along the dive, toward the goal line)
+    drawArmTo(t, skin, -1, -10.5 + bob, hx - 1.2, hy + 1, 7, 7.5, 1, 4);
+    drawArmTo(t, skin, 2, -9 + bob, hx + 1.2, hy - 0.5, 7, 7.5, -1, 4);
+    ctx.save(); ctx.translate(hx + 0.4, hy - 3.6 * e); ctx.rotate(-1.45 * e + TUCK_BALL.tilt * (1 - e)); drawFootball(7 * TUCK_BALL.scale, 4.5 * TUCK_BALL.scale, 1, -0.3); ctx.restore();
+  } else if (fx && fx.hands) {
+    for (const h of fx.hands) mlHand(t, skin, h, bob, bl);   // a beaten man's reaching / grabbing / bracing hands (REEL_SKIN), a pick / tip look's hands (to the ball by h[8])
   } else if (fx && fx.arms) {
     for (const [sx, sy, a, b] of fx.arms) drawArm(t, skin, sx, sy + bob, a, 4.5, b, 5, 3.6);   // a beaten tackler's flailing / bracing arms
   } else if (p.action === 'down' && p.act && p.act.thr && p.act.t < THROW_LOOK.hitArm) {
     // hit as he lets it go: the throwing arm still whips through the release as he goes down, the other arm flung back
     const k = smooth01(p.act.t / 0.18);
     drawArm(t, skin, lf ? 2 : -2, -10 + bob, 2.2, 3.5, 0.35, 3.5, 3.5);
-    drawArm(t, skin, lf ? -2 : 2, -11 + bob, -1.3 + 1.1 * k, 6, 0.6 * k, 7, 4.5);
+    drawArm(t, skin, lf ? -2 : 2, -11 + bob, -0.5 + 0.65 * k, 6, 0.25 * k, 7, 4.5);   // (v0.43: the release knocked flat, the arm finishing low)
   } else if (bringIn) {
     // the catching arm (fully extended while reaching) draws back in to the chest with the ball in the glove
     const toward = (p.hand || 1) * p.face, jumpA = -Math.PI / 2 + (toward > 0 ? 0.55 : -0.55);
@@ -5824,15 +7205,20 @@ function drawPlayer(p) {
       ctx.restore();
     }
     drawArmTo(t, skin, -1, -10.5 + bob, topH.x + (isQb ? 0.6 * (1 - cs) : 0), topH.y + (isQb ? 0.4 * (1 - cs) : 0), 3.5, 4, 1, 3.4);
-  } else if (throwing && p === qb && p.act && p.act.t < THROW_LIFT * 0.7 && !p.act.cross) {
+  } else if (throwing && p === qb && p.act && p.act.t < THROW_LIFT * 0.7 && !p.act.cross && !p.act.lane) {
     // the first instant of the throw: both hands still on the ball at his chest, pulling it up, before the arm whips out
     drawArmTo(t, skin, -1, -10.5 + bob, 4.5, -12 + bob, 3.5, 4, 1, 3.4);
     drawArmTo(t, skin, 2, -9 + bob, 4.5, -8.5 + bob, 3, 4, 1, 3.4);
   } else if (throwing && p.act && p.act.cross) {
-    // across his body (moving toward his off-hand side): the throwing arm comes over the top and down across the front, the other arm pulled in
-    const k = smooth01(Math.min(1, p.act.t / 0.22));
-    drawArm(t, skin, lf ? 2 : -2, -10 + bob, 1.6 + 0.4 * k, 3.5, -1.2, 3.5, 3.5);
-    drawArm(t, skin, lf ? -2 : 2, -11 + bob, -1.4 + 2.0 * k, 6, 0.3 + 0.5 * k, 7, 4.5);
+    // across his body (v0.43): the throwing arm comes round in a three-quarter sidearm arc, low, and finishes down across his front; the other arm tucked in
+    const k = Math.min(1, p.act.t / p.act.dur), th = -2.0 + 2.9 * smooth01(k / 0.6), sx = lf ? -2 : 2, sy = -11 + bob;
+    drawArmTo(t, skin, lf ? 2 : -2, -10 + bob, 3, -6.5 + bob, 3.5, 4, 1, 3.5);
+    drawArmTo(t, skin, sx, sy, sx + 12.5 * Math.cos(th), sy + 2 + 9.5 * Math.sin(th), 6, 7, th < -0.6 ? 1 : -1, 4.5);
+  } else if (throwing && p.act && p.act.lane) {
+    // round a lineman's hands (v0.43): the arm dropped to shoulder height and slung flat from behind him to out in front, the other arm thrown back
+    const k = smooth01(Math.min(1, p.act.t / 0.2)), a = 2.7 - 2.6 * k, sx = lf ? -2 : 2, sy = -9.5 + bob;
+    drawArm(t, skin, lf ? 2 : -2, -10 + bob, 2.5, 3.5, 0.35, 3.5, 3.5);
+    drawArmTo(t, skin, sx, sy, sx + 12 * Math.cos(a), sy + 1.5 + 3 * Math.sin(a) * (1 - k), 6, 7, -1, 4.5);
   } else if (throwing && p.act && p.act.side) {
     // sidearm sling: the throwing arm whipped round flat, low, from out wide to across the front; the other arm flung back
     // (seen from the side the arm stays flat at chest height: short while it comes round from behind him, full length out front)
@@ -5874,6 +7260,12 @@ function drawPlayer(p) {
     const sx = 0, sy = -10.5 + bob, far = 17;
     const near = Math.hypot(bl.x - sx, bl.y - sy) < 24 && (ball.inAir || ball.loose);
     drawArmTo(t, skin, sx, sy, near ? bl.x : sx + Math.cos(a) * far, near ? bl.y : sy + Math.sin(a) * far, 7, 8, toward > 0 ? -1 : 1, 6);
+    if (dive && diveLook(p) === DIVE_ST.oneHand) {   // (v0.43: laid out one-handed, fingers splayed; the ball sticks to three fingertips)
+      const hx = near ? bl.x : sx + Math.cos(a) * far, hy = near ? bl.y : sy + Math.sin(a) * far, a0 = Math.atan2(hy - sy, hx - sx);
+      ctx.save(); ctx.strokeStyle = t.glove; ctx.lineWidth = 1.4; ctx.lineCap = 'round'; ctx.beginPath();
+      for (let i = 0; i < 3; i++) { const g = a0 + (i - 1) * 0.45; ctx.moveTo(hx + Math.cos(g) * 2, hy + Math.sin(g) * 2); ctx.lineTo(hx + Math.cos(g) * 5.5, hy + Math.sin(g) * 5.5); }
+      ctx.stroke(); ctx.restore();
+    }
     // the free arm thrown back and down
     drawArm(t, skin, -1, -10 + bob, dive ? Math.PI / 2 + 0.4 : toward > 0 ? 2.5 : 0.65, 4.5, toward > 0 ? 0.5 : -0.5, 5, 3.6);
   } else if (p.action === 'swat' && p.act && TIP_ST[p.act.tipSt] && TIP_ST[p.act.tipSt].back) {
@@ -5902,6 +7294,20 @@ function drawPlayer(p) {
     // going up for a catch with the ball arriving: both hands close around it
     // (a ball coming in at his feet: the arms drop to meet it and get hands on it before he pulls it up, not stay stretched overhead)
     const lowBall = bl.y > -9 && Math.hypot(bl.x - 2, bl.y + 10) < CLASP_REACH * 2.2;
+    // v0.43 move looks: an empty-handed landing slaps both palms on the turf, the roll-out hugs his chest, a catch dive's own hands, a diving tip's fingertips
+    const A0 = diveArms ? p.act : null, onBall = (ball.inAir || ball.loose) && Math.hypot(bl.x - 1, bl.y + 24) < 16;
+    if (A0 && A0.pt != null && !p.hasBall && !wrapping) {
+      const pf = postDiveFx(p);
+      if (pf && pf.hug) { mlHand(t, skin, [-1, -10.5, 5, -7.5, -1], 0); mlHand(t, skin, [2, -9, 4.5, -5.5, -1], 0); return; }
+      if (A0.slap && A0.post !== 'back' && A0.pt < POST_DIVE.slapT + 0.3) {
+        const e = smooth01(A0.pt / POST_DIVE.slapIn) * (1 - smooth01((A0.pt - POST_DIVE.slapT) / 0.3));
+        mlHand(t, skin, [-1, -10.5, -5 + 11.5 * e, -21 + 7 * e, -1, e > 0.6 ? 'open' : null], 0); mlHand(t, skin, [2, -9, 5 + 1 * e, -21 + 10 * e, -1, e > 0.6 ? 'open' : null], 0);
+        return;
+      }
+    }
+    if (tipOne && A0) { mlHand(t, skin, [2, -11, onBall ? bl.x : 4.5, onBall ? bl.y : -8 - 19 * raise, -1, 'tips', 7, 8], 0); return; }   // (only his fingertips get there)
+    const dvH = diveArms && !wrapping ? diveLook(p) : null;
+    if (dvH && dvH.hands) { for (const h of dvH.hands(raise, bl, onBall)) mlHand(t, skin, h, 0); return; }
     if (ripOn && !diveArms) {   // both hands follow the ball down from the DB's grip to his chest
       drawArmTo(t, skin, -4.5, -11.5, bl.x - 1.5, bl.y - 3, len * 0.42, len * 0.5, -1, 4);
       drawArmTo(t, skin, 4.5, -11.5, bl.x + 0.5, bl.y + 3, len * 0.42, len * 0.5, 1, 4);
@@ -5944,7 +7350,7 @@ function drawPlayer(p) {
       ctx.restore();
     }
   };
-  const upDone = !!(fx && (fx.arms || fx.cel));   // (a pose that draws its own arms: never a second pair of raised ones on top)
+  const upDone = !!(fx && (fx.arms || fx.hands || fx.cel || fx.mvl));   // (a pose that draws its own arms: never a second pair of raised ones on top)
   if (armsUp && diveArms && !upDone) drawUpArms();
 
   const hy = -20 + bob + (truck ? 4 : 0);
@@ -5952,7 +7358,7 @@ function drawPlayer(p) {
   // (aimed in 3D, not at where the ball is drawn: up or down by its height over his helmet against its distance along the ground,
   //  so a high ball that happens to sit lower on the screen, nearer the camera, is still looked UP at; depth only tips it a little)
   const lbx = ball.x - p.x, lby = ball.y - p.y, gd = Math.hypot(lbx, lby);
-  const look3 = { x: (lbx * p.face >= -0.5 * YD ? 1 : -1) * gd / bk, y: -(ball.z - p.z) / bkY + lby * LOOK_BALL.depth / bkY };
+  const look3 = LOOK3; look3.x = (lbx * p.face >= -0.5 * YD ? 1 : -1) * gd / bk; look3.y = -(ball.z - p.z) / bkY + lby * LOOK_BALL.depth / bkY;
   const watchB = rec && rec.replaying ? !!p.watch : watchingBall(p);
   const hW = headLook(p, look3, hy, watchB);
   let yaw = lying ? 0 : rec && rec.replaying && p.yawRec != null ? p.yawRec : headYaw(p, watchB);   // (a replay turns the head as it was in the play, not from the live state)
@@ -6008,6 +7414,7 @@ function drawPlayer(p) {
     ctx.stroke();
     ctx.restore();
   }
+  if (!plLod) {   // (small on screen: no stripe, no ear hole; see PLAYER_LOD)
   ctx.strokeStyle = t.stripe;
   ctx.lineWidth = 2;
   // the helmet turns with the facemask: the stripe (down the middle of the shell) foreshortens and shifts with the yaw
@@ -6017,6 +7424,7 @@ function drawPlayer(p) {
   // ...and so does the ear hole: it swings back round the head as the face turns toward us, forward as it turns away, fading at the edge
   const earX = -1.5 - 5 * Math.sin(yaw), earA = Math.max(0, 1 - Math.max(0, -earX - 4.5) / 2.2);
   if (earA > 0) { ctx.fillStyle = `rgba(0,0,0,${0.45 * earA})`; ctx.beginPath(); ctx.arc(earX, hy + 1, 1.2, 0, Math.PI * 2); ctx.fill(); }   // (ear hole slides back as the face turns toward us)
+  }
   // (the cage sticks out front of the shell: it foreshortens as the head turns but never fades out or shrinks inside the helmet)
   ctx.save(); ctx.translate(0, hy); ctx.scale(Math.max(NECK.cageMin, faceW), 1); ctx.translate(0, -hy);
   ctx.strokeStyle = '#d0d0d0';
@@ -6038,10 +7446,12 @@ function drawPlayer(p) {
     const st = p.act.t, k = st < 0.15 ? 1 - st / 0.15 : Math.min(1, (st - 0.15) / 0.2);   // up, then one stroke down
     drawArm(t, skin, 2, -10.5 + bob, -1.1 + 1.7 * k, 5, -0.4 + 0.3 * k, 5.5, 5);
   }
-  if (p.action === 'swat' && p.act && p.act.punch) {
-    // punching at the ball as the receiver pulls it in: one fist jabs straight out and back
-    const k = Math.sin(Math.PI * Math.min(1, p.act.t / p.act.dur));
-    drawArm(t, skin, 2, -10.5 + bob, 0.9 - 1.05 * k, 5, 1.2 - 1.3 * k, 5.5, 5);
+  if (p.action === 'swat' && p.act && TIP_ST[p.act.tipSt] && TIP_ST[p.act.tipSt].hands) {
+    // (v0.43 tip looks with their own hands: drawn in the arm chain)
+  } else if (p.action === 'swat' && p.act && p.act.punch) {
+    // punching it out (v0.43 look): the near fist cocked up by his shoulder, hammered down and forward through the ball at the catch point, then back
+    const k = Math.min(1, p.act.t / p.act.dur), u = smooth01(k / 0.5), b = smooth01((k - 0.65) / 0.35);
+    drawArmTo(t, skin, 2, -10.5 + bob, 5 + 8 * u - 4 * b, -21 + 15 * u + 3 * b + bob, 5.5, 6, -1, 3.6);
   } else if (p.action === 'swat' && p.act && TIP_ST[p.act.tipSt] && TIP_ST[p.act.tipSt].one) {
     // a styled one-arm tip (lunge / backhand / chop / rake): see TIP_ST
     const tg = tgt && tgt !== p ? { x: (tgt.x - p.x) * p.face / bk, y: (tgt.y - (tgt.z || 0) - (p.y - (p.z || 0))) / bkY } : null;
@@ -6061,7 +7471,7 @@ function drawPlayer(p) {
     drawArmTo(t, skin, 2, -10 + bob, bl.x + 1, bl.y + 3, 6.5, 7.5, 1);
   }
   ctx.restore();
-  if (cq) celebAfter(p, cq);   // (world space: the scripted ball)
+  if (cq) { if (cq.mvl) mvAfter(p, cq); else celebAfter(p, cq); }   // (world space: the scripted ball / a move look's turf puffs and pencil strokes)
 }
 
 const PICK_R = 1.7 * YD;
@@ -6275,7 +7685,7 @@ function drawBallBody() {
     // spiral: nose along the flight path; the laces roll around the ball (in front, then out of sight behind)
     // and the shading turns with them, so it reads as spinning on its long axis, not pinwheeling
     const ph = ball.spiral || 0, c = Math.cos(ph), sn = Math.sin(ph);
-    ctx.rotate(nose + 0.06 * Math.sin(ph * 0.23));   // a touch of wobble in the nose, like a real spiral
+    ctx.rotate(nose + 0.06 * Math.sin(ph * 0.23) + (ball.wob ? THROW_LOOK.wob * Math.sin(ph * THROW_LOOK.wobRate) : 0));   // a touch of wobble in the nose, like a real spiral (a throw hit as it left: a real wobble, v0.43 looks)
     drawFootball(7.5, 4.2, sn > -0.2 ? Math.min(1, 0.4 + sn) : 0, c * 2.6);   // laces rolling round
     ctx.fillStyle = 'rgba(0,0,0,0.28)';                 // the shaded half, rolling round
     ctx.beginPath(); ctx.ellipse(0, -c * 1.6, 7, 2.4, 0, 0, Math.PI * 2); ctx.fill();
@@ -6378,6 +7788,7 @@ function callTimeout(cpu = false, defense = false) {   // defense: two players, 
   const mine = !cpu && (defense || (aiOff() && !!twoP));
   if ((mine ? twoP.to : game.timeouts) <= 0 || game.over || (rec && rec.replaying)) return;
   if (game.secs <= 0 && state !== 'pre') return;   // time has expired on that play: too late to stop the clock
+  if (SL.on) slTvWalk();   // (the TV timeout official walks on: looks only)
   let saved = 0;
   if (state === 'done' && game.runoff > 0) { saved = game.runoff; game.runoff = 0; game.runoffTotal = 0; }
   else if (state === 'pre' && patMode === null) { saved = game.lastRunoff; game.secs = Math.min(QUARTER_SECS, game.secs + saved); game.lastRunoff = 0; }   // (before the snap it's always allowed, even with the clock already stopped)

@@ -270,6 +270,129 @@ const DRAFT_SCHOOLS = ['BAYOU STATE', 'GREAT LAKES TECH', 'NORTH PRAIRIE', 'COAS
   'CEDAR FALLS STATE', 'GULF SHORE', 'HIGH PLAINS', 'MILL CREEK', 'CANYON STATE', 'LAKESHORE', 'EAST TIMBER', 'COPPER MOUNTAIN', 'RIVERBEND', 'STONE HARBOR', 'BLUE MESA', 'WEST DELTA', 'GRANITE STATE TECH',
   'MAGNOLIA', 'SILVER LAKE', 'FORT ASH', 'PALMETTO BAY', 'BIG SKY NORTH', 'CAPITAL CITY', 'THREE RIVERS', 'SAGEBRUSH', 'MAPLE GROVE', 'SOUTH RIDGE', 'TIDEWATER', 'ELK RAPIDS', 'SUNCOAST', 'BLACK HILLS TECH', 'WINDWARD'];
 const CHANGELOG = [
+  { v: "v0.44", secs: [
+    ["SIDELINES: MORE PEOPLE", [
+      "Camera crews stand behind both end lines. They follow the ball across the field, drop to a knee when a runner heads their way, back up when he's close, and duck when a field goal or extra point comes over the posts.",
+      "Two more handheld cameramen work the goal-line ends of each sideline.",
+      "Open spots on the sidelines fill up: photographers in numbered orange vests near the pylons, a TV timeout official in a red cap and gloves, a get-back coach by the bench, event staff in lime vests and a grounds crew member with a rake (a towel in the rain).",
+      "The TV timeout official walks a few yards onto the field for every timeout and at each quarter break, then heads back off. He's gone again at the snap.",
+      "Knockdowns now depend on who gets hit: a cameraman hugs his camera, a photographer's camera goes flying, the mascot flops and bounces, and a cheerleader goes down on her box and her squad helps her up.",
+    ]],
+    ["SIDELINES: PLAYERS AND PEOPLE", [
+      "After the whistle, players steer around sideline people instead of walking through them. A runner going out of bounds has to win a roll first (better for agile players, worse at full speed), so fast runners still flatten someone now and then.",
+      "Players coming off the field jog to an open spot by their own bench and become a bench player when they get there. After a turnover, kick or punt, the units leaving the field jog off from where they stood, and their bench stays empty until they arrive. The snap never waits for them.",
+      "When a player knocks someone down, he might help them up, swerve past with a sorry, ignore them (more likely in a late close game or right after a big play), leave it to a coach or bench player who walks over, or the person gets up on their own. Players rarely help someone from the other team. The crowd says ooh at the hit and cheers the help-up.",
+      "Looks only: nothing on the field plays differently. Every new person, routine and knockdown is in the animation library's SIDELINE tab. Help-ups and walk-ons turn off at the second performance level.",
+    ]],
+    ["PERFORMANCE", [
+      "GRAPHICS setting (settings > EXTRAS, the old PERF button): AUTO (as before), PERFORMANCE (lighter stands, weather and sound in every game) or QUALITY (never lightened; on phones a sharper picture, full stands and all the weather). Old ON / OFF choices carry over as PERFORMANCE / QUALITY.",
+      "The field's turf, lines, numbers and logo are drawn once a game and reused every frame instead of being redrawn (closer zooms are still drawn live), and several per-frame chores no longer create throwaway objects. Smoother on phones.",
+      "Players lose their smallest details (helmet stripe, ear hole, knee and elbow shading) when they are small on screen: only on pulled-back shots in AUTO, always in PERFORMANCE, never in QUALITY.",
+      "Replays use far less memory while a play is recorded: each frame keeps only what changed. Replays and highlights look the same.",
+      "FRAME TIMES (settings > DEBUG): a small readout of frames per second and how long the game step and the drawing take.",
+      "Online: each new play reaches the other device much faster: the sideline people are sent once a match instead of with every play, and each player's roster card is sent as a short reference. The per-play message is about a quarter of its old size.",
+      "The host spends less time on every update it sends, and the game's difficulty values are worked out once a frame instead of hundreds of times (this helps offline too).",
+      "Nothing looks or plays differently. Both devices need this update to play each other.",
+    ]],
+  ] },
+  { v: "v0.43", secs: [
+    ["ANIMATIONS: RUNNER MOVES", [
+      "Every spin, juke and hurdle now has its own look, picked from the runner: tight or wide spins (the ball switched hands in the middle of the turn), plant cuts, jump cuts, stutters, shoulder dips, double jukes and dead legs near the sideline.",
+      "Hurdles: clean track-style, both knees tucked, backward after a spin, and a clipped one when there wasn't room. The man underneath can now take a foot to the helmet, or stand up into the runner when the hurdle gets tackled.",
+      "The truck drops the shoulder behind a forearm shield, then either runs straight through the man or both bounce off. Runners tiptoe the sideline, leap over the pile at the goal line, and reach the ball out for the line as they go down.",
+      "Beaten tacklers have new reactions: lunging flat on their face, hips turned the wrong way, grabbing at air, ankles broken three ways, and a hand on the hip that slides off a spin. Each one plays over the same time as before, so nothing about recovery changes.",
+      "Looks only: no move's odds, speed, length or result changed. Every new look is in the animation library (MOVES / REACTIONS) and in TEST MODE > MOVE LOOKS, where you can pick a look, a rating and a reaction, loop it and slow it down.",
+    ]],
+    ["ANIMATIONS: CATCHES, PICKS AND TIPS", [
+      "Diving catches: fully laid out one-handers with the ball on his fingertips, two hands together in a diamond, rolled on his side across his run, and reaching back over for a ball from behind.",
+      "After the dive: belly slides with pencil scuffs behind his toes, rolling out twice, sliding over the sideline and sitting up, and both palms slapping the turf when the dive comes up empty. Rolls happen exactly as often as before.",
+      "Spectacular one-handers have their own looks again (they were only ever plain one-handed grabs): stretched out low or heels up on a dive, at the sideline, reaching back or twisting on a leap, and off the shoe tops, straight up, in stride or across the body on his feet, each with its call-out.",
+      "Leaping catches land on both feet or hop on one; a man hit in the air is turned flat onto his shoulder, or spun right round if he's hit at the catch.",
+      "Interceptions: one hand at the top of a leap, a toe drag at the sideline, pulling down a tipped ball, caught in stride, a diving pick that rolls out, and rare ones reached round the receiver or juggled twice.",
+      "Tips and breakups: linemen jumping with both hands up or swatting with one arm while still blocked, linebackers flicking it in their drop, DBs over the shoulder, swiping down on the hands, punching it out, or getting just fingertips on a dive.",
+      "All in the animation library (EXTRAS) and in the MOVE LOOKS test (dive / slide / land / pick / tip).",
+    ]],
+    ["ANIMATIONS: THROWS", [
+      "Throwing across his body on the run: shoulders turned back opening through the throw, off his back foot with the front knee up, the arm coming round low in a three-quarter arc.",
+      "A lineman leaping with his hands up in the lane: the QB drops his arm and slings it flat round him, leaning away.",
+      "Hit as he lets it go: the arm finishes knocked flat, and the ball wobbles in the air. Looks only: the throw itself is unchanged. In the MOVE LOOKS test as a throw family.",
+    ]],
+    ["CELEBRATIONS: DEFENSE", [
+      "The box: both index fingers trace a frame around his helmet in real pencil, corners overshooting like a sketch, a flash when it closes, then two nods inside it (sometimes with a shutter click and a white flash).",
+      "Picks: binoculars scanning the field, tiptoeing off to slip it in his pocket, casting and reeling in a fishing line, a magic trick that pulls the ball out from behind his helmet, a phone call, a snow angel left on the turf.",
+      "Sacks and hits: chopping the tree down, a lunch eaten off a plate with the lunch bag beside the QB, counting his sacks on his fingers, a home-run swing, ringing the bell, push-ups. Plus no-good signals on a breakup, a key locked and thrown away on a stop, a swat-and-wag on a block, a two-finger safety call, a ball ripped out on a forced fumble, a watch tap late in the game.",
+      "A defensive touchdown can get a jump shot from the end zone or a slow walk with the ball held high. New sounds: pencil scratch, bell, key click, axe chop.",
+      "Celebration test panel: a DEFENSE filter, and EVENT plays any defensive event's own pool with a defender as the hero (four teammates brought in, so the group ones come up too).",
+      "Group celebrations on defense: the team box (he traces a pencil frame round his teammates while they pose in it), the wall (linemen shoulder to shoulder, two stomps, linked arms up, pencil bricks laid in front of them), the huddle bounce, rolling the dice (pencil dice land on the turf), the hot potato round the circle until the last man spikes it, and a volleyball set-and-spike after a blocked kick.",
+    ]],
+    ["NEW CAREER: HOW TOUGH, ORIGINS AND THE COACHING QUESTIONNAIRE", [
+      "HOW TOUGH? is now a row of taped cards, one per level from DOODLE to PLAYBOOK LEGEND, each with a face that gets tougher. A WHAT CHANGES note compares the pick with PRO (their tackle breaks, picks, breakups and punch-outs). Player speed never changes. ADAPTIVE and a CUSTOM SLIDERS button sit beside it.",
+      "HOW'D YOU GET YOUR START? has 12 origins, 4 at a time. Each shows a perk and a catch: CLEAN SLATE, the old three, FILM ROOM GRINDER, EX-SCOUT, TRAINER'S ROOM, COACH'S KID, SECOND CHANCE, LOCKER ROOM LEADER, CAP WIZARD and JUCO LEGEND. Timed ones last through your first full season. A perk that needs scouts or contracts switched off gets a fallback.",
+      "CONTINUE opens a coaching questionnaire on a clipboard, with page tabs, your coach's comments and a paper page turn. It covers game day (play defense or sim it), front office (contracts, scouts), realism (injuries, weather), style (taunts, replays), general settings, help (page tours, account, keybinds) and a sign page with an APPROVED stamp. USE RECOMMENDED (or Esc / right-click) jumps to the end. Settings > RUN SETUP QUESTIONS runs it again.",
+      "The pennant wall moved into the questionnaire's LOCKER ROOM: 32 lockers that swing open on the jersey, helmet and logo, with a scouting report on the pinned team. HIRING PREFERENCE (favorite team, a rebuild, a contender, surprise me) picks who hires you. The ? buttons replay a tour of each.",
+    ]],
+  ]},
+  { v: "v0.42", secs: [
+    ["HIGHLIGHTS", [
+      "Halftime and end-of-game reels show each play in one piece: an interception with its whole return, a catch with the run after it, a long run from the handoff. No more cuts and fades inside a play; only a short cross-fade between plays.",
+      "Around the league clips are different every time: any lane on the field, weaving runs, angled routes and rushes, edge and middle sacks, extras who don't all stand in the same spots, and two new runs (a hard cutback, and a breakaway with a chaser laying out just short).",
+      "Instant replay hides the live controls: the kick meter, the aim line, the kick reticle, the landing ring, the defense overlay and the celebrate prompt.",
+    ]],
+    ["GAMEPLAY", [
+      "Diving interceptions are timed: the defender waits on his feet and lays out as the ball arrives, at where it will be, instead of diving early at a spot it hadn't reached.",
+      "Adaptive difficulty moves again. It was held within 20% of where each season started, so a winning team sat at that ceiling all year (the stuck 38%). It now follows how you play, who you beat or lose to and by how much, your stats, your team's rating, the playoffs and your years in charge, and comes back down when those do.",
+    ]],
+    ["CELEBRATIONS AND SCREENS", [
+      "Your defender's legs run when he walks out to open space to celebrate.",
+      "Celebrations that need people around them (stepping over a man on the turf, taunts, team celebrations, the goal post) no longer walk away to open space first.",
+      "Paper Passer Post: stories no longer run past the bottom of the page or under the section buttons, text never runs across a player card, and the wire, saga list, editorial, archive and scrapbook all fit their pages.",
+      "Settings locked during a game are flat grey buttons that don't move, with no grey tint over them.",
+    ]],
+  ]},
+  { v: "v0.41", secs: [
+    ["CONTRACTS", [
+      "Your head coach has a contract. The owner pays you credits at the end of every season (about 10 to 30), plus incentives you hit: playoffs, the division, the Paper Bowl, coaching goals. A deal belongs to its team: take another job and the new team's offer replaces it.",
+      "The owner has a win target and a patience meter. Make the target and he warms up; miss it and a pip is gone. Out of patience = fired, with a buyout for the seasons left, and a few teams always call.",
+      "After a strong season you can RENEGOTIATE, and with 2 years or less left you can ASK FOR AN EXTENSION. You can also ask for up to two perks: more staff budget, cheaper facilities, a cap bump, or final say on trades. A deal you let run out is renewed on the owner's terms.",
+      "Coordinators, trainers and scouts: every folder shows a contract stamp, and an EXTEND sticker in the last year. A man you don't extend leaves when his deal ends. Staff who have been with you 3 seasons give a loyalty discount.",
+      "Other teams now try to poach your staff, more often on short deals, highly rated men and coordinators who could be head coaches. You choose: LET HIM GO (they pay you credits), EXTEND at a raised ask, or REFUSE (he stays, unhappy, and likely leaves later).",
+      "Player extensions (FRONT OFFICE > PLAYER DEALS): see how each ask is built (market value, morale, contender discount, age, agent type), then negotiate during the season. A signing bonus paid in credits lowers this year's cap hit, and incentive chips cost you only if they are hit. One FRANCHISE TAG a year keeps an expiring player for one pricey season. LET HIM WALK sends him to free agency without the offseason screen.",
+      "One NEGOTIATE popup for all of it: his ask beside your counter, an interest meter (COLD / WARM / SIGNS) and 3 tries. A warm counter moves his ask toward you; a lowball ends the talks for a week.",
+      "The Front Office is now an open filing drawer: STAFF / MY CONTRACT / PLAYER DEALS tabs, manila folders for your coaches, and a ? tour of the new tabs. Every old button does what it did.",
+      "SETTINGS > DEALS: AUTO hands every contract back to the game: no talks, no alerts, no stickers, and your own deal renews by itself.",
+    ]],
+  ]},
+  { v: "v0.40", secs: [
+    ["KICK RUSH AND PROTECTION", [
+      "Field goals, extra points and punts: rushers fire off the ball much harder and keep working. Each one has his own reaction to the snap (a great jump gives a burst), and a man who is held keeps changing it up: a new shoulder, the next gap, a swim or a spin. Blockers slide with them.",
+      "The first hit goes both ways: both men are shoved back off it by strength, and a mismatch staggers the loser.",
+      "Rushers who can't get through plant and jump with their arms up as the ball is kicked. A man who is stonewalled spins off and leaps late anyway.",
+      "Offside: rarely a rusher guesses the snap too early. 5 yards and the kick again (a first down if that is enough; an extra point is simply kicked again). Either team can do it.",
+      "The protection lines up wider with a ragged depth, then kick-slides at the snap: a step inside, ground given as one wave, then standing up.",
+      "Blocked kicks stay rare (about 2% of field goals, 1% of extra points; simulated games use the same rates).",
+    ]],
+    ["SIDELINES", [
+      "The chain crew's sticks mark the spots: the down box on the line of scrimmage, the front stick on the line to gain, the rear stick 10 yards behind it. The crew stands beside its sticks. Goal to go: the front stick stands on the goal line, the rear one where the series began.",
+      "The down box follows a big gain while the play is still going.",
+      "Nobody on the sideline pops into place on camera any more: the crew walks in from the edge of the picture.",
+      "Sideline people watch the play: when a player is heading their way they step or hop clear ahead of time. Too late, and they still get run over.",
+    ]],
+    ["STADIUM", [
+      "The crowd is a bowl now: the rows squeeze together toward the corners and curve round them, the upper tier behind each end zone curves back down, and every fan is turned toward the field.",
+      "Stadium lights: the front rows are lit off the field, pools of light sit under each tower, the upper rows fall into shadow. Open air, rain or snow and a closed roof each have their own light.",
+      "The wall on the near sideline is drawn lower, to match the view from above. It blocks the same as before.",
+    ]],
+    ["CELEBRATIONS", [
+      "New: the one-hand top spin. He crouches, rips the ball like a top with one hand and it keeps spinning by itself while he shows it off.",
+      "Bowling runs longer: an approach, pins that go down by where the ball comes through (wobbling, sent flying, on their faces, straight over), and they stay down before getting up one by one.",
+      "Chest bump and fist bump are much harder: a real run-up, a higher leap, a bigger hit with a double shock ring, dust, a jolt and a boom, then a stagger back.",
+    ]],
+    ["ICONS AND HIGHLIGHTS", [
+      "Every rip, swim and club with the hands (rush moves and receiver releases) shows the wave icon.",
+      "Around the league clips are far less repetitive: runs with a juke, spin, stiff arm, hurdle, truck or a dive over the goal line; every catch style as a catch-and-run or a deep ball in the end zone; picks (grab, one hand, high point) returned or taken all the way; sacks of every tackle style and strip-sacks scooped up and run back; long field goals.",
+      "The clips remember what they showed: the same play or animation doesn't come back in one show or the next.",
+    ]],
+  ] },
   { v: "v0.39", secs: [
     ["CELEBRATIONS", [
       "Celebrations have weight now. Every move builds up, hits a peak and follows through: at the peak the players freeze for a few frames, the camera punches in, the screen jolts and an ink burst pops around the player.",

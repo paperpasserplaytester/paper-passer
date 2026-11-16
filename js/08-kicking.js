@@ -137,7 +137,7 @@ function startFieldGoal(prev) {   // prev = where everyone stood before the line
       s.p.fgTo = { x: s.p.x, y: s.p.y, fast: fresh.has(s.p) };
       if (fresh.has(s.p)) { s.p.x = Math.max(-ENDZONE, s.p.fgTo.x - 6 * YL); s.p.y = edge(s.p.fgTo.y); } else { s.p.x = s.x; s.p.y = s.y; }
     }
-    for (const g of gone) { g.fgTo = { x: Math.max(-ENDZONE, g.x - 6 * YL), y: leaveEdge(), fast: true, leave: true }; g.moving = false; }
+    gone.forEach((g, j) => { g.fgTo = Object.assign(slSubTo(Math.max(-ENDZONE, g.x - 6 * YL), 1, offHomeTop() ? 0 : 1, j, gone.length, g), { fast: true, leave: true }); g.moving = false; });   // (a gap by their bench when that is no farther: slSubTo)
     fgExit = gone;
     qb.action = null; qb.act = null;   // (he kneels as the holder once he's at the spot)
     kick.phase = 'enter';
@@ -606,10 +606,23 @@ function updateKick(dt) {
 const KPRO = {
   align: { spread: 1.22, depth: 0.7, wob: 0.28, punt: 0.5 },   // rushers' set (FG / PAT and punt rush): gaps x spread, up to depth YL further back off the ball (staggered), +-wob YD sideways (never a perfect row); punt = share of that on a punt rush
   on: true,
-  gap: 1.05, wingBack: 1.0, wingOut: 0.85,            // line spacing (yd, foot to foot); the wings: yd back off the line, yd outside the tight end
+  // v0.40: the set = split yd wider per gap, interior men +-stag yd of depth (never the snapper), then the kick-slide at the snap: step inside over ks.step s, give ground as one wave over ks.give s, stand up
+  split: 0.4, stag: 0.1, ks: { step: 0.12, give: 0.35 },
+  // get-off: each rusher's reaction to the snap (s, from - to); great = odds of a great jump (x his speed): off in greatRt s with burstK x speed for burst s;
+  // side = odds a kick that somebody guesses early (offside: yds yards, replay the kick; x sidePat on extra points; hold = s the flag is shown); fire / fireAcc = yd/s, yd/s^2 into his blocker
+  off: { react: [0.04, 0.22], great: 0.12, greatRt: 0.01, burst: 0.45, burstK: 1.3, side: 0.012, sidePat: 0.5, hold: 1.3, yds: 5 }, fire: 9.5, fireAcc: 34,
+  // first contact goes both ways: v = yd/s each man is shoved back at even strength (+- k per point of strength edge; the blocker x blk), fading at damp /s; a mismatch over stag = a stagger (x stagK, impact puff)
+  hit: { v: 4.2, k: 0.3, blk: 0.7, damp: 7, stag: 0.9, stagK: 1.6 },
+  // a held rusher keeps changing it up every [from, to] s: a new shoulder / gap gapYd yd over (flip = odds he switches sides), swim or spin (spin = odds); each try moves his shed time +-swing s; follow = how fast his blocker slides with him (1/s)
+  dyn: { every: [0.3, 0.5], gapYd: 0.55, flip: 0.6, spin: 0.35, swing: 0.12, follow: 9 },
+  // a held rusher's leap at the line: odds he tries it (within lane yd of the ball's path), at s before the kick, h = jump height (S units), up = extra reach (S units), tall = share of his reach rating that counts
+  lj: { odds: 0.55, lane: 3.2, at: 0.04, h: 15, up: 5, tall: 0.5 },
+  // second effort: a man whose shed time is stone s or more past the kick spins off spinAt s before it (side yd toward the ball's lane) and leaps late s after it anyway
+  se: { stone: 0.7, spinAt: 0.5, late: 0.12, side: 0.6 },
+  gap: 1.05, wingBack: 1.0, wingOut: 1.0,            // line spacing (yd, foot to foot); the wings: yd back off the line, yd outside the tight end
   rushOff: 1.0, backOff: 1.9, backGap: 1.5,           // rushers: YL past the line; the three behind: YL back, yd apart
   point: 1.5,                                         // the block point: yards along the field (YL) in front of the ball's spot, on its path
-  set: 0.35, stepIn: 0.3, anchor: 4.5, slide: 0.6,    // protection: yd the line sets back, yd each man steps down inside, his speed (yd/s), the most (yd) he ever slides
+  set: 0.45, stepIn: 0.3, anchor: 4.5, slide: 0.85,    // protection: yd the line sets back, yd each man steps down inside, his speed (yd/s), the most (yd) he ever slides
   edgeMax: 2, clean: 0.0018, cleanK: 0.9, cleanAt: [0.3, 0.7],   // beaten clean: odds at even ratings, e^(cleanK x rating edge); seconds after the snap he is through
   drive: 0.75, dbl: 1.6, driveMax: 4.6, driveVar: [0.5, 1.6],   // a bull rush: yd/s the blocker gives at even strength; x when doubled (MIDDLE); most yd given; each drive's own luck (x from - to)
   // the block battle (the line's logic): shed = s [base, + random] until he beats his man at even ratings (x e^(-shedK x rating edge), never under shedMin unless beaten clean);
@@ -628,9 +641,10 @@ const KPRO = {
   patClean: 0.85,                                     // extra points: x the clean-win odds (a short, quick operation)
   late: { p: 0.07, hands: 0.35, secs: [0.15, 0.4], pat: 0.6 },   // a slow operation (a high snap, a bobbled hold): odds at an average holder, less / more per point of his hands rating edge; seconds it costs; x on extra points. The rush keeps coming while the kicker waits: this is when an overload gets home
   calls: { fg: { MIDDLE: 0.4, EDGE: 0.35, SAFE: 0.25 }, long: { MIDDLE: 0.55, EDGE: 0.35, SAFE: 0.1 }, pat: { MIDDLE: 0.1, EDGE: 0.3, SAFE: 0.6 } }, longYd: 45,   // the rush call's weights: a normal field goal, one of longYd+ yards, an extra point
-  sim: { fg: 0.02, pat: 0.01, punt: 0.007 },          // simulated kicks: the same block rates the live engine is tuned to
+  sim: { fg: 0.022, pat: 0.011, punt: 0.007 },          // simulated kicks: the same block rates the live engine is tuned to
   // punts (kproSetPunt / kproPuntTick)
   pt: { calls: { BLOCK: 0.25 }, backedUp: 0.3, returnRush: [5, 6],   // the return side's call: odds of BLOCK (+ backedUp when the punter is near his own goal line), else RETURN with this many rushing
+        spread: 1.2,                                   // v0.40: the punt line's splits x this at the set
         ppDepth: 5,                                    // the personal protector: YL behind the line
         setBack: 1.1, setOut: 0.45, slide: 0.9, anchor: 4.2, hold: 1.2,   // the zone kick-slide: yd back, yd outward (half a man), most yd he slides, his speed (yd/s); s he holds before leaving for his lane
         pp: 0.8, ppK: 0.12, ppV: 6.5,                  // the protector on a free man: odds at even ratings, per point of rating edge; his speed (yd/s)
@@ -641,6 +655,76 @@ const KPRO = {
 };
 const kproLive = () => KPRO.on && !tut;
 const kproFG = () => !!(kick && kick.kp && !kick.punt);
+// --- v0.40: get-off, contact, re-work, the leap at the line, offside
+let kproPen = null, kproCrashAt = 0;   // an offside flag waiting for endPlay; the last line-crash sound (ms)
+// the snap: every rusher's own reaction (R.rt), a great jump's burst (R.burstT). Returns the man who guessed early (offside), or null
+function kproGetOff(list, P, me, sideP) {
+  const O = KPRO.off; P.go = true;
+  for (const r of list) {
+    const R = r.kp; if (!R) continue;
+    const great = r !== me && Math.random() < O.great * Math.max(0.4, 1 + 0.25 * zc(rz(r, 'spd')));
+    R.rt = r === me ? 0 : great ? O.greatRt : O.react[0] + Math.random() * (O.react[1] - O.react[0]);
+    R.burstT = great ? R.rt + O.burst : 0;
+  }
+  if (!(sideP > 0) || Math.random() >= sideP) return null;
+  const c = list.filter(r => r !== me && r.kp && r.kp.role === 'line');
+  return c.length ? c[Math.floor(Math.random() * c.length)] : null;
+}
+const kproBurst = (R, t) => t < (R.burstT || 0) ? KPRO.off.burstK : 1;
+// first contact: both men are shoved back off it, by strength (the loser of a mismatch staggers)
+function kproHit(r, b) {
+  const H = KPRO.hit, R = r.kp, B = b.kpB; if (!R || !B) return;
+  const e = Math.max(-2, Math.min(2, rz(r, 'str') - rz(b, 'str'))), s = Math.sign(r.x - b.x) || 1, big = Math.abs(e) > H.stag;
+  R.shv = s * H.v * YD * Math.max(0.3, 1 - H.k * e) * (big && e < 0 ? H.stagK : 1);
+  B.shv = -s * H.v * YD * H.blk * Math.max(0.3, 1 + H.k * e) * (big && e > 0 ? H.stagK : 1);
+  if (big) impacts.push({ x: (r.x + b.x) / 2, y: (r.y + b.y) / 2 - 10 * S, t: 0 });
+  const now = performance.now(); if (now - kproCrashAt > 700 && !(rec && rec.replaying)) { kproCrashAt = now; tackleSfx(); }   // (the lines meet: one crash, not nine)
+}
+function kproShove(p, o, dt) {
+  if (!o || !o.shv) return;
+  p.x += o.shv * dt; o.shv *= Math.exp(-KPRO.hit.damp * dt); if (Math.abs(o.shv) < 0.2 * YD) o.shv = 0;
+}
+// a held rusher changes it up: another shoulder / the next gap (R.gy), a swim or a spin. Returns the seconds it moves his shed time
+function kproRework(r, b, t) {
+  const D = KPRO.dyn, R = r.kp;
+  if (R.dynAt == null) { R.dynAt = t + D.every[0] + Math.random() * (D.every[1] - D.every[0]); R.gs = Math.random() < 0.5 ? -1 : 1; return 0; }
+  if (t < R.dynAt) return 0;
+  R.dynAt = t + D.every[0] + Math.random() * (D.every[1] - D.every[0]);
+  if (Math.random() < D.flip) R.gs = -R.gs;
+  R.gy = R.gs * D.gapYd * YD * (0.6 + 0.8 * Math.random());
+  if (!(r.spinFx > 0) && !(r.swimLeft > 0) && !(r.bullFx > 0)) { if (Math.random() < D.spin) r.spinFx = 0.5; else { r.swimLeft = DL_SWIM.anim; r.swimSide = R.gs; } }
+  return (Math.random() - 0.5) * 2 * D.swing;
+}
+// a held man on the line plants and goes up with the kick (left = s until it is struck, negative once it is away); stonewalled = a spin off first, then a late leap
+function kproLineJump(r, R, bp, left) {
+  const J = KPRO.lj, E = KPRO.se;
+  if (R.ljOK == null) R.ljOK = Math.random() < J.odds && Math.abs(r.y - bp.y) <= J.lane * YD;
+  if (!R.ljOK) return false;
+  if (R.stone == null && left <= E.spinAt) R.stone = r.kickBeat - kick.t - left > E.stone;
+  if (R.stone && !R.seSpin && left <= E.spinAt) { R.seSpin = true; r.spinFx = 0.5; R.gy = (Math.sign(bp.y - r.y) || (Math.random() < 0.5 ? -1 : 1)) * E.side * YD; }
+  if (left > (R.stone ? -E.late : J.at)) return false;
+  r.leapt = true; r.leapBat = true; r.leapKick = kick; r.engaged = false; R.lj = true; R.up = false;
+  r.action = 'jump'; r.act = { t: 0, dur: JUMP_TIME, h: J.h * S };
+  return true;
+}
+// offside: the flag is shown for a beat (he is across, nobody else moved), then 5 yards and the kick again (endPlay's penalty flow; an extra point is simply kicked again)
+function kproFlagTick(dt) {
+  const F = kick.kp.flag, r = F.r; F.t += dt;
+  kproGo(r, los - 0.9 * YL, r.y, 8 * YD, 30 * YD, dt); r.face = -1;
+  for (const o of kick.rush) if (o !== r) { o.vx = o.vy = 0; o.moving = false; }
+  ball.x = kick0.x; ball.y = kick0.y; ball.z = 3 * S;
+  if (F.t < KPRO.off.hold) return true;
+  if (patMode === 'kick') { startFieldGoal(); msg = 'OFFSIDE, defense: the try is kicked again'; return true; }
+  kproPen = { num: r.num || '' }; kick = null; stopClock = true;
+  endPlay('Offside', los, '');
+  return true;
+}
+function kproPenalty() {
+  const p = kproPen; kproPen = null;
+  if (!p) return null;
+  const spot = Math.min(los + KPRO.off.yds * YL, (los + FIELD) / 2), first = spot + BALL_TIP >= lineToGain;
+  return { spot, dead: true, first, text: `OFFSIDE, defense${p.num ? ' #' + p.num : ''}: ${Math.round((spot - los) / YL)} yards, ${first ? 'FIRST DOWN' : 'replay the kick'}` };
+}
 // the second (on the kick's own clock, from the snap) a rusher beats his man, off the ratings: his best of strength / speed against the blocker's blocking
 // (strength for a non-lineman), in rating z-units, capped (a star against a walk-on is a mismatch, not a certainty). Rarely he is beaten clean (the line's quick win)
 function kproShed(r, b, pat) {
@@ -660,7 +744,7 @@ function kproFight(r, b, t, mine) {
   };
   let add = 0;
   if (R.engAt == null) {
-    R.engAt = t; R.countered = false;
+    R.engAt = t; R.countered = false; kproHit(r, b);
     let ty = rushType(r) === 'power' ? 'power' : 'finesse';   // (no corner to bend on a kick: a speed man goes to his hands)
     if (Math.random() < RUSH.offType) ty = ty === 'power' ? 'finesse' : 'power';
     setMove(ty); add += F.moveK * (RUSH.shed[R.move] + RUSH.react * ans(ty));
@@ -703,9 +787,9 @@ function kproUp(r, R, bp, kickT, flight) {
   return kick.t > kickT - R.upLead;
 }
 function kproSetFG() {   // from startFieldGoal, once the old lineup is made: the unit, the rush and the call
-  const K = KPRO, g = K.gap * YD, lx = los - 0.35 * YL, pat = patMode === 'kick';
+  const K = KPRO, g = (K.gap + K.split) * YD, lx = los - 0.35 * YL, pat = patMode === 'kick'; kproPen = null;
   const line = [recs[1], ols[0], ols[1], ols[2], ols[3], ols[4], recs[2]], wings = [recs[0], recs[3]];
-  line.forEach((b, i) => { if (!b) return; b.x = lx; b.y = MID + (i - 3) * g; b.kpB = { x0: b.x, y0: b.y, in: Math.sign(3 - i), back: 0, man: null, wing: false }; });
+  line.forEach((b, i) => { if (!b) return; b.x = lx - (i === 3 ? 0 : (Math.random() * 2 - 1) * K.stag * YD); b.y = MID + (i - 3) * g; b.kpB = { x0: b.x, y0: b.y, in: Math.sign(3 - i), back: 0, man: null, wing: false }; });
   wings.forEach((b, i) => { if (!b) return; const s = i ? 1 : -1; b.x = lx - K.wingBack * YL; b.y = MID + s * (3 * g + K.wingOut * YD); b.kpB = { x0: b.x, y0: b.y, in: -s, back: 0, man: null, wing: true }; });
   const dist = kickDistance(), W = K.calls[pat ? 'pat' : dist >= K.longYd ? 'long' : 'fg'];
   let roll = Math.random() * (W.MIDDLE + W.EDGE + W.SAFE), call = 'SAFE';
@@ -742,7 +826,8 @@ const kproBallSpot = () => ({ x: qb.x + 12 * S, y: qb.y });
 function kproPoint() { const s = kproBallSpot(); return { x: s.x + KPRO.point * YL, y: s.y }; }
 // where a rusher's hands are, and how high they reach (null = his hands are not up)
 function kproHandsOf(r) {
-  if (r.action === 'jump' && r.act) return { x: r.x - 0.35 * YD, y: r.y, z: PICK_HANDS.stand + PICK_HANDS.air * Math.sin(Math.PI * Math.min(1, r.act.t / (r.act.dur || JUMP_TIME))) };
+  if (r.action === 'jump' && r.act) { const lj = r.kp && r.kp.lj, rk = lj ? 1 + (reachK(r) - 1) * KPRO.lj.tall : 1;   // (a leap at the line: a little more reach, by his build)
+    return { x: r.x - 0.35 * YD, y: r.y, z: (PICK_HANDS.stand + PICK_HANDS.air * Math.sin(Math.PI * Math.min(1, r.act.t / (r.act.dur || JUMP_TIME)))) * rk + (lj ? KPRO.lj.up * S : 0) }; }
   if (r.action === 'dive' && r.act) { const h = diveHands(r, figReach(r, 0.9 * YD)); return { x: h.x, y: h.y, z: KPRO.diveZ * S }; }
   if (r.kp && r.kp.up && !r.action) return { x: r.x - 0.3 * YD, y: r.y, z: PICK_HANDS.stand };
   return null;
@@ -772,6 +857,11 @@ function kproBlocked(r, at) {   // off his hands: the ball pops loose where he m
 }
 function kproTick(dt) {   // every frame of a placekick (true = it was blocked: the kick is over)
   const K = KPRO, P = kick.kp, snap = kick.phase === 'snap', flight = kick.phase === 'flight', bp = P.bp = kproPoint(), me = defLive() ? kick.me : null;
+  if (P.flag) return kproFlagTick(dt);
+  if (snap && !P.go) {   // the snap: everyone's get-off; rarely somebody guessed early
+    const off = kproGetOff(kick.rush, P, me, P.call === 'SAFE' || tut ? 0 : K.off.side * (patMode === 'kick' ? K.off.sidePat : 1));
+    if (off) { P.flag = { r: off, t: 0 }; kick.phase = 'flag'; kick.t = 0; popup(off, 'OFFSIDE', '#ffd23f'); whistle(); msg = 'FLAG  -  offside, defense'; return true; }
+  }
   if (snap && P.late > 0 && kick.t >= KICK_SNAP) {   // a slow operation: the holder is still getting it down, the kicker waits (the kick's own clock holds; every rusher's release time moves with it)
     const d = Math.min(P.late, dt); kick.t -= d; P.late -= d; P.wasLate = true;
     for (const r of kick.rush) if (r.kickBeat < 90) r.kickBeat -= d;
@@ -791,21 +881,23 @@ function kproTick(dt) {   // every frame of a placekick (true = it was blocked: 
     const man = stun ? null : kick.rush.find(r => r.kickBlocker === b && !r.kp.free && !r.action && r.kp.role !== 'push') || null;
     const drv = man && snap && man.engaged ? (man.kp.v || 0) * (kick.rush.some(r => r.kickBlocker === b && r.kp.role === 'push' && r.engaged) ? K.dbl : 1) : 0;   // (bull-rushed: he gives ground, more with a second man on him)
     if (drv) B.back = Math.min(K.driveMax, B.back + drv * dt);
-    let ty = B.y0 + B.in * K.stepIn * YD;
-    if (man) ty = Math.max(B.y0 - K.slide * YD, Math.min(B.y0 + K.slide * YD, ty + (man.y - ty) * 0.5));   // (squares up on his man, inside his own slide)
+    const s1 = snap ? Math.min(1, kick.t / K.ks.step) : 1, s2 = snap ? Math.max(0, Math.min(1, (kick.t - K.ks.step) / K.ks.give)) : 1;   // (the kick-slide: the step inside, then ground given as one wave)
+    let ty = B.y0 + B.in * K.stepIn * YD * s1;
+    if (man) { B.ry = B.ry == null ? man.y : B.ry + (man.y - B.ry) * Math.min(1, dt * K.dyn.follow); ty = Math.max(B.y0 - K.slide * YD, Math.min(B.y0 + K.slide * YD, ty + (B.ry - ty) * 0.6)); }   // (slides with his man, a beat behind him, inside his own slide)
     else if (!stun && snap && P.call !== 'SAFE' && kick.t > K.fight.helpAfter) {   // nobody on him: a hand on the man next door who is about to win (the line's passHelp)
       const h = kick.rush.filter(r => r.engaged && !r.kp.free && !r.action && r.kickBeat < 90 && r.kickBlocker !== b && Math.abs(r.y - B.y0) < K.fight.helpYd * YD && r.kickBeat - kick.t < PRO.help.losing).sort((p, q) => p.kickBeat - q.kickBeat)[0];
       if (h) { if (!h.kp.helped && !h.kp.quick) { h.kp.helped = true; h.kickBeat += PRO.help.hold; } ty = Math.max(B.y0 - K.slide * YD, Math.min(B.y0 + K.slide * YD, ty + (h.y - ty) * 0.6)); }
     }
     if (B.wing) { const o = kick.rush.find(r => r.kp.role === 'over' && r.kp.wide && Math.sign(r.y - MID) === Math.sign(b.y - MID)); if (o && kick.t > K.wingPunch) ty = B.y0 - B.in * K.widen * 0.6 * YD; }   // (punched the inside man: now out to widen the outside one)
-    go(b, B.x0 - K.set * YL - B.back * YD, ty, K.anchor * YD, 20 * YD);
+    go(b, B.x0 - K.set * YL * s2 * (2 - s2) - B.back * YD, ty, K.anchor * YD, 20 * YD); kproShove(b, B, dt);
     b.face = 1; b.engaged = !!man && !flight && Math.hypot(man.x - b.x, man.y - b.y) < 1.4 * YD;
     b.moving = Math.hypot(b.vx || 0, b.vy || 0) > 0.4 * YD;
   }
   // --- the rush
   for (const r of kick.rush) {
     if (r.action) { updateAction(r, dt); if (r.kp.jf && r.action === 'jump') r.x -= r.kp.jf * dt; continue; }
-    const R = r.kp, b = r.kickBlocker, top = Math.min(10.5 * YD, r.top || K.top * YD) * (R.wide ? K.widenSlow : 1);
+    const R = r.kp, b = r.kickBlocker, bk = snap ? kproBurst(R, kick.t) : 1, top = Math.min(10.5 * YD, r.top || K.top * YD) * (R.wide ? K.widenSlow : 1) * bk;
+    if (snap && kick.t < (R.rt || 0)) { r.vx = r.vy = 0; r.moving = false; continue; }   // (not off the ball yet)
     if (!R.free && snap && kick.t >= r.kickBeat) {   // off his block: the next protector over may pick him up once (never a clean win, never yours), else he is through
       const nb = b && r !== me && !R.quick && !R.reTried && R.role === 'line' ? kproReblock(r, b, bp, [...P.line, ...P.wings], kick.t) : null;
       R.reTried = true;
@@ -839,13 +931,14 @@ function kproTick(dt) {   // every frame of a placekick (true = it was blocked: 
     const tgt = R.role === 'push' ? kick.rush.find(o => o.kp.role === 'line' && o.kickBlocker === b) || b : b;
     if (!tgt) { go(r, bp.x, bp.y, top, K.accel * YD); continue; }
     const off = (R.role === 'push' ? 0.75 : 0.85) * YD;
-    go(r, tgt.x + off, tgt.y + (R.role === 'push' ? 0 : (r.y - tgt.y) * 0.35), flight ? 2 * YD : 6.5 * YD, 22 * YD);
-    r.engaged = !flight && Math.hypot(r.x - tgt.x, r.y - tgt.y) < 1.3 * YD; r.face = -1;
+    go(r, tgt.x + off, tgt.y + (R.role === 'push' ? 0 : R.gy != null ? R.gy : (r.y - tgt.y) * 0.35), flight ? 2 * YD : K.fire * YD * bk, K.fireAcc * YD); kproShove(r, R, dt);
+    r.engaged = !flight && Math.hypot(r.x - tgt.x, r.y - tgt.y) < 1.4 * YD; r.face = -1;
     if (r.engaged && snap && b && b.kpB && P.call !== 'SAFE') {
       if (R.role === 'push') r.bullFx = 0.15;   // (the second man: shoving the pile)
-      else { const add = kproFight(r, b, kick.t, r === me); if (add && r.kickBeat < 90 && !R.quick) r.kickBeat = Math.max(K.fight.shedMin, r.kickBeat + add); }
+      else { const add = kproFight(r, b, kick.t, r === me) + (r === me ? 0 : kproRework(r, b, kick.t)); if (add && r.kickBeat < 90 && !R.quick) r.kickBeat = Math.max(K.fight.shedMin, r.kickBeat + add); }
     }
     R.up = kproUp(r, R, bp, kickT, flight);
+    if (r !== me && R.role === 'line' && !r.leapt && b && P.call !== 'SAFE' && kproLineJump(r, R, bp, snap ? kickT - kick.t : -kick.flight.t)) continue;   // (can't get through: up with the kick from where he is)
     if (r === me && snap) kickRushMove(r, bp, dt);   // (yours: bull / swim at him to get through sooner)
   }
   for (const r of kick.rush) r.armsUp = !!(r.kp && r.kp.up);   // (a plain flag: taped for replays, sent online; drawPlayer puts both arms up)
@@ -866,6 +959,7 @@ function kproSetPunt(k) {
   const line = k.cover.filter(d => d !== kicker && d.lane >= 1 && d.lane <= 7), pp = k.cover.find(d => d !== kicker && d.lane === 8) || null;
   const deep = Math.max(0, Math.min(1, (ps.los / YL - 75) / 20));   // (the punter backed up near his own goal line: more reason to come after it)
   const call = Math.random() < T.calls.BLOCK + T.backedUp * deep ? 'BLOCK' : 'RETURN';
+  for (const b of line) { b.y = Math.max(Y_MIN, Math.min(Y_MAX, MID + (b.y - MID) * T.spread)); if (Math.abs(b.y - MID) > 0.3 * YD) b.x += (Math.random() * 2 - 1) * K.stag * YD; }   // (wider splits, a ragged depth; never the snapper)
   for (const b of [...line, pp]) if (b) { b.kpB = { x0: b.x, y0: b.y, out: Math.sign(b.y - MID), back: 0, pp: b === pp, rel: false }; b.vx = b.vy = 0; }
   // zones: every rusher belongs to the blocker nearest across from him; a blocker with two has to choose (the inside man), the other is free
   const own = new Map();
@@ -906,11 +1000,13 @@ function kproPuntTick(k, dt, t0, runUp) {
   if (P.late > 0 && k.t >= t0 + PUNT.snapT) { const d = Math.min(P.late, dt); k.t -= d; P.late -= d; P.wasLate = true; }   // (a slow operation: the punt's own clock holds while he gets the ball right; the rush keeps coming)
   const left = kickAt - k.t + P.late;   // (seconds until it is struck)
   const foot = { x: k.kickerX0 - PUNT.walk * YL, y: MID }, bp = P.bp = { x: foot.x - T.point * YD, y: foot.y };   // (where it leaves his foot; the block point just in front of it)
+  if (!P.go) kproGetOff(P.R, P, null, 0);   // (every rusher's own get-off; no offside call on punts)
   // --- the rush (toward higher x)
   for (const q of P.R) {
     if (q.action) continue;   // (updateKickoff runs everyone's dives and leaps)
-    const o = q.kp, b = o.blk, top = Math.min(10.5 * YD, q.top || K.top * YD);
+    const o = q.kp, b = o.blk, bk = kproBurst(o, P.t), top = Math.min(10.5 * YD, q.top || K.top * YD) * bk;
     q.face = 1;
+    if (o.role !== 'drop' && P.t < (o.rt || 0)) { q.vx = q.vy = 0; q.moving = false; continue; }   // (not off the ball yet)
     if (o.role === 'drop') { kproGo(q, ps.los - T.dropYd * YL, q.y + (MID - q.y) * 0.15, T.dropV * YD, 10 * YD, dt); q.engaged = false; continue; }   // (RETURN: back to set up the return)
     if (!o.free && b && o.out !== 'ride' && P.t >= o.at) {   // off his block: the next man on the line may pick him up once, else he is through
       const nb = !o.quick && !o.reTried ? kproReblock(q, b, bp, P.line, P.t) : null;
@@ -933,9 +1029,9 @@ function kproPuntTick(k, dt, t0, runUp) {
       q.engaged = false; continue;
     }
     if (!b) { o.free = true; continue; }
-    kproGo(q, b.x - 0.85 * YD, b.y + (q.y - b.y) * 0.3, 6.5 * YD, 22 * YD, dt);   // into his blocker: locked up, driving or just riding him
-    q.engaged = Math.hypot(q.x - b.x, q.y - b.y) < 1.3 * YD;
-    if (q.engaged && o.out !== 'ride') { const add = kproFight(q, b, P.t, false); if (add && o.at < 90 && !o.quick) o.at = Math.max(T.hold, o.at + add); }   // (the line's block battle: his move, the counter, the drive)
+    kproGo(q, b.x - 0.85 * YD, b.y + (o.gy != null ? o.gy : (q.y - b.y) * 0.3), (o.out === 'ride' ? 6.5 : K.fire * bk) * YD, K.fireAcc * YD, dt); kproShove(q, o, dt);   // into his blocker: locked up, driving or just riding him
+    q.engaged = Math.hypot(q.x - b.x, q.y - b.y) < 1.4 * YD;
+    if (q.engaged && o.out !== 'ride') { const add = kproFight(q, b, P.t, false) + kproRework(q, b, P.t); if (add && o.at < 90 && !o.quick) o.at = Math.max(T.hold, o.at + add); }   // (the line's block battle: his move, the counter, the drive)
   }
   // --- the protection (back = higher x; nobody crosses the line before the kick)
   for (const b of P.line) {
@@ -944,12 +1040,14 @@ function kproPuntTick(k, dt, t0, runUp) {
     if (!B.rel && (P.t >= T.hold || !man && P.t > 0.5)) B.rel = P.t >= T.hold;   // (his job is done after hold s: off to his lane)
     if (B.rel && !(man && man.kp.out === 'ride')) { kproGo(b, Math.max(ps.los, B.x0 - 0.3 * YD), B.y0, 5 * YD, 14 * YD, dt); b.engaged = false; b.face = -1; continue; }
     if (man && man.engaged && man.kp.out !== 'ride' && man.kp.v > 0) B.back = Math.min(K.driveMax, B.back + man.kp.v * dt);   // (bull-rushed: he gives ground)
-    let ty = man ? B.y0 + B.out * T.setOut * YD + (man.y - (B.y0 + B.out * T.setOut * YD)) * 0.45 : B.y0 + B.out * T.setOut * YD;
+    const s1 = Math.min(1, P.t / K.ks.step), s2 = Math.max(0, Math.min(1, (P.t - K.ks.step) / K.ks.give)), yo = B.y0 + B.out * T.setOut * YD * s1;   // (the kick-slide: a step, then back as one wave)
+    if (man) B.ry = B.ry == null ? man.y : B.ry + (man.y - B.ry) * Math.min(1, dt * K.dyn.follow);
+    let ty = man ? yo + (B.ry - yo) * 0.55 : yo;
     if (!man && !stun && P.t > K.fight.helpAfter) {   // nobody on him: a hand on the man next door who is about to win
       const h = P.R.filter(q => q.engaged && !q.kp.free && !q.action && q.kp.at < 90 && q.kp.blk !== b && Math.abs(q.y - B.y0) < K.fight.helpYd * YD && q.kp.at - P.t < PRO.help.losing).sort((p, q) => p.kp.at - q.kp.at)[0];
       if (h) { if (!h.kp.helped && !h.kp.quick) { h.kp.helped = true; h.kp.at += PRO.help.hold; } ty += (h.y - ty) * 0.6; }
     }
-    kproGo(b, B.x0 + T.setBack * YD + B.back * YD, Math.max(B.y0 - T.slide * YD, Math.min(B.y0 + T.slide * YD, ty)), T.anchor * YD, 18 * YD, dt);
+    kproGo(b, B.x0 + T.setBack * YD * s2 * (2 - s2) + B.back * YD, Math.max(B.y0 - T.slide * YD, Math.min(B.y0 + T.slide * YD, ty)), T.anchor * YD, 18 * YD, dt); kproShove(b, B, dt);
     b.face = -1; b.engaged = !!man && Math.hypot(man.x - b.x, man.y - b.y) < 1.4 * YD;
     if (man && man.kp.out === 'ride' && b.engaged) b.kpRide = true;   // (ridden: he gets out late, see kproPuntAfter)
   }
@@ -1520,7 +1618,7 @@ function startPunt(prev) {
       p.fgTo = { x: p.x, y: p.y, fast: fresh.has(p) || p === ret };
       if (fresh.has(p)) { p.x = Math.max(-ENDZONE, p.fgTo.x - 6 * YL); p.y = ownEdge(); } else { p.x = s.x; p.y = s.y; }
     }
-    for (const g of gone) { g.fgTo = { x: Math.max(-ENDZONE, g.x - 6 * YL), y: leaveEdge(), fast: true, leave: true }; g.moving = false; }
+    gone.forEach((g, j) => { g.fgTo = Object.assign(slSubTo(Math.max(-ENDZONE, g.x - 6 * YL), 1, offHomeTop() ? 0 : 1, j, gone.length, g), { fast: true, leave: true }); g.moving = false; });   // (a gap by their bench when that is no farther: slSubTo)
     fgExit = gone;
     qb.action = null; qb.act = null;
     kick.phase = 'enter';
@@ -3575,7 +3673,7 @@ function dcApply(which) {
   for (const p of B) {
     const b = before.get(p); if (p.src === b.src) continue;
     n.push(p);
-    const gone = Object.assign(b.clone, { fmTo: { x: los + (off ? -6 : 6) * YL, y: leaveEdge(), leave: true }, hasBall: false, action: null, act: null });
+    const gone = Object.assign(b.clone, { fmTo: Object.assign(slSubTo(los + (off ? -6 : 6) * YL, off ? 1 : 2, (off ? offHomeTop() : !offHomeTop()) ? 0 : 1, 0, 1, b.clone), { leave: true }), hasBall: false, action: null, act: null });
     fgExit.push(gone);
     if (p.hasBall) continue;   // (the center keeps the ball: he just swaps in place)
     const to = { x: p.x, y: p.y }; p.y = fmEdge(p.y); p.x = los + (off ? -6 : 6) * YL; p.fmTo = to;
@@ -3964,6 +4062,7 @@ function drawTurnoverBanner() {
   ctx.restore();
 }
 
+const DRAW_ORDER = [], byDrawY = (a, b) => a.y - b.y;   // (draw(): the players back to front, one reused list)
 function draw() {
   ringSeen.clear();
   ctx.fillStyle = '#3f5f39';
@@ -4011,10 +4110,11 @@ function draw() {
     if (!rb.split) drawPickCircle(rb, RB_COLOR, 'RUN');
     { const f = fbCarrier(); if (f) drawPickCircle(f, RB_COLOR, 'FB RUN'); }   // (two backs: either one can carry)
   }
-  if (aim && (!ONL.on || onlIAmOff())) drawAim();   // (online: only the thrower sees his aim)
-  const kickAim = state === 'kickoff' && kick && kick.userKo && kick.target && !kick.onside && ['target', 'power', 'aim'].includes(kick.phase) && onlKickOwner();
+  const inRp = !!(rec && rec.replaying);   // (a replay shows the tape and nothing of the live play's controls: no aim, meters, reticle, landing ring)
+  if (aim && !inRp && (!ONL.on || onlIAmOff())) drawAim();   // (online: only the thrower sees his aim)
+  const kickAim = !inRp && state === 'kickoff' && kick && kick.userKo && kick.target && !kick.onside && ['target', 'power', 'aim'].includes(kick.phase) && onlKickOwner();
   if (kickAim) drawKickReticle('ground');
-  if (ball.inAir && !cinemaOn()) {
+  if (ball.inAir && !cinemaOn() && !inRp) {
     const L = landRingSpot();
     ctx.strokeStyle = 'rgba(255,255,255,0.6)';
     ctx.lineWidth = 6;
@@ -4027,7 +4127,10 @@ function draw() {
   let ballDrawn = ball.tucked || tossing();
   const cullX = (W / 2 + PAD) / camZ() + 8 * YD;   // (players far off the sides of the screen aren't drawn: the sidelines hold a lot of bodies)
   if (SL.on) slDrawSide(0);   // (sideline people on the far (top) touchline: behind every player, bar the few slExUpTo puts in order)
-  for (const p of (tossing() ? [] : allPlayers()).sort((a, b) => a.y - b.y)) {
+  DRAW_ORDER.length = 0; if (!tossing()) { const ap = allPlayers(); for (let i = 0; i < ap.length; i++) DRAW_ORDER.push(ap[i]); }   // (its own list: allPlayers' array is shared, never sorted in place)
+  DRAW_ORDER.sort(byDrawY);
+  plLod = plLodNow();   // (small on screen: the tiniest details are skipped, see PLAYER_LOD; off again right after the loop)
+  for (const p of DRAW_ORDER) {
     if (Math.abs(p.x - camX) > cullX && p !== holder) continue;
     if (SL.exN) slExUpTo(p.y);
     if (p.slOut) {   // (hurt and leaving the field: the sideline people's copy of him is the one drawn; with those off he just fades out)
@@ -4040,6 +4143,7 @@ function draw() {
     drawPlayer(p);
     if (p === holder && !ballDrawn && ball.z < 20 * S) { drawBall(); ballDrawn = true; }
   }
+  plLod = false;
   if (!ballDrawn) drawBall();
   if (SL.exN) slExUpTo(1e9);
   if (SL.on) slDrawSide(1);   // (the near (bottom) touchline's people: in front of the players)
@@ -4149,10 +4253,10 @@ function draw() {
   ctx.fillStyle = '#ffd94a'; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineWidth = 4; ctx.lineJoin = 'round';   // (the down and distance: yellow text over the field, outlined so it reads without a bar)
   const ddTxt = tut ? (state !== 'pre' && tutStep() ? 'TUTORIAL  -  BACKSPACE to reset the play' : 'TUTORIAL') : (puntRetPlay || (state === 'kick' && kick && kick.punt) || (state === 'kickoff' && kickoff && kickoff.punt) || state === 'punt' || (puntRet && puntPlay && !puntPlay.ko)) ? 'PUNT' : kickoffPlay || (state === 'kick' && kick && kick.kickoff) || (puntRet && puntPlay && puntPlay.ko) ? 'KICKOFF' : patMode !== null || patNext ? 'PAT' : `${downAndDistance()}  |  ${spot(los)}`;
   ctx.strokeText(ddTxt, W / 2, H - BOT_BAR * 0.33); ctx.fillText(ddTxt, W / 2, H - BOT_BAR * 0.33);
-  if (!cine && celebWaiting()) { const t = `${TOUCH ? 'DOUBLE TAP' : 'RIGHT CLICK'}  -  CELEBRATE`; ctx.save(); ctx.fillStyle = '#ffffff'; ctx.strokeText(t, W / 2, H - BOT_BAR - 14); ctx.fillText(t, W / 2, H - BOT_BAR - 14); ctx.restore(); }   // (one of your players has a celebration ready)
+  if (!cine && !inRp && celebWaiting()) { const t = `${TOUCH ? 'DOUBLE TAP' : 'RIGHT CLICK'}  -  CELEBRATE`; ctx.save(); ctx.fillStyle = '#ffffff'; ctx.strokeText(t, W / 2, H - BOT_BAR - 14); ctx.fillText(t, W / 2, H - BOT_BAR - 14); ctx.restore(); }   // (one of your players has a celebration ready)
   if (finishShowing()) { ctx.save(); menuBtn(finishBtn(), 'FINISH', IN_GAME_PAPER.red, 16); ctx.restore(); }
   if (!tut && state !== 'sim' && state !== 'kick' && !lightGfx() && !cine) { drawStarHud(); drawNamesTip(); }
-  if (state === 'kick' || (state === 'kickoff' && kick && kick.userKo)) drawKickMeters();
+  if (!inRp && (state === 'kick' || (state === 'kickoff' && kick && kick.userKo))) drawKickMeters();
   if (state === 'sim' && !halfHold) drawSim();   // (the halftime banner shows over the plain field, the sim panel hides)
   // the game's over: FINAL with the score, and FINISH GAME, once the last play's replay is rolling
   FINAL_BTN.x = undefined;
@@ -4183,9 +4287,9 @@ function draw() {
     for (const b of decisionButtons()) { ctx.save(); menuBtn(b, b.label, b.fill, 18); ctx.restore(); }
   }
   const sw = patSwitch();
-  if (sw && !paused && !showKeys && onlKickOwner()) { ctx.save(); menuBtn(PAT_SWITCH_BTN, sw.label, sw.fill, 16); ctx.restore(); }
+  if (sw && !paused && !showKeys && !inRp && onlKickOwner()) { ctx.save(); menuBtn(PAT_SWITCH_BTN, sw.label, sw.fill, 16); ctx.restore(); }
   if (DB_TURN.debug && !paused) drawDbDebug();
-  if (defLive() && !paused && !(pvpDef() && fourthPending) && (!ONL.on || !onlIAmOff())) {   // (the assignment art never draws over the top / bottom banner or any button)
+  if (defLive() && !paused && !inRp && !(pvpDef() && fourthPending) && (!ONL.on || !onlIAmOff())) {   // (the assignment art never draws over the top / bottom banner or any button)
     ctx.save(); ctx.beginPath(); ctx.rect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - FIELD_BOT);   // (the whole screen: the field is wider than W on a phone, the lines must reach its ends)
     for (const b of UI_BTNS) if (b && b.w) ctx.rect(b.x - 4, b.y - 4, b.w + 8, b.h + 8);
     ctx.clip('evenodd'); drawDefOverlay(); ctx.restore();

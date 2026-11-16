@@ -266,6 +266,7 @@ function announceOT() { endWhistle(); showBanner('OVERTIME', '#ffd94a', '#3a2a00
 // on to the next quarter / period; starting overtime it tosses the coin and returns who receives
 function nextPeriod() {
   game.quarter++; game.pendingQuarter = false;
+  if (SL.on) slTvWalk();   // (sideline: the TV official walks on for the break)
   if (game.quarter < 5) { game.secs = QUARTER_SECS; if (game.quarter === 3) { xfHalftime(); game.timeouts = diffTO(); if (twoP) twoP.to = 3; } return null; }
   const post = postseason();
   game.secs = QUARTER_SECS;   // overtime is as long as a quarter
@@ -1343,7 +1344,15 @@ let puntRetPlay = false;   // the live return of THEIR punt (a kickoff-style ret
 const kickTB = () => (puntRetPlay ? 20 : KICKOFF.touchback);
 let puntPlay = null, puntRet = false;  // the punt in the air / on the ground (see "punting"); a live return is on (the pick return runs it)
 let fgExit = [];   // the offense's skill players jogging off as the field-goal unit comes on (their stand-ins; only during that swap)
-const allPlayers = () => [qb, rb, ...ols, ...recs, ...dl, ...back7, ...fgExit];
+// everyone on the field. Called many times a frame: the same array is handed back while the line-ups are unchanged (checked man by man), and a NEW one is made
+// when they change, so an array a caller kept (a tape's cast, a loop in progress) never changes under it. Callers must not sort / push / splice it: copy first.
+let AP_LIST = [];
+function apSame(a, L, i) { for (let k = 0; k < L.length; k++) if (a[i++] !== L[k]) return -1; return i; }
+function allPlayers() {
+  const a = AP_LIST; let i = 2;
+  if (a.length > 1 && a[0] === qb && a[1] === rb && (i = apSame(a, ols, i)) > 0 && (i = apSame(a, recs, i)) > 0 && (i = apSame(a, dl, i)) > 0 && (i = apSame(a, back7, i)) > 0 && (i = apSame(a, fgExit, i)) > 0 && i === a.length) return a;
+  return AP_LIST = [qb, rb, ...ols, ...recs, ...dl, ...back7, ...fgExit];
+}
 // eligible targets this play (a back who stayed in to protect isn't one)
 // (nor is a tight end who stayed in to block)
 const catchers = () => {
@@ -1385,7 +1394,7 @@ function reset() {
   slReset();   // (sideline people: the chain crew walks to the new spots; see 07-drawing)
   if (ols && ols.length) for (const p of allPlayers()) p.coast = null;
   xfHit = null; xfAir = 0; xfDrop = false; pickThrown = false; xfCont = 0; xfPicker = null;
-  snaps = []; fgExit = [];
+  snaps = []; fgExit = slSubTake();   // (the old units jogging off after a change of possession, if any: see slSubOff)
   puntPlay = null; puntRet = false; puntRetPlay = false;   // (a punt return's flag must not outlive it: every later play was scored as a return = 1st and 10 at the spot)
   popups = []; yardsTag = null;
   impacts = [];
@@ -2153,7 +2162,7 @@ const audibleLocked = () => !!tut && (tutStep() || {}).id !== 'audible';
 // The players really jog there (p.fmTo, stepFormation) and the snap waits until everybody's set; subs run on from the sideline as the man they
 // replace jogs off.
 const FM = { chance: 0.7, speed: 8 * YD, accel: 14 * YD, turn: 4 * YD };   // accel = how fast a man gets up to his jog and slows into his spot (per s^2); turn = a move at least this long, mostly along the field, turns him to run; shorter ones he shuffles, squared up
-const fmBusy = () => state === 'pre' && allPlayers().some(p => p.fmTo);
+const fmBusy = () => state === 'pre' && allPlayers().some(p => p.fmTo && !p.fmTo.tov);   // (tov: the old units jogging off after a change of possession never hold up the snap)
 let fmWait = 0;
 const FM_MAX_WAIT = 8;   // seconds the snap may wait for the formation to settle before everyone is put in place
 // the offense's own sideline: the home team's bench is the top one (the visitors' the bottom), so everyone running on or off goes that way
@@ -2196,7 +2205,7 @@ function audibleFormation() {
     moved.push({ p: sub, x: sub.x, y: sub.y });
     sub.x = how === 'toTE' ? los - 0.5 * YD : los - YD; sub.y = ty;
     // the man he replaces jogs off to the sideline and is gone
-    const gone = Object.assign({}, old, { fmTo: { x: los - 6 * YL, y: leaveEdge(), leave: true }, hasBall: false });
+    const gone = Object.assign({}, old, { fmTo: Object.assign(slSubTo(los - 6 * YL, 1, offHomeTop() ? 0 : 1, 0, 1, old), { leave: true }), hasBall: false });   // (sideline people on: a gap by his bench, slSubTo)
     fgExit.push(gone);
     formation = formation.replace(/ \d TE/, '');
     const n = recs.filter(r => r.isTE).length;

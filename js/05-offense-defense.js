@@ -1217,6 +1217,7 @@ function runAction(code) {
     c.action = 'spin';
     const bq = balMove(c, 'moveTime'), bs = Math.min(1.25, balMove(c, 'moveSpeed'));   // (balance: quicker moves, more speed kept through them)
     c.act = { t: 0, dur: 0.45 / bq, vx: c.vx * 0.8 * bs, vy: c.vy * 0.8 * bs };
+    moveLookPick(c, 'spin', c.act);   // (looks only: see move looks, 07-drawing)
     c.spinT = clock;
     c.spinReady = clock + SPIN_COOLDOWN * moveCoolK(c);
   } else if (code === 'KeyA' || code === 'Tab') {   // (A: the kickoff kneel; Tab: dive / slide)
@@ -1267,6 +1268,7 @@ function runAction(code) {
     c.act = { t: 0, dur: HURDLE.userDur, vx: c.vx, vy: c.vy, h: HURDLE.userH, user: true, space, mid: space ? null : ahead.o,
               backward: clock - (c.spinT ?? -9) < 0.6, cleared: [] };   // (spin + hurdle = a backwards hurdle)
     c.act.style = hurdleStyle(c.act.backward);
+    moveLookPick(c, 'hurdle', c.act);   // (looks only)
     if (space && ahead && ahead.f <= HURDLED.near * YD) hurdledBy(c, ahead.o);   // (the man he's going over reacts under him)
     c.hurdleReady = clock + HURDLE.cooldown;
     hurdleWings(c, !!(space && ahead));
@@ -1276,6 +1278,7 @@ function runAction(code) {
     c.action = 'juke';
     const jd = 0.3 / balMove(c, 'moveTime'), bs = Math.min(1.25, balMove(c, 'moveSpeed'));
     c.act = { t: 0, dur: jd, vx: c.vx * 0.6 * bs, vy: side * 1.6 * YD / jd, side };
+    moveLookPick(c, 'juke', c.act);   // (looks only)
     c.jukeT = clock;
     c.jukeReady = clock + JUKE_COOLDOWN * moveCoolK(c);
   }
