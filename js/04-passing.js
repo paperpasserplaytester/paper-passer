@@ -475,7 +475,7 @@ function coastIn(p, dt) {
   p.moving = c.v > YD;
 }
 
-const HELP_UP = { odds: 0.25, range: 6, walk: 0.9, pull: 0.45, max: 3 };   // after a tackle, odds a nearby opponent (the first one up) helps the carrier up; range yd; seconds to walk over / to pull; give-up time
+const HELP_UP = { odds: 0.25, range: 6, walk: 0.9, pull: 0.45, max: 3, stuck: 3 };   // stuck = s after the whistle a man still pinned on the turf (act.pin never let go) is freed to get up   // after a tackle, odds a nearby opponent (the first one up) helps the carrier up; range yd; seconds to walk over / to pull; give-up time
 // After the whistle nobody stops dead: they coast and settle.
 const AFTER_WHISTLE = { cap: 10, decay: 1.5, ud: 2.6 };
 // the end zone is just more field: chasers who were on the scorer keep running him down through it (full speed, momentum kept) for t s, pulling up once they're on him
@@ -483,6 +483,7 @@ const TD_FINISH = { t: 0.9, range: 9, stop: 1.1, k: 1 };   // cap = fastest yd/s
 function settle(p, dt) {
   if (p.coast) return coastIn(p, dt);
   if (p.action) {
+    if (doneLying(p) && p.act && p.act.pin && !p.lyingKeep && (p.pinT = (p.pinPid === runPid ? p.pinT : 0) + dt, p.pinPid = runPid, p.pinT) > HELP_UP.stuck) { p.act.pin = false; p.pinT = 0; }   // (a pin nothing let go of: he gets up like everyone else)
     if (doneLying(p) && !(p.act && p.act.pin) && !p.lyingKeep) {   // (the play's over: whoever is still on the turf picks himself up after a beat)
       if (p.helpRoll !== runPid) {   // sometimes the first man up, a tackler, walks over and pulls the one still on the ground to his feet
         p.helpRoll = runPid;
@@ -492,7 +493,7 @@ function settle(p, dt) {
         }
       }
       p.lieT = (p.lieT || 0) + dt;
-      if (p.helper && p.helper.helpTarget !== p) { p.helper = null; p.upAfter = 0.2; }   // (his helper gave up / got there: up now)
+      if (p.helper && (p.helper.helpTarget !== p || p.lieT > HELP_UP.max + 0.5)) { if (p.helper.helpTarget === p) { p.helper.helpTarget = null; p.helper.reach = false; } p.helper = null; p.upAfter = 0.2; }   // (his helper gave up / got there, or never could (taken by a celebration / a coast / an action): up now)
       if (p.lieT > (p.upAfter ??= 0.6 + Math.random() * 0.7)) { p.lieT = 0; p.upAfter = null; getUp(p); }
     } else p.lieT = 0;
     updateAction(p, dt);
@@ -723,6 +724,14 @@ function catchHit(kind) {
 // where a receiver in the air comes down (on the ground: where he is)
 // close enough to a sideline or the back line of the end zone to need his feet down (toe tap / toe drag)
 const edgeClose = p => toSideline(p) <= SIDELINE_ZONE || FIELD + ENDZONE - p.x <= SIDELINE_ZONE;
+// the full toe tap (act.fine on a 'toetap'; looks only, so far only the cold open's first catch asks for it). Shares of the action's length: tap1 / tap2 = each
+// foot coming down, off = he steps on out of bounds; hop / step = how high he hangs / the stumble's little hops (sprite units); carry = share of his
+// downfield speed kept (vMax yd/s at most); out = yd/s he drifts over the line after the second foot
+// then he topples on over the line: fall = the fall that follows (s to the turf, yd/s he is carried out, s it slides)
+// flat (act.flat, the cold open's first catch): he is laid out almost level over the sideline while his toes come down in: lean = rad his body tips to,
+// from / by = the shares of the action it tips over, foot = sprite units from his middle to his feet (they stay planted), fallAt = share of the fall he starts at
+const TOE_FINE = { dur: 0.95, tap1: 0.3, tap2: 0.46, off: 0.62, hop: 12, step: 0, carry: 0.55, vMax: 6, out: 2.6, fall: { time: 0.42, out: 2.4, slide: 0.55 },
+  flat: { lean: 1.18, from: 0.04, by: 0.4, foot: 14, fallAt: 0.9, hand: [15, -21], chest: [3, -8], bring: 0.25, reachIn: 0.25 } };   // (reachIn = share of the action the hand takes from the catch spot out to `hand`)   // (hand = his reaching ball hand in his own sprite frame (full reach up off the near shoulder), chest = where it is brought in to over bring s once the second foot is down: toeHandSpr / toeHandW in 07, the arm and the ball both read it)
 function toeDown(p, tap) {
   const was = p.action || null;   // (the catch he made keeps its own arms / body pose: only the footwork is the toe tap / drag)
   p.action = tap ? 'toetap' : 'toedrag';
@@ -891,7 +900,7 @@ function popLoose(by, text, up, spread) {
   // a big breakup (a deep ball, or one the crowd was already up for) is the defense's good play: boos at home, cheers on the road
   if (/^(Broken up|Tipped|Batted down)/.test(text) && by && by.team === 'def' && ((ball.tx - ball.fx) / YL >= ANTICIPATE.deep * 0.65 || playHype >= CROWD_IMPACT.hype))
     crowdCheer(0.5 + 0.4 * Math.min(1, playHype), 'opp', false, true);
-  if (by && by.team === 'def' && label !== 'DROPPED' && (label || text === 'Broken up!')) celebNote('pbu', by);
+  if (by && by.team === 'def' && label !== 'DROPPED' && (label || /^(Broken up|Knocked loose|Smacked out|Got a fingertip)/.test(text))) celebNote('pbu', by);   // (every clean break-up by a defender, v0.46)
   if (text === 'Dropped!' || text === 'Dropped the pick!' || text === 'Bobbled!') dropSfx();
   if (text === 'Dropped!' && by && by.team === 'off') moraleEvent(by, 'drop');
   if (label === 'TIPPED') catchSfx();   // (the ball off a defender's hands)
@@ -2007,6 +2016,24 @@ function updateAction(p, dt) {
     a.t += dt;
     p.z = airZ(a.t, airFit(8 * S, a.dur));
     if (a.t >= a.dur) { p.action = null; p.z = 0; }
+  } else if (p.action === 'toetap' && a.fine) {
+    // the full toe tap (act.fine; looks, TOE_FINE): a short hang with the toes reaching for the turf, one foot down then the other just inside the
+    // line, and his own momentum carries him on out of bounds in a couple of easing steps (never a dead stop on the paint)
+    const F = TOE_FINE, u0 = a.t / a.dur; a.t += dt; const u = Math.min(1, a.t / a.dur);
+    if (a.vx0 == null) { a.vx0 = Math.max(-F.vMax * YD, Math.min(F.vMax * YD, p.vx || 0)); a.vy0 = Math.abs(p.vy || 0); }
+    if (a.z0 == null) a.z0 = p.z || 0;   // (caught at the top of a leap: he comes down from there onto his toes; caught on his feet: the short hop)
+    const q0 = u / F.tap1;
+    p.z = u < F.tap1 ? (a.z0 > 3 * S ? a.z0 * (1 - q0 * q0) : F.hop * S * Math.sin(Math.PI * q0)) : u > F.off ? F.step * S * Math.abs(Math.sin(Math.PI * 2 * (u - F.off) / (1 - F.off))) * (1 - u) / (1 - F.off) : 0;
+    p.x += a.vx0 * F.carry * dt * (1 - u) * (1 - u);
+    if (u < F.tap2) { const room = toSideline(p) - OOB_FOOT - 2; if (room > 0) p.y += (a.out || 0) * Math.min(room, a.vy0 * 0.5 * dt * (1 - u / F.tap2)); }   // (drifting to the line, feet still in)
+    else if (a.out) p.y += a.out * F.out * YD * dt * smooth01((u - F.tap2) / 0.15) * (1 - 0.75 * smooth01((u - 0.7) / 0.3));
+    for (const tp of [F.tap1, F.tap2]) if (u0 < tp && u >= tp) { try { wetSfx(0.35); } catch (e) {} }
+    if (a.t >= a.dur) {   // both feet were in: his momentum takes him over, down out of bounds
+      const o = a.out || 0, fx = a.flat ? p.face : Math.sign(a.vx0) || p.face;   // (laid out: he goes down the way he is already tipped)
+      p.z = 0; p.face = fx; p.action = 'down';
+      p.act = { t: a.flat ? F.fall.time * F.flat.fallAt : 0, fall: true, back: false, side: 0, fallTime: F.fall.time, twist: 0, out: true, vx: a.vx0 * F.carry * 0.5, vy: o * F.fall.out * YD, slide: F.fall.slide, angle: Math.atan2(o, fx) };
+      try { wetSfx(0.7); } catch (e) {}
+    }
   } else if (p.action === 'toetap') {
     a.t += dt;
     p.x += 2 * YD * dt * (1 - k);

@@ -175,7 +175,7 @@ function drawKickReticle(part) {   // part 'ground' = the landing ring and cross
   ctx.save();
   const R = KO_RETICLE, h = (kick.punt ? PUNT_AIR.high : KO_AIR.high) * S * R.arcK;   // (the same peak the ball will reach)
   if (part === 'ground') {
-    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = R.ring; ctx.setLineDash([10, 7]);
+    ctx.strokeStyle = wxInk('#ffffff'); ctx.lineWidth = R.ring; ctx.setLineDash([10, 7]);
     ctx.beginPath(); ctx.ellipse(t.x, t.y, rl, rt, 0, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);   // how far off it typically lands
     ctx.lineWidth = R.ring; ctx.beginPath(); ctx.arc(t.x, t.y, 16, 0, Math.PI * 2); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(t.x - 28, t.y); ctx.lineTo(t.x + 28, t.y); ctx.moveTo(t.x, t.y - 28); ctx.lineTo(t.x, t.y + 28); ctx.stroke();
@@ -185,10 +185,10 @@ function drawKickReticle(part) {   // part 'ground' = the landing ring and cross
   // the arrow out to it, arcing like a pass: a thick dark-edged line ending in an arrowhead
   const pts = []; for (let i = 0; i <= 30; i++) pts.push(at(i / 30 * R.end));
   ctx.lineCap = ctx.lineJoin = 'round';
-  for (const [w, c] of [[R.w + R.edge, 'rgba(0,0,0,0.45)'], [R.w, '#ffffff']]) { ctx.strokeStyle = c; ctx.lineWidth = w; ctx.setLineDash([R.dash, R.gap]); ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke(); }
+  for (const [w, c] of [[R.w + R.edge, wxInk('rgba(0,0,0,0.45)', 'rgba(255,255,255,0.45)')], [R.w, wxInk('#ffffff')]]) { ctx.strokeStyle = c; ctx.lineWidth = w; ctx.setLineDash([R.dash, R.gap]); ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke(); }
   ctx.setLineDash([]);
   const [ex, ey] = pts[pts.length - 1], [qx, qy] = at(R.end - 0.02), ang = Math.atan2(ey - qy, ex - qx);
-  for (const [grow, c] of [[R.edge / 2 + 1, 'rgba(0,0,0,0.45)'], [0, '#ffffff']]) {
+  for (const [grow, c] of [[R.edge / 2 + 1, wxInk('rgba(0,0,0,0.45)', 'rgba(255,255,255,0.45)')], [0, wxInk('#ffffff')]]) {
     const L = R.head + grow, Wd = R.head * 0.7 + grow;
     ctx.fillStyle = c; ctx.beginPath(); ctx.moveTo(ex + Math.cos(ang) * L * 0.5, ey + Math.sin(ang) * L * 0.5);
     ctx.lineTo(ex - Math.cos(ang) * L * 0.6 - Math.sin(ang) * Wd, ey - Math.sin(ang) * L * 0.6 + Math.cos(ang) * Wd);
@@ -311,7 +311,7 @@ function blockKick(r) {
   // pops up and goes loose, usually back toward the offense's side
   Object.assign(ball, { x: rb.x + 0.8 * YD, y: rb.y, z: 14 * S, loose: true, live: true, fumble: true, blocked: true, inAir: false,
                         vx: (Math.random() - 0.7) * 5 * YD, vy: (Math.random() - 0.5) * 6 * YD, vz: 100 * S, spin: (Math.random() - 0.5) * 24 });
-  state = 'fumble';
+  state = 'fumble'; kproLetGo();
   fumbleT = clock;
   msg = 'BLOCKED!';
   kick = null;
@@ -846,6 +846,9 @@ function kproHands(dt) {
   }
   return false;
 }
+function kproLetGo() {   // a kick was blocked: the protection and the rush let go of each other (the loose-ball code owns everyone now; left on, the engaged / locked pairs kept pulling men back toward their old man every frame: the jitter)
+  for (const p of allPlayers()) { p.engaged = false; p.armsUp = false; p.kickBlocker = null; p.lockedTo = null; p.blockUntil = 0; }
+}
 function kproBlocked(r, at) {   // off his hands: the ball pops loose where he met it (the old rules from here: a live ball nobody can advance)
   px(r, 'bk');
   qb.holding = false; rb.kickSwing = false;
@@ -853,7 +856,7 @@ function kproBlocked(r, at) {   // off his hands: the ball pops loose where he m
   popup(r, 'BLOCKED', '#ff6b6b'); celebNote('block', r);
   Object.assign(ball, { x: at.x, y: at.y, z: at.z, loose: true, live: true, fumble: true, blocked: true, inAir: false, tumbling: null,
                         vx: (Math.random() - 0.45) * 5 * YD, vy: (Math.random() - 0.5) * 7 * YD, vz: 90 * S, spin: (Math.random() - 0.5) * 24 });
-  state = 'fumble'; fumbleT = clock; msg = 'BLOCKED!'; kick = null;
+  state = 'fumble'; fumbleT = clock; msg = 'BLOCKED!'; kick = null; kproLetGo();
 }
 function kproTick(dt) {   // every frame of a placekick (true = it was blocked: the kick is over)
   const K = KPRO, P = kick.kp, snap = kick.phase === 'snap', flight = kick.phase === 'flight', bp = P.bp = kproPoint(), me = defLive() ? kick.me : null;
@@ -1087,7 +1090,7 @@ function kproPuntBlocked(k, q, at) {   // off his hands: a live ball where he me
   Object.assign(ball, { x: at.x, y: at.y, z: at.z, loose: true, live: true, fumble: true, blocked: true, inAir: false,
                         vx: (1 + Math.random() * 5) * YD * (Math.random() < 0.7 ? 1 : -1), vy: (Math.random() - 0.5) * 7 * YD, vz: 90 * S, spin: (Math.random() - 0.5) * 24 });
   kicker.kickSwing = false; kicker.followV = 0;
-  state = 'fumble'; fumbleT = clock; runner = null; kickoff = null; msg = 'PUNT BLOCKED!  -  live ball';
+  state = 'fumble'; fumbleT = clock; runner = null; kickoff = null; msg = 'PUNT BLOCKED!  -  live ball'; kproLetGo();
 }
 // the punt is away: a blocker who was ridden gets out late (RETURN's whole point), everyone else is already heading for his lane
 function kproPuntAfter(k) {
@@ -2712,7 +2715,12 @@ function drawSim() {
 }
 const STOP_SIM_BTN = { label: 'STOP SIM', w: 200, h: 44 };
 const FINISH_BTN = { label: 'FINISH GAME', w: 240, h: 48 };
-const FINAL_BTN = { label: 'FINISH GAME', w: 240, h: 48 };   // over the last play's replay in a live game
+const FINAL_BTN = { label: 'FINISH GAME', w: 240, h: 48 };   // once a live game is over: always up (before, during and after the win celebration and the last play's replay)
+function finishLive() {   // FINISH GAME (button, Enter / Space): any live or waiting celebration ends, then straight to the result screen
+  for (const c of [...celebLive]) celebEnd(c);
+  celebQ = null; celebSides = [];
+  FINAL_BTN.x = undefined; proceed();
+}
 const SIM_BOX_BTNS = [{ id: 'offdrive', label: 'NEXT OFF DRIVE', w: 160, h: 48 }, { id: 'defdrive', label: 'NEXT DEF DRIVE', w: 160, h: 48 }, { id: 'quarter', label: 'SIM QUARTER', w: 160, h: 48 },
                       { id: 'half', label: 'SIM TO HALF', w: 160, h: 48 }, { id: 'end', label: 'SIM TO END', w: 160, h: 48 }];
 
@@ -2756,7 +2764,7 @@ function proceed() {
   if (patNext) {
     // after a touchdown: the try. Kick it from the 15 for one, or run one play from the 2 for two.
     patNext = false;
-    if (tryFlip && twoP) { if ((tryFlip === 'back') === !!twoP.flipped) flipSides(); }   // (a defensive score: the scoring team's try, from its side)
+    if (tryFlip && twoP) { if (tryFlip === 'swap' || (tryFlip === 'back') === !!twoP.flipped) flipSides(); }   // ('swap': two humans, the scorer was on defense: always flip to him)   // (a defensive score: the scoring team's try, from its side)
     tryFlip = null;
     patMode = 'choose';
     nextLos = 98 * YL; nextDown = 1; nextLtg = FIELD;
@@ -3378,7 +3386,7 @@ function updateKickoff(dt) {
           Object.assign(ball, { x: K.x - 1.5 * YD, y: K.y, z: 14 * S, loose: true, live: true, fumble: true, blocked: true, inAir: false,
                                 vx: -(1 + Math.random() * 6) * YD, vy: (Math.random() - 0.5) * 6 * YD, vz: 100 * S, spin: (Math.random() - 0.5) * 24 });
           K.kickSwing = false; K.followV = 0;
-          state = 'fumble'; fumbleT = clock; runner = null; kickoff = null; msg = 'PUNT BLOCKED!  -  live ball';
+          state = 'fumble'; fumbleT = clock; runner = null; kickoff = null; msg = 'PUNT BLOCKED!  -  live ball'; kproLetGo();
           return;
         }
         shortPunt = { x: bx, y: K.y + (Math.random() - 0.5) * 8 * YD };   // past the line: it still goes, just short
@@ -3750,7 +3758,7 @@ function leaveGame() {
   try { if (typeof syncOnLeave === 'function') setTimeout(syncOnLeave, 200); } catch (e) {}   // (leaving a game: the cloud gets the save)
 }
 // a decision screen (punt / FG / go for it, kick or go for two, the halftime card): no pausing until you pick (resuming is always allowed)
-const noPause = () => !paused && !(rec && rec.replaying) && (halfShown() || (state === 'pre' && fourthPending) || patMode === 'choose');
+const noPause = () => !paused && !(rec && rec.replaying) && (halfShown() || (state === 'pre' && fourthPending) || patMode === 'choose') || (!paused && !!(rec && (rec.rewind || rec.intro)));   // (no pausing during the rewind / lead-in into a replay)
 const overPauseButton = p => { const b = PAUSE_BTN, m = TOUCH ? PAUSE_ICON.touchPad : 0; return p.x >= b.x - m && p.x <= b.x + b.w + m && p.y >= b.y - m && p.y <= b.y + b.h + m; };   // (a finger gets a little room around the small icon)
 // the touch version (phones / tablets: TUI.on) of the list below
 const KEYBINDS_MOBILE = [
@@ -3791,6 +3799,7 @@ const KEYBINDS_MOBILE = [
   ['HIT STICK', 'Big hit, can whiff'],
   ['STRIP', 'Try to knock the ball out'],
   ['JUMP', 'Jump for the ball: time it to arrive with the ball'],
+  ['Tap your held defender', 'Chop at a stiff arm when the white ring flashes (helps tear it off)'],
   ['Tackling', 'Automatic once you get to the ball carrier'],
 ];
 const KEYBINDS = [
@@ -3856,6 +3865,7 @@ const KEYBINDS = [
   ['G', 'Secure tackle (rarely missed, rarely fumbles)'],
   ['R', 'Spin off a block / jump for the ball'],
   ['R (ball in the air)', 'Jump for the ball: time it to arrive with the ball and a pick is almost sure; a mistimed one can still knock it away'],
+  ['X (held off by a stiff arm)', 'Chop at the arm when the white ring flashes: a good chop helps you tear it off and wrap up; a mistimed one gives the runner the edge'],
   ['TWO PLAYERS (scrimmage, SIM DEFENSE off)', ''],
   ['Left side of the matchup screen', 'WASD and the keys above, on offense and defense'],
   ['Right side: IJKL', 'Move (offense or defense)'],
@@ -4151,7 +4161,7 @@ function draw() {
   if (Math.abs(-ENDZONE - camX) < cullX) drawGoalPostTop(-ENDZONE, -1);
   if (COLLIDE.show) drawHitboxes();
   drawImpacts();
-  const cine = cinemaOn() || reelOn();   // (CINEMATIC highlights and the halftime / end-of-game reel: nothing drawn over the field or the players)
+  const cine = cinemaOn() || reelOn() || coldHud();   // (CINEMATIC highlights and the halftime / end-of-game reel: nothing drawn over the field or the players)
   if ((state === 'pre' || (rec && rec.replaying)) && !tossing() && !SETTINGS.hideNames && !(hl && hl.mode === 'half') && !cine) drawNameTags();   // (Y hides / shows them in a replay too)
   if (!tossing() && !cine) drawStarMarks();
   if (!cine) drawPopups();
@@ -4160,6 +4170,7 @@ function draw() {
   ctx.restore();
   wxDraw();
   dmHold = Math.max(0, dmHold - 1);
+  if (coldHud()) return;   // (the cold open's dream: the field and nothing else)
   if (reelOn()) { ctx.fillStyle = '#16211a'; ctx.fillRect(0, 0, W, TOP_BAR); return; }   // (a reel: the play and nothing else. No scoreboard, buttons, down and distance or text)
   if (rec && rec.replaying && !rec.intro && !rec.rewind && !(hl && hl.mode === 'half') && !cine) {   // (the badge waits for the rewind to finish; none on the halftime reel): a torn red paper scrap, and SAVE beside it
     ctx.save();
@@ -4253,7 +4264,7 @@ function draw() {
   ctx.fillStyle = '#ffd94a'; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineWidth = 4; ctx.lineJoin = 'round';   // (the down and distance: yellow text over the field, outlined so it reads without a bar)
   const ddTxt = tut ? (state !== 'pre' && tutStep() ? 'TUTORIAL  -  BACKSPACE to reset the play' : 'TUTORIAL') : (puntRetPlay || (state === 'kick' && kick && kick.punt) || (state === 'kickoff' && kickoff && kickoff.punt) || state === 'punt' || (puntRet && puntPlay && !puntPlay.ko)) ? 'PUNT' : kickoffPlay || (state === 'kick' && kick && kick.kickoff) || (puntRet && puntPlay && puntPlay.ko) ? 'KICKOFF' : patMode !== null || patNext ? 'PAT' : `${downAndDistance()}  |  ${spot(los)}`;
   ctx.strokeText(ddTxt, W / 2, H - BOT_BAR * 0.33); ctx.fillText(ddTxt, W / 2, H - BOT_BAR * 0.33);
-  if (!cine && !inRp && celebWaiting()) { const t = `${TOUCH ? 'DOUBLE TAP' : 'RIGHT CLICK'}  -  CELEBRATE`; ctx.save(); ctx.fillStyle = '#ffffff'; ctx.strokeText(t, W / 2, H - BOT_BAR - 14); ctx.fillText(t, W / 2, H - BOT_BAR - 14); ctx.restore(); }   // (one of your players has a celebration ready)
+  if (!cine && !inRp && celebPromptHere()) { const t = `${TOUCH ? 'DOUBLE TAP' : 'RIGHT CLICK'}  -  CELEBRATE`; ctx.save(); ctx.fillStyle = '#ffffff'; ctx.strokeText(t, W / 2, H - BOT_BAR - 14); ctx.fillText(t, W / 2, H - BOT_BAR - 14); ctx.restore(); }   // (one of your players has a celebration ready)
   if (finishShowing()) { ctx.save(); menuBtn(finishBtn(), 'FINISH', IN_GAME_PAPER.red, 16); ctx.restore(); }
   if (!tut && state !== 'sim' && state !== 'kick' && !lightGfx() && !cine) { drawStarHud(); drawNamesTip(); }
   if (!inRp && (state === 'kick' || (state === 'kickoff' && kick && kick.userKo))) drawKickMeters();
@@ -4265,11 +4276,9 @@ function draw() {
     ctx.font = 'bold 30px monospace'; ctx.fillStyle = 'rgba(0,0,0,0.55)';
     ctx.fillRect(W / 2 - 260, TOP_BAR + 40, 520, 46);   // (under the replay controls' tip)
     ctx.fillStyle = '#ffd94a'; ctx.fillText(`FINAL  ${scoreLine()}`, W / 2, TOP_BAR + 74, 500);
-    if (rec && rec.replaying || !rec || !rec.frames.length) {
-      FINAL_BTN.x = W / 2 - FINAL_BTN.w / 2; FINAL_BTN.y = H - BOT_BAR - FINAL_BTN.h - 18;
-      ctx.font = 'bold 18px monospace';
-      drawSimButton(FINAL_BTN, true);
-    }
+    FINAL_BTN.x = W / 2 - FINAL_BTN.w / 2; FINAL_BTN.y = H - BOT_BAR - FINAL_BTN.h - 18;
+    ctx.font = 'bold 18px monospace';
+    drawSimButton(FINAL_BTN, true);
   }
   if (state === 'pre' && fourthPending && !paused && !aiOff() && ONL.on && !onlIAmOff()) {   // online: the offense decides; the defense just waits (no buttons it can't press)
     ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(-PAD, 0, W + 2 * PAD, H - FIELD_BOT);   // (the dim covers the top bar too)
@@ -4304,7 +4313,7 @@ function draw() {
     // (never a second ring where the game already draws one: the offense's own pick circles before the snap, the flashing ring under the ball carrier, the defender's own
     // assignment ring, your cover man's kick-return ring)
     const carry = ['run', 'picked', 'drop', 'pocket', 'kickoff'].includes(state) && (allPlayers().some(p => p.hasBall) || (qb.cradle && !ball.inAir));
-    if (state === 'pre' ? !onlIAmOff() : !carry) ring(state === 'pre' ? qb : (controlledPlayer() || qb), '#ffffff');
+    if (state === 'pre' ? !onlIAmOff() : !carry) ring(state === 'pre' ? qb : (controlledPlayer() || qb), wxInk('#ffffff'));
     if (ud && state !== 'done' && onlIAmOff() && !ud.hasBall && !kcuOn()) ring(ud, '#ffd94a');
   }
   if (kcuOn() && !paused && !bannerUp() && !(rec && rec.replaying) && ringFree(kcu)) {   // your cover man on a live kick return: a yellow ring under him

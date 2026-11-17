@@ -1020,6 +1020,7 @@ function offAwards() {
                       def: [...top('DL', 4), ...top('LB', 3), ...top('CB', 2), ...top('S', 2)] };
   }
   for (const a of list) if (a.id !== 'COTY') honorOf(a.name).m.push(a.id);
+  for (const a of list) if (a.team === me && TROPHY_K[a.id] && (a.id !== 'COTY' || (season.played || 0) >= OFFSEASON.minPlayed)) trophyAdd(a.id, a.id === 'COTY' ? (a.rec || '') : a.name);   // (your team's award winners go on the trophy room's shelf)
   const pb = season.pb;
   if (pb && !season.rings) {
     tenureTally();
@@ -1360,6 +1361,7 @@ function offLeague() {
   if (OFF.leagueDone) return;
   OFF.leagueDone = true;
   const me = season.team;
+  try { const L = conAutoExtend(me); if (L.length) (LEAGUE.conNews = LEAGUE.conNews || []).push(...L); } catch (e) { console.warn('auto extend', e); }   // (no contract touched all season: the front office keeps who it can, before the expiring list and offStaff)
   foRoll();   // (a new year: every computer front office is re-rolled, and who is rebuilding)
   // your head coach's stars now come from XP (coachGame / goals), not from a yearly roll; a playoff trip or title pays a bonus
   { const bonus = (po && po.seed && po.seed[me] ? COACH.playoff : 0) + (po && po.champ === me ? COACH.champ : 0);
@@ -2552,12 +2554,13 @@ const NO_NAME_MAX = 4.5;   // the most stars a side can have with a no-name (unr
 // raw = P x starters' stars (weighted by SIDE_W; an empty slot = max(best backup - emptyCut, empty)) + C x coordinator + H x 3 + D x depth
 //       + hcK x (head coach - 3) + ability bonus (per starter by tier, capped) + veterans - rookies - injured starters
 // stars = clamp 1-5 (half stars) of SIDE_SCALE.mid + (raw - SIDE_SCALE.base) x SIDE_SCALE.per. Potential is never counted.
-const SIDE_MIX = { P: 0.62, C: 0.15, H: 0.08, D: 0.08, hcK: 0.05, empty: 1.2, emptyCut: 0.75, noDepth: 1,
+const SIDE_MIX = { P: 0.55, C: 0.18, H: 0.07, D: 0.12, hcK: 0.08, depthAll: true,   // (v0.46: stricter, depth / coordinator / head coach count more; stock league: median 2.5-3, one 4.5, no 5)
+                   empty: 1.2, emptyCut: 0.75, noDepth: 1,
                    ab: { X: 0.1, S: 0.05, F: 0.02 }, abMax: 0.35,   // ability tiers of the starters (X = a Star Factor)
                    vetYrs: 6, vet: 0.025, vetMax: 0.15,              // starters with vetYrs+ years in the league
                    rook: 0.04, rookMax: 0.2,                         // rookie starters
                    inj: 0.06, injMax: 0.25 };                        // would-be starters who are out (hurt, benched, suspended): on top of their backups playing
-const SIDE_SCALE = { mid: 3, base: 2.8, per: 3.5 };    // raw score that rates 3 stars / stars per raw point (fixed: calibrated once on the stock league)
+const SIDE_SCALE = { mid: 3, base: 2.825, per: 3.5 };    // raw score that rates 3 stars / stars per raw point (fixed: calibrated once on the stock league)
 // weight per starting slot (offense sums to 13.25 with K and P, defense to 10.75); the punter slot uses the kicker
 const SIDE_W = { QB: [2.5], RB: [1], WR: [1.25, 1.25], TE: [0.75, 0.5], OL: [1, 1, 1, 1, 1], K: [0.5], P: [0.5],
                  DL: [1, 1, 1, 1], LB: [0.75, 0.75, 0.75], CB: [1.25, 1.25], S: [1, 1] };
@@ -2585,7 +2588,8 @@ function sideRating(t, off, unrounded) {
   }
   const st = typeof STAFF !== 'undefined' && STAFF[t], co = st ? (off ? st.oc : st.dc) : null;
   const C = co ? co.stars : 3, H = hcStars(t);
-  const D = SIDE_DEPTH[side].reduce((s, g) => { const b = at(g)[SIDE_W[g].length]; return s + (b ? b.stars : M.noDepth); }, 0) / SIDE_DEPTH[side].length;
+  const dg = M.depthAll ? SIDE_SLOTS[side].filter(g => g !== 'K' && g !== 'P') : SIDE_DEPTH[side];   // (depthAll: the best backup at every slot group counts)
+  const D = dg.reduce((s, g) => { const b = at(g)[SIDE_W[g].length]; return s + (b ? b.stars : M.noDepth); }, 0) / dg.length;
   const raw = M.P * (sum / wt) + M.C * C + M.H * 3 + M.D * D + M.hcK * (H - 3)
             + Math.min(ab, M.abMax) + Math.min(vet, M.vetMax) - Math.min(rook, M.rookMax) - Math.min(inj, M.injMax);
   if (unrounded) return raw;
@@ -2841,6 +2845,7 @@ function tenureTally() {   // once per season, when the Paper Bowl rings are han
   const t = tenureOf(), T = seasonTable()[season.team], g = season.played || 0;
   t.games += g; t.wins += Math.round(winPct(T) * g); t.seasons++;
   if (((season.fin || {})[season.team] || 0) > 0) t.po++;
+  try { trophySeason(); } catch (e) { console.warn('trophies', e); }   // (the trophy room's shelf: playoff wins, accomplishments)
   if (season.pb && season.pb.win === season.team) {
     t.titles++; moraleShiftAll(MORALE_TEAM.bowl);   // (champions: the whole locker room)
     const red = career.redeem || (career.redeem = {}), kind = season.beatOld ? 'blood' : red[season.team] ? 'silver' : null;   // blood = beat a team you left on the way; silver = first title back on a team you left

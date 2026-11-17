@@ -808,7 +808,7 @@ function updateCarrier(c, top, dt) {
   // (a screen catcher set up to throw has the QB's pocket controls: no truck, no sprint)
   const setUp = passerMode && c === passer;
   c.guard = !setUp && !!keys.KeyG && (!c.action || c.action === 'dive' || c.action === 'slide');
-  c.stiff = (keys.KeyQ || (c.stiffLock && clock - (c.stiffLock.t0 ?? 0) < STIFF.minHold)) && !c.action && !c.guard ? (c.stiff || { t: 0 }) : null;   // (a hold-off that has started lasts at least STIFF.minHold, even on a tap)
+  c.stiff = (keys.KeyQ || (c.stiffLock && clock - (c.stiffLock.t0 ?? 0) < STIFF.minHold)) && !c.action && !c.guard ? (c.stiff || { t: 0, t0: clock }) : null;   // (a hold-off that has started lasts at least STIFF.minHold, even on a tap)
   if (!c.stiff) c.stiffSide = 0;   // (a new hold picks the arm again)
   ballArm(c);   // the ball rides in his outside arm (nearest the sideline), so the free arm is on the field side
   c.truck = !setUp && keys.KeyC && !c.action && !c.guard;
@@ -1292,13 +1292,17 @@ const blockerPool = () => kickoffPlay ? [...ols, ...recs, rb, qb] : [...ols, ...
 // a new assignment to help the ballcarrier (he won't pick the same man again for MISSED_BLOCK.skip s)
 const CLIMB = { hold: 0.4, past: 1.2, slow: 0.4 };   // a lineman who has won his block lets go once the back is `past` yards beyond him and his man (after `hold` s of contact) and climbs; the beaten man is slowed
 const MISSED_BLOCK = { past: 0.6 * YD, far: 1.6, skip: 1.2 };
+// every man a blocker has missed / been shed by is skipped for MISSED_BLOCK.skip s (a list, not one slot: with one slot, missing B forgot A, so he went back to A,
+// missed him again, back to B... a re-aim every frame = the stutter). '__' prop: never sent online
+function missMark(b, d) { const L = (b.__miss || []).filter(m => m[0] !== d && m[2] === runPid && clock < m[1]); L.push([d, clock + MISSED_BLOCK.skip, runPid]); b.__miss = L; }   // (runPid: the clock restarts every play)
+const missedNow = (b, x) => !!b.__miss && b.__miss.some(m => m[0] === x && m[2] === runPid && clock < m[1]);
 const WR_RETRY = { stun: 0.3, again: 0.5 };   // a receiver whose block whiffs is back at it after stun s: again = chance he goes at the same man (else the next one)
 const blockMissed = (b, d) => {
   if (!d || !runner || d.action || b.action || (b.stunUntil || 0) > clock) return false;
   const held = d.engaged || (d.blockers && d.blockers.includes(b) && clock < d.blockUntil);
   if (held || dist(d, b) <= BLOCK_RANGE * MISSED_BLOCK.far) return false;
   if (dist(d, runner) >= dist(b, runner) - MISSED_BLOCK.past) return false;
-  b.missedMan = d; b.missedUntil = clock + MISSED_BLOCK.skip;
+  missMark(b, d);
   return true;
 };
 // run / after-catch blockers: threat = s to reach the runner under which an unblocked man must be blocked before anyone doubles; danger = yd of cost
@@ -1352,7 +1356,8 @@ function updateBlocker(b, dt, speed) {
   // a receiver attached to his man finishes the block first: only a man who is very unlikely to make the tackle gets let go early (WR_FINISH)
   const attached = recs.includes(b) && !!d && !d.action && !!d.blockers && d.blockers.includes(b) && dist(b, d) <= BLOCK_RANGE * WR_FINISH.reach;
   const finish = attached && !(d.x < c.x - RUN_WR.past * YD && dist(d, c) > WR_FINISH.far * YD);   // (stays on him until the back is past AND the man can't get back to him)
-  const hardPick = !d || !pool.includes(d) || d.action === 'dive' || (!finish && others(d) >= 2) || (ends.length && !ends.includes(d)) || blockMissed(b, d) || (!finish && leadBlock && d.x < c.x - RUN_WR.past * YD);
+  const fresh = clock - (b.wrAt || 0) < BLOCK_LOOK.minHold;   // (a man just picked is kept a beat: the end-first / missed tests flicker as the play moves)
+  const hardPick = !d || !pool.includes(d) || d.action === 'dive' || (!finish && others(d) >= 2) || (!fresh && ends.length && !ends.includes(d)) || (!fresh && blockMissed(b, d)) || (!finish && leadBlock && d.x < c.x - RUN_WR.past * YD);
   const softPick = !hardPick && !finish && (peel || dropDouble || leadBad) && clock - (b.wrAt || 0) > BLOCK_LOOK.hold;
   if ((hardPick || softPick) && !nm) {
     const isWR = recs.includes(b);
@@ -1365,7 +1370,7 @@ function updateBlocker(b, dt, speed) {
     const err = x => ((((x.num || 0) * 37 + (b.num || 0) * 11 + runPid * 7) % 17) / 16 - 0.5) * Math.max(0, BLOCK_LOOK.noise - BLOCK_LOOK.awrNoise * rz(b, 'awr')) * YD;
     const fc = x => (leadBlock ? lcost(x) : cost(x)) + err(x);
     const old = d;
-    let nd = pool.filter(x => !x.action && !x.hasBall && others(x) < 2 && (leadBlock ? x.x >= c.x - RUN_WR.level * YD : (x.x > c.x - YD || chaser(x))) && dist(x, b) < 14 * YD && !(x === b.missedMan && clock < (b.missedUntil || 0)))
+    let nd = pool.filter(x => !x.action && !x.hasBall && others(x) < 2 && (leadBlock ? x.x >= c.x - RUN_WR.level * YD : (x.x > c.x - YD || chaser(x))) && dist(x, b) < 14 * YD && !missedNow(b, x))
              .sort((p, q) => fc(p) - fc(q))[0] || null;
     if (softPick && nd && old && nd !== old && fc(old) - fc(nd) < BLOCK_LOOK.switch * YD) nd = old;   // (not clearly better: stays on his man, no jitter)
     d = nd; b.assign = d;
@@ -3258,7 +3263,7 @@ function tryPancake(b, d, odds) {
 // Stiff arm: he locks the man up at arm's length (slowing down while he does), for a while or only a
 // split second, then the shove either knocks him off or he wraps up. A second man arriving mid-stiff-arm
 // gets a quick shove at reduced odds.
-const stiffOdds = (c, d) => d.sucker || xfOn(c, 'freightTrain') ? 1 : Math.min(Math.min(0.8, STIFF.cap * brkK(c, d)), brkK(c, d) * STIFF.win * (d.role === 'LB' ? 0.8 : 1) * (d.hitStick ? HIT_STICK_VS.stiff : 1) * (c.pos === 'TE' ? 1.2 : 1) * rv(c, 'str', d, 'str', 'power') * (c.team === 'off' ? c.stiffEff ?? 1 : 1)) * (c === playCatcher && abilOn(c, 'rumbler') ? ABIL_FX.rumbler : 1);   // a missile is hard to hold off
+const stiffOdds = (c, d, k = 1) => d.sucker || xfOn(c, 'freightTrain') ? 1 : Math.min(Math.min(0.8, STIFF.cap * brkK(c, d)), brkK(c, d) * STIFF.win * k * (d.role === 'LB' ? 0.8 : 1) * (d.hitStick ? HIT_STICK_VS.stiff : 1) * (c.pos === 'TE' ? 1.2 : 1) * rv(c, 'str', d, 'str', 'power') * (c.team === 'off' ? c.stiffEff ?? 1 : 1)) * (c === playCatcher && abilOn(c, 'rumbler') ? ABIL_FX.rumbler : 1);   // a missile is hard to hold off
 // a tackle at the legs (gator roll, a shoestring dive at the ankles, a man hanging on an ankle) goes in under a stiff arm: the arm can't touch it
 const lowTk = d => !!d && (d.action === 'clasp' || (d.action === 'dive' && (d.tkStyle === 'gator' || d.lowDive)));
 // the hold-off tug-of-war, every frame while a man is held at arm's length: -1 = he tears the arm off and wraps up, 1 = the runner throws him off, 0 = still fighting
@@ -3281,6 +3286,69 @@ function ballArm(c) {
 }
 // strength + weight edge of the runner over the man he's holding off (1 = even)
 const stiffPower = (c, d) => rv(c, 'str', d, 'str', 'power') * (c.wt && d.wt ? (c.wt / d.wt) ** STIFF.wtK : 1);
+// --- stiff arm outcomes (v0.46)
+// where the held man came from, read once when the arm lands (same front test as missReel): front = in his path, side = a pursuit angle, back = chasing, low = an upper-body diver
+function saAngle(c, d) {
+  if (d.action === 'dive') return 'low';
+  const cs = Math.hypot(c.vx || 0, c.vy || 0), dd = Math.hypot(d.x - c.x, d.y - c.y) || 1;
+  const dot = cs > YD ? ((d.x - c.x) * c.vx + (d.y - c.y) * c.vy) / (cs * dd) : (d.x - c.x) * (c.face || 1) / dd;
+  return dot > 0.35 ? 'front' : dot < -0.35 ? 'back' : 'side';
+}
+// angle + his speed at contact: x the win odds (kept on the lock as L.k)
+const saSitK = (c, ang) => (STIFF.angle[ang] ?? 1) * (1 + STIFF.speedK * Math.min(1, Math.hypot(c.vx || 0, c.vy || 0) / (STIFF.speedRef * YD)));
+const saCount = c => { c.saN = c.saPid === runPid ? (c.saN || 0) + 1 : 1; c.saPid = runPid; };   // (stiff arms he has thrown this play: the arm grab)
+const SA_REEL = { stagger: 'stiffShove', down: 'stiffDown', sit: 'saSitDown', spinOut: 'saSpinOut', slideOff: 'saSlideOff', oob: 'saOobTumble' };
+// a won shove: which way he goes (weights STIFF.out, x strength + weight and the win margin; out of bounds only near the sideline he's on)
+function saOutcome(c, d, margin) {
+  const pw = Math.max(0.6, Math.min(1.6, stiffPower(c, d))), edge = Math.min(d.y - Y_MIN, Y_MAX - d.y), toLine = Math.sign(d.y - c.y) === (d.y < MID ? -1 : 1);
+  const ws = Object.entries(STIFF.out).map(([k, o]) => [k, k === 'oob' && !(edge < STIFF.oobYd * YD && toLine) ? 0 : o.w * pw ** (o.pw || 0) * (1 + 2 * Math.max(0, margin)) ** (o.mg || 0)]);
+  let r = Math.random() * ws.reduce((s, w) => s + w[1], 0);
+  for (const [k, w] of ws) if ((r -= w) <= 0) return k;
+  return 'stagger';
+}
+// both stiff-arm paths: a won shove. The outcome is rolled first, the reaction follows it (an iconic one may replace the look)
+function saWon(c, d, margin) {
+  d.tackling = false; d.resolved = true;
+  const out = tut ? (Math.random() < STIFF.fall ? 'down' : 'stagger') : saOutcome(c, d, margin), style = REEL_ST[SA_REEL[out]] ? SA_REEL[out] : 'stiffShove';
+  const ico = missReel(c, d, 'stiff', style);
+  if (!ico) popup(c, 'STIFF ARM', '#ffd94a');   // (steam off the carrier's helmet)
+  if (out === 'stagger' || out === 'spinOut') { d.slow = Math.max(d.slow || 0, STIFF.stagger); d.stiffed = clock; }
+  if (out === 'slideOff' && d.act && d.act.style === 'saSlideOff') { d.act.shoe = 1; SA_SHOE.set(d, c); }   // (his lunge at the ankles late in the reel: saShoeTry from updateReel; the runner is kept off the taped act)
+  if (out === 'oob' && d.act && d.act.style === 'saOobTumble') d.act.oob = Math.sign(d.y - MID) || 1;
+  c.boostUntil = clock + POWER_BOOST.time;   // free of him: a burst, and he's harder to bring down for a moment
+  SA_GAME[saKey(c)] = saWinsOf(c) + 1;
+  if (typeof saAfterWin === 'function') saAfterWin(c, d, out, ico);   // (looks / celebrations: 07)
+  return out;
+}
+// a lost one: the tackle is still tackleCarrier's; this only picks how it's drawn (rip-down / duck-under / arm grab / bear-up). Returns who makes the tackle
+function saLost(c, d) {
+  const L = STIFF.lose, n = Math.max(0, (c.saN || 1) - 1);
+  const ws = [['rip', L.rip], ['duck', L.duck], ['grab', L.grab + L.grabPer * n], ['bear', L.bear]];
+  let r = Math.random() * ws.reduce((s, w) => s + w[1], 0), k = 'rip';
+  if (!tut) for (const [kk, w] of ws) if ((r -= w) <= 0) { k = kk; break; }
+  d.saLoss = { k, t: clock }; d.saHeld = null; c.saLook = null;
+  if (k !== 'bear') return d;
+  const nx = [...back7, ...dl, ...(c.team === 'def' ? [qb, rb, ...ols, ...recs] : [])].filter(o => o !== d && o.team !== c.team && !o.action && !o.engaged && dist(o, c) < L.bearYd * YD).sort((a, b) => dist(a, c) - dist(b, c))[0];
+  if (!nx) return d;
+  if (typeof startReel === 'function') { reelQuiet = true; startReel(d, 'saBearUp', c); reelQuiet = false; }   // (stood him up; the next man hits)
+  nx.saLoss = { k: 'bearHit', t: clock };
+  return nx;
+}
+// smart tacklers adapt: a runner who has won STIFF.adapt.wins+ stiff arms this game sees more low tackles (x the tackler's awareness)
+// a SLIDE-OFF: sliding down the arm to his knees he lunges at the ankles once (a SHOESTRING try at SHOESTRING.chance x STIFF.shoeK)
+const SA_SHOE = new Map();
+function saShoeTry(d) {
+  const c = SA_SHOE.get(d); SA_SHOE.delete(d);
+  if (!c || !c.hasBall || c.action || dist(d, c) > SHOESTRING.range || Math.random() >= SHOESTRING.chance * STIFF.shoeK) return;
+  c.slow = Math.min(0.5, (c.slow || 0) + SHOESTRING.slow / balK(c));
+  c.falterUntil = clock + SHOESTRING.stumble / balK(c);
+  popup(d, 'SHOESTRING', '#ffd94a');
+}
+// (players are rebuilt every play, so the game's count lives in SA_GAME by name / team + number; reset in newGame)
+let SA_GAME = {};
+const saKey = c => (c.src && c.src.name) || c.name || (c.team + c.num);
+const saWinsOf = c => SA_GAME[saKey(c)] || 0;
+const saAdapt = (d, c) => { const w = c ? saWinsOf(c) : 0; return w < STIFF.adapt.wins ? 0 : Math.min(STIFF.adapt.max, STIFF.adapt.per * Math.max(0, 1 + (rz(d, 'cov') || rz(d, 'awr') || 0)) * (w - STIFF.adapt.wins + 1)); };
 function stiffArm(c, d) {
   if (lowTk(d)) return false;   // (at his legs: under the arm, the normal tackle roll decides it)
   if (d.action && !(d.action === 'dive' && d.tackling && !d.resolved)) return false;   // (getting up / reeling / a dive that already missed: nobody to hold off)
@@ -3288,6 +3356,7 @@ function stiffArm(c, d) {
   const side = Math.sign(d.y - c.y) || 1;   // the arm nearest him is the one that goes out
   if (c.stiffLock || (c.stiffSide && c.stiffSide !== side) || allPlayers().some(p => p !== d && p.stiffBy === c)) { tackleCarrier(c, d); return true; }   // one free arm: a second man can't be held off while the first is, nor one on the other side while Q is held
   c.stiffSide = side;
+  const ang = saAngle(c, d), sk = saSitK(c, ang); saCount(c);
   // only the free hand stiff-arms: the ball's on that side (or still between hands), so he flips it to the other arm first: a beat late, a bit weaker
   const swap = c.ballSide === side || c.ballSwapUntil > clock;
   if (c.ballSide === side) { c.ballSide = -side; c.ballSwapUntil = clock + STIFF.swapT; }
@@ -3301,8 +3370,9 @@ function stiffArm(c, d) {
   const pw = stiffPower(c, d);   // (strength and weight: a stronger, heavier runner holds him off longer and keeps moving; a weaker one is nearly stopped)
   const len = lo + Math.random() ** (STIFF.skew / Math.max(0.4, pw)) * (hi - lo);
   const slow = Math.max(STIFF.slowMin, Math.min(STIFF.slowMax, STIFF.slow * pw));
-  c.stiffLock = { d, until: clock + Math.max(STIFF.minHold, Math.min(hi, len)), win: stiffOdds(c, d), slow, rip: STIFF.rip * 0.4 * rm(d, 'tck', 'tackle') / Math.max(0.4, pw), grip: 0.5, t: clock, t0: clock, noTug: !!tut };
+  c.stiffLock = { d, until: clock + Math.max(STIFF.minHold, Math.min(hi, len)), win: stiffOdds(c, d, sk), slow, rip: STIFF.rip * 0.4 * rm(d, 'tck', 'tackle') / Math.max(0.4, pw), grip: 0.5, t: clock, t0: clock, noTug: !!tut, ang, k: sk };
   d.stiffBy = c;
+  if (typeof saPick === 'function') saPick(c, d, ang);   // (the look: 07)
   if (tut && c.team === 'off') c.stiffLock.rip = 0;   // (the tutorial's stiff arm always lands: he never tears it away)
   d.action = null; d.act = null; d.tackling = false; d.resolved = true; d.hitStick = false;
   stiffSfx(); if (tut) tutEvent('stiff');   // (no callout yet: the steam icon only goes up if the stiff arm wins, in shoveOff; the tutorial step still counts the arm)
@@ -3327,7 +3397,7 @@ function updateStiffLock(c) {
   const dt = Math.max(0, clock - L.t); L.t = clock;
   // the struggle: his grip (0 = the arm is torn off and he wraps up, 1 = the runner throws him off) swings back and forth; the better matchup tilts it
   const tug = stiffTug(L, held, dt);
-  if (tug < 0) { c.stiffLock = null; d.stiffBy = null; d.engaged = false; d.reach = false; msg = 'Arm torn away'; tackleCarrier(c, d); return true; }
+  if (tug < 0) { c.stiffLock = null; d.stiffBy = null; d.engaged = false; d.reach = false; msg = 'Arm torn away'; tackleCarrier(c, saLost(c, d)); return true; }
   if (tug > 0) { c.stiffLock = null; d.stiffBy = null; d.engaged = false; d.reach = false; return shoveOff(c, d, 1); }
   const winNow = tut && c.team === 'off' ? 1 : Math.min(STIFF.capLong, L.win * (1 + STIFF.grow * held));   // (prolonged contact: the shove gets likelier the longer he holds him off)
   if (clock >= L.until || ((!c.stiff || c.action) && held >= STIFF.minHold) || (c.action && c.action !== 'stiff' && held >= STIFF.minHold * 0.6)) {   // (a juke / dive mid-hold no longer lets go on the spot: he fights it first)
@@ -3337,19 +3407,15 @@ function updateStiffLock(c) {
   return false;
 }
 function shoveOff(c, d, win) {
-  if (Math.random() < win) {
+  const roll = Math.random();
+  if (roll < win) {
     msg = 'Stiff arm!';
     if (tut) tutEvent('stiff');   // (no callout: the shove speaks for itself)
-    d.tackling = false; d.resolved = true;
-    // shoved off his feet, or (usually) driven back off the arm, head snapped back, and chases on slowed; rarely an iconic one
-    const fall = Math.random() < STIFF.fall;
-    if (!missReel(c, d, 'stiff', fall ? 'stiffDown' : 'stiffShove')) popup(c, 'STIFF ARM', '#ffd94a');   // (steam off the carrier's helmet)
-    if (!fall) { d.slow = Math.max(d.slow || 0, STIFF.stagger); d.stiffed = clock; }
-    c.boostUntil = clock + POWER_BOOST.time;   // free of him: a burst, and he's harder to bring down for a moment
+    saWon(c, d, win - roll);   // (the outcome table: stagger / shoved down / sit-down / spin-out / slide-off / out of bounds; rarely an iconic one)
     return false;
   }
   popup(c, 'MOVE TRIED', '#ffd94a', undefined, true, true, { k: 'steam' });   // (a stiff arm that didn't work still shows its icon)
-  tackleCarrier(c, d);
+  tackleCarrier(c, saLost(c, d));
   return true;
 }
 
@@ -3612,7 +3678,7 @@ function pursueMove(d, c, dt) {
         d.svy += sx * 5 * YD; d.svx += Math.sign(c.x - d.x || 1) * 3 * YD; d.slow = 0;
         popup(d, Math.random() < 0.5 ? 'SWIM MOVE' : 'RIP MOVE', '#ffd94a', undefined, true);
       }
-      if (!climb && Math.random() >= WR_RETRY.again) { b.missedMan = d; b.missedUntil = clock + MISSED_BLOCK.skip; }
+      if (!climb && Math.random() >= WR_RETRY.again) missMark(b, d);
     }
   }
   engagedNow.splice(0, engagedNow.length, ...engagedNow.filter(b => !(b.stunUntil > clock)));
@@ -3676,7 +3742,7 @@ function pursueMove(d, c, dt) {
     const toward = Math.sign(c.y - d.y) || 1, side = Math.random() < 0.7 ? toward : -toward;
     d.svx = dx / dd * 3 * YD; d.svy = side * 4 * YD;   // rip move
     if (d.blockMove === 'swim') d.svx = dx / dd * 6 * YD;
-    for (const b of engagedNow) { b.stunUntil = clock + (ols.includes(b) ? 0.8 : WR_RETRY.stun); b.assign = null; if (!ols.includes(b)) { b.missedMan = d; b.missedUntil = clock + MISSED_BLOCK.skip; } }   // (a receiver shed by his man picks up the next defender after a beat)
+    for (const b of engagedNow) { b.stunUntil = clock + (ols.includes(b) ? 0.8 : WR_RETRY.stun); b.assign = null; if (!ols.includes(b)) missMark(b, d); }   // (a receiver shed by his man picks up the next defender after a beat)
     d.freedAt = clock;
     d.blockers = null; d.heldT = 0;
   }
@@ -3788,9 +3854,9 @@ function pursueMove(d, c, dt) {
     startDive(d, aimT.x, aimT.y, dur, LUNGE_DIST * mom * (d.hitStick ? 1.3 : 1) * (notBehind ? 1 : BEHIND_REACH));
     // the tackle he's going for is picked now, before the animation: big hit, gator roll (at the legs), or a plain wrap-up dive
     const justCaught = clock - (c.catchAt ?? -9) < TKV.catchWin;
-    d.tkStyle = d.hitStick ? (headOn && Math.random() < TKV.fold ? 'fold' : 'hit') : !d.isKicker && Math.random() < (headOn ? GATOR.front : GATOR.other) ? 'gator'
+    d.tkStyle = d.hitStick ? (headOn && Math.random() < TKV.fold ? 'fold' : 'hit') : !d.isKicker && Math.random() < (headOn ? GATOR.front : GATOR.other) + saAdapt(d, c) ? 'gator'
               : (headOn || justCaught) && Math.random() < (justCaught ? TKV.hugCatch : TKV.hug) ? 'hug' : 'wrap';
-    d.lowDive = trailing && !d.hitStick;   // (a shoestring dive from behind goes at the ankles: under any stiff arm)
+    d.lowDive = (trailing || Math.random() < saAdapt(d, c)) && !d.hitStick;   // (a shoestring dive from behind goes at the ankles: under any stiff arm)
     ooTk(d);
     d.tackling = true;
     d.resolved = false;

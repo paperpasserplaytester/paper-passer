@@ -149,7 +149,7 @@ const SIDELINE = {
   // players round sideline people, DEAD BALL ONLY (after the whistle / before the snap; slColP, in the frames slCollide runs): soft = YD added round a person's collider where
   // a player is steered off, push = YD/s he is eased out at the collider's edge, slow = share of his speed into the person kept while he steers. A man rolls once a play whether
   // he gets round them: ok + agi x (agility multiplier - 1) - fast x (YD/s over 4), + walk if he is under 4 YD/s, in [min, max]; a miss = no steering (he can still run them over)
-  dodge: { soft: 0.75, push: 2.4, slow: 0.6, ok: 0.5, agi: 0.9, fast: 0.07, walk: 0.4, min: 0.08, max: 0.97 },
+  dodge: { soft: 0.75, push: 2.4, slow: 0.6, ok: 0.7, agi: 0.9, fast: 0.07, walk: 0.4, min: 0.25, max: 0.97, safeV: 3.5, knockV: 5.5, cone: 0.8 },   // v0.46: safeV = yd/s under which a player (or anyone jogging on / off, fmTo / celWalk) only steers round people, even in a live ball; a knockdown needs knockV+ yd/s heading within cone (cos) of the person, else a bump / hop
   // men jogging off (stepFormation / the kick's clones): d = yd past the sideline of the gap they aim for by their unit's bench, spread = yd between them along it, arrive = YD
   // from it that counts as there (gone: the bench man shows); a kick's clones only use it when it is no farther than the old run off the screen (the kick never waits longer).
   // turnover = after a change of possession / a kick the old units jog off from where they stood (only when the view keeps its picture; the snap never waits)
@@ -158,7 +158,7 @@ const SIDELINE = {
   // other = a nearby staff member / bench man walks over (within otherR yd, there in time), self = up on his own). opp = x help for the other team's people, neutral = x help
   // for crew / cameras / vests; hurry = x ignore in a late close game (lateS(late) s left, within close points) or right after a big play. dwHelp / dwMax = extra s on the turf
   // while a player / a walker gets there; walk = YD/s a helping player steps over; ooh / cheer = crowd (oohSfx on the hit, crowdPop on the pull up)
-  help: { w: { help: 0.4, sorry: 0.17, ignore: 0.13, other: 0.18, self: 0.12 }, opp: 0.2, neutral: 0.75, hurry: 3, late: 120, close: 8, otherR: 7, dwHelp: 0.6, dwMax: 2.4, walk: 4.5, ooh: 0.3, cheer: 0.35 },
+  help: { w: { help: 0.4, sorry: 0.17, ignore: 0.13, other: 0.18, self: 0.12 }, opp: 0.2, neutral: 0.75, hurry: 3, late: 120, close: 8, otherR: 7, dwHelp: 0.6, dwMax: 2.4, walk: 4.5, ooh: 0.15, cheer: 0.16 },   // ooh = the crowd's small ooh at a knockdown, cheer = the volume of a short, local cheer when he is helped up (never a full crowd pop)
   tvOut: 2.4, tvHold: 4,                          // TV timeout official: yd onto the field he walks in a timeout / at a quarter break / s he stands there (tvSignal)
   flashLen: 0.14, flashSpread: 1.5,                 // camera flashes: s one burst lasts / s the bursts of one moment are spread over
   liteHz: 15,                                       // performance mode: the bench's poses are sampled at this rate
@@ -174,7 +174,7 @@ const SIDELINE = {
   live: { think: 0.4, gain: 12, step: 3 },
   // getting out of the way (slAvoid, every think s): a player within band yd of a sideline, heading at it faster than v yd/s, is looked ahead s; people within r yd of where he will
   // cross hop aside (hop yd along the sideline, back yd away from the field), each after his own reaction [from, to] s; late = s into a hop he can still be knocked down
-  avoid: { think: 0.1, band: 4, v: 2.5, ahead: 0.7, r: 1.7, hop: 1.0, back: 0.7, react: [0.02, 0.22], late: 0.12 },
+  avoid: { think: 0.1, band: 4, v: 2.5, ahead: 1.0, r: 2.2, hop: 1.0, back: 0.7, react: [0.02, 0.22], late: 0.12 },
   bumpV: 3.2, downT: 1.4, hitCool: 1.0, hitD: [0.35, 1.1, 0.9, 0.3],   // YD/s a stagger turns into a knockdown / s on the turf / s between reactions / yd moved by bump, knockdown, hop aside, pole tilt
   sfxCool: 0.6, sfxVol: 0.35,                       // knockdown thud: s apart at most / x the tackle clip's volume
   // props (07-drawing, `// --- sideline props`: statics, pre-rendered sprites). Where they stand = SL_LAY
@@ -202,11 +202,16 @@ const CAM_MAN = { spots: [[20, 5, 35, 1], [80, 65, 95, 2], [7, -6, 16, 2], [93, 
   // end mirrored); span = share of the width each may drift; arc = YD the ball can be off across before he steps; walk = YD/s; react = s before a reaction;
   // runAt / runY = a carrier heading in this many YL from the end line and YD across: he kneels; backAt = this close: he backpedals backYd YD for backT s;
   // run = carrier speed toward them (YD/s) that counts as heading in; duckV / duckX = a field goal / PAT flying at them faster than duckV YD/s within duckX YL of the end line: that end's crew ducks
-  ez: { back: 3.3, ys: [0.19, 0.36, 0.77], span: 0.06, arc: 4, walk: 1.2, react: [0.05, 0.3], run: 3, runAt: 18, runY: 9, backAt: 5, backYd: 0.9, backT: 1.6, duckV: 6, duckX: 35 } };
+  ez: { back: 3.3, ys: [0.19, 0.36, 0.77], edge: { ys: [0.06], back: 2.4, tier: 1 },   // edge = the corner crews at both ends (ys from the near sideline, mirrored for the far one: one at each corner), closer in (back yd) so the stands' corner arcs stay clear, a lower lite tier
+        span: 0.06, arc: 4, walk: 1.2, react: [0.05, 0.3], run: 3, runAt: 18, runY: 9, backAt: 5, backYd: 0.9, backT: 1.6, duckV: 6, duckX: 35 } };
 // (cart spots are in the cart sprite's own units, x from its middle toward its nose: seatX / seatH = the driver; bedX = where the hurt man's feet go (he lies along the bed, head toward the cab),
 // bedH = the deck's height; trX = where the two trainers sit on the bed for the ride back)
 const INJURY_EXIT = { delay: 0.5, jog: 7, walk: 3.4, limp: 2, help: 2.6, cart: 7, tend: 1.3, lift: 1.8, unload: 1.2, cartGap: 0.9, seatX: 13, seatH: 6, bedX: -25, bedH: 12, trX: [5, -22],
-  kneeYd: 6, kneeMax: 5, fade: 1.1, benchYd: 44.4, benchD: 2.6, door: 2.6, inD: 3.4 };
+  kneeYd: 6, kneeMax: 5, fade: 1.1,
+  // any injury timeout: kneeAll = every free man on the field (both teams) takes a knee facing him (false = only the old severe-injury few: kneeYd / kneeMax), each up to kneeDelay s late;
+  // once he is up and leaving (or the cart moves off) they stand and clap clapSecs s (clapRate claps a s, clapVol = the clap sound, clapCrowd = the crowd's applause level); upPad = s it waits when no exit is shown
+  limpStride: 0.55, walkStride: 0.75, hang: 0.45,   // the hurt man drawn as himself walking off: leg swing x (limping / helped or walking), head hung (p.hang)
+  kneeAll: true, kneeDelay: 0.6, clapSecs: 2.5, clapRate: 2.4, clapVol: 0.3, clapCrowd: 0.45, upPad: 3.5, benchYd: 44.4, benchD: 2.6, door: 2.6, inD: 3.4 };
 const figX = (p, x) => x * figK(p);                                    // a sideways offset tied to a spot on the old body -> that spot now
 const figZ = (p, z) => (FOOT + z) * figK(p) * FIGURE.tall - FOOT;      // same for a height (z) on his body (scaled up from his feet)
 const figReach = (p, r) => S * figK(p) * (FIGURE.tall * (r / S + 14) - 14);   // a reach along a laid-out body (dives: stretched from the feet end)
@@ -405,7 +410,7 @@ const POCKET_ARC = { width: 3.6, depth: 3.8, inside: 0.5, edge: 0.75, edgeSide: 
 const JUST_FREED = 0.8;        // seconds after shedding a block where his tackling is shaky
 const DL_MISS = 0.08;         // linemen in pursuit are shakier tacklers
 const PANCAKE = { DE: 0.015, DT: 0.012, LB: 0.04, CB: 0.26, S: 0.26 };   // linemen, run blocks only
-const BLOCK_LOOK = { ahead: 0.45, awrAhead: 0.25, hold: 0.4, switch: 2.5, noise: 3, awrNoise: 2 };   // run / after-catch blockers: read threats ahead s from now (+ awrAhead x receiver AWARENESS z), re-pick at most every hold s unless forced and only for a man switch yd better; noise = yd of misjudging (less with AWARENESS)
+const BLOCK_LOOK = { ahead: 0.45, awrAhead: 0.25, hold: 0.4, minHold: 0.25, switch: 2.5, noise: 3, awrNoise: 2 };   // minHold = s a new pick is kept before the end-first / missed-block tests may drop him (his man down / gone / tripled still drops him at once)   // run / after-catch blockers: read threats ahead s from now (+ awrAhead x receiver AWARENESS z), re-pick at most every hold s unless forced and only for a man switch yd better; noise = yd of misjudging (less with AWARENESS)
 const WR_FINISH = { reach: 1.6, ttr: 2.2, far: 9 };   // a receiver locked on a man finishes that block before looking for another (no peel / double-drop / runner-went-past switch) unless his man is very unlikely to make the tackle: over ttr s from the runner, or behind him and over far yd away. reach = x BLOCK_RANGE that still counts as attached
 const RUN_WR = { level: 0.5, past: 0.25, hold: 0.45, k: 8, blocked: 6 };   // receivers' blocks on a run / QB run: only men level with or ahead of the runner (level yd of slack; a man gone this far past `past` yd behind him is dropped), the most dangerous = soonest to reach him (s x k yd), re-picked at most every hold s; blocked = yd penalty for a man a lineman already has
 const WR_PANCAKE = { DE: 0.003, DT: 0.003, LB: 0.008, CB: 0.13, S: 0.13 }; // receivers blocking downfield
@@ -613,7 +618,28 @@ const STIFF = { abreast: 0.8, win: 0.62, cap: 0.68, dur: [0, 0.9], skew: 0.85, p
   reach: 1.0 * YD, early: 0.5, second: 0.75, ease: 0.18,
   minHold: 0, grow: 0.12, capLong: 0.88,   // minHold s = the hold-off lasts at least this long even on a tap; grow = + win odds per second held (capped at capLong): the longer he holds him off, the likelier the shove wins
   struggle: { min: 0.15, tilt: 1.2, noise: 1.1 },   // grip tug-of-war (updateStiffLock): starts after min s; tilt = pull per unit of win odds over the base; noise = random swing /s
-  wobble: 0.14 * YD, wobRate: 15 };   // the held man's struggle: jostling at the end of the arm (yd, rad/s), arms grabbing at the runner   // ease = share of the gap to arm's length closed per frame while held off
+  wobble: 0.14 * YD, wobRate: 15,
+  // v0.46 overhaul. angle = x win odds by where the man came from (saAngle: front = in his path, side = a pursuit angle, back = chasing, low = an upper-body diver);
+  // speedK = + share of win odds at speedRef yd/s or faster (his speed at contact); oobYd = yd from the sideline a shove can put him out of bounds
+  angle: { front: 0.85, side: 1.15, back: 1.0, low: 0.95 }, speedK: 0.12, speedRef: 8, oobYd: 3, shoeK: 0.6,   // shoeK = x SHOESTRING.chance for a slide-off's lunge at the ankles
+  // the outcome of a won shove (weights; `pw` = x stiffPower, `mg` = x the win margin): stagger / down are the old two. A lost one only changes the tackle's look
+  out: { stagger: { w: 0.5 }, down: { w: 0.22, pw: 0.6, mg: 0.5 }, sit: { w: 0.1, pw: 0.4 }, spinOut: { w: 0.08 }, slideOff: { w: 0.07 }, oob: { w: 0.6 } },
+  lose: { rip: 0.62, duck: 0.16, grab: 0.06, grabPer: 0.06, bear: 0.16, bearYd: 2.5 },   // grabPer = + arm grab per stiff arm he has already thrown this play past the first; bearYd = the next man this close makes the bear-up's tackle
+  adapt: { wins: 2, per: 0.06, max: 0.25 },   // a runner with this many stiff-arm wins this game: smart tacklers go low (+ per x awareness z-score + 1, per win past it, capped at max)
+  chop: { every: 0.55, window: 0.16, good: 0.22, bad: 0.12, cd: 0.3 } };   // your held defender's CHOP (X): a window opens every `every` s for `window` s; good / bad = grip pushed toward 0 / 1; cd = s between presses   // the held man's struggle: jostling at the end of the arm (yd, rad/s), arms grabbing at the runner   // ease = share of the gap to arm's length closed per frame while held off
+// stiff-arm LOOKS (v0.46; looks only, never odds / speed / length / result; MV_LOOKS fam 'stiff', saPick in 07-drawing).
+// aggro = the aggressive looks: anyone can, but x his build ^ pw (a light WR / QB ~1/10 as often as a power back), x hot after a stiff-arm win this game or
+// with a strength + weight edge (stiffPower) over `edge`, capped at max. vault = agility (x, mlAgi) a vault needs + its odds;
+// spinWin / jukeWin / truckWin / hurdleWin = s after that move a stiff arm counts as coming out of it; dive = s after letting go a dive counts as saArmDive
+const STIFF_LOOK = {
+  aggro: { base: 0.1, pw: 1.8, wt: 210, hot: 1.6, edge: 1.25, max: 0.45 },   // body = his strength multiplier x weight / wt (his own build, not the matchup); chance = base x body ^ pw
+  vault: { agi: 1.25, odds: 0.18 }, sideYd: 3,
+  spinWin: 0.45, jukeWin: 0.55, truckWin: 0.8, hurdleWin: 0.5,
+  // hit-stop / slow motion at contact (real s; stopK / slowK = time scale while it runs): hit = every look, aggro = the aggressive ones, ico = an iconic one
+  time: { hit: { stop: 0.05, stopK: 0.12 }, aggro: { stop: 0.09, stopK: 0.08 }, ico: { stop: 0.11, stopK: 0.06, slow: 0.35, slowK: 0.4 } },
+  icoShake: 12, oobReach: 3.5,   // camera jolt on an iconic; yd an out-of-bounds tumble reaches into the sideline people
+  lidOdds: 0.25, lid: { v: 2.4, vz: 260, spin: 14, g: 900, life: 2.2 },   // icoLidPop: share of iconic front picks it may join; the helmet's throw (yd/s along, px/s up, rad/s), gravity px/s2, s on the turf before it's back on
+};
 // ball arm: a carrier tucks it in his outside arm (the one nearest the near sideline); he only switches once he's `hyst` yd past the middle, and a
 // switch takes `swap` s (ball in both hands: no stiff arm with it). The CPU returner's quick stiff arm lasts ret [min, max] s
 const BALL_ARM = { hyst: 3, swap: 0.25, ret: [0, 1.4], retTry: 0.1 };   // retTry = s between the CPU returner's looks for a man to stiff-arm

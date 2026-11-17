@@ -823,6 +823,7 @@ function rbNote(c, book, res, e) {
   const what = /^LONGEST /.test(c.l) ? `a ${rbFmt(c, e.v)}-yard ${c.l.slice(8).toLowerCase()}` : `${rbFmt(c, e.v)} ${c.l.toLowerCase()}`;
   const txt = `${who}: ${what}, ${res.broke ? 'breaks' : 'ties'} ${old ? oldWho + "'s " : 'the '}${lg ? 'league' : 'franchise'} ${sw} record${old ? ` (${rbFmt(c, old.v)})` : ''}.`;
   if (!S.news.includes(txt)) { S.news.push(txt); if (S.news.length > RB.newsMax) S.news.shift(); }
+  if (lg && e.t === me && !rbTeamCat(c)) try { trophyAdd('record', rbShort(e.n)); } catch (err) {}   // (one of your players set a league record: the trophy room's shelf, once a season)
   try { const P = postS(); (P.notes || (P.notes = [])).push({ k: 'record', w: lg ? 9 : 6, team: NFL[e.t] ? e.t : null, big: lg, sl: { p: who, team: NFL[e.t] ? pTeam(e.t) : '', what: c.l.toLowerCase(), val: rbFmt(c, e.v), old: old ? oldWho : 'the old mark', was: old ? rbFmt(c, old.v) : '', book: lg ? 'league' : 'franchise', scope: sw,
     Book: lg ? 'League' : 'Franchise', Scope: sw.replace(/(^|-)([a-z])/g, (m, a, b) => a + b.toUpperCase()), What: c.l.toLowerCase().replace(/\b[a-z]/g, m => m.toUpperCase()) } }); } catch (err) {}
 }
@@ -1319,6 +1320,7 @@ function newGame() {
   if (twoP && twoP.flipped) flipSides();   // (quit mid-game: back to Player 1's side first)
   twoP = exhibition && exhibition.two && !tut ? { flipped: false, to: 3, def: !SETTINGS.simDefense } : (simMode === 'offense' || (!SETTINGS.simDefense && simMode !== 'defense')) && !tut ? { flipped: false, to: 3, ai: true, simO: simMode === 'offense' } : null;   // (def: the other player defends live, IJKL / U / O, unless the settings' SIM DEFENSE is on; ai: you play their drives on defense)
   moveWear = { juke: 1, spin: 1, truck: 1, stiff: 1 }; lastMove = null; moveStreak = 0;
+  SA_GAME = {};   // (stiff-arm wins this game, per runner: smart tacklers adapt, see saAdapt)
   halfHold = false;
   highlights = []; lastRec = null;   // (a new game's tapes)
   if (hl && hl.bg) hlClose(); HTS.clips = []; HTS.cards = []; HTS.game = []; HT = null; pgPending = true;   // (and no halftime reel left from the old game; the pregame show comes up once the game screen does)

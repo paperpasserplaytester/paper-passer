@@ -200,7 +200,18 @@ function animEntries(cat) {
         ['GOAL LINE LEAP', { fam: 'run', look: 'goalLeap' }], ['BALL REACH', { fam: 'run', look: 'ballReach' }],
         ['HURDLE: CLEAN (DUCK)', { fam: 'hurdle', look: 'hurdleClean', reel: 'duck' }], ['HURDLE: HIGH KNEE (KICKED)', { fam: 'hurdle', look: 'hurdleHighKnee', reel: 'kicked' }],
         ['HURDLE: BACKWARD (GRAB)', { fam: 'hurdle', look: 'hurdleBack', reel: 'grab' }], ['HURDLE: CLIPPED', { fam: 'hurdle', look: 'hurdleClip', reel: 'none' }],
-        ['HURDLE: TACKLED (RISE UP)', { fam: 'hurdle', look: 'hurdleClip', reel: 'riseUp' }]].map(([l, c]) => [l, (A, B) => mvStage(A, B, c)]),
+        ['HURDLE: TACKLED (RISE UP)', { fam: 'hurdle', look: 'hurdleClip', reel: 'riseUp' }],
+        // v0.46 stiff arms: one look per family with an outcome, the new reactions and the iconic ones
+        ['STIFF: FACEMASK (HEAD SNAP)', { fam: 'stiff', look: 'saFacemask', reel: 'saHeadSnap' }], ['STIFF: CHEST PUNCH (BACKPEDAL)', { fam: 'stiff', look: 'saChestPunch', reel: 'saBackpedal' }],
+        ['STIFF: GATE (SPIN-OUT)', { fam: 'stiff', look: 'saGate', ang: 'side', reel: 'saSpinOut' }], ['STIFF: SHOULDER LOCK (SIT-DOWN)', { fam: 'stiff', look: 'saShoulderLock', ang: 'side', reel: 'saSitDown' }],
+        ['STIFF: REAR LOCK (FACEPLANT)', { fam: 'stiff', look: 'saRearLock', ang: 'back', reel: 'saFaceplant' }], ['STIFF: HELMET PRESS (KNEE DROP)', { fam: 'stiff', look: 'saHelmetPress', ang: 'low', reel: 'saKneeDrop' }],
+        ['STIFF: HAYMAKER (SHOVED DOWN)', { fam: 'stiff', look: 'saHaymaker', reel: 'stiffDown' }], ['STIFF: BULLDOZER (SLIDE-OFF)', { fam: 'stiff', look: 'saBulldozer', reel: 'saSlideOff' }],
+        ['STIFF: SIDELINE (OUT OF BOUNDS)', { fam: 'stiff', look: 'saSideline', ang: 'side', reel: 'saOobTumble' }],
+        ['STIFF LOST: RIP-DOWN', { fam: 'stiff', look: 'saFacemask', reel: 'rip' }], ['STIFF LOST: DUCK-UNDER', { fam: 'stiff', look: 'saFacemask', reel: 'duck' }],
+        ['STIFF LOST: ARM GRAB', { fam: 'stiff', look: 'saGate', ang: 'side', reel: 'grab' }], ['STIFF LOST: BEAR-UP', { fam: 'stiff', look: 'saFacemask', reel: 'saBearUp' }],
+        ...['icoTimber', 'icoLawnChair', 'icoTurfAngel', 'icoDomino', 'icoLidPop', 'icoKeepOff', 'icoCorkscrew', 'icoFaceplantSlide'].map(k => [`ICONIC STIFF: ${k.slice(3).replace(/([A-Z])/g, ' $1').trim().toUpperCase()}`,
+          { fam: 'stiff', look: k === 'icoCorkscrew' ? 'saGate' : k === 'icoFaceplantSlide' ? 'saBackSwat' : 'saFacemask', ang: k === 'icoCorkscrew' ? 'side' : k === 'icoFaceplantSlide' ? 'back' : 'front', reel: k }])
+       ].map(([l, c]) => [l, (A, B) => mvStage(A, B, c)]),
     ['HURDLE', A => animAct(A, 'hurdle', { dur: HURDLE.userDur, vx: 3 * YD, vy: 0, h: HURDLE.userH, user: false, space: true, cleared: [] })],
     ['DIVE', A => startDive(A, A.x + 3 * YD, A.y, 0.4, 2.5 * YD)],
     ['QB SLIDE', A => animAct(A, 'slide', { dur: 0.45, fx: A.x, fy: A.y, tx: A.x + 1.5 * YD, ty: A.y, angle: Math.PI })],
@@ -507,6 +518,35 @@ function mvStage(A, B, c) {
       anim.mvInfo += '   UNDER: riseUp';
     });
   });
+  if (F === 'stiff') {   // (v0.46) the arm locks on B at the asked angle with the game's own pick (pinned, aggressive or AUTO), held, then the outcome
+    const ang = c.ang || 'front', side = ang === 'side' || ang === 'back' ? 1 : 0;
+    B.x = A.x + (ang === 'back' ? -0.9 : ang === 'side' ? 1.4 : 2.2) * YD; B.y = side * 0.9 * YD; B.vx = 0; B.moving = false;
+    at(MV_T0, () => {
+      A.stiff = { t: 0, t0: clock }; A.stiffSide = Math.sign(B.y - A.y) || 1; A.ballSide = -A.stiffSide;
+      if (ang === 'low') { B.action = null; B.z = 0; }
+      const k0 = MOVE_LOOK.force.stiff;
+      MOVE_LOOK.force.stiff = look && MV_LOOKS[look] ? look : c.aggro ? pickOf(SA_POOL.aggro[ang] || SA_POOL.aggro.front) : null;
+      try { saPick(A, B, ang); } finally { MOVE_LOOK.force.stiff = k0; }
+      B.x = A.x + (ang === 'back' ? -0.6 : ang === 'side' ? 0.25 : 0.6) * STIFF.reach; B.y = A.y + (side ? 0.95 : -0.8) * STIFF.reach;   // (at arm's length and swung abreast, as updateStiffLock pins him; front / back: on the far side, so the arm shows)
+      A.stiffLock = { d: B, t0: clock, t: clock, ang }; B.stiffBy = A; B.moving = true; B.vx = A.vx; B.face = A.x >= B.x ? 1 : -1;
+      anim.mvInfo = `LOOK: ${A.saLook}   ANGLE: ${ang.toUpperCase()}`;
+      at(MV_T0 + 0.8, () => {   // the shove (or the tackle that beats it)
+        A.stiffLock = null; B.stiffBy = null; B.moving = false; B.vx = 0;
+        if (reelK === 'none') return;
+        const r = reelK === 'AUTO' ? 'stiffShove' : reelK;
+        if (SA_LOSS[1][r]) {
+          A.saLook = null; B.saLoss = { k: r, t: clock }; B.action = 'wrap'; B.act = { t: 0, target: A, ox: 0.3 * YD, oy: 0, angle: 0, fallTime: 0.4 }; B.face = A.x >= B.x ? 1 : -1;
+          A.stiff = null; A.action = 'down'; A.act = { t: 0, fall: true, back: true, side: 0, fallTime: 0.4, vx: YD, vy: 0, angle: 0 };
+        } else {
+          const L = MV_LOOKS[A.saLook]; if (L) A.mvFx = { k: A.saLook, t: clock, o: L.shove, side: A.stiffSide }; A.saLook = null;
+          startReel(B, REEL_SKIN[r] ? REEL_SKIN[r].base : r, A); if (B.act) B.act.skin = REEL_SKIN[r] ? r : null;
+          if (/^ico/.test(r)) saIconicFx(A, B);
+          if (r === 'saOobTumble' && B.act) B.act.oob = 1;
+        }
+        anim.mvInfo += `   OUTCOME: ${r}`;
+      });
+    });
+  }
   if (F === 'run') {
     B.x = 1e6;
     if (look === 'goalLeap') { Object.assign(B, { x: A.x + 2.4 * YD, action: 'down', act: { t: 5, fall: true, back: false, side: 0, fallTime: 0.4, vx: 0, vy: 0, angle: 0 } });
@@ -529,17 +569,21 @@ const MVT_FAMS = {
   truck: { looks: ['truckRun', 'truckPancake', 'truckBounce'], reels: ['truckBack', 'truckStagger', 'icoTruck', 'none'] },
   hurdle: { looks: ['hurdleClean', 'hurdleHighKnee', 'hurdleBack', 'hurdleClip'], reels: ['duck', 'grab', 'flinch', 'kicked', 'riseUp', 'none'] },
   run: { looks: ['tightrope', 'goalLeap', 'ballReach'], reels: [], noAuto: true },
+  stiff: { looks: Object.keys(MV_LOOKS).filter(k => MV_LOOKS[k].fam === 'stiff' && k !== 'saKeepOff'),   // (v0.46: OUTCOME = a won shove's reaction / a lost one's tackle look / an iconic one)
+           reels: ['stiffShove', 'saHeadSnap', 'saBackpedal', 'saKneeDrop', 'stiffDown', 'saSitDown', 'saSpinOut', 'saSlideOff', 'saOobTumble', 'saFaceplant', 'rip', 'duck', 'grab', 'saBearUp',
+                   'icoToss', 'icoHelmet', 'icoPlant', 'icoFling', 'icoBell', 'icoFacemask', 'icoTimber', 'icoLawnChair', 'icoTurfAngel', 'icoDomino', 'icoLidPop', 'icoKeepOff', 'icoCorkscrew', 'icoFaceplantSlide', 'none'] },
   dive: { looks: Object.keys(mvX.dive), reels: [], noAuto: true }, slide: { looks: Object.keys(mvX.slide), reels: [], noAuto: true },
   throw: { looks: Object.keys(mvX.throw), reels: [], noAuto: true }, land: { looks: Object.keys(mvX.land), reels: [], noAuto: true }, pick: { looks: Object.keys(mvX.pick), reels: [], noAuto: true }, tip: { looks: Object.keys(mvX.tip), reels: [], noAuto: true },
 };
 const MVT_FAM_KEYS = Object.keys(MVT_FAMS);
-const mvtNew = () => ({ fam: 0, look: 0, rate: 2, wt: 1, reel: 0, grab: true, stiff: false, side: 1, sideYd: 2, spd: 0, loop: true });
+const mvtNew = () => ({ fam: 0, look: 0, rate: 2, wt: 1, reel: 0, grab: true, stiff: false, side: 1, sideYd: 2, spd: 0, loop: true, ang: 0, aggro: false });
+const MVT_ANGS = ['front', 'side', 'back', 'low'];   // (the stiff family's ANGLE)
 const mvtRow = (i, half) => ({ x: MVT.x + (half === 2 ? MVT.w / 2 + 4 : 0), y: MVT.y + i * MVT.gap, w: half ? MVT.w / 2 - 4 : MVT.w, h: MVT.h });
 const MVT_B = { fam: mvtRow(0), look: mvtRow(1), rate: mvtRow(2, 1), wt: mvtRow(2, 2), reel: mvtRow(3), x1: mvtRow(4, 1), x2: mvtRow(4, 2), side: mvtRow(5, 1), spd: mvtRow(6, 1), loop: mvtRow(6, 2) };
 function mvtCfg() {
   const T = mvT, fk = MVT_FAM_KEYS[T.fam], F = MVT_FAMS[fk], looks = F.noAuto ? F.looks : ['AUTO', ...F.looks], reels = ['AUTO', ...F.reels];
   return { fam: fk, look: looks[T.look % looks.length], reel: F.reels.length ? reels[T.reel % reels.length] : 'none', grab: T.grab, stiff: T.stiff, side: T.side,
-           rate: MVT.rates[T.rate], wt: MVT.wts[T.wt], sideYd: MVT.sides[T.sideYd], looks, reels };
+           rate: MVT.rates[T.rate], wt: MVT.wts[T.wt], sideYd: MVT.sides[T.sideYd], looks, reels, ang: MVT_ANGS[T.ang || 0], aggro: !!T.aggro };
 }
 function openMoveTest() {
   openAnimLib();
@@ -554,6 +598,7 @@ function drawMoveT() {
   if (MVT_FAMS[c.fam].reels.length) cyc(MVT_B.reel, `REACTION: ${nm(c.reel)}`, c.reel !== 'AUTO');
   if (c.fam === 'spin') { menuBtn(MVT_B.x1, `HAND ON HIP: ${T.grab ? 'ON' : 'OFF'}`, T.grab ? G : N, 15); menuBtn(MVT_B.x2, `STIFF ARM HELD: ${T.stiff ? 'ON' : 'OFF'}`, T.stiff ? G : N, 15); }
   if (c.fam === 'juke') { menuBtn(MVT_B.x1, `CUT: ${T.side > 0 ? 'DOWN' : 'UP'}`, N, 15); menuBtn(MVT_B.x2, `SIDELINE: ${c.sideYd} YD`, N, 15); }
+  if (c.fam === 'stiff') { menuBtn(MVT_B.x1, `ANGLE: ${c.ang.toUpperCase()}`, N, 15); menuBtn(MVT_B.x2, `AGGRESSIVE: ${T.aggro ? 'ON' : 'OFF'}`, T.aggro ? G : N, 15); }
   menuBtn(MVT_B.spd, `SPEED: ${MVT.speeds[T.spd]}x`, T.spd ? G : N, 16); menuBtn(MVT_B.loop, `LOOP: ${T.loop ? 'ON' : 'OFF'}`, T.loop ? G : N, 16);
   ctx.fillStyle = RES.line; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   ctx.fillText(anim.mvInfo || '', MVT.x, MVT.y + 7 * MVT.gap + 10, MVT.w);
@@ -572,6 +617,8 @@ function mvtClick(p) {
   else if (inBtn(p, B.x2) && c.fam === 'spin') T.stiff = !T.stiff;
   else if (inBtn(p, B.x1) && c.fam === 'juke') T.side = -T.side;
   else if (inBtn(p, B.x2) && c.fam === 'juke') T.sideYd = cy(T.sideYd, MVT.sides.length, 1);
+  else if (inBtn(p, B.x1) && c.fam === 'stiff') T.ang = cy(T.ang || 0, MVT_ANGS.length, 1);
+  else if (inBtn(p, B.x2) && c.fam === 'stiff') T.aggro = !T.aggro;
   else if (inBtn(p, B.spd)) { T.spd = cy(T.spd, MVT.speeds.length, 1); return true; }
   else if (inBtn(p, B.loop)) { T.loop = !T.loop; return true; }
   else return false;
@@ -1264,7 +1311,8 @@ function wxThrow(P, t, bullet) {
 // edge = yd the cover runs past the field's edges onto the sidelines,
 // prints: deep = cover over which feet leave prints (full strength at 1), stride = yd between prints, life = s a print lasts
 // (falling snow fills them faster: fill x snowfall), max = most kept, w / h = a print's size (yd)
-const WX_LOOK = { stands: 0.42,   // stands = how white the stands get at full snow cover
+const WX_LOOK = { stands: 0.42,   // stands = how white the stands get at full snow cover; inkAt = snow cover (coat x cover) where white on-field aids turn to ink (`wxInk`)
+                  inkAt: 0.5, ink: '#111', inkRGB: '17,17,17',
                   coatTime: 150, melt: 400, meltRain: 150, coatStart: 0.3, cover: 0.86, grain: 0.55, edge: 4, wet: 0.16,
                   dark: 0.26, haze: 0.2, drops: 2.6, dropLife: [1.4, 3], dropMax: 30,
                   prints: { deep: 0.3, stride: 0.95, life: 40, fill: 2.5, max: 1800, w: 0.24, h: 0.15, alpha: 0.4 } };
@@ -1323,6 +1371,10 @@ function wxPrintTick(dt) {
 }
 // drawing (world space, inside drawField: over the grass, lines, logo and numbers, under the pylons, goal posts, the line of
 // scrimmage and the first-down line): the field darkens in rain; snow covers it all evenly, thicker as it builds, with prints in it
+// white on-field aids (aim, zones, routes, kick reticle, cursor edge) turn dark over deep snow; replays read the tape's weather (wxTapeOn swaps game.wx)
+const wxSnowy = () => wxLive() && (game.wx.coat || 0) * WX_LOOK.cover >= WX_LOOK.inkAt;
+function wxInk(light, dark = WX_LOOK.ink) { return wxSnowy() ? dark : light; }
+function wxInkA(a) { return wxSnowy() ? `rgba(${WX_LOOK.inkRGB},${a})` : `rgba(255,255,255,${a})`; }   // the same with a white's alpha kept
 function wxGround() {
   if (!wxLive()) return;
   const L = WX_LOOK, a = WXI.rain * L.wet, coat = game.wx.coat || 0, e = L.edge * YD;
@@ -1448,7 +1500,7 @@ function wxDraw() {
     }
     ctx.restore();
   }
-  if (reelOn()) return;   // (a highlight reel: no badge or notices over the play)
+  if (reelOn() || coldHud()) return;   // (a highlight reel / the cold open: no badge or notices over the play)
   // the badge: condition, wind speed and an arrow the way it blows
   const label = g.roof === 'dome' ? 'INDOORS' : g.roof === 'closed' ? 'ROOF CLOSED' : WX_LABELS[wxCode(g)];
   const live = wxLive(), txt = live ? `${label}  ${Math.round(WXI.mph)} MPH` : label;
@@ -3220,6 +3272,7 @@ const BIND_ACTIONS = [
   ['switchD', 'Switch defender', 'KeyO', 'KeyO', 'def'], ['switchE', 'Switch defender (E)', 'KeyE', 'KeyE', 'def'],
   ['hit', 'Hit stick', 'KeyC', 'KeyC', 'def'], ['diveD', 'Dive tackle', 'KeyV', 'KeyV', 'def'], ['secure', 'Secure tackle', 'KeyG', 'KeyG', 'def'],
   ['jumpD', 'Jump / spin off a block', 'KeyR', 'KeyR', 'def'], ['strip', 'One-hander in the air', 'KeyF', 'KeyF', 'def'], ['hints', 'Defense hints', 'KeyN', 'KeyN', 'def'],
+  ['chop', 'Chop a stiff arm (held off)', 'KeyX', 'KeyX', 'def'],
 ];
 const bindKeyOf = a => { const b = SETTINGS.binds && SETTINGS.binds[a[0]]; return b === undefined ? a[2] : b === 'None' ? null : b; };   // (a row's key now: null = none)
 const BIND_EXCL = [['L', 'R'], ['off', 'def'], ['pre', '!pre'], ['run', '!run'], ['pre', 'run']];
@@ -3305,8 +3358,8 @@ const TOUCH_HELP = [
 ];
 // the debug page: goes over the settings screen (DEBUG, bottom of the settings panel)
 let dbgUI = false;
-const DBG_PANEL = { x: 330, y: 110, w: 620, h: 480 };
-const DBG_BTNS = { hit: { x: 370, y: 190, w: 540, h: 60 }, mobile: { x: 370, y: 270, w: 540, h: 60 }, tools: { x: 370, y: 350, w: 540, h: 60 }, perf: { x: 370, y: 430, w: 540, h: 60 }, back: { x: 370, y: 510, w: 540, h: 56 } };   // (perf = the frame-time readout, see PERF_HUD)
+const DBG_PANEL = { x: 330, y: 70, w: 620, h: 560 };
+const DBG_BTNS = { hit: { x: 370, y: 150, w: 540, h: 60 }, mobile: { x: 370, y: 230, w: 540, h: 60 }, tools: { x: 370, y: 310, w: 540, h: 60 }, perf: { x: 370, y: 390, w: 540, h: 60 }, net: { x: 370, y: 470, w: 540, h: 60 }, back: { x: 370, y: 550, w: 540, h: 56 } };   // (perf = the frame-time readout, see PERF_HUD; net = FAKE LAG for testing online, see NET_SIM)
 function drawDebug() {
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
   resPanel(DBG_PANEL.x, DBG_PANEL.y, DBG_PANEL.w, DBG_PANEL.h, [['DEBUG', null]], RES.bright);
@@ -3315,12 +3368,14 @@ function drawDebug() {
   menuBtn(DBG_BTNS.mobile, `MOBILE MODE: ${TUI.on ? 'ON' : 'OFF'}`, Y, 24);
   menuBtn(DBG_BTNS.tools, `HIDE EXTRA TOOLS: ${SETTINGS.hideTools ? 'ON' : 'OFF'}`, Y, 24);   // (the start screen's ANIMATION LIBRARY + TEST MODE)
   menuBtn(DBG_BTNS.perf, `FRAME TIMES: ${SETTINGS.perfHud ? 'ON' : 'OFF'}`, Y, 24);   // (fps + update / draw ms in a corner of every screen)
+  menuBtn(DBG_BTNS.net, `FAKE LAG: ${SETTINGS.netSim || 'OFF'}`, Y, 24);   // (online test bench: delays / drops what this device receives)
   menuBtn(DBG_BTNS.back, 'DONE', Y, 24);
 }
 function debugClick(p) {
   if (inBtn(p, DBG_BTNS.hit)) { SETTINGS.hitboxes = !SETTINGS.hitboxes; COLLIDE.show = SETTINGS.hitboxes; }
   else if (inBtn(p, DBG_BTNS.tools)) SETTINGS.hideTools = !SETTINGS.hideTools;
   else if (inBtn(p, DBG_BTNS.perf)) SETTINGS.perfHud = !SETTINGS.perfHud;
+  else if (inBtn(p, DBG_BTNS.net)) netSimNext();
   else if (inBtn(p, DBG_BTNS.mobile)) { DEVICE.mobile = !TUI.on; saveDevice(); tuiSet(DEVICE.mobile); }   // (touch controls: on by default on a phone / tablet, off on a PC; this overrides that)
   else if (inBtn(p, DBG_BTNS.back) || !inBtn(p, DBG_PANEL)) dbgUI = false;
   saveSettings();
@@ -3750,7 +3805,7 @@ const SYNC = { owner: 'paperpasserplaytester', repo: 'paper-passer-saves', branc
   iters: 150000,                // PBKDF2 rounds (slower = harder to guess a password from a stolen file)
   every: 60,                    // seconds between auto syncs while the page is visible (push if this device changed, else check for a newer cloud save)
   user: /^[a-z0-9_]{3,16}$/, minPass: 6,
-  light: ['pocketPasser.settings', 'pocketPasser.koTipSeen', 'pocketPasser.offTut', 'pocketPasser.draftTut', 'pocketPasser.coach'] };   // keys that don't count as "this device has data" when signing in
+  light: ['pocketPasser.settings', 'pocketPasser.koTipSeen', 'pocketPasser.offTut', 'pocketPasser.draftTut', 'pocketPasser.coach', 'pocketPasser.coldDone'] };   // keys that don't count as "this device has data" when signing in
 const SYNC_KEY = 'pocketPasser.account';   // this device's sign-in (never synced)
 let acct = null;    // { user, key (raw AES key, base64: the password itself is never stored), sha (cloud file sha last seen), hash (this device's data hash then), at (last sync) }
 let acctUI = null;  // the DOM popup (real inputs, so phones get their keyboard and password managers work)
@@ -4074,7 +4129,7 @@ function loadFromSlot(i) {
   let d = null;
   try { d = lsJson(localStorage.getItem(SLOT_KEY(i))); } catch (e) {}
   if (!d || !d.season) { note('NO SAVED GAME'); return; }
-  curSlot = i; slotUI = null; suspended = null; resumeRoster = null; pstLoadSlot(i);
+  curSlot = i; slotUI = null; payToFly = 0; coinPending = 0; coinFly = []; payFrom = null; suspended = null; resumeRoster = null; pstLoadSlot(i);
   slNewGame();   // (sideline people: a fresh cast, put on their spots at the next reset; nothing of them is saved)
   { const sd = typeof d.diff === 'string' ? d.diff : d.diff && d.diff.preset || (d.world && d.world.settings && d.world.settings.difficulty); if (DIFFS.includes(sd)) SETTINGS.difficulty = sd; diffLoad(d.diff); }   // (diffLoad: mode / sliders / dynamic state; an old save's name = preset mode)
   { const own = d.setV && d.world && d.world.settings;   // (this save's own settings; a save without them gets a copy of the defaults. Volume and replays stay the global ones)
@@ -4449,13 +4504,29 @@ function qsTurf(x, y, w, h) {   // a scrap of field: a green wash and pencil yar
   ctx.fillStyle = 'rgba(80,160,90,0.18)'; ctx.fillRect(x, y, w, h);
   ctx.strokeStyle = 'rgba(40,90,50,0.35)'; ctx.lineWidth = 1.2; for (let i = 1; i < 5; i++) { ctx.beginPath(); ctx.moveTo(x + w * i / 5, y + 3); ctx.lineTo(x + w * i / 5 + 2, y + h - 3); ctx.stroke(); }
 }
-function qsStamp(x, y, text, col, rot, k = 1, size = 20) {   // a rubber stamp: k = scale (thumps down from big)
+function qsStamp(x, y, text, col, rot, k = 1, size = 20, o) {   // a rubber stamp: k = scale (thumps down from big); o.distress = a seed: uneven, worn ink (APPROVED etc. never pass it)
+  if (o && o.distress) return qsInkStamp(x, y, text, col, rot, k, size, o.distress);
   ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(k, k);
   ctx.font = `bold ${size}px monospace`; const w = ctx.measureText(text).width + 16;
   ctx.globalAlpha = Math.min(1, 0.85 * (2 - k)); ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.strokeRect(-w / 2, -size * 0.75, w, size * 1.5);
   ctx.lineWidth = 1; ctx.strokeRect(-w / 2 + 3, -size * 0.75 + 3, w - 6, size * 1.5 - 6);
   ctx.fillStyle = col; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, 0, 1);
   ctx.restore();
+}
+// the distressed stamp: drawn once into a cached picture (2x), then speckled, worn in patches and roughened at the edges; a picture, so dark mode never touches its red
+const QS_INK = new Map();
+function qsInkStamp(x, y, text, col, rot, k, size, seed) {
+  const key = text + '|' + col + '|' + size + '|' + seed; let c = QS_INK.get(key);
+  if (!c) {
+    const R = 2; c = document.createElement('canvas'); const g = c.getContext('2d'); g.font = `bold ${size}px monospace`;
+    const w = Math.ceil(g.measureText(text).width + 40), h = Math.ceil(size * 1.5 + 24); c.width = w * R; c.height = h * R;
+    const keep = ctx; ctx = g; try { g.scale(R, R); qsStamp(w / 2, h / 2, text, col, 0, 1, size); } finally { ctx = keep; }
+    const r = seeded(seed); g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'destination-out';
+    for (let i = 0; i < 6; i++) { const px = r() * c.width, py = r() * c.height, pr = (20 + r() * 50) * R, gr = g.createRadialGradient(px, py, 0, px, py, pr); gr.addColorStop(0, `rgba(0,0,0,${0.35 + r() * 0.3})`); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(px - pr, py - pr, pr * 2, pr * 2); }   // (faded patches)
+    for (let i = 0; i < w * h / 26; i++) { g.fillStyle = `rgba(0,0,0,${0.3 + r() * 0.7})`; const sz = (0.6 + r() * 2.2) * R; g.fillRect(r() * c.width, r() * c.height, sz, sz); }   // (speckles: uneven ink, rough edges)
+    g.globalCompositeOperation = 'source-over'; QS_INK.set(key, c);
+  }
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(k / 2, k / 2); ctx.drawImage(c, -c.width / 2, -c.height / 2); ctx.restore();
 }
 const QS_DEMO = {
   defense(x, y, w, h, t) {   // your defender (yellow ring) runs down the ball carrier
@@ -4769,13 +4840,19 @@ const QS_HIRE = [   // id, sticky-note text, short answer for the sign page
   { id: 'surprise',  name: ['SURPRISE', 'ME'],      line: 'anyone (likelier a bad one)',   short: 'SURPRISE',  paper: '#ddf5c4' },
 ];
 const QS_LWALL = { x: 140, y: 74, w: 760, h: 400 };   // the locker wall (8 x 4)
-const QS_LOCK = i => { const w = QS_LWALL.w / 8, h = QS_LWALL.h / 4; return { x: QS_LWALL.x + (i % 8) * w + 3, y: QS_LWALL.y + Math.floor(i / 8) * h + 3, w: w - 6, h: h - 6 }; };
+const QS_LGRID = { confs: ['AFC', 'NFC'], gap: 22, label: 15 };   // the wall: AFC half | NFC half, a row per division (4 lockers), gap px between the halves, label px over each division block
+// one layout for drawing and clicks: i = index into qsTeams() (conference, then division, then the division's own order)
+const QS_LOCK = i => { const G = QS_LGRID, w = (QS_LWALL.w - G.gap) / 8, h = QS_LWALL.h / 4, c = Math.floor(i / 16), d = Math.floor((i % 16) / 4), p = i % 4;
+  return { x: QS_LWALL.x + c * (4 * w + G.gap) + p * w + 3, y: QS_LWALL.y + d * h + G.label + 2, w: w - 6, h: h - G.label - 5 }; };
+const QS_LBLOCK = (c, d) => { const G = QS_LGRID, w = (QS_LWALL.w - G.gap) / 8, h = QS_LWALL.h / 4; return { x: QS_LWALL.x + c * (4 * w + G.gap), y: QS_LWALL.y + d * h, w: 4 * w, h }; };
 const QS_HNOTE = i => ({ x: 140 + i * 192, y: 516, w: 178, h: 100 });
 const QS_REPORT = { x: 920, y: 70, w: 340, h: 540 };
 const QS_LBTN = { back: { x: 140, y: 636, w: 160, h: 56 }, rec: { x: 920, y: 636, w: 170, h: 56 }, next: { x: 1104, y: 636, w: 156, h: 56 } };
 const QS_DOOR = 0.32;
 const QS_LTOUR = { x: 880, y: 12, w: 44, h: 44 };   // the locker room's ? (TOUR_STEPS.locker)   // seconds a locker door takes to swing open
-const qsTeams = () => Object.keys(DEFAULT_WORLD.roster).filter(k => NFL[k]);
+const qsTeams = () => { const all = Object.keys(DEFAULT_WORLD.roster).filter(k => NFL[k]), out = [];
+  for (const c of QS_LGRID.confs) for (const d of DIVS) for (const k of all) if (NFL[k].conf === `${c} ${d}`) out.push(k);
+  return out.length === all.length ? out : all; };   // (by conference and division; data without them keeps the old order)
 function qsJersey(cx, cy, w, k) {   // a hanging jersey in the team's home colours
   const [a, b] = carCols(k), h = w * 0.9, num = ((DEFAULT_WORLD.roster[k] || []).find(p => p.group === 'QB') || {}).num || 1;
   ctx.save(); ctx.translate(cx, cy);
@@ -4819,6 +4896,8 @@ function qsLocker(t, now, sk) {
   ctx.fillStyle = 'rgba(30,15,0,0.3)'; ctx.fillRect(QS_LWALL.x - 6, QS_LWALL.y - 6, QS_LWALL.w + 16, QS_LWALL.h + 16);
   ctx.fillStyle = '#c9ced6'; ctx.fillRect(QS_LWALL.x - 10, QS_LWALL.y - 10, QS_LWALL.w + 20, QS_LWALL.h + 20);
   ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.strokeRect(QS_LWALL.x - 10, QS_LWALL.y - 10, QS_LWALL.w + 20, QS_LWALL.h + 20);
+  QS_LGRID.confs.forEach((c, ci) => DIVS.forEach((d, di) => { const b = QS_LBLOCK(ci, di); ctx.fillStyle = '#aeb5bf'; ctx.fillRect(b.x + 1, b.y + 1, b.w - 2, QS_LGRID.label); ctx.fillStyle = ink; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`${c} ${d}`, b.x + b.w / 2, b.y + 1 + QS_LGRID.label / 2, b.w - 8); }));
+  { const b = QS_LBLOCK(1, 0); ctx.fillStyle = '#8e959e'; ctx.fillRect(b.x - QS_LGRID.gap + 4, QS_LWALL.y, QS_LGRID.gap - 8, QS_LWALL.h); }   // (the post between the two conferences)
   qsTeams().forEach((key, i) => {
     const r = QS_LOCK(i);
     qsLockerDraw(r, key, key === k, qsLockerOpen(key, now), t);

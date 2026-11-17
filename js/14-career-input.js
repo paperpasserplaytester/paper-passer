@@ -391,7 +391,7 @@ function careerStart() {   // the questionnaire's START SEASON: a new franchise
   randomizeWorld();   // (every franchise is its own league: ratings, coaches, tendencies, free agents)
   seasonSkipTo(SEASON_WEEKS, true);   // you take over for the regular-season finale: weeks 1-17 are already played (on VETERAN odds)
   LEAGUE.coins = 10; payToFly = 0;   // (simmed games pay nothing: a new franchise starts with a base of 10 credits, plus / minus your origin)
-  originStart(team);   // (your origin's instant perk / catch; the timed ones read originK)
+  originStart(team); payToFly = 0; coinPending = 0; coinFly = []; payFrom = null;   // (your origin's instant perk / catch; the timed ones read originK)
   career.setupDone = true;
   results.screen = 'home';
   tutPrompt = 'coach';
@@ -853,7 +853,7 @@ function startCrumple(rect) {   // rect: crumple only that part of the screen (a
 // a short crinkle: filtered noise bursts
 function paperSfx() {
   try {
-    if (sndRec('crumple', 1, { ms: SND_USE.crumpleMs, fade: 400 })) return;   // (the recording; the noise burst below = no audio element)
+    if (crumpleSfx(1)) return;   // (the recording; the noise burst below = no audio element)
     const a = ac(); if (!a) return;
     const len = 0.35, ac_ = a, buf = ac_.createBuffer(1, ac_.sampleRate * len, ac_.sampleRate), d = buf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (Math.random() < 0.08 ? 1 : 0.25) * (1 - i / d.length);
@@ -1083,6 +1083,7 @@ canvas.addEventListener('pointerdown', e => {
     if (e.button === 0 && inBtn(pointerPos(e), nextBtn())) advanceResults();
     return;
   }
+  if (e.button === 0 && finalReplay() && !paused && FINAL_BTN.x !== undefined && inBtn(pointerPos(e), FINAL_BTN)) { finishLive(); return; }   // (the game's over: FINISH GAME first, before a celebration skip / tip / replay can take the press)
   celebSkip();   // (any tap ends a celebration; the tap still does whatever else it does)
   if (injuryShowing() && !paused && !showKeys && !overPauseButton(pointerPos(e))) { if (e.button === 0) injuryClick(pointerPos(e)); return; }   // the injury timeout
   if (tut && tut.defAsk) {   // the offense lessons are done: play the defense lessons, or let the computer play defense
@@ -1136,16 +1137,26 @@ canvas.addEventListener('pointerdown', e => {
     return;
   }
   if (rec && rec.replaying && e.button === 0 && !finalReplay() && !halfShown()) { const p = pointerPos(e); if (tipClick(p)) { pressAt = 0; replayLeft = null; return; } pressAt = performance.now(); replayLeft = { sx: p.x, sy: p.y, moved: false }; return; }   // (a replay takes the click before anything under it: a pre-kick / pre-snap replay of the last play used to hand it to the kick meter, PAT switch or kick target)
-  if (e.button === 2 && celebGo()) return;   // (one of your players has a celebration waiting: a RIGHT click starts it)
+  if (e.button === 2 && celebGo(e)) return;   // (one of your players has a celebration waiting: a RIGHT click starts it)
   if (e.pointerType === 'touch' && e.button === 0) {   // (on a phone: a double tap)
     const now = performance.now(), dbl = now - celebTapAt < CELEB_DBL_TAP;
     celebTapAt = dbl ? 0 : now;
-    if (dbl && celebGo()) return;
+    if (dbl && celebGo(e)) return;
   }
   if (e.button === 0 && !paused && !showKeys && tipClick(pointerPos(e))) return;   // (the names / star tips toggle with a click)
   if (halfShown()) { if (e.button === 0 && inBtn(pointerPos(e), HALF_OK_BTN)) halfOK(); return; }   // halftime: only OK moves on
   if (halfHold && !(rec && rec.replaying)) { if (e.button === 0 && replayBtnShowing() && inBtn(pointerPos(e), REPLAY_BTN) && replayBtnOn() && playSettled() && !bannerUp()) { startReplay(); rec.fromClick = true; } else if (e.button === 0 && state === 'done' && !(rec && (rec.replaying || rec.rewind)) && playSettled() && !bannerUp()) halfGo = true; return; }   // (the card isn't up yet: the play is still settling, or a replay is playing)
   if (e.button === 0 && patSwitch() && inBtn(pointerPos(e), PAT_SWITCH_BTN)) { patSwitchClick(); return; }
+  if (((state === 'pre' && fourthPending) || patMode === 'choose') && e.button === 0 && !(rec && rec.replaying)) {   // (the decision dim is up: FIRST, before any on-field picker, and it swallows the click hit or miss)
+    const p = pointerPos(e);
+    const hit = decisionButtons().find(b => inBtn(p, b));
+    if (hit && hit.id === 'punt') { if (simSTOn()) doPunt(); else startMyPunt(); }   // (SIM SPECIAL TEAMS: the punt is simulated)
+    else if (hit && hit.id === 'fg') startFieldGoal();
+    else if (hit && hit.id === 'pat') { patMode = 'kick'; los = 85 * YL; startFieldGoal(); }   // from the 15
+    else if (hit && hit.id === 'two') { patMode = 'two'; fourthPending = false; }          // one play from the 2
+    else if (hit) fourthPending = false;
+    return;
+  }
   if (pvpDef() && e.button === 0 && state === 'pre' && !(rec && rec.replaying) && !fourthPending && (inBtn(pointerPos(e), pvpAud().off) || inBtn(pointerPos(e), pvpAud().def))) {   // (two players: each side's audible button)
     if (inBtn(pointerPos(e), pvpAud().def)) defAudible(); else audible();
     return;
@@ -1168,16 +1179,6 @@ canvas.addEventListener('pointerdown', e => {
     if (e.button === 0) { if (state === 'pre' && !tut && inBtn(pointerPos(e), AUDIBLE_BTN)) defAudible(); else defClick(pointerPos(e)); }
     return;
   }   // (their offense is the computer's: a click picks your defender)
-  if (state === 'pre' && fourthPending && e.button === 0 && !(rec && rec.replaying)) {
-    const p = pointerPos(e);
-    const hit = decisionButtons().find(b => inBtn(p, b));
-    if (hit && hit.id === 'punt') { if (simSTOn()) doPunt(); else startMyPunt(); }   // (SIM SPECIAL TEAMS: the punt is simulated)
-    else if (hit && hit.id === 'fg') startFieldGoal();
-    else if (hit && hit.id === 'pat') { patMode = 'kick'; los = 85 * YL; startFieldGoal(); }   // from the 15
-    else if (hit && hit.id === 'two') { patMode = 'two'; fourthPending = false; }          // one play from the 2
-    else if (hit) fourthPending = false;
-    return;
-  }
   if (e.button === 0 && iceOpen() && inBtn(pointerPos(e), pvpTO().def)) { iceKick(false); return; }   // (two players: the defense ices the kicker)
   if ((state === 'kick' || (state === 'kickoff' && kick && kick.userKo)) && e.button === 0) { kickClick(); return; }
   if (e.button === 0 && replayBtnShowing() && inBtn(pointerPos(e), REPLAY_BTN)) { if (replayBtnOn() && playSettled()) { startReplay(); rec.fromClick = true; } return; }
@@ -1199,7 +1200,7 @@ canvas.addEventListener('pointerdown', e => {
   if (e.button !== 0) return;
   const p = pointerPos(e);
   if (finalReplay()) {   // the game's over: only FINISH GAME moves on (a click before the replay starts it)
-    if (FINAL_BTN.x !== undefined && inBtn(p, FINAL_BTN)) { FINAL_BTN.x = undefined; proceed(); }
+    if (FINAL_BTN.x !== undefined && inBtn(p, FINAL_BTN)) finishLive();
     else if (rec && rec.replaying) pressAt = performance.now();
     else if (rec && rec.frames.length) startReplay();
     return;
@@ -1246,7 +1247,7 @@ canvas.addEventListener('pointerdown', e => {
     canvas.setPointerCapture(e.pointerId);
   }
 });
-canvas.addEventListener('pointermove', e => { hoverPt = pointerPos(e); if (qtrDrag) setQtrFromX(hoverPt.x); if (diffDrag) diffDragTo(hoverPt.x); });
+canvas.addEventListener('pointermove', e => { hoverPt = pointerPos(e); if (qtrDrag) setQtrFromX(hoverPt.x); if (diffDrag) diffDragTo(hoverPt.x); if ((e.buttons & 1) && results && results.screen === 'staff' && FOT.tab === 'pl' && contractsOn() && pdMax() > 0 && inBtn(hoverPt, { ...pdTrack(), x: pdTrack().x - 8, w: pdTrack().w + 16 })) pdTrackTo(hoverPt.y); });   // (PLAYER DEALS: dragging on the scroll bar)
 window.addEventListener('pointerup', () => { qtrDrag = false; diffDrag = null; });
 // a press in the backfield before the snap: dragging BACKFIELD_DRAG px from it snaps the ball and starts the aim there
 let backfieldPress = null;
@@ -1370,6 +1371,7 @@ canvas.addEventListener('wheel', e => {
   if (settingsOpen) { bindScroll = Math.max(0, Math.min(bindMax(), bindScroll + e.deltaY * (e.deltaMode === 1 ? 38 : 1))); return; }   // scrolls the settings keybinds
   if (results && results.screen === 'roster' && fvWheel(e)) return;
   if (results && results.screen === 'tradeb' && !offPop && tbWheel(e)) return;   // (the offer builder's player cards page)   // (the roster's formation view zooms)
+  if (results && results.screen === 'staff' && pdWheel(e.deltaY * (e.deltaMode === 1 ? 38 : 1))) return;   // (FRONT OFFICE > PLAYER DEALS: the list scrolls)
   if (results && results.screen === 'records' && !teamPick) { recWheel(e.deltaY); return; }   // (the record book's list scrolls)
   if (results && results.screen === 'week') { weekScroll = Math.max(0, Math.min(weekMax, weekScroll + Math.sign(e.deltaY) * WEEK_ROW)); return; }   // end-of-week player list
   if (results && results.screen === 'home') {   // over the schedule strip: scroll through the season
@@ -1393,11 +1395,11 @@ canvas.addEventListener('contextmenu', e => {
   if (touchLong) return;   // (a long-press on a phone fires this: not a right-click)
   if (qsRight()) return;   // (the coaching questionnaire: USE RECOMMENDED)
   if (rec && rec.replaying) return;
-  if (performance.now() - celebClickAt < 500 || celebGo() || celebSkip() || aiOff()) return;   // (a celebration: started (the right button's own pointerdown may already have done it) or skipped; on defense: no bullet toggle)
+  if (performance.now() - celebClickAt < 500 || celebGo(e) || celebSkip() || aiOff()) return;   // (a celebration: started (the right button's own pointerdown may already have done it) or skipped; on defense: no bullet toggle)
   bulletMode = !bulletMode;
 });
 
-const GAME_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyR', 'KeyV', 'KeyG', 'KeyO', 'KeyF', 'KeyN', 'KeyC', 'KeyT', 'Tab', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'];
+const GAME_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyR', 'KeyV', 'KeyG', 'KeyO', 'KeyF', 'KeyN', 'KeyC', 'KeyT', 'KeyX', 'Tab', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'];
 // IJKL work exactly like WASD (and so like the arrows for movement)
 // (J is left / downfield like the left arrow, since A is sprint)
 const KEY_ALIAS = { KeyI: 'KeyW', KeyJ: 'ArrowLeft', KeyK: 'KeyS', KeyL: 'KeyD' };
@@ -1468,7 +1470,7 @@ function onKeyDown(e) {
     if (hlDel) { e.preventDefault(); if (!e.repeat && hlDel.stage === 'ask') { if (e.code === 'Enter') hlDel.stage = 'go'; else if (e.code === 'Escape' || e.code === 'Backspace') hlDel = null; } return; }
     if (e.code === 'Escape') { if (!e.repeat) { e.preventDefault(); hlClose(); } }
     else if (e.code === 'Enter' || e.code === 'Backspace') { e.preventDefault(); if (!e.repeat) hlPlay(hl.i + (e.code === 'Enter' ? 1 : -1)); }
-    else if (e.code === 'Space') { e.preventDefault(); if (!e.repeat && rec) rec.paused = !rec.paused; }
+    else if (e.code === 'Space') { e.preventDefault(); if (!e.repeat && rec && !rec.rewind) rec.paused = !rec.paused; }
     else if (GAME_KEYS.includes(e.code)) { e.preventDefault(); keys[e.code] = true; }
     return;
   }
@@ -1500,6 +1502,7 @@ function onKeyDown(e) {
   if (e.code === 'Escape' && noPause()) { e.preventDefault(); return; }
   if (e.code === 'Escape') { e.preventDefault(); paused = !paused; resetAsk = false; pauseGoals = false; aim = null; return; }
   if (paused) return;
+  if (finalReplay() && !e.repeat && e.code === 'Enter') { e.preventDefault(); finishLive(); return; }   // (the game's over: Enter = FINISH GAME, any time)
   if (!e.repeat) celebSkip();   // (any key ends a celebration)
   if (e.def && !(rec && rec.replaying)) { e.preventDefault(); dkeys[e.code] = true; if (!e.repeat) defKeyDown({ code: e.code }); return; }   // (two players: the defender's keys; the offense's fall through as the usual codes)
   if (tut && tutStep() && e.code === 'Backspace' && !e.repeat) { e.preventDefault(); tut.passed = false; aim = null; reset(); return; }   // start this step over
@@ -1516,9 +1519,9 @@ function onKeyDown(e) {
   if (halfHold && !(rec && rec.replaying)) { if (state === 'done' && !(rec && (rec.replaying || rec.rewind)) && playSettled() && !bannerUp() && (e.code === 'Space' || e.code === 'Enter')) halfGo = true; return; }   // (not up yet: Space / Enter moves on to the card; the play may be settling or a replay on)
   if (e.code === 'KeyV' && !(state === 'run' && !passerMode)) { if (!(rec && rec.replaying)) bulletMode = !bulletMode; return; }   // same as right-click (running with the ball, V dives instead)
   if (e.code === 'Space') {
-    if (rec && rec.replaying) rec.paused = !rec.paused;   // Space pauses / resumes the replay
+    if (rec && rec.replaying && !rec.rewind && !rec.intro) rec.paused = !rec.paused;   // Space pauses / resumes the replay
     else if (state === 'pre') { /* Space no longer snaps the ball (click the QB / RB or use the SNAP button) */ }
-    else if (state === 'done') { if (!playSettled()) return; if (!finalReplay()) proceed(); else if (rec && rec.frames.length) startReplay(); }
+    else if (state === 'done') { if (!playSettled()) return; if (!finalReplay()) proceed(); else finishLive(); }
     else if (state === 'sim') simAdvance();
     else if (state === 'kick') kickClick();
   } else if (e.code === 'KeyQ') {
@@ -1590,6 +1593,7 @@ const SPEED_BASE = 1.1;   // (the game's default speed: the clock, animations an
 // each step every man's movement is stretched by the slider (his velocity too, so the legs keep up); throwBall scales the ball.
 const SPEED_JUMP = 2.5;   // yd: a move bigger than this in one step is a reset / teleport, not running (left alone)
 function speedStep(dt) {
+  if (saBeatK && !(rec && rec.replaying)) dt *= saTimeK();   // (a stiff arm's hit-stop / slow-motion beat: 07)
   const k = gameSpd();
   if (k === 1 || state === 'pre' || state === 'done' || state === 'sim' || (kickoff && kickoff.forming) || (rec && rec.replaying)) return update(dt);
   const all = allPlayers(), before = all.map(p => [p, p.x, p.y]);
@@ -1613,6 +1617,33 @@ function speedStep(dt) {
 const BRIGHT = { k: 1.12 };   // k = brightness (1 = off)
 const brightCol = v => { const s = `color(srgb ${v} ${v} ${v})`, n = Math.round(v * 255); try { const g = document.createElement('canvas').getContext('2d'); g.fillStyle = '#000'; g.fillStyle = s; if (g.fillStyle !== '#000000') return s; } catch (e) {} return `rgb(${n},${n},${n})`; };   // (an exact grey where the browser has color(); the nearest 8-bit one otherwise)
 const BRIGHT_UP = brightCol(+(1 - 1 / BRIGHT.k).toFixed(5)), BRIGHT_DOWN = brightCol(+(1 / BRIGHT.k).toFixed(5));
+// --- pencil cursor (desktop only: the system pointer is hidden over the canvas). Drawn last in frame(), in screen space (game units), after brightPass ---
+const CURSOR = { len: 34, w: 7, tilt: 0.75, tip: 7, eraser: 6, band: 2.5, press: 3, body: '#f2c230', bodyDark: '#c9971c', wood: '#f1d6a8', lead: '#3a3a3a', eraserCol: '#f08ca0', band2: '#b9bec6', ink: '#2a2a2a', edge: 'rgba(255,255,255,0.9)' };   // px at 1280 wide: length, width, tilt (rad from straight up, leaning right), sharpened tip, eraser, metal band, press-down (px along the pencil when a button is held)
+let curPt = null, curDown = false, cCursorSeen = 0;   // (cCursorSeen: the cold open drew its own prompt cursor this frame: no pencil on top of it)
+window.addEventListener('pointermove', e => { if (e.pointerType === 'mouse') { curPt = pointerPos(e); curDown = (e.buttons & 3) !== 0; } }, true);
+window.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse') { curPt = pointerPos(e); curDown = true; } }, true);
+window.addEventListener('pointerup', e => { if (e.pointerType === 'mouse') curDown = (e.buttons & 3) !== 0; }, true);
+canvas.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse' && !(e.buttons & 3)) curPt = null; });
+function drawCursor() {
+  const want = TOUCH ? '' : 'none'; if (canvas.style.cursor !== want) canvas.style.cursor = want;   // (desktop: hide the system arrow over the canvas)
+  if (TOUCH || !curPt || performance.now() - cCursorSeen < 120) return;
+  const C = CURSOR, x = curPt.x, y = curPt.y, pr = curDown ? C.press : 0, w = C.w / 2;
+  ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  ctx.translate(x, y); ctx.rotate(C.tilt); ctx.translate(0, -pr * 0.3);   // (the tip stays on the hot spot; pressed: it digs in a touch and the pencil drops back)
+  const L = C.len + pr, tipY = -C.tip, bodyY = -(L - C.eraser - C.band), bandY = bodyY - C.band, topY = -L;
+  const shape = () => { ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(w, tipY); ctx.lineTo(w, topY + 2); ctx.quadraticCurveTo(w, topY, w - 2, topY); ctx.lineTo(-w + 2, topY); ctx.quadraticCurveTo(-w, topY, -w, topY + 2); ctx.lineTo(-w, tipY); ctx.closePath(); };
+  ctx.lineJoin = 'round';
+  shape(); ctx.strokeStyle = pageKey() === 'game' && !paused && wxSnowy() ? WX_LOOK.ink : C.edge; ctx.lineWidth = 4.5; ctx.stroke();   // (white outer edge: reads on grass and paper; dark over a snow-covered field)
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(w, tipY); ctx.lineTo(-w, tipY); ctx.closePath(); ctx.fillStyle = C.wood; ctx.fill();   // sharpened wood
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(w * 0.38, tipY * 0.38); ctx.lineTo(-w * 0.38, tipY * 0.38); ctx.closePath(); ctx.fillStyle = C.lead; ctx.fill();   // the lead
+  ctx.fillStyle = C.body; ctx.fillRect(-w, bodyY, 2 * w, tipY - bodyY); ctx.fillStyle = C.bodyDark; ctx.fillRect(w * 0.25, bodyY, w * 0.75, tipY - bodyY);   // yellow body, a shaded facet
+  ctx.beginPath(); ctx.moveTo(-w, tipY); for (let i = 0; i <= 4; i++) ctx.lineTo(-w + i * w / 2, tipY + (i % 2 ? 1.5 : 0)); ctx.lineTo(w, tipY); ctx.fillStyle = C.body; ctx.fill();   // (the scalloped edge where the paint stops)
+  ctx.fillStyle = C.band2; ctx.fillRect(-w, bandY, 2 * w, C.band);   // the metal band
+  ctx.beginPath(); ctx.moveTo(-w, bandY); ctx.lineTo(-w, topY + 2); ctx.quadraticCurveTo(-w, topY, -w + 2, topY); ctx.lineTo(w - 2, topY); ctx.quadraticCurveTo(w, topY, w, topY + 2); ctx.lineTo(w, bandY); ctx.closePath(); ctx.fillStyle = C.eraserCol; ctx.fill();   // the pink eraser
+  shape(); ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.stroke();   // dark outline
+  ctx.beginPath(); ctx.moveTo(-w, tipY); ctx.lineTo(w, tipY); ctx.moveTo(-w, bandY); ctx.lineTo(w, bandY); ctx.moveTo(-w, bodyY); ctx.lineTo(w, bodyY); ctx.lineWidth = 1; ctx.stroke();
+  ctx.restore();
+}
 function brightPass() {   // (frame(): last, over everything)
   if (BRIGHT.k === 1) return;
   dmHold++; ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'color-dodge'; ctx.fillStyle = BRIGHT_UP; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.restore(); dmHold--;
@@ -1705,6 +1736,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   ctx.restore();
   brightPass();
   ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0); perfDraw(performance.now() - paintT0, now); drawPerfHud(); ctx.restore();   // (the readout times the brighten pass too)
+  drawCursor();   // (the pencil pointer: last of all, never brightened)
   if (TUI.on) {   // how long painting took, smoothed: slow frames drop the paint rate to ~30 (so the game keeps up and the thread isn't always behind), fast ones bring it back
     paintAvg += (performance.now() - paintT0 - paintAvg) * 0.1;
     if (paintAvg > PAINT_SLOW) paintMin = PAINT_MIN_SLOW; else if (paintAvg < PAINT_SLOW * 0.65) paintMin = PAINT_MIN;
@@ -2208,8 +2240,8 @@ for (const [type, k] of [['pointerdown', 'pd'], ['pointermove', 'pm'], ['pointer
     } else ONL.gPid = null;
   }
   if (k === 'pd') onlSendKm();   // (a tap can be the kick's click: the meter value this guest saw goes first)
-  if (k === 'pd') ONL.gUi = overUiBtn(p);   // (a press on a button stays a screen spot for the whole gesture; one on the field is scaled into the host's view)
-  const hp = ONL.gUi ? { x: onlPtX(p), y: p.y } : onlPtOut(p), hx = Math.round(hp.x), hy = Math.round(hp.y);   // (the host's frame)
+  if (k === 'pd') ONL.gUi = overUiBtn(p);   // (a press on a button stays a screen spot for the whole gesture, never mirrored: no button moves with the drive direction; one on the field is scaled into the host's view)
+  const hp = ONL.gUi ? { x: p.x, y: p.y } : onlPtOut(p), hx = Math.round(hp.x), hy = Math.round(hp.y);   // (the host's frame)
   { const pm = { t: 'in', k, x: hx, y: hy, q: ONL.pq = (ONL.pq || 0) + 1 }; if (k === 'pm') NET.sendFast(pm); else NET.send(pm); }   // (q: the order they were made in. A drag's moves may be lost (the next one replaces them): the fast channel; down / up always arrive)
   ONL.gLastP = { x: hx, y: hy }; ONL.gClient = { x: e.clientX, y: e.clientY };
   if (k === 'pu') setTimeout(() => { if (ONL.gLastP && ONL.gPid == null) NET.send({ t: 'in', k: 'pu', x: ONL.gLastP.x, y: ONL.gLastP.y }); }, 150);   // (the release is sent twice: the host ignores the second one, a lost first one no longer leaves the aim stuck)

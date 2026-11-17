@@ -30,19 +30,23 @@ function pickDiveSpot(d) {
   }
   return best;
 }
+// where a pass in the air is, from its own numbers only (p, age, the throw's from / to / height): the host's updateFlight and the online guest's drawing share it
+function flightPose(b) {
+  b.x = b.fx + (b.tx - b.fx) * b.p;
+  b.y = b.fy + (b.ty - b.fy) * b.p;
+  b.z = Math.sin(Math.PI * b.p) * b.h + (b.z0 || 0) * (1 - b.p);   // (z0: a tall QB lets it go higher)
+  if (b.chest != null && b.age < THROW_LIFT) b.z = b.chest + (b.z - b.chest) * smooth01(b.age / THROW_LIFT);   // (it leaves the chest hold: pulled up to the release point, not popped there)
+  // a thrown spiral: the nose follows the arc (up on the way out, tipping over and down on the way in)
+  // while the ball spins about its long axis
+  b.nose = Math.atan2((b.ty - b.fy) - Math.PI * b.h * Math.cos(Math.PI * b.p), b.tx - b.fx);
+  b.spiral = b.age * SPIRAL.rate * (b.bullet ? SPIRAL.bullet : 1) * (1 - PRESSURE_THROW.duckSpin * (b.duck || 0));
+  if (b.duck) b.nose += b.duck * (0.5 * Math.sin(b.age * 11) + 0.25 * Math.sin(b.age * 4.3));   // wobbling end over end-ish
+}
 function updateFlight(dt) {
   const bx0 = ball.x, by0 = ball.y;   // (where it was last frame: the body check sweeps the whole step, so a fast ball can't skip over a defender)
   ball.age += dt;
   ball.p = Math.min(ball.p + dt / ball.T, 1);
-  ball.x = ball.fx + (ball.tx - ball.fx) * ball.p;
-  ball.y = ball.fy + (ball.ty - ball.fy) * ball.p;
-  ball.z = Math.sin(Math.PI * ball.p) * ball.h + (ball.z0 || 0) * (1 - ball.p);   // (z0: a tall QB lets it go higher)
-  if (ball.chest != null && ball.age < THROW_LIFT) ball.z = ball.chest + (ball.z - ball.chest) * smooth01(ball.age / THROW_LIFT);   // (it leaves the chest hold: pulled up to the release point, not popped there)
-  // a thrown spiral: the nose follows the arc (up on the way out, tipping over and down on the way in)
-  // while the ball spins about its long axis
-  ball.nose = Math.atan2((ball.ty - ball.fy) - Math.PI * ball.h * Math.cos(Math.PI * ball.p), ball.tx - ball.fx);
-  ball.spiral = ball.age * SPIRAL.rate * (ball.bullet ? SPIRAL.bullet : 1) * (1 - PRESSURE_THROW.duckSpin * (ball.duck || 0));
-  if (ball.duck) ball.nose += ball.duck * (0.5 * Math.sin(ball.age * 11) + 0.25 * Math.sin(ball.age * 4.3));   // wobbling end over end-ish
+  flightPose(ball);
   const remaining = (1 - ball.p) * ball.T;
   // as it comes down, whichever receiver is clearly closest to the spot becomes the one catching it
   if (remaining < 0.35) {
@@ -457,9 +461,11 @@ function updateReturner(d, dt) {
       d.stiffEnd = clock + BALL_ARM.ret[0] + Math.random() ** (STIFF.skew / Math.max(0.4, pw)) * (BALL_ARM.ret[1] - BALL_ARM.ret[0]);
       if (ch.action === 'dive') { ch.action = null; ch.act = null; ch.z = 0; ch.vx *= 0.3; ch.vy *= 0.3; }   // (an upper-body dive caught on the arm: pulled into the hold-off)
       ch.tackling = false; ch.resolved = true; d.stiffDiver = false;
-      d.stiffSide = side; d.stiffLock = { d: ch, t0: clock, t: clock, ret: true, win: stiffOdds(d, ch) * (d.stiffSwap ? STIFF.wrong : 1), grip: 0.5,
-        rip: STIFF.rip * 0.4 * rm(ch, 'tck', 'tackle') / Math.max(0.4, pw) };
-      ch.stiffBy = d;   // (the same hold-off as the offense's: he's pinned at the end of the arm, fighting it, until one of them wins the struggle)
+      const ang = d.saAng || saAngle(d, ch), sk = saSitK(d, ang);
+      d.stiffSide = side; d.stiffLock = { d: ch, t0: clock, t: clock, ret: true, win: stiffOdds(d, ch, sk) * (d.stiffSwap ? STIFF.wrong : 1), grip: 0.5,
+        rip: STIFF.rip * 0.4 * rm(ch, 'tck', 'tackle') / Math.max(0.4, pw), ang, k: sk, noTug: !!tut };
+      ch.stiffBy = d;
+      if (typeof saPick === 'function') saPick(d, ch, ang);   // (the same hold-off as the offense's: he's pinned at the end of the arm, fighting it, until one of them wins the struggle)
     }
     if (d.stiffLock && d.stiffLock.ret) {   // (the man held off: eased onto the end of the arm, jostling, like updateStiffLock)
       const L = d.stiffLock, ch = L.d;
@@ -474,7 +480,7 @@ function updateReturner(d, dt) {
           d.stiff = d.stiffTgt = null; d.stiffSet = false; d.stiffSide = 0; d.stiffLock = null;
           ch.stiffBy = null; ch.engaged = false; ch.reach = false;
           if (tug < 0) return retTackled(d, ch);
-          retShove(d, ch);
+          retShove(d, ch, 0.3);
         }
       }
     }
@@ -483,11 +489,12 @@ function updateReturner(d, dt) {
     if (mine && heldFor < STIFF.dur[1] && (dkeys.KeyQ || heldFor < STIFF.minHold) && d.stiffEnd < clock + 0.2) d.stiffEnd = clock + 0.2;
     if (d.stiff && clock >= d.stiffEnd) {
       const ch = d.stiffTgt; d.stiff = d.stiffTgt = null; d.stiffSet = false;
-      const heldAll = d.stiffLock && d.stiffLock.ret ? clock - d.stiffLock.t0 : 0;
+      const heldAll = d.stiffLock && d.stiffLock.ret ? clock - d.stiffLock.t0 : 0, sk = d.stiffLock && d.stiffLock.ret ? d.stiffLock.k ?? 1 : ch ? saSitK(d, d.saAng || saAngle(d, ch)) : 1;
       if (d.stiffLock && d.stiffLock.ret) { if (ch) { ch.stiffBy = null; ch.engaged = false; ch.reach = false; } d.stiffLock = null; }
       d.stiffSide = 0;
       // let go with nobody winning the struggle: the shove (likelier the longer he held him off; worse if you let go early)
-      if (ch && !ch.action && Math.random() < Math.min(STIFF.capLong, stiffOdds(d, ch) * (1 + STIFF.grow * heldAll)) * (d.stiffSwap ? STIFF.wrong : 1) * (mine && heldFor < STIFF.minHold ? STIFF.early : 1)) retShove(d, ch);
+      const odds = ch && !ch.action ? Math.min(STIFF.capLong, stiffOdds(d, ch, sk) * (1 + STIFF.grow * heldAll)) * (d.stiffSwap ? STIFF.wrong : 1) * (mine && heldFor < STIFF.minHold ? STIFF.early : 1) : 0, roll = Math.random();
+      if (ch && !ch.action && roll < odds) retShove(d, ch, odds - roll);
       else if (ch) ch.resolved = false;   // (he hung on through it: free to go for the tackle again, rolled on contact as usual)
       d.stiffDiver = false;
     }
@@ -495,7 +502,7 @@ function updateReturner(d, dt) {
     const ch = [qb, rb, ...ols, ...recs].filter(p => !p.action && p.x < d.x + 0.3 * YD && dist(p, d) <= STIFF_RANGE).sort((a, b) => dist(a, d) - dist(b, d))[0];
     d.stiffNext = clock + BALL_ARM.retTry;
     const fresh = ch && ch !== d.stiffRolled; if (ch) d.stiffRolled = ch;   // (one roll per man)
-    if (fresh && Math.random() < 0.6) { d.stiffAt = clock; d.stiff = { t: 0 }; d.stiffTgt = ch; d.stiffEnd = clock + 0.3 + Math.random() * 0.25; ch.tackling = false; ch.resolved = true; }
+    if (fresh && Math.random() < 0.6) { d.stiffAt = clock; d.stiff = { t: 0, t0: clock }; saCount(d); d.saAng = saAngle(d, ch); d.stiffTgt = ch; d.stiffEnd = clock + 0.3 + Math.random() * 0.25; ch.tackling = false; ch.resolved = true; }
   } else if (udCtl(d) && dkeys.KeyQ && clock - (d.stiffAt ?? -9) > 0.5) {   // (your return: hold Q and the arm goes out on the first man to close in)
     const ch = retStiffTgt(d);
     if (ch) retStiffOn(d, ch);
@@ -548,8 +555,9 @@ function updateReturner(d, dt) {
     let tryTxt;
     // playing the defense (SIM DEFENSE off): the try is played, not simulated. Yours: you pick kick or two (the sides flip back to your offense);
     // theirs: the computer picks and you defend the kick / the two-point play (proceed flips the sides)
-    const liveTry = !puntRet && !tut && twoP && twoP.ai && !twoP.koOnly && !(game.quarter >= 5 && lead > 0) && (aiOff() ? d.team === 'def' : d.team === 'def');
-    if (liveTry) { tryFlip = aiOff() ? 'back' : 'to'; patNext = true; tryTxt = aiOff() ? 'your try is next' : 'their try is next'; }
+    const pvpTry = !puntRet && !tut && pvpOn() && !(game.quarter >= 5 && lead > 0);   // (two humans, local or online: the scorer gets the normal kick / two choice, v0.46)
+    const liveTry = pvpTry || (!puntRet && !tut && twoP && twoP.ai && !twoP.koOnly && !(game.quarter >= 5 && lead > 0) && (aiOff() ? d.team === 'def' : d.team === 'def'));
+    if (liveTry) { tryFlip = pvpTry ? 'swap' : aiOff() ? 'back' : 'to'; patNext = true; tryTxt = aiOff() && !pvpTry ? 'your try is next' : 'their try is next'; }
     else if (game.quarter >= 5 && lead > 0) tryTxt = 'no try needed';
     else if (goTwo) { const ok = Math.random() < defTry(MATCH.opp, MATCH.you).two; if (ok) game.red += 2; tryTxt = ok ? 'they go for two... and get it' : 'they go for two... and are stopped'; }
     else { const ok = Math.random() < 0.94; if (ok) game.red += 1; tryTxt = ok ? 'extra point is good' : 'extra point is NO GOOD'; }
@@ -584,7 +592,7 @@ function cpuReturnMove(d) {
   if ((r -= w.spin) < 0) act('KeyR', 'spin');
   else if ((r -= w.juke) < 0) act(side < 0 ? 'KeyW' : 'KeyS', 'juke');
   else if ((r -= w.truck) < 0) { d.retMove = { until: clock + 0.6, truck: true, kind: 'truck' }; popup(d, 'TRUCK', '#ffd94a'); }
-  else if ((r -= w.stiff) < 0) { if (lowTk(ch)) return; d.stiff = { t: 0 }; d.stiffTgt = ch; d.stiffEnd = clock + 0.35; d.stiffAt = clock; ch.tackling = false; ch.resolved = true; d.retMove = { until: clock + 0.6, kind: 'stiff' }; }
+  else if ((r -= w.stiff) < 0) { if (lowTk(ch)) return; d.stiff = { t: 0, t0: clock }; saCount(d); d.saAng = saAngle(d, ch); d.stiffTgt = ch; d.stiffEnd = clock + 0.35; d.stiffAt = clock; ch.tackling = false; ch.resolved = true; d.retMove = { until: clock + 0.6, kind: 'stiff' }; }
   else if (Math.hypot(d.vx, d.vy) > 2 * YD && !(d.hurdleReady > clock)) {
     d.action = 'hurdle'; d.act = { t: 0, dur: HURDLE.userDur, vx: d.vx, vy: d.vy, h: HURDLE.userH, user: false, space: true, cleared: [], style: hurdleStyle(false) }; hurdleWings(d, false);
     d.hurdleReady = clock + HURDLE.cooldown; d.retMove = { until: clock + HURDLE.userDur };   // (wings only if he gets over someone: chaseReturner)
@@ -692,8 +700,8 @@ function chaseReturner(p, d, dt) {
     const dur = p.hitStick ? 0.2 : 0.25;
     const aimT = tackleAim(p, d, dur);
     startDive(p, aimT.x, aimT.y, dur, LUNGE_DIST * PICK_RETURN.lunge * (p.hitStick ? 1.3 : 1));
-    p.tkStyle = p.hitStick ? 'hit' : Math.random() < (square ? GATOR.front : GATOR.other) ? 'gator' : 'wrap';   // (picked at launch: a gator roll goes under a stiff arm)
-    p.lowDive = !square && !p.hitStick && Math.random() < 0.5;   // (from behind: often at the ankles)
+    p.tkStyle = p.hitStick ? 'hit' : Math.random() < (square ? GATOR.front : GATOR.other) + saAdapt(p, d) ? 'gator' : 'wrap';   // (picked at launch: a gator roll goes under a stiff arm)
+    p.lowDive = !p.hitStick && Math.random() < (square ? 0 : 0.5) + saAdapt(p, d);   // (from behind: often at the ankles)
     p.tackling = true; p.resolved = false; p.recoverUntil = clock + 0.95;
   }
 }
@@ -1081,8 +1089,22 @@ function switchDefender(eKey, oKey) {
   pickUd(list[0] === ud && list[1] ? list[1] : list[0]);
 }
 function defClick(p) {
-  const w = screenToWorld(p), best = defenders().sort((a, b) => Math.hypot(a.x - w.x, a.y - w.y) - Math.hypot(b.x - w.x, b.y - w.y))[0];
+  const w0 = screenToWorld(p);
+  if (TOUCH && ud && ud.stiffBy && Math.hypot(ud.x - w0.x, ud.y - w0.y) < 2.5 * YD) { saChop(); return; }   // (touch: a tap on your held defender = CHOP)
+  const w = w0, best = defenders().sort((a, b) => Math.hypot(a.x - w.x, a.y - w.y) - Math.hypot(b.x - w.x, b.y - w.y))[0];
   if (best && Math.hypot(best.x - w.x, best.y - w.y) < 2.5 * YD) { if (udFlight) udFlight.manual = true; pickUd(best); if (tut) tutEvent('dswitch'); }
+}
+// CHOP (v0.46): your defender held off by a stiff arm (either path: the carrier's lock or the returner's) chops at the arm. In the window (every
+// STIFF.chop.every s of the hold, for `window` s: drawDefOverlay flashes it) his grip goes toward tearing it off; a mistimed one gives the runner ground
+const saChopWin = (L, now) => ((now - L.t0) % STIFF.chop.every) < STIFF.chop.window;
+function saChop() {
+  const d = ud, r = d && d.stiffBy, L = r && r.stiffLock, C = STIFF.chop;
+  if (!L || L.d !== d || (d.chopAt != null && clock >= d.chopAt && clock < d.chopAt + C.cd) || L.noTug) return;
+  d.chopAt = clock;
+  const good = saChopWin(L, clock);
+  L.grip = Math.max(-0.01, Math.min(1, (L.grip ?? 0.5) + (good ? -C.good : C.bad)));
+  popup(d, good ? 'CHOP!' : 'MISTIMED', good ? '#7fe3ff' : '#ff9f1c', undefined, true, true);
+  if (good) try { stiffSfx(); } catch (e) {}
 }
 // your presses while you're on defense (true: handled)
 function defKeyDown(e) {
@@ -1091,6 +1113,7 @@ function defKeyDown(e) {
   if (state === 'kick' && kick && !kick.kickoff) return userKickRush(c);   // (their FG / PAT / punt: R leaps, V / Tab dives at it once your rusher is free)
   if (state === 'done' || state === 'sim' || state === 'kickoff' || state === 'kick') return false;
   if (c === 'KeyN') { SETTINGS.defHints = !SETTINGS.defHints; saveSettings(); return true; }
+  if (c === 'KeyX') { saChop(); return true; }   // X: CHOP at the arm that's holding you off (in its window)
   if (state === 'picked' && ud && ud.hasBall && udCtl(ud) && ['KeyR', 'KeyF', 'KeyC', 'KeyQ', 'KeyE', 'KeyV', 'Tab'].includes(c)) { returnMove(c); return true; }   // the return: R spin, F juke, C truck, Q stiff arm, E hurdle, V / Tab dive (the pylon near the corner)
   if (c === 'KeyQ' && state === 'pre') { defAudible(); return true; }   // Q: the defensive audible
   if (c === 'KeyO' || c === 'KeyQ' || c === 'KeyE') { switchDefender(c === 'KeyE', c === 'KeyO'); if (tut) tutEvent('dswitch'); return true; }
@@ -1135,24 +1158,21 @@ function retStiffTgt(d) {
 }
 function retStiffOn(d, ch) {
   if (ch && d.stiffTgt && d.stiffTgt !== ch && d.stiffLock && d.stiffLock.ret) return;   // (one arm: only one man held off at a time)
-  d.stiffAt = clock; d.stiff = d.stiff || { t: 0 }; d.retMove = { until: clock + 0.6, kind: 'stiff' };
+  d.stiffAt = clock; if (!d.stiff) { d.stiff = { t: 0, t0: clock }; saCount(d); } d.retMove = { until: clock + 0.6, kind: 'stiff' };
   d.stiffTgt = ch || null; d.stiffDiver = false;
+  d.saAng = ch ? saAngle(d, ch) : null;   // (the angle, read once: before his dive is cancelled below)
   d.stiffEnd = clock + 0.35;
   if (ch) { ch.tackling = false; ch.resolved = true; }
 }
 // a returner's stiff arm won: the same reactions as the offense's (shoved down or driven back with his head snapped, rarely the iconic one)
-function retShove(d, ch) {
-  ch.tackling = false; ch.resolved = true;
-  const fall = Math.random() < STIFF.fall;
-  const ico = missReel(d, ch, 'stiff', fall ? 'stiffDown' : 'stiffShove');
-  if (!fall) { ch.slow = Math.max(ch.slow || 0, STIFF.stagger); ch.stiffed = clock; }
-  d.boostUntil = clock + POWER_BOOST.time;
-  if (!ico) popup(d, 'STIFF ARM', '#ffd94a');   // (steam off the returner's helmet)
+function retShove(d, ch, margin = 0.2) {
+  saWon(d, ch, margin);   // (the same outcome table as the offense's: 05)
   stiffSfx();
 }
 // ...or the chaser tore the arm off and wrapped him up
 function retTackled(d, p) {
   msg = 'Arm torn away';
+  p.saLoss = { k: pickOf(['rip', 'rip', 'duck', 'grab']), t: clock };   // (looks only: how the wrap-up is drawn)
   tackleSfx(false); wrapTackle(d, p);
   if (puntRet) return puntReturned(d, '');
   return pickEnd(d, `${ball.scoopReturn ? 'TURNOVER!' : 'INTERCEPTED!'}  Tackled on the return`);
@@ -1380,7 +1400,7 @@ function userTackle(d, c) {
   if (d.hitReq && clock - d.hitReq < DEF.hit.window && dd <= DEF.hit.range * YD) { d.hitReq = 0; d.userDive = false; return userLunge(d, c, 1, true); }   // T: the hit stick
   if (d.diveReq && (d.engaged || d.userBlockUntil > clock)) d.diveReq = 0;   // (locked up with a blocker: no dive until you shed him)
   if (d.diveReq && clock - d.diveReq < 0.25 && dd <= DEF.dive.range * YD) { d.diveReq = 0; userLunge(d, c, DEF.dive.reach, false); d.userDive = true; d.recoverUntil = clock + DEF.dive.recover; return; }   // F: dive from a distance
-  if (d.secureReq && clock - d.secureReq < DEF.secure.window && dd <= DEF.secure.range * YD) { d.secureReq = 0; d.userDive = false; userLunge(d, c, 1, false); d.secure = true; popup(d, 'SECURE TACKLE', '#7fe3ff', undefined, true); return; }   // G: wrap up, no stick
+  if (d.secureReq && clock - d.secureReq < DEF.secure.window && dd <= DEF.secure.range * YD) { d.secureReq = 0; d.userDive = false; userLunge(d, c, 1, false); d.secure = true; return; }   // G: wrap up, no stick
   if (dd <= LUNGE_RANGE) { d.userDive = false; userLunge(d, c, 1, false); }   // close enough: he wraps up on his own
 }
 // a lineman (or blitzer) locked up with a blocker: toward the ball = bull rush, around = swim, away = let go and drop out
@@ -2447,6 +2467,10 @@ function drawDefOverlay() {
   if (!ud || state === 'done' || state === 'sim' || state === 'kick' || state === 'kickoff' || bannerUp() || (rec && rec.replaying)) return;
   const z = camZ(), sp = p => [W / 2 + MIRROR * (p.x - camX) * z, viewCenterY() + (p.y - camY) * z];
   ctx.save();
+  { const L = ud.stiffBy && ud.stiffBy.stiffLock;   // held off by a stiff arm: the CHOP window flashes as a white ring (X / tap him)
+    if (L && L.d === ud && !L.noTug) { const [x, y] = sp(ud), on = saChopWin(L, clock); ctx.strokeStyle = on ? '#ffffff' : 'rgba(255,255,255,0.3)'; ctx.lineWidth = on ? 4 : 2;
+      ctx.beginPath(); ctx.ellipse(x, y + FOOT * z, (on ? 1.15 : 0.9) * YD * z, (on ? 0.5 : 0.4) * YD * z, 0, 0, Math.PI * 2); ctx.stroke();
+      if (on) { ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.fillText(TOUCH ? 'TAP' : 'X', x, y - 2.4 * YD * z); } } }
   if (state === 'pre') {   // the whole defense's job before the snap: zones as circles, man coverage as a line to his receiver
     ctx.lineWidth = 2; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     // everybody going at the quarterback (the linemen and the blitzers): a red dashed line, the same as the man / zone lines, ending in an arrow
@@ -2460,7 +2484,7 @@ function drawDefOverlay() {
     for (const d of back7) {
       if ((tut && tut.bench.includes(d)) || (oo && oo.bench.includes(d))) continue;
       const [dx, dy] = sp(d), mine = d === ud;
-      ctx.strokeStyle = mine ? '#ffd94a' : 'rgba(255,255,255,0.75)'; ctx.fillStyle = ctx.strokeStyle;
+      ctx.strokeStyle = mine ? '#ffd94a' : wxInkA(0.75); ctx.fillStyle = ctx.strokeStyle;
       if (d.blitz) continue;   // (drawn below with the line: everyone coming at the QB gets the same red arrow)
       if (d.man) {
         const [mx, my] = sp(d.man);
@@ -2645,6 +2669,7 @@ function update(dt) {
   if (tut && tut.defAsk) return;   // (the tutorial's "play defense or sim it?" card: nothing moves until you pick)
   clock += dt;
   if (SL.on) slTick(dt);   // (sideline people: their clock; hides the chain crew for kicks)
+  injKneelTick();   // (an injury timeout's kneel, then the clap: 07)
   wxTick(dt);
   // each defender's real movement over the last frame, whatever code moved him (pursue picks its speed up from it)
   for (const d of [...(back7 || []), ...(dl || [])]) { if (d.mpx != null) { d.mvx = (d.x - d.mpx) / dt; d.mvy = (d.y - d.mpy) / dt; } d.mpx = d.x; d.mpy = d.y; }
@@ -2848,6 +2873,11 @@ function update(dt) {
       // the QB sliding / a carrier protecting it (G) wraps both arms around it: the ball sits at his chest between the hands
       ball.tucked = false;
       ball.x = holder.x + figX(holder, 4 * S) * holder.face; ball.y = holder.y; ball.z = holder.z + figZ(holder, (a ? 5 : 7) * S);
+    } else if (a === 'toetap' && holder.hasBall && holder.act && holder.act.flat) {
+      // the laid-out toe tap (TOE_FINE.flat): the ball stays out in his reaching hand, which swings forward and down with his body as it tips about his toes
+      // (the same hand spot drawPlayer draws the arm to: toeHandW; brought in to his chest only after the second foot is down)
+      if (holder.catchFrom && !holder.act.h0) { toeHandFrom(holder, holder.catchFrom); holder.catchFrom = null; }   // (the hand itself carries the ball from the catch spot: no second glide)
+      const h = toeHandW(holder); ball.x = h.x; ball.y = holder.y; ball.z = Math.max(0, h.z);
     } else if (holder.hasBall && ((holder.oneHanded && (a === 'jump' || a === 'dive')) || (a === 'dive' && (holder.diveCaught || holder.jumpCaught || (holder.act && holder.act.pt != null))) || (a === 'jump' && holder.jumpCaught))) {
       // a catch / pick in the air (or a leap that came down off his feet, or a dive that has landed): the ball comes in from full reach to the chest
       const k = a === 'dive' && !holder.diveCaught && !holder.oneHanded ? 1 : airTuckK(holder);   // (landed with it / came down off his feet: already in his arms, never out at the fingertips)
@@ -3190,9 +3220,7 @@ let passPull = 1;   // < 1 while passing: the extra pull-back on top of the came
 // is the whole view (all four corners, the same rectangle drawCrowd tests) inside the stadium's rounded bowl at this camera centre / total zoom?
 function viewInBowl(cxp, cyp, zc) {
   const vc = viewCenterY(), vTop = cyp - (vc - TOP_BAR) / zc - 24, vBot = cyp + (H - FIELD_BOT - vc) / zc + 24, vL = cxp - (W / 2 + PAD) / zc - 48, vR = cxp + (W / 2 + PAD) / zc + 48;
-  const ecx = FIELD / 2, ecy = MID, ea = FIELD / 2 + ENDZONE + CROWD.endGap + CROWD.end, eb = MID + CROWD.depth, er = eb * 0.8;
-  const inB = (px, py) => { const dx = Math.abs(px - ecx), dy = Math.abs(py - ecy), a = ea - 10, b = eb - 10; if (dx > a || dy > b) return false; const qx = dx - (a - er), qy = dy - (b - er); return !(qx > 0 && qy > 0 && qx * qx + qy * qy > er * er); };
-  return inB(vL, vTop) && inB(vR, vTop) && inB(vL, vBot) && inB(vR, vBot);
+  return inBowlOut(vL, vTop, 10) && inBowlOut(vR, vTop, 10) && inBowlOut(vL, vBot, 10) && inBowlOut(vR, vBot, 10);   // (the stands' rim: bowlGeo, the same curve drawCrowd draws)
 }
 // the QB is up near the line and heading for it, a runner by his rating: the defense reads run before he crosses
 function qbLooksRun() {

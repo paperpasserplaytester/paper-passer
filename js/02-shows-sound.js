@@ -43,7 +43,9 @@ function captureFrame() {
       relFx: p.relFx ? { ...p.relFx, t: rec.t - (clock - p.relFx.t) } : null,
       headTop: p.headTop ? { ...p.headTop, t: rec.t - (clock - p.headTop.t) } : null,
       catchFx: p.catchFx ? { ...p.catchFx, t: rec.t - (clock - p.catchFx.t) } : null,
-      mvFx: p.mvFx ? { ...p.mvFx, t: rec.t - (clock - p.mvFx.t) } : null, mlTight: p.mlTight,   // (move looks: a look's tail after the move)
+      mvFx: p.mvFx ? { ...p.mvFx, t: rec.t - (clock - p.mvFx.t) } : null, mlTight: p.mlTight,
+      saLook: p.saLook || null, saT1: p.saT1 != null ? rec.t - (clock - p.saT1) : null, saHeld: p.saHeld || null, saTx: p.saTx, saTy: p.saTy, saTz: p.saTz,   // (stiff-arm looks: the look, its lock clock, the held man's look, the target's spot)
+      saLoss: p.saLoss ? { k: p.saLoss.k, t: rec.t - (clock - p.saLoss.t) } : null, lid: p.lid ? { ...p.lid, t: rec.t - (clock - p.lid.t) } : null,   // (move looks: a look's tail after the move)
       cel: p.cel ? { ...p.cel, t0: rec.t - (clock - p.cel.t0) } : null, oneHanded: p.oneHanded, oneAt: p.oneAt,
       falterUntil: rec.t + ((p.falterUntil || 0) - clock), stumbleRec: p.stumbleRec != null ? rec.t - (clock - p.stumbleRec) : null })), ps),
     ball: { x: ball.x, y: ball.y, z: ball.z, lift: ballLift(), rot: ball.rot, nose: ball.nose, snapNose: ball.snapNose, spiral: ball.spiral, wob: ball.wob, tucked: ball.tucked, inAir: ball.inAir, tx: ball.tx, ty: ball.ty, live: ball.live },
@@ -653,7 +655,8 @@ const HLREEL = {
   gamePool: 14, endBudget: 90, endClips: 14,                    // the whole game's reel (behind the result screen): tapes kept while the game is played, its length in s, most clips
   defMin: 2,                                                    // the defense's best plays (picks, forced fumbles, big hits, sacks, break-ups) that always make a reel when there are any
   yd: 0.5, td: 40, longTd: 0.4, turnover: 45, fg: 0.8, fgBase: 15, fgFrom: 35,   // weights: per yard gained, a touchdown (+ per yard over 20), a turnover, a field goal (per yard over fgFrom)
-  ev: { iconic: 45, spectacular: 40, moss: 35, tipcatch: 35, hit: 32, pbu: 16, move: 12, broken: 10, block: 12 }, evCap: { move: 3, broken: 3 },   // per moment; a kind counts up to its cap in one play (default 1)
+  celebHype: 0.6, celebTail: 4.5, celebEv: ['pick', 'poWin', 'bowlWin'],   // a celebration this hyped (or a cast of 2+, or one of celebEv) is part of its play's clip: the tape runs on up to celebTail s past the whistle (never more), weight ev.celeb
+  ev: { iconic: 45, spectacular: 40, moss: 35, tipcatch: 35, hit: 32, pbu: 16, move: 12, broken: 10, block: 12, celeb: 14 }, evCap: { move: 3, broken: 3 },   // per moment; a kind counts up to its cap in one play (default 1)
   air: { min: 0.9, pre: 0.5, post: 0.9, zoom: 0.84, w: 18 },    // a completed pass in the air min s or longer is shown from pre s before the throw to post s after the catch (the shot widens by zoom while it flies); w = its score
   smooth: { pan: 6, panCap: 60 * YD, zoom: 4.5, zoomCap: 2.5,   // the director's springs: how fast the pan / the zoom settle (1/s; higher = tighter, lower = floatier) and their top speeds (px/s; zoom in e-folds a second)
             lead: 3, focus: 3.5, near: 2,                        // eases (1/s): the runner's lead turning on / with a cut, the hold on a blocker, the push-in when defenders close
@@ -661,7 +664,7 @@ const HLREEL = {
             fadeOut: 0.2, dip: 0.5, dipIn: 0.22 },               // s the picture darkens into a cut / a clip's end; how dark a near (panned) cut dips, and s it takes to come back
   cross: 0.4, crossNear: 0.3,                                  // s the last play's picture takes to fade away over the next one (a new clip / a far cut; a near cut inside one play)
   fade: 0.3, panYd: 12, angles: [1, 1.1, 0.94],              // s of fade a new clip comes in under; parts of one play closer than panYd are joined by a camera pan, further by that fade; zoom of each part in turn (a new angle)
-  pop: { td: [1, 1], pick: [0.95, 1], fumble: [0.9, 1], iconic: [0.8, 0, 1], spectacular: [0.85], moss: [0.8], tipcatch: [0.7], hit: [0.7, 0, 1], pbu: [0.5], move: [0.45, 0, 1], broken: [0.45], block: [0.4], def: [0.5] },   // the crowd at each moment: [level, two clips layered, the ooh first]
+  pop: { td: [1, 1], pick: [0.95, 1], fumble: [0.9, 1], iconic: [0.8, 0, 1], spectacular: [0.85], moss: [0.8], tipcatch: [0.7], hit: [0.7, 0, 1], pbu: [0.5], move: [0.45, 0, 1], broken: [0.45], block: [0.4], celeb: [0.8, 1], def: [0.5] },   // the crowd at each moment: [level, two clips layered, the ooh first]
   bgPaper: 0.5,                                                 // how much of the result screen's paper covers the reel behind it (0 = none, 1 = hidden)
   bonus: { lead: 10, down: 6, star: 6 },                        // ties / takes the lead, a 3rd / 4th down converted, a Star Factor player (glow on) made the moment
   perKind: 3, perMan: 2, monster: 4,                            // variety: clips of one kind, clips of one player (unless he has `monster`+ qualifying plays)
@@ -737,6 +740,7 @@ function hsCollect(r) {
   const m = r && r.hs;
   if (!m || m.done || r.replaying || r.hl) return;
   m.done = true;
+  { const c = r.cel, W = HLREEL; if (c && (c.hy >= W.celebHype || c.n > 1 || W.celebEv.includes(c.ev))) { m.cel = c; m.score += W.ev.celeb; m.apex = [...(m.apex || []), { t: c.t, k: 'celeb', i: -1 }]; } }   // (a big celebration: noted by celebBegin, after the whistle that scored the play)
   if (m.score < HLREEL.minScore || !htOn('highlights') || !hsOn()) return;
   // a full pool drops its weakest clip for a better one (never one of the last defMin defensive clips): the pools are the cap on what is kept in memory
   const lowOf = (L, cap) => { if (L.length < cap) return null; const nd = L.filter(c => c.def).length, C = L.filter(c => !c.def || nd > HLREEL.defMin); return (C.length ? C : L).reduce((a, c) => (c.score < a.score ? c : a)); };
@@ -772,7 +776,8 @@ function hsTape(r, m) {
   // the cut: one window per moment, plus the finish of a score (the last yards and the goal-line cross); no moment at all = one window up to the whistle.
   // Nothing after end + out: no pile, no celebration.
   const stop = end + W.out, wOf = e => W.ev[e.k] || W.turnover;
-  const raw = (m.apex || []).map(e => { const [pre, post] = W.cut[e.k] || W.cut.def; return { a: e.t - pre, b: Math.min(stop, e.t + post), w: wOf(e) }; }).filter(w => w.b > w.a);
+  const stopC = m.cel && m.cel.t < fr[fr.length - 1].t ? Math.max(stop, Math.min(fr[fr.length - 1].t, end + W.celebTail)) : stop;   // (a big celebration: its tail is kept, capped)
+  const raw = (m.apex || []).filter(e => e.k !== 'celeb').map(e => { const [pre, post] = W.cut[e.k] || W.cut.def; return { a: e.t - pre, b: Math.min(stop, e.t + post), w: wOf(e) }; }).filter(w => w.b > w.a);
   if (!raw.length) raw.push({ a: end - (W.win[m.type] || W.win.gain)[0], b: stop, w: Infinity });
   if (m.air) raw.push({ a: m.air[0] - W.air.pre, b: Math.min(stop, m.air[1] + W.air.post), w: W.air.w });   // (the throw: the ball followed from the release into his hands)
   const fin = ['td', 'pickTd', 'fg'].includes(m.type) || m.six ? { a: end - W.fin, b: stop, w: Infinity, fin: true } : null;
@@ -784,8 +789,8 @@ function hsTape(r, m) {
   let a = Math.max(fr[0].t, Math.min(...raw.map(w => w.a)));
   if (stop - a > W.maxSecs) a = Math.min(stop - W.maxSecs, keyT - W.keyPre);
   a = Math.max(a, stop - W.maxHard, fr[0].t);
-  let wins = [{ a, b: stop }];
-  let sel = fr.filter(f => f.t >= a && f.t <= stop);
+  let wins = [{ a, b: stopC }];
+  let sel = fr.filter(f => f.t >= a && f.t <= stopC);
   if (sel.length < 10) { sel = fr.filter(f => f.t <= stop).slice(-60); wins = sel.length ? [{ a: sel[0].t, b: sel[sel.length - 1].t }] : []; }
   sel = sel.filter((f, i) => i % W.skip === 0 || i === sel.length - 1).slice(-W.maxFrames);
   const cast = r.cast.map(o => ({ ...o })), map = new Map(r.castLive.map((p, i) => [p, cast[i]]));
@@ -2114,7 +2119,7 @@ function sagaPop(a) {
 }
 // (EVENTS = the midweek decisions: a text table in js/00-text.js)
 
-const SETTINGS = { weather: true, simDefense: false, scouts: true, contracts: true, autoSwitch: false, defHints: true, injuries: true, pracInjuries: true, difficulty: 'NORMAL', diffMode: 'preset', volume: 1, replays: 'BIG PLAYS', starHud: true, hideNames: false, hitboxes: false, hideTools: true, morale: true, quarterMin: 2, halftime: true, ht: { highlights: true, league: true, historic: true, qb: true, def: true, match: true }, pregame: true, pg: { historic: true, qb: true, def: true, match: true }, binds: {}, darkMode: false, cinema: false, simST: false, perfHud: false };   // perfHud = the frame-time readout (DEBUG > FRAME TIMES, see PERF_HUD)   // cinema = CINEMATIC highlight reels (no UI over the field)   // simST = SIM SPECIAL TEAMS: your kickoffs, punts, field goals and kick returns are simulated (off = you play them)   // darkMode = grey menus (see `// --- dark mode`)   // quarterMin = minutes per quarter (1-8); binds = { action: key code } overrides (see BIND_ACTIONS)   // starHud = the Star Factor tips panel (H toggles; stays hidden in every game until H)
+const SETTINGS = { weather: true, simDefense: false, scouts: true, contracts: true, autoSwitch: false, defHints: true, injuries: true, pracInjuries: true, difficulty: 'NORMAL', diffMode: 'preset', volume: 1, replays: 'BIG PLAYS', starHud: true, hideNames: false, hitboxes: false, hideTools: true, morale: true, quarterMin: 2, halftime: true, ht: { highlights: true, league: true, historic: true, qb: true, def: true, match: true }, pregame: true, pg: { historic: true, qb: true, def: true, match: true }, binds: {}, darkMode: false, cinema: false, simST: false, perfHud: false, netSim: 'OFF' };   // perfHud = the frame-time readout (DEBUG > FRAME TIMES, see PERF_HUD)   // cinema = CINEMATIC highlight reels (no UI over the field)   // simST = SIM SPECIAL TEAMS: your kickoffs, punts, field goals and kick returns are simulated (off = you play them)   // darkMode = grey menus (see `// --- dark mode`)   // quarterMin = minutes per quarter (1-8); binds = { action: key code } overrides (see BIND_ACTIONS)   // starHud = the Star Factor tips panel (H toggles; stays hidden in every game until H)
 try { Object.assign(SETTINGS, JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}); } catch (e) {}
 SETTINGS.hitboxes = false; COLLIDE.show = false;   // (debug only: never saved or loaded, so it can't come back on by itself; the settings button / ` key flip it for this session)
 if (SETTINGS.dynV !== 1) { SETTINGS.diffMode = 'dynamic'; SETTINGS.dynV = 1; }   // (new franchises default to dynamic difficulty: older saved settings get that once; existing saves keep their own level)
@@ -2126,7 +2131,7 @@ if (!REPLAY_MODES.includes(SETTINGS.replays)) SETTINGS.replays = 'BIG PLAYS';   
 if (SETTINGS.liteMode === 'ON') SETTINGS.liteMode = 'PERFORMANCE'; else if (SETTINGS.liteMode === 'OFF') SETTINGS.liteMode = 'QUALITY';   // (the old performance-mode values; see gfxMode)
 // Settings scopes: SETTINGS_DEF = the defaults (main menu / exhibitions / a new franchise, kept in localStorage); SETTINGS = the working copy.
 // Inside a franchise save (inSave) the working copy is that save's own (stored in its world.settings); only GLOBAL_SET (volume, replays) is shared by all.
-const GLOBAL_SET = ['volume', 'replays', 'hideTools', 'darkMode', 'cinema', 'liteMode', 'sideline', 'taunts', 'perfHud'];
+const GLOBAL_SET = ['volume', 'replays', 'hideTools', 'darkMode', 'cinema', 'liteMode', 'sideline', 'taunts', 'perfHud', 'netSim'];
 // per-device settings: their own key, never in SETTINGS / franchise saves, and cloud sync skips it. mobile = the MOBILE MODE override (unset = on for phones / tablets, off for PCs)
 const DEVICE_KEY = 'pocketPasser.device';
 const DEVICE = (() => { try { return JSON.parse(localStorage.getItem(DEVICE_KEY) || '{}') || {}; } catch (e) { return {}; } })();
@@ -2444,12 +2449,21 @@ const COLD_SND = {
   laugh:    ['audio/laugh.mp3', 0.5],     tap:     ['audio/tap.mp3', 0.6],       tick: ['audio/tick.mp3', 0.5],   // (tap / tick: ONE hit each)
   dream:    ['audio/dream.mp3', 0.5],     click:   ['audio/click.mp3', 0.4],
 };
-const SND_USE = { penAt: 8, pencilMs: 420, signMs: 700, tickMs: 220, crumpleMs: 1100, pressMs: 2800, slowMs: 2200, slowAt: 0.5,   // stretches the game's own uses play (ms; at = s into the clip)
+const SND_USE = { penAt: 8, pencilMs: 420, signMs: 700, tickMs: 220, crumpleMs: 480, crumpleFade: 170, crumpleAt: [0, 0.4, 0.85, 1.3, 1.65], pressMs: 2800, slowMs: 2200, slowAt: 0.5,   // stretches the game's own uses play (ms; at = s into the clip)
   wetFrom: 0.3, wetGap: 160, wetBig: 1, wetHit: 0.6, wetDive: 0.75 };   // wet impacts: from this rain (WXI, 0-1), ms between two, levels (big hit / tackle / dive landing)
 // plays cue k at level v (x its table gain). o: ms (stop after), fade (out, ms), in (fade in, ms), at (s into the clip), tag (its own copy, so it can overlap itself)
 function sndRec(k, v = 1, o = {}) {
   const c = COLD_SND[k]; if (!c) return null;
   return playSfx(c[0] + (o.tag ? '#' + o.tag : ''), Math.min(1, c[1] * v), o.ms || 60000, o.fade == null ? 250 : o.fade, o.in || 0, o.at || 0);
+}
+// the paper crumple, everywhere it is used (page changes, popups, the cold open's torn page): a short slice of the 2.2 s recording, a different one each
+// time (SND_USE.crumpleAt = where the slices start, crumpleMs / crumpleFade = how long one plays and fades), never the same slice twice running
+let crumpleLast = -1;
+function crumpleSfx(v = 1) {
+  const A = SND_USE.crumpleAt; let i = Math.floor(Math.random() * A.length);
+  if (A.length > 1 && i === crumpleLast) i = (i + 1 + Math.floor(Math.random() * (A.length - 1))) % A.length;
+  crumpleLast = i;
+  return sndRec('crumple', v * (0.9 + Math.random() * 0.2), { ms: SND_USE.crumpleMs, fade: SND_USE.crumpleFade, at: A[i] });
 }
 let wetSfxAt = 0;
 function wetSfx(v = 1) {   // a body hitting soaked turf: tackles, dive landings and slides in rain games

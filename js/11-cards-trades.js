@@ -1292,8 +1292,8 @@ const FO_CARDS = [{ x: 40, y: 96, w: 390, h: 262 }, { x: 445, y: 96, w: 390, h: 
 const FO_POACH = FO_CARDS.map(b => ({ x: b.x + b.w - 118, y: b.y + b.h - 44, w: 106, h: 34 }));
 const FO_ROLES = [null, 'oc', 'dc', 'to', 'td', 'so', 'sd'];   // the card in each slot (0 = the head coach)
 let POA = null, foMsg = null;   // the offer popup { team, role, sal, cred }; a line under the cards { t, text }
-const PO_P = { x: 340, y: 170, w: 600, h: 380 };
-const PO_BTN = { sm: { x: 700, y: 302, w: 44, h: 36 }, sp: { x: 880, y: 302, w: 44, h: 36 }, cm: { x: 700, y: 348, w: 44, h: 36 }, cp: { x: 880, y: 348, w: 44, h: 36 }, cancel: { x: 370, y: 484, w: 200, h: 48 }, offer: { x: 710, y: 484, w: 200, h: 48 } };
+const PO_P = { x: 140, y: 100, w: 1000, h: 560 };
+const PO_BTN = { sm: { x: 720, y: 290, w: 58, h: 48 }, sp: { x: 1040, y: 290, w: 58, h: 48 }, cm: { x: 720, y: 356, w: 58, h: 48 }, cp: { x: 1040, y: 356, w: 58, h: 48 }, cancel: { x: 180, y: 576, w: 300, h: 62 }, offer: { x: 800, y: 576, w: 300, h: 62 } };
 const foOn = () => xpcOn();   // your franchise only
 function foFill(team) {   // another team's staff, filled in the first time it is looked at: a head coach, the coordinators' pay / age / specialty, two trainers, two scouts
   const s = STAFF[team], t = (s.tend || TEND_RAW[team] || 'P S M 3 0 O').split(' ');
@@ -1372,18 +1372,18 @@ function drawFoView(team) {
 function drawPoach() {
   const P = PO_P, t = foGet(POA.team, POA.role), cur = hireFill(hireGet(POA.role), POA.role), after = r1(crewPay() - cur.sal + POA.sal), bud = staffBudget(), pr = poachP(t, POA.team, POA.sal, POA.cred), buy = buyoutOf(cur);
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
-  resPanel(P.x, P.y, P.w, P.h, [[`POACH ${t.name}`, 24]], RES.bright);
-  ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.line; ctx.font = '15px monospace';
-  ctx.fillText(`${HIRE_ROLE[POA.role].label}, ${t.stars} stars. He makes $${t.sal.toFixed(1)}M with the ${NFL[POA.team].city}.`, P.x + 24, P.y + 70, P.w - 48);
-  ctx.fillText(`He replaces ${cur.name} (${cur.stars} stars, $${cur.sal.toFixed(1)}M)${buy ? `: buyout ${buy} ¤` : ''}.`, P.x + 24, P.y + 94, P.w - 48);
-  ctx.font = 'bold 18px monospace';
-  ctx.fillText('SALARY / YEAR', P.x + 24, PO_BTN.sm.y + 18); ctx.fillText('CREDITS UP FRONT', P.x + 24, PO_BTN.cm.y + 18);
-  ctx.textAlign = 'center'; ctx.fillText(`$${POA.sal.toFixed(1)}M`, 812, PO_BTN.sm.y + 18); ctx.fillText(`${POA.cred} ¤`, 812, PO_BTN.cm.y + 18);
-  for (const k of ['sm', 'cm']) menuBtn(PO_BTN[k], '-', RES.bright, 22); for (const k of ['sp', 'cp']) menuBtn(PO_BTN[k], '+', RES.bright, 22);
-  ctx.textAlign = 'left'; ctx.font = '15px monospace'; ctx.fillStyle = after > bud ? '#c81b1b' : RES.line;
-  ctx.fillText(`STAFF PAYROLL $${crewPay().toFixed(1)}M > $${after.toFixed(1)}M OF $${bud.toFixed(1)}M`, P.x + 24, P.y + 244);
-  ctx.fillStyle = RES.line; ctx.fillText(`CHANCE: ${pr < 0.3 ? 'UNLIKELY' : pr < 0.6 ? 'POSSIBLE' : 'LIKELY'}     A NO LOCKS HIM FOR ${POACH.lockWeeks} WEEKS`, P.x + 24, P.y + 270);
-  menuBtn(PO_BTN.cancel, 'CANCEL', RES.bright, 20); menuBtn(PO_BTN.offer, 'MAKE OFFER', '#6cc070', 20);
+  resPanel(P.x, P.y, P.w, P.h, [[`POACH ${t.name}`, 30]], RES.bright);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.line; ctx.font = '19px monospace';
+  ctx.fillText(`${HIRE_ROLE[POA.role].label}, ${t.stars} stars. He makes $${t.sal.toFixed(1)}M with the ${NFL[POA.team].city}.`, P.x + 30, P.y + 84, P.w - 60);
+  ctx.fillText(`He replaces ${cur.name} (${cur.stars} stars, $${cur.sal.toFixed(1)}M)${buy ? `: buyout ${buy} ¤` : ''}.`, P.x + 30, P.y + 116, P.w - 60);
+  ctx.font = 'bold 23px monospace';
+  ctx.fillText('SALARY / YEAR', P.x + 30, PO_BTN.sm.y + 24); ctx.fillText('CREDITS UP FRONT', P.x + 30, PO_BTN.cm.y + 24);
+  ctx.textAlign = 'center'; ctx.fillText(`$${POA.sal.toFixed(1)}M`, 909, PO_BTN.sm.y + 24); ctx.fillText(`${POA.cred} ¤`, 909, PO_BTN.cm.y + 24);
+  for (const k of ['sm', 'cm']) menuBtn(PO_BTN[k], '-', RES.bright, 28); for (const k of ['sp', 'cp']) menuBtn(PO_BTN[k], '+', RES.bright, 28);
+  ctx.textAlign = 'left'; ctx.font = '19px monospace'; ctx.fillStyle = after > bud ? '#c81b1b' : RES.line;
+  ctx.fillText(`STAFF PAYROLL $${crewPay().toFixed(1)}M > $${after.toFixed(1)}M OF $${bud.toFixed(1)}M`, P.x + 30, P.y + 360, P.w - 60);
+  ctx.fillStyle = RES.line; ctx.fillText(`CHANCE: ${pr < 0.3 ? 'UNLIKELY' : pr < 0.6 ? 'POSSIBLE' : 'LIKELY'}     A NO LOCKS HIM FOR ${POACH.lockWeeks} WEEKS`, P.x + 30, P.y + 400, P.w - 60);
+  menuBtn(PO_BTN.cancel, 'CANCEL', RES.bright, 26); menuBtn(PO_BTN.offer, 'MAKE OFFER', '#6cc070', 26);
 }
 function foClick(pt) {
   const team = staffView.team;
@@ -1469,6 +1469,27 @@ function conSeasonEnd(me) {   // the new-season step, before newSeason: your pay
   } else out.push(`The owner wanted ${need} wins and got ${T.w}: his patience ${made ? 'grows' : 'wears thinner'}.`);
   return out;
 }
+// a season with no contract touched (no talks, tag, let-go or walk call: LEAGUE.conTouched): staff on their last year first, then players in a contract year,
+// best stars first, at their asks, while the staff budget / the cap allows. Whoever doesn't fit follows the normal rules. Returns news lines
+function conAutoExtend(me) {
+  if (!contractsOn() || LEAGUE.conTouched === LEAGUE.year) return [];
+  const got = [], miss = [];
+  for (const { role, c } of conStaff().filter(x => conStaffExt(x.c) && !x.c.sour && !conLocked(x.c)).sort((a, b) => b.c.stars - a.c.stars)) {
+    const a = conStaffAsk(role, c);
+    if (r1(crewPay() - c.sal + a.pay) > staffBudget()) { miss.push(c.name); continue; }
+    c.sal = a.pay; c.years = Math.max(0, c.years || 0) + a.yrs; got.push(`${c.name} (${HIRE_ROLE[role].short})`);
+  }
+  for (const p of (ROSTER[me] || []).filter(p => p.salary != null && (p.years || 1) <= 1 && !p.walk && !conLocked(p)).sort((a, b) => b.stars - a.stars)) {
+    const a = conPlAsk(p);
+    if (capRoom(me) + payOf(p) - a.salary < 0) { miss.push(p.name); continue; }
+    p.salary = a.salary; p.years = Math.max(1, p.years || 1) + (a.years || 1); delete p.xAsk; delete p.capCut; p.signStars = p.stars; p.perfXP = 0; p.perfG = 0;
+    got.push(`${p.name} (${p.group})`);
+  }
+  const out = [];
+  if (got.length) out.push(`Your front office extended: ${got.slice(0, 6).join(', ')}${got.length > 6 ? ` +${got.length - 6} more` : ''}.`);
+  if (miss.length) out.push(`It could not afford: ${miss.slice(0, 5).join(', ')}${miss.length > 5 ? ` +${miss.length - 5} more` : ''}.`);
+  return out;
+}
 // ---- staff
 const conStaff = () => hireRolesAll().map(role => { const c = hireFill(hireGet(role), role); if (c.since == null) c.since = LEAGUE.year; return { role, c }; });
 const conLoyal = c => !c.interim && LEAGUE.year - (c.since == null ? LEAGUE.year : c.since) >= CONTRACT.staff.loyalYrs;
@@ -1506,7 +1527,7 @@ function conWeek() {   // once a week (leagueWeek): another team may call for on
   }
 }
 function conStaffGo(a, buy) {   // LET HIM GO: they pay the buyout, an interim fills in
-  const c = hireGet(a.role);
+  const c = hireGet(a.role); LEAGUE.conTouched = LEAGUE.year;
   LEAGUE.coins += buy; payToFly += buy; payFrom = [W / 2, H / 2];
   hireSet(a.role, hireInterim(a.role)); if (career.cxp && (a.role === 'oc' || a.role === 'dc')) career.cxp[a.role] = 0;
   (LEAGUE.coachNews = LEAGUE.coachNews || []).push(`${c.name} left for the ${teamFull(a.team)}${a.hc ? ' as their new head coach' : ''}. They paid you ${buy} credits. An interim fills in: open the hiring board.`);
@@ -1573,6 +1594,7 @@ function conPlNegotiate(p) {
     } });
 }
 function conTag(p) {   // the franchise tag: one a year, a pricey 1-year deal, no talks
+  LEAGUE.conTouched = LEAGUE.year;   // (touched: no automatic extensions this year)
   const me = season.team, P = CONTRACT.pl, pay = r1(conPlAsk(p).market * P.tagK), room = capRoom(me) + payOf(p) - pay;
   if (LEAGUE.tagYr === LEAGUE.year) { conSay('THE FRANCHISE TAG IS USED FOR THIS YEAR'); return; }
   if ((p.years || 1) > 1) { conSay('ONLY A PLAYER IN HIS LAST YEAR CAN BE TAGGED'); return; }
@@ -1585,12 +1607,13 @@ function conTag(p) {   // the franchise tag: one a year, a pricey 1-year deal, n
 // ---- the NEGOTIATE popup: { kind 'hc' | 'staff' | 'pl', who (carries ngLock), name, sub, dir (+1 you pay him / -1 the owner pays you), unit 'M' | 'C',
 // ask { yrs, pay, bonus } (theirs; it moves toward a WARM counter), yrs [lo, hi], chips [ids], chipMax, chipK (interest per chip), mod, mods [lines],
 // check(me, chips) -> error text | null, sign(me, chips) }
-const NG_P = { x: 250, y: 106, w: 780, h: 548 };   // (below the title strip and the coin box)
-const NG_ROWS = ['yrs', 'pay', 'bonus'], NG_B = { walk: { x: NG_P.x + 30, y: NG_P.y + NG_P.h - 66, w: 220, h: 50 }, meet: { x: NG_P.x + 280, y: NG_P.y + NG_P.h - 66, w: 220, h: 50 }, send: { x: NG_P.x + 530, y: NG_P.y + NG_P.h - 66, w: 220, h: 50 } };
-const NG_STEP = NG_ROWS.map((k, i) => ({ m: { x: NG_P.x + 420, y: NG_P.y + 132 + i * 50, w: 44, h: 38 }, p: { x: NG_P.x + 706, y: NG_P.y + 132 + i * 50, w: 44, h: 38 } }));
-const NG_CHIPS = [0, 1, 2, 3].map(i => ({ x: NG_P.x + 30 + i * 182, y: NG_P.y + 312, w: 174, h: 36 }));
+const NG_P = { x: 40, y: 100, w: 1200, h: 610 };   // (below the title strip and the coin box)
+const NG_ROWS = ['yrs', 'pay', 'bonus'], NG_B = { walk: { x: NG_P.x + 30, y: NG_P.y + NG_P.h - 68, w: 340, h: 54 }, meet: { x: NG_P.x + 430, y: NG_P.y + NG_P.h - 68, w: 340, h: 54 }, send: { x: NG_P.x + 830, y: NG_P.y + NG_P.h - 68, w: 340, h: 54 } };
+const NG_STEP = NG_ROWS.map((k, i) => ({ m: { x: NG_P.x + 650, y: NG_P.y + 149 + i * 58, w: 56, h: 46 }, p: { x: NG_P.x + 1100, y: NG_P.y + 149 + i * 58, w: 56, h: 46 } }));
+const NG_CHIPS = [0, 1, 2, 3].map(i => ({ x: NG_P.x + 30 + i * 285, y: NG_P.y + 346, w: 270, h: 44 }));
 function ngOpen(o) {
   const N = CONTRACT.neg, hc = o.kind === 'hc', a = o.ask;
+  LEAGUE.conTouched = LEAGUE.year;   // (any talks this season: no automatic extensions at its end)
   NG = { ...o, ask0: { ...a }, me: { ...a }, on: (o.on || []).slice(), tries: N.tries, msg: '',
     lim: { yrs: o.yrs, pay: hc ? [CONTRACT.hc.pay[0], CONTRACT.hc.pay[1] + 5] : [Math.max(CAP.minPay, r1(a.pay * N.payLo)), r1(a.pay * N.payHi)], bonus: [0, hc ? CONTRACT.hc.bonusMax : N.bonusMax] },
     step: { yrs: 1, pay: hc ? CONTRACT.hc.payStep : Math.max(N.payStep, r1(a.pay * 0.02)), bonus: 1 } };
@@ -1621,42 +1644,42 @@ function ngSend() {
   } else NG.msg = 'COLD: NO MOVEMENT. A LOWBALL ENDS THE TALKS';
 }
 function drawNegotiate() {
-  const P = NG_P, N = CONTRACT.neg, hc = NG.kind === 'hc', v = ngInterest(), lx = P.x + 30, rx = P.x + 400;
+  const P = NG_P, N = CONTRACT.neg, hc = NG.kind === 'hc', v = ngInterest(), lx = P.x + 30, rx = P.x + 620;
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
-  resPanel(P.x, P.y, P.w, P.h, [[`NEGOTIATE: ${NG.name}`.toUpperCase().slice(0, 44), 24]], RES.bright);
-  ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.dim; ctx.font = 'bold 13px monospace'; ctx.fillText(NG.sub || '', lx, P.y + 66, P.w - 60);
-  ctx.fillStyle = RES.line; ctx.font = 'bold 17px monospace';
-  ctx.fillText(hc ? 'THE OWNER OFFERS' : 'HIS ASK', lx, P.y + 104); ctx.fillText('YOUR COUNTER', rx, P.y + 104);
-  ctx.fillRect(lx, P.y + 118, 330, 2); ctx.fillRect(rx, P.y + 118, 350, 2);
-  ctx.strokeStyle = RES.shade; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(P.x + 380, P.y + 96); ctx.lineTo(P.x + 380, P.y + 280); ctx.stroke();
+  resPanel(P.x, P.y, P.w, P.h, [[`NEGOTIATE: ${NG.name}`.toUpperCase().slice(0, 60), 30]], RES.bright);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.dim; ctx.font = 'bold 17px monospace'; ctx.fillText(NG.sub || '', lx, P.y + 74, P.w - 60);
+  ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace';
+  ctx.fillText(hc ? 'THE OWNER OFFERS' : 'HIS ASK', lx, P.y + 114); ctx.fillText('YOUR COUNTER', rx, P.y + 114);
+  ctx.fillRect(lx, P.y + 132, 540, 2); ctx.fillRect(rx, P.y + 132, 540, 2);
+  ctx.strokeStyle = RES.shade; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(P.x + 595, P.y + 104); ctx.lineTo(P.x + 595, P.y + 316); ctx.stroke();
   NG_ROWS.forEach((k, i) => {
-    const y = P.y + 151 + i * 50, lab = k === 'yrs' ? 'YEARS' : k === 'pay' ? (hc ? 'CREDITS / SEASON' : 'SALARY / YEAR') : (hc ? 'SIGNING BONUS (YOURS)' : 'SIGNING BONUS (CREDITS)'), fixed = NG.lim[k][0] === NG.lim[k][1];
-    ctx.textAlign = 'left'; ctx.fillStyle = RES.dim; ctx.font = 'bold 13px monospace'; ctx.fillText(lab, lx, y);
-    ctx.textAlign = 'right'; ctx.fillStyle = RES.line; ctx.font = 'bold 19px monospace'; ctx.fillText(ngFmt(k, NG.ask[k]), lx + 330, y);
-    ctx.textAlign = 'center'; ctx.fillStyle = NG.me[k] === NG.ask[k] ? RES.line : RES.gold; ctx.font = 'bold 21px monospace'; ctx.fillText(ngFmt(k, NG.me[k]), P.x + 585, y);
-    menuBtn(NG_STEP[i].m, '-', fixed ? CARD_GRAY : RES.bright, 22, null, !fixed); menuBtn(NG_STEP[i].p, '+', fixed ? CARD_GRAY : RES.bright, 22, null, !fixed);
+    const y = P.y + 172 + i * 58, lab = k === 'yrs' ? 'YEARS' : k === 'pay' ? (hc ? 'CREDITS / SEASON' : 'SALARY / YEAR') : (hc ? 'SIGNING BONUS (YOURS)' : 'SIGNING BONUS (CREDITS)'), fixed = NG.lim[k][0] === NG.lim[k][1];
+    ctx.textAlign = 'left'; ctx.fillStyle = RES.dim; ctx.font = 'bold 17px monospace'; ctx.fillText(lab, lx, y);
+    ctx.textAlign = 'right'; ctx.fillStyle = RES.line; ctx.font = 'bold 25px monospace'; ctx.fillText(ngFmt(k, NG.ask[k]), lx + 540, y);
+    ctx.textAlign = 'center'; ctx.fillStyle = NG.me[k] === NG.ask[k] ? RES.line : RES.gold; ctx.font = 'bold 27px monospace'; ctx.fillText(ngFmt(k, NG.me[k]), P.x + 903, y);
+    menuBtn(NG_STEP[i].m, '-', fixed ? CARD_GRAY : RES.bright, 28, null, !fixed); menuBtn(NG_STEP[i].p, '+', fixed ? CARD_GRAY : RES.bright, 28, null, !fixed);
   });
-  ctx.textAlign = 'left'; ctx.fillStyle = RES.dim; ctx.font = 'bold 13px monospace';
-  ctx.fillText(hc ? `PERKS: ASK FOR UP TO ${NG.chipMax} (EACH COSTS YOU SOME GOODWILL)` : 'INCENTIVES: HE LIKES THEM, YOU PAY ONLY IF THEY ARE HIT', lx, P.y + 298, P.w - 60);
-  NG.chips.forEach((id, i) => { const on = NG.on.includes(id), c = hc ? CONTRACT.perks[id] : CONTRACT.inc[id]; menuBtn(NG_CHIPS[i], hc ? c.name : `${c.name} ${c.pl}¤`, on ? SEL : RES.bright, 13); });
+  ctx.textAlign = 'left'; ctx.fillStyle = RES.dim; ctx.font = 'bold 17px monospace';
+  ctx.fillText(hc ? `PERKS: ASK FOR UP TO ${NG.chipMax} (EACH COSTS YOU SOME GOODWILL)` : 'INCENTIVES: HE LIKES THEM, YOU PAY ONLY IF THEY ARE HIT', lx, P.y + 328, P.w - 60);
+  NG.chips.forEach((id, i) => { const on = NG.on.includes(id), c = hc ? CONTRACT.perks[id] : CONTRACT.inc[id]; menuBtn(NG_CHIPS[i], hc ? c.name : `${c.name} ${c.pl}¤`, on ? SEL : RES.bright, 17); });
   { const hov = hoverPt ? NG.chips.findIndex((id, i) => inBtn(hoverPt, NG_CHIPS[i])) : -1, mods = (NG.mods || []).filter(Boolean);
-    ctx.fillStyle = RES.dim; ctx.font = '13px monospace'; ctx.textAlign = 'left';
-    ctx.fillText(hov >= 0 && hc ? CONTRACT.perks[NG.chips[hov]].text.toUpperCase() : mods.slice(0, 3).join('   '), lx, P.y + 368, P.w - 60);
-    if (mods.length > 3 && hov < 0) ctx.fillText(mods.slice(3).join('   '), lx, P.y + 386, P.w - 60); }
+    ctx.fillStyle = RES.dim; ctx.font = '17px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(hov >= 0 && hc ? CONTRACT.perks[NG.chips[hov]].text.toUpperCase() : mods.slice(0, 3).join('   '), lx, P.y + 410, P.w - 60);
+    if (mods.length > 3 && hov < 0) ctx.fillText(mods.slice(3).join('   '), lx, P.y + 432, P.w - 60); }
   // the interest meter
-  const mx = lx, my = P.y + 408, mw = 560, mh = 26, zones = [[0, N.cold, 'COLD', '#9db8d8'], [N.cold, N.signs, 'WARM', '#f2c94c'], [N.signs, 1, 'SIGNS', '#6cc070']];
+  const mx = lx, my = P.y + 450, mw = 860, mh = 34, zones = [[0, N.cold, 'COLD', '#9db8d8'], [N.cold, N.signs, 'WARM', '#f2c94c'], [N.signs, 1, 'SIGNS', '#6cc070']];
   for (const [a, b, lab, col] of zones) {
     ctx.fillStyle = col; ctx.fillRect(mx + mw * a, my, mw * (b - a), mh);
-    ctx.fillStyle = '#22305a'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center'; ctx.fillText(lab, mx + mw * (a + b) / 2, my + mh / 2 + 1);
+    ctx.fillStyle = '#22305a'; ctx.font = 'bold 17px monospace'; ctx.textAlign = 'center'; ctx.fillText(lab, mx + mw * (a + b) / 2, my + mh / 2 + 1);
   }
   ctx.strokeStyle = RES.line; ctx.lineWidth = 2.5; ctx.strokeRect(mx, my, mw, mh);
-  { const x = mx + mw * v; ctx.fillStyle = RES.line; ctx.beginPath(); ctx.moveTo(x, my + mh + 2); ctx.lineTo(x - 9, my + mh + 16); ctx.lineTo(x + 9, my + mh + 16); ctx.closePath(); ctx.fill(); ctx.fillRect(x - 1.5, my - 4, 3, mh + 8); }
-  ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = 'bold 14px monospace'; ctx.fillText('TRIES', mx + mw + 24, my + mh / 2 + 1);
-  for (let i = 0; i < N.tries; i++) { ctx.beginPath(); ctx.arc(mx + mw + 88 + i * 24, my + mh / 2, 8, 0, Math.PI * 2); ctx.fillStyle = i < NG.tries ? RES.gold : RES.shade; ctx.fill(); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.stroke(); }
+  { const x = mx + mw * v; ctx.fillStyle = RES.line; ctx.beginPath(); ctx.moveTo(x, my + mh + 2); ctx.lineTo(x - 10, my + mh + 16); ctx.lineTo(x + 10, my + mh + 16); ctx.closePath(); ctx.fill(); ctx.fillRect(x - 1.5, my - 4, 3, mh + 8); }
+  ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.fillText('TRIES', mx + mw + 24, my + mh / 2 + 1);
+  for (let i = 0; i < N.tries; i++) { ctx.beginPath(); ctx.arc(mx + mw + 110 + i * 30, my + mh / 2, 10, 0, Math.PI * 2); ctx.fillStyle = i < NG.tries ? RES.gold : RES.shade; ctx.fill(); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.stroke(); }
   const err = NG.check ? NG.check(NG.me, NG.on) : null;
-  ctx.textAlign = 'center'; ctx.font = 'bold 15px monospace'; ctx.fillStyle = err ? '#c81b1b' : RES.line; ctx.fillText(err || NG.msg || (v >= N.signs ? 'THIS OFFER GETS SIGNED' : 'EACH COUNTER COSTS A TRY'), P.x + P.w / 2, P.y + 462, P.w - 60);
-  ctx.fillStyle = RES.shade; ctx.fillRect(P.x + 16, P.y + P.h - 82, P.w - 32, 2);   // the bottom strip
-  menuBtn(NG_B.walk, 'WALK AWAY', RES.bright, 20); menuBtn(NG_B.meet, hc ? 'TAKE OFFER' : 'MEET ASK', RES.bright, 20); menuBtn(NG_B.send, 'SEND COUNTER', err ? CARD_GRAY : '#6cc070', 20, null, !err);
+  ctx.textAlign = 'center'; ctx.font = 'bold 19px monospace'; ctx.fillStyle = err ? '#c81b1b' : RES.line; ctx.fillText(err || NG.msg || (v >= N.signs ? 'THIS OFFER GETS SIGNED' : 'EACH COUNTER COSTS A TRY'), P.x + P.w / 2, P.y + 518, P.w - 60);
+  ctx.fillStyle = RES.shade; ctx.fillRect(P.x + 16, P.y + P.h - 80, P.w - 32, 2);   // the bottom strip
+  menuBtn(NG_B.walk, 'NOT NOW', RES.bright, 26); menuBtn(NG_B.meet, hc ? 'TAKE OFFER' : 'MEET ASK', RES.bright, 26); menuBtn(NG_B.send, 'SEND COUNTER', err ? CARD_GRAY : '#6cc070', 26, null, !err);
 }
 function ngClick(pt) {
   if (inBtn(pt, NG_B.walk)) { NG = null; return; }
@@ -1770,20 +1793,28 @@ function hcNegotiate(ext) {
     } });
 }
 // PLAYER DEALS
-const PD = { x: 60, y: 128, w: 700, rowY: 190, rowH: 40 };
+const PD = { x: 60, y: 128, w: 700, rowY: 190, rowH: 40, listH: 280, thumbW: 10, cap: { y: 474, h: 124 } };   // listH = the scrolled list's height (wheel, or drag on the bar at its right); cap = the salary cap sheet under it
 const PD_BTNS = { exp: { x: 60, y: 128, w: 130, h: 30 }, all: { x: 198, y: 128, w: 90, h: 30 }, prev: { x: 60, y: 520, w: 60, h: 34 }, next: { x: 700, y: 520, w: 60, h: 34 },
   walk: { x: 780, y: 536, w: 150, h: 52 }, tag: { x: 938, y: 536, w: 130, h: 52 }, neg: { x: 1076, y: 536, w: 144, h: 52 } };
-const pdRow = i => ({ x: PD.x, y: PD.rowY + i * PD.rowH, w: PD.w, h: PD.rowH - 4 });
+const pdRow = i => ({ x: PD.x, y: PD.rowY + i * PD.rowH - (FOT.pd.sc || 0), w: PD.w, h: PD.rowH - 4 });
+const pdBox = () => ({ x: PD.x, y: PD.rowY, w: PD.w, h: PD.listH });
+const pdTrack = () => ({ x: PD.x + PD.w + 4, y: PD.rowY, w: PD.thumbW, h: PD.listH });
+const pdMax = () => Math.max(0, conPlList().length * PD.rowH - PD.listH);
+function pdScroll(v) { FOT.pd.sc = Math.max(0, Math.min(pdMax(), v)); }
+function pdTrackTo(y) { const T = pdTrack(); pdScroll((y - T.y) / T.h * (pdMax() + PD.listH) - PD.listH / 2); }   // (a click / drag on the bar centres the thumb there)
+const pdWheel = dy => { if (!contractsOn() || FOT.tab !== 'pl' || NG || offPop || !hoverPt || !inBtn(hoverPt, { x: PD.x, y: PD.rowY, w: PD.w + 20, h: PD.listH })) return false; pdScroll((FOT.pd.sc || 0) + dy); return true; };
 function conPlList() { const R = (ROSTER[season.team] || []).filter(p => p.salary != null), L = FOT.pd.filter === 'exp' ? R.filter(p => (p.years || 1) <= 1) : R.slice(); return L.sort((a, b) => b.stars - a.stars); }
 function drawPlTab() {
-  const me = season.team, S = FOT.pd, L = conPlList(), per = CONTRACT.pl.rows, pages = Math.max(1, Math.ceil(L.length / per)), open = conPlOpen();
-  S.page = Math.max(0, Math.min(pages - 1, S.page)); if (S.sel && !L.includes(S.sel)) S.sel = null; if (!S.sel && L.length) S.sel = L[S.page * per] || L[0];
+  const me = season.team, S = FOT.pd, L = conPlList(), open = conPlOpen();
+  pdScroll(S.sc || 0); if (S.sel && !L.includes(S.sel)) S.sel = null; if (!S.sel && L.length) S.sel = L[0];
   menuBtn(PD_BTNS.exp, 'EXPIRING', S.filter === 'exp' ? SEL : RES.bright, 15); menuBtn(PD_BTNS.all, 'ALL', S.filter === 'all' ? SEL : RES.bright, 15);
   ctx.textBaseline = 'middle'; ctx.textAlign = 'right'; ctx.font = 'bold 16px monospace'; ctx.fillStyle = '#f4efe0'; ctx.fillText(`CAP SPACE ${fmtM(capRoom(me))}   TAG: ${LEAGUE.tagYr === LEAGUE.year ? 'USED' : 'READY'}`, PD.x + PD.w, 143);
   ctx.font = 'bold 12px monospace'; ctx.fillStyle = '#f4efe0'; ctx.textAlign = 'left';
   [['PLAYER', 12], ['POS', 222], ['STARS', 262], ['MOOD', 366], ['AGENT', 436], ['LEFT', 548]].forEach(([t, x]) => ctx.fillText(t, PD.x + x, 176)); ctx.textAlign = 'right'; ctx.fillText('ASK', PD.x + PD.w - 12, 176);
-  L.slice(S.page * per, (S.page + 1) * per).forEach((p, i) => {
-    const b = pdRow(i), a = conPlAsk(p), sel = S.sel === p, hov = !NG && !offPop && hoverPt && inBtn(hoverPt, b), cy = b.y + b.h / 2 + 1;
+  ctx.save(); { const B = pdBox(); ctx.beginPath(); ctx.rect(B.x - 2, B.y - 2, B.w + 4, B.h + 4); ctx.clip(); }
+  L.forEach((p, i) => {
+    const b = pdRow(i); if (b.y + b.h < PD.rowY || b.y > PD.rowY + PD.listH) return;
+    const a = conPlAsk(p), sel = S.sel === p, hov = !NG && !offPop && hoverPt && inBtn(hoverPt, b), cy = b.y + b.h / 2 + 1;
     ctx.fillStyle = sel ? '#fff3a0' : hov ? '#fff9d6' : RES.bright; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.strokeStyle = RES.line; ctx.lineWidth = sel ? 3 : 1.5; ctx.strokeRect(b.x, b.y, b.w, b.h);
     ctx.fillStyle = '#22305a'; ctx.textAlign = 'left'; ctx.font = 'bold 16px monospace'; ctx.fillText(p.name, b.x + 12, cy, 204);
     ctx.font = 'bold 14px monospace'; ctx.fillText(p.group, b.x + 222, cy); starsRow(b.x + 270, cy - 1, p.stars, 8);
@@ -1792,9 +1823,12 @@ function drawPlTab() {
     ctx.fillStyle = (p.years || 1) <= 1 ? '#c81b1b' : '#22305a'; ctx.fillText(p.walk ? 'WALK' : `${p.years || 1}Y`, b.x + 548, cy);
     ctx.textAlign = 'right'; ctx.fillStyle = '#22305a'; ctx.fillText(`${fmtM(a.salary)}/${a.years}Y`, b.x + b.w - 12, cy);
   });
+  ctx.restore();
+  { const mx = pdMax(), T = pdTrack(); if (mx > 0) { const th = Math.max(30, T.h * PD.listH / (mx + PD.listH)), ty = T.y + (T.h - th) * (S.sc || 0) / mx; ctx.fillStyle = 'rgba(244,239,224,0.25)'; ctx.fillRect(T.x, T.y, T.w, T.h); ctx.fillStyle = '#f4efe0'; ctx.fillRect(T.x, ty, T.w, th); } }
+  // the salary cap, previewing the selected player's ask (his current deal off, the new one on)
+  foSheet(PD.x, PD.cap.y, PD.w, PD.cap.h, 'SALARY CAP');
+  { const q = S.sel, pv = q && open && (q.years || 1) <= 1 ? [{ group: q.group, ask: { salary: conPlAsk(q).salary } }] : []; drawCapBar(me, PD.x + 18, PD.cap.y + 40, PD.w - 36, pv.length ? [q] : [], false, pv); }
   if (!L.length) { ctx.fillStyle = '#f4efe0'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.fillText(S.filter === 'exp' ? 'NOBODY IS IN A CONTRACT YEAR' : 'NO CONTRACTS', PD.x + PD.w / 2, 320); }
-  if (pages > 1) { menuBtn(PD_BTNS.prev, '◂', S.page > 0 ? RES.bright : CARD_GRAY, 22, null, S.page > 0); menuBtn(PD_BTNS.next, '▸', S.page < pages - 1 ? RES.bright : CARD_GRAY, 22, null, S.page < pages - 1);
-    ctx.fillStyle = '#f4efe0'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'; ctx.fillText(`${S.page + 1} / ${pages}`, PD.x + PD.w / 2, 537); }
   // the selected player: his ask, broken down
   foSheet(780, 128, 440, 396, S.sel ? S.sel.name.toUpperCase().slice(0, 30) : 'PICK A PLAYER');
   const p = S.sel;
@@ -1835,15 +1869,14 @@ function conFoClick(pt) {   // the drawer's own clicks (true = taken): tabs, the
     else if (inBtn(pt, HC_BTNS.ext) && d.yrs <= CONTRACT.hc.extLeft && !lock) hcNegotiate(true);
     return true;
   }
-  const S = FOT.pd, L = conPlList(), per = CONTRACT.pl.rows, p = S.sel, open = conPlOpen();
-  if (inBtn(pt, PD_BTNS.exp)) { S.filter = 'exp'; S.page = 0; S.sel = null; }
-  else if (inBtn(pt, PD_BTNS.all)) { S.filter = 'all'; S.page = 0; S.sel = null; }
-  else if (inBtn(pt, PD_BTNS.prev)) S.page = Math.max(0, S.page - 1);
-  else if (inBtn(pt, PD_BTNS.next)) S.page = Math.min(Math.max(0, Math.ceil(L.length / per) - 1), S.page + 1);
+  const S = FOT.pd, L = conPlList(), p = S.sel, open = conPlOpen();
+  if (inBtn(pt, PD_BTNS.exp)) { S.filter = 'exp'; S.sc = 0; S.sel = null; }
+  else if (inBtn(pt, PD_BTNS.all)) { S.filter = 'all'; S.sc = 0; S.sel = null; }
+  else if (pdMax() > 0 && inBtn(pt, pdTrack())) pdTrackTo(pt.y);
   else if (p && open && inBtn(pt, PD_BTNS.neg)) conPlNegotiate(p);
   else if (p && open && inBtn(pt, PD_BTNS.tag)) conTag(p);
-  else if (p && open && (p.years || 1) <= 1 && inBtn(pt, PD_BTNS.walk)) { if (p.walk) delete p.walk; else p.walk = LEAGUE.year; autosaveSoon(); }
-  else { const i = L.slice(S.page * per, (S.page + 1) * per).findIndex((_, k) => inBtn(pt, pdRow(k))); if (i >= 0) S.sel = L[S.page * per + i]; }
+  else if (p && open && (p.years || 1) <= 1 && inBtn(pt, PD_BTNS.walk)) { LEAGUE.conTouched = LEAGUE.year; if (p.walk) delete p.walk; else p.walk = LEAGUE.year; autosaveSoon(); }
+  else if (inBtn(pt, pdBox())) { const i = L.findIndex((_, k) => inBtn(pt, pdRow(k))); if (i >= 0) S.sel = L[i]; }
   return true;
 }
 // the trainers and scouts have no card on your own front office: when one of them is on his last year, a small EXTEND sticker for him sits on the drawer's front
@@ -2310,6 +2343,7 @@ function homeNews() {
 // deal goes through when what it gets beats what it gives by `accept` (a dice roll a little under), with both payrolls under the cap.
 // Windows: the offseason after the draft, and in-season until the deadline after week 9. Your picks: this draft and the next two.
 const TRADE = {
+  capNear: 4, capCredit: 2, capFix: { pay: 0.1, third: 0.2 },   // a deal both like that misses the cap by capNear $M or less: you can PAY capCredit credits per $M (a one-season cap credit) or RESTRUCTURE the incoming man; the computer pays one down itself at accept + capFix.pay, and moves one of its own to a third team at accept + capFix.third
   accept: 1.05, maybe: 0.92, dice: 4, lock: 1.5, deadline: 10, depth: 0.75, weekly: 3, offseason: 7, aiChance: 0.3, bigKeep: 0.75,   // bigKeep = odds a computer deal with a 4+ star player in it is called off anyway (big trades are rare)   // ratio for a yes / for a dice roll; the d6 needed; ratio a contender wants for a 4+ star QB; the last season.week trades are open; every extra incoming asset counts x depth; computer deals tried a week / in the offseason
   base: [0, 2, 6, 17, 42, 90], pay: [0, 1, 2.5, 7, 16, 28],   // TV and fair $M a year by whole stars (half stars in between)
   hi: 13, lo: 7, attr: 0.1, xf: 0.2, xfStar: 0.5,             // best attribute at least hi / at most lo = +- attr; a superstar ability (S) = + xf, a star factor (X) = + xfStar
@@ -3142,6 +3176,7 @@ function drawTradeB() {
   menuBtn(TR_SAVE_BTN, 'SAVE TRADE', RES.bright, 20);
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
   tourQDraw();
+  if (NG) drawNegotiate();   // (RESTRUCTURE: the incoming player's talks)
 }
 // SAVE TRADE: keeps the trade you are building (who with, what each side gives) in LEAGUE.savedTrades; SAVED on the trade list brings one back
 const TR_SAVE_BTN = { x: 800, y: 612, w: 220, h: 54 }, TR_SAVED_BTN = { x: 150, y: 640, w: 270, h: 58 }   /* (bottom row only: SAVED sits left of SUGGESTIONS) */, TR_SAVED_MAX = 8;
@@ -3172,6 +3207,54 @@ function trSavedPage(i) {
     btns: [{ label: '◂', keep: true, on: () => { offPop = trSavedPage(k - 1); } }, { label: 'DELETE', keep: true, on: () => { list.splice(k, 1); autosaveSoon(); offPop = trSavedPage(Math.min(k, list.length - 1)); } },
       { label: 'LOAD', green: true, on: () => { if (tradeClosed()) return; TR.partner = S.k; TR.give = give; TR.get = get; TR.tab = [0, 0]; TR.pg = [0, 0]; teamPick = null; results.screen = 'tradeb'; } }, { label: '▸', keep: true, on: () => { offPop = trSavedPage(k + 1); } }] };
 }
+// a deal both sides like that misses the cap by a little (TRADE.capNear): how far over team t would be
+function trCapOver(me, k, t) {
+  const pl = l => l.filter(a => a.kind === 'player').map(a => a.p), out = t === me ? pl(TR.give) : pl(TR.get), inn = t === me ? pl(TR.get) : pl(TR.give);
+  return payroll(t) - out.reduce((s, p) => s + payOf(p), 0) + inn.reduce((s, p) => s + payOf(p), 0) - capOf(t);
+}
+function trCapNear(me, k, theirs) {   // true = handled (a popup is up)
+  const t = theirs ? k : me, over = r1(trCapOver(me, k, t) + 0.05), nick = NFL[k].nick.toUpperCase(), T = TRADE;
+  if (!(over > 0) || over > T.capNear) return false;
+  const say = (title, lines, btns) => offPopShow({ title, lines: lines.flatMap(l => wrapLines(l, 54)), btns });
+  if (!theirs) {   // yours: pay it down with credits, or ask the incoming man to take less
+    const inc = TR.get.filter(a => a.kind === 'player').map(a => a.p).sort((a, b) => payOf(b) - payOf(a))[0];
+    if (!inc) return false;
+    const n = Math.max(1, Math.ceil(over * T.capCredit));
+    say('CAP SQUEEZE', [`This trade puts you ${fmtM(over)} over the salary cap.`, `PAY ${n} ¤: a one-season cap credit on ${inc.name}'s deal (this season only).`, `RESTRUCTURE: ask ${inc.name} to take ${fmtM(over)} less a year (he can say no).`], [{ label: 'NO THANKS' }, { label: `PAY ${n} ¤`, green: true, on: () => {
+      if (LEAGUE.coins < n + tradeCost(TR.get)) { say('NOT ENOUGH ¤', [`You need ${n} ¤ for the cap credit plus ${tradeCost(TR.get)} ¤ for the trade.`]); return; }
+      const prev = inc.capCut, base = prev && prev.y === LEAGUE.year ? prev.m : 0;
+      inc.capCut = { y: LEAGUE.year, m: r1(base + over) };
+      if (tradeLegal(me, k, TR.give, TR.get)) { if (prev) inc.capCut = prev; else delete inc.capCut; say('CAN\'T DO THAT', ['The cap credit is not enough.']); return; }
+      const c0 = LEAGUE.coins; LEAGUE.coins -= n;
+      TR.capGo = true; try { tradePropose(); } finally { TR.capGo = false; }
+      if (!ROSTER[me].includes(inc)) { LEAGUE.coins = c0; if (prev) inc.capCut = prev; else delete inc.capCut; }   // (they said no after all: nothing paid)
+    } }, { label: 'RESTRUCTURE', on: () => trRestructure(me, k, inc, over) }]);
+    return true;
+  }
+  // theirs: tradeCapFix first (salary back to you / cuts), then a pay-down on a man they take in, then one of theirs to a third team; the better the deal for them, the further they go
+  const ratio = tradeSide(k, TR.give, TR.get).ratio, fix = tradeCapFix(me, k, TR.give, TR.get);
+  if (fix) return false;   // (the old counters handle it)
+  const inn = TR.give.filter(a => a.kind === 'player').map(a => a.p).sort((a, b) => payOf(b) - payOf(a))[0];
+  let plan = null;
+  if (inn && ratio >= T.accept + T.capFix.pay && payOf(inn) - over >= CAP.minPay) plan = { kind: 'pay', p: inn, text: `They pay down ${inn.name}'s cap hit this season by ${fmtM(over)}.` };
+  else if (ratio >= T.accept + T.capFix.third) {
+    const inDeal = new Set([...TR.give, ...TR.get].filter(a => a.kind === 'player').map(a => a.p));
+    for (const p of (ROSTER[k] || []).filter(p => !inDeal.has(p) && p.group !== 'K' && payOf(p) >= over && p.stars < T.starKeep).sort((a, b) => payOf(a) - payOf(b))) { const d = aiCapTrade(me, k, p, true); if (d) { plan = { kind: 'third', p, B: d[0], text: `They send ${p.name} to the ${NFL[d[0]].nick} for cap room.` }; break; } }
+  }
+  if (!plan) return false;
+  say('CAP SQUEEZE', [`The ${nick} like it, but it puts them ${fmtM(over)} over the salary cap.`, plan.text], [{ label: 'NO THANKS' }, { label: 'GO AHEAD', green: true, on: () => {
+    if (plan.kind === 'pay') { const prev = plan.p.capCut; plan.p.capCut = { y: LEAGUE.year, m: r1((prev && prev.y === LEAGUE.year ? prev.m : 0) + over) }; TR.capGo = true; try { tradePropose(); } finally { TR.capGo = false; } if (ROSTER[me].includes(plan.p)) { if (prev) plan.p.capCut = prev; else delete plan.p.capCut; } }
+    else { if (aiCapTrade(me, k, plan.p)) { TR.capGo = true; try { tradePropose(); } finally { TR.capGo = false; } } else say('CAN\'T DO THAT', ['That deal fell through.']); }
+  } }]);
+  return true;
+}
+function trRestructure(me, k, inc, over) {   // the incoming man takes less a year so the deal fits (his years stay)
+  const yrs = Math.max(1, inc.years || 1), base = inc.salary;
+  ngOpen({ kind: 'pl', who: inc, name: inc.name, dir: 1, unit: 'M', ask: { yrs, pay: base, bonus: 0 }, yrs: [yrs, yrs], chips: [], chipMax: 0, chipK: 0,
+    sub: `RESTRUCTURE TO MAKE THE TRADE WORK: ${fmtM(over)} OFF A YEAR NEEDED (NOW ${fmtM(base)})`, mod: -0.05, mods: [`MOOD: ${conMood(inc)}`],
+    check: m => base - m.pay < over - 1e-6 ? `NEED ${fmtM(over)} OFF HIS SALARY` : null,
+    sign: m => { inc.salary = m.pay; TR.capGo = true; try { tradePropose(); } finally { TR.capGo = false; } if (!ROSTER[me].includes(inc)) inc.salary = base; } });
+}
 function tradePropose() {
   const me = season.team, k = TR.partner, why = tradeClosed(), nick = NFL[k].nick.toUpperCase();
   const say = (title, lines, btns) => offPopShow({ title, lines: lines.flatMap(l => wrapLines(l, 54)), btns });
@@ -3179,6 +3262,7 @@ function tradePropose() {
   if (!TR.give.length || !TR.get.length) { say('NOTHING TO TRADE', ['A trade needs at least one asset going each way.']); return; }
   const ill = tradeLegal(me, k, TR.give, TR.get);
   let capCuts = null;
+  if (ill && ill.includes('SALARY CAP') && !TR.capGo && tradeDecide(k, TR.give, TR.get).ok && trCapNear(me, k, !ill.startsWith('YOUR'))) return;   // (close on the cap: pay / restructure, or the computer's own fix, confirmed first)
   if (ill) {
     // (they like it but it puts THEM over the cap: they counter with salary coming back to you, or take it and cut players to fit)
     const theirs = !ill.startsWith('YOUR'), spotIssue = /NO ROSTER SPOT/.test(ill);
@@ -3210,6 +3294,7 @@ function tradeClick(pt) {
   if (!season) return;
   if (tourQClick(pt)) return;
   if (results.screen === 'tradeb') {
+    if (NG) { ngClick(pt); return; }
     if (inBtn(pt, BACK_BTN)) { results.screen = 'trade'; return; }
     if (inBtn(pt, MENU_NEXT)) { tradePropose(); return; }
     if (inBtn(pt, TR_SAVE_BTN)) { trSave(); return; }

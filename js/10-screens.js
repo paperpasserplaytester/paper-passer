@@ -1049,11 +1049,8 @@ function drawResultsNow() {
   drawMomentum(L, U.graph.y, LW, U.graph.h);
 
   // season tiles (an exhibition doesn't count: a button to this game's player stats instead)
-  if (exhibition) {   // (pulses and bobs so it is seen after a scrimmage / PvP game: a soft gold glow behind it)
-    const t = performance.now() / 1000, pul = 0.5 + 0.5 * Math.sin(t * 4.2), b = { ...EX_STATS_BTN, y: U.tiles.y + Math.sin(t * 3) * 3, h: 80 };
-    ctx.save(); ctx.shadowColor = `rgba(255,200,50,${0.45 + 0.45 * pul})`; ctx.shadowBlur = 12 + 18 * pul; ctx.fillStyle = `rgba(255,205,60,${0.25 + 0.25 * pul})`;
-    ctx.beginPath(); ctx.roundRect(b.x - 4 - 3 * pul, b.y - 4 - 3 * pul, b.w + 8 + 6 * pul, b.h + 8 + 6 * pul, 14); ctx.fill(); ctx.restore();
-    menuBtn(b, 'PLAYER STATS ▸', RES.bright, 28);
+  if (exhibition) {   // (a plain button: menuBtn's own hover / press easing; EX_STATS_BTN is the click test too)
+    menuBtn(EX_STATS_BTN, 'PLAYER STATS ▸', RES.bright, 28);
   }
   else if (pg) drawPoPanel(L, U.tiles.y, LW, U.tiles.h, lostPO);
   else if (season && season.team === MATCH.you) drawSeasonTiles(L, U.tiles.y, LW, U.tiles.h);
@@ -1270,7 +1267,7 @@ function drawCoinFly() {
   const now = performance.now(), busy = coinFly.some(c => !c.xp);   // (credits first: the XP tokens wait until the last credit has landed)
   if (busy) for (const c of coinFly) if (c.xp) c.t0 = now + c.off;
   xpFlyTick(now);
-  if (!coinFly.length) return;
+  if (!coinFly.length || slotUI || !xpcBoxSeen()) return;   // (never over the save / load slots, or on a page with no credits box to land in)
   ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   for (const c of coinFly) {
     const k = (now - c.t0) / (COIN_FLY.time * 1000 * 1.5), icon = c.xp ? xpIcon : eraserIcon, R = c.xp ? 13 : 16;
@@ -1457,7 +1454,42 @@ const PO_UI = {
   bad: { to: 2, fgm: 1, third: 0.4 },                       // "what went wrong" flags: turnovers, missed FGs, 3rd-down rate under
 };
 const TROPHY_BTN = { x: 780, y: 620, w: 240, h: 80 };
-const TR_UI = { perPage: 8, cols: 4, w: 250, h: 240, gapX: 40, gapY: 18, y0: 96 };   // trophy room banners
+const TR_UI = { perPage: 4, cols: 4, w: 250, h: 240, gapX: 40, gapY: 18, y0: 78, shelf: { per: 10, cols: 5, w: 210, y: [478, 630], s: 46 } };   // trophy room: Paper Bowl banners along the top, a shelf of the other trophies (two rows of cols) under them
+// career.trophies = [{ kind, year, team, note }] (per save: career is reset per franchise). Kinds: playoff round wins, accomplishments, awards; drawn by trophyDraw
+const TROPHY_K = {
+  wc: { name: 'WILD CARD WIN', look: 'plaque', col: '#9db8d8' }, div: { name: 'DIVISIONAL WIN', look: 'cup', col: '#c0c6cf' }, conf: { name: 'CONFERENCE CHAMPS', look: 'tall', col: '#e0a43a' },
+  perfect: { name: 'PERFECT SEASON', look: 'star', col: '#ffd23f' }, divTitle: { name: 'DIVISION TITLE', look: 'plaque', col: '#b07a10' }, best: { name: 'BEST RECORD', look: 'ball', col: '#8a5a2b' },
+  streak: { name: '10+ WIN STREAK', look: 'medal', col: '#c81b1b' }, record: { name: 'LEAGUE RECORD', look: 'book', col: '#2f6fb0' },
+  MVP: { name: 'MVP', look: 'medal', col: '#ffd23f' }, SBMVP: { name: 'PAPER BOWL MVP', look: 'medal', col: '#e0a43a' }, OPOY: { name: 'OFFENSIVE POY', look: 'medal', col: '#6cc070' },
+  DPOY: { name: 'DEFENSIVE POY', look: 'medal', col: '#7a86a3' }, OROTY: { name: 'OFF. ROOKIE', look: 'medal', col: '#9db8d8' }, DROTY: { name: 'DEF. ROOKIE', look: 'medal', col: '#9db8d8' }, COTY: { name: 'COACH OF THE YEAR', look: 'cup', col: '#ffd23f' } };
+function trophyAdd(kind, note, yr) {   // once per kind a season
+  if (!career || !TROPHY_K[kind] || !season) return;
+  const L = career.trophies || (career.trophies = []), y = yr || LEAGUE.year;
+  if (!L.some(t => t.kind === kind && t.year === y)) L.push({ kind, year: y, team: season.team, note: note || '' });
+}
+function trophySeason() {   // from tenureTally, once a season: playoff round wins and the season's accomplishments
+  const me = season.team, T = seasonTable(), r = T[me]; if (!r) return;
+  try { if (po && po.rounds) ['wc', 'div', 'conf'].forEach((k, i) => { const g = (po.rounds[i] || []).find(x => poHas(x, me) && x.hs != null); if (g && poWon(g) === me) trophyAdd(k, `${PO_ROUNDS[i]} vs ${shortName(g.h === me ? g.a : g.h)}`); }); } catch (e) {}
+  if ((season.played || 0) >= SEASON_WEEKS && r.l === 0 && !r.t) trophyAdd('perfect', offRec(r));
+  try { const conf = NFL[me].conf.slice(0, 3); if (playoffSeeds(conf, T).slice(0, DIVS.length).some(s => s.k === me)) trophyAdd('divTitle', NFL[me].conf); } catch (e) {}
+  if (Object.values(T).every(o => winPct(o) <= winPct(r))) trophyAdd('best', offRec(r));
+  try { let best = 0; for (let w = 1; w <= SEASON_WEEKS; w++) best = Math.max(best, teamStreak(me, w)); if (best >= 10) trophyAdd('streak', `${best} STRAIGHT WINS`); } catch (e) {}
+}
+function trophyDraw(t, cx, by, s) {   // one trophy standing on y = by (s = about its height / 2)
+  const K = TROPHY_K[t.kind], c = K.col; ctx.save(); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.fillStyle = c;
+  const base = () => { ctx.fillStyle = '#5a3c22'; ctx.fillRect(cx - s * 0.6, by - s * 0.22, s * 1.2, s * 0.22); ctx.strokeRect(cx - s * 0.6, by - s * 0.22, s * 1.2, s * 0.22); ctx.fillStyle = c; };
+  if (K.look === 'cup') trophy(cx, by - s * 0.75, s, c);
+  else if (K.look === 'tall') { base(); ctx.beginPath(); ctx.moveTo(cx - s * 0.18, by - s * 0.22); ctx.lineTo(cx - s * 0.08, by - s * 1.3); ctx.lineTo(cx + s * 0.08, by - s * 1.3); ctx.lineTo(cx + s * 0.18, by - s * 0.22); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.beginPath(); ctx.ellipse(cx, by - s * 1.55, s * 0.22, s * 0.32, 0, 0, 7); ctx.fill(); ctx.stroke(); }
+  else if (K.look === 'plaque') { ctx.fillStyle = '#7a5230'; ctx.fillRect(cx - s * 0.62, by - s * 1.5, s * 1.24, s * 1.5); ctx.strokeRect(cx - s * 0.62, by - s * 1.5, s * 1.24, s * 1.5); ctx.fillStyle = c; ctx.fillRect(cx - s * 0.45, by - s * 1.32, s * 0.9, s * 0.8); ctx.strokeRect(cx - s * 0.45, by - s * 1.32, s * 0.9, s * 0.8); ctx.fillStyle = '#e8d9a8'; ctx.fillRect(cx - s * 0.4, by - s * 0.4, s * 0.8, s * 0.2); }
+  else if (K.look === 'star') { base(); ctx.fillRect(cx - s * 0.06, by - s * 0.7, s * 0.12, s * 0.5); drawStar(cx, by - s * 1.15, s * 0.55, c, '#8a5a00'); }
+  else if (K.look === 'ball') { base(); ctx.fillRect(cx - s * 0.06, by - s * 0.6, s * 0.12, s * 0.4); ctx.save(); ctx.translate(cx, by - s * 0.95); ctx.rotate(-0.5); ctx.scale(s / 15, s / 15); drawFootball(7, 4.4); ctx.restore(); }
+  else if (K.look === 'book') { base(); ctx.fillRect(cx - s * 0.5, by - s * 1.1, s, s * 0.88); ctx.strokeRect(cx - s * 0.5, by - s * 1.1, s, s * 0.88); ctx.fillStyle = '#f4efe0'; ctx.fillRect(cx - s * 0.36, by - s * 0.95, s * 0.72, s * 0.14); }
+  else { ctx.strokeStyle = c; ctx.lineWidth = s * 0.12; ctx.beginPath(); ctx.moveTo(cx - s * 0.3, by - s * 1.6); ctx.lineTo(cx, by - s * 0.9); ctx.lineTo(cx + s * 0.3, by - s * 1.6); ctx.stroke(); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, by - s * 0.55, s * 0.42, 0, 7); ctx.fill(); ctx.stroke(); drawStar(cx, by - s * 0.55, s * 0.22, '#fff8d0', '#8a5a00'); }   // medal
+  ctx.restore();
+}
+const trShelfSlot = i => { const S = TR_UI.shelf, row = Math.floor(i / S.cols), col = i % S.cols; return { cx: W / 2 + (col - (S.cols - 1) / 2) * S.w, by: S.y[row] - 52 }; };
+const trTrophies = () => ((career && career.trophies) || []).slice().sort((a, b) => a.year - b.year);
+const trPages = () => Math.max(1, Math.ceil(trBanners().length / TR_UI.perPage), Math.ceil(trTrophies().length / TR_UI.shelf.per));
 const trView = { page: 0, sel: null };
 const poGame = () => !!(season && !exhibition && season.lastPO != null && season.team === MATCH.you);
 function poFrame(lost) {   // after paperBg: a tint and a double gold rule round the page
@@ -1566,8 +1598,17 @@ function trBanners() {   // your titles, oldest first; a save from before banner
 const trSlot = i => ({ x: (W - (TR_UI.cols * TR_UI.w + (TR_UI.cols - 1) * TR_UI.gapX)) / 2 + (i % TR_UI.cols) * (TR_UI.w + TR_UI.gapX), y: TR_UI.y0 + Math.floor(i / TR_UI.cols) * (TR_UI.h + TR_UI.gapY), w: TR_UI.w, h: TR_UI.h });
 function drawTrophyRoom() {
   paperBg(); ctx.fillStyle = RES.line; ctx.font = 'bold 44px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('TROPHY ROOM', W / 2, 46);
-  const L = trBanners(), pages = Math.max(1, Math.ceil(L.length / TR_UI.perPage)); trView.page = Math.min(trView.page, pages - 1);
-  if (!L.length) { ctx.fillStyle = RES.dim; ctx.font = 'bold 24px monospace'; ctx.fillText('NO PAPER BOWL TITLES YET', W / 2, 330); }
+  const L = trBanners(), TL = trTrophies(), pages = trPages(); trView.page = Math.min(trView.page, pages - 1);
+  if (!L.length) { ctx.fillStyle = RES.dim; ctx.font = 'bold 22px monospace'; ctx.fillText('NO PAPER BOWL TITLES YET', W / 2, 190); }
+  // the shelf: two wooden boards, a trophy per accomplishment, its name and year under it
+  for (const y of TR_UI.shelf.y) { ctx.fillStyle = '#8a5a2b'; ctx.fillRect(110, y - 52, W - 220, 12); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(110, y - 52, W - 220, 12); }
+  if (!TL.length) { ctx.fillStyle = RES.dim; ctx.font = 'bold 18px monospace'; ctx.fillText('PLAYOFF WINS, TITLES AND AWARDS GO ON THE SHELF', W / 2, TR_UI.shelf.y[0] - 90); }
+  TL.slice(trView.page * TR_UI.shelf.per, (trView.page + 1) * TR_UI.shelf.per).forEach((t, i) => {
+    const s = trShelfSlot(i), K = TROPHY_K[t.kind]; if (!K) return;
+    trophyDraw(t, s.cx, s.by, TR_UI.shelf.s);
+    ctx.textAlign = 'center'; ctx.fillStyle = RES.line; ctx.font = 'bold 13px monospace'; ctx.fillText(K.name, s.cx, s.by + 24, TR_UI.shelf.w - 14);
+    ctx.fillStyle = RES.dim; ctx.font = 'bold 12px monospace'; ctx.fillText(`${nflYear(t.year)}${t.note ? '  ' + t.note : ''}`.slice(0, 30), s.cx, s.by + 40, TR_UI.shelf.w - 14);
+  });
   L.slice(trView.page * TR_UI.perPage, (trView.page + 1) * TR_UI.perPage).forEach((e, i) => {
     const s = trSlot(i), [m, t] = kitColors(e.team, 'home');
     ctx.strokeStyle = RES.line; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(s.x - 6, s.y + 4); ctx.lineTo(s.x + s.w + 6, s.y + 4); ctx.stroke();
@@ -1579,12 +1620,12 @@ function drawTrophyRoom() {
     ctx.font = 'bold 26px monospace'; ctx.fillText(e.legacy ? 'CHAMPIONS' : `${e.ws}-${e.ls}`, s.x + s.w / 2, s.y + 182, s.w - 20);
   });
   if (pages > 1) ROSTER_ARROWS.forEach((b, i) => menuBtn(b, i ? '▸' : '◂', RES.bright, 30));
-  ctx.fillStyle = RES.dim; ctx.font = 'bold 18px monospace'; ctx.fillText(`${L.length} TITLE${L.length === 1 ? '' : 'S'}  ·  PAGE ${trView.page + 1} / ${pages}`, W / 2, 660);
+  ctx.textAlign = 'center'; ctx.fillStyle = RES.dim; ctx.font = 'bold 18px monospace'; ctx.fillText(`${L.length} TITLE${L.length === 1 ? '' : 'S'}  ·  ${TL.length} TROPH${TL.length === 1 ? 'Y' : 'IES'}  ·  PAGE ${trView.page + 1} / ${pages}`, W / 2, 686);
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
 }
 function trophyClick(pt) {
   if (inBtn(pt, BACK_BTN)) { results.screen = 'hof'; return; }
-  const L = trBanners(), pages = Math.max(1, Math.ceil(L.length / TR_UI.perPage)), a = ROSTER_ARROWS.findIndex(b => inBtn(pt, b));
+  const L = trBanners(), pages = trPages(), a = ROSTER_ARROWS.findIndex(b => inBtn(pt, b));
   if (a >= 0) { if (pages > 1) trView.page = (trView.page + (a ? 1 : -1) + pages) % pages; return; }
   for (let i = 0; i < TR_UI.perPage; i++) { const e = L[trView.page * TR_UI.perPage + i]; if (e && !e.legacy && inBtn(pt, trSlot(i))) { trView.sel = e; results.screen = 'scrap'; return; } }
 }
@@ -2390,7 +2431,7 @@ function aiCapCuts(me) {
 }
 // a computer team that must shed salary shops the player for a pick: the best pick a team with the cap room will give for him (the pick changes
 // hands for real, so it shows up in the draft). False when nobody bites.
-function aiCapTrade(me, k, p) {
+function aiCapTrade(me, k, p, dry) {   // (dry: only find the deal, return [team, pick])
   if (!season || p.group === 'K') return false;
   TCX = null;
   const out = { kind: 'player', p, team: k }, deals = [];
@@ -2403,6 +2444,7 @@ function aiCapTrade(me, k, p) {
   }
   if (!deals.length) return false;
   const [B, pk] = deals.sort((a, b) => b[2] - a[2])[0];
+  if (dry) return [B, pk];
   tradeMove([out], k, B); tradeMove([pk], B, k);
   if (p.stars >= 4 && (LEAGUE.tradeNews || (LEAGUE.tradeNews = [])).length < 8) LEAGUE.tradeNews.push(`${k} sends ${assetName(out)} to ${B} for the ${assetName(pk)} (cap room)`);
   return true;
