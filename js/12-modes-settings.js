@@ -2622,6 +2622,7 @@ function spendWatch() {   // once a frame (before the menus draw): credits went 
 canvas.addEventListener('pointerdown', e => { const p = pointerPos(e); spendClick = { x: p.x, y: p.y, t: performance.now() }; }, true);
 function drawSpendFx() {
   if (spendDrawn === spendFrame) return; spendDrawn = spendFrame;   // (drawn once a frame, whichever screen calls it first)
+  if (!spendFxs.length) return;   // (v0.55: nothing spent: no clock read)
   const now = performance.now();
   spendFxs = spendFxs.filter(f => now - f.t0 < SPEND.ms + f.coins.length * SPEND.gap + 1000);
   for (const f of spendFxs) {
@@ -3730,7 +3731,8 @@ ${SETTINGS.simST ? 'ON' : 'OFF'}`, Y, 10);   // (was the SPEED popup: the speeds
   menuBtn(B.zoom, `CAM ZOOM:
 ${SETTINGS.camZoom !== false ? 'ON' : 'OFF'}`, Y, 10);
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  if (settingsNote && performance.now() - settingsNote.t0 < 2500) { ctx.font = 'bold 17px monospace'; ctx.fillStyle = RES.gold; ctx.fillText(settingsNote.text, SET_X + 220, SET_TIP_Y); }
+  if (settingsNote && performance.now() - settingsNote.t0 >= 2500) settingsNote = null;   // (v0.55: gone once shown: no clock read after)
+  if (settingsNote) { ctx.font = 'bold 17px monospace'; ctx.fillStyle = RES.gold; ctx.fillText(settingsNote.text, SET_X + 220, SET_TIP_Y); }
   else {   // a one-line tip for the button under the mouse
     const hk = !settingsPopUp() && hoverPt && Object.keys(SET_TIPS).find(k => inBtn(hoverPt, B[k]));
     if (hk) { ctx.font = 'bold 13px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(SET_TIPS[hk](), SET_X + 220, SET_TIP_Y, SET_FULL); }

@@ -25,6 +25,7 @@ const postV = { pg: 0, ai: 0, ap: 0, sp: 0, turn: null, hits: [], note: null, se
 // the Post's page turn: ms = length, strips = how finely the leaf bends, lead = how far round the spine edge is vs the free edge (0.5 = free edge swings twice as far),
 // swing = overall angle (1 = the leaf ends flat on the other side), lift = perspective (taller as it lifts), shade = darkening as it turns away, cast = shadow on the page below
 const PAGE_TURN = { ms: 760, strips: 110, lead: 0.5, swing: 1, lift: 0.05, shade: 0.5, cast: 0.45 };
+const TURN_SH = Array.from({ length: 101 }, (_, i) => `rgba(30,20,5,${i / 100})`), turnShade = a => TURN_SH[Math.max(0, Math.min(100, Math.round(a * 100)))];   // (v0.55: the strips' shades, quantised to 0.01 instead of a new colour string per strip per frame)
 let POST_SNAP = null, POST_GRAIN = null, POST_DOTS = null, postEvShown = false, postMatchKey = '', postMatchLines = [];
 function postS() {
   const P = LEAGUE.post || (LEAGUE.post = {});
@@ -1440,11 +1441,11 @@ function drawPostInner() {
         if (c > 0) {   // (front of the leaf: the old page, lit from above-left, a little taller toward the viewer as it lifts)
           const hh = H * (1 + PAGE_TURN.lift * Math.sin(a)), y0 = (H - hh) / 2, sw = Math.max(wd, 0.6);
           ctx.drawImage(POST_SNAP, d > 0 ? i * w : W - (i + 1) * w, 0, w + 0.5, H, x0, y0, sw + 0.5, hh);
-          ctx.fillStyle = `rgba(30,20,5,${PAGE_TURN.shade * (1 - c)})`; ctx.fillRect(x0, y0, sw + 0.5, hh);
+          ctx.fillStyle = turnShade(PAGE_TURN.shade * (1 - c)); ctx.fillRect(x0, y0, sw + 0.5, hh);
         } else if (cx > 0) {   // (past the vertical: the back of the leaf, blank paper)
           const hh = H * (1 + PAGE_TURN.lift * Math.sin(a)), y0 = (H - hh) / 2, sw = Math.max(-wd, 0.6), bx = d > 0 ? cx + wd : W - cx;
           ctx.fillStyle = PP.paper; ctx.fillRect(bx, y0, sw + 0.5, hh);
-          ctx.fillStyle = `rgba(30,20,5,${0.12 + 0.2 * (1 + c)})`; ctx.fillRect(bx, y0, sw + 0.5, hh);
+          ctx.fillStyle = turnShade(0.12 + 0.2 * (1 + c)); ctx.fillRect(bx, y0, sw + 0.5, hh);
         }
         cx += wd;
         if (cx <= 0 && i > n / 2) break;
@@ -1552,8 +1553,16 @@ function drawChangelog(P) {
   window.addEventListener('pointerup', () => { from = null; });
 })();
 const VER_BTN = { x: 8, y: 8, w: 96, h: 36 };
+let START_BAKE = null;   // (v0.55: the version + the title sheet, baked; rebuilt when the version, dark mode or the pixel scale changes)
 function drawStart() {
   deskBg();
+  const t = START_TITLE, s = Math.round(Math.hypot(DM_P.getTransform.call(ctx).a, DM_P.getTransform.call(ctx).b) * 8) / 8, key = `${GAME_VERSION}|${dmOn ? 1 : 0}|${s}`;
+  if (!START_BAKE || START_BAKE._k !== key) { freeCanvas(START_BAKE); START_BAKE = ctxBake(0, 0, t.x + t.w + 30, t.y + t.h + 30, drawStartStill); START_BAKE._k = key; }
+  ctx.drawImage(START_BAKE, START_BAKE._x, START_BAKE._y, START_BAKE._w, START_BAKE._h);
+  if (dmOn) { const o = dmRgb('#fffdf4'), gr = dmFillCol('#fffdf4'); if (o) dmNote(dmBox(t.x, t.y, t.x + t.w, t.y + t.h), o, gr ? dmRgb(gr) : o); }
+  drawStartBtns();
+}
+function drawStartStill() {   // (what drawStart bakes: never anything that changes while the screen is up)
   ctx.save(); ctx.font = 'bold 22px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
   ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillText(GAME_VERSION, 19, 17); ctx.fillStyle = '#fffdf4'; ctx.fillText(GAME_VERSION, 18, 16);
   ctx.fillRect(18, 42, ctx.measureText(GAME_VERSION).width, 2); ctx.restore();   // (underlined: it opens the changelog)
@@ -1568,6 +1577,8 @@ function drawStart() {
   titleStamp(cx, cy);   // (the logo: PAPER PASSER stamped in worn red ink, as the cold open stamps it)
   ctx.font = 'bold 24px monospace'; ctx.fillStyle = '#c0392b'; ctx.fillText('★ FOOTBALL ★', cx, cy + 46);
   ctx.restore();
+}
+function drawStartBtns() {
   menuBtn(START_BTNS.ex, 'QUICK PLAY', quickMenu ? SEL : RES.bright, 32, b => {   // (the old EXHIBITION button: drops down EXHIBITION / 1V1 / ONLINE over the three buttons below it)
     const w = ctx.measureText('QUICK PLAY').width, ax = b.x + b.w - 34, ay = b.y + b.h / 2;
     ctx.fillStyle = RES.line; ctx.beginPath();
@@ -1580,7 +1591,7 @@ function drawStart() {
   if (!SETTINGS.hideTools) { menuBtn(TEST_BTN, 'TEST MODE', RES.bright, 24); menuBtn(ANIM_BTN, 'ANIMATION LIBRARY', RES.bright, 18); }   // (hidden by default: DEBUG > HIDE EXTRA TOOLS)
   menuBtn(ACCT_BTN, acct ? `ACCOUNT\n${acct.user.toUpperCase()}` : 'ACCOUNT', IN_GAME_PAPER.red, acct ? 20 : 24);   // (cloud sync popup: acctOpen)
   menuBtn(MENU_HL_BTN, savedHighlights.length ? `HIGHLIGHTS (${savedHighlights.length})` : 'IMPORT\nHIGHLIGHTS', IN_GAME_PAPER.yellow, 22);   // (none saved: the button imports a file)
-  if (performance.now() - hlFlash < 4000) {   // (nothing saved yet)
+  if (uiNow() - hlFlash < 4000 && performance.now() - hlFlash < 4000) {   // (nothing saved yet)   (v0.55: the page clock only while the note is up)
     ctx.save(); ctx.fillStyle = '#fffdf4'; ctx.fillRect(W - 420, H - 140, 390, 40); ctx.strokeStyle = RES.line; ctx.lineWidth = 3; ctx.strokeRect(W - 420, H - 140, 390, 40);
     ctx.fillStyle = RES.line; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('NO HIGHLIGHTS SAVED YET', W - 225, H - 120); ctx.restore();
   }
@@ -2948,7 +2959,7 @@ function drawOnline() {
   }
 }
 function drawNetBadge() {   // the connection readout in a corner of an online game: ping and whether the link is direct or relayed; while paused, the detail too
-  const now = performance.now();
+  const now = PERF_NOW();   // (v0.55: its own frame timer, not an animation: hidden from the menu clock probe)
   if (NET._fpsAt && now - NET._fpsAt < 500) NET.fms = NET.fms ? NET.fms * 0.95 + (now - NET._fpsAt) * 0.05 : now - NET._fpsAt;   // (this device's own frame time, smoothed)
   NET._fpsAt = now;
   if (!NET.conn || !NET.conn.open || results || !ONL.on) return;

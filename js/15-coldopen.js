@@ -2099,7 +2099,7 @@ function coldPeel(R, u) {
 (function () {
   const d = drawStart, c = startClick;
   drawStart = function () {
-    const I = coldIntro, C = COLD_END, now = performance.now(), s = I ? (now - I.t0) / 1000 : 0, T = I ? coldIT(I) : null;
+    const I = coldIntro, C = COLD_END, now = I || coldUnfx || coldUnPend || coldWig ? performance.now() : uiNow(), s = I ? (now - I.t0) / 1000 : 0, T = I ? coldIT(I) : null;   // (v0.55: no intro = no page-clock read)
     if (I && I.rip && s < T.m0) {   // the page torn away, the quiet, the stamp: only the desk (and the scrap) under it
       const sh = coldShake(s - T.imp);
       ctx.save(); ctx.translate(sh[0], sh[1]); deskBg(); coldScrap();

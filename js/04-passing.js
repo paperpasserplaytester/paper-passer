@@ -525,7 +525,7 @@ function settle(p, dt) {
   if (p.engaged) p.vx = p.vy = 0;   // still tied up when the whistle blew: the block just lets go, he is not flung out of it
   const coast = Math.hypot(p.vx, p.vy), cap = AFTER_WHISTLE.cap * YD;   // (cap = fastest he's still moving at the whistle; the decay below = how fast he stops, per s)
   if (coast > cap) { p.vx *= cap / coast; p.vy *= cap / coast; }
-  const f = Math.exp(-(p === ud && aiOff() ? AFTER_WHISTLE.ud : AFTER_WHISTLE.decay) * dt);   // (momentum carries him on and he eases up; the defender you were steering pulls up a bit sooner)
+  const f = Math.exp(-(p === ud && aiOff() && !p.hasBall ? AFTER_WHISTLE.ud : AFTER_WHISTLE.decay) * dt);   // (your returner carrying it eases up like any ball carrier)   // (momentum carries him on and he eases up; the defender you were steering pulls up a bit sooner)
   p.vx *= f; p.vy *= f;
   if (p.svx) { p.svx *= f; p.svy *= f; }
   p.x += p.vx * dt; p.y += p.vy * dt;
@@ -1775,7 +1775,25 @@ function steer(p, tx, ty, top, accel, dt) {
 // (the AI's targets stay in bounds: oobAim in steer). The old clamp walled defenders 0.2 yd INSIDE the line (more in the red zone)
 // but let carriers / receivers 1.5 yd out: a tackler riding a carrier down over the sideline was yanked back in the moment he let go
 // (the post-play teleport), and anyone whose role or the state changed snapped to the new wall.
-const OOB_ROOM = { y: 3.9, x: 4.4 };   // yd anyone's feet can go past a sideline (y) / an end line (x): the stands' ad wall is a hard wall (sideline wall = its foot, CROWD.wall 4.4 yd out, however tall CROWD.wallH makes it; end wall = endGap + wall 5 yd), minus half a yard of body (clampField; oobBrake slows him so he never slams into it)
+const OOB_ROOM = { body: 0.5 };   // body = yd of a player's feet kept off the stands' wall. The wall is the one bowlGeo() draws (07): its field-side faces + rounded corners (wallLim). (It used to be a plain rectangle measured past Y_MIN, which is 0.8 yd outside the paint: feet went into the top / bottom walls and through the corners)
+let WALL_LIM = null;
+function wallLim() {   // the rounded rectangle players' feet stay inside: the bowl's field-side wall faces, a body in (corners follow the drawn curve)
+  if (WALL_LIM) return WALL_LIM;
+  const G = bowlGeo(), b = OOB_ROOM.body * YD, cx0 = G.X0 + G.ri, cx1 = G.X1 - G.ri, cy0 = G.Y0 + G.ri, cy1 = G.Y1 - G.ri;
+  return WALL_LIM = { xl: G.X0 + G.tE + b, xr: G.X1 - G.tE - b, yt: G.Y0 + G.tT + b, yb: G.Y1 - G.tB - b, G, b,
+    C: [[cx0, cy0, -1, -1, G.tT], [cx1, cy0, 1, -1, G.tT], [cx0, cy1, -1, 1, G.tB], [cx1, cy1, 1, 1, G.tB]] };   // (centre, outward signs, side wall's thickness)
+}
+// a point in a rounded corner: { centre, r = his distance from it, max = the room there, ux / uy = out from the centre }, or null off the corners
+function wallCorner(x, y) {
+  const W = wallLim(), G = W.G;
+  for (const [cx, cy, sx, sy, ts] of W.C) {
+    const dx = (x - cx) * sx, dy = (y - cy) * sy;
+    if (dx <= 0 || dy <= 0) continue;
+    const r = Math.hypot(dx, dy), u = Math.atan2(dy, dx) / (Math.PI / 2), t = G.tE + (ts - G.tE) * u;
+    return { cx, cy, r, max: Math.max(0, G.ri - t - W.b), ux: sx * dx / r, uy: sy * dy / r };
+  }
+  return null;
+}
 const OOB_DRAG = { drag: 3.2, decel: 55 };   // out of bounds: drag = 1/s slow-down on his velocity, decel = yd/s^2 he can brake at (his speed toward the wall is capped so he stops before it, never hitting it)
 function oobBrake(p, dt) {   // (steer, before the move: past a sideline / end line a runner sheds speed fast and can't carry it into the wall)
   if (p.svx == null || p.svy == null) return;
@@ -1789,17 +1807,22 @@ function oobBrake(p, dt) {   // (steer, before the move: past a sideline / end l
     const vmax = Math.sqrt(2 * dec * Math.max(0, room - out));   // (the fastest he can still be going outward and stop in the room that's left)
     p[key] = dir * Math.min(Math.abs(v), vmax);
   };
-  const RY = OOB_ROOM.y * YD, RX = OOB_ROOM.x * YD;
+  const WL = wallLim(), RY = Y_MIN - WL.yt, RYB = WL.yb - Y_MAX, RX = WL.xr - (FIELD + ENDZONE), RXL = -ENDZONE - WL.xl;
   const outT = Y_MIN - p.y, outB = p.y - Y_MAX, outL = -ENDZONE - p.x, outR = p.x - (FIELD + ENDZONE);
   if (outT > 0 && p.svy < 0) brake(outT, RY, 'svy');
-  if (outB > 0 && p.svy > 0) brake(outB, RY, 'svy');
+  if (outB > 0 && p.svy > 0) brake(outB, RYB, 'svy');
   if (outR > 0 && p.svx > 0) brake(outR, RX, 'svx');
-  if (outL > 0 && p.svx < 0) brake(outL, RX, 'svx');
+  if (outL > 0 && p.svx < 0) brake(outL, RXL, 'svx');
+  const k = wallCorner(p.x, p.y);   // (a rounded corner: his speed outward from its centre is capped the same way)
+  if (k) { const vo = p.svx * k.ux + p.svy * k.uy; if (vo > 0) { const vmax = Math.sqrt(2 * dec * Math.max(0, k.max - k.r)); if (vo > vmax) { p.svx -= (vo - vmax) * k.ux; p.svy -= (vo - vmax) * k.uy; } } }
 }
 const OOB_AIM = { margin: 0.2, rzEdge: true };   // AI players aim margin yd inside the sideline; rzEdge = red-zone coverage aims inside the back of the end zone
 function clampField(p) {
-  p.y = Math.max(Y_MIN - OOB_ROOM.y * YD, Math.min(Y_MAX + OOB_ROOM.y * YD, p.y));
-  p.x = Math.max(-ENDZONE - OOB_ROOM.x * YD, Math.min(FIELD + ENDZONE + OOB_ROOM.x * YD, p.x));
+  const W = wallLim();
+  p.y = Math.max(W.yt, Math.min(W.yb, p.y));
+  p.x = Math.max(W.xl, Math.min(W.xr, p.x));
+  const k = wallCorner(p.x, p.y);
+  if (k && k.r > k.max) { p.x = k.cx + k.ux * k.max; p.y = k.cy + k.uy * k.max; }
   postBump(p);
 }
 // the goal posts' padded base is solid: a small oval collider behind each end line, around the blue pad (drawGoalPost draws the pad from these same numbers). Anyone who runs into

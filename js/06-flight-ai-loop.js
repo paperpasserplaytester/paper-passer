@@ -2506,7 +2506,7 @@ function drawDefOverlay(g) {
         const zs = zoneShape(d), [zx, zy] = sp({ x: los + (d.zone.d || 0) * YL, y: zs.cy }), rr = zs.rx * z, rv = zs.ry * z;
         if (g) {
           if (plLod || liteOn()) { ctx.globalAlpha = 0.18; ctx.beginPath(); ctx.ellipse(zx, zy, rr, rv, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1; }
-          else penRingHatch(zx, zy, rr, rv, ctx.strokeStyle, (d.num | 0) * 13 + 7, true);   // (the zone coloured in with a light, wide pencil hatch)
+          else penRingHatch(zx, zy, rr, rv, ctx.strokeStyle, (d.num | 0) * 13 + 7, z);   // (the zone coloured in with a light, wide pencil hatch)
           penEllipse(zx, zy, rr, rv, (d.num | 0) * 13 + 7); ctx.stroke(); continue;
         }
         ctx.fillText(d.zone.deep ? 'DEEP' : 'ZONE', zx, zy - 8 * z);
@@ -2538,7 +2538,7 @@ function drawDefOverlay(g) {
       const zs = zoneShape(ud), [zx, zy] = sp({ x: los + (ud.zone.d || 0) * YL, y: zs.cy }), rr = zs.rx * z, rv = zs.ry * z;
       if (g) {
         if (plLod || liteOn()) { ctx.globalAlpha = 0.12; ctx.fillStyle = '#ffd94a'; ctx.beginPath(); ctx.ellipse(zx, zy, rr, rv, 0, 0, Math.PI * 2); ctx.fill(); }
-        else penRingHatch(zx, zy, rr, rv, '#ffd94a', 47, true);
+        else penRingHatch(zx, zy, rr, rv, '#ffd94a', 47, z);
         ctx.globalAlpha = 0.8;
         penEllipse(zx, zy, rr, rv, 47); ctx.stroke();
       }
@@ -3003,7 +3003,8 @@ function update(dt) {
   if (ud && (aiOff() || pvpDef()) && !LIVE_STATES.has(state) && !ud.celWalk) {   // (walking out to open space to celebrate: his legs run)
     const still = (ud.gs || 0) < (state === 'pre' ? 0.6 : 1.2) * YD && !['dive', 'jump', 'down', 'getup', 'spin', 'hurdle'].includes(ud.action);
     // (pre-snap with a key held: he keeps his speed, so he can really move)
-    if (still && !(state === 'pre' && defDir())) { ud.moving = false; ud.stride = null; ud.svx = ud.svy = 0; if (state !== 'pre') { ud.vx = ud.vy = 0; if (ud.action && !ud.act) ud.action = null; } }
+    if (still && !(state === 'pre' && defDir()) && !(state === 'done' && ud.hasBall)) {   // (your returner with the ball: he coasts and eases up like any carrier, settle)
+      ud.moving = false; ud.stride = null; ud.svx = ud.svy = 0; if (state !== 'pre') { ud.vx = ud.vy = 0; if (ud.action && !ud.act) ud.action = null; } }
   }
   for (const p of allPlayers()) if (p.moving) {
     const v = p.gs || 0;   // (his ground speed, measured: a stale velocity left behind when nobody moves him any more (the whistle, a held pose) must never keep his legs going)
@@ -3017,7 +3018,7 @@ function update(dt) {
       p.run += dt * LOCK_FEET.rate; p.stride = p.stride == null ? LOCK_FEET.amp : p.stride + (LOCK_FEET.amp - p.stride) * Math.min(1, dt * STRIDE.smooth);
       continue;
     }
-    if (state === 'done' && p === ud && !p.action && !p.celWalk && !(p.coast && p.coast.v > 0)) { p.svx = p.svy = 0; p.moving = false; p.vx = p.vy = 0; p.stride = null; continue; }   // (the defender you drive stops with the whistle: no jogging in place on held keys)
+    if (state === 'done' && p === ud && !p.hasBall && !p.action && !p.celWalk && !(p.coast && p.coast.v > 0)) { p.svx = p.svy = 0; p.moving = false; p.vx = p.vy = 0; p.stride = null; continue; }   // (the defender you drive stops with the whistle: no jogging in place on held keys)
     if (state === 'done' && !p.action && v < 0.6 * YD) { p.moving = false; p.vx = p.vy = 0; p.engaged = false; p.stride = null; continue; }   // (the play is over: nobody keeps running in place)
     if (!churn && !p.engaged && !p.action && v < (p === ud && defLive() ? UD_STAND : 0.3) * YD) { p.moving = false; p.stride = null; continue; }   // (flagged moving but going nowhere: he stands, no frozen half-stride rocking in place)
     p.run += dt * (churn ? 22 : p.engaged ? 6 : Math.min(STRIDE.max, STRIDE.rate * v / YD));

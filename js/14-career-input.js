@@ -885,7 +885,8 @@ function tutPromptClick(p) {
 // Any page change (menu screens, the team picker, into and out of a game): the old page, snapshotted from the
 // last frame, crumples into a paper ball (a grid of triangles folding in on itself, creases shading in) and
 // gets tossed off the bottom of the screen, uncovering the new one.
-const CRUMPLE = { ms: 720, fold: 0.55, gx: 8, gy: 5, ball: 95 };   // fold = share of the time spent crumpling
+const CRUMPLE = { ms: 720, fold: 0.55, gx: 8, gy: 5, ball: 95, snapK: 0.6, snapKTouch: 0.4, shades: 16 };   // fold = share of the time spent crumpling; snapK = the snapshot's size vs the canvas (desktop / phones); shades = crease colours kept (v0.55)
+const CRUMPLE_SH = Array.from({ length: CRUMPLE.shades * 2 + 1 }, (_, i) => { const k = (i - CRUMPLE.shades) / CRUMPLE.shades * 0.35; return k > 0 ? `rgba(40,30,10,${k.toFixed(3)})` : `rgba(255,255,255,${(-k * 0.8).toFixed(3)})`; });   // (crease shade k in -0.35..0.35, quantised)
 const crumpleSnap = document.createElement('canvas');
 crumpleSnap.width = W; crumpleSnap.height = H;
 let crumple = null, lastPage = null, crumpleG = CRUMPLE;   // (crumpleG: the grid / timing this crumple was started with)
@@ -893,7 +894,7 @@ const pageKey = () => (results ? results.screen + (teamPick ? ':pick' : '') : tu
 function startCrumple(rect) {   // rect: crumple only that part of the screen (a popup's card), not the whole page
   // (just the 16:9 middle. Phones: a half-size snapshot, a quarter of the pixels to copy and to draw through every facet: the copy was the hitch at a page change)
   // (the whole canvas, the widened sides of a phone screen included: the page is DW logical px wide, from -PAD to W + PAD)
-  const K = TOUCH ? 0.4 : 1, DW = W + 2 * PAD;
+  const K = TOUCH ? CRUMPLE.snapKTouch : CRUMPLE.snapK, DW = W + 2 * PAD;
   const R = rect ? { x: rect.x + 3, y: rect.y + 3, w: rect.w - 6, h: rect.h - 6 } : { x: -PAD, y: 0, w: DW, h: H };   // (inset: the card's torn edge and shadow stay out of the piece)
   crumpleSnap.width = Math.max(2, Math.round(R.w * K)); crumpleSnap.height = Math.max(2, Math.round(R.h * K));
   crumpleSnap.getContext('2d').drawImage(canvas, (R.x + PAD) * RK, R.y * RK, R.w * RK, R.h * RK, 0, 0, crumpleSnap.width, crumpleSnap.height); snapUnbright(crumpleSnap);
@@ -914,7 +915,16 @@ function startCrumple(rect) {   // rect: crumple only that part of the screen (a
     tris.push([a, b, c, r()], [b, d, c, r()]);
   }
   tris.sort(() => r() - 0.5);   // folded paper overlaps every which way
-  crumple = { R, cx0: R.x + R.w / 2, cy0: R.y + R.h / 2, t0: performance.now(), pts, tris, spin: (r() < 0.5 ? -1 : 1) * (4 + 3 * r()), dir: r() < 0.5 ? -1 : 1 };
+  // (v0.55: each facet's source-side numbers and page patch, worked out once instead of every frame)
+  const SK = crumpleSnap.width / R.w, T = tris.map(([ia, ib, ic, shade]) => {
+    const s0 = pts[ia], s1 = pts[ib], s2 = pts[ic];
+    const s1x = s1.sx - s0.sx, s1y = s1.sy - s0.sy, s2x = s2.sx - s0.sx, s2y = s2.sy - s0.sy;
+    const bx0 = Math.max(R.x, Math.min(s0.sx, s1.sx, s2.sx) - 2), by0 = Math.max(R.y, Math.min(s0.sy, s1.sy, s2.sy) - 2);
+    const bx1 = Math.min(R.x + R.w, Math.max(s0.sx, s1.sx, s2.sx) + 2), by1 = Math.min(R.y + R.h, Math.max(s0.sy, s1.sy, s2.sy) + 2);
+    return { ia, ib, ic, shade, s1x, s1y, s2x, s2y, den: s1x * s2y - s2x * s1y, s0x: s0.sx, s0y: s0.sy, bx0, by0, bw: bx1 - bx0, bh: by1 - by0,
+             qx: (bx0 - R.x) * SK, qy: (by0 - R.y) * SK, qw: (bx1 - bx0) * SK, qh: (by1 - by0) * SK };
+  });
+  crumple = { R, cx0: R.x + R.w / 2, cy0: R.y + R.h / 2, t0: performance.now(), pts, tris: T, P: pts.map(() => [0, 0]), spin: (r() < 0.5 ? -1 : 1) * (4 + 3 * r()), dir: r() < 0.5 ? -1 : 1 };
   paperSfx();
 }
 // a short crinkle: filtered noise bursts
@@ -944,38 +954,32 @@ function drawCrumple() {
   // after the fold: tossed in an arc off the bottom, spinning
   const q = Math.max(0, (p - G.fold) / (1 - G.fold));
   const C0 = { x: crumple.cx0, y: crumple.cy0 }, cx = C0.x + crumple.dir * q * W * 0.45, cy = C0.y - 160 * q + 900 * q * q, rot = crumple.spin * q, sc = 1 - 0.35 * q;
-  const P = crumple.pts.map(v => {
-    const bx = v.bx * Math.cos(rot) - v.by * Math.sin(rot), by = v.bx * Math.sin(rot) + v.by * Math.cos(rot);
-    return [v.sx + (C0.x + bx * sc - v.sx) * f + v.wx * wob * 0.5 + (cx - C0.x) , v.sy + (C0.y + by * sc - v.sy) * f + v.wy * wob * 0.5 + (cy - C0.y)];
-  });
+  const P = crumple.P, cr = Math.cos(rot), sr = Math.sin(rot), ox = cx - C0.x, oy = cy - C0.y, w5 = wob * 0.5;   // (one points array, reused every frame)
+  for (let i = 0; i < crumple.pts.length; i++) {
+    const v = crumple.pts[i], bx = v.bx * cr - v.by * sr, by = v.bx * sr + v.by * cr, q = P[i];
+    q[0] = v.sx + (C0.x + bx * sc - v.sx) * f + v.wx * w5 + ox; q[1] = v.sy + (C0.y + by * sc - v.sy) * f + v.wy * w5 + oy;
+  }
   ctx.save();
   ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0);   // (the 16:9 middle of a widened canvas)
-  for (const [ia, ib, ic, shade] of crumple.tris) {
-    const s = [crumple.pts[ia], crumple.pts[ib], crumple.pts[ic]], d = [P[ia], P[ib], P[ic]];
-    const mx = (d[0][0] + d[1][0] + d[2][0]) / 3, my = (d[0][1] + d[1][1] + d[2][1]) / 3;
-    const grow = ([x, y]) => [x + (x - mx) * 0.04 + Math.sign(x - mx) * 0.6, y + (y - my) * 0.04 + Math.sign(y - my) * 0.6];   // (no seams)
-    const [d0, d1, d2] = d.map(grow);
-    const s1x = s[1].sx - s[0].sx, s1y = s[1].sy - s[0].sy, s2x = s[2].sx - s[0].sx, s2y = s[2].sy - s[0].sy;
-    const D1x = d[1][0] - d[0][0], D1y = d[1][1] - d[0][1], D2x = d[2][0] - d[0][0], D2y = d[2][1] - d[0][1];
-    const den = s1x * s2y - s2x * s1y;
-    if (!den) continue;
-    const a = (D1x * s2y - D2x * s1y) / den, b = (D1y * s2y - D2y * s1y) / den;
-    const c = (D2x * s1x - D1x * s2x) / den, dd = (D2y * s1x - D1y * s2x) / den;
-    const e = d[0][0] - a * s[0].sx - c * s[0].sy, ff = d[0][1] - b * s[0].sx - dd * s[0].sy;
+  const NS = CRUMPLE.shades, grow = (v, m) => v + (v - m) * 0.04 + Math.sign(v - m) * 0.6;   // (no seams)
+  for (const t of crumple.tris) {
+    if (!t.den) continue;
+    const p0 = P[t.ia], p1 = P[t.ib], p2 = P[t.ic];
+    const mx = (p0[0] + p1[0] + p2[0]) / 3, my = (p0[1] + p1[1] + p2[1]) / 3;
+    const D1x = p1[0] - p0[0], D1y = p1[1] - p0[1], D2x = p2[0] - p0[0], D2y = p2[1] - p0[1], den = t.den;
+    const a = (D1x * t.s2y - D2x * t.s1y) / den, b = (D1y * t.s2y - D2y * t.s1y) / den;
+    const c = (D2x * t.s1x - D1x * t.s2x) / den, dd = (D2y * t.s1x - D1y * t.s2x) / den;
+    const e = p0[0] - a * t.s0x - c * t.s0y, ff = p0[1] - b * t.s0x - dd * t.s0y;
     ctx.save();
-    ctx.beginPath(); ctx.moveTo(d0[0], d0[1]); ctx.lineTo(d1[0], d1[1]); ctx.lineTo(d2[0], d2[1]); ctx.closePath();
+    ctx.beginPath(); ctx.moveTo(grow(p0[0], mx), grow(p0[1], my)); ctx.lineTo(grow(p1[0], mx), grow(p1[1], my)); ctx.lineTo(grow(p2[0], mx), grow(p2[1], my)); ctx.closePath();
     ctx.clip();
     ctx.setTransform(a * RK, b * RK, c * RK, dd * RK, (e + PAD) * RK, ff * RK);
     // (only this facet's patch of the page, not the whole snapshot, is drawn through the clip)
-    const CR = crumple.R, bx0 = Math.max(CR.x, Math.min(s[0].sx, s[1].sx, s[2].sx) - 2), by0 = Math.max(CR.y, Math.min(s[0].sy, s[1].sy, s[2].sy) - 2);
-    const bx1 = Math.min(CR.x + CR.w, Math.max(s[0].sx, s[1].sx, s[2].sx) + 2), by1 = Math.min(CR.y + CR.h, Math.max(s[0].sy, s[1].sy, s[2].sy) + 2);
-    const SK = crumpleSnap.width / CR.w;
-    ctx.drawImage(crumpleSnap, (bx0 - CR.x) * SK, (by0 - CR.y) * SK, (bx1 - bx0) * SK, (by1 - by0) * SK, bx0, by0, bx1 - bx0, by1 - by0);
+    ctx.drawImage(crumpleSnap, t.qx, t.qy, t.qw, t.qh, t.bx0, t.by0, t.bw, t.bh);
+    // creases: each facet catches the light a little differently as it folds (one fillRect over the patch inside the facet's own clip)
+    const k = f * (t.shade - 0.35) * 0.5, ki = Math.round(k / 0.35 * NS);
+    if (ki) { ctx.fillStyle = CRUMPLE_SH[Math.max(-NS, Math.min(NS, ki)) + NS]; ctx.fillRect(t.bx0, t.by0, t.bw, t.bh); }
     ctx.restore();
-    // creases: each facet catches the light a little differently as it folds
-    const k = f * (shade - 0.35) * 0.5;
-    ctx.fillStyle = k > 0 ? `rgba(40,30,10,${k})` : `rgba(255,255,255,${-k * 0.8})`;
-    ctx.beginPath(); ctx.moveTo(d0[0], d0[1]); ctx.lineTo(d1[0], d1[1]); ctx.lineTo(d2[0], d2[1]); ctx.closePath(); ctx.fill();
   }
   ctx.restore();
 }
@@ -1553,7 +1557,7 @@ function onKeyDown(e) {
   }
   if (offPop && e.code === 'Escape') { e.preventDefault(); if (!e.repeat) offPopClose(); return; }   // (Esc closes the popup on top, one at a time: the changelog and every other popup)
   if (results && teamPick && e.code === 'Escape') { teamPick = null; return; }
-  if (results && e.code === 'Escape' && !offPop && performance.now() - backDrawn < 500) {   // (500 ms: a slow frame must not make Esc miss)   // Esc = the screen's BACK button
+  if (results && e.code === 'Escape' && !offPop && (performance.now() - backDrawn < 500 || backDrawn === UI_LAST)) {   // (or drawn in the last painted frame: a still menu isn't repainted)   // (500 ms: a slow frame must not make Esc miss)   // Esc = the screen's BACK button
     e.preventDefault(); const r = canvas.getBoundingClientRect(), bb = backBtnNow || BACK_BTN;
     if (homeLeave) { homeLeave = false; return; }   // (the home screen's ARE YOU SURE?: Esc = STAY)
     const c = { x: bb.x + bb.w / 2, y: bb.y + bb.h / 2 };   // (a real mouse click on the button: sendMouse maps it through the touch padding / rotation too)
@@ -1754,7 +1758,7 @@ function snapUnbright(c) {   // a copy of the canvas, taken back to the picture 
 // --- frame-time readout (settings > DEBUG > FRAME TIMES; SETTINGS.perfHud, off by default, kept per device) ---
 // fps + the average / worst ms of the game step (update) and of the painting (draw), over the last PERF_HUD.win ms. Costs two clock reads a frame when off.
 const PERF_HUD = { win: 1000, x: 8, y: 150, font: 15, fontTouch: 20, alpha: 0.78 };   // win = ms a reading covers; x / y = its corner (from the left / up from the bottom); font px (touch = phones)
-const perfS = { t0: 0, uS: 0, uM: 0, uN: 0, dS: 0, dM: 0, dN: 0, l1: '', l2: '' };
+const perfS = { t0: 0, uS: 0, uM: 0, uN: 0, dS: 0, dM: 0, dN: 0, pN: 0, l1: '', l2: '', l3: '', parts: {}, btn: 0 };   // (pN = frames really painted; parts = ms per paint-block part; btn = menuBtn calls last frame)
 function perfUpd(ms) { if (!SETTINGS.perfHud) return; perfS.uS += ms; perfS.uN++; if (ms > perfS.uM) perfS.uM = ms; }
 function perfDraw(ms, now) {
   if (!SETTINGS.perfHud) return;
@@ -1762,17 +1766,41 @@ function perfDraw(ms, now) {
   if (now - P.t0 < PERF_HUD.win) return;
   const f = n => n.toFixed(1), lv = liteLevel();
   P.l1 = `${Math.round(P.dN * 1000 / Math.max(1, now - P.t0))} FPS   UPD ${f(P.uS / Math.max(1, P.uN))} / ${f(P.uM)}   DRAW ${f(P.dS / Math.max(1, P.dN))} / ${f(P.dM)} ms`;
-  P.l2 = `avg / worst   ${gfxMode()}${lv ? ' L' + lv : ''}   ${canvas.width}x${canvas.height} (x${RK.toFixed(2)})`;
-  P.t0 = now; P.uS = P.uM = P.uN = P.dS = P.dM = P.dN = 0;
+  P.l2 = `avg / worst   ${gfxMode()}${lv ? ' L' + lv : ''}   ${canvas.width}x${canvas.height} (x${RK.toFixed(2)})  HI${RK_HI}  DM ${dmOn ? 'on' : 'off'}  BTN ${P.btn}`;
+  const top = Object.keys(P.parts).map(k => [k, P.parts[k] / Math.max(1, P.dN)]).sort((a, b) => b[1] - a[1]).slice(0, 2);
+  P.l3 = `${Math.round(P.pN * 1000 / Math.max(1, now - P.t0))} paints/s   ` + (top.length ? top.map(([k, v]) => `${k} ${f(v)}`).join('   ') + ' ms' : '');
+  P.t0 = now; P.uS = P.uM = P.uN = P.dS = P.dM = P.dN = P.pN = 0; P.parts = {};
 }
+// v0.55: per-part timing of the paint block (only while FRAME TIMES is on): t = perfMark('name', t) adds the ms since t to that part and returns now
+function perfMark(name, t) { const n = PERF_NOW(); perfS.parts[name] = (perfS.parts[name] || 0) + n - t; return n; }
+// the end-of-game reel under the result screen's paper: every HLREEL.bgEvery-th frame, into a canvas HLREEL.bgK x the size (the global ctx points at it
+// while draw() runs, with the main ctx's own hooks copied on), blitted under the result screen every frame
+let REEL_BG = null, reelBgN = 0;
+function reelBgDraw() {
+  const k = HLREEL.bgK, ev = Math.max(1, HLREEL.bgEvery | 0);
+  if (!(k > 0 && k < 1) && ev === 1) { draw(); drawReelFx(); return; }
+  const cw = Math.max(2, Math.round(canvas.width * k)), ch = Math.max(2, Math.round(canvas.height * k));
+  if (!REEL_BG) REEL_BG = document.createElement('canvas');
+  if (REEL_BG.width !== cw || REEL_BG.height !== ch) { REEL_BG.width = cw; REEL_BG.height = ch; reelBgN = 0; }
+  if (reelBgN++ % ev === 0) {
+    const main = ctx, g = REEL_BG.getContext('2d'), kk = cw / canvas.width;
+    for (const p of Object.getOwnPropertyNames(main)) Object.defineProperty(g, p, Object.getOwnPropertyDescriptor(main, p));
+    ctx = g;
+    try { g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = '#111'; g.fillRect(0, 0, cw, ch); g.setTransform(RK * kk, 0, 0, RK * kk, PAD * RK * kk, 0); draw(); drawReelFx(); }
+    finally { ctx = main; dmRecs.length = 0; }   // (dark mode: nothing the reel noted is a background of the result screen)
+  }
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(REEL_BG, 0, 0, canvas.width, canvas.height); ctx.restore();
+}
+function reelBgFree() { if (REEL_BG) { freeCanvas(REEL_BG); REEL_BG = null; } }
 function drawPerfHud() {
   if (!SETTINGS.perfHud || !perfS.l1) return;
   const fs = TUI.on ? PERF_HUD.fontTouch : PERF_HUD.font, y = H - PERF_HUD.y;
   ctx.save(); ctx.font = `bold ${fs}px monospace`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  const w = Math.max(ctx.measureText(perfS.l1).width, ctx.measureText(perfS.l2).width) + 16;
-  ctx.globalAlpha = PERF_HUD.alpha; ctx.fillStyle = '#000'; ctx.fillRect(PERF_HUD.x, y, w, fs * 2.7);
+  const w = Math.max(ctx.measureText(perfS.l1).width, ctx.measureText(perfS.l2).width, ctx.measureText(perfS.l3).width) + 16;
+  ctx.globalAlpha = PERF_HUD.alpha; ctx.fillStyle = '#000'; ctx.fillRect(PERF_HUD.x, y, w, fs * 3.9);
   ctx.globalAlpha = 1; ctx.fillStyle = '#9fe3a8'; ctx.fillText(perfS.l1, PERF_HUD.x + 8, y + fs * 0.75);
-  ctx.fillStyle = '#d8d8d8'; ctx.fillText(perfS.l2, PERF_HUD.x + 8, y + fs * 1.95); ctx.restore();
+  ctx.fillStyle = '#d8d8d8'; ctx.fillText(perfS.l2, PERF_HUD.x + 8, y + fs * 1.95);
+  ctx.fillStyle = '#ffd27a'; ctx.fillText(perfS.l3, PERF_HUD.x + 8, y + fs * 3.15); ctx.restore();
 }
 function frame(now, bg) {   // bg: stepped by the background ticker (a hidden online tab), which must not start a second rAF chain
   DIFF_FRAME++;   // (a new frame: diffLvl's kept row is rebuilt)
@@ -1811,6 +1839,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   try { celTTick(); celebFxTick(); } catch (e) {}   // (celebration sounds, the peak's jolt and the crowd, off whatever clock the cast is drawn by)
   const page = pageKey();   // (the canvas still holds the old page here: that's what crumples)
   if (lastPage !== null && page !== lastPage) {
+    menuInputAt = PERF_NOW();   // (v0.55: a new page paints at full rate for a while)
     // credits spent on the click that changed the page: the old page holds (coins flying into the button it was) until they land, then crumples
     let hold = 0;
     try { spendWatch(); const f = spendFxs[spendFxs.length - 1]; if (f) hold = Math.max(0, f.t0 + f.coins.length * SPEND.gap + SPEND.ms + 150 - performance.now()); } catch (e) {}   // (any spend still in the air, whoever started it: the button used to leave before the coins landed)
@@ -1819,27 +1848,57 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   }
   lastPage = page;
   { const lv = liteLevel(), hi = results && (results.screen === 'roster' || results.screen === 'tradeb') ? 2 : !results && !lv && (!TUI.on || gfxHi()) ? 1 : 0; if (hi !== RK_HI || lv !== liteLvl) { RK_HI = hi; liteLvl = lv; fitScreen(); } }   // (the roster / offer builder render at full screen resolution; after the page-change snapshot above: a resize clears the canvas, so doing it first crumpled a blank / wrong page)
+  rafDt += (Math.min(100, Math.max(1, now - rafLast)) - rafDt) * 0.1; rafLast = now;
   if (TUI.on && now - lastPaint < paintMin) return;   // (phones: drawn at most ~60 times a second even on a 90 / 120 Hz screen, ~30 when a frame takes too long to paint; the game steps above are unaffected)
+  if (menuSkip(now)) return;   // (v0.55: menus: paced, and nothing painted while nothing on them can change; the canvas keeps its last picture)
   lastPaint = now;
-  const paintT0 = performance.now();
-  // (touch: the canvas has RK x the pixels, drawn through a scale; the 16:9 game sits in the middle of a wider canvas, PAD logical px in)
-  dmFrame();   // (dark mode: wraps / unwraps the canvas calls, clears last frame's backgrounds)
-  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#111'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0);
-  if (hl && hl.bg) { if (results.screen === 'result') { draw(); drawReelFx(); } drawMenus(); }   // (the end-of-game reel: the plays, then the result screen over them)
-  else if (hl) { draw(); if (hl) drawHlBar(); hlDelStep(); if (hl) drawHlDel(); } else if (HT) drawHalfShow(); else if (results) drawMenus(); else draw();
-  if (settingsOpen) drawSettings();
-  if (slotUI) drawSlots();
-  drawCrumple();
-  ioDrawToast();
-  drawNetBadge(); drawOnlineHud(); drawOnlineOverlay();
-  ctx.restore();
-  brightPass();
-  ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0); perfDraw(performance.now() - paintT0, now); drawPerfHud(); ctx.restore();   // (the readout times the brighten pass too)
+  const paintT0 = performance.now(), pm = SETTINGS.perfHud;
+  UI_NOW = UI_LAST = paintT0; menuMoving = false; menuProbeN = 0; performance.now = menuProbe;
+  try { paintFrame(paintT0, pm, now); } finally { delete performance.now; UI_NOW = 0; menuClock = menuProbeN > 0; }
   if (TUI.on) {   // how long painting took, smoothed: slow frames drop the paint rate to ~30 (so the game keeps up and the thread isn't always behind), fast ones bring it back
     paintAvg += (performance.now() - paintT0 - paintAvg) * 0.1;
     if (paintAvg > PAINT_SLOW) paintMin = PAINT_MIN_SLOW; else if (paintAvg < PAINT_SLOW * 0.65) paintMin = PAINT_MIN;
   }
+}
+// --- menu pacing (v0.55; tunables MENU_PACE in 01-tuning) ---
+// A paint that reads the page clock (performance.now) is animating something; menu buttons read UI_NOW instead, so a still menu reads none.
+// After MENU_PACE.idleMs with no input, a menu whose last paint read no clock, had no hover still easing and nothing below busy is not painted again.
+const PERF_NOW = performance.now.bind(performance);
+let menuInputAt = 0, menuClock = true, menuProbeN = 0, rafDt = 16.7, rafLast = 0, menuWhy = null;
+function menuProbe() { if (!menuProbeN++ && MENU_PACE.debug) menuWhy = new Error().stack.split('\n').slice(2, 5).map(s => s.trim().replace(/\(http[^)]*\/js\//, '(')).join(' < '); return PERF_NOW(); }   // (MENU_PACE.debug: menuWhy = the first clock read of the last paint)
+for (const t of ['pointermove', 'pointerdown', 'pointerup', 'keydown', 'keyup', 'wheel', 'resize', 'focus', 'visibilitychange']) window.addEventListener(t, () => { menuInputAt = PERF_NOW(); }, { capture: true, passive: true });
+const menuPaced = () => !!results && !(hl && !hl.bg) && !HT && !(rec && rec.replaying);
+function menuDirty() {
+  return menuClock || menuMoving || !!crumple || !!btnPress || spendFxs.length > 0 || coinFly.length > 0 || cardShows.length > 0 || !!tour || !!offPop || !!IO.toast || !!hl || !!HT || !!LGJ
+    || !!postV.turn || settingsPopUp() || !!slotUI || ONL.on || !!NET.conn || (typeof CO !== 'undefined' && !!CO) || teamPick != null && !!teamPick;
+}
+function menuSkip(now) {
+  if (!MENU_PACE.on || !menuPaced()) return false;
+  const idle = now - menuInputAt > MENU_PACE.idleMs, since = now - lastPaint;
+  const skip = since < 1000 / (idle ? MENU_PACE.idleFps : MENU_PACE.fps) - rafDt * 0.5   // (the cap, allowing for the refresh's own step: 144 Hz -> every 2nd refresh)
+    || (idle && since < MENU_PACE.beatMs && !menuDirty());
+  if (skip) { UI_BTNS = UI_BTNS_PREV; UI_MODAL.now = UI_MODAL.was; spendFrame--; }   // (an unpainted frame: last painted frame's buttons, popup state and frame count stay current)
+  return skip;
+}
+function paintFrame(paintT0, pm, now) {
+  let pt = paintT0;
+  // (touch: the canvas has RK x the pixels, drawn through a scale; the 16:9 game sits in the middle of a wider canvas, PAD logical px in)
+  dmFrame();   // (dark mode: wraps / unwraps the canvas calls, clears last frame's backgrounds)
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#111'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0);
+  if (pm) pt = perfMark('clear', pt);
+  if (hl && hl.bg) { if (results.screen === 'result') { reelBgDraw(); if (pm) pt = perfMark('reel', pt); } drawMenus(); if (pm) pt = perfMark('menus', pt); }   // (the end-of-game reel: the plays, then the result screen over them)
+  else if (hl) { draw(); if (hl) drawHlBar(); hlDelStep(); if (hl) drawHlDel(); if (pm) pt = perfMark('hl', pt); } else if (HT) { drawHalfShow(); if (pm) pt = perfMark('half', pt); } else if (results) { if (!settingsOpen || MENU_PACE.underSettings) { drawMenus(); if (pm) pt = perfMark('menus', pt); } }   // (v0.55: settings starts with a full-screen desk: the menu under it isn't drawn) else { draw(); if (pm) pt = perfMark('draw', pt); }
+  if (settingsOpen) { drawSettings(); if (pm) pt = perfMark('settings', pt); }
+  if (slotUI) { drawSlots(); if (pm) pt = perfMark('slots', pt); }
+  if (crumple) { drawCrumple(); if (pm) pt = perfMark('crumple', pt); }
+  ioDrawToast();
+  drawNetBadge(); drawOnlineHud(); drawOnlineOverlay();
+  ctx.restore();
+  if (pm) pt = perfMark('misc', pt);
+  brightPass();
+  if (pm) { pt = perfMark('bright', pt); perfS.pN++; perfS.btn = UI_BTNS.length; }
+  ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0); perfDraw(PERF_NOW() - paintT0, now); drawPerfHud(); ctx.restore();   // (the readout times the brighten pass too)
 }
 // the first touch (a menu, long before a play) gets everything that would otherwise be built mid-play ready: the audio context and its clip buffer (decoded on
 // first use: the hitch at the first catch / tackle / throw), the one-shot sound elements and the footstep loops (the hitch at the first snap)
@@ -1955,7 +2014,7 @@ function tkey(code, down) {
   window.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code, bubbles: true, cancelable: true })); }
 // touch mode: the canvas fills the whole screen (stretched to the phone's ratio) and the page is forced to landscape
 // (orientation lock where the browser allows it, else html.rot turns the page 90 deg while the phone is held upright)
-let rotNow = false, rotVotes = 0, rotInit = false;
+let rotNow = false, rotVotes = 0, rotInit = false, fitRK = 0;
 function fitScreen() {
   const de = document.documentElement;
   // held upright = turned 90 deg. The screen's own orientation decides (the window's size jumps around for a moment on a page change / fullscreen / the address bar and
@@ -1974,6 +2033,8 @@ function fitScreen() {
   if (liteLvl) RK = Math.min(RK, LITE.rk) * (liteLvl > 1 ? LITE.slowRk : 1);   // (performance mode: a phone's canvas at 1x; frames still slow: fewer pixels on every device)
   if (RK_HI) { const r = layRect(canvas); RK = Math.max(RK, Math.min(RK_HI === 1 ? (TUI.on ? GAME_RES.touchMax : GAME_RES.max) : FV.resMax, (window.devicePixelRatio || 1) * Math.max(1, r.width) / (W + 2 * PAD))); }   // (formation view: sharp at every zoom; in a game: sharper text, GAME_RES)
   const cw = Math.round((W + 2 * PAD) * RK), ch = Math.round(H * RK);
+  if (RK !== fitRK) { fitRK = RK; btnSprClear(); }   // (v0.55: button sprites are made at the canvas's pixel scale)
+  if (canvas.width !== cw || canvas.height !== ch) menuInputAt = PERF_NOW();   // (a resize clears the canvas: paint again)
   if (canvas.width !== cw) canvas.width = cw;
   if (canvas.height !== ch) canvas.height = ch;
   canvas.style.width = PAD ? Math.min(lw, lh * asp) + 'px' : ''; canvas.style.aspectRatio = PAD ? `${W + 2 * PAD} / ${H}` : '';

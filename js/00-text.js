@@ -607,6 +607,29 @@ const CHANGELOG = [
       "The goal posts are yellow pencils taped together, the pylons are crayons.",
       "Outside the stadium is a wooden desk, with a desk lamp on the side the light comes from and a few things left lying around far out.",
     ]],
+    ["PAPER FIELD AND SIDELINES", [
+      "The field between the goal lines is construction paper (two sheets' shades for the 5-yard bands, fibres and specks); the end zones stay in marker, and the sidelines and end lines are drawn in white marker.",
+      "The sidelines are painted by depth: the yard markers, chain and crew no longer cover the bench behind them.",
+      "Players leaving the field run off by the nearest sideline (to their bench if it's theirs, simply gone on the far side).",
+      "Players stop before the stands' wall everywhere, round corners included (the wall used to be a box that let feet into the top / bottom walls).",
+      "Zone circles: the pencil hatching stays put inside the zone as the camera pans and zooms.",
+    ]],
+    ["KICKING, POPUPS AND SCREENS", [
+      "Greening both kick bars now all but guarantees the kick (unless it's blocked); harder difficulties speed the kick meters up much less.",
+      "No more ADAPTIVE DIFFICULTY or LEAGUE INJURIES popups (league injuries are in the Post's wire).",
+      "The end-of-week screen is gone: the result screen has STATS and INJURIES buttons, and CONTINUE goes straight home (or back to the bracket).",
+      "The scoring summary scrolls (wheel or drag) when there are more scores than fit.",
+      "Player names / Star Factor tips show only while you hold their tip, and hide when you let go.",
+      "Hiring board: the staff payroll bar and the +5M BUDGET button (now 25 credits) are on the board too.",
+    ]],
+    ["CELEBRATIONS AND ANIMATION FIXES", [
+      "Wall moves only after a touchdown; the wall sit is a real seated pose (it was a flat sliver).",
+      "New props: a disco ball over the disco point, a pogo stick for the pogo.",
+      "The hands-on-knees catch-your-breath lead-in drops the ball first (it used to sit on his back).",
+      "The group photo run is only picked when the photographer is close enough (no more teleporting after a pick).",
+      "Your interception return out of bounds keeps its momentum and eases up like any ball carrier.",
+      "Fixed a third arm on a hand-fight / hip-hold, on a beaten tackler's flailing arms, and on a strip punch from a dive.",
+    ]],
   ] },
   { v: "v0.53", secs: [
     ["HAND-DRAWN FIELD (PART 1)", [

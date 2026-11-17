@@ -25,6 +25,13 @@ let RK_HI = 0;   // 2 = the roster formation view: the canvas renders at the scr
 const GAME_RES = { max: 1.5, name: 3, touchMax: 2 };   // touchMax = phones / tablets in GRAPHICS: QUALITY: most canvas px per game px (also capped by the screen's own density; memory x touchMax^2)     // name = name tags' cached image px per world px (they are zoomed with the camera)
 let RK = 1;   // touch mode: the canvas has this share of the pixels (RENDER_K), drawn through a scale of RK: fewer pixels to fill each frame
 const RENDER_K = 1.1;   // (phones: was 0.75; the crowd has its own canvases and keeps its resolution)
+// v0.55 menu pacing (frame() in 14): menus paint at most fps, idleFps after idleMs with no input, and not at all while nothing on them can change
+// (a slow beatMs repaint covers anything that changes without a clock or input: a late image, a cloud sync note)
+const MENU_PACE = { fps: 60, idleFps: 30, idleMs: 400, beatMs: 2000, on: true, underSettings: false };   // underSettings = still draw the menu hidden under the settings page
+let UI_NOW = 0, UI_LAST = 0, menuMoving = false;   // UI_LAST = when the last painted frame started   // UI_NOW = the paint block's clock (0 outside it); menuMoving = a button's hover is still easing this frame
+const uiNow = () => UI_NOW || performance.now();   // (menu buttons read this, not the page clock: a paint that reads the clock counts as animating)
+const uiDt = (at, now) => { const d = now - (at || now); return d > 100 ? 1 / 60 : d / 1000; };   // (a hover's easing step; after a rest with no paints it eases from where it was instead of snapping)
+const uiEase = (v, over) => { if (Math.abs((over ? 1 : 0) - v) > 0.01) menuMoving = true; };   // (a hover still easing keeps the menu painting)
 let PAD = 0;   // touch mode on a screen wider than 16:9: logical px of extra view on each side of the 1280-wide game (see fitScreen); everything is drawn shifted by it
 const WIDE_MAX = 2.4;   // the widest screen shape used (width / height); past that the sides stay black
 const touchText = t => typeof t !== 'string' ? t : t

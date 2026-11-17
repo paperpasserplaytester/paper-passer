@@ -643,6 +643,7 @@ function hsPitch(r) { for (const k in sfxCtl) if (/cheer|boo|crowd|ooh|disappoin
 function hsClip(d) { if (!hl || hl.mode !== 'half') return; hl.again = false; hlPlay(hl.i + d, d); }   // the reel's next / previous clip (past the last one the list closes and the show moves on)
 function hlClose() {
   if (!hl) return;
+  if (hl.bg) reelBgFree();   // (v0.55: the result screen's half-size reel canvas)
   hlKitsBack();
   const L = hl.live, half = hl.mode === 'half', bg = hl.bg;
   hl = null; reelSnapFree();
@@ -685,6 +686,7 @@ const HLREEL = {
   fade: 0.3, panYd: 12, angles: [1, 1.1, 0.94],              // s of fade a new clip comes in under; parts of one play closer than panYd are joined by a camera pan, further by that fade; zoom of each part in turn (a new angle)
   pop: { td: [1, 1], pick: [0.95, 1], fumble: [0.9, 1], iconic: [0.8, 0, 1], spectacular: [0.85], moss: [0.8], tipcatch: [0.7], hit: [0.7, 0, 1], pbu: [0.5], move: [0.45, 0, 1], broken: [0.45], block: [0.4], celeb: [0.8, 1], def: [0.5] },   // the crowd at each moment: [level, two clips layered, the ooh first]
   bgPaper: 0.5,                                                 // how much of the result screen's paper covers the reel behind it (0 = none, 1 = hidden)
+  bgEvery: 2, bgK: 0.5,                                         // (v0.55) the reel behind the result screen is drawn every bgEvery-th frame into a canvas bgK x the size (the paper over it hides the softness)
   bonus: { lead: 10, down: 6, star: 6 },                        // ties / takes the lead, a 3rd / 4th down converted, a Star Factor player (glow on) made the moment
   perKind: 3, perMan: 2, monster: 4,                            // variety: clips of one kind, clips of one player (unless he has `monster`+ qualifying plays)
   win: { td: [5, 0.8], pick: [1.6, 2.2], pickTd: [1.2, 0.8], fumble: [1.2, 1.4], hit: [1.0, 1.2], gain: [5, 0.4], fg: [2.5, 0.8] },   // seconds kept before / after the anchor (the whistle, or the moment itself)

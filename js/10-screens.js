@@ -435,11 +435,12 @@ function openSection(x, y, w, title, ink = RES.line) {   // returns the y just u
 }
 function textBtn(b, label, ink = RES.line, size = 22, on = true) {
   UI_BTNS.push(b);
-  const now = performance.now(), dt = Math.min(0.1, (now - (b.at || now)) / 1000);
+  const now = uiNow(), dt = uiDt(b.at, now);
   b.at = now;
   const still = uiBehind() || (!!offPop && !popBtnDraw) || ((!!tour || tutPrompt === 'ask' || tutPrompt === 'coach' || tutPrompt === 'ready' || tutPrompt === 'setup' || !!(tut && tut.defAsk)) && !tourBtnDraw);
   const over = on && !still && hoverPt && inBtn(hoverPt, b);
   b.hov = (b.hov || 0) + ((over ? 1 : 0) - (b.hov || 0)) * Math.min(1, dt * 12);
+  if (Math.abs((over ? 1 : 0) - b.hov) > 0.01) menuMoving = true;
   const d = on && !still ? pressDepth(b) : 0;
   b.ink = ink;
   if (b.hov > 0.01) { ctx.fillStyle = `rgba(255,226,90,${0.4 * b.hov})`; ctx.fillRect(b.x, b.y, b.w, b.h); }
@@ -468,15 +469,19 @@ function paperCard(b, fill, draw) {
   ctx.restore();
 }
 function tornPath(b) {
-  if (!b.torn || b.torn.key !== `${b.x},${b.y},${b.w},${b.h}`) {
+  tornPts(b);
+  ctx.beginPath(); b.torn.pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath();
+}
+function tornPts(b) {   // (the scrap's jagged outline, made once per rect: no path built)
+  if (!b.torn || b.torn.x !== b.x || b.torn.y !== b.y || b.torn.w !== b.w || b.torn.h !== b.h) {
     const r = seeded(Math.round(b.x * 7 + b.y * 13 + b.w * 3 + b.h) + 1), pts = [], j = () => (r() - 0.5) * 5;
     const edge = (x0, y0, x1, y1, n) => { for (let i = 0; i < n; i++) pts.push([x0 + (x1 - x0) * i / n + j(), y0 + (y1 - y0) * i / n + j()]); };
     const nx = Math.max(4, Math.round(b.w / 14)), ny = Math.max(3, Math.round(b.h / 14));
     edge(b.x, b.y, b.x + b.w, b.y, nx); edge(b.x + b.w, b.y, b.x + b.w, b.y + b.h, ny);
     edge(b.x + b.w, b.y + b.h, b.x, b.y + b.h, nx); edge(b.x, b.y + b.h, b.x, b.y, ny);
-    b.torn = { key: `${b.x},${b.y},${b.w},${b.h}`, pts, tilt: (r() - 0.5) * 0.035 };
+    b.torn = { key: `${b.x},${b.y},${b.w},${b.h}`, x: b.x, y: b.y, w: b.w, h: b.h, pts, tilt: (r() - 0.5) * 0.035 };
   }
-  ctx.beginPath(); b.torn.pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath();
+  return b.torn;
 }
 // --- dark mode (SETTINGS.darkMode, settings > EXTRAS): the menus' white paper turns grey. Looks only.
 // While it's on, dmFrame wraps the main ctx's fill / stroke / text calls (never the field: draw() holds it over the world, and
@@ -648,15 +653,17 @@ const MENU_LOCK_GREY = '#a9a9a9';   // a button that can't be pressed here (sett
 function menuBtn(b, label, bg, size = 24, face, on = true) {
   if (b.lockGrey) { bg = MENU_LOCK_GREY; on = false; }   // (a locked setting: flat grey, no hover or press)
   UI_BTNS.push(b);
-  const now = performance.now(), dt = Math.min(0.1, (now - (b.at || now)) / 1000);
+  const now = uiNow(), dt = uiDt(b.at, now);
   b.at = now; if (b === BACK_BTN || b === HOME_BACK) { backDrawn = now; backBtnNow = b; }
   const still = uiBehind() || (!!offPop && !popBtnDraw) || (settingsPopUp() && !setPopDraw) || ((!!tour || tutPrompt === 'ask' || tutPrompt === 'coach' || tutPrompt === 'ready' || tutPrompt === 'setup' || !!(tut && tut.defAsk)) && !tourBtnDraw);   // (a popup or tutorial tip is up: the buttons behind it hold still)
   const over = on && !still && hoverPt && inBtn(hoverPt, b);
   b.hov = (b.hov || 0) + ((over ? 1 : 0) - (b.hov || 0)) * Math.min(1, dt * 12);
+  if (Math.abs((over ? 1 : 0) - b.hov) > 0.01) menuMoving = true;   // (v0.55: still easing: the menu keeps painting)
   const paper = bg === SEL ? '#fff3a0' : !bg || bg === RES.bright || bg === RES.bg ? '#fffdf4' : bg;
   b.ink = paperInk(paper);
   // pressed: the scrap flattens onto the desk, so its own torn shadow tucks in under it (no square shadow)
   const d = on && !still ? pressDepth(b) : 0, up = (1 - d) * b.hov;
+  if (up <= 0.01 && d <= 0.01 && BTN_SPR_ON && btnSprite(b, label, paper, size, face, on)) return;   // (v0.55: at rest = one cached image; hovered / pressed = drawn live below)
   {
     ctx.save();
     const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
@@ -680,6 +687,64 @@ function menuBtn(b, label, bg, size = 24, face, on = true) {
     if (face) face(b);
     ctx.restore();
   }
+}
+// --- button sprites (v0.55): a menu button at rest (torn shadow, paper, outline, construction-paper sheen, label) is drawn once into a small canvas
+// at the canvas's own pixel scale and blitted after that; face(b) stays live on top. Dark mode: the sprite is built with the dark colours worked out
+// directly (the off-screen context isn't wrapped), and the paper is noted as a background so face text / icons drawn on it are still fixed.
+const BTN_SPR = new Map(), BTN_SPR_MAX = 360, BTN_SPR_PAD = 8;
+let BTN_SPR_ON = true;   // (false = every button drawn live, as before v0.55)
+function btnSprClear() { for (const c of BTN_SPR.values()) freeCanvas(c); BTN_SPR.clear(); }
+function btnSprite(b, label, paper, size, face, on) {
+  const T = tornPts(b), m = DM_P.getTransform.call(ctx), s = Math.round(Math.hypot(m.a, m.b) * 8) / 8;
+  if (!s || s > 6) return false;
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2, plain = paper === '#fffdf4' || paper === '#fff3a0';
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(T.tilt); ctx.translate(-cx, -cy);
+  let grey = null, stroke = 'rgba(120,100,70,0.45)', ink = on ? b.ink : plain ? 'rgba(70,55,30,0.6)' : 'rgba(255,255,255,0.55)';
+  if (dmOn) {   // (what the wrapped calls would have drawn: paper greyed, the outline fixed for the page under it, the label for the greyed paper)
+    grey = dmFillCol(paper);
+    const r = dmBgAt(cx, cy), sc = dmRgb(stroke); if (r && r.ch && sc) stroke = dmFix(stroke, sc, r) || stroke;
+    const o = dmRgb(paper), g = grey && dmRgb(grey), ic = dmRgb(ink); if (o && g && ic) ink = dmFix(ink, ic, { o, m: g }) || ink;
+  }
+  const key = `${b.x},${b.y},${b.w},${b.h}|${label}|${paper}|${size}|${on ? 1 : 0}|${s}|${grey || ''}|${stroke}|${ink}`;
+  let c = BTN_SPR.get(key);
+  if (!c) {
+    if (BTN_SPR.size >= BTN_SPR_MAX) btnSprClear();
+    const P = BTN_SPR_PAD, x0 = b.x - P, y0 = b.y - P;
+    c = document.createElement('canvas'); c.width = Math.ceil((b.w + 2 * P) * s); c.height = Math.ceil((b.h + 2 * P) * s);
+    const g = c.getContext('2d'), path = () => { g.beginPath(); T.pts.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath(); };
+    g.setTransform(s, 0, 0, s, -x0 * s, -y0 * s);
+    g.save(); g.translate(3, 4); path(); g.fillStyle = 'rgba(40,25,5,0.28)'; g.fill(); g.restore();
+    path(); g.fillStyle = grey || paper; g.fill(); g.strokeStyle = stroke; g.lineWidth = 1.2; g.stroke();
+    if (!plain) {
+      const gr = g.createLinearGradient(0, b.y, 0, b.y + b.h);
+      gr.addColorStop(0, 'rgba(255,255,255,0.16)'); gr.addColorStop(0.5, 'rgba(255,255,255,0)'); gr.addColorStop(1, 'rgba(0,0,0,0.08)');
+      g.fillStyle = gr; g.fill();
+    }
+    g.fillStyle = ink; g.font = `bold ${size}px ${HAND_FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';   // (the main ctx's own hooks, done here by hand: monospace = the hand font, "3.5 stars" = the star sign)
+    const lines = label.split('\n');
+    lines.forEach((l, i) => g.fillText(l.includes('*') || /star/i.test(l) ? l.replace(/(\d(?:\.\d)?)(?:\s*\*|\s+stars?\b)/gi, '$1★') : l, cx, cy + 2 + (i - (lines.length - 1) / 2) * (size + 6)));
+    c._x = x0; c._y = y0; c._w = b.w + 2 * P; c._h = b.h + 2 * P;
+    BTN_SPR.set(key, c);
+  }
+  ctx.drawImage(c, c._x, c._y, c._w, c._h);
+  if (dmOn) { const o = dmRgb(paper); if (o) dmNote(dmBox(b.x, b.y, b.x + b.w, b.y + b.h), o, grey ? dmRgb(grey) : o); }   // (face text / icons on the paper are fixed for it)
+  if (face) face(b);
+  ctx.restore();
+  return true;
+}
+// a still part of a screen drawn once into its own canvas (x0, y0, w, h in page px, at the canvas's pixel scale) by its normal draw code: the global ctx
+// points at the bake canvas while draw() runs, with the main ctx's own hooks copied on (hand font, star text, dark-mode wrappers), so it comes out as it
+// would on screen, dark mode included. Returns the canvas (c._x / _y / _w / _h = where it goes).
+function ctxBake(x0, y0, w, h, draw) {
+  const m = DM_P.getTransform.call(ctx), s = Math.round(Math.hypot(m.a, m.b) * 8) / 8 || 1, main = ctx;
+  const c = document.createElement('canvas'); c.width = Math.ceil(w * s); c.height = Math.ceil(h * s);
+  const g = c.getContext('2d');
+  for (const k of Object.getOwnPropertyNames(main)) Object.defineProperty(g, k, Object.getOwnPropertyDescriptor(main, k));
+  const keep = dmRecs.slice();
+  ctx = g; DM_P.setTransform.call(g, s, 0, 0, s, -x0 * s, -y0 * s);
+  try { draw(); } finally { ctx = main; dmRecs.length = 0; for (const r of keep) dmRecs.push(r); }
+  c._x = x0; c._y = y0; c._w = w; c._h = h; c._s = s;
+  return c;
 }
 function drawStar(cx, cy, r, fill, stroke = '#0b1a3a', lw = 2) {
   ctx.beginPath();
@@ -805,7 +870,7 @@ function coinAutoFace() {
 function coinBox(x, y, n, bg) {   // ONE box, top right on every screen that shows it: credits on one face, the XP bank on the other (a click flips it)
   if (x < 900) { x = COIN_SPOT.x; y = COIN_SPOT.y; }
   if (n === LEAGUE.coins) coinAutoFace();
-  const B = xpcBox, on = n === LEAGUE.coins && xpcOn(), k = on ? Math.min(1, (performance.now() - B.t0) / (XPC.flip * 1000)) : 1;
+  const B = xpcBox, on = n === LEAGUE.coins && xpcOn(), k = on && B.t0 && uiNow() - B.t0 < XPC.flip * 1000 ? Math.min(1, (performance.now() - B.t0) / (XPC.flip * 1000)) : 1;   // (v0.55: the page clock only mid-flip)
   const xp = on && (k < 0.5 ? !B.xp : B.xp), sx = k < 1 ? Math.max(0.05, Math.abs(Math.cos(Math.PI * k))) : 1;   // (the flip: the box closes on the old face and opens on the new one)
   ctx.save();
   if (sx < 1) { ctx.translate(x + 65, 0); ctx.scale(sx, 1); ctx.translate(-(x + 65), 0); }
@@ -1295,6 +1360,7 @@ function xpFlyTick(now) {   // the box turns to whatever is flying to it or out 
 }
 function drawCoinFly() {
   COIN_FLY.to = coinTarget();
+  if (!coinFly.length && xpcBox.back == null && !spendFxs.length) return;   // (v0.55: nothing in the air or flipping back: no clock read, so a still menu can stop painting)
   const now = performance.now(), busy = coinFly.some(c => !c.xp);   // (credits first: the XP tokens wait until the last credit has landed)
   if (busy) for (const c of coinFly) if (c.xp) c.t0 = now + c.off;
   xpFlyTick(now);
@@ -2406,6 +2472,7 @@ function capBought(from, to) {
   capCoins = Array.from({ length: 20 }, (_, i) => ({ t0: now + i * 18, ox: (Math.random() - 0.5) * 30, oy: (Math.random() - 0.5) * 20 }));
 }
 function drawCapFx() {   // over the front office screen: coins into the button, then its glow
+  if (!capCoins.length && !(capGlow && uiNow() - capGlow < CAP_GLOW_MS)) return;   // (v0.55: nothing to show: no page-clock read)
   const b = CAP_UP_BTN, now = performance.now(), cx = b.x + b.w / 2, cy = b.y + b.h / 2;
   if (capCoins.length) {
     ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -2467,9 +2534,10 @@ function drawBookmark(b, on, big, label = 'KR') {
       for (let k = 0; k < n; k++) pts.push([x0 + (x1 - x0) * k / n + (r() - 0.5) * (big ? 4.5 : 2.5), y0 + (y1 - y0) * k / n + (r() - 0.5) * (big ? 4.5 : 2.5)]); });
     b.rough = { key, pts };
   }
-  const now = performance.now(), dt = Math.min(0.1, (now - (b.at || now)) / 1000); b.at = now;
+  const now = uiNow(), dt = uiDt(b.at, now); b.at = now;
   const over = big && hoverPt && !behindPop() && inBtn(hoverPt, b);
   b.hov = (b.hov || 0) + ((over ? 1 : 0) - (b.hov || 0)) * Math.min(1, dt * 12);
+  if (Math.abs((over ? 1 : 0) - b.hov) > 0.01) menuMoving = true;
   const d = big ? pressDepth(b) : 0, up = (1 - d) * b.hov;
   const path = () => { ctx.beginPath(); b.rough.pts.forEach(([px, py], i) => i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)); ctx.closePath(); };
   ctx.save();
@@ -2562,7 +2630,7 @@ function drawRoster() {
   for (const p of ps) p.backup = !starting.has(p);
   const pages = rosterPages(ps, rosterView.side, team), pg = Math.min(rosterView.page || 0, pages - 1);
   const upgView = rosterView.side === 'upg', nUpg = team === MATCH.you ? upgTotal(team) : 0;
-  const spots = rosterView.pos ? 0 : spotsOf(team, rosterView.side), buy = rosterView.buy && rosterView.buy.side === rosterView.side && !rosterView.statsOnly ? rosterView.buy : null, tNow = performance.now();
+  const spots = rosterView.pos ? 0 : spotsOf(team, rosterView.side), buy = rosterView.buy && rosterView.buy.side === rosterView.side && !rosterView.statsOnly ? rosterView.buy : null, tNow = buy ? performance.now() : uiNow();   // (v0.55: the page clock only while a bought spot animates)
   const slideK = buy && buy.slide ? Math.max(0, (tNow - buy.t0) / (SPOT.slide * 1000)) : 1;   // (0..1 while the list scrolls to the bought spot's page)
   const crumpK = buy ? Math.max(0, Math.min(1, (tNow - buy.t0 - (buy.slide ? SPOT.slide * 1000 : 0)) / (SPOT.crumple * 1000))) : 1;
   if (buy && crumpK >= 1 && slideK >= 1) rosterView.buy = null;
@@ -3410,7 +3478,7 @@ function stAutoAll(team) { FVS.cyc = {}; }
 // double duty: who is on more than one unit (a starter on offense or defense counts as one), cached briefly for the cards
 const ST_HOLD = { t: 0, team: null, map: new Map(), st: new Set() };
 function stHolders(team) {
-  const now = performance.now();
+  const now = uiNow();   // (a cache age, not an animation)
   if (ST_HOLD.team === team && now - ST_HOLD.t < 250) return ST_HOLD;
   const m = new Map(), st = new Set([...startersOf(team)].filter(p => p.group !== 'K'));
   for (const p of st) m.set(p, 1);

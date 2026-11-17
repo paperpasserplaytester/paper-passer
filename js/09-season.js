@@ -441,8 +441,9 @@ function drawHomeAwards() {
   thinPanel(A.x, A.y, A.w, A.h);
   ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('WEEKLY AWARDS', A.x + A.w / 2, A.y + 20);
-  const pc = AWH.hit && AWH.hit.card, nowT = performance.now(), dtc = Math.min(0.1, (nowT - (AWH.t || nowT)) / 1000);   // (the card eases up while the mouse is on it)
+  const pc = AWH.hit && AWH.hit.card, nowT = uiNow(), dtc = uiDt(AWH.t, nowT);   // (the card eases up while the mouse is on it)
   AWH.t = nowT; AWH.hov = (AWH.hov || 0) + (((hoverPt && pc && !offPop && inBtn(hoverPt, pc)) ? 1 : 0) - (AWH.hov || 0)) * Math.min(1, dtc * 12);
+  if (AWH.hov > 0.01 && AWH.hov < 0.99) menuMoving = true;   // (v0.55: still easing)
   AWH.hit = null;
   if (!list.length) { ctx.fillStyle = RES.dim; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('NO AWARDS YET', A.x + A.w / 2, A.y + A.h / 2); return; }
   AWH.idx = ((AWH.idx % list.length) + list.length) % list.length;
@@ -1643,9 +1644,9 @@ function cardFoil(p, bb, slot) {   // 4+ stars: foil edge and a shine sweeping a
 }
 function folderTab(b, label, col, badge, badgeCol) {   // a notebook divider tab along the bottom edge (same rect as the old button)
   UI_BTNS.push(b);
-  const now = performance.now(), dt = Math.min(0.1, (now - (b.at || now)) / 1000); b.at = now;
+  const now = uiNow(), dt = uiDt(b.at, now); b.at = now;
   const over = hoverPt && inBtn(hoverPt, b) && !offPop && !settingsPopUp();
-  b.hov = (b.hov || 0) + ((over ? 1 : 0) - (b.hov || 0)) * Math.min(1, dt * 12);
+  b.hov = (b.hov || 0) + ((over ? 1 : 0) - (b.hov || 0)) * Math.min(1, dt * 12); uiEase(b.hov, over);
   const y0 = b.y - 6 - 7 * b.hov, x0 = b.x, x1 = b.x + b.w, sl = 12;
   ctx.save();
   ctx.beginPath(); ctx.moveTo(x0 - sl, H); ctx.lineTo(x0, y0 + 12); ctx.quadraticCurveTo(x0 + 2, y0, x0 + 14, y0); ctx.lineTo(x1 - 14, y0); ctx.quadraticCurveTo(x1 - 2, y0, x1, y0 + 12); ctx.lineTo(x1 + sl, H); ctx.closePath();
@@ -1660,9 +1661,9 @@ function folderTab(b, label, col, badge, badgeCol) {   // a notebook divider tab
 }
 function stampBtn(b, label, col, on = true) {   // a rubber-stamp button
   UI_BTNS.push(b);
-  const now = performance.now(), dt = Math.min(0.1, (now - (b.at || now)) / 1000); b.at = now;
+  const now = uiNow(), dt = uiDt(b.at, now); b.at = now;
   const over = on && hoverPt && inBtn(hoverPt, b) && !offPop && !settingsPopUp();
-  b.hov = (b.hov || 0) + ((over ? 1 : 0) - (b.hov || 0)) * Math.min(1, dt * 12);
+  b.hov = (b.hov || 0) + ((over ? 1 : 0) - (b.hov || 0)) * Math.min(1, dt * 12); uiEase(b.hov, over);
   ctx.save(); ctx.translate(b.x + b.w / 2, b.y + b.h / 2); ctx.rotate(-0.07 + 0.05 * b.hov); ctx.scale(1 + 0.07 * b.hov, 1 + 0.07 * b.hov);
   ctx.fillStyle = 'rgba(255,253,244,0.9)'; ctx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h);
   ctx.strokeStyle = on ? col : '#7b8088'; ctx.lineWidth = 4; ctx.strokeRect(-b.w / 2 + 2, -b.h / 2 + 2, b.w - 4, b.h - 4); ctx.lineWidth = 1.5; ctx.strokeRect(-b.w / 2 + 8, -b.h / 2 + 8, b.w - 16, b.h - 16);
