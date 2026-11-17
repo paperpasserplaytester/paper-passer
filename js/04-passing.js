@@ -105,6 +105,7 @@ function throwBall() {
   }
   thrownPlay = { depth: Math.max(0, (t.x - los) / YL) };   // (for your tendencies)
   playPass = { q: P.src, ay: thrownPlay.depth };   // (for the player stats)
+  throwHeat = pressure();   // (a throwaway under pressure gets a SMART THROWAWAY callout)
   const aimX = t.x, aimY = t.y;   // (where he meant it: the intended receiver is picked from this, not from where a miss lands)
   const scramble = state === 'pocket' ? Math.min(1, Math.hypot(qb.vx, qb.vy) / QB_SPEED) : 0;
   // throwing on the run or with a rusher bearing down sprays the ball
@@ -435,6 +436,7 @@ function endPlay(text, next, kind) {
     tutAfterPlay(); }
 }
 function touchdown() {
+  try { showTd(); } catch (e) {}   // (v0.51: showing off into the end zone: a bigger celebration)
   const twoPt = patMode === 'two';   // (endPlay clears patMode)
   const tdYds = Math.max(1, Math.round((FIELD - los) / YL));   // how long the touchdown was
   const qbCarry = ['drop', 'pocket', 'run'].includes(state) && !ball.inAir && !ball.loose;   // (a scrambling QB never has hasBall set)
@@ -1177,7 +1179,7 @@ function updatePylons(dt) {
 // the front pylon a carrier can launch a pylon dive at (null if he's not close enough)
 const pylonFor = c => c.team === 'off' && c.x < FIELD && c.x > FIELD - PYLON.dive.depth &&
   pylons.find(p => p.x === FIELD && !p.down && Math.abs(c.y - p.y) < PYLON.dive.range) || null;
-const ballX = c => c.x + (c.action === 'dive' && c.act && c.act.angle !== undefined ? Math.cos(c.act.angle) * 30 * S : c.face * 6 * S);
+const ballX = c => c.show && c.show.pt != null ? showPlaceX(c) : c.x + (c.action === 'dive' && c.act && c.act.angle !== undefined ? Math.cos(c.act.angle) * 30 * S : c.face * 6 * S);   // (v0.51: a showboater setting it down at the goal line: where the ball is)
 // the ball held out on a dive sideways reaches over the line before his body does: any touch of the paint by it is out too
 const OOB_BALL = 3 * S;
 const ballInBounds = c => {
@@ -1280,6 +1282,18 @@ function reachBall(c, big) {
   if (near(FIELD)) c.reachGoal = true;   // (he's going down stretching the ball for the goal line: drawn reaching, and the ball's looser out there)
 }
 const REACH_FUMBLE = 1.35;   // x the fumble odds while going down reaching the ball for the goal line
+// the kind of hit for injuryHit: [kind, cause label]. A QB tackled as a runner past the line (no slide, no dive) = qbOpen;
+// a failed move on red legs (clipped hurdle, lost truck, spin stumble) = moveFail; otherwise a plain tackle / big hit
+function injKind(c, big) {
+  if (big) return ['stick'];
+  if (c === qb && !kickoffPlay && markX(c) > los && c.action !== 'slide' && !(c.action === 'dive' && c.runDive)) return ['qbOpen'];
+  if (wearZone(c) === 2) {
+    const a = c.act || {}, how = c.truck ? 'FAILED TRUCK' : c.action === 'spin' && a.stum != null ? 'SPIN STUMBLE'
+      : (c.action === 'hurdle' && a.look === 'hurdleClip') || (c.mvFx && c.mvFx.k === 'hurdleClipLand' && clock - c.mvFx.t < INJURY.moveFailT) ? 'HURDLE HIT' : null;
+    if (how) return ['moveFail', how];
+  }
+  return ['tackle'];
+}
 function tackleCarrier(c, d, trip) {
   if (pendDown(c)) return;   // (already going down: a second man piling on doesn't tackle him again)
   if (d && d.downMiss && !trip) return;   // (a defender on the turf after a miss can't tackle, not even crawling, until he's up; trip = the piece of him the miss still got)
@@ -1297,15 +1311,18 @@ function tackleCarrier(c, d, trip) {
   if (c.stiffLock) { c.stiffLock.d.stiffBy = null; c.stiffLock.d.engaged = false; c.stiffLock = null; }   // somebody else got him mid-stiff-arm
   tackleSfx(!!big);
   if (big) popup(c, 'BOOM!', '#ff6b6b', undefined, true);   // (called the moment the hit lands, before the fumble / injury rolls; the SACK! banner goes up after it below)
+  if (d && d.hitStick) c.crease = { t: clock, a: Math.random() * 2 - 1 };   // (looks only: a paper crease across his torso until the next play, see drawPlayer / DOODLE_PL)
   if (d) xfHit = d;
-  injuryHit(c, big ? 'stick' : 'tackle');
+  injuryHit(c, ...injKind(c, big));   // (the kind of hit: plain tackle, big hit, the QB caught in the open, a failed move on red legs)
   if (big) moraleEvent(c, 'bigHit');
   // Fumbles only come from a break-tackle move gone wrong (the ball's away from the body)
   // or from a big hit. A plain wrap-up tackle never jars it loose.
-  const moveOdds = c.truck ? FUMBLE_MOVE.truck : c.stiff ? FUMBLE_MOVE.stiff :
+  const sh = c.show;   // (v0.51: showboating: the ball is away from the body)
+  let moveOdds = c.truck ? FUMBLE_MOVE.truck : c.stiff ? FUMBLE_MOVE.stiff :
                    clock - (c.spinT ?? -9) < 0.6 ? FUMBLE_MOVE.spin : clock - (c.jukeT ?? -9) < 0.5 ? FUMBLE_MOVE.juke : 0;
+  if (sh) moveOdds = Math.max(moveOdds, SHOW.fumBase);
   // a big hit on a runner in the middle of a juke or spin (ball away from the body) is the likeliest to pop it
-  const inMove = clock - (c.spinT ?? -9) < 0.6 || clock - (c.jukeT ?? -9) < 0.5;
+  const inMove = clock - (c.spinT ?? -9) < 0.6 || clock - (c.jukeT ?? -9) < 0.5 || !!sh;
   const hurdleHit = !!c.hurdleAir || c.action === 'hurdle'; c.hurdleAir = false;   // tackled in mid-air on a hurdle: lands awkwardly
   const backHurdle = hurdleHit && c.act && c.act.backward;
   const base = hurdleHit ? Math.max(HURDLE.airFumble, moveOdds) * (backHurdle ? HURDLE.backFumble : 1) * HURDLE.fumbleK :
@@ -1313,7 +1330,13 @@ function tackleCarrier(c, d, trip) {
   if (tut && c.guard) tutEvent('protect');   // (tutorial: tackled with both arms on the ball)
   const odds = abilFumBase(d, base) * FUMBLE_SCALE * (aiOff() ? DEF_FUMBLE : diffFor(d).fum) * (c === qb ? QB_FUMBLE * qbHitFumble(d) : c === rb ? RB_FUMBLE / rbVis(RB_VISION.fumble) : 1) * (c.sprint ? SPRINT_FUMBLE : 1) * (d && d.role === 'LB' ? 1.5 : 1) * (big && d && udCtl(d) ? USER_HIT.fumble : 1) * rm(d, 'tck', 'fumble') * rm(d, 'str', FUMBLE_STR) / rm(c, 'str', 'powerResist') / rm(c, 'str', FUMBLE_STR) * (c.guard ? PROTECT.fumble : 1) * (d && d.secure ? DEF.secure.fumble : 1)   // (a strong carrier keeps the ball secure)
               * (big && (moveOdds > 0 || hurdleHit) ? HIT_MOVE_FUMBLE : 1)   // (hit stick on a man mid break-tackle move)
-              * (1 + WEAR.fumble * (c.wear || 0)) / moraleMulP(c) * abilFumK(c, d, big) * (c.reachGoal ? REACH_FUMBLE : 1) * (c.star ? 1 : BACKUP_FUMBLE) * (1 + WXF.fumble * wxP());   // (a backup's low ratings made him fumble a lot: tamed; tired = looser ball; Truzz: no tackle jars it)
+              * WEAR.zoneFum[wearZone(c)] / moraleMulP(c) * abilFumK(c, d, big) * (c.reachGoal ? REACH_FUMBLE : 1) * (c.star ? 1 : BACKUP_FUMBLE) * (1 + WXF.fumble * wxP());   // (a backup's low ratings made him fumble a lot: tamed; tired = looser ball; Truzz: no tackle jars it)
+  let showK = 1;
+  if (sh) {   // x SHOW.fumK, x hitK more from behind (he is not looking), x 1.3 more with the ball held out
+    const vx = c.vx || c.face, blind = d && (d.x - c.x) * Math.sign(vx) < 0;
+    showK = SHOW.fumK * (blind ? SHOW.hitK : 1) * (sh.id === 'shBallOut' ? 1.3 : 1);
+    showFail(c);
+  }
   const len = Math.hypot(c.vx, c.vy) || 1;
   c.stiff = null;
   const wasAir = c.action === 'jump' || (c.z || 0) > 4 * S;   // (looks only: hit in the air, see move looks)
@@ -1331,7 +1354,7 @@ function tackleCarrier(c, d, trip) {
   else wrapTackle(c, d);
   if (hurdleHit && c.act) { c.act.back = true; c.act.twist = 0.5; c.act.fallTime = 0.3; }   // (flipped over, landing on his back)
   if (wasAir && !hurdleHit && !onTurf && c.action === 'down' && c.act && !c.act.tk) c.act.airHit = mlAirHit(c);   // (looks only: flipped flat / spun round in the air)
-  if (!onTurf && Math.random() < odds) return fumble(c, big);
+  if (!onTurf && Math.random() < odds * showK) return fumble(c, big);
   // going for the strip: as he wraps him up he punches at the ball (QBs hold it loosest)
   if (!big && d && d.act && !d.secure && !c.guard && !xfOn(c, 'secondWind') && Math.random() < (c === qb ? STRIP.trySack : STRIP.tryRun)) {
     d.act.punch = true;
@@ -1469,10 +1492,10 @@ function sack(r) {
   moraleEvent(qb, 'sack');
   // a rusher arriving untouched at full speed can blow the QB up; the ball often comes out
   const big = qb.hitBy === r && qb.hitBig != null ? qb.hitBig : bigSackRoll(r);
-  const blindMult = qbHitFumble(r) * (1 + WEAR.fumble * (qb.wear || 0)) / moraleMulP(qb);   // (read before the hit turns him; tired = looser ball)
+  const blindMult = qbHitFumble(r) * WEAR.zoneFum[wearZone(qb)] / moraleMulP(qb), blindHit = r && qbBlind(r) > INJURY.blindAt;   // (read before the hit turns him; tired = looser ball)
   tackleLunge(r, qb.x, qb.y, 0.2, 0.95 * YD);   // (a ground distance: it was written in sprite units)
   tackleSfx(big);
-  injuryHit(qb, big ? 'stick' : 'sack');
+  injuryHit(qb, big ? 'stick' : blindHit ? 'blind' : 'sack');   // (blindside = hit from where he isn't looking)
   pstTackle(r, true);
   sackCall();   // any turnover off this play replaces SACK!
   qb.action = 'down';
@@ -1733,7 +1756,7 @@ function steer(p, tx, ty, top, accel, dt) {
   if (d > 1) { const s = Math.min(top, d * 4); wx = dx / d * s; wy = dy / d * s; }
   if (p.retPid === runPid && (p.svx || p.svy)) retReverse(p, (p.team === 'off' ? 1 : -1) * p.svx / Math.hypot(p.svx, p.svy), dt);   // (the returner's real heading)
   if (wxLive()) { const v = { x: wx, y: wy }; wxSteer(p, v, top, dt); wx = v.x; wy = v.y; }   // (weather: wind at his back / in his face, slips)
-  let m = accel * (1 - WEAR.accel * (p.wear || 0)) * dt * wxGrip();   // (a tired player is slower to get going and to cut; a wet / snowy field is slick)
+  let m = accel * (1 - WEAR.accel * (p.wear || 0)) * (p.fresh > 0 ? 1 + WEAR.fresh.accel : 1) * dt * wxGrip();   // (a tired player is slower to get going and to cut; a wet / snowy field is slick)
   if (p.team === 'off' && p.svx < -REVERSE.min * YD && wx > 0) { m *= REVERSE.accel; p.revAt = clock; }   // (offense going backward and then forward: a slow turnaround)
   if (p.revAt != null && clock - p.revAt < REVERSE.dur) { wx *= REVERSE.top; wy *= REVERSE.top; }
   if (p.grp && p.at && p.at.agi != null) m *= Math.max(0.5, Math.min(1.8, rm(p, 'agi', COD_K)));   // (agility is change of direction: how fast his velocity turns)
@@ -1845,7 +1868,7 @@ function speedSetK(p) {
   const pvp = twoP && !twoP.ai, mine = pvp || p.team === (aiOff() ? 'def' : 'off');
   return mine ? spdK.me : spdK.cpu;
 }
-const effTop = (p, base) => base * speedSetK(p) * (p.spdMult || 1) * (xfAttrK(p, 'spd') ? 1 + XF_BOOST.spdPer * XF_BOOST.amt : 1) * abilSpdK(p) * (0.9 + 0.1 * p.stam) * (1 - p.slow) * (1 - p.fatigue) * (1 - WEAR.speed * (p.wear || 0)) * Math.max(1, moraleMulP(p)) * limitedSpeedP(p) * (isRunPlay && !tut && (p === rb || ols.includes(p)) ? 1 - runHeat() * RUN_STREAK.spd : 1);   // (run after run tires the back and the line; low morale never slows a franchise player below scrimmage speed; fired up still helps)
+const effTop = (p, base) => base * (p.show ? showSpeedK(p) : 1) * speedSetK(p) * (p.spdMult || 1) * (xfAttrK(p, 'spd') ? 1 + XF_BOOST.spdPer * XF_BOOST.amt : 1) * abilSpdK(p) * (0.9 + 0.1 * p.stam) * (1 - p.slow) * (1 - p.fatigue) * (1 - WEAR.speed * (p.wear || 0)) * (p.fresh > 0 ? 1 + WEAR.fresh.top : 1) * Math.max(1, moraleMulP(p)) * limitedSpeedP(p) * (isRunPlay && !tut && (p === rb || ols.includes(p)) ? 1 - runHeat() * RUN_STREAK.spd : 1);   // (run after run tires the back and the line; low morale never slows a franchise player below scrimmage speed; fired up still helps)
 function tire(p, base, dt) {
   p.stam = Math.max(0, p.stam - STAMINA_DRAIN * dt * Math.min(1, Math.hypot(p.vx, p.vy) / base));
   if (!(p.falterUntil && clock < p.falterUntil)) p.slow = Math.max(0, p.slow - BREAK_RECOVER * dt);   // (no recovering while still stumbling: that was a speed boost mid-stumble)
@@ -2027,12 +2050,12 @@ function updateAction(p, dt) {
     p.x += a.vx0 * F.carry * dt * (1 - u) * (1 - u);
     if (u < F.tap2) { const room = toSideline(p) - OOB_FOOT - 2; if (room > 0) p.y += (a.out || 0) * Math.min(room, a.vy0 * 0.5 * dt * (1 - u / F.tap2)); }   // (drifting to the line, feet still in)
     else if (a.out) p.y += a.out * F.out * YD * dt * smooth01((u - F.tap2) / 0.15) * (1 - 0.75 * smooth01((u - 0.7) / 0.3));
-    for (const tp of [F.tap1, F.tap2]) if (u0 < tp && u >= tp) { try { wetSfx(0.35); } catch (e) {} }
+    for (const tp of [F.tap1, F.tap2]) if (u0 < tp && u >= tp) { try { wetSfx(SND_USE.wetTap, 'tap'); } catch (e) {} }
     if (a.t >= a.dur) {   // both feet were in: his momentum takes him over, down out of bounds
       const o = a.out || 0, fx = a.flat ? p.face : Math.sign(a.vx0) || p.face;   // (laid out: he goes down the way he is already tipped)
       p.z = 0; p.face = fx; p.action = 'down';
       p.act = { t: a.flat ? F.fall.time * F.flat.fallAt : 0, fall: true, back: false, side: 0, fallTime: F.fall.time, twist: 0, out: true, vx: a.vx0 * F.carry * 0.5, vy: o * F.fall.out * YD, slide: F.fall.slide, angle: Math.atan2(o, fx) };
-      try { wetSfx(0.7); } catch (e) {}
+      try { wetSfx(SND_USE.wetTap * 2, 'tap'); } catch (e) {}
     }
   } else if (p.action === 'toetap') {
     a.t += dt;

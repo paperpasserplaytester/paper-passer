@@ -19,7 +19,7 @@ function placeRoster(team, slots) {
   const yours = team === MATCH.you, used = new Set((ROSTER[team] || []).map(s => s.num));
   // the players picked to start (first STARTERS[group] of each group) fill the slots first; backups only take what's left
   // (a formation needing a 3rd receiver, or an injury, is how a backup gets on: the auto sub)
-  const starting = startersOf(team), avail = (ROSTER[team] || []).filter(s => !isOut(s));
+  const starting = startersOf(team), avail = (ROSTER[team] || []).filter(s => !isOut(s) && !s.restGame);   // (restGame = resting in a blowout: his backup plays)
   const pools = [avail.filter(s => starting.has(s)), avail.filter(s => !starting.has(s))];
   const take = (pool, grp, tags) => {
     let i = pool.findIndex(s => s.group === grp && tags.includes(s.tag));
@@ -29,7 +29,7 @@ function placeRoster(team, slots) {
   // exact tag matches first, then whoever's left of the group
   const picks = slots.map(() => null);
   if (yours && placePre) {   // (your depth chart's locked men go to their spots first: placePre = slot index -> roster entry, from rateOffense)
-    placePre.forEach((s, i) => { if (!s || !slots[i]) return; picks[i] = s; slots[i][1] = s.group; for (const pl of pools) { const j = pl.indexOf(s); if (j >= 0) pl.splice(j, 1); } });
+    placePre.forEach((s, i) => { if (!s || s.restGame || !slots[i]) return; picks[i] = s; slots[i][1] = s.group; for (const pl of pools) { const j = pl.indexOf(s); if (j >= 0) pl.splice(j, 1); } });
     placePre = null;
   }
   if (oo && oo.cfg) {   // (1v1: the QB / receiver / defender picked on the 1V1 screen play those spots, whatever team they're from)
@@ -96,6 +96,46 @@ function startersOf(team) {
   const n = {}, set = new Set();
   for (const s of ROSTER[team] || []) if ((n[s.group] = (n[s.group] || 0) + 1) <= (STARTERS[s.group] || 0)) set.add(s);
   return set;
+}
+// --- blowout rests
+// (BLOWOUT tunables in 01-tuning) Between plays (reset) and before each simmed drive (startSim): the team far ahead late rests its
+// starters who have a healthy named backup (s.restGame on the ROSTER entry, filtered out in placeRoster; never s.outGame = hurt).
+// game.blowout = the resting team, game.restShare[name] = share of regulation played when he sat (a simmed game's condition cost, playShareK).
+const blowoutOn = () => !!game && !tut && !exhibition && !(oo && oo.cfg) && !ONL.on && !(typeof CO !== 'undefined' && CO);   // (reset runs once at load, before 15-coldopen defines CO)
+const gameShare = () => ((Math.min(game.quarter, 4) - 1) * QUARTER_SECS + QUARTER_SECS - game.secs) / (4 * QUARTER_SECS);
+function blowoutTick() {   // true = starters just came out
+  if (!blowoutOn()) return false;
+  const lead = game.blue - game.red, m = Math.abs(lead), up = lead > 0 ? MATCH.you : MATCH.opp;
+  if (game.blowout) { if (m <= BLOWOUT.back || up !== game.blowout || game.quarter > BLOWOUT.q) blowoutEnd(); return false; }
+  const need = MATCH.playoff ? BLOWOUT.playoffLead : game.secs <= lateS(BLOWOUT.lateSecs) ? BLOWOUT.leadLate : BLOWOUT.lead;
+  if (game.quarter !== BLOWOUT.q || m < need) return false;
+  const S = startersOf(up), R = ROSTER[up] || [], el = gameShare(), sh = game.restShare || (game.restShare = {});
+  let n = 0;
+  for (const g of BLOWOUT.groups) {
+    const st = R.filter(s => S.has(s) && s.group === g && !isOut(s)), bk = R.filter(s => !S.has(s) && s.group === g && !isOut(s)).length;
+    for (const s of st.slice(0, bk)) { s.restGame = true; sh[s.name] = el; n++; }
+  }
+  if (n) game.blowout = up;
+  return n > 0;
+}
+function blowoutEnd() {   // the lead is back to `back` or less: the starters return (and play the rest of it)
+  for (const s of ROSTER[game.blowout] || []) if (s.restGame) { s.restGame = false; if (game.restShare) delete game.restShare[s.name]; }
+  game.blowout = null;
+}
+function blowoutClear() { for (const k of Object.keys(ROSTER)) for (const s of ROSTER[k] || []) if (s.restGame) s.restGame = false; }   // (a new game / the game's over)
+// league sims: a blowout winner's named backups get BLOWOUT.simShare of its starters' stat volume (lines = pstSimGame's Map)
+function blowoutSimLines(g, lines, add) {
+  if (Math.abs(g.hs - g.as) < BLOWOUT.lead) return;
+  const k = g.hs > g.as ? g.h : g.a, S = startersOf(k), R = ROSTER[k] || [], used = new Set();
+  for (const [p, l] of [...lines]) {
+    if (!S.has(p) || p.group === 'K' || !R.includes(p)) continue;
+    const b = R.find(s => !S.has(s) && s.group === p.group && s.name && !isOut(s) && !used.has(s));
+    if (!b) continue;
+    used.add(b);
+    const take = { gs: 1 };
+    for (const c in l) if (c !== 'gs' && !PST_MAX.has(c) && typeof l[c] === 'number') { const v = Math.round(l[c] * BLOWOUT.simShare); if (v) { l[c] -= v; take[c] = v; } }
+    add(b, take);
+  }
 }
 function rateOffense() {
   const slots = [[qb, 'QB', ['QB']], [rb, 'RB', ['RB']]];
@@ -267,7 +307,7 @@ function announceOT() { endWhistle(); showBanner('OVERTIME', '#ffd94a', '#3a2a00
 function nextPeriod() {
   game.quarter++; game.pendingQuarter = false;
   if (SL.on) slTvWalk();   // (sideline: the TV official walks on for the break)
-  if (game.quarter < 5) { game.secs = QUARTER_SECS; if (game.quarter === 3) { xfHalftime(); game.timeouts = diffTO(); if (twoP) twoP.to = 3; } return null; }
+  if (game.quarter < 5) { game.secs = QUARTER_SECS; if (game.quarter === 3) { xfHalftime(); wearFreshArm = true; game.timeouts = diffTO(); if (twoP) twoP.to = 3; } return null; }
   const post = postseason();
   game.secs = QUARTER_SECS;   // overtime is as long as a quarter
   if (game.quarter === 5 || (post && game.quarter % 2 === 1)) {   // overtime starts (or a new playoff "half" of it): fresh timeouts
@@ -408,10 +448,10 @@ function pstLoadSlot(i) {
   const c = rd(CHOF_KEY); CHOF = Array.isArray(c) ? c : [];
 }
 function pstSaveSlot(i) { try { localStorage.setItem(`${CHOF_KEY}.${i}`, JSON.stringify(CHOF)); } catch (e) {} try { localStorage.setItem(`${HOF_KEY}.${i}`, JSON.stringify(HOF)); } catch (e) {} try { localStorage.setItem(`${PST_KEY}.${i}`, lsPacked(PST)); localStorage.setItem(`${LPST_KEY}.${i}`, lsPacked(LPST)); localStorage.setItem(`${REC_KEY}.${i}`, lsPacked(RECS)); } catch (e) {} }
-function pstInit() { if (exhibition) pstExhibitionOn(); const fl = twoP && twoP.flipped, a = fl ? MATCH.opp : MATCH.you, b = fl ? MATCH.you : MATCH.opp; pstGame = { id: Date.now(), yr: exhibition || !season ? 0 : LEAGUE.year, wk: exhibition || !season ? 0 : MATCH.playoff ? 'PO' : season.week, rd: !exhibition && season && MATCH.playoff && po ? po.round : null, opp: b, a, b }; }
+function pstInit() { if (LG_SAND) return; if (exhibition) pstExhibitionOn(); const fl = twoP && twoP.flipped, a = fl ? MATCH.opp : MATCH.you, b = fl ? MATCH.you : MATCH.opp; pstGame = { id: Date.now(), yr: exhibition || !season ? 0 : LEAGUE.year, wk: exhibition || !season ? 0 : MATCH.playoff ? 'PO' : season.week, rd: !exhibition && season && MATCH.playoff && po ? po.round : null, opp: b, a, b }; }
 // this game's stat line for a roster player (null in the tutorial or for a nobody)
 function pstRec(s) {
-  if (!s || !s.name || tut) return null;
+  if (!s || !s.name || tut || LG_SAND) return null;   // (LG_SAND: a league tape being made, see 02)
   if (!pstGame) pstInit();
   const e = PST[s.name] || (PST[s.name] = { pos: s.tag, group: s.group, games: [] });
   e.pos = s.tag; e.group = s.group;
@@ -811,7 +851,10 @@ function rbTry(c, e, book, repl) {
   store[c.id] = live.filter(x => now.includes(x)); if (!store[c.id].length) delete store[c.id];
   if (!rank) return null;
   const old = others[0];
-  return { rank, old, broke: !wasTop && rank === 1 && (!old || rbBetter(c, e.v, old.v)), tie: !wasTop && !!old && old.v === e.v };
+  const broke = !wasTop && rank === 1 && (!old || rbBetter(c, e.v, old.v));
+  // own: he broke a #1 that was already his (a different game / season of his): the old holder is himself (v0.52). The same game / season growing is not news.
+  const own = broke && !!old && (rbTeamCat(c) ? old.t === e.t : old.n === e.n);
+  return { rank, old, broke, own, tie: !wasTop && !!old && old.v === e.v };
 }
 const rbScopeWord = c => c.sc === 'g' || c.sc === 'tg' ? 'single-game' : c.sc === 's' || c.sc === 'ts' ? 'season' : c.sc === 'c' ? 'career' : 'playoff';
 // a #1 fell (or was tied): the home-screen line (league marks for anyone, franchise marks for your team only) + the Post
@@ -823,8 +866,14 @@ function rbNote(c, book, res, e) {
   const what = /^LONGEST /.test(c.l) ? `a ${rbFmt(c, e.v)}-yard ${c.l.slice(8).toLowerCase()}` : `${rbFmt(c, e.v)} ${c.l.toLowerCase()}`;
   const txt = `${who}: ${what}, ${res.broke ? 'breaks' : 'ties'} ${old ? oldWho + "'s " : 'the '}${lg ? 'league' : 'franchise'} ${sw} record${old ? ` (${rbFmt(c, old.v)})` : ''}.`;
   if (!S.news.includes(txt)) { S.news.push(txt); if (S.news.length > RB.newsMax) S.news.shift(); }
+  if (res.broke && res.rank === 1) {   // (v0.52: the home popup's card: a mark that really fell, kept structured)
+    const X = S.newsX || (S.newsX = []), key = `${book}|${c.id}|${e.n}|${e.y}|${e.w}`;
+    const it = { key, n: e.n, t: e.t, team: rbTeamCat(c), cat: c.id, l: c.l, v: rbFmt(c, e.v), oldBy: old && !res.own ? oldWho : '', oldV: old ? rbFmt(c, old.v) : '', lg, sw, own: !!res.own };
+    const i = X.findIndex(x => x.key === key || (x.cat === c.id && x.n === e.n && x.lg === lg)); if (i >= 0) X.splice(i, 1);
+    X.push(it); if (X.length > RB.newsMax) X.shift();
+  }
   if (lg && e.t === me && !rbTeamCat(c)) try { trophyAdd('record', rbShort(e.n)); } catch (err) {}   // (one of your players set a league record: the trophy room's shelf, once a season)
-  try { const P = postS(); (P.notes || (P.notes = [])).push({ k: 'record', w: lg ? 9 : 6, team: NFL[e.t] ? e.t : null, big: lg, sl: { p: who, team: NFL[e.t] ? pTeam(e.t) : '', what: c.l.toLowerCase(), val: rbFmt(c, e.v), old: old ? oldWho : 'the old mark', was: old ? rbFmt(c, old.v) : '', book: lg ? 'league' : 'franchise', scope: sw,
+  try { const P = postS(); (P.notes || (P.notes = [])).push({ k: res.own ? 'recordOwn' : 'record', w: lg ? 9 : 6, team: NFL[e.t] ? e.t : null, big: lg, sl: { p: who, team: NFL[e.t] ? pTeam(e.t) : '', what: c.l.toLowerCase(), val: rbFmt(c, e.v), old: old ? oldWho : 'the old mark', was: old ? rbFmt(c, old.v) : '', book: lg ? 'league' : 'franchise', scope: sw,
     Book: lg ? 'League' : 'Franchise', Scope: sw.replace(/(^|-)([a-z])/g, (m, a, b) => a + b.toUpperCase()), What: c.l.toLowerCase().replace(/\b[a-z]/g, m => m.toUpperCase()) } }); } catch (err) {}
 }
 // ---- live tracking (Phase 4) ----
@@ -852,7 +901,7 @@ function recLive() {   // after every play of a game you play: a game mark falli
       const e = PST[s.name], g = e && e.games[e.games.length - 1];
       if (!g || g.id !== pstGame.id) continue;
       for (const x of rbGameLine(s.name, s.tag, g.tm || pstGame.a, g, pstGame.yr, pstGame.wk, pstGame.rd, true)) {
-        if (x.res.rank !== 1 || !(x.res.broke || x.res.tie) || !x.res.old) continue;
+        if (x.res.rank !== 1 || !(x.res.broke || x.res.tie) || !x.res.old) continue;   // (own records count: broke is true for them)
         const k = x.book + x.c.id + s.name;
         if (RB_CALLED.has(k)) continue; RB_CALLED.add(k);
         if (!call || (x.book === 'L' && call.x.book !== 'L')) call = { p, x };
@@ -862,7 +911,7 @@ function recLive() {   // after every play of a game you play: a game mark falli
       const { p, x } = call, fav = p.team === 'off' ? (aiOff() ? 'opp' : 'you') : (aiOff() ? 'you' : 'opp');
       popup(p, 'NEW RECORD!', RB.color, fav, true, true, { k: 'trophy', c: RB.color });
       try { celebNote('rec', p); } catch (err) {}   // (a record fell on this play: its celebration is bigger, celebHype)
-      showTopCallout(`${rbShort(x.e.n).toUpperCase()} ${x.res.broke ? 'BREAKS' : 'TIES'} ${rbHolder(x.c, x.res.old).toUpperCase()}'S ${x.book === 'L' ? 'LEAGUE' : 'TEAM'} RECORD: ${rbFmt(x.c, x.e.v)} ${x.c.l}`, RB.color);      try { crowdCheer(x.book === 'L' ? 0.9 : 0.7, fav, false, true, x.book === 'L'); } catch (err) {}
+      showTopCallout(x.res.own ? `${rbShort(x.e.n).toUpperCase()} TOPS HIS OWN ${x.book === 'L' ? 'LEAGUE' : 'TEAM'} RECORD: ${rbFmt(x.c, x.e.v)} ${x.c.l}` : `${rbShort(x.e.n).toUpperCase()} ${x.res.broke ? 'BREAKS' : 'TIES'} ${rbHolder(x.c, x.res.old).toUpperCase()}'S ${x.book === 'L' ? 'LEAGUE' : 'TEAM'} RECORD: ${rbFmt(x.c, x.e.v)} ${x.c.l}`, RB.color);      try { crowdCheer(x.book === 'L' ? 0.9 : 0.7, fav, false, true, x.book === 'L'); } catch (err) {}
       if (rec && !rec.replaying) rec.big = true;
     }
   } catch (err) {}
@@ -937,7 +986,7 @@ function rbWeek(mode) {
             const pace = v / sm.gp * RB.games;
             for (const book of team === me ? ['L', team] : ['L']) {
               const top = rbList(c, book).find(x => !(x.n === name && x.y === yr));
-              if (top && pace >= top.v && v < top.v) chase.push({ mine: team === me, k: pace / top.v, txt: `${rbShort(name)} (${team}) is on pace for ${rbFmt(c, pace)} ${c.l.toLowerCase()}: needs ${rbFmt(c, top.v - v + (c.fmt === 'h' ? 0.5 : 1))} more to break the ${book === 'L' ? 'league' : 'franchise'} season mark (${rbFmt(c, top.v)}, ${rbHolder(c, top)}).` });
+              if (top && pace >= top.v && v < top.v) chase.push({ mine: team === me, n: name, k: pace / top.v, txt: `${rbShort(name)} (${team}) is on pace for ${rbFmt(c, pace)} ${c.l.toLowerCase()}: needs ${rbFmt(c, top.v - v + (c.fmt === 'h' ? 0.5 : 1))} more to break the ${book === 'L' ? 'league' : 'franchise'} season mark (${rbFmt(c, top.v)}, ${rbHolder(c, top)}).` });
             }
           }
         }
@@ -1300,6 +1349,7 @@ function pstSimGame(g, wk) {
     spread(D, tw, pois(0.05), p => add(p, { dt: 1 }));
     spread(D, w({ DL: 0.3 }), pois(0.04), p => add(p, { bk: 1 }));
   }
+  blowoutSimLines(g, lines, add);   // (a blowout: the backups get some of it)
   const res = (a, b) => `${a > b ? 'W' : a < b ? 'L' : 'T'} ${a}-${b}`;
   for (const [p, l] of lines) {
     const mine = (ROSTER[g.h] || []).includes(p), opp = mine ? g.a : g.h, r = mine ? res(g.hs, g.as) : res(g.as, g.hs);
@@ -1364,7 +1414,8 @@ const catchers = () => {
 
 function reset() {
   runPid++;   // (a new play: everyone's yards run start over)
-  if (Array.isArray(ols) && qb) for (const p of allPlayers()) { if (!p) continue; p.armsUp = false; p.coast = null; }   // (not on the very first reset at load: nobody exists yet)
+  if (kitHold) { kitHold = false; applyKits(); }   // (the kick's bodies kept their kits behind the sim box: the real ones come back with the new play)
+  if (Array.isArray(ols) && qb) for (const p of allPlayers()) { if (!p) continue; p.armsUp = false; p.coast = null; p.crease = null; p.flat = null; }   // (crease / flat: the paper reactions, one play only)   // (not on the very first reset at load: nobody exists yet)
   //   // (a kick rusher's raised arms never carry into the next play; nor an old scorer's end-zone coast: the camera panned to him, by then an unrelated man, at every later whistle until the next kickoff)
   if (tut && tut.koUnflip) { tut.koUnflip = false; if (twoP && twoP.koOnly) { flipSides(); twoP = null; } }   // (the tutorial's kickoff return is over: the sides go back now, not while the players are still on the field in their kits)
   if (tut && !(tutStep() || {}).kick) { kick = null; kickoff = null; kickoffPlay = false; puntPlay = null; puntRet = puntRetPlay = false; game.kickPending = null; }   // (nothing of a kicking lesson lingers into the next play)
@@ -1378,6 +1429,7 @@ function reset() {
     if (game.quarter === 3) { newDrive(); game.kickPending = secondHalfRecv(); }   // second half: fresh timeouts, kickoff to whoever didn't get the opening one
     if (otRecv) { newDrive(); patMode = null; patNext = false; pendingSim = null; kickoffNext = false; game.kickPending = otRecv; }   // overtime: the toss winner receives
   }
+  if (blowoutTick()) showTopCallout('STARTERS RESTING');   // (a big 4th-quarter lead: the starters with a backup sit, before the line-ups are placed)
   if (tut) tutSeed();   // (the tutorial: every step lines up the same way every time)
   los = Math.max(YL, Math.min(FIELD - 0.2 * YL, nextLos));   // (spotted exactly: inside the 1 is goal to go from inches)
   down = nextDown;
@@ -1393,6 +1445,7 @@ function reset() {
   audiblesLeft = 2; defAudLeft = 2;
   tgt = runner = null; playCatcher = null;
   firstDownCall = false; celebReset();   // (last play's celebration never carries into this snap)
+  if (typeof tuiReleaseAll === 'function') tuiReleaseAll();   // (phones: no stiff arm / truck / button held from the last play)
   slReset();   // (sideline people: the chain crew walks to the new spots; see 07-drawing)
   if (ols && ols.length) for (const p of allPlayers()) p.coast = null;
   xfHit = null; xfAir = 0; xfDrop = false; pickThrown = false; xfCont = 0; xfPicker = null;
@@ -1535,6 +1588,7 @@ const secondHalfRecv = () => game.recvFirst === 'RED' ? 'BLUE' : 'RED';
 // "you" (MATCH, kits, score, timeouts, coin-toss keys), so the live offense is always BLUE; openResults flips it
 // back. twoP = { flipped: Player 2 has the ball, to: the other side's timeouts } while one is on.
 let twoP = null;
+var kitHold = false;   // (var: reset() can run before this line) the players still on the field after your mirrored kick keep the kits they wore on it until the next reset (behind the sim box; mirrorDone)
 function flipSides() {
   const sw = k => k === 'BLUE' ? 'RED' : k === 'RED' ? 'BLUE' : k;
   [MATCH.you, MATCH.opp] = [MATCH.opp, MATCH.you];
@@ -1590,6 +1644,7 @@ function startHalfKick(recv) {
   if (kickLive()) return startMyKickoff(intro);   // (you kick it: power, aim, the kick)
   const k = kickoffPreface('BLUE');
   startSim(k.yd, [...intro, ...k.lines]);
+  stBanner('KICKOFF', k.lines);
 }
 
 // Routes are re-drawn until no two route runners come within ROUTE_SPACING.yards of each other while they
@@ -2229,7 +2284,7 @@ function stepFormation(dt) {
     if ((to.t += dt) < to.delay) continue;
     const dx = to.x - p.x, dy = to.y - p.y, d = Math.hypot(dx, dy);
     // (eased: he builds up to his jog and slows into his spot, no instant start / dead stop; and he only turns his back for a real run along the field)
-    to.sp = Math.min((to.v || FM.speed) * to.pace, (to.sp || 0) + FM.accel * dt, Math.sqrt(2 * FM.accel * d) + 0.6 * YD);
+    to.sp = Math.min((to.v || (to.leave && SL.on ? SIDELINE.sub.v * YD : FM.speed)) * to.pace, (to.sp || 0) + FM.accel * dt, Math.sqrt(2 * FM.accel * d) + 0.6 * YD);
     if (to.far == null) to.far = !!to.leave || (d > FM.turn && Math.abs(dx) > Math.abs(dy) * 0.6);
     const step = to.sp * dt;
     if (d <= step) { p.x = to.x; p.y = to.y; p.fmTo = null; p.vx = p.vy = 0; p.moving = false; p.face = p.team === 'def' ? -1 : 1; if (to.leave) fgExit = fgExit.filter(g => g !== p); continue; }

@@ -20,6 +20,7 @@
     touch-action: none; cursor: crosshair;
   }
   @supports (height: 100dvh) { canvas { width: min(100vw, 177.7dvh); } }
+  input, textarea, select { cursor: text !important; }   /* (the page wears the pencil cursor: real text fields keep the text cursor) */
   /* touch mode: forced landscape (html.rot = phone held upright, page turned 90deg); the game keeps its 16:9 shape (never stretched) */
   html.rot body { inset: auto; top: 0; left: 0; width: 100vh; height: 100vw; transform-origin: 0 0; transform: translateX(100vw) rotate(90deg); }
   @supports (height: 100dvh) { html.rot body { width: 100dvh; } }

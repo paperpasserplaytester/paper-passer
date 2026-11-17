@@ -1,12 +1,12 @@
 // --- result screen ------------------------------------------------------------------------
 // Once the clock runs out in the 4th, the next click shows a full-screen result: the score by quarter,
 // your all-time record (kept in this browser), points by team, and every scoring play. CONTINUE steps through
-// result -> end of week (player stats) -> home screen -> next week's matchup, and PLAY there starts a new game.
+// result (STATS / INJURIES buttons) -> home screen -> next week's matchup, and PLAY there starts a new game.
 // Only CONTINUE / PLAY work for now; the other menu buttons are just drawn.
-let results = null;   // { record, screen: 'result' | 'week' | 'home' | 'matchup' }
+let results = null;   // { record, screen: 'result' | 'home' | 'matchup' | ... }
 const RESULT_BTN = { x: 980, y: 605, w: 260, h: 75 };
 const MENU_NEXT = { x: 1040, y: 620, w: 220, h: 80 };
-const MENU_SCREENS = ['result', 'week', 'home', 'matchup'];
+const MENU_SCREENS = ['result', 'home', 'matchup'];
 const nextBtn = () => results.screen === 'result' ? RESULT_BTN : MENU_NEXT;
 function advanceResults() {
   if (onlLobbyActive() && results.screen === 'exhibition' && !teamPick) { onlPlayClick(); return; }   // (the online lobby: only the host's PLAY starts it)
@@ -16,12 +16,13 @@ function advanceResults() {
   if (!MENU_SCREENS.includes(results.screen) && !['exhibition', 'playoffs', 'exstats'].includes(results.screen)) return;   // (Space only moves on from screens that have a continue button: not the animation library, settings pages, etc.)
   if (OFF_SCREENS.includes(results.screen) || ['trade', 'tradeb', 'toffers', 'staff', 'roster', 'hof', 'post', 'chof', 'practice', 'hire', 'board'].includes(results.screen)) return;   // (the offseason and trade screens have their own buttons)
   if (results.screen === 'home' && season && season.offseason && !exhibition) { offHomeNext(); return; }   // OFFSEASON
-  if (tutPrompt === 'ask' || tutPrompt === 'coach' || tutPrompt === 'ready') return;                            // (answer the tutorial card first)
+  if (tutPrompt === 'ask' || tutPrompt === 'coach' || tutPrompt === 'ready' || tutPrompt === 'setup') return;                            // (answer the tutorial card first)
   if (tutPrompt === 'play' && results.screen === 'matchup') { tutPrompt = null; startTutorial(); return; }
   if (tutPrompt === 'continue' && results.screen === 'home') tutPrompt = 'play';
   if (results.screen === 'playoffs') poPrimary();   // NEXT / PLAY / CONTINUE on the bracket
   else if (results.screen === 'home' && season && season.week > SEASON_WEEKS && !exhibition) { if (!po) poStart(); results.screen = 'playoffs'; }   // PLAYOFFS
-  else if (results.screen === 'week' && po && !exhibition) results.screen = 'playoffs';   // (after a playoff game: straight back to the bracket)
+  else if (results.screen === 'home' && !exhibition && isByeNow()) seasonByeStep();   // CONTINUE on your bye week: one week goes by, the home screen stays
+  else if (results.screen === 'result' && po && !exhibition) results.screen = 'playoffs';   // (after a playoff game: straight back to the bracket)
   else if (results.screen === 'matchup' && suspended && !exhibition) resumeGame();   // RESUME: the game you left
   else if (results.screen === 'exhibition' && !(exhibition && exhibition.test)) exPlay();   // PLAY on the scrimmage board: the helmets bump, then the game loads
   else if (results.screen === 'matchup' || results.screen === 'exhibition') { simMode = 'none'; reset(); }   // PLAY: a new game
@@ -29,7 +30,7 @@ function advanceResults() {
   else if (exhibition && (results.screen === 'result' || results.screen === 'exstats')) results.screen = exHome();
   else {
     results.screen = MENU_SCREENS[MENU_SCREENS.indexOf(results.screen) + 1];
-    if (results.screen === 'home') homeNews();   // (upgrades ready, big trades)
+    if (results.screen === 'home') { homeNews(); firstRunHome(); }   // (upgrades ready, big trades; your very first game: the hiring card + tours now)
     // next week's game comes up (after week 18: a new season)
     if (results.screen === 'matchup') {
       if (!season || season.team !== MATCH.you || season.week > SEASON_WEEKS) newSeason(MATCH.you);
@@ -249,7 +250,7 @@ function postGameFacts(blue, red) {
   game.big = null;
   return out;
 }
-// your game is over: its score goes in, the rest of the week is simulated, and so are any bye weeks after it
+// your game is over: its score goes in and the rest of the week is simulated (a bye after it waits on the home screen: seasonByeStep)
 function seasonGameDone(blue, red) {
   if (!season || season.team !== MATCH.you || season.week > SEASON_WEEKS) return;
   const g = gameOf(season.week);
@@ -258,23 +259,46 @@ function seasonGameDone(blue, red) {
   upgradeGame();   // (and XP toward attribute upgrades)
   for (const q of ROSTER[season.team]) if (q.newWk > 0) q.newWk--;   // (the NEW tag lasts two games)
   if (g) { if (g.h === season.team) { g.hs = blue; g.as = red; } else { g.hs = red; g.as = blue; } season.last = season.week; season.lastPO = null; season.played = (season.played || 0) + 1; rbYards(g); try { recTeamGame(g, season.week); } catch (e) {} }
-  let myG = g;   // (the first week of the loop is the one you played)
-  do {
-    const awk = season.week; AWD_POOL = [];
-    season.sched[season.week - 1].forEach(x => { if (x.hs == null) { simGameScore(x); try { pstSimGame(x, season.week); recTeamGame(x, season.week); } catch (e) {} } });   // (and every player's box score)
-    try { awardsWeek(awk, myG); } catch (e) {} AWD_POOL = null; myG = null;
-    season.week++;
-    leagueWeek(season.team);   // (teams cut and sign free agents as the weeks go by)
-  } while (season.week <= SEASON_WEEKS && !gameOf(season.week));
+  seasonWeekStep(g);   // (the week you played; a bye after it now waits on the home screen for CONTINUE: seasonByeStep)
   try { rbWeek(season.week > SEASON_WEEKS ? 'end' : 'wk'); } catch (e) { console.warn('record book', e); }   // (season marks so far / locked once the regular season is over, careers)
   lpstSave(); recSave();
   season.facts = postGameFacts(blue, red);
   try { postIssue('wk'); } catch (e) { console.warn('post', e); }   // (the Paper Passer Post: this week's paper)
 }
+// one week of the league: the rest of this week's games simmed (box scores, team marks), the weekly awards, on to the next week, the league's moves
+function seasonWeekStep(myG) {
+  const awk = season.week; AWD_POOL = [];
+  season.sched[season.week - 1].forEach(x => { if (x.hs == null) { simGameScore(x); try { pstSimGame(x, season.week); recTeamGame(x, season.week); } catch (e) {} } });   // (and every player's box score)
+  try { awardsWeek(awk, myG); } catch (e) {} AWD_POOL = null;
+  season.week++;
+  leagueWeek(season.team);   // (teams cut and sign free agents as the weeks go by)
+}
+// YOUR BYE WEEK: the home screen sits on it (roster, practice, trades, free agents, the Post all open) until CONTINUE runs exactly one week:
+// the league's games + awards + moves, the record book, the Post's issue, your players' week of rest (an injured man is a week closer, everyone fully rested,
+// the week's practice), then a save
+const isByeNow = () => !!season && !season.offseason && season.team === MATCH.you && season.week <= SEASON_WEEKS && !gameOf(season.week);
+function seasonByeStep() {
+  if (!isByeNow()) return;
+  seasonWeekStep(null);
+  const notes = [];
+  if (SETTINGS.injuries) for (const s of yourStars()) {
+    if (s.inj && s.inj.weeks != null && !s.inj.season) { s.inj.weeks--; if (s.inj.weeks <= 0) { const sev = s.inj.sev; s.inj = null; injuryReturn(s, sev, notes); } }
+    s.cond = 100;   // (a week off: fully rested)
+  }
+  try { notes.push(...pracWeek(1)); } catch (e) { console.warn('bye practice', e); }
+  LEAGUE.injNotes = notes;
+  try { rbWeek(season.week > SEASON_WEEKS ? 'end' : 'wk'); } catch (e) { console.warn('record book', e); }
+  lpstSave(); recSave();
+  season.facts = null;
+  try { postIssue('wk'); } catch (e) { console.warn('post', e); }
+  seasonMatch();
+  homeNews();
+  try { if (curSlot === null) autoAssignSlot(); else saveToSlot(curSlot, true); } catch (e) {}
+}
 // --- weekly awards: after each week one Offensive and one Defensive Player of the Week from every game in the league (AWARD tunables at the top).
 // Candidates = the simulated games' lines (pstSimGame fills AWD_POOL) + the players' lines from your game (PST). Score = AWARD.off / .def stat points x position weight;
 // ties go to the winning team, then the better player (stars). Saved in LEAGUE.awards [{ yr, wk, off, def }] (a winner = { name, tag, grp, team, mine, sc, line }).
-// You get AWARD.pay credits per award your player wins. LEAGUE.awardNews = the home screen popup. Screen 'pawards' (NEWS button on the week screen) = history + most awards.
+// You get AWARD.pay credits per award your player wins. LEAGUE.awardNews = the home screen popup. Screen 'pawards' = history + most awards.
 let AWD_POOL = null;
 const awdRaw = (g, side) => { let s = 0; const T = AWARD[side]; for (const k in T) s += (g[k] || 0) * T[k]; return s; };
 function awardsWeek(wk, myG) {
@@ -342,7 +366,7 @@ function pawardsClick(pt) {
   if (t) { AWV.tab = t.t; AWV.page = 0; return; }
   const list = AWV.tab === 'hist' ? (LEAGUE.awards || []) : awardsMost(), pages = Math.max(1, Math.ceil(list.length / AWD_PER[AWV.tab])), a = ROSTER_ARROWS.findIndex(b => inBtn(pt, b));
   if (a >= 0) { if (pages > 1) AWV.page = (AWV.page + (a ? 1 : -1) + pages) % pages; return; }
-  if (inBtn(pt, BACK_BTN)) results.screen = 'week';
+  if (inBtn(pt, BACK_BTN)) results.screen = 'home';
 }
 // a new franchise starts late: every game (yours too) before week w is simulated
 let skipNormal = false;   // true while a new franchise's weeks before you step in are simulated: always VETERAN (HARD) odds, whatever difficulty was picked
@@ -771,7 +795,7 @@ const offPopNow = p => { if (offPop) popQ.unshift(offPop); offPop = p; };   // (
 function offPopClick(pt) {
   if (offPop.lock) return;   // (waiting on an animation)
   if (offPop.custom) { offPop.custom.click(pt); return; }   // (a category popup: its own tabs, arrows, cards)
-  if (offPop.hide && offPop.hideBtn && inBtn(pt, offPop.hideBtn)) { SETTINGS.hideGoalsTip = true; saveSettings(); offPopClose(); return; }   // (HIDE THIS TIP: the new-goals popup stays away from now on)
+  if (offPop.hide && offPop.hideBtn && inBtn(pt, offPop.hideBtn)) { SETTINGS[typeof offPop.hide === 'string' ? offPop.hide : 'hideGoalsTip'] = true; saveSettings(); offPopClose(); return; }   // (HIDE THIS TIP / DON'T SHOW AGAIN: hide = the SETTINGS key it sets (true = the new-goals tip); settings can turn it back on)
   const b = (offPop.btns || []).find(x => inBtn(pt, x));
   if (!b) {   // (a suggestion's player card opens his page)
     const P = offPop, c = P.card;
@@ -823,7 +847,7 @@ function drawOffPop() {
   }
   // (P.player = { p, k }: his roster card on the left of the popup, the text beside it)
   const nb = P.bars ? P.bars.length : 0;
-  const pc = P.player, w = pc ? 1000 : 760, h = Math.max(150 + P.lines.length * 28 + 70 + nb * POP_BAR.h + (nb ? 14 : 0), pc ? 430 : 0), card = P.card || (P.card = { x: W / 2 - w / 2, y: Math.max(20, Math.round((H - h) / 2)), w, h });
+  const pc = P.player, w = pc ? 1000 : 760, h = Math.max(150 + P.lines.length * 28 + 70 + nb * POP_BAR.h + (nb ? 14 : 0) + (P.price ? 44 : 0), pc ? 430 : 0), card = P.card || (P.card = { x: W / 2 - w / 2, y: Math.max(20, Math.round((H - h) / 2)), w, h });
   ctx.save(); ctx.translate(4, 6); tornPath(card); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill(); ctx.restore();
   tornPath(card); ctx.fillStyle = '#fffdf4'; ctx.fill();
   ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.arc(W / 2, card.y + 10, 7, 0, Math.PI * 2); ctx.fill();   // the pin
@@ -833,7 +857,9 @@ function drawOffPop() {
   ctx.font = 'bold 34px monospace'; ctx.fillText(P.title, W / 2, card.y + 56, w - 60);
   ctx.font = 'bold 18px monospace';
   if (P.left) ctx.textAlign = 'left';   // (changelog: bullets run from the left edge)
-  P.lines.forEach((l, i) => ctx.fillText(l, P.left ? card.x + 40 : tx, card.y + 112 + i * 28, tw));
+  if (P.xpBig != null) { ctx.save(); ctx.font = 'bold 54px monospace'; const s = String(P.xpBig), sw = ctx.measureText(s).width, x0 = tx - (sw + 60) / 2; xpIcon(x0 + 22, card.y + 150, 22); ctx.fillStyle = XPC.col; ctx.textAlign = 'left'; ctx.fillText(s, x0 + 56, card.y + 152); ctx.restore(); }   // (v0.52: the XP bank, big, with its token)
+  P.lines.forEach((l, i) => ctx.fillText(l, P.left ? card.x + 40 : tx, card.y + 112 + (P.xpBig != null ? 110 : 0) + i * 28, tw));
+  if (P.price) priceTag(tx, card.y + 112 + P.lines.length * 28 + 10, P.price.was, P.price.now, 26);   // (optional sale price: { was, now })
   if (nb) {   // what moved: each bar slides from the old value to the new one, with the change beside it
     if (P.barT0 == null) P.barT0 = performance.now();
     const k = Math.max(0, Math.min(1, (performance.now() - P.barT0 - POP_BAR.delay) / POP_BAR.ms)), e = 1 - Math.pow(1 - k, 3);
@@ -856,7 +882,7 @@ function drawOffPop() {
   });
   if (P.hide) {   // a small button in the bottom right corner: never show this tip again
     P.hideBtn = P.hideBtn || { x: card.x + card.w - 224, y: card.y + card.h - 70, w: 190, h: 40 };
-    popBtnDraw = true; menuBtn(P.hideBtn, 'HIDE THIS TIP', RES.bright, 16); popBtnDraw = false;
+    popBtnDraw = true; menuBtn(P.hideBtn, typeof P.hide === 'string' ? "DON'T SHOW AGAIN" : 'HIDE THIS TIP', RES.bright, typeof P.hide === 'string' ? 14 : 16); popBtnDraw = false;
   }
   ctx.restore();
 }
@@ -1698,7 +1724,7 @@ const faInterest = p => p.stars >= 3 && deskHash(p.name) % DESKFX.interest === 0
 const FA_SORTS = [{ k: 'rate', label: 'TOP RATED', col: '#ffd94a' }, { k: 'value', label: 'BEST VALUE', col: '#8fd9a8' }, { k: 'cheap', label: 'CHEAPEST', col: '#9fd0f5' }];
 const FA_SORT_BTNS = FA_SORTS.map((s, i) => ({ ...s, b: { x: 130 + i * 100, y: 646, w: 94, h: 40 } }));
 const FA_TAB_BTNS = FA_POSITIONS.map((pos, i) => ({ pos, b: { x: Math.round((W - FA_POSITIONS.length * 64) / 2) + i * 64, y: 71, w: 60, h: 24 } }));
-const FA_CAP_BOX = { x: 880, y: 14, w: 170, h: 46 };
+const FA_CAP_BOX = { x: 868, y: 648, w: 166, h: 46 };   // the free agents' cap meter: bottom right, between ROSTER (narrowed on this screen) and NEXT (top right is the credits box)
 function faCardDressing(p, bb, me, slot) {   // contract-slip touches on a free agent's card (all looks): price tag, fit check / warning, flame / bargain, interest, old team
   const px = bb.x + 10, py = bb.y + 10, pw = bb.w - 20, ph = 148, nd = teamNeeds(me)[p.group];
   if (p.from && p.from !== me && LOGOS[p.from]) { ctx.save(); ctx.globalAlpha = 0.16; drawLogo(p.from, bb.x + bb.w - 40, bb.y + 214, 54); ctx.restore(); }
@@ -1761,7 +1787,7 @@ function drawFA() {
   coinBox(COIN_SPOT.x, COIN_SPOT.y - 8, LEAGUE.coins, RES.bright);   // (signing costs credits: they show on the list too)
   menuBtn(FA_TITLE_BTN, `${F.pos && F.pos !== 'ALL' ? F.pos : 'FREE AGENTS'} ${F.dd ? '▴' : '▾'}`, F.dd ? SEL : RES.bright, 30);
   menuBtn(FA_SIDE_BTNS[0].b, F.filter === 'off' ? 'OFFENSE' : F.filter === 'def' ? 'DEFENSE' : 'ALL', F.filter !== 'all' ? SEL : RES.bright, 22);   // (one button: ALL > OFFENSE > DEFENSE)
-  if (!F.browse) menuBtn(TR_TEAM_BTN, 'TRADES', RES.bright, 22);   // (trades are open all offseason)
+  if (!F.browse) menuBtn(FA_TRADES_BTN, 'TRADES', RES.bright, 22);   // (trades are open all offseason)
   FA_TAB_BTNS.forEach(t => {   // position index tabs along the top
     const on = (F.pos || 'ALL') === t.pos, dim = F.filter !== 'all' && t.pos !== 'ALL' && OFF_GROUPS.includes(t.pos) !== (F.filter === 'off'), b = t.b;
     UI_BTNS.push(b);
@@ -1791,11 +1817,12 @@ function drawFA() {
     ROSTER_ARROWS.forEach((b, i) => menuBtn(b, i ? '▸' : '◂', RES.bright, 30));
     ctx.font = 'bold 16px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`PAGE ${F.page + 1} / ${pages}`, W / 2, 620);
   }
-  menuBtn(OFF_ROSTER_BTN, 'ROSTER', RES.bright, 22); menuBtn(TR_SUG_BTN, 'SUGGESTIONS', RES.bright, 20);   // (no cap bar on this screen; the cap rules still apply to a signing)
+  OFF_ROSTER_BTN.w = 160; menuBtn(OFF_ROSTER_BTN, 'ROSTER', RES.bright, 22); menuBtn(TR_SUG_BTN, 'SUGGESTIONS', RES.bright, 20);   // (ROSTER is narrowed here: the cap meter sits beside it, FA_CAP_BOX)
   if (F.browse) menuBtn(BACK_BTN, '', RES.bright, 22, backArrow); else menuBtn(MENU_NEXT, OFF.draftDone ? 'NEXT ▸' : 'DRAFT ▸', RES.bright);
-  if (F.dd) faDDItems().forEach(it => menuBtn(it.b, it.label, (F.pos || 'ALL') === it.pos ? SEL : RES.bright, 20));
+  if (F.dd) { uiModal(); faDDItems().forEach(it => menuBtn(it.b, it.label, (F.pos || 'ALL') === it.pos ? SEL : RES.bright, 20)); }   // (the open menu: its own buttons animate, everything drawn before it holds still)
 }
 // the filter dropdown: ALL, then OFFENSE with its positions, then DEFENSE with its positions; once a side is picked the other side's entries grey out
+const FA_TRADES_BTN = { x: 240, y: 12, w: 160, h: 56 };   // free agents' TRADES button (its own rect: the trade screen's team filter moved)
 const FA_DD = FA_TITLE_BTN;   // the FREE AGENTS title is the position dropdown; OFFENSE / DEFENSE beside it filter the side
 const FA_SIDE_BTNS = [{ side: 'off', label: 'OFFENSE', b: { x: 20, y: 12, w: 200, h: 60 } }, { side: 'def', label: 'DEFENSE', b: { x: W - 220, y: 12, w: 200, h: 60 } }];   // (same spots as ROSTER_TABS)
 const faDDItems = () => FA_POSITIONS.filter(p => p === 'ALL' || OFF.fa.filter === 'all' || OFF_GROUPS.includes(p) === (OFF.fa.filter === 'off'))
@@ -1867,7 +1894,7 @@ function faClick(pt) {
   }
   const ss = FA_SORT_BTNS.find(s => inBtn(pt, s.b));
   if (ss) { F.sort = F.sort === ss.k ? 'rate' : ss.k; F.page = 0; return; }
-  if (!F.browse && inBtn(pt, TR_TEAM_BTN)) { tradeOpen('fa'); return; }
+  if (!F.browse && inBtn(pt, FA_TRADES_BTN)) { tradeOpen('fa'); return; }
   if (inBtn(pt, FA_DD)) { F.dd = true; return; }
   if (inBtn(pt, FA_SIDE_BTNS[0].b)) {
     F.filter = F.filter === 'off' ? 'def' : F.filter === 'def' ? 'all' : 'off'; F.page = 0;
@@ -1972,20 +1999,55 @@ function uniqueNum(R, p) {
 // another team's pick: the best stock left plus its need at the position (a rookie only makes the roster if he starts or beats its weakest man there)
 // (its own grade of him: the board's perceived score read by its scouts and front office, boardGrade; + need + position value. got = who it already
 //  took in a mock, gk = the class's generational kicker, live = draft day: a little luck on top, so a mock is never exactly right)
-function draftChoice(k, pool, got, gk, live) {
-  const R = ROSTER[k], fo = foSkill(k); let best = null, bs = -1e9;
-  for (const r of pool.slice(0, 40)) {
-    const G = R.filter(q => q.group === r.group), dup = got ? got.filter(q => q.group === r.group).length : 0, weak = G.length ? Math.min(...G.map(scoreOf)) : 0;
-    const s = boardGrade(k, r) + (G.length + dup < (STARTERS[r.group] || 0) ? 3 : !dup && scoreOf(r) > weak ? 0.5 + LEAN.draft * leanBias(k, r.group) : -2.5) + (boardPos({ gk }, r) - 1) * BOARD.posDraft
-      + (live ? (Math.random() * 2 - 1) * BOARD.dayNoise : 0) - (r.group === 'K' && r.name !== gk ? DRAFT.kickerPenalty : 0) + ((r.potential || r.stars) - r.stars) * MGMT.pot * (fo - 0.5) * 2;   // (a good front office likes high potential; a poor one takes low)
-    if (s > bs) { bs = s; best = r; }
+// the team's picture, once per pick (no per-prospect roster scans): per position group its count, weakest starter's score, the share of starters old / on their
+// last year; the holes (teamNeeds); its QB situation; its timeline (TRADE.mode now)
+function draftPicture(k) {
+  const A = DRAFT_AI, R = ROSTER[k] || [], groups = {};
+  for (const q of R) { const g = groups[q.group] || (groups[q.group] = { n: 0, weak: 0, aging: 0, list: [] }); g.n++; g.list.push(q); }
+  for (const gk2 of Object.keys(groups)) {
+    const g = groups[gk2], st = g.list.sort((x, y) => y.stars - x.stars).slice(0, STARTERS[gk2] || 1), pk = (TRADE.peak[gk2] || [25, 30])[1];
+    g.weak = Math.min(...st.map(scoreOf)); g.aging = st.filter(q => (q.age || 0) > pk || (q.years || 9) <= 1).length / Math.max(1, st.length);
   }
+  const qb = groups.QB ? groups.QB.list[0] : null, qbEnd = TRADE.peak.QB[1];
+  const qbState = !qb || qb.stars < A.qbPoor || (qb.age || 0) > qbEnd ? 'need' : qb.stars >= A.qbGood && (qb.age || 0) <= qbEnd - A.qbYoung ? 'has' : 'ok';
+  let mode = 'neutral'; try { mode = (tcx()[k] || {}).mode || 'neutral'; } catch (e) {}
+  return { groups, N: teamNeeds(k), qbState, now: (TRADE.mode[mode] || TRADE.mode.neutral).now };
+}
+// another team's pick (the single place a computer pick is decided: draftAI on draft day, boardMock for the mock): a weighted score per prospect (DRAFT_AI).
+// got = who it already took (a mock's list; draft day: OFF.draft.took), gk = the class's generational kicker, live = draft day (real dice; a mock only uses
+// seeded hashes, so it stays steady week to week), at = { n: overall pick, round }
+function draftChoice(k, pool, got, gk, live, at) {
+  const A = DRAFT_AI, fo = foSkill(k), bad = 1 - fo, PIC = draftPicture(k), round = (at && at.round) || 1, ri = Math.min(round, 7) - 1, n = (at && at.n) || 1;
+  const yr = (OFF && OFF.draft && OFF.draft.year) || (LEAGUE && LEAGUE.year) || 0, taken = got || [], last = taken.length ? taken[taken.length - 1].group : null, rk = A.needRound[ri];
+  const needW = A.need * (1 + bad * A.needOver) * rk, noise = live ? BOARD.dayNoise * (A.noise.good + bad * A.noise.bad) : 0;
+  let best = null, bs = -1e9;
+  pool.slice(0, A.look).forEach((r, idx) => {
+    const g = PIC.groups[r.group] || { n: 0, weak: 0, aging: 0 }, dup = taken.filter(q => q.group === r.group).length, key = tradeKey(r), nd = PIC.N[r.group];
+    const hole = g.n + dup < (STARTERS[r.group] || 0);
+    let s = A.talent * boardGrade(k, r);                                                          // 1. talent: the team's own grade
+    s += needW * ((nd ? nd.sev : 0) + (hole ? 0.5 : 0)) + A.needAge * g.aging * rk;               // 2. need: the hole, aging / expiring starters...
+    s += (hole ? 0 : !dup && scoreOf(r) > g.weak ? A.fills : A.noRoom) * rk;                      //    ...he fills it, or would never play
+    s += (boardPos({ gk }, r) - 1) * A.pos * (A.prem.includes(key) ? A.posRound.prem[ri] : A.disc.includes(key) ? A.posRound.disc[ri] : 1);   // 3. position value by round
+    if (r.group === 'K' && r.name !== gk) s -= DRAFT.kickerPenalty * (round < A.kLate ? 1 : 0.5);
+    if (r.group === 'QB') s += PIC.qbState === 'has' && round <= 2 ? A.qbHas : PIC.qbState === 'need' ? A.qbNeed : 0;   // 4. the QB rule
+    const rank = (r.bd && r.bd.r) || (n + idx), fell = n - rank;                                  // 5. value vs the public board
+    s += fell > 0 ? Math.min(A.fallMax, fell * A.fall) : Math.min(0, (fell + A.reachFree) * A.reach);
+    const ready = (scoreOf(r) - 40) / 8, ceil = ((r.potPts || scoreOf(r)) - scoreOf(r)) / 8 + (22 - (r.age || 22)) * A.youth;   // 6. timeline: ready now vs ceiling and youth
+    s += A.time * (PIC.now - 1) * (ready - ceil) + ((r.potential || r.stars) - r.stars) * MGMT.pot * (fo - 0.5) * 2;   // (+ the front office's old potential lean)
+    s += A.lean * leanBias(k, r.group);                                                           // 7. scheme / tendency fit
+    s -= dup * A.dup + (last === r.group ? A.dupBack : 0);                                        // 8. already taken in this draft
+    s += bad * (A.hype * Math.max(0, A.look - rank) + (key === 'QB' || key === 'WR' || key === 'RB' ? A.flash : 0));   // a poor front office: hype and flash
+    if (bdHash(`${k}|${r.name}|${yr}|love`) < bad * A.love) s += A.loveBonus;                    // (it fell for him: seeded, the same all spring)
+    if (noise) s += (Math.random() * 2 - 1) * noise;                                              // luck on the pick (draft day only)
+    if (s > bs) { bs = s; best = r; }
+  });
   return best;
 }
 function draftAI(k) {
-  const D = OFF.draft, R = ROSTER[k], best = draftChoice(k, D.pool, null, D.gk, true);
+  const D = OFF.draft, R = ROSTER[k], took = (D.took || (D.took = {}))[k] || (D.took[k] = []), best = draftChoice(k, D.pool, took, D.gk, true, { n: D.n + 1, round: D.round });
   if (!best) return;
-  D.pool.splice(D.pool.indexOf(best), 1); delete best.bd;
+  took.push({ group: best.group });
+  D.pool.splice(D.pool.indexOf(best), 1); delete best.bd; try { postDrafted(best, k); } catch (e) {}
   D.n++; if (D.n <= 32 || best.stars >= 3.5) postWire('draft', best, k, { n: D.n }); D.log.push(`${D.n} ${k} ${best.short} ${best.tag}`); if (D.log.length > 4) D.log.shift();
   best.drafted = true;
   const side = OFF_GROUPS.includes(best.group), G = R.filter(q => q.group === best.group);
@@ -2052,7 +2114,20 @@ function draftStep() {
   draftPop = { r: D.round, i: D.pi, t0: performance.now() }; D.pi++; D.viewR = D.round;
   return true;
 }
-function draftSim() { let n = 0; while (draftStep() && ++n < 600) {} const D = OFF.draft; if (D && !D.done) D.viewR = D.round; }
+function draftSim(now) {   // to your pick / the end: one computer pick every DRAFT_GRID.simGap s, each popping in (draftSimTick from the board's draw); now = all at once (the old loop)
+  if (!now) { draftSimQ = { at: performance.now(), n: 0 }; draftSimTick(); return; }
+  draftSimQ = null; let n = 0; while (draftStep() && ++n < 600) {} const D = OFF.draft; if (D && !D.done) D.viewR = D.round;
+}
+let draftSimQ = null;   // a sim running pick by pick: { at (ms of the last pick), n } (never saved; a click anywhere finishes it at once)
+function draftSimTick() {
+  const Q = draftSimQ; if (!Q || !OFF.draft) { draftSimQ = null; return; }
+  const gap = DRAFT_GRID.simGap * 1000, now = performance.now();
+  for (let k = 0; k < 3 && (Q.n === 0 || now - Q.at >= gap); k++) {   // (a slow frame catches up a few picks, never a burst)
+    Q.at = Q.n === 0 ? now : Q.at + gap;
+    if (!draftStep() || ++Q.n >= 600) { draftSimQ = null; const D = OFF.draft; if (D && !D.done) D.viewR = D.round; return; }
+    try { sndRec('tick', DRAFT_GRID.simVol, { ms: SND_USE.tickMs }); } catch (e) {}
+  }
+}
 function draftMineAhead() {   // do you still hold a pick from here on
   const D = OFF.draft, me = season.team, plan = draftCur();
   for (let i = D.pi; i < plan.length; i++) if ((plan[i].x ? plan[i].k : pickOwner(D.year, D.round, plan[i].o)) === me) return true;
@@ -2071,7 +2146,7 @@ function draftFix(D) {   // a save from before the board, made while you were on
 function draftTake(p) {   // you pick him
   const D = OFF.draft, me = season.team, R = ROSTER[me], e = draftCur()[D.pi];
   D.pool.splice(D.pool.indexOf(p), 1);
-  p.drafted = true; delete p.scout; delete p.bd; D.n++; D.mine.push(p); postWire('draft', p, me, { n: D.n });
+  p.drafted = true; delete p.scout; delete p.bd; D.n++; D.mine.push(p); postWire('draft', p, me, { n: D.n }); try { postDrafted(p, me); } catch (e) {}
   uniqueNum(R, p); R.splice(depthAt(R, p), 0, p);
   moveMood(p, 1); recalcTeamStars(); cardShowAdd(p, me, 'DRAFTED');
   if (e) { e.p = draftSlim(p); e.n = D.n; draftPop = { r: D.round, i: D.pi, t0: performance.now() }; }
@@ -2097,7 +2172,7 @@ function draftFinish() {
 }
 const DRAFT_SCOUT_BTN = { x: 660, y: 618, w: 230, h: 62 }, DRAFT_PICK_BTN = { x: 910, y: 618, w: 250, h: 62 };
 // the board: where a round's slots sit (8 across), px between cells, the team band's height, s a new pick takes to pop in
-const DRAFT_GRID = { x: 58, y: 92, w: 1164, h: 516, cols: 8, gap: 6, band: 22, pop: 0.3 };
+const DRAFT_GRID = { x: 58, y: 92, w: 1164, h: 516, cols: 8, gap: 6, band: 22, pop: 0.3, simGap: 0.07, simPop: 0.12, simVol: 0.12 };   // simGap = s between simmed picks, simPop = their pop-in, simVol = the tick's volume
 const DRAFT_SIM_BTN = { x: 20, y: 12, w: 200, h: 60 }, DRAFT_VIEW_BTN = { x: 228, y: 12, w: 150, h: 60 };   // (top left: the credits / XP boxes are top right)
 const DRAFT_ARROWS = [{ x: 4, y: 300, w: 46, h: 90 }, { x: 1280 - 50, y: 300, w: 46, h: 90 }];               // (the round shown)
 const draftList = () => { const D = OFF.draft; return D.pool.filter(p => (!D.side || OFF_GROUPS.includes(p.group) === (D.side === 'off')) && (!D.pos || D.pos === 'ALL' || p.group === D.pos)); };
@@ -2113,7 +2188,7 @@ function draftCells(r) {
 function drawDraftCell(c, r) {
   const D = OFF.draft, me = season.team, G = DRAFT_GRID, { e, i, b } = c, cur = r === D.round && i === D.pi && !D.done, mine = e.k === me;
   const col = kitColors(e.k, 'home')[0], cx = b.x + b.w / 2, by = b.y + G.band, bh = b.h - G.band, cy = by + bh / 2;
-  const pk = draftPop && draftPop.r === r && draftPop.i === i ? Math.max(0, Math.min(1, (performance.now() - draftPop.t0) / (G.pop * 1000))) : 1;
+  const pk = draftPop && draftPop.r === r && draftPop.i === i ? Math.max(0, Math.min(1, (performance.now() - draftPop.t0) / ((draftSimQ ? G.simPop : G.pop) * 1000))) : 1;
   const hov = !!e.p && hoverPt && inBtn(hoverPt, b) && !uiBehind();
   ctx.save();
   if (pk < 1) { const k = 0.55 + 0.45 * (1 - Math.pow(1 - pk, 3)) + 0.12 * Math.sin(Math.PI * pk); ctx.translate(cx, b.y + b.h / 2); ctx.scale(k, k); ctx.translate(-cx, -(b.y + b.h / 2)); }
@@ -2146,6 +2221,7 @@ function drawDraftCell(c, r) {
   ctx.restore();
 }
 function drawDraftBoard() {
+  if (draftSimQ) draftSimTick();
   const D = OFF.draft, e = draftCur()[D.pi], r = D.viewR = Math.max(1, Math.min(D.round || 1, D.viewR || D.round || 1));
   ctx.fillStyle = RES.line; ctx.font = 'bold 36px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('NFL DRAFT', W / 2, 38);
@@ -2156,7 +2232,7 @@ function drawDraftBoard() {
   if (!D.turn) menuBtn(DRAFT_SIM_BTN, draftMineAhead() ? 'SIM TO\nMY PICK ▸▸' : 'SIM TO\nTHE END ▸▸', RES.bright, 20);
   menuBtn(DRAFT_VIEW_BTN, 'PROSPECTS', RES.bright, 19);
   offCapBar();
-  menuBtn(MENU_NEXT, D.turn ? 'MAKE\nPICK ▸' : 'NEXT\nPICK ▸', D.turn ? IN_GAME_PAPER.green : RES.bright);
+  menuBtn(MENU_NEXT, D.turn ? 'MAKE\nPICK ▸' : 'NEXT\nPICK ▸', IN_GAME_PAPER.green);
 }
 function draftBoardClick(pt) {
   const D = OFF.draft;
@@ -2206,13 +2282,14 @@ function drawDraftPage(p) {
   if (p.drafted) return;   // (a pick already made: just his card)
   const spot = faHasSpot(me, p), can = !p.scout && D.scouts > 0, mine = spot && D.turn;
   menuBtn(DRAFT_SCOUT_BTN, p.scout ? 'SCOUTED' : `SCOUT\n${D.scouts} LEFT`, can ? RES.bright : CARD_GRAY, 20, null, can);
-  if (scoutsOn()) { const sc = scoutFor(p); ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.line; ctx.fillText(`${sc.name.toUpperCase()}: READS WITHIN ${(DRAFT.scoutErr * scoutErrK(sc, p)).toFixed(1)} PTS${p.flag ? (p.flag === 'gen' ? '   REPORT: GENERATIONAL' : '   REPORT: UNDERRATED') : ''}`, 130, 636, 510); }
+  if (scoutsOn() && p.flag) { ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.line; ctx.fillText(p.flag === 'gen' ? 'SCOUT REPORT: GENERATIONAL' : 'SCOUT REPORT: UNDERRATED', DRAFT_SCOUT_BTN.x, DRAFT_SCOUT_BTN.y - 20, 480); }   // (just the report, above the SCOUT button: the scout's read range was a tip running under the panel)
   menuBtn(DRAFT_PICK_BTN, D.turn ? `DRAFT\n${fmtM(p.salary)} / ${p.years}Y` : 'NOT YOUR\nPICK YET', mine ? IN_GAME_PAPER.green : CARD_GRAY, 19, null, mine);
   if (!spot) { ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#c81b1b'; ctx.fillText('NO ROSTER SPOT: BACK, THEN ROSTER > DROP', 130, 660); }
 }
 function draftClick(pt) {
   const D = OFF.draft, me = season.team;
   draftFix(D);
+  if (draftSimQ) { draftSim(true); return; }   // (a sim running pick by pick: any click finishes the rest at once; nothing else reacts)
   if (D.sel) {
     const p = D.sel;
     if (helpClick(pt, p)) return;
@@ -2370,7 +2447,7 @@ function boardFactor(k, band) {
 function boardMock(C) {
   const yr = tradeYears()[0], S = projSlots(), order = Object.keys(S).sort((a, b) => S[a] - S[b]), pool = C.pool.slice(), got = {}, out = [];
   for (let r = 1; r <= BOARD.mockRounds; r++) for (const o of order) {
-    const k = pickOwner(yr, r, o), p = draftChoice(k, pool, got[k] || (got[k] = []), C.gk);
+    const k = pickOwner(yr, r, o), p = draftChoice(k, pool, got[k] || (got[k] = []), C.gk, false, { n: out.length + 1, round: r });
     if (!p) continue;
     pool.splice(pool.indexOf(p), 1); got[k].push(p); out.push({ n: out.length + 1, k, o, p });
   }

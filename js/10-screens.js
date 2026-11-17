@@ -209,6 +209,7 @@ function approvalAfterGame(margin) {
   payToFly = pay;   // (the credits fly to the credits box when the first screen with one shows)
 }
 function openResults() {
+  SC_SCROLL.off = 0; SC_SCROLL.drag = null;   // (the scoring list starts at the latest score)
   try { localStorage.setItem(KO_TIP_KEY, '1'); } catch (e) {}   // (one game finished: the kickoff reticle tip is gone for good)
   suspended = null; simMode = 'none';   // (a finished game's SIM menu pick must not carry into the next game / tutorial)
   if (twoP && twoP.flipped) flipSides();   // (two players: the result is shown from Player 1's side)
@@ -224,6 +225,7 @@ function openResults() {
     record[game.blue > game.red ? 'w' : game.blue < game.red ? 'l' : 't']++;
     try { localStorage.setItem(RECORD_KEY, JSON.stringify(record)); } catch (e) {}
     const wk0 = season ? season.week : 0;
+    LEAGUE.recFresh = 1;   // (v0.52: the next home screen may show the RECORD BOOK popup: only right after a game, played or SIM GAME)
     seasonGameDone(game.blue, game.red);
     LEAGUE.firstPlayed = true;
     dynAfterGame(game.blue, game.red);   // (dynamic difficulty: only a game you played, never a simulated one)
@@ -435,7 +437,7 @@ function textBtn(b, label, ink = RES.line, size = 22, on = true) {
   UI_BTNS.push(b);
   const now = performance.now(), dt = Math.min(0.1, (now - (b.at || now)) / 1000);
   b.at = now;
-  const still = uiBehind() || (!!offPop && !popBtnDraw) || ((!!tour || tutPrompt === 'ask' || tutPrompt === 'coach' || tutPrompt === 'ready' || !!(tut && tut.defAsk)) && !tourBtnDraw);
+  const still = uiBehind() || (!!offPop && !popBtnDraw) || ((!!tour || tutPrompt === 'ask' || tutPrompt === 'coach' || tutPrompt === 'ready' || tutPrompt === 'setup' || !!(tut && tut.defAsk)) && !tourBtnDraw);
   const over = on && !still && hoverPt && inBtn(hoverPt, b);
   b.hov = (b.hov || 0) + ((over ? 1 : 0) - (b.hov || 0)) * Math.min(1, dt * 12);
   const d = on && !still ? pressDepth(b) : 0;
@@ -638,7 +640,7 @@ function dmSwap(on) { const F = on ? DM_HELD : DM_RAW; drawPlayer = F.drawPlayer
 // bg: a menu paper (RES.bright / RES.bg: white), SEL (yellow), or any other colour = coloured construction paper
 // (white ink on dark paper). on = false: no hover or press (a greyed-out button). b.ink = the ink colour, for face().
 const paperInk = c => lum(c) < 0.55 ? '#fff' : RES.line;
-let backBtnNow = null;   // which back button that was (BACK_BTN, WEEK_BACK or the home screen's HOME_BACK)
+let backBtnNow = null;   // which back button that was (BACK_BTN or the home screen's HOME_BACK)
 let backDrawn = 0;   // when a menu screen last drew its BACK button (Esc presses it)
 let tourBtnDraw = false;   // true while a tutorial tip draws its own buttons (everything else behind it holds still)
 let UI_BTNS = [], UI_BTNS_PREV = [];   // every menuBtn drawn this frame / last frame: a touch on one is the button's, never the joystick's (overUiBtn)
@@ -647,8 +649,8 @@ function menuBtn(b, label, bg, size = 24, face, on = true) {
   if (b.lockGrey) { bg = MENU_LOCK_GREY; on = false; }   // (a locked setting: flat grey, no hover or press)
   UI_BTNS.push(b);
   const now = performance.now(), dt = Math.min(0.1, (now - (b.at || now)) / 1000);
-  b.at = now; if (b === BACK_BTN || b === WEEK_BACK || b === HOME_BACK) { backDrawn = now; backBtnNow = b; }
-  const still = uiBehind() || (!!offPop && !popBtnDraw) || (settingsPopUp() && !setPopDraw) || ((!!tour || tutPrompt === 'ask' || tutPrompt === 'coach' || tutPrompt === 'ready' || !!(tut && tut.defAsk)) && !tourBtnDraw);   // (a popup or tutorial tip is up: the buttons behind it hold still)
+  b.at = now; if (b === BACK_BTN || b === HOME_BACK) { backDrawn = now; backBtnNow = b; }
+  const still = uiBehind() || (!!offPop && !popBtnDraw) || (settingsPopUp() && !setPopDraw) || ((!!tour || tutPrompt === 'ask' || tutPrompt === 'coach' || tutPrompt === 'ready' || tutPrompt === 'setup' || !!(tut && tut.defAsk)) && !tourBtnDraw);   // (a popup or tutorial tip is up: the buttons behind it hold still)
   const over = on && !still && hoverPt && inBtn(hoverPt, b);
   b.hov = (b.hov || 0) + ((over ? 1 : 0) - (b.hov || 0)) * Math.min(1, dt * 12);
   const paper = bg === SEL ? '#fff3a0' : !bg || bg === RES.bright || bg === RES.bg ? '#fffdf4' : bg;
@@ -751,11 +753,12 @@ function xpBankAdd(xp) {   // spare XP -> the bank (x XPC.rate); returns what we
   LEAGUE[k] = (LEAGUE[k] || 0) + add;
   return add;
 }
-function xpSpend(n) {   // pay from the bank: false if it can't
+const spendRect = () => { const pt = spendClick; if (!pt) return null; const all = [...UI_BTNS, ...UI_BTNS_PREV].filter(r => r && r.w && inBtn(pt, r)).sort((a, b) => a.w * a.h - b.w * b.h); return all[0] ? { x: all[0].x, y: all[0].y, w: all[0].w, h: all[0].h } : null; };   // (the smallest button under the last click, copied)
+function xpSpend(n, rect) {   // pay from the bank: false if it can't; rect = the button the buy came from (xpcBuy keeps it across its confirm popup)
   if (!xpcOn() || !(n > 0) || xpBank() < n) return false;
   career.xpBank = xpBank() - n; xpcFlip(true); xpcBox.back = null;   // (the box turns to XP so you see it go)
-  if (xpcBoxSeen() && spendClick) {   // (the tokens fly out of the XP box into the button that was clicked, like credits do)
-    const pt = spendClick, all = [...UI_BTNS, ...UI_BTNS_PREV].filter(r => r && r.w && inBtn(pt, r)).sort((a, b) => a.w * a.h - b.w * b.h);
+  if (xpcBoxSeen() && (rect || spendClick)) {   // (the tokens fly out of the XP box into the button that was clicked, like credits do)
+    const pt = spendClick || { x: rect.x, y: rect.y }, all = rect ? [rect] : [...UI_BTNS, ...UI_BTNS_PREV].filter(r => r && r.w && inBtn(pt, r)).sort((a, b) => a.w * a.h - b.w * b.h);
     spendFx(all[0] || { x: pt.x - 40, y: pt.y - 20, w: 80, h: 40 }, Math.max(1, Math.round(n / XPC.perToken)), true);
   }
   return true;
@@ -826,9 +829,24 @@ function coinBox(x, y, n, bg) {   // ONE box, top right on every screen that sho
   coinAt = { x: x + 105, y: y + 21, xx: x + 105, bx: x, by: y, frame: typeof spendFrame === 'number' ? spendFrame : 0 };   // (credits / XP fly to and from the box actually on this page)
 }
 let coinAt = null;
+// a sale price: the full price struck through in pencil, then the sale price in the credits colour + the credit icon (centred on cx)
+const PRICE_TAG = { was: '#8a8270', now: '#2f7d3a', strike: '#c0392b', gap: 16 };
+function priceTag(cx, cy, was, now, size = 22) {
+  ctx.save(); ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  ctx.font = `bold ${Math.round(size * 0.8)}px monospace`; const a = String(was), ww = ctx.measureText(a).width;
+  ctx.font = `bold ${size}px monospace`; const b = String(now), nw = ctx.measureText(b).width, ir = size * 0.42;
+  const tot = ww + PRICE_TAG.gap + nw + 8 + ir * 3; let x = cx - tot / 2;
+  ctx.font = `bold ${Math.round(size * 0.8)}px monospace`; ctx.fillStyle = PRICE_TAG.was; ctx.fillText(a, x, cy);
+  ctx.strokeStyle = PRICE_TAG.strike; ctx.lineWidth = Math.max(2, size * 0.11); ctx.lineCap = 'round';   // (the pencil strike: a little uphill, slightly wobbly)
+  ctx.beginPath(); ctx.moveTo(x - 3, cy + size * 0.12); ctx.quadraticCurveTo(x + ww / 2, cy - size * 0.02, x + ww + 3, cy - size * 0.14); ctx.stroke();
+  x += ww + PRICE_TAG.gap;
+  ctx.font = `bold ${size}px monospace`; ctx.fillStyle = PRICE_TAG.now; ctx.fillText(b, x, cy);
+  eraserIcon(x + nw + 8 + ir * 1.5, cy, ir);
+  ctx.restore();
+}
 function coinTarget() {   // where the credits box is on the page being drawn (falls back to the per-screen guess)
   if (coinAt && typeof spendFrame === 'number' && spendFrame - coinAt.frame <= 2) return [coinAt.x, coinAt.y];
-  return results && results.screen === 'home' ? COIN_TO.home : results && (results.screen === 'result' || results.screen === 'week') ? COIN_TO.right : COIN_TO.other;
+  return results && results.screen === 'home' ? COIN_TO.home : results && results.screen === 'result' ? COIN_TO.right : COIN_TO.other;
 }
 let yearCal = false;   // home screen year box: false = "YEAR n" (coaching year), true = the calendar year (kept in localStorage; every year label in the game follows it)
 try { yearCal = localStorage.getItem('pocketPasser.yearCal') === '1'; } catch (e) {}
@@ -909,12 +927,13 @@ const recStr = r => `${r.w}-${r.l}${r.t ? '-' + r.t : ''}`;
 const clockStr = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 // --- result screen redesign (v0.10): hero headline, quarter strip, scoring list, Player of the Game, momentum graph, W/L tiles
+const SC_SCROLL = { off: 0, max: 0, drag: null, box: null };   // the result screen's scoring list: px scrolled up from the latest score (wheel / drag, see 14's input)
 const RES_UI = {
   logo: 96, logoX: 212, headY: 66, headFs: 50,   // hero: logo size, headline baseline, font px
   strip: { y: 150, h: 112 },          // quarter strip (left column)
   graph: { y: 282, h: 150, minMargin: 7, dot: 6 },   // momentum graph: y, height, smallest +/- range (points), dot radius
   tiles: { y: 452, h: 128, size: 30, gap: 6 },       // season tiles: row top, panel height, tile size, gap
-  score: { y: 150, h: 262, rows: 8, rowH: 28 },      // scoring list (right column)
+  score: { y: 150, h: 262, rows: 8, rowH: 28 },      // scoring list (right column; rows = shown at once, the rest scroll: SC_SCROLL)
   potg: { y: 432, h: 148 },                          // Player of the Game card
   potgMin: 1,                                        // least score (AWARD points) a player needs to be named
 };
@@ -1066,17 +1085,28 @@ function drawResultsNow() {
   resPanel(R, SC.y, RW, SC.h, [['SCORING', 24], ['PLAY', 260], [`${MATCH.you}-${MATCH.opp}`, 452]]);
   let b = 0, rd = 0;
   const rows = game.log.map(s => { if (s.team === 'blue') b += s.pts; else rd += s.pts; return { ...s, score: `${b}-${rd}` }; });
-  const shown = rows.slice(-SC.rows);
+  const shown = rows, SS = SC_SCROLL;   // (every score: the list scrolls, SC_SCROLL.off = px up from the latest)
+  SS.max = Math.max(0, (rows.length - SC.rows) * SC.rowH); SS.off = Math.max(0, Math.min(SS.max, SS.off));
+  SS.box = { x: R, y: SC.y + 24, w: RW, h: SC.h - 24 };
   ctx.font = 'bold 20px monospace'; ctx.textBaseline = 'middle';
   if (!shown.length) { ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.fillText('NO SCORING', R + RW / 2, SC.y + SC.h / 2); }
+  ctx.save(); ctx.beginPath(); ctx.rect(SS.box.x, SS.box.y, SS.box.w, SS.box.h); ctx.clip();
+  const top = SS.max - SS.off;
   shown.forEach((s, i) => {
-    const y = SC.y + 38 + i * SC.rowH;
+    const y = SC.y + 38 + i * SC.rowH - top;
+    if (y < SS.box.y - SC.rowH || y > SS.box.y + SS.box.h + SC.rowH) return;
     ctx.fillStyle = s.team === 'blue' ? RES.gold : RES.line; ctx.textAlign = 'left';
     ctx.fillText(`${s.q >= 4 ? 'OT' : 'Q' + (s.q + 1)} ${clockStr(s.secs)}`, R + 24, y);
     ctx.fillText(s.team === 'blue' ? MATCH.you : MATCH.opp, R + 160, y);
     ctx.fillText(s.what, R + 260, y);
     ctx.textAlign = 'right'; ctx.fillText(s.score, R + RW - 30, y);
   });
+  ctx.restore();
+  if (SS.max > 0) {   // thin scroll bar on the right edge
+    const B = SS.box, th = Math.max(24, B.h * B.h / (B.h + SS.max)), ty = B.y + (B.h - th) * (top / SS.max);
+    ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.fillRect(B.x + B.w - 12, B.y + 4, 5, B.h - 8);
+    ctx.fillStyle = RES.dim; ctx.fillRect(B.x + B.w - 12, Math.max(B.y + 4, Math.min(B.y + B.h - 4 - th, ty)), 5, th);
+  }
 
   drawPotg(R, U.potg.y, RW, U.potg.h);
 
@@ -1084,6 +1114,7 @@ function drawResultsNow() {
   const k = RESULT_BTN;
   if (highlights.length) menuBtn(HL_BTN, `HIGHLIGHTS (${highlights.length})`, RES.bright, 22);   // every big play this game, as it happened
   menuBtn(PGX_BTN, 'POST-GAME ▸', RES.bright, 24);   // (box score / the Post / badges / standings)
+  if (!exhibition) { menuBtn(RES_STATS_BTN, 'STATS', RES.bright, 22); menuBtn(RES_INJ_BTN, 'INJURIES', RES.bright, 20); }   // (this game's player stats; the injury report again)
   menuBtn(k, 'CONTINUE', RES.bg, 26);
   ctx.font = '16px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('or press Space', k.x + k.w / 2, 694);
@@ -1154,7 +1185,7 @@ function drawPayOverlay() {
 }
 
 function drawMenus() {
-  ({ start: drawStart, franchise: drawCareer, qsetup: drawQs, result: drawResults, pgx: drawPgx, week: drawWeekEnd, home: drawHome, matchup: drawMatchup, roster: drawRoster, staff: drawStaff, playoffs: drawPlayoffs,
+  ({ start: drawStart, franchise: drawCareer, qsetup: drawQs, result: drawResults, pgx: drawPgx, home: drawHome, matchup: drawMatchup, roster: drawRoster, staff: drawStaff, playoffs: drawPlayoffs,
      awards: drawAwards, pbowl: drawPbowl, resign: drawResign, draft: drawDraft, fa: drawFA, offers: drawOffers, trade: drawTrade, tradeb: drawTradeB, toffers: drawTOffers,
      exhibition: () => drawMatchup(true), exstats: drawExStats, hof: drawHof, trophy: drawTrophyRoom, scrap: drawScrap, post: drawPost, pawards: drawPAwards, dboard: drawDBoard, records: drawRecords, chof: drawCoachHof, practice: drawPractice, hire: drawHire, board: drawBoard, test: drawTest, onevone: drawOneVOne, oopick: drawOvPick, anims: drawAnims, coach: drawCoachEd, online: drawOnline, onresult: drawOnResult })[results.screen]();
   if (teamPick) drawTeamPicker();
@@ -1163,7 +1194,7 @@ function drawMenus() {
   if (offPop) drawOffPop();
   if (results.injAlert) drawInjAlert();
   // credits just earned: on the first screen with the credits box, they fly to it one by one (the box counts up as each lands)
-  if (payToFly > 0 && (results.screen === 'week' || results.screen === 'home' || results.screen === 'playoffs' || results.screen === 'awards')) { flyCoins(payToFly); payToFly = 0; }
+  if (payToFly > 0 && (results.screen === 'home' || results.screen === 'playoffs' || results.screen === 'awards')) { flyCoins(payToFly); payToFly = 0; }
   drawCoinFly();
   drawSpendFx();   // (credits spent: out of the box into the button, on any screen)
   drawCardShows();   // (a player just drafted / signed / traded for: his card, crumpled, tossed to the roster button)
@@ -1290,8 +1321,8 @@ function drawCoinFly() {
   ctx.restore();
   coinFly = coinFly.filter(c => !c.done);
 }
-// --- post-game extras (POST-GAME button on the result screen): BOX SCORE (drawBoxScore + BOX_TABS) / THE POST recap / BADGES (sticky notes) / STANDINGS.
-// Screen 'pgx'; BACK returns to the result. Next-game note = nextGameNote (end-of-week screen); injury clipboard = drawInjAlert.
+// --- post-game extras (POST-GAME button on the result screen): BOX SCORE / THE POST recap / BADGES (sticky notes) / STANDINGS.
+// Screen 'pgx'; BACK returns to the result. Injury clipboard = drawInjAlert (RES_INJ_BTN reopens it).
 const PGX = { tab: 'post' };
 const PGX_TABS = [['post', 'THE POST'], ['team', 'TEAM STATS'], ['badge', 'BADGES'], ['table', 'STANDINGS']].map(([t, label], i) => ({ t, label, x: 147 + i * 250, y: 92, w: 236, h: 48 }));
 // TEAM STATS: both teams' totals from this game (yards from game.ty, counts summed over every player's line, hsLines)
@@ -1429,20 +1460,6 @@ function drawPgx() {
   else if (PGX.tab === 'badge') drawPgxBadges(x, y, w, h);
   else drawPgxTable(x, y, w, h);
   menuBtn(PGX_BACK, '', RES.bright, 22, backArrow);
-}
-function nextGameNote(x, y, w, h) {   // end-of-week screen: a sticky note on who's next
-  if (!pgxFranchise() || season.offseason) return;
-  let txt = null;
-  try {
-    const T = seasonTable(), rec = k => `${T[k].w}-${T[k].l}${T[k].t ? '-' + T[k].t : ''}`;
-    if (season.week <= SEASON_WEEKS) { const g = gameOf(season.week); if (g) { const o = g.h === season.team ? g.a : g.h; txt = [`NEXT: WEEK ${season.week}`, `${g.h === season.team ? 'vs' : 'at'} ${shortName(o)} (${rec(o)})`]; } }
-    else if (po && !po.over) { const g = poYours(); if (g) { const o = g.h === season.team ? g.a : g.h; txt = [`NEXT: ${PO_ROUNDS[po.round]}`, `${g.h === season.team ? 'vs' : 'at'} ${shortName(o)}`]; } }
-  } catch (err) {}
-  if (!txt) return;
-  ctx.save(); ctx.translate(x + w / 2, y + h / 2); ctx.rotate(-0.02);
-  ctx.fillStyle = RES.shade; ctx.fillRect(-w / 2 + 3, -h / 2 + 4, w, h); ctx.fillStyle = '#fff2a0'; ctx.fillRect(-w / 2, -h / 2, w, h);
-  ctx.fillStyle = '#2b2616'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 17px monospace'; ctx.fillText(txt[0], 0, -11, w - 12); ctx.font = 'bold 19px monospace'; ctx.fillText(txt[1], 0, 13, w - 12);
-  ctx.restore();
 }
 // --- playoff identity (v0.13): gold-trimmed paper + round stamp on the result / week / post-game screens of a playoff game (poGame), ADVANCING (mini bracket) or
 // SEASON OVER (what went wrong, from the PST lines), the bracket's gold path + circled next opponent (drawPlayoffs), the champion card (drawPoCard), and the
@@ -1667,114 +1684,6 @@ function drawInjAlert() {
 }
 
 // End of week: team condition / morale / ratings, then a stat line per player (stats are placeholders for now).
-function drawWeekEnd() {
-  paperBg();
-  noTape = true;   // (no tape strips on this screen's panels: less clutter; cleared again at the end)
-  if (poGame()) poFrame(game.blue < game.red);
-  coinBox(1120, 16, LEAGUE.coins, RES.bg);
-  ctx.fillStyle = RES.line; ctx.font = 'bold 50px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  const poRound = season && season.lastPO != null ? PO_ROUNDS[season.lastPO] : null;   // (a playoff game: the round, not a week number)
-  if (poRound) ctx.font = 'bold 42px monospace';
-  ctx.fillText(poRound ? `END OF ${poRound}` : `END OF WEEK ${season && season.last ? season.last : gamesPlayed()}`, W / 2, 44);
-
-  const cndNow = LEAGUE.condition, cndShown = barShown('cond', cndNow);   // (slides from before the game)
-  // the top strip: ONE open section (no boxes): condition label over its bar at left; MOOD / OFFENSE / DEFENSE small dim labels over their values, thin dividers; one rule under it all
-  ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  ctx.fillText(`TEAM CONDITION ${Math.round(cndShown)}%`, 40, 100);
-  pencilBar(40, 118, 540, 36, cndShown / 100, condTone(cndShown), 20, 5);
-  resPanel(630, 92, 615, 76, []);   // MOOD / OFFENSE / DEFENSE share one box, a small label over each value
-  [['MOOD', 732, (cx, cy) => {
-    ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center';
-    ctx.fillText(`${LEAGUE.morale}%`, cx - 16, cy); drawFace(cx + 36, cy - 1, 11, '#ffd23a', LEAGUE.morale);
-    const md = LEAGUE.moraleD || 0;   // (this game's change)
-    if (md) { ctx.fillStyle = md > 0 ? MORALE.gain : MORALE.hit; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'left'; ctx.fillText(`${md > 0 ? '▲ +' : '▼ '}${md}`, cx + 54, cy); }
-  }], ['OFFENSE', 937, (cx, cy) => starRow(cx, cy, LEAGUE.offense, offStarFill(), 14, offStarRim())],
-  ['DEFENSE', 1142, (cx, cy) => starRow(cx, cy, LEAGUE.defense, defStarFill(), 14, defStarRim())]].forEach(([t, cx, draw], i) => {
-    ctx.fillStyle = RES.dim; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(t, cx, 112);
-    draw(cx, 144);
-    if (i) { ctx.fillStyle = 'rgba(34,48,90,0.25)'; ctx.fillRect(cx - 103, 106, 2, 52); }
-  });
-  wobLine(40, 168, 580, 168);
-
-  // the player table: a thin box; tabs top left, sort / filter buttons, then the headings
-  thinPanel(40, 188, 1205, 420);
-  BOX_TABS.forEach(b => menuBtn(b, b.label, boxTab === b.t ? SEL : RES.bright, 18));
-  menuBtn(WEEK_SORT_BTN, `SORT: ${WEEK_UI.sorts[weekSort][1]}`, RES.bright, 16);
-  menuBtn(WEEK_UP_BTN, weekUp ? 'READY ONLY: ON' : 'READY ONLY: OFF', weekUp ? SEL : RES.bright, 16);
-  if (weekSeen !== results) { weekSeen = results; weekT0 = performance.now(); }
-  const wkE = Math.min(1, (performance.now() - weekT0) / WEEK_UI.fillMs), wkEase = 1 - (1 - wkE) * (1 - wkE);   // (the XP bars fill once, when the screen opens)
-  weekSummary(40, 178);
-  {   // OFFENSE / DEFENSE: condition bar, XP earned, XP bar toward the next upgrade, and whether he levels up
-  const cols = [['Name', 140, 'left'], ['Pos', 440], ['Cnd', 560], ['+XP', 720], ['XP to next upgrade', 880], ['Lvl Up', 1140]];
-  ctx.font = 'bold 20px monospace'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.line;
-  for (const [t, x, a] of cols) { ctx.textAlign = a || 'center'; ctx.fillText(t, x, 268); }
-  wobLine(60, 285, 1220, 285);   // rule under the headings
-  // every named player on your roster for the side (offense incl. the line and kicker; defense: everyone), scrolling in whole rows
-  const sideO = boxTab === 'off' ? ['QB', 'RB', 'WR', 'TE', 'OL', 'K'] : ['DL', 'LB', 'CB', 'S'];
-  const xpOf = p => p.gameXP || 0;
-  const list = (ROSTER[MATCH.you] || []).filter(p => sideO.includes(p.group) && (!weekUp || (p.upg || 0) > 0)).sort((a, b) => {
-    const byPos = sideO.indexOf(a.group) - sideO.indexOf(b.group) || scoreOf(b) - scoreOf(a);
-    return weekSort === 1 ? xpOf(b) - xpOf(a) || byPos : weekSort === 2 ? condOf(a) - condOf(b) || byPos : byPos;
-  });
-  const top = 289, rowH = WEEK_ROW, vis = Math.floor((602 - top) / rowH), bot = top + vis * rowH, maxScroll = Math.max(0, (list.length - vis) * rowH);
-  weekScroll = Math.round(Math.max(0, Math.min(maxScroll, weekScroll)) / rowH) * rowH; weekMax = maxScroll;
-  if (!list.length) { ctx.fillStyle = RES.dim; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center'; ctx.fillText('NO PLAYERS WITH AN UPGRADE READY', W / 2, top + 60); }
-  ctx.save(); ctx.beginPath(); ctx.rect(48, top, 1190, bot - top); ctx.clip();
-  list.forEach((p, n) => {
-    const y = top + rowH / 2 + n * rowH - weekScroll, pos = p.group;
-    if (y < top - 14 || y > bot + 14) return;
-    const off = boxTab === 'off', hurt = !!(p.inj && SETTINGS.injuries), cn = condOf(p);
-    const xp = xpOf(p);
-    if (!exhibition) drawFace(72, y, 11, '#ffd23a', moodOf(p));   // (his mood: green grin .. red frown)
-    ctx.save(); ctx.beginPath(); ctx.rect(92, y - rowH / 2 + 2, 34, rowH - 4); ctx.clip();   // (his face: head and shoulders, cut off at the row)
-    drawAvatar(weekFace(p), 109, y + rowH / 2 - 2 - 16 * 0.98, 16, { shirt: off ? '#2a62b0' : '#b82a30', num: '' }); ctx.restore();
-    ctx.font = 'bold 21px monospace'; ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.fillText(p.short || p.name || p.tag, 140, y, 280);
-    ctx.textAlign = 'center'; ctx.fillStyle = POS_COLOR[pos] || (off ? '#5fc8ff' : '#ff4a3a'); ctx.fillText(pos, 440, y);
-    // condition: a coloured bar, its %, and a tired / hurt icon under the tunable threshold
-    const bx = 500, bw = 100, tone = hurt || cn < WEEK_UI.bad ? UI_BAD : cn < WEEK_UI.warn ? UI_WARN : UI_GOOD;
-    ctx.fillStyle = '#fffdf4'; ctx.fillRect(bx, y - 6, bw, 12); ctx.fillStyle = tone; ctx.fillRect(bx, y - 6, hurt ? 0 : bw * Math.max(0, Math.min(1, cn / 100)), 12);
-    ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.strokeRect(bx, y - 6, bw, 12);
-    ctx.font = 'bold 15px monospace'; ctx.textAlign = 'left'; ctx.fillStyle = tone; ctx.fillText(hurt ? 'INJ' : `${cn}%`, bx + bw + 8, y);
-    if (hurt) weekIcon('hurt', 506 + bw + 52, y); else if (cn < WEEK_UI.tired) weekIcon('tired', 506 + bw + 52, y);
-    ctx.font = 'bold 21px monospace'; ctx.textAlign = 'center'; ctx.fillStyle = xp ? RES.gold : RES.dim; ctx.fillText(xp ? `+${xp}` : '-', 720, y);
-    // XP bar: fills from where it stood to where it is now; a full bar = an upgrade earned
-    if (!exhibition) {
-      const need = Math.max(1, upgCost(p)), room = upgRoom(p) > 0 || (p.upg || 0) > 0, gain = xp * UPG.xpK, fx = 790, fw = 190;
-      if (!room) { ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.fillText('AT POTENTIAL', fx, y); }
-      else {
-        const after = p.upgThisGame ? 1 : Math.min(1, (p.xp || 0) / need), before = p.upgThisGame ? 0 : Math.max(0, ((p.xp || 0) - gain) / need), f = before + (after - before) * wkEase;
-        ctx.fillStyle = '#fffdf4'; ctx.fillRect(fx, y - 5, fw, 10);
-        if (f > 0.01) penHatch(fx, y - 5, fw * f, 10, p.upgThisGame ? UI_GOOD : '#2a62b0', 5);
-        penOutline(fx, y - 5, fw, 10, 5, RES.line, 2);
-        ctx.fillStyle = RES.dim; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'left'; ctx.fillText(`${Math.floor(p.xp || 0)}/${Math.ceil(need)}`, fx + fw + 8, y);
-      }
-    }
-    // level-up: a pop (springy scale) once the bar has filled
-    if (p.upgThisGame) {
-      const k = Math.max(0, (wkE - WEEK_UI.popAt) / (1 - WEEK_UI.popAt)), s = k <= 0 ? 0 : 1 + 0.45 * Math.sin(Math.min(1, k) * Math.PI) * (1 - k * 0.3);
-      if (s > 0) { ctx.save(); ctx.translate(1140, y); ctx.scale(s, s); ctx.fillStyle = UI_GOOD; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.fillText('▲ UPGRADE', 0, 0); ctx.restore(); }
-    } else { ctx.fillStyle = RES.dim; ctx.font = 'bold 21px monospace'; ctx.textAlign = 'center'; ctx.fillText('-', 1140, y); }
-  });
-  ctx.restore();
-  if (maxScroll > 0) {   // scroll bar
-    const th = Math.max(30, (bot - top) * (bot - top) / (maxScroll + bot - top));
-    ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(1224, top + (bot - top - th) * weekScroll / maxScroll, 7, th);
-  }
-  }
-
-  ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center';
-  ctx.fillText(`DIFFICULTY: ${inSave() ? diffTag() : dn(SETTINGS.difficulty)}`, 567, 684, 440);
-  nextGameNote(360, 618, 420, 56);   // (who's next, a sticky note)
-  menuBtn(WEEK_STATS_BTN, 'STATS', RES.bright, 26);   // (every player's stats page, from a roster list)
-  menuBtn(WEEK_BACK, '', RES.bright, 22, backArrow);   // back to the result screen
-  menuBtn(WEEK_NEWS_BTN, 'INJURY REPORT', RES.bright, 22);   // (this game's injury popup)
-  menuBtn(MENU_NEXT, 'CONTINUE', IN_GAME_PAPER.green, 24);
-  noTape = false;
-}
-// post-game progress screen (v0.11 of the redesign list = Phase 2): tunables, sort / filter state, helpers
-const WEEK_UI = { tired: 50, warn: 70, bad: 40, fillMs: 1100, popAt: 0.8, sorts: [['pos', 'POSITION'], ['xp', '+XP'], ['cnd', 'CONDITION']] };   // tired = condition % under which the tired icon shows; warn / bad = bar colours; fillMs = XP bars fill time; popAt = share of it before the level-up pops
-let weekSort = 0, weekUp = false, weekSeen = null, weekT0 = 0;
-const WEEK_SORT_BTN = { x: 560, y: 198, w: 250, h: 42 }, WEEK_UP_BTN = { x: 830, y: 198, w: 250, h: 42 };
 const WK_FACES = new Map();
 const weekFace = p => p.face || WK_FACES.get(p.name) || (WK_FACES.set(p.name, makeFace(Math.random)), WK_FACES.get(p.name));
 function weekIcon(kind, x, y) {   // tired: a blue sweat drop; hurt: a red cross
@@ -1783,22 +1692,10 @@ function weekIcon(kind, x, y) {   // tired: a blue sweat drop; hurt: a red cross
   else { ctx.fillStyle = '#5fb4f0'; ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, -9); ctx.quadraticCurveTo(8, 0, 0, 8); ctx.quadraticCurveTo(-8, 0, 0, -9); ctx.fill(); ctx.stroke(); }
   ctx.restore();
 }
-function weekSummary(x, y) {   // MOST IMPROVED (most XP, an upgrade earned wins ties) / FADING (lowest condition, or hurt), from this game's numbers
-  const R = ROSTER[MATCH.you] || [];
-  const imp = R.filter(p => (p.gameXP || 0) > 0).sort((a, b) => (b.upgThisGame ? 1e6 : 0) + b.gameXP - ((a.upgThisGame ? 1e6 : 0) + a.gameXP))[0];
-  const fad = R.filter(p => !isOut(p) || p.inj).sort((a, b) => ((b.inj && SETTINGS.injuries) ? -1e6 : 0) + condOf(a) - (((a.inj && SETTINGS.injuries) ? -1e6 : 0) + condOf(b)))[0];
-  const parts = [];
-  if (imp && !exhibition) parts.push(`MOST IMPROVED: ${imp.short || imp.name} +${imp.gameXP} XP${imp.upgThisGame ? ' (UPGRADE)' : ''}`);
-  if (fad && ((fad.inj && SETTINGS.injuries) || condOf(fad) < WEEK_UI.tired)) parts.push(`FADING: ${fad.short || fad.name} ${fad.inj && SETTINGS.injuries ? 'HURT' : condOf(fad) + '%'}`);
-  if (!parts.length) return;
-  ctx.save(); ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.gold; ctx.fillText(parts.join('   ·   '), W / 2, y, 1180); ctx.restore();
-}
 // the post-game box score (end of week / exhibition stats): this game's line for each of your players, OFFENSE or DEFENSE tab
-let boxTab = 'off', weekScroll = 0, weekMax = 0;   // (weekScroll: the OFFENSE / DEFENSE list's scroll, always a whole number of rows)
-const WEEK_ROW = 36;   // end-of-week player list: one row's height
-const BOX_TABS = [['off', 'OFFENSE'], ['def', 'DEFENSE']].map(([t, label], i) => ({ t, label, x: 56 + i * 190, y: 198, w: 178, h: 42 }));
-const WEEK_STATS_BTN = { x: 124, y: 620, w: 210, h: 80 };
-const WEEK_BACK = { x: 20, y: 620, w: 84, h: 80 }, WEEK_NEWS_BTN = { x: 800, y: 620, w: 210, h: 80 };
+// the result screen's franchise buttons (the end-of-week screen is gone): this game's player stats, and the injury report again
+const RES_STATS_BTN = { x: 355, y: 605, w: 160, h: 75 }, RES_INJ_BTN = { x: 525, y: 605, w: 160, h: 75 };
+function resInjReport() { if (SETTINGS.injuries && LEAGUE.injNotes && LEAGUE.injNotes.length) results.injAlert = [...LEAGUE.injNotes]; else offPopShow({ title: 'INJURY REPORT', lines: [SETTINGS.injuries ? 'NO NEW INJURIES' : 'INJURIES ARE OFF'] }); }
 const BOX_COLS = {
   off: [['C/ATT', g => g.pa ? `${g.pc}/${g.pa}` : '-'], ['PASS', g => g.pa ? g.py : '-'], ['P TD', g => g.pa ? g.pt : '-'], ['INT', g => g.pa ? g.pi : '-'],
         ['CAR', g => g.ca || '-'], ['RUSH', g => g.ca ? g.cy : '-'], ['REC', g => g.tg ? `${g.rc}/${g.tg}` : '-'], ['REC YD', g => g.tg ? g.ry : '-'],
@@ -1836,18 +1733,6 @@ function drawBoxScore(side, x0, x1, y0, yMax) {
     ctx.font = 'bold 18px monospace'; ctx.fillStyle = RES.gold; ctx.textAlign = 'center';
     ctx.fillText(`${side === 'off' ? 'YOUR OFFENSE' : 'THEY'}:  ${T.rush} RUSH YDS  ·  ${T.pass} PASS YDS  ·  ${pts} POINTS${side === 'def' && game.defSimmed ? '  (SOME DRIVES SIMULATED)' : ''}`, (x0 + x1) / 2, yMax - 18, x1 - x0 - 20);
   }
-}
-function weekClick(pt) {
-  const t = BOX_TABS.find(b => inBtn(pt, b));
-  if (t) { boxTab = t.t; weekScroll = 0; return true; }
-  if (inBtn(pt, WEEK_SORT_BTN)) { weekSort = (weekSort + 1) % WEEK_UI.sorts.length; weekScroll = 0; return true; }
-  if (inBtn(pt, WEEK_UP_BTN)) { weekUp = !weekUp; weekScroll = 0; return true; }
-  if (inBtn(pt, WEEK_BACK)) { results.screen = 'result'; return true; }
-  if (inBtn(pt, WEEK_NEWS_BTN)) { if (SETTINGS.injuries && LEAGUE.injNotes.length) results.injAlert = [...LEAGUE.injNotes]; else offPopShow({ title: 'INJURY REPORT', lines: [SETTINGS.injuries ? 'NO NEW INJURIES' : 'INJURIES ARE OFF'] }); return true; }
-  if (inBtn(pt, WEEK_STATS_BTN)) {   // a roster list whose cards open the stats page
-    gsOpen('week'); results.screen = 'exstats'; return true;
-  }
-  return false;
 }
 
 // After an exhibition: every tracked player's line from that game (no condition / XP: it doesn't count). BACK = result.
@@ -2285,9 +2170,55 @@ function sideKit(team, p) {
   if (OFF_GROUPS.includes(p.group) || s === m) return { main: m, trim: s === m ? '#ffffff' : s };
   return { main: s, trim: m };
 }
-function drawPortrait(p, x, y, u, team) {
-  const { main, trim } = sideKit(team, p), R = 13.5 * u;
-  drawAvatar(p.face || makeFace(Math.random), x, y - R * 0.98, R, { shirt: main, trim, num: p.num, bg: mixHex(main, 0.82, 255) });
+// o.page = the full player page: a yearbook photo instead of the circle (drawYearbook). Every portrait: injured = a band-aid, morale moves the mouth / brows
+// (FIRED UP grin, SHAKEN / RATTLED frown, STEADY = his own face; only while moraleOn()). The stored face is never changed.
+const YEARBOOK = { w: 23, h: 26, bd: 1.1, polaroid: 4.2, frame: 2.4, tilt: 0.075, sig: 13, tape: '#f1e3a0' };   // print size / white border / polaroid bottom / HOF frame (portrait units), max tilt (rad), signature px
+function portraitOpts(p, team) {
+  const s = entryOf(p) || p, { main, trim } = sideKit(team, p), o = { shirt: main, trim, num: p.num, bg: mixHex(main, 0.82, 255) };
+  if (s && injLabel(s)) o.hurt = true;
+  if (moraleOn() && s && s.morale != null) { const m = s.morale; if (m >= MORALE.tiers.fired) o.expr = 2; else if (m < MORALE.tiers.steady) o.expr = 4; }
+  return o;
+}
+function drawPortrait(p, x, y, u, team, page) {
+  const R = 13.5 * u, f = p.face ? faceMore(p.face, p.name, p.group, p) : makeFace(Math.random), o = portraitOpts(p, team);
+  if (page) return drawYearbook(p, f, x, y - R * 0.98, u, o);
+  drawAvatar(f, x, y - R * 0.98, R, o);
+}
+function drawYearbook(p, f, cx, cy, u, o) {
+  const Y = YEARBOOK, h0 = [...p.name].reduce((t, ch) => (t * 31 + ch.charCodeAt(0)) % 9973, 7), tilt = ((h0 % 200) / 100 - 1) * Y.tilt;
+  const rookie = !!p.rookie, hof = HOF.some(h => h.p.name === p.name), retire = cardStatsOnly, star = p.tier === 'X';
+  const w = Y.w * u, h = Y.h * u, bd = Y.bd * u, bb = rookie ? Y.polaroid * u : bd, iw = w - 2 * bd, ih = h - bd - bb;
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(tilt);
+  const x0 = -w / 2, y0 = -h / 2;
+  if (hof) {   // a drawn picture frame
+    const F = Y.frame * u;
+    ctx.fillStyle = '#8a5a1e'; ctx.fillRect(x0 - F, y0 - F, w + 2 * F, h + 2 * F);
+    ctx.strokeStyle = '#d9a63a'; ctx.lineWidth = 2; ctx.strokeRect(x0 - F + 2, y0 - F + 2, w + 2 * F - 4, h + 2 * F - 4);
+    ctx.strokeStyle = 'rgba(40,20,5,0.6)'; ctx.lineWidth = 1; ctx.beginPath(); penLine(x0 - F, y0 - F, x0, y0, 31, 0.6); penLine(x0 + w + F, y0 - F, x0 + w, y0, 32, 0.6); penLine(x0 - F, y0 + h + F, x0, y0 + h, 33, 0.6); penLine(x0 + w + F, y0 + h + F, x0 + w, y0 + h, 34, 0.6); ctx.stroke();
+  } else { ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(x0 + 3, y0 + 4, w, h); }   // (its shadow on the card)
+  ctx.fillStyle = '#fbfaf5'; ctx.fillRect(x0, y0, w, h);
+  ctx.strokeStyle = 'rgba(60,50,30,0.35)'; ctx.lineWidth = 1; ctx.strokeRect(x0 + 0.5, y0 + 0.5, w - 1, h - 1);
+  const Rin = iw * 50 / 92;   // (drawAvatar's square crop is 92 x 100 units)
+  ctx.save(); ctx.beginPath(); ctx.rect(x0 + bd, y0 + bd, iw, ih); ctx.clip();
+  ctx.fillStyle = o.bg; ctx.fillRect(x0 + bd, y0 + bd, iw, ih);
+  drawAvatar(f, 0, y0 + bd + ih / 2 + (100 * Rin / 50 - ih) / 2 - Rin * 0.02, Rin, { ...o, sq: true });
+  ctx.fillStyle = 'rgba(255,240,210,0.1)'; ctx.fillRect(x0 + bd, y0 + bd, iw, ih);   // (a faded print)
+  ctx.restore();
+  ctx.strokeStyle = 'rgba(40,40,50,0.45)'; ctx.lineWidth = 0.8; ctx.strokeRect(x0 + bd, y0 + bd, iw, ih);
+  if (rookie) { ctx.fillStyle = '#1f3f9a'; ctx.font = `bold ${Math.round(bb * 0.62)}px ${HAND_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('ROOKIE', 0, y0 + h - bb / 2 + 1, iw); }
+  // a strip of tape on one corner
+  const tc = h0 % 2 ? 1 : -1;
+  ctx.save(); ctx.translate(tc * (w / 2 - 6), y0 + 2); ctx.rotate(tc * 0.7); ctx.globalAlpha = 0.72; ctx.fillStyle = Y.tape; ctx.fillRect(-18, -6, 36, 12);
+  ctx.globalAlpha = 0.35; ctx.strokeStyle = '#9a8a50'; ctx.lineWidth = 0.8; ctx.strokeRect(-18, -6, 36, 12); ctx.restore();
+  if (star) { drawStar(-tc * (w / 2 - 4), y0 + 6, 11, '#ffd23f', '#8a5a00', 1.6); }   // (STAR FACTOR sticker on the other top corner)
+  if (retire) {   // a yearbook signing across the bottom corner
+    ctx.save(); ctx.translate(w * 0.12, h / 2 - 12); ctx.rotate(-0.32); ctx.fillStyle = '#1f3f9a'; ctx.font = `italic 12px ${HAND_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('have a great summer!', 0, 0); ctx.fillText('- coach', 18, 13); ctx.restore();
+  }
+  // his name scribbled under it like a signature
+  ctx.fillStyle = 'rgba(30,40,90,0.85)'; ctx.font = `italic ${Y.sig}px ${HAND_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(p.name, 0, h / 2 + (hof ? Y.frame * u : 0) + 9, w * 0.78);
+  ctx.restore();
 }
 const conditionLabel = c => c >= 90 ? 'GREAT' : c >= 70 ? 'GOOD' : c >= 50 ? 'FAIR' : 'POOR';
 // --- morale (v0.9; tunables MORALE / RECOVERY at the top) -----------------------------------
@@ -2393,9 +2324,16 @@ const unitSide = s => OFF_GROUPS.includes(s.group) ? 'off' : 'def';
 const trainerStars = side => (typeof career !== 'undefined' && career && career.prac && career.prac.tr && career.prac.tr[side] ? career.prac.tr[side].stars : RECOVERY.trainerBase);   // (franchise: your trainer's stars; otherwise average)
 const trainerK = side => 1 + RECOVERY.trainerPerStar * (trainerStars(side) - RECOVERY.trainerBase);
 const recoveryK = k => k && typeof k === 'object' && yoursEntry(k) ? trainerK(unitSide(k)) * moraleMul(k) * (1 + FAC_FX.rec.rest * facLvl('rec')) : 1;   // (x the wear shed per possession change: your named players only)
-function timeoutRecover() {   // your timeout: a breather (wear) and a steadier locker room (morale pulled toward 50)
-  for (const [k, v] of WEAR_MAP) if (k && typeof k === 'object' && yoursEntry(k)) WEAR_MAP.set(k, Math.max(0, v - RECOVERY.timeoutWear));
-  moraleDecay(RECOVERY.timeoutSteady);
+function timeoutRecover(cpu = false) {   // your timeout: a breather (wear, more for a man in red) and a steadier locker room (morale pulled toward 50); cpu = the computer's men instead
+  const side = aiOff() ? 'off' : 'def';   // (the computer's bench slots: 'team:slot' keys on its side of the ball)
+  for (const [k, v] of WEAR_MAP) {
+    const obj = k && typeof k === 'object', mine = obj && yoursEntry(k);
+    if (cpu ? mine || (!obj && !String(k).startsWith(side + ':')) : !mine) continue;
+    WEAR_MAP.set(k, Math.max(0, v - (v >= WEAR.zone.red ? RECOVERY.timeoutRed : RECOVERY.timeoutWear)));
+  }
+  for (const p of allPlayers()) if (p.wk != null) p.wear = WEAR_MAP.get(p.wk) || 0;   // (the pips show it now)
+  pipFlash = performance.now();
+  if (!cpu) moraleDecay(RECOVERY.timeoutSteady);
 }
 const rehabOf = s => s.rehab ?? 0;
 function rehabStep(s, games = 1) {   // a game (or week) of rehab: the meter fills faster with a better trainer and medical staff
@@ -2668,7 +2606,8 @@ function drawTeamUpg(team, spots) {
     ctx.fillStyle = can ? bb.ink : 'rgba(70,55,30,0.55)'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.font = 'bold 22px monospace'; ctx.fillText(l1, bb.x + bb.w / 2, bb.y + 40);
     ctx.font = 'bold 15px monospace'; ctx.fillText(l2, bb.x + bb.w / 2, bb.y + 74); ctx.fillText(l3, bb.x + bb.w / 2, bb.y + 98);
-    if (cost != null) { ctx.font = 'bold 24px monospace'; ctx.fillText(`${cost} ¤`, bb.x + bb.w / 2, bb.y + 145); }
+    if (cost != null && b === TU.cap && LEAGUE.capSale && cost < CAP.cost) priceTag(bb.x + bb.w / 2, bb.y + 145, CAP.cost, cost, 24);   // (the first-time sale: full price struck through)
+    else if (cost != null) { ctx.font = 'bold 24px monospace'; ctx.fillText(`${cost} ¤`, bb.x + bb.w / 2, bb.y + 145); }
   }, can);
   card(TU.cap, capCan, 'SALARY CAP', capMax ? 'MAXED OUT' : `+${fmtM(CAP.step)}`, `NOW ${fmtM(capNow)}`, capMax ? null : capCost());
   card(TU.spot, spCan, 'ROSTER SPOT', spMax ? 'MAXED OUT' : `+1 ON ${side}`, `${spots} / ${SPOT.max} SPOTS`, spMax ? null : SPOT.cost);
@@ -2869,10 +2808,10 @@ function fvCands(team, pg, i, cur, holder) {   // the slot's list: the man in it
 }
 const FV_AUTO_BTN = { x: FV.box.x + 10, y: FV.box.y + FV.box.h - 44, w: 110, h: 34 };   // AUTO: small overlay in the view's bottom left (across from the zoom / pan hint); your franchise only
 const FV_AUTO_B = [{}, {}];
-const FV_AUTO_SPOTS = { form: { ...FV_AUTO_BTN }, simple: { x: 1050, y: 632, w: 200, h: 68 } };   // formation view = the overlay; the in-game depth chart's simple list = bottom right
+const FV_AUTO_SPOTS = { form: { ...FV_AUTO_BTN }, simple: { x: 1050, y: 632, w: 200, h: 68 }, list: { x: 960, y: 20, w: 140, h: 44 } };   // list = the roster's defense list (top, beside the credits box; its menu opens downward)   // formation view = the overlay; the in-game depth chart's simple list = bottom right
 // AUTO: your team, formation view (roster or depth chart) or the depth chart's simple list (never the roster's simple list); it also moves the button to that view's spot
-const rosterAutoOn = team => { const fv = formView(); Object.assign(FV_AUTO_BTN, fv ? FV_AUTO_SPOTS.form : FV_AUTO_SPOTS.simple); return depthOwn(team) && !rosterView.statsOnly && rosterView.side !== 'upg' && (fv || !!dcg); };
-const fvAutoItems = () => ['AUTO THIS PAGE', 'AUTO ALL'].map((label, i) => ({ i, label, b: Object.assign(FV_AUTO_B[i], { x: FV_AUTO_BTN.x - 10, y: FV_AUTO_BTN.y - (2 - i) * 42, w: 210, h: 38 }) })).filter(it => it.i === 1 || formView());   // (the simple list has no page: AUTO ALL only)
+const rosterAutoOn = team => { const fv = formView(), dl = !fv && !dcg && rosterView.side === 'def'; Object.assign(FV_AUTO_BTN, fv ? FV_AUTO_SPOTS.form : dl ? FV_AUTO_SPOTS.list : FV_AUTO_SPOTS.simple); return depthOwn(team) && !rosterView.statsOnly && rosterView.side !== 'upg' && (fv || !!dcg || dl); };   // (v0.51: the defense list too: AUTO ALL re-sorts every group)
+const fvAutoItems = () => ['AUTO THIS PAGE', 'AUTO ALL'].map((label, i) => ({ i, label, b: Object.assign(FV_AUTO_B[i], { x: FV_AUTO_BTN.x - 10, y: FV_AUTO_BTN.y < 200 ? FV_AUTO_BTN.y + FV_AUTO_BTN.h + 6 + (formView() ? i : 0) * 42 : FV_AUTO_BTN.y - (2 - i) * 42, w: 210, h: 38 }) })).filter(it => it.i === 1 || formView());   // (a button near the top opens its menu downward)   // (the simple list has no page: AUTO ALL only)
 function fvAuto(team, all) {   // AUTO: every slot gets its best-fit named man, written as locks (depthFill); ALL = every formation and special-teams page
   if (all) { depthAutoFull(team); for (const pg of fvPages()) depthFill(team, pg); }
   else depthFill(team, fvPages()[FVS.page]);
@@ -3257,7 +3196,7 @@ function depthAutoFull(team) {   // AUTO ALL: every formation and special-teams 
   for (const g of new Set(R.map(p => p.group))) {
     const at = [], mem = [];
     R.forEach((p, i) => { if (p.group === g) { at.push(i); mem.push(p); } });
-    mem.sort((a, b) => (isOut(a) - isOut(b)) || (b.stars || 0) - (a.stars || 0) || scoreOf(b) * starForm(b) - scoreOf(a) * starForm(a));
+    mem.sort((a, b) => (isOut(a) - isOut(b)) || (hurtOut(a) - hurtOut(b)) || scoreOf(b) * starForm(b) - scoreOf(a) * starForm(a));   // (v0.51: overall, not star count first: a better man with the same stars no longer stays behind)
     mem.forEach((p, j) => { R[at[j]] = p; delete p.subFor; });
   }
   for (const q of R) delete q.backup;
@@ -3270,6 +3209,7 @@ function depthAutoFull(team) {   // AUTO ALL: every formation and special-teams 
 const DEPTH_FIT = {
   spdOff: { OL: 7, DL: 4.5, K: 6 },                     // rating points taken off a relative-scale group's SPEED to put it on the absolute scale
   wt: [175, 330],                                        // weight (lb) that reads as size 0 / 20
+  ovr: 0.45, ovrSt: 0.2, ovrMax: 60,                    // v0.51: share of the fit that is his overall (scoreOf x starForm, ovrMax = 20 on the fit scale): formations / special teams, so a clearly better player beats a slightly better fit
   noSt: ['QB', 'K'],                                     // never on a special-teams unit (but the kicker / punter slots, and a QB may hold)
   krNo: ['OL', 'DL', 'QB', 'K'],                         // never returns kicks
   order: [['QB'], ['RB'], ['LT', 'LG', 'C', 'RG', 'RT'], ['WR1'], ['WR2'], ['TE1'], ['WR3'], ['FB'], ['TE2'], ['WR4']],   // formation pages: who is filled first (each wave best pair first)
@@ -3314,7 +3254,8 @@ function autoFit(pg, k, p, T) {   // 0-20: how well he fits the slot (T = his tr
   s /= n || 1;
   if (pg.kind === 'form') { if (!depthNat(k, p)) s *= DEPTH.oop; if (kind === 'OL' && p.tag !== k) s *= DEPTH.olTag; }
   else if (kind === 'fgL' && p.tag !== ST_OL_TAG[k]) s *= DEPTH.olTag;
-  return s;
+  const F = DEPTH_FIT, ow = pg.kind === 'form' ? F.ovr : F.ovrSt, ov = Math.min(20, scoreOf(p) * starForm(p) / F.ovrMax * 20);
+  return s * (1 - ow) + ov * ow * (s > 0 ? 1 : 0);
 }
 function autoCan(pg, k, p) {   // may AUTO put him there?
   if (pg.kind === 'form') return (DEPTH.grp[k] || []).includes(p.group);

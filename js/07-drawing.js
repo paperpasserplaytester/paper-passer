@@ -24,8 +24,8 @@ const CROWD_PAD = 14 * YD;   // stands built this far past each end zone (the si
 // light = the stadium lights, baked into the crowd canvases (never per frame), one set per sky (crowdLit: cl = open air, ov = rain / snow: the floodlights do the work,
 // in = under a roof): shade = how dark the top rows get, deck = the extra shadow under the upper deck's roof (its share of the depth = deckAt), glow = the light off the
 // field on the front rows, pool = the pools under each light tower (towers a side, poolR yd), tint = the light's colour
-const CROWD = { x0: -ENDZONE - CROWD_PAD, depth: 18 * YD, wall: 4.4 * YD, wallH: 1.8 * YD, endWall: 0.6 * YD, end: 40 * YD, endOver: 30 * YD, endGap: 0.6 * YD,
-  botWallK: 0.5, out: '#0b1020', stand: '#141d3a', rim: '#c9d2e6',
+const CROWD = { x0: -ENDZONE - CROWD_PAD, depth: 24 * YD, wall: 4.4 * YD, wallH: 1.8 * YD, endWall: 0.6 * YD, end: 40 * YD, endOver: 30 * YD, endGap: 0.6 * YD,
+  botWallK: 0.5, out: '#0b1020', stand: '#3a2c1f', rim: '#c9a46c',   // (stand = the cardboard behind the strips, rim = the cut cardboard edge)
   // the bowl (v0.46): ONE rounded rectangle through the walls' stand-side faces (corner radius ri); every seat row and the rim are offsets of it, so there are no kinks.
   // tile = about how long a baked straight piece is (aisles between pieces), aisle = px from a section's edge to the nearest fan's centre, rowGap = px between rows,
   // sp = px between fans along a row [side-on, face-on], padIn = how far a back-view row is pushed out (heads clear the wall), headOut = a face-on fan's height (the back row stays inside the rim)
@@ -37,6 +37,14 @@ const CROWD = { x0: -ENDZONE - CROWD_PAD, depth: 18 * YD, wall: 4.4 * YD, wallH:
     cl: { shade: 0.34, deck: 0.16, glow: 0.07, pool: 0.05 },
     ov: { shade: 0.56, deck: 0.24, glow: 0.13, pool: 0.2 },
     in: { shade: 0.44, deck: 0.2, glow: 0.11, pool: 0.15 } } };
+// handmade stands (looks only): each baked piece = cardboard bleacher strips with the fans doodled on them, popsicle sticks under each strip (taller toward the
+// back), masking tape over the joins (the aisles), the sideline walls = wooden rulers, the end walls = cardboard. Reactions per PIECE, never per fan: cheer = the
+// strips hop (crowdFx), boo / groan = they tilt about their base (crowdFx.boo), the wave = a ripple round the bowl (crowdFx.wave, home climax); sticky-note signs
+// pop up on a cheer. Outside the rim = a desk (HANDMADE.desk), with a lamp on the side the light comes from and a few easter eggs far out.
+const HANDMADE = { card: '#c99c62', cardDk: '#8d6a3c', stick: '#ead09a', stickDk: '#a88a52', stickBase: 8, stickGrow: 26, ink: 'rgba(34,34,44,0.7)', inkW: 1.3, streak: 0.2,
+  tape: 'rgba(236,224,176,0.82)', tapeEdge: 'rgba(150,135,90,0.5)', ruler: '#e6c372', rulerDk: '#7a5a22', cardWall: '#b98e58',
+  tilt: 0.014, tiltIn: 0.25, wave: { ms: 3800, amp: 16, width: 0.55 }, signs: { n: 4, pop: 0.22, drop: 0.45, size: 1.6 },
+  desk: { wood: '#8f6034', grain: '#6e4524', scale: 3, lamp: 900 } };
 const crowdLit = () => { const w = typeof game !== 'undefined' && game && game.wx; return !w || !w.on ? 'cl' : w.roof ? 'in' : w.rain > 0 || w.snow > 0 ? 'ov' : 'cl'; };   // (which light set the crowd is baked with)
 // the bowl's fixed geometry (world px): wall faces X0 / X1 (ends), Y0 (top) / Y1 (bottom, as drawn), corner radius ri, stand depth D, rim radius R; L = the wall loop
 // sampled once (each point: the stand-side face x / y, its inward normal nx / ny, the wall's thickness t there)
@@ -94,14 +102,28 @@ function buildCrowd() {
     const gl = s < 0.42 ? LS.glow * (1 - s / 0.42) : 0, pl = LS.pool * Math.exp(-((pd / (LT.poolR * YD)) ** 2)) * (1 - s);
     return (1 - 0.45 * s) * (1 - sh) * (1 - dk) * (1 - LT.dirK * td) * (1 + gl + pl);
   };
-  const fan = (x, y, d, nx, ny, pd) => ({ x, y, k: kOf(d, nx, ny, pd), v: viewOf(ny), s: nx >= 0 ? 1 : -1, skin: pick(skins), sh: pick(shirts), hair: pick(hairs), ar: rnd(), cap: rnd() < 0.28, capCol: pick(caps) });
+  const fan = (x, y, d, nx, ny, pd) => ({ x, y, d, k: kOf(d, nx, ny, pd), v: viewOf(ny), s: nx >= 0 ? 1 : -1, skin: pick(skins), sh: pick(shirts), hair: pick(hairs), ar: rnd(), cap: rnd() < 0.28, capCol: pick(caps), st: rnd() < 0.55, cut: (rnd() - 0.5) * 3 });
+  const HM = HANDMADE, dood = !liteOn();   // (performance mode keeps the cheapest fans: no outlines)
+  // his bit of the cardboard strip he sits on (neighbours' bits join into one strip; the top edge cut a little unevenly) and, now and then, a popsicle stick under it
+  const seat = (g, f) => {   // (shades worked out once per fan: f.sc)
+    const x = f.x, y = f.y, w = 16, c = f.sc || (f.sc = [shade(HM.stickDk, f.k), shade(HM.stick, f.k), shade(HM.card, f.k), shade(HM.cardDk, f.k)]);
+    if (f.st) { g.fillStyle = c[1]; g.fillRect(x - 2, y + 6, 4, HM.stickBase + HM.stickGrow * Math.min(1, f.d / G.D)); }
+    g.fillStyle = c[3]; g.fillRect(x - w, y - 12 + f.cut * 0.4, 2 * w, 16);   // (the strip's dark cut edge, then its face: 3 fills a fan keeps the bake close to the old cost; his shirt's colour still shows above it)
+    g.fillStyle = c[2]; g.fillRect(x - w, y - 10.3 + f.cut * 0.4, 2 * w, 12.5);
+  };
   // one fan, feet at (f.x, f.y), drawn in its look (all in the old fans' pencil sizes); the side looks are drawn facing right, mirrored for left
-  const drawFan = (g, f, cheer) => {
+  const drawFan = (g, f, cheer) => { drawFan0(g, f, cheer); seat(g, f); };   // (his strip is in front of him: it hides his lower shirt, the next row overlaps it)
+  const drawFan0 = (g, f, cheer) => {
     const k = f.k, y = f.y - (cheer ? 5 : 0), cx = f.x, v = f.v, skin = shade(f.skin, k), hair = shade(f.hair, k), capC = f.cap ? shade(f.capCol, k) : null;
     const bw = v === 2 ? 9 : v === 0 || v === 4 ? 14 : 12, arms = cheer ? f.ar < 0.75 : f.ar < 0.12;
     g.fillStyle = skin;
     if (arms) for (const q of [-1, 1]) g.fillRect(cx + q * (bw + 2) - 3, y - (cheer ? 66 : 52), 6, cheer ? 44 : 30);
+    if (dood) {   // (doodled: a graphite edge round the head and shirt = a dark shape just bigger, under them: fills, not strokes, to keep the bake cheap)
+      g.fillStyle = HM.ink; g.beginPath(); g.arc(cx + (v === 1 ? 2 * f.s : 0), y - 36 - (v === 4 ? 1 : 0), 13 + HM.inkW, 0, Math.PI * 2); g.fill();
+      g.fillRect(cx - bw - HM.inkW, y - 26 - HM.inkW, 2 * bw + 2 * HM.inkW, 26 + HM.inkW);
+    }
     g.fillStyle = shade(f.sh, k); g.fillRect(cx - bw, y - 26, 2 * bw, 26);
+    if (dood) { g.fillStyle = `rgba(255,255,255,${HM.streak})`; g.fillRect(cx - bw + 3, y - 23, 3, 18); }   // (a marker streak down the shirt)
     if (v === 0) {
       g.fillStyle = skin; g.beginPath(); g.arc(cx, y - 36, 13, 0, Math.PI * 2); g.fill();
       g.fillStyle = hair; g.beginPath(); g.arc(cx, y - 38, 13, Math.PI * 1.05, Math.PI * 1.95); g.fill();
@@ -224,43 +246,61 @@ function drawCrowd() {
     for (const [x, y, ux, uy] of I.aisles) {
       const ex = x + ux * G.D, ey = y + uy * G.D;
       if (Math.max(x, ex) < vL - 40 || Math.min(x, ex) > vR + 40 || Math.max(y, ey) < vTop - 40 || Math.min(y, ey) > vBot + 40) continue;
-      ctx.lineCap = 'butt'; ctx.setLineDash([]); ctx.strokeStyle = '#222b48'; ctx.lineWidth = O.stair; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(ex, ey); ctx.stroke();
-      ctx.setLineDash([3, 11]); ctx.strokeStyle = '#3a4466'; ctx.lineWidth = O.stair - 6; ctx.stroke(); ctx.setLineDash([]);
+      ctx.lineCap = 'butt'; ctx.setLineDash([]); ctx.strokeStyle = HANDMADE.tapeEdge; ctx.lineWidth = O.stair + 3; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(ex, ey); ctx.stroke();   // (masking tape over the join)
+      ctx.strokeStyle = HANDMADE.tape; ctx.lineWidth = O.stair; ctx.stroke();
+      ctx.setLineDash([2, 9]); ctx.strokeStyle = 'rgba(120,105,70,0.25)'; ctx.lineWidth = O.stair - 8; ctx.stroke(); ctx.setLineDash([]);
     }
     // the fans: each baked piece, only its visible part (on their feet and bouncing while the crowd roars)
-    const bounce = cheering ? -Math.abs(Math.sin(now / 95)) * (4 + 6 * crowdFx.level) : 0;
-    for (const P of I.pieces) {
-      const A = P.a, img = cheering ? A.c1 : A.c0, by = P.y + bounce;
-      const lx0 = Math.max(A.ox, P.m ? P.x - vR : vL - P.x), lx1 = Math.min(A.ox + A.w, P.m ? P.x - vL : vR - P.x);
-      const ly0 = Math.max(A.oy, vTop - by), ly1 = Math.min(A.oy + A.h, vBot - by);
-      if (lx1 <= lx0 || ly1 <= ly0) continue;   // (culled: the camera can't see this piece)
+    const still = liteOn(), HM = HANDMADE, bounce = cheering && !still ? -Math.abs(Math.sin(now / 95)) * (4 + 6 * crowdFx.level) : 0;
+    const booK = still ? 0 : Math.max(0, Math.min(1, ((crowdFx.boo || 0) - now) / 1000 / HM.tiltIn)), waveT = still ? 1 : (now - (crowdFx.wave || -1e9)) / HM.wave.ms;
+    const bcx = (G.X0 + G.X1) / 2, bcy = (G.Y0 + G.Y1) / 2, mg = booK || waveT < 1 ? 60 : 0;
+    I.pieces.forEach((P, pi) => {
+      const A = P.a, img = cheering ? A.c1 : A.c0;
+      let by = P.y + bounce;
+      if (waveT < 1) {   // (the wave: a bump travelling once round the bowl by where the piece sits)
+        const ax = (P.m ? P.x - A.ox - A.w / 2 : P.x + A.ox + A.w / 2), ay = P.y + A.oy + A.h / 2, ang = Math.atan2(ay - bcy, ax - bcx) / (Math.PI * 2) + 0.5;
+        const dph = ((ang - waveT) % 1 + 1) % 1, q = Math.min(dph, 1 - dph) / HM.wave.width * 4;
+        if (q < 1) by -= HM.wave.amp * Math.cos(q * Math.PI / 2) * Math.sin(Math.PI * Math.min(1, waveT * 6, (1 - waveT) * 6));
+      }
+      const lx0 = Math.max(A.ox, (P.m ? P.x - vR : vL - P.x) - mg), lx1 = Math.min(A.ox + A.w, (P.m ? P.x - vL : vR - P.x) + mg);
+      const ly0 = Math.max(A.oy, vTop - by - mg), ly1 = Math.min(A.oy + A.h, vBot - by + mg);
+      if (lx1 <= lx0 || ly1 <= ly0) return;   // (culled: the camera can't see this piece)
       ctx.save(); ctx.translate(P.x, by); if (P.m) ctx.scale(-1, 1);
+      if (booK) { const px = A.ox + A.w / 2, py = A.oy + A.h; ctx.translate(px, py); ctx.rotate((pi % 2 ? 1 : -1) * HM.tilt * booK * (0.8 + 0.4 * Math.sin(pi * 2.3))); ctx.translate(-px, -py); }   // (boo: tilted about its base)
       ctx.drawImage(img, (lx0 - A.ox) * K, (ly0 - A.oy) * K, (lx1 - lx0) * K, (ly1 - ly0) * K, lx0, ly0, lx1 - lx0, ly1 - ly0);
       ctx.restore();
-    }
+    });
+    if (cheering && !still) crowdSigns(G, now, vL, vR, vTop, vBot);
   }
   // the wall all the way round (thick along the sidelines, thin behind the end lines, drawn lower on the near side), its light cap on the stand side
   ctx.beginPath();
   for (let i = 0; i < L.length; i++) { const p = L[i]; i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); } ctx.closePath();
   for (let i = L.length - 1; i >= 0; i--) { const p = L[i], fx = p.x + p.nx * p.t, fy = p.y + p.ny * p.t; i === L.length - 1 ? ctx.moveTo(fx, fy) : ctx.lineTo(fx, fy); } ctx.closePath();
-  ctx.fillStyle = '#0f1a33'; ctx.fill('evenodd');
+  ctx.fillStyle = HANDMADE.cardWall; ctx.fill('evenodd');
   ctx.beginPath(); for (let i = 0; i < L.length; i++) { const p = L[i], fx = p.x + p.nx * 2.5, fy = p.y + p.ny * 2.5; i ? ctx.lineTo(fx, fy) : ctx.moveTo(fx, fy); } ctx.closePath();
   ctx.strokeStyle = C.rim; ctx.lineWidth = 5; ctx.stroke();
-  // the ad panels on the straight walls (only the ones in view)
-  const panels = ['#1b4aa8', '#e9eef8', '#c8282d', '#f08a2a', '#2a2f3a'], xa = G.X0 + G.ri, xb = G.X1 - G.ri;
+  // the sideline walls = wooden rulers laid end to end (ticks every yard, numbers every 10; only what's in view), the end walls = cardboard with its ribs
+  const xa = G.X0 + G.ri, xb = G.X1 - G.ri, HM = HANDMADE, RL = 30 * YL;
   for (const [y0, t, top] of [[G.Y0, G.tT, true], [G.Y1 - G.tB, G.tB, false]]) {
     if (y0 + t < vTop || y0 > vBot) continue;
-    const ph = Math.max(4, t - 14);
-    for (let px = xa + Math.max(0, Math.floor((vL - xa) / 320)) * 320, i = Math.round((px - xa) / 320); px < xb && px < vR; px += 320, i++) {
-      const pw = Math.min(304, xb - px - 8); if (pw <= 0) break;
-      ctx.fillStyle = panels[i % panels.length]; ctx.fillRect(px + 8, y0 + 7, pw, ph);
-      if (top) { ctx.fillStyle = i % 5 === 1 ? '#1b4aa8' : '#ffffff'; for (let j = 0; j < 6 && 30 + j * 42 + 28 < pw; j++) ctx.fillRect(px + 30 + j * 42, y0 + t - 15, 28, 6); }
+    const a = Math.max(xa, vL), b = Math.min(xb, vR); if (b <= a) continue;
+    ctx.fillStyle = HM.ruler; ctx.fillRect(a, y0 + 3, b - a, t - 6);
+    ctx.fillStyle = 'rgba(255,255,255,0.22)'; ctx.fillRect(a, y0 + 4, b - a, 3);
+    const edge = top ? y0 + t - 3 : y0 + 3, dir = top ? -1 : 1;
+    ctx.strokeStyle = HM.rulerDk; ctx.lineWidth = 1.6; ctx.beginPath();
+    for (let x = xa + Math.ceil((a - xa) / YL) * YL, n = Math.round((x - xa) / YL); x < b; x += YL, n++) {
+      const L2 = n % 30 === 0 ? t - 8 : n % 10 === 0 ? t * 0.55 : n % 5 === 0 ? t * 0.38 : t * 0.22;
+      ctx.moveTo(x, edge); ctx.lineTo(x, edge + dir * L2);
+      if (n % 30 === 0) { ctx.moveTo(x + 2, y0 + 3); ctx.lineTo(x + 2, y0 + t - 3); }   // (where two rulers meet)
     }
+    ctx.stroke();
+    if (top) for (let x = xa + Math.ceil((a - xa) / (10 * YL)) * 10 * YL; x < b; x += 10 * YL) { const n = Math.round((x - xa) / YL) % 30; if (!n) continue; ctx.save(); ctx.translate(x, y0 + t * 0.32); ctx.scale(MIRROR, 1); drawTextCached(String(n), t * 0.3, 'bold', HAND_FONT, 0, 0, HM.rulerDk); ctx.restore(); }
   }
-  for (const wx of [G.X1 - G.tE, G.X0]) {   // the end walls' panels (the wall runs wx .. wx + tE)
+  for (const wx of [G.X1 - G.tE, G.X0]) {   // (end walls: cardboard ribs)
     if (wx > vR || wx + G.tE < vL) continue;
-    const ya = G.Y0 + G.ri, yb = G.Y1 - G.ri;
-    for (let y = ya, i = 0; y < yb; y += 260, i++) { if (y + 260 < vTop || y > vBot) continue; ctx.fillStyle = panels[(i + 2) % 5]; ctx.fillRect(wx + 4, y + 8, Math.max(2, G.tE - 8), Math.min(244, yb - y - 12)); }
+    ctx.strokeStyle = 'rgba(90,62,30,0.45)'; ctx.lineWidth = 1; ctx.beginPath();
+    for (let y = Math.max(G.Y0 + G.ri, vTop - 10 - ((vTop - G.Y0) % 7)); y < Math.min(G.Y1 - G.ri, vBot); y += 7) { ctx.moveTo(wx + 2, y); ctx.lineTo(wx + G.tE - 2, y); }
+    ctx.stroke();
   }
   ctx.restore();
   // snow piling up on the stands too (the same cover as the field's, a bit lighter: the crowd still shows through)
@@ -280,10 +320,85 @@ function drawCrowd() {
   ctx.save();
   ctx.beginPath(); ctx.rect(G.X0 - G.D - 4000, G.Y0 - G.D - 3000, G.X1 - G.X0 + 2 * G.D + 8000, G.Y1 - G.Y0 + 2 * G.D + 6000);
   rrAdd(G.X0 - G.D, G.Y0 - G.D, G.X1 + G.D, G.Y1 + G.D, G.R);
-  ctx.fillStyle = C.out; ctx.fill('evenodd');
+  ctx.fillStyle = deskPattern() || C.out; ctx.fill('evenodd');
   ctx.beginPath(); rrAdd(G.X0 - G.D, G.Y0 - G.D, G.X1 + G.D, G.Y1 + G.D, G.R);
+  ctx.strokeStyle = 'rgba(30,18,8,0.35)'; ctx.lineWidth = 22; ctx.stroke();   // (the stadium's shadow on the desk)
   ctx.strokeStyle = C.rim; ctx.lineWidth = 8; ctx.stroke();
+  deskThings(G, vL, vR, vTop, vBot);
   ctx.restore();
+}
+// --- the desk (outside the stadium; looks only). A low-res wood tile baked once, used as a pattern; the lamp stands on the side the bowl's one light
+// comes from (CROWD.light.dir: there is no time of day), the easter eggs lie far out (only drawn when in view)
+const DESK = { tile: null, pat: null };
+function deskPattern() {
+  if (!DESK.tile) {
+    const c = document.createElement('canvas'), n = 256; c.width = c.height = n; const g = c.getContext('2d'), D = HANDMADE.desk;
+    let s = 17; const r = () => (s = s * 16807 % 2147483647) / 2147483647;
+    g.fillStyle = D.wood; g.fillRect(0, 0, n, n);
+    for (let i = 0; i < 46; i++) {   // (grain: long wavy lines, tiling top to bottom)
+      const y = r() * n, a = 1 + r() * 3, ph = r() * 6; g.strokeStyle = `rgba(70,40,18,${0.08 + r() * 0.16})`; g.lineWidth = 0.6 + r() * 1.6; g.beginPath();
+      for (let x = 0; x <= n; x += 8) { const yy = y + Math.sin(x / n * Math.PI * 2 + ph) * a; x ? g.lineTo(x, yy) : g.moveTo(x, yy); } g.stroke();
+    }
+    for (let i = 0; i < 7; i++) { const x = r() * n, y = r() * n, a = r() * 3; g.strokeStyle = 'rgba(240,215,170,0.22)'; g.lineWidth = 0.8; g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * 30, y + Math.sin(a) * 6); g.stroke(); }   // (scratches)
+    DESK.tile = c;
+  }
+  if (!DESK.pat) { try { DESK.pat = ctx.createPattern(DESK.tile, 'repeat'); if (DESK.pat && DESK.pat.setTransform) DESK.pat.setTransform(new DOMMatrix().scale(HANDMADE.desk.scale)); } catch (e) { DESK.pat = null; } }
+  return DESK.pat;
+}
+function deskThings(G, vL, vR, vTop, vBot) {
+  const D = HANDMADE.desk, x0 = G.X0 - G.D, x1 = G.X1 + G.D, y0 = G.Y0 - G.D, y1 = G.Y1 + G.D, see = (x, y, r) => x + r > vL && x - r < vR && y + r > vTop && y - r < vBot;
+  // the lamp, on the side the light comes from (the light travels along dir on screen: world x is mirrored)
+  const LT = CROWD.light, tl = Math.hypot(LT.dir[0], LT.dir[1]) || 1, dx = LT.dir[0] / tl * MIRROR, dy = LT.dir[1] / tl, cx = (G.X0 + G.X1) / 2, cy = (G.Y0 + G.Y1) / 2;
+  const lx = cx - dx * ((x1 - x0) / 2 * Math.abs(dx) + (y1 - y0) / 2 * Math.abs(dy) + D.lamp), ly = cy - dy * ((x1 - x0) / 2 * Math.abs(dx) + (y1 - y0) / 2 * Math.abs(dy) + D.lamp);
+  if (see(lx, ly, 900)) {
+    const gl = ctx.createRadialGradient(lx, ly, 20, lx, ly, 700); gl.addColorStop(0, 'rgba(255,236,170,0.35)'); gl.addColorStop(1, 'rgba(255,236,170,0)');
+    ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(lx, ly, 700, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#2b2f36'; ctx.beginPath(); ctx.ellipse(lx - dx * 260, ly - dy * 260, 120, 70, 0, 0, Math.PI * 2); ctx.fill();   // (base)
+    ctx.strokeStyle = '#3a3f48'; ctx.lineWidth = 26; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(lx - dx * 260, ly - dy * 260); ctx.lineTo(lx - dx * 120 + dy * 90, ly - dy * 120 - dx * 90); ctx.lineTo(lx, ly); ctx.stroke();
+    ctx.save(); ctx.translate(lx, ly); ctx.rotate(Math.atan2(dy, dx));
+    ctx.fillStyle = '#c23b2e'; ctx.beginPath(); ctx.moveTo(-40, -70); ctx.lineTo(120, -130); ctx.lineTo(120, 130); ctx.lineTo(-40, 70); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#fff6c8'; ctx.beginPath(); ctx.ellipse(120, 0, 26, 130, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  // easter eggs, far from the stands
+  const egg = [[x0 - 520, cy + 240], [x1 + 480, y0 - 160], [x1 + 380, y1 + 300], [x0 - 360, y1 + 360], [cx + 1700, y0 - 620]];
+  let [ex, ey] = egg[0];
+  if (see(ex, ey, 200)) { ctx.strokeStyle = 'rgba(80,45,20,0.45)'; ctx.lineWidth = 14; ctx.beginPath(); ctx.arc(ex, ey, 150, 0.3, Math.PI * 1.85); ctx.stroke(); ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(ex + 6, ey - 4, 132, 0, Math.PI * 2); ctx.stroke(); }   // (a coffee ring)
+  [ex, ey] = egg[1];
+  if (see(ex, ey, 160)) { ctx.save(); ctx.translate(ex, ey); ctx.rotate(-0.35); ctx.fillStyle = '#f19aa6'; ctx.beginPath(); ctx.roundRect(-110, -45, 220, 90, 18); ctx.fill(); ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(-110, 18, 220, 27); ctx.fillStyle = 'rgba(80,60,60,0.35)'; ctx.fillRect(60, -45, 8, 90); ctx.restore(); }   // (an eraser)
+  [ex, ey] = egg[2];
+  if (see(ex, ey, 160)) for (let i = 0; i < 6; i++) { const a = i * 1.1, r = 40 + (i % 3) * 30; ctx.save(); ctx.translate(ex + Math.cos(a) * r, ey + Math.sin(a) * r * 0.7); ctx.rotate(a * 2); ctx.fillStyle = '#e8c48e'; ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, 34, -0.5, 0.9); ctx.closePath(); ctx.fill(); ctx.strokeStyle = '#f2c230'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(0, 0, 32, -0.5, 0.9); ctx.stroke(); ctx.restore(); }   // (pencil shavings)
+  [ex, ey] = egg[3];
+  if (see(ex, ey, 160)) { ctx.save(); ctx.translate(ex, ey); ctx.rotate(0.12); ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(-92, -86, 190, 190); ctx.fillStyle = '#ffe680'; ctx.fillRect(-100, -95, 190, 190); ctx.scale(MIRROR, 1); drawTextCached(typeof GAME_VERSION !== 'undefined' ? GAME_VERSION : 'v0', 46, 'bold', HAND_FONT, 0, 0, '#3b3320'); ctx.restore(); }   // (a sticky note with the version)
+  [ex, ey] = egg[4];
+  if (see(ex, ey, 200)) { ctx.save(); ctx.translate(ex, ey); ctx.scale(MIRROR, 1); drawTextCached('P.P. WAS HERE', 60, 'bold', HAND_FONT, 0, 0, 'rgba(40,22,8,0.45)', 'rgba(240,215,170,0.25)', 3); ctx.restore(); }   // (initials scratched into the wood)
+}
+// sticky-note signs popping up from the home strips on a cheer (a small fixed pool of baked sprites; spots picked once per cheer, never stored)
+const SIGN_TXT = ['GO!', 'D-FENSE', 'TD!!', 'WOW', '#1', '\u2665', '\u2605', 'YES!'], SIGN_COL = ['#ffe680', '#ffb3c7', '#b8f0a8', '#a8d8ff'];
+const SG = { img: null, start: 0, list: null };
+function crowdSigns(G, now, vL, vR, vTop, vBot) {
+  const S2 = HANDMADE.signs;
+  if (!SG.img) SG.img = SIGN_TXT.map((t, i) => {
+    const c = document.createElement('canvas'); c.width = 120; c.height = 96; const g = c.getContext('2d');
+    g.fillStyle = 'rgba(0,0,0,0.2)'; g.fillRect(8, 8, 108, 84); g.fillStyle = SIGN_COL[i % SIGN_COL.length]; g.fillRect(4, 4, 108, 84);
+    g.fillStyle = 'rgba(0,0,0,0.08)'; g.fillRect(4, 4, 108, 14);
+    g.fillStyle = '#2b2630'; g.font = `bold ${t.length > 4 ? 26 : 38}px ${HAND_FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(t, 58, 52, 100);
+    g.fillStyle = '#ead09a'; g.fillRect(54, 88, 8, 8);
+    return c;
+  });
+  if (!SG.list || now - SG.start > 20000 || SG.end !== crowdFx.until && now > SG.end) {   // (a new cheer: new spots)
+    SG.start = now; SG.end = crowdFx.until; SG.list = [];
+    let h = Math.floor(now) % 9973 + 1; const r = () => (h = h * 16807 % 2147483647) / 2147483647;
+    for (let i = 0; i < S2.n; i++) SG.list.push({ x: vL + (vR - vL) * (0.1 + 0.8 * r()), dep: 0.25 + 0.55 * r(), img: Math.floor(r() * SIGN_TXT.length), t: 0.1 * i + 0.3 * r(), rot: (r() - 0.5) * 0.4 });
+  }
+  SG.end = crowdFx.until;
+  const left = (crowdFx.until - now) / 1000, el = (now - SG.start) / 1000;
+  for (const s of SG.list) {
+    const y = G.Y0 - G.D * s.dep; if (y < vTop - 120 || y > vBot + 40) continue;
+    const a = Math.min(1, Math.max(0, (el - s.t) / S2.pop)), d = Math.min(1, Math.max(0, left / S2.drop)); const k = a * d; if (k <= 0) continue;
+    const w = 120 * S2.size, hh = 96 * S2.size * k;
+    ctx.save(); ctx.translate(s.x, y); ctx.rotate(s.rot); ctx.scale(MIRROR, 1); ctx.drawImage(SG.img[s.img], -w / 2, -hh - 10, w, hh); ctx.restore();
+  }
 }
 
 // Team logos: images/logos.png is a 4 x 8 sheet of see-through 200 px tiles, in order (one division per row).
@@ -412,19 +527,32 @@ function drawGoalPostTop(px = POST_X, s = 1) {
     ctx.strokeStyle = fill; ctx.lineWidth = w;
     ctx.beginPath(); ctx.moveTo(px + ox, y0 + oy); ctx.lineTo(px + ox, y1 + oy); ctx.stroke();
   };
-  // the pole itself, on top, with a highlight and a joint at each end and in the middle
-  pole(0, 0, '#6d6d12', '#e6e83c', 11);
-  ctx.strokeStyle = 'rgba(255,255,200,0.7)'; ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.moveTo(px - 2, y0); ctx.lineTo(px - 2, y1); ctx.stroke();
-  ctx.fillStyle = '#f4f27a'; ctx.strokeStyle = '#6d6d12'; ctx.lineWidth = 3;
-  for (const y of [y0, MID, y1]) { ctx.beginPath(); ctx.arc(px, y, 9, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
-  // the uprights stand tall above the crossbar (screen-up = height; a good kick passes between them, over the bar)
-  for (const [w, col] of [[GOAL_UP.w + 4, '#6d6d12'], [GOAL_UP.w, '#e6e83c']]) {
-    ctx.strokeStyle = col; ctx.lineWidth = w;
-    ctx.beginPath(); ctx.moveTo(px, y0); ctx.lineTo(px + tip, y0 - GOAL_UP.h * S); ctx.moveTo(px, y1); ctx.lineTo(px - tip, y1 - GOAL_UP.h * S); ctx.stroke();
-  }
-  ctx.strokeStyle = 'rgba(255,255,200,0.6)'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(px - 1.5, y0 - 6); ctx.lineTo(px - 1.5 + tip, y0 - GOAL_UP.h * S); ctx.moveTo(px - 1.5, y1 - 6); ctx.lineTo(px - 1.5 - tip, y1 - GOAL_UP.h * S); ctx.stroke();
+  // the crossbar = two yellow pencils taped together in the middle (eraser end / sharpened end), the uprights = two more pencils taped on (same widths as before)
+  pencilStick(px, y0, px, MID + 4, 11, 'eraser', null); pencilStick(px, MID - 4, px, y1, 11, null, 'tip');
+  pencilStick(px, y0 + 6, px + tip, y0 - GOAL_UP.h * S, GOAL_UP.w, null, 'eraser'); pencilStick(px, y1 + 6, px - tip, y1 - GOAL_UP.h * S, GOAL_UP.w, null, 'eraser');
+  for (const [x, y, r] of [[px, MID, 0], [px, y0, 0.6], [px, y1, -0.6]]) { ctx.save(); ctx.translate(x, y); ctx.rotate(r); ctx.fillStyle = 'rgba(245,245,240,0.82)'; ctx.fillRect(-13, -9, 26, 18); ctx.strokeStyle = 'rgba(120,120,110,0.45)'; ctx.lineWidth = 1; ctx.strokeRect(-13, -9, 26, 18); ctx.restore(); }   // (tape at the joints)
+}
+// a hexagonal yellow pencil from (x0, y0) to (x1, y1), w wide: facets along it, an eraser + ferrule or a sharpened tip on either end (looks only)
+function pencilStick(x0, y0, x1, y1, w, end0, end1) {
+  const L = Math.hypot(x1 - x0, y1 - y0) || 1;
+  ctx.save(); ctx.translate(x0, y0); ctx.rotate(Math.atan2(y1 - y0, x1 - x0));
+  const a = end0 === 'eraser' ? 20 : end0 === 'tip' ? 18 : 0, b = L - (end1 === 'eraser' ? 20 : end1 === 'tip' ? 18 : 0), h = w / 2;
+  ctx.fillStyle = '#5a4a10'; ctx.fillRect(a - 1, -h - 3, b - a + 2, w + 6);
+  ctx.fillStyle = '#f2c230'; ctx.fillRect(a, -h, b - a, w);
+  ctx.fillStyle = '#d39e1c'; ctx.fillRect(a, h * 0.25, b - a, h * 0.5);
+  ctx.fillStyle = 'rgba(255,250,200,0.75)'; ctx.fillRect(a, -h * 0.6, b - a, Math.max(1.5, h * 0.3));
+  const cap = (e, x, s) => {   // s = +1: the end runs toward +x
+    if (e === 'eraser') {
+      ctx.fillStyle = '#5a4a10'; ctx.fillRect(Math.min(x, x + s * 20) - 1, -h - 3, 22, w + 6);
+      ctx.fillStyle = '#c9cdd2'; ctx.fillRect(Math.min(x, x + s * 10), -h - 1, 10, w + 2); ctx.fillStyle = 'rgba(90,90,100,0.6)'; ctx.fillRect(Math.min(x, x + s * 10) + 3, -h - 1, 1.5, w + 2); ctx.fillRect(Math.min(x, x + s * 10) + 6, -h - 1, 1.5, w + 2);
+      ctx.fillStyle = '#f19aa6'; ctx.beginPath(); ctx.roundRect(Math.min(x + s * 10, x + s * 20), -h, 10, w, 3); ctx.fill();
+    } else if (e === 'tip') {
+      ctx.fillStyle = '#e8c48e'; ctx.beginPath(); ctx.moveTo(x, -h); ctx.lineTo(x + s * 13, -h * 0.35); ctx.lineTo(x + s * 13, h * 0.35); ctx.lineTo(x, h); ctx.closePath(); ctx.fill(); ctx.strokeStyle = '#5a4a10'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = '#333'; ctx.beginPath(); ctx.moveTo(x + s * 13, -h * 0.35); ctx.lineTo(x + s * 18, 0); ctx.lineTo(x + s * 13, h * 0.35); ctx.closePath(); ctx.fill();
+    }
+  };
+  cap(end0, a, -1); cap(end1, b, 1);
+  ctx.restore();
 }
 
 // the home team's name in big bold letters across the back of each end zone (in its secondary colour), a logo at each end of it
@@ -535,6 +663,7 @@ const SL_ROUTINES = {
   pulledUp:  { secs: 0.9, keys: [[0, { rot: 1.5, aL: 2.6, aR: 2.3, eL: 0.3, eR: 0.15, gL: 0.5, gR: 0.25, kn: 0.15 }], [0.3, 'o', { rot: 0.9, aR: 2.0, eR: 0.05, kn: 0.7 }], [0.6, { rot: 0.15, kn: 0.35, aR: 1.6, aL: 0.5, eL: 0.4 }], [0.9, { _r: 1 }]] },   // (help-up: hand in the helper's, pulled to his feet)
   getup:     { secs: 0.9, keys: [[0, { rot: 1.5, aL: 2.6, aR: 2.2, eL: 0.3, eR: 0.4, gL: 0.5, gR: 0.25, kn: 0.15 }], [0.4, { rot: 0.7, kn: 0.9, aL: 0.4, aR: 0.6, eL: 0.4, eR: 0.3 }], [0.9, { _r: 1 }]] },
   hop:       { secs: 0.45, keys: [[0.08, { kn: 0.45, aL: 1.6, aR: 1.8 }], [0.22, 'o', { kn: 0.05, lift: 7 }], [0.38, 'i', { lift: 0, kn: 0.3 }], [0.45, { _r: 1 }]] },
+  sitDown:   { secs: 0.7, keys: [[0, {}], [0.7, 'o', { gL: 0.7, gR: 0.76, kn: 0.72, lean: 0.1, aL: 0.75, eL: 0.6, aR: 0.8, eR: 0.65 }]] },   // (a sub reaching the bench: standing -> seated, then his idle sit takes over)
   sit:       { secs: 4.6, loop: 1, keys: [[0, { gL: 0.7, gR: 0.76, kn: 0.72, lean: 0.1, aL: 0.75, eL: 0.6, aR: 0.8, eR: 0.65 }], [2.3, { lean: 0.16, bob: 0.2 }]] },
   sitDrink:  { secs: 5.2, loop: 1, keys: [[0, { gL: 0.7, gR: 0.76, kn: 0.72, lean: 0.08, aL: 0.75, eL: 0.6, aR: 0.8, eR: 0.65 }], [1.6, { aR: 0.8, eR: 0.65 }], [2.1, { aR: 1.5, eR: 1.9, lean: -0.02 }], [3.0, { aR: 1.5, eR: 1.9 }], [3.6, { aR: 0.8, eR: 0.65, lean: 0.08 }]] },
   sheet:     { secs: 5.6, loop: 1, keys: [[0, { aR: 1.75, eR: 1.45, aL: -0.5, eL: 2.0, x1: 1 }], [2.4, { aR: 1.75, eR: 1.45, lean: 0.04 }], [2.9, { aR: 1.1, eR: 0.9, lean: 0.1 }], [3.9, { aR: 1.1, eR: 0.9 }], [4.4, { aR: 1.75, eR: 1.45, lean: 0.04 }]] },
@@ -558,6 +687,15 @@ const SL_ROUTINES = {
   guardScan: { secs: 7, loop: 1, keys: [[0, { aL: 1.25, eL: 1.8, aR: 1.2, eR: 1.85 }], [2, { tw: 1 }], [2.8, { tw: -1 }], [5, { tw: -1 }], [5.8, { tw: 1 }]] },
   judgeSig:  { secs: 2, keys: [[0.2, { aR: 1.57, eR: 0, lean: 0.06 }], [1.4, { aR: 1.57, eR: 0 }], [1.9, { _r: 1 }]] },
   mascotDance: { secs: 2.4, loop: 1, keys: [[0, { aL: 2.2, aR: 0.6, eL: 0.4, eR: 0.9, gL: 0.25, kn: 0.1, lean: -0.08 }], [0.3, 'o', { bob: 0.9, kn: 0.2 }], [0.6, { bob: 0, aL: 0.6, aR: 2.2, eL: 0.9, eR: 0.4, gL: 0, gR: -0.25, lean: 0.1, kn: 0.1 }], [0.9, 'o', { bob: 0.9, kn: 0.2 }], [1.2, { bob: 0, tw: 1, kn: 0.1 }], [1.5, { tw: -1, lift: 4 }], [1.8, { tw: 1, lift: 0, kn: 0.25 }]] },
+  // v0.51: the mascot's parts in a celebration (timed off the hero's clock: slEvent kind 1 from the move's onBegin) and the bench running along with a carrier
+  mascotBump: { secs: 2.8, keys: [[0.5, { kn: 0.4, aL: 0.8, aR: 0.8 }], [0.8, 'o', { kn: 0.05, lift: 6, aL: 2.6, aR: 2.6 }], [0.95, 'i', { lift: 2, rot: 0.6 }], [1.15, 'i', { rot: 1.5, gL: 1.3, gR: 1.1, aL: 2.8, aR: 2.6, kn: 0.05, lift: 0 }], [1.3, 'o', { lift: 4 }], [1.45, 'i', { lift: 0 }], [2.1, { rot: 1.5 }], [2.8, { _r: 1 }]] },
+  mascotShake: { secs: 2.5, keys: [[0.4, { aR: 2.6, eR: 0.2 }], [0.55, { aR: 1.2 }], [0.8, { aR: 0.5, eR: 0.1 }], [0.95, { aR: 0.2 }], [1.15, { tw: 1 }], [1.35, { tw: -1, lift: 2 }], [1.65, { tw: 1, lift: 0 }], [1.95, { aR: 1.57, eR: 0 }], [2.5, { _r: 1 }]] },
+  mascotBallUp: { secs: 2.6, keys: [[0.6, { aL: 1.2, aR: 1.2 }], [0.9, 'o', { aL: 3.0, aR: 3.0, eL: 0.1, eR: 0.1 }], [1.0, { bob: 0.6 }], [1.15, { bob: 0 }], [1.3, { bob: 0.6 }], [1.45, { bob: 0 }], [2.2, { aL: 3.0, aR: 3.0 }], [2.6, { _r: 1 }]] },
+  mascotCopy: { secs: 3.2, keys: [[0.5, { aL: 0.6, aR: 0.6 }], [0.95, { aL: 2.2, aR: 0.6, lean: -0.08 }], [1.4, { aL: 0.6, aR: 2.2, lean: 0.1 }], [1.85, { aL: 2.2, aR: 0.6, lean: -0.08 }], [2.3, { aL: 2.8, aR: -0.3, gL: 0.6, lean: -0.2 }], [2.9, { aL: 2.8, aR: -0.3, gL: 0.6 }], [3.2, { _r: 1 }]] },
+  mascotCarry: { secs: 2.8, keys: [[0.4, { kn: 0.35, lean: 0.25, aL: -0.6, aR: -0.6, eL: 1.6, eR: 1.6 }], [0.8, { bob: 0.5 }], [1.2, { tw: 0.2, bob: 0 }], [1.6, { tw: -1, bob: 0.5 }], [2.0, { tw: 0.2, bob: 0 }], [2.2, { tw: 1 }], [2.8, { _r: 1 }]] },
+  mascotSad: { secs: 2.6, keys: [[0.4, { lean: 0.38, aL: 0.02, aR: 0.02, eL: 0.05, eR: 0.05, bob: 1.2, kn: 0.12 }], [2.0, { lean: 0.32 }], [2.6, { _r: 1 }]] },
+  benchRunCheer: { secs: 0.8, loop: 1, keys: [[0, { aR: 2.7, eR: 0.2, lean: 0.12 }], [0.2, { eR: 0.9 }], [0.4, { eR: 0.2 }], [0.6, { eR: 0.9 }]] },   // (one arm pumping overhead: the legs come from the walk record, `pump`)
+  benchLowFive: { secs: 1.0, keys: [[0.15, { aR: 0.6, eR: 0.2, lean: 0.1 }], [0.3, 'o', { aR: 1.1 }], [0.45, { aR: 0.5 }], [0.9, { _r: 1 }]] },
   mascotWave: { secs: 2.6, keys: [[0.2, { aR: 2.8, eR: -0.3, aL: 2.6, eL: 0.3 }], [0.5, { eR: 0.4, eL: -0.4 }], [0.8, { eR: -0.3, eL: 0.3 }], [1.1, { eR: 0.4, eL: -0.4 }], [1.4, { eR: -0.3, eL: 0.3, lift: 5 }], [1.7, { lift: 0, kn: 0.3 }], [2.3, { _r: 1 }]] },
   limp:      { secs: 1, loop: 1, keys: [[0, { gL: 0.4, gR: -0.25, kn: 0.08, lean: 0.16, aR: 0.5, eR: 0.9, aL: -0.2 }], [0.5, { gL: -0.3, gR: 0.12, kn: 0.2, lean: 0.24, bob: 1.4, aL: 0.3 }]] },
   helped:    { secs: 1, loop: 1, keys: [[0, { aL: 1.75, eL: 0.1, aR: -1.75, eR: -0.1, lean: 0.12, gL: 0.3, gR: -0.08, kn: 0.14 }], [0.5, { gL: -0.2, gR: 0.1, kn: 0.22, bob: 1 }]] },
@@ -717,7 +855,7 @@ function slPose(P, w, a, h, t) {   // position + pose at time t -> SL_P / SL_Q (
   if (SL_P.wd >= 0 && !down) {   // walking: legs (and a free arm) from the stride table, by the distance covered
     slSample(SL_WALK, SL_P.wd / (SL_STRIDE * YD) * SL_WALK.secs, SL_QW);
     Q[0] = 0; Q[2] = SL_QW[2]; Q[6] = SL_QW[6]; Q[7] = SL_QW[7]; Q[8] = SL_QW[8];
-    if (P.k > SLK.BOX && !P.hp && P.k !== SLK.CAM) Q[3] = SL_QW[3];   // (the crew keeps the pole up; a hand holding something stays put)
+    if (P.k > SLK.BOX && !P.hp && P.k !== SLK.CAM && !(w && w.pump)) Q[3] = SL_QW[3];   // (the crew keeps the pole up; a hand holding something stays put; pump = his arm pumping overhead as he runs along, v0.51)
   }
   if (P.k === SLK.CAM) {   // his shoulders and head turn with the camera (never by which way he walks)
     const am = slAim(P, a, t), c = Math.cos(am); SL_P.dig = am; SL_P.f = 1; Q[12] = c >= 0 ? (c < 0.35 ? 0.35 : c) : (c > -0.35 ? -0.35 : c);
@@ -806,6 +944,9 @@ function slPaintCam(L, n) {   // the cameras (on a shoulder; the dolly's on a tr
     slEnd();
   }
 }
+const SL_INK = { x: 0, y: 0 };   // (slPaint's doodle edge offset this frame)
+function slInkA(w, cap) { ctx.save(); ctx.translate(SL_INK.x, SL_INK.y); ctx.strokeStyle = DOODLE_PL.inkS; ctx.lineWidth = w; ctx.lineCap = cap; ctx.beginPath(); }
+function slInkB() { ctx.stroke(); ctx.restore(); }
 function slPaint(L, n) {   // the posed slots L[0..n), in colour-batched passes (back to front: shadow, far arm, legs, body, near arm, head, props)
   if (!n) return;
   const T = SL.PT, sp = SL.sp, lod = SL.lod, u0 = S * FIGURE.grow;
@@ -825,11 +966,18 @@ function slPaint(L, n) {   // the posed slots L[0..n), in colour-batched passes 
     return;
   }
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  // doodle edges (DOODLE_PL, same width and offset idea as the players): ONE graphite pass under each layer for everyone, never per person; the offset
+  // boils only at the closest level of detail. Off in performance mode.
+  const dk = DOODLE_PL.on && !liteOn(), dw = DOODLE_PL.w * 2 * u0, dj = lod === 2 ? Math.floor(animNow() / 1000 * ICON.boil) % DOODLE_PL.sets : 0;
+  const dox = (DOODLE_PL.off * 0.6 + (lod === 2 ? (dpH(dj * 7 + 1) - 0.5) * 2 * DOODLE_PL.boil : 0)) * u0, doy = (DOODLE_PL.off * 0.6 + (lod === 2 ? (dpH(dj * 7 + 2) - 0.5) * 2 * DOODLE_PL.boil : 0)) * u0;
+  SL_INK.x = dox; SL_INK.y = doy;
+  if (dk) { slInkA(SL_FIG.armW * u0 + dw, 'round'); for (let j = 0; j < n; j++) { const o = L[j] * SL_STR; ctx.moveTo(T[o + 2], T[o + 3]); ctx.lineTo(T[o + 14], T[o + 15]); ctx.lineTo(T[o + 16], T[o + 17]); } slInkB(); }   // (far arms)
   slMode = 1; ctx.lineWidth = SL_FIG.armW * u0;
   for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR; slSet(sp[k].c1); ctx.moveTo(T[o + 2], T[o + 3]); ctx.lineTo(T[o + 14], T[o + 15]); }
   slEnd();
   for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR; slSet(sp[k].cfa); ctx.moveTo(T[o + 14], T[o + 15]); ctx.lineTo(T[o + 16], T[o + 17]); }
   slEnd();
+  if (dk) { slInkA(SL_FIG.legW * u0 + dw, 'butt'); for (let j = 0; j < n; j++) { const o = L[j] * SL_STR; ctx.moveTo(T[o], T[o + 1]); ctx.lineTo(T[o + 6], T[o + 7]); ctx.lineTo(T[o + 8], T[o + 9]); ctx.moveTo(T[o], T[o + 1]); ctx.lineTo(T[o + 10], T[o + 11]); ctx.lineTo(T[o + 12], T[o + 13]); } slInkB(); }   // (legs)
   ctx.lineWidth = SL_FIG.legW * u0; ctx.lineCap = 'butt';   // (legs are blocks, like a player's)
   for (let j = 0; j < n; j++) {
     const k = L[j], o = k * SL_STR; slSet(sp[k].cl);
@@ -843,6 +991,8 @@ function slPaint(L, n) {   // the posed slots L[0..n), in colour-batched passes 
   for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR, u = T[o + 43], g = T[o + 42] * u, y0 = -1.2 * u; slSet(sp[k].cf); ctx.moveTo(T[o + 8] - 2.5 * g, T[o + 9] + y0); ctx.lineTo(T[o + 8] + 4 * g, T[o + 9] + y0); ctx.moveTo(T[o + 12] - 2.5 * g, T[o + 13] + y0); ctx.lineTo(T[o + 12] + 4 * g, T[o + 13] + y0); }   // (shoes, toe forward)
   slEnd();
   ctx.lineCap = 'round';
+  if (dk) { slInkA(dw, 'round'); for (let j = 0; j < n; j++) { const o = L[j] * SL_STR, P = sp[L[j]]; ctx.moveTo(T[o + 22], T[o + 23]); ctx.lineTo(T[o + 28], T[o + 29]); ctx.lineTo(T[o + 26], T[o + 27]); ctx.lineTo(T[o + 24], T[o + 25]); ctx.closePath();
+    if (P.coat || P.k === SLK.CHEER) { ctx.moveTo(T[o + 24], T[o + 25]); ctx.lineTo(T[o + 30], T[o + 31]); ctx.lineTo(T[o + 32], T[o + 33]); ctx.lineTo(T[o + 22], T[o + 23]); ctx.closePath(); } } slInkB(); }   // (torsos, coats, skirts)
   slMode = 0;
   for (let j = 0; j < n; j++) {   // torso (and a cold game's long coat)
     const k = L[j], o = k * SL_STR, P = sp[k]; slSet(P.c1);
@@ -873,11 +1023,13 @@ function slPaint(L, n) {   // the posed slots L[0..n), in colour-batched passes 
     for (let j = 0; j < n; j++) { const o = L[j] * SL_STR; ctx.moveTo(T[o + 22], T[o + 23]); ctx.lineTo(T[o + 24], T[o + 25]); ctx.moveTo(T[o + 26], T[o + 27]); ctx.lineTo(T[o + 28], T[o + 29]); }
     slEnd();
   }
+  if (dk) { slInkA(SL_FIG.armW * u0 + dw, 'round'); for (let j = 0; j < n; j++) { const o = L[j] * SL_STR; ctx.moveTo(T[o + 2], T[o + 3]); ctx.lineTo(T[o + 18], T[o + 19]); ctx.lineTo(T[o + 20], T[o + 21]); } slInkB(); }   // (near arms)
   slMode = 1; ctx.lineWidth = SL_FIG.armW * u0;
   for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR; slSet(sp[k].c1); ctx.moveTo(T[o + 2], T[o + 3]); ctx.lineTo(T[o + 18], T[o + 19]); }
   slEnd();
   for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR; slSet(sp[k].cfa); ctx.moveTo(T[o + 18], T[o + 19]); ctx.lineTo(T[o + 20], T[o + 21]); }
   slEnd();
+  if (dk) { slInkA(dw, 'round'); for (let j = 0; j < n; j++) { const o = L[j] * SL_STR, u = T[o + 43], r = SL_FIG.hr * u; ctx.moveTo(T[o + 4] + r, T[o + 5]); ctx.ellipse(T[o + 4], T[o + 5], r, SL_FIG.hry * u, 0, 0, SL_PI2); } slInkB(); }   // (heads)
   slMode = 0;
   for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR, u = T[o + 43], r = SL_FIG.hr * u; slSet(sp[k].cs); ctx.moveTo(T[o + 4] + r, T[o + 5]); ctx.ellipse(T[o + 4], T[o + 5], r, SL_FIG.hry * u, 0, 0, SL_PI2); }
   slEnd();
@@ -919,7 +1071,20 @@ function slPaint(L, n) {   // the posed slots L[0..n), in colour-batched passes 
   slEnd();
   for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR, P = sp[k]; if (!P.hm) continue; const u = T[o + 43], r = 7.4 * u, hx = T[o + 4], hy = T[o + 5] - 0.8 * u; slSet(P.hm); ctx.moveTo(hx + r, hy); ctx.arc(hx, hy, r, 0, SL_PI2); }   // (a helmet)
   slEnd();
-  for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR, P = sp[k]; if (!P.hm || T[o + 46] > 0.6) continue; const u = T[o + 43], g = T[o + 42], hx = T[o + 4], hy = T[o + 5]; slSet('#9a9a9a'); ctx.rect(hx + g * 3.4 * u, hy + 0.6 * u, g * 5 * u, 1.3 * u); ctx.rect(hx + g * 3.4 * u, hy + 3.2 * u, g * 5 * u, 1.3 * u); ctx.rect(hx + g * 7.4 * u, hy - 0.6 * u, g * 1.2 * u, 5.4 * u); }
+  slMode = 1; ctx.lineWidth = 1.6 * u0;   // (v0.52: the helmet's stripe, front to back over the crown, as on the field)
+  for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR, P = sp[k]; if (!P.hm || !P.hst || lod < 1) continue; const u = T[o + 43], r = 7.4 * u, hx = T[o + 4], hy = T[o + 5] - 0.8 * u; slSet(P.hst); ctx.moveTo(hx + Math.cos(-Math.PI * 0.9) * r * 0.95, hy + Math.sin(-Math.PI * 0.9) * r * 0.95); ctx.arc(hx, hy, r * 0.95, -Math.PI * 0.9, -Math.PI * 0.18); }
+  slEnd(); slMode = 0;
+  for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR, P = sp[k]; if (!P.hh || T[o + 46] > 0.6) continue; const u = T[o + 43], r = 6.4 * u, hx = T[o + 20], hy = T[o + 21] - r * 0.6; slSet(P.hh); ctx.moveTo(hx + r, hy); ctx.arc(hx, hy, r, 0, SL_PI2); }   // (a helmet held on his knee)
+  slEnd();
+  for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR, P = sp[k]; if (!P.hh || lod < 2 || T[o + 46] > 0.6) continue; const u = T[o + 43], g = T[o + 42], hx = T[o + 20], hy = T[o + 21] - 3.8 * u; slSet('#9a9a9a'); ctx.rect(hx + g * 2.6 * u, hy, g * 4.2 * u, 1.1 * u); ctx.rect(hx + g * 2.6 * u, hy + 2.2 * u, g * 4.2 * u, 1.1 * u); }
+  slEnd();
+  for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR, P = sp[k]; if (!P.hm || T[o + 46] > 0.6 || Math.abs(T[o + 47]) >= 0.6) continue; const u = T[o + 43], hx = T[o + 4], hy = T[o + 5]; slSet(P.cs); ctx.moveTo(hx + 4.4 * u, hy + 1.2 * u); ctx.ellipse(hx, hy + 1.2 * u, 4.4 * u, 4.6 * u, 0, 0, SL_PI2); }   // (v0.52: facing the camera: his face in the helmet's opening...)
+  slEnd();
+  for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR, P = sp[k]; if (!P.hm || T[o + 46] > 0.6 || Math.abs(T[o + 47]) >= 0.6 || lod < 1) continue; const u = T[o + 43], hx = T[o + 4], hy = T[o + 5]; slSet('#9a9a9a'); ctx.rect(hx - 4.6 * u, hy + 1.4 * u, 9.2 * u, 1.1 * u); ctx.rect(hx - 3.8 * u, hy + 3.8 * u, 7.6 * u, 1.1 * u); ctx.rect(hx - 0.55 * u, hy + 1.4 * u, 1.1 * u, 3.5 * u); }   // (...behind a front-on facemask)
+  slEnd();
+  for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR, P = sp[k]; if (!P.hm || T[o + 46] > 0.6 || Math.abs(T[o + 47]) < 0.6 || P.k === SLK.HURT) continue; const u = T[o + 43], g = T[o + 42], fx = T[o + 4] + g * 4 * u, fy = T[o + 5] + 2.2 * u; slSet(P.cs); ctx.moveTo(fx + 3.3 * u, fy); ctx.ellipse(fx, fy, 3.3 * u, 3.4 * u, 0, 0, SL_PI2); }   // (v0.52: side-on, the face shows in the helmet's opening, as on the field)
+  slEnd();
+  for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR, P = sp[k]; if (!P.hm || T[o + 46] > 0.6 || Math.abs(T[o + 47]) < 0.6) continue; const u = T[o + 43], g = T[o + 42], hx = T[o + 4], hy = T[o + 5]; slSet('#9a9a9a'); ctx.rect(hx + g * 3.4 * u, hy + 0.6 * u, g * 5 * u, 1.3 * u); ctx.rect(hx + g * 3.4 * u, hy + 3.2 * u, g * 5 * u, 1.3 * u); ctx.rect(hx + g * 7.4 * u, hy - 0.6 * u, g * 1.2 * u, 5.4 * u); }
   slEnd();
   for (let j = 0; j < n; j++) {   // the mascot's big head (ears, muzzle, eye, nose)
     const k = L[j], o = k * SL_STR, P = sp[k]; if (!P.hd) continue;
@@ -1007,11 +1172,14 @@ function slSprites() {   // (re)built only when the kits, dark mode or the perfo
     if (flip) { g.translate(w, 0); g.scale(-1, 1); }
     g.translate(pad, pad);
     g.fillStyle = 'rgba(0,0,0,0.22)'; g.beginPath(); g.ellipse(D.w / 2, D.h, D.w / 2 + 1.2, 1.7, 0, 0, SL_PI2); g.fill();
+    const dood = DOODLE_PL.on && !lvl;   // (doodle: each shape gets a graphite edge; baked here once, never per frame)
+    if (dood) { g.strokeStyle = DOODLE_PL.inkS; g.lineWidth = DOODLE_PL.w; g.lineJoin = 'round'; }
     for (const sh of D.sh) {
       const c0 = sh[0]; g.fillStyle = c0 === 'J' ? T.jersey : c0 === 'T' ? T.trim : c0 === 'H' ? T.shell : c0;
       if (sh[5] === 'e') { g.beginPath(); g.ellipse(sh[1], sh[2], sh[3], sh[4], 0, 0, SL_PI2); g.fill(); }
       else if (sh[5] === 't') { g.beginPath(); g.moveTo(sh[1], sh[2] + sh[4]); g.lineTo(sh[1] + sh[3] / 2, sh[2]); g.lineTo(sh[1] + sh[3], sh[2] + sh[4]); g.closePath(); g.fill(); }
-      else g.fillRect(sh[1], sh[2], sh[3], sh[4]);
+      else { g.fillRect(sh[1], sh[2], sh[3], sh[4]); if (dood) { g.beginPath(); g.rect(sh[1], sh[2], sh[3], sh[4]); } }
+      if (dood && sh[3] > 1 && sh[4] > 1) g.stroke();
     }
     if (label) { g.fillStyle = '#ffffff'; g.font = 'bold 4.6px monospace'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(label, D.w / 2, D.h * 0.68); }
     m[key] = { c, w: w * u * k, h: h * u * k, ax: w / 2 * u * k, ay: (D.h + pad) * u * k };
@@ -1127,7 +1295,7 @@ function slFrame() {   // once a frame (draw()'s far pass): the source (live or 
     while (lo < hi) { const m = (lo + hi) >> 1; if (ppl[A[m]].hx < vL - M) lo = m + 1; else hi = m; }
     for (let j = lo; j < A.length; j++) {
       const i = A[j], P = ppl[i]; if (P.hx > vR + M) break;
-      if (P.un && (un >> (s * 2 + P.un - 1)) & 1) continue;   // (his unit is out on the field)
+      if (P.un && (un >> (s * 2 + P.un - 1)) & 1 && !(SL.w[i] && SL.w[i].sub)) continue;   // (his unit is out on the field; a sub walking to his seat shows: slSubSeat)
       slPose(P, SL.w[i], SL.a[i], SL.h[i], lvl >= 2 ? 0 : lvl === 1 && P.k === SLK.BENCH ? Math.floor(t * hz) / hz : t);   // (performance mode: the bench at a lower rate; level 2: frozen)
       if (SL_P.x < vL || SL_P.x > vR) continue;
       slPrep(k, P); SL.sp[k] = P;
@@ -1265,7 +1433,7 @@ function slPerson(k, s, x, d, T, cold, rnd) {
   // un = his unit (1 offense, 2 defense: off the bench while it is on the field), bn = the bench (prop) he sits on, dp = 1 back by the wall (drawn with the props' row),
   // hp = what his hand holds (SL_HP), hd = 1 the mascot's head, sk = sock colour (a kit), num / cn = jersey number and its colour, up = px his feet are off the turf (the rail cart)
   const P = { k, s, hx: x, hy: s ? Y_MAX + dd * YD : Y_MIN - dd * YD, f: x < FIELD / 2 ? 1 : -1, z, o: 0, tier: 1, stg: rnd() * 6, idle: SLRI.stand, g: -1, role: 0, fly: -1, dg: k === SLK.BOX ? 1 : 0, hs: 0, coat: 0,
-    un: 0, bn: -1, dp: 0, hp: 0, hd: 0, sk: '', num: '', cn: '', up: 0, rail: 0, x0: 0, x1: 0, co: 0,
+    un: 0, bn: -1, dp: 0, hp: 0, hd: 0, sk: '', num: '', cn: '', up: 0, rail: 0, x0: 0, x1: 0, co: 0, hm: '', hh: '', hst: '',
     c1: '#ffffff', c2: '#25272e', c3: '#ffffff', cs: pk(SL_SKIN), ch: pk(SL_HAIR), cp: '', cv: '', cl: '', cf: '#1f1f22', cfa: '' };
   const jer = T.jersey || '#2b56b8', trim = T.trim || T.shell || '#ffffff', shell = T.shell || jer;
   if (k <= SLK.BOX) { P.o = Math.floor(rnd() * SL_CREW.length); const w = SL_CREW[P.o]; P.c1 = w.c1; P.cv = w.cv; P.cp = w.cp; P.c2 = rnd() < 0.5 ? '#25272e' : '#cdb98f'; P.hs = rnd() < 0.6 ? 1 : 0; P.idle = SLRI.pole; if (cold) P.cfa = P.c1; }
@@ -1342,8 +1510,9 @@ function slSetup() {
       for (let j = 0; j < seat.length; j++) {
         const e = seat[j], P = at(SLK.BENCH, s, c + (j - (seat.length - 1) / 2) * pitch, 3.22, T, { num: String(e.num), un: e.un, dp: 1, tier: 0, coat: 0, bn });
         P.idle = rnd() < 0.25 ? SLRI.sitDrink : SLRI.sit;
+        slGameKit(P, T, rnd() < SIDELINE.kitLook.helmSit, true, rnd);
       }
-      for (let j = 0; j < stand.length; j++) { const e = stand[j], sg = j % 2 ? -1 : 1; at(SLK.BENCH, s, c + sg * (SIDELINE.benchLen / 2 + 0.9 + (j >> 1) * 0.95), 2.85, T, { num: String(e.num), un: e.un, dp: 1, tier: j < 2 ? 1 : 2 }); }
+      for (let j = 0; j < stand.length; j++) { const e = stand[j], sg = j % 2 ? -1 : 1; const P = at(SLK.BENCH, s, c + sg * (SIDELINE.benchLen / 2 + 0.9 + (j >> 1) * 0.95), 2.85, T, { num: String(e.num), un: e.un, dp: 1, tier: j < 2 ? 1 : 2 }); slGameKit(P, T, rnd() < SIDELINE.kitLook.helmStand, false, rnd); }
     }
     for (let q = 0; q < CAM_MAN.spots.length; q++) {   // cameramen: handhelds and (the last one) the rail dolly, each on his own stretch with his own lag, error and distance
       const sp = CAM_MAN.spots[q], dolly = q === CAM_MAN.spots.length - 1, lerp = r => r[0] + (r[1] - r[0]) * rnd();
@@ -1391,6 +1560,7 @@ function slNewGame() { if (ONL.on && ONL.guest) return; SL.seed = (Math.random()
 // --- per play (reset): the crew walks to the new spots (or is put there while nobody can see it), the squads clear the crew's spots
 function slReset() {
   if (ONL.on && ONL.guest) return;
+  SL.ra = null;   // (v0.51: the run-along is over)
   SL.on = slWanted();
   if (!SL.on) { if (SL.cast) slFree(); return; }
   if (!SL.cast || SL.key !== slKeyNow()) slSetup();
@@ -1404,7 +1574,9 @@ function slReset() {
   SL.crewHid = false;
   for (let j = 0; j < SL.R.length; j++) { const r = SL.R[j]; if (r && r.k === 1) slEvent(j, 4, null); }   // (anything knocked over is stood back up between plays)
   if (SL.sprK !== benchKit()) slSprites();
-  { const un = slUnits(); if (un !== SL.U) slEvent(-1, 6, keepPic && slSubOff(un) ? un | SL.U : un); }   // (units jogging off keep their bench empty until they get there)
+  SL.subSeat = {};
+  { const un = slUnits(); if (un !== SL.U) { for (let i = 3; i < SL.W.length; i++) { const w = SL.W[i]; if (w && w.sub) slEvent(i, 0, null); }   // (the units changed: seated subs are plain bench men again, hidden or shown with their unit)
+    slEvent(-1, 6, keepPic && slSubOff(un) ? un | SL.U : un); } }   // (units jogging off keep their bench empty until they get there)
   if (SL.tin.length) slTentCheck();   // (a change of possession: the other unit comes off the bench)
   slCrewGo(snap, cut);
 }
@@ -1412,12 +1584,18 @@ function slReset() {
 // the screen (from = where he starts), or that old run when sideline people are off. slSubOff (slReset, a change of possession on a mirrored view) = the old units' stand-ins
 // (fgExit, like a kick's) jog off from where they stood, the world mirrored under them like slRemap; their bench stays empty (SL.U bits held, SL.uPend) until a unit's
 // last man is there (slSubTick: there = gone, the bench man shows). The snap never waits for them (fmTo.tov); it clears fgExit, and the bits go with it
+// v0.52: a roster bench man in the on-field kit (no warm-up top or cap): jersey + trim, pants, socks, number; helmet on (shell + stripe + facemask), or held
+function slGameKit(P, T, on, sit, rnd) {
+  const jer = T.jersey || '#2b56b8', trim = T.trim || T.shell || '#ffffff', shell = T.shell || jer;
+  P.o = 0; P.c1 = jer; P.cp = ''; P.cv = trim !== jer ? trim : ''; if (!P.coat) P.cfa = '';
+  P.hm = on ? shell : ''; P.hst = trim !== shell ? trim : (T.stripe || ''); P.hh = !on && sit && rnd() < SIDELINE.kitLook.helmHold ? shell : '';
+}
 function slSubTo(x0, un, s, j, n, from) {
   const D = SIDELINE.sub, old = { x: x0, y: leaveEdge() };
   if (!SL.on || !SL.cast) return old;
   const t = { x: (SIDELINE.benchAt[un - 1] + ((j | 0) - ((n || 1) - 1) / 2) * D.spread) * YL, y: slSide(s, D.d) };
   if (from && Math.hypot(t.x - from.x, t.y - from.y) > Math.hypot(old.x - from.x, old.y - from.y)) return old;
-  if (from) from.slArr = { x: t.x, y: t.y };
+  if (from) { from.slArr = { x: t.x, y: t.y }; from.slU = 1 << (s * 2 + un - 1); }   // (slU: which bench he sits on, slSubSeat)
   return t;
 }
 function slSubOff(un) {
@@ -1432,22 +1610,60 @@ function slSubOff(un) {
       const x = FIELD - p.x, y = p.y; if (slOffView(p.x, y)) return;   // (nobody sees him: he is just gone. The camera has not been mirrored yet: tested where he stood)
       const g = Object.assign({}, p, { x, y, team: p.team === 'off' ? 'def' : 'off', face: -(p.face || 1), hasBall: false, action: null, act: null, cel: null, coast: null, celWalk: null, fgTo: null,
         vx: 0, vy: 0, moving: false, armsUp: false, slU: bit, slDgP: -1 });
-      g.fmTo = Object.assign(slSubTo(x, u, s, j, n, null), { leave: true, tov: true }); g.slArr = { x: g.fmTo.x, y: g.fmTo.y };
+      g.fmTo = Object.assign(slSubTo(x, u, s, j, n, null), { leave: true, tov: true }); g.slArr = { x: g.fmTo.x, y: g.fmTo.y }; g.slTov = 1;
       SL.subQ.push(g);
     });
   }
   if (SL.subQ.length) SL.uPend = 1;
   return SL.subQ.length > 0;
 }
+// a sub reaching his bench (or still walking when the play starts / when play resumes after a pause): one bench man of his unit takes over from his spot, walks
+// the rest of the way to his seat and sits down (one walk record marked sub = shown even while his unit's bench is hidden, + the sitDown routine). put = he is just
+// placed seated (off camera, or a time skip). No free bench man: the old way (he is simply gone).
+function slSubSeat(g, put) {
+  if (!SL.cast || !g.slU || (ONL.on && ONL.guest)) return false;
+  const b = Math.log2(g.slU) | 0, s = b >> 1, un = (b & 1) + 1, ppl = SL.cast.people, used = SL.subSeat || (SL.subSeat = {});
+  let best = -1, bd = Infinity;
+  for (let i = 3; i < ppl.length; i++) { const P = ppl[i]; if (P.un !== un || P.s !== s || used[i] || !(P.bn >= 0) || (SL.W[i] && SL.W[i].sub)) continue; const d = Math.abs(P.hx - g.x); if (d < bd) { bd = d; best = i; } }
+  if (best < 0) return false;
+  used[best] = 1; if (liteLevel() >= 2) put = true;   // (performance mode's heaviest level: no animation, just seated)
+  const pad = SIDELINE.sub.inPad * YD; if (g.y > -pad && g.y < FW + pad) put = true;   // (v0.52: still inside the field: never a sideline walker or a sit-down out there, he is placed on his seat)
+  const P = ppl[best], now = SL.now, L = Math.hypot(P.hx - g.x, P.hy - g.y), T = put || slOffView(g.x, g.y) ? 0 : L / (SIDELINE.walkSpeed * YD);
+  slEvent(best, 0, { fx: g.x, fy: g.y, tx: P.hx, ty: P.hy, t0: now, T, L, d0: P.dg, d1: P.dg, fs: g.x < P.hx ? 1 : -1, fe: P.f, rt: 0, sub: 1, tp: T ? 0 : 1 });
+  if (T || !put) slEvent(best, 1, { id: SLRI.sitDown, t0: now + T });
+  return true;
+}
+// the ball went live (or play resumed after a pause) with subs still walking off: they finish as sideline people (seated by slSubSeat), never vanish
+function slSubFlush(put) { if (!SL.on || !SL.cast || !fgExit.length) return; for (const g of fgExit) if (g.slArr && !g.slGone && slSubSeat(g, put || slOffView(g.x, g.y))) g.slGone = 1; }
+// a time skip (the first tick after a replay / banner / sim box / pause, SIDELINE.sub.skip s or more of real time): every sub walking off moves on by that time; anyone who
+// would have arrived, or is off camera, is simply seated; only the stragglers still on screen keep walking. The chain crew the same (slCrewSkip).
+function slSkipCheck() {
+  const t = performance.now(), gap = SL.tkAt ? (t - SL.tkAt) / 1000 : 0; SL.tkAt = t;
+  if (gap < SIDELINE.sub.skip) return;
+  for (const g of fgExit) {
+    if (!g.slArr || g.slGone) continue;
+    const to = g.fmTo || g.fgTo, sp = (to && to.v) || FM.speed, d = Math.hypot(g.slArr.x - g.x, g.slArr.y - g.y);
+    if (slOffView(g.x, g.y) || d <= sp * gap) { if (slSubSeat(g, true)) g.slGone = 1; }
+    else { const k = sp * gap / d; g.x += (g.slArr.x - g.x) * k; g.y += (g.slArr.y - g.y) * k; }
+  }
+  fgExit = fgExit.filter(g => !g.slGone);
+  slCrewSkip(gap);
+}
 function slSubTake() { const q = SL.subQ || []; SL.subQ = []; return q; }   // (reset: becomes fgExit once the new players are placed)
-function slSubTick() {   // (slTick, host) arrivals, and each unit's bench showing again once its last man is off
+function slSubTick(dt = 0) {   // (slTick, host) arrivals (each one sits down: slSubSeat), and each unit's bench showing again once its last man is off
   const A = SIDELINE.sub.arrive * YD; let held = 0, gone = false;
-  for (const g of fgExit) { if (!g.slArr) continue; if (Math.hypot(g.x - g.slArr.x, g.y - g.slArr.y) < A) { g.slGone = 1; gone = true; } else held |= g.slU | 0; }
+  const cover = (bannerUp() || fourthPending || patMode === 'choose') && state === 'pre', D = SIDELINE.sub;   // (v0.52: something covers the field: they hurry on as a time skip)
+  for (const g of fgExit) {
+    if (!g.slArr) continue;
+    if (cover && dt) { const d = Math.hypot(g.slArr.x - g.x, g.slArr.y - g.y), st = (D.fast - 1) * D.v * YD * dt; if (d > st) { g.x += (g.slArr.x - g.x) * st / d; g.y += (g.slArr.y - g.y) * st / d; } else { g.x = g.slArr.x; g.y = g.slArr.y; } }
+    if (slOffView(g.x, g.y)) { if (slSubSeat(g, true) || !g.slTov) { g.slGone = 1; gone = true; } else held |= g.slU | 0; continue; }   // (v0.52: nobody sees him: seated now, not at the flush)
+    if (Math.hypot(g.x - g.slArr.x, g.y - g.slArr.y) < A) { slSubSeat(g, false); g.slGone = 1; gone = true; } else if (g.slTov) held |= g.slU | 0;
+  }
   if (gone) fgExit = fgExit.filter(g => !g.slGone);
   if (SL.uPend) { const u = slUnits() | held; if (u !== SL.U) slEvent(-1, 6, u); if (!held) SL.uPend = 0; }
 }
 const SL_X3 = new Float64Array(4);
-const slCrewT = L => Math.min(SIDELINE.walkMax, 1.5 * L / (SIDELINE.crewSpeed * YD));
+const slCrewT = L => Math.min(SIDELINE.walkMax, L / (SIDELINE.walkSpeed * YD));   // (a walk, never a sprint: the crew followed the play, so what is left is short)
 function slOffCam(s, x) {   // is a spot on sideline s off camera (the view's rectangle + crewTp yd)?
   const zc = camZ(), vc = viewCenterY(), half = (W / 2 + PAD) / zc + SIDELINE.crewTp * YD;
   if (x < camX - half || x > camX + half) return true;
@@ -1484,6 +1700,17 @@ function slCrewGo(snap, cut) {
     if (q === 3 && down === 1 && L > 2 * YL) slEvent(i, 1, { id: SLRI.judgeSig, t0: now + SIDELINE.walkDelay + T });   // (a new set of downs: he points the way)
   }
 }
+// a time skip (slSkipCheck): a crew member still walking who would have got there in the time that passed, or who is off camera, is put on his spot
+function slCrewSkip(gap) {
+  if (!SL.crewOn || SL.crewHid) return;
+  const ppl = SL.cast.people, now = SL.now;
+  for (let q = 0; q < 4; q++) {
+    const i = q < 3 ? q : SL.cast.jd | 0; if (q === 3 && !i) break;
+    const w = SL.W[i]; if (!w || w.pa || w.tp || now >= w.t0 + w.T) continue;
+    slWhere(ppl[i], w, null, now);
+    if (w.t0 + w.T - now <= gap || slOffCam(ppl[i].s, SL_P.x)) slEvent(i, 0, { fx: w.tx, fy: w.ty, tx: w.tx, ty: w.ty, t0: now, T: 0, L: 0, d0: w.d1, d1: w.d1, fs: w.fe, fe: w.fe, rt: 0, tp: 1 });
+  }
+}
 function slRemap() {   // the world was mirrored under them (a change of possession on a mirrored view): the crew keeps its spot on screen, then walks
   const ppl = SL.cast.people, now = SL.now;
   for (let q = 0; q < 4; q++) { const i = q < 3 ? q : SL.cast.jd | 0; if (q === 3 && !i) break; slWhere(ppl[i], SL.W[i], null, now); const x = FIELD - SL_P.x, d = SL_P.dig, f = -SL_P.f; slEvent(i, 0, { fx: x, fy: SL_P.y, tx: x, ty: SL_P.y, t0: now, T: 0, L: 0, d0: d, d1: d, fs: f, fe: f, rt: 0 }); }
@@ -1498,6 +1725,7 @@ function slFreeze() {   // the snap: any walk still under way stops where it is 
     const w = SL.W[i]; if (!w || w.pa || ppl[i].k === SLK.CAM || now >= (w.rt ? w.rt + w.T : w.t0 + w.T)) continue;   // (an injury exit keeps going: see slExitTick; the cameramen work through the play)
     slWhere(ppl[i], w, null, now); const d = SL_P.dig, f = SL_P.f;
     if (ppl[i].k === SLK.TVOFF) { slTvHome(i, ppl[i]); continue; }   // (the TV official never stays out on the field for a snap)
+    if (w.sub) { const pad = SIDELINE.sub.inPad * YD; if (SL_P.y > -pad && SL_P.y < FW + pad) { slEvent(i, 0, { fx: w.tx, fy: w.ty, tx: w.tx, ty: w.ty, t0: now, T: 0, L: 0, d0: d, d1: d, fs: w.fe, fe: w.fe, rt: 0, sub: 1, tp: 1 }); slEvent(i, 1, { id: SLRI.sitDown, t0: now }); } continue; }   // (v0.52: a sub walking to his seat finishes on the sideline (his sit-down is timed to the walk's end); one somehow on the field is seated at once)
     if (w.hlp) { if (slOffView(SL_P.x, SL_P.y) && slOffView(w.fx, w.fy)) slEvent(i, 0, { fx: w.fx, fy: w.fy, tx: w.fx, ty: w.fy, t0: now, T: 0, L: 0, d0: d, d1: d, fs: w.fs, fe: w.fs, rt: 0, tp: 1 }); continue; }   // (a help-up walker: home at once off camera, else he finishes)
     slEvent(i, 0, { fx: SL_P.x, fy: SL_P.y, tx: SL_P.x, ty: SL_P.y, t0: now, T: 0, L: 0, d0: d, d1: d, fs: f, fe: f, rt: 0 });
   }
@@ -1506,27 +1734,87 @@ const slCrewHide = () => state === 'kick' || state === 'punt' || state === 'kick
 function slTick(dt) {   // update(): the clock (one number), and hiding the crew for a kick (sticky until the next reset)
   if ((rec && rec.replaying) || (ONL.on && ONL.guest)) return;
   SL.now += dt;
+  if (SL.cast && SL.on) slSkipCheck();   // (a pause just ended: subs / crew move on by the time that passed)
   if (SL.cast && !SL.crewHid && slCrewHide()) { SL.crewHid = true; slEvent(-1, 3, 0); }
   if (SL.xt) slExitTick();
   if (SL.cast && SL.cm.length) slCamTick();
-  if (SL.cast && SL.on && (SL.uPend || fgExit.length)) slSubTick();
+  if (SL.cast && SL.on && (SL.ra || state === 'run' || state === 'picked' || state === 'kickoff')) slRunAlong();
+  if (SL.cast && SL.on && (SL.uPend || fgExit.length)) slSubTick(dt);
   if (SL.cast && SL.on) { if (!(SL.now < SL.lvT && SL.now > SL.lvT - 5)) slCrewLive(); if (!(SL.now < SL.avT && SL.now > SL.avT - 5)) slAvoid(); }
+}
+// v0.51: the bench runs down the sideline with a carrier breaking away along it (host only; once a play, SL.ra; tunables SIDELINE.runAlong). Up to n standing bench
+// people / get-back coaches / staff of HIS team, nearest him, each ONE walk record level with the goal line (pump = an arm overhead), walking back on their own (rt).
+// At the whistle: a touchdown = benchCheer where they are (the head coach pumps a fist), caught short = benchDown and a walk home.
+function slRunAlong() {
+  const A = SIDELINE.runAlong, now = SL.now;
+  if (!A || (ONL.on && ONL.guest) || (rec && rec.replaying) || tut || (typeof CO !== 'undefined' && CO) || liteLevel() >= 2) return;
+  const R = SL.ra;
+  if (R) { if (!R.done && (state === 'done' || state === 'pre')) { R.done = true; slRunEnd(R); } return; }
+  if (now < (SL.raT || 0)) return;
+  SL.raT = now + 0.15;
+  const c = allPlayers().find(p => p.hasBall);
+  if (!c || !c.vx) return;
+  const s = celebHome(c) ? 0 : 1, dir = Math.sign(c.vx), goal = dir > 0 ? FIELD : 0;
+  if ((s ? FW - c.y : c.y) > A.yd * YD || c.vx * dir < A.speed * YD || (goal - c.x) * dir / YL < A.minLeft) return;
+  for (const d of allPlayers()) if (d.team !== c.team && !lyingDown(d) && dist(d, c) < A.gap * YD) return;
+  const ppl = SL.cast.people, e = SL_VM.get(SL.cast), mt = e ? e.mt : 9, ok = { [SLK.BENCH]: 1, [SLK.GETBACK]: 1, [SLK.STAFF]: 1 }, ids = [];
+  for (let i = 3; i < ppl.length; i++) {
+    const P = ppl[i];
+    if (!P || P.s !== s || !ok[P.k] || P.bn >= 0 || P.ez || (P.tier | 0) > mt || (P.un && (SL.U >> (P.s * 2 + P.un - 1)) & 1)) continue;
+    const h = SL.H[i], w = SL.W[i];
+    if ((h && now - h.t0 < slHitLen(h)) || (w && now < (w.rt ? w.rt + w.T : w.t0 + w.T))) continue;
+    if ((goal - P.hx) * dir < 2 * YL) continue;   // (already level with the goal line)
+    ids.push(i);
+  }
+  if (!ids.length) return;
+  ids.sort((a, b) => Math.abs(ppl[a].hx - c.x) - Math.abs(ppl[b].hx - c.x)).splice(A.n);
+  let arr = now;
+  ids.forEach((i, k) => {
+    const P = ppl[i]; slWhere(P, SL.W[i], SL.H[i], now);
+    const x = SL_P.x, y = SL_P.y, tx = Math.max(-ENDZONE, Math.min(FIELD + ENDZONE, goal - dir * k * A.stagger * YL)), L = Math.abs(tx - x), v = A.v[0] + Math.random() * (A.v[1] - A.v[0]), T = L / (v * YD), t0 = now + 0.1 * k;
+    arr = Math.max(arr, t0 + T);
+    slEvent(i, 0, { fx: x, fy: y, tx, ty: y, t0, T, L, d0: SL_P.dig || 0, d1: SL_P.dig || 0, fs: dir, fe: dir, rt: t0 + T + A.hold, pump: 1 });
+    slEvent(i, 1, { id: SLRI.benchRunCheer, t0 });
+  });
+  SL.ra = { ids, dir, goal, c, s, arr, done: false, td: false };
+}
+function slRunEnd(R) {
+  const now = SL.now, ppl = SL.cast.people;
+  R.td = (R.c.x - R.goal) * R.dir >= 0;
+  if (R.td) {
+    for (const i of R.ids) slEvent(i, 1, { id: SLRI.benchCheer, t0: Math.max(now, Math.min(R.arr, now + 1.5)) });
+    for (let i = 3; i < ppl.length; i++) if (ppl[i].k === SLK.COACH && ppl[i].s === R.s) { slEvent(i, 1, { id: SLRI.coachPump, t0: now + 0.2 }); break; }
+    return;
+  }
+  for (const i of R.ids) {   // caught short: they stop where they are, slump, and walk back
+    const P = ppl[i]; slWhere(P, SL.W[i], SL.H[i], now);
+    const x = SL_P.x, y = SL_P.y, L = Math.hypot(P.hx - x, P.hy - y);
+    slEvent(i, 1, { id: SLRI.benchDown, t0: now });
+    slEvent(i, 0, { fx: x, fy: y, tx: P.hx, ty: P.hy, t0: now + 1.6, T: slWalkT(L), L, d0: SL_P.dig || 0, d1: SL_P.dig || 0, fs: P.hx > x ? 1 : -1, fe: P.f, rt: 0 });
+  }
+}
+// the run-along people near the scorer's exit jog (poJogOff): one low five each as he passes (host)
+function slRunFives(h, at) {
+  const R = SL.ra; if (!R || !R.td || (ONL.on && ONL.guest) || (rec && rec.replaying)) return false;
+  const ppl = SL.cast.people; let k = 0;
+  for (const i of R.ids) { slWhere(ppl[i], SL.W[i], SL.H[i], SL.now); if (Math.hypot(SL_P.x - h.x, SL_P.y - h.y) < CELEB.bench.five * YD) slEvent(i, 1, { id: SLRI.benchLowFive, t0: at + 0.3 + 0.12 * k++ }); }
+  return k > 0;
 }
 // during a play the box man (and the judge) go with a big gain: one ordinary walk record each, re-aimed as the ball gets further on. The chain sticks stay until the play is over
 function slCrewLive() {
   const A = SIDELINE.live, now = SL.now; SL.lvT = now + A.think;
-  if (!SL.crewOn || SL.crewHid || state !== 'run' || typeof ball === 'undefined' || !ball) return;
+  if (!SL.crewOn || SL.crewHid || !(state === 'run' || state === 'picked') || typeof ball === 'undefined' || !ball || (ONL.on && ONL.guest)) return;
   const bx = slClampX(ball.x); if (bx < los + A.gain * YL) return;
-  const ppl = SL.cast.people, jd = SL.cast.jd | 0;
-  for (let q = 2; q < 4; q++) {
+  const ppl = SL.cast.people, jd = SL.cast.jd | 0, first = state === 'run' && bx > lineToGain + YL && lineToGain < FIELD - 1;
+  for (let q = first ? 0 : 2; q < 4; q++) {   // (0 / 1 = the sticks, only once the first down is certain: toward the new series' spots)
     if (q === 3 && !jd) break;
-    const i = q === 2 ? 2 : jd, P = ppl[i], w = SL.W[i], h = SL.H[i];
+    const i = q < 3 ? q : jd, P = ppl[i], w = SL.W[i], h = SL.H[i];
     if (h && now - h.t0 < slHitLen(h)) continue;
-    const tx = q === 2 ? bx - slPoleOff(P) : slClampX(bx - 1.5 * YL);
-    if (w && !w.pa && Math.abs(w.tx - tx) < A.step * YL && w.tx > los + YL) continue;   // (already heading about there)
+    const tx = q === 2 ? bx - slPoleOff(P) : q === 3 ? slClampX(bx - 1.5 * YL) : q === 0 ? slClampX(bx + 10 * YL) - slPoleOff(P) : slClampX(bx) + slPoleOff(P);
+    if (w && !w.pa && Math.abs(w.tx - tx) < A.step * YL && (q < 2 || w.tx > los + YL)) continue;   // (already heading about there)
     slWhere(P, w, null, now);
     const L = Math.abs(tx - SL_P.x); if (L < YL) continue;
-    slEvent(i, 0, { fx: SL_P.x, fy: SL_P.y, tx, ty: P.hy, t0: now, T: 1.5 * L / (SIDELINE.crewSpeed * YD), L, d0: SL_P.dig, d1: SL_P.dig, fs: 1, fe: 1, rt: 0 });
+    slEvent(i, 0, { fx: SL_P.x, fy: SL_P.y, tx, ty: P.hy, t0: now, T: L / (SIDELINE.walkSpeed * YD), L, d0: SL_P.dig, d1: SL_P.dig, fs: tx > SL_P.x ? 1 : -1, fe: 1, rt: 0 });   // (one record per re-aim, at walking pace)
   }
 }
 // avoidance: anyone on a sideline (crew, bench, staff, cheerleaders) who sees a player coming his way steps / hops clear before he gets there: an ordinary hit
@@ -1569,6 +1857,7 @@ function slCamTick() {
     if (now < T[j]) continue;
     T[j] = now + M.think * (0.7 + 0.6 * Math.random());
     const i = cm[j], P = ppl[i], w = SL.W[i], h = SL.H[i];
+    if (SL.celCam === i && now < (SL.celCamT || 0)) continue;   // (v0.51: posing for a celebration: he holds his aim and stays put)
     if (h && now - h.t0 < slHitLen(h)) continue;   // (knocked about: he sorts himself out first)
     slWhere(P, w, null, now);
     const x = SL_P.x, y = SL_P.y, bx = slClampX(ball.x);
@@ -1653,6 +1942,7 @@ function slCollide(dt) {
 }
 function slColP(p) {
   if (!p) return;
+  if (p.cel && CELEB_MOVES[p.cel.id] && CELEB_MOVES[p.cel.id].sl) return;   // (v0.51: a wall / camera / mascot celebration runs through the sideline to its mark)
   const y = p.y, C = SL.cast; let s;
   if (C.ez && (p.x < -ENDZONE - SIDELINE.gap * YD || p.x > FIELD + ENDZONE + SIDELINE.gap * YD) && SL.ce.mt >= 0) { const ez = C.ez; for (let j = 0; j < ez.length; j++) slHitTest(p, ez[j], C.people[ez[j]]); }   // (past an end line: the end-zone crews)
   if (y < SL.y0) s = 0; else if (y > SL.y1) s = 1; else return;   // (the broadphase: nobody inside `gap` of the sideline can touch anyone)
@@ -1685,7 +1975,7 @@ function slScatter(j, P, d) {   // a bench is hit hard: the men sitting on it ju
 }
 function slHitTest(p, i, P) {
   if (SL.W[i] && SL.W[i].pa && SL.now < SL.W[i].pa[SL.W[i].pa.length - 3]) return;   // (on an injury exit: never in a player's way)
-  if ((P.un && (SL.U >> (P.s * 2 + P.un - 1)) & 1) || (P.tier | 0) > SL.ce.mt || (P.k === SLK.JUDGE && !SL.crewOn)) return;   // (out on the field / not shown at this performance level / away with the crew)
+  if ((P.un && (SL.U >> (P.s * 2 + P.un - 1)) & 1 && !(SL.W[i] && SL.W[i].sub)) || (P.tier | 0) > SL.ce.mt || (P.k === SLK.JUDGE && !SL.crewOn)) return;   // (out on the field / not shown at this performance level / away with the crew)
   slWhere(P, SL.W[i], SL.H[i], SL.now);
   const c = SIDELINE.col[P.k] || SIDELINE.col[3], b0 = SIDELINE.body, z = FIGURE.grow * P.z, cx = SL_P.x, cy = SL_P.y, f = SL_P.f;
   const safe = slSafeMover(p);
@@ -2078,7 +2368,8 @@ function slLibDraw(L, t) {   // (drawAnims, inside the stage's transform; dark m
 // --- pencil look (drawing only: no hitbox, spot or speed ever reads these)
 // Field lines, route art and the pick circles are drawn by hand: each line wanders a little off straight, the circles are lumpy and jagged,
 // and the RUN circle is coloured in with green pencil, the PASS circle with plain graphite. Shapes are seeded, so they hold still between frames.
-const PENCIL = { amp: 2.4, seg: 70, ell: 0.08, ellN: 19, hatch: 7, hatchW: 2.4, hatchA: 0.6 };   // amp = px a line wanders, seg = px between wobbles, ell = how lumpy a circle is, hatch = px between fill strokes
+const PENCIL = { zoneHatch: 13, zoneA: 0.28, ringA: 0.45,   // zoneHatch / zoneA = the wider, lighter hatch inside the big zone circles; ringA = the hatch inside the other rings under a man (penRingHatch)
+ amp: 2.4, seg: 70, ell: 0.08, ellN: 19, hatch: 7, hatchW: 2.4, hatchA: 0.6, dashVar: 0.35, dashAmp: 1.2 };   // amp = px a line wanders, seg = px between wobbles, ell = how lumpy a circle is, hatch = px between fill strokes; dashVar = +- share a pencil dash / gap varies (penDash), dashAmp = px each dash's ends stray off the line
 function penRnd(seed) { let s = (Math.floor(seed) * 9301 + 49297) % 233280 || 1; return () => (s = (s * 9301 + 49297) % 233280) / 233280; }
 // (the same generator without a new function per line: penSeed, then penNext for each number. One stream at a time: only for a helper that finishes its
 //  own numbers before anything else is drawn, like the four below)
@@ -2102,13 +2393,85 @@ function penEllipse(cx, cy, rx, ry, seed) {   // (begins a new path: a lumpy, ja
   for (let i = 0; i < n; i++) { const a = ph + i / n * Math.PI * 2, k = 1 + (penNext() - 0.5) * 2 * PENCIL.ell * (i % 2 ? 1.5 : 0.7); pts.push([cx + Math.cos(a) * rx * k, cy + Math.sin(a) * ry * k]); }
   ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath();
 }
-function penHatchE(cx, cy, rx, ry, col, seed) {   // (the current path, coloured in with slanted pencil strokes; the path is used up by the clip)
-  penSeed(seed + 5); const sp = PENCIL.hatch;
-  ctx.save(); ctx.clip(); ctx.strokeStyle = col; ctx.globalAlpha *= PENCIL.hatchA; ctx.lineWidth = PENCIL.hatchW; ctx.lineCap = 'round';
+const penPlain = () => (typeof plLod !== 'undefined' && plLod) || liteOn();   // (no wobble when it would not be seen or costs too much: small-player LOD, performance mode)
+// a hand-drawn dashed line along a polyline (adds to the current path; stroke it, no setLineDash): dash and gap lengths vary by PENCIL.dashVar, each dash's
+// ends stray a little off the line. pts = [[x, y], ...] or flat [x0, y0, x1, y1, ...]. Seeded: the same seed draws the same dashes every frame. No allocations.
+function penDash(pts, seed, dash, gap, amp = PENCIL.dashAmp) {
+  const flat = typeof pts[0] === 'number', n = flat ? pts.length >> 1 : pts.length;
+  if (n < 2) return;
+  penSeed(seed); const V = PENCIL.dashVar, A = penPlain() ? 0 : amp;
+  const vary = L => L * (1 + (penNext() - 0.5) * 2 * V);
+  let on = true, seg = dash * (0.25 + 0.75 * penNext()), o = (penNext() - 0.5) * 2 * A, started = false;
+  for (let k = 0; k < n - 1; k++) {
+    const x0 = flat ? pts[2 * k] : pts[k][0], y0 = flat ? pts[2 * k + 1] : pts[k][1], x1 = flat ? pts[2 * k + 2] : pts[k + 1][0], y1 = flat ? pts[2 * k + 3] : pts[k + 1][1];
+    const L = Math.hypot(x1 - x0, y1 - y0); if (!L) continue;
+    const ux = (x1 - x0) / L, uy = (y1 - y0) / L, nx = -uy, ny = ux;
+    if (!started) { ctx.moveTo(x0 + nx * o, y0 + ny * o); started = true; }
+    let d = 0;
+    while (L - d > seg) {
+      d += seg; const x = x0 + ux * d, y = y0 + uy * d;
+      if (on) { const o2 = (penNext() - 0.5) * 2 * A; ctx.lineTo(x + nx * o2, y + ny * o2); seg = vary(gap); }
+      else { o = (penNext() - 0.5) * 2 * A; ctx.moveTo(x + nx * o, y + ny * o); seg = vary(dash); }
+      on = !on;
+    }
+    seg -= L - d;
+    if (on) ctx.lineTo(x1 + nx * o, y1 + ny * o);   // (a dash carried round a corner)
+  }
+}
+const PEN_DASH_PTS = [0, 0, 0, 0];   // (penDashLine's reused two-point list)
+function penDashLine(x0, y0, x1, y1, seed, dash, gap, amp) { PEN_DASH_PTS[0] = x0; PEN_DASH_PTS[1] = y0; PEN_DASH_PTS[2] = x1; PEN_DASH_PTS[3] = y1; penDash(PEN_DASH_PTS, seed, dash, gap, amp); }
+// a lumpy pencil loop round part of an ellipse (a0 -> a1 radians; adds to the current path): penEllipse's look for a ring that fills up
+function penArc(cx, cy, rx, ry, a0, a1, seed) {
+  penSeed(seed); const n = Math.max(2, Math.ceil(PENCIL.ellN * Math.abs(a1 - a0) / (Math.PI * 2))), plain = penPlain();
+  for (let i = 0; i <= n; i++) { const a = a0 + (a1 - a0) * i / n, k = plain ? 1 : 1 + (penNext() - 0.5) * 2 * PENCIL.ell * (i % 2 ? 1.5 : 0.7), x = cx + Math.cos(a) * rx * k, y = cy + Math.sin(a) * ry * k; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+}
+function penHatchE(cx, cy, rx, ry, col, seed, sp0, a0) {   // (the current path, coloured in with slanted pencil strokes; the path is used up by the clip; sp0 / a0 = other spacing / alpha)
+  penSeed(seed + 5); const sp = sp0 || PENCIL.hatch;
+  ctx.save(); ctx.clip(); ctx.strokeStyle = col; ctx.globalAlpha *= a0 || PENCIL.hatchA; ctx.lineWidth = PENCIL.hatchW; ctx.lineCap = 'round';
   ctx.beginPath();
   for (let x = -rx - ry; x <= rx + ry; x += sp) { const j = (penNext() - 0.5) * 3, sl = ry * (0.9 + penNext() * 0.2); ctx.moveTo(cx + x - sl + j, cy + ry * 1.15); ctx.lineTo(cx + x + sl + j, cy - ry * 1.15); }
   ctx.stroke(); ctx.restore();
 }
+// a ring under a man (or a zone circle) filled with the same seeded pencil hatch as the QB / RB rings (skipped for tiny players and in performance mode)
+function penRingHatch(cx, cy, rx, ry, col, seed, zone) {
+  if (plLod || liteOn()) return;
+  penEllipse(cx, cy, rx, ry, seed); penHatchE(cx, cy, rx, ry, col, seed, zone ? PENCIL.zoneHatch : 0, zone ? PENCIL.zoneA : PENCIL.ringA);
+}
+// marker grass (drawing only): the turf, the end zones and the grass outside the field are coloured in with marker. ONE small tile a colour + direction
+// (parallel strokes of uneven width / pressure that overlap into darker seams, a few thin light gaps), used as a repeating pattern, so a fill costs the
+// same as the old flat one (drawFieldStatic also runs live on a close shot). Strokes run at 45 degrees, the other way on every other 5-yard band (the mowing
+// stripes). Off in performance mode (markerOn(): fieldCacheDraw rebuilds when it changes); the tiles are freed with the field cache.
+// tile = world px a side; n = strokes a tile; w = stroke width range px; a = their darkening alpha range; lite = share of strokes that are a lighter
+// pass instead; gaps / gapA / gapW = thin light gaps a tile; outside = the sparser, lighter green round the field (col; flat = its old flat colour)
+const MARKER = { on: true, tile: 192, n: 14, w: [7, 14], a: [0.035, 0.085], lite: 0.2, gaps: 3, gapA: 0.12, gapW: 1.4,
+  outside: { col: '#5a8051', flat: '#4c6e45', n: 8, a: [0.03, 0.07] } };
+// pencil pressure on the white lines (with the marker on): a = the shades a yard line's pieces / a hash tick are drawn in, n = pieces a yard line,
+// hashAmp = px a hash tick wanders (penLine); flat = the old single shade (marker off)
+const FIELD_PRESS = { a: [0.7, 0.82, 0.95], n: 4, hashAmp: 1.2, flat: [0.85] };
+let MK_TILES = {};
+const markerOn = () => MARKER.on && !liteOn();
+function markerFree() { for (const k in MK_TILES) freeCanvas(MK_TILES[k]); MK_TILES = {}; }
+function markerTile(col, dir, sparse) {
+  const key = col + (dir < 0 ? '<' : '>') + (sparse ? 's' : '');
+  let c = MK_TILES[key]; if (c) return c;
+  const T = MARKER.tile, O = MARKER.outside, n = sparse ? O.n : MARKER.n, A = sparse ? O.a : MARKER.a, Wr = MARKER.w;
+  c = MK_TILES[key] = document.createElement('canvas'); c.width = c.height = T;
+  const g = c.getContext('2d');
+  g.fillStyle = col; g.fillRect(0, 0, T, T);
+  if (dir < 0) { g.translate(T, 0); g.scale(-1, 1); }   // (the other direction = the same tile mirrored: still seamless)
+  g.lineCap = 'round';
+  let h = 0; for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) % 9973;
+  penSeed(h + 1);
+  // a stroke y = x + c: drawn at c - T, c and c + T, so the tile repeats without a seam (a 45-degree line shifted by T in c = shifted by T in x or y)
+  const stroke = (c0, w, col2) => { g.strokeStyle = col2; g.lineWidth = w; g.beginPath(); for (let k = -1; k <= 1; k++) { const cc = c0 + k * T; g.moveTo(-T, -T + cc); g.lineTo(2 * T, 2 * T + cc); } g.stroke(); };
+  for (let i = 0; i < n; i++) {
+    const c0 = (i + (penNext() - 0.5) * 0.6) * T / n, w = Wr[0] + (Wr[1] - Wr[0]) * penNext(), a = A[0] + (A[1] - A[0]) * penNext();
+    stroke(c0, w, penNext() < MARKER.lite ? `rgba(255,255,255,${a * 0.7})` : `rgba(0,0,0,${a})`);
+  }
+  if (!sparse) for (let i = 0; i < MARKER.gaps; i++) stroke(penNext() * T, MARKER.gapW, `rgba(255,255,255,${MARKER.gapA})`);
+  return c;
+}
+const markerFill = (col, dir, sparse) => ctx.createPattern(markerTile(col, dir, sparse), 'repeat');   // (patterns are cheap: made per fill, the tile is what's kept)
 // the pre-drawn field: everything drawFieldStatic paints (turf, stripes, end zones + names, yard lines, hash marks, sidelines, logo, numbers) never changes within
 // a game (the pencil wobble is seeded), so it is drawn once into its own canvas and only the part on screen is copied each frame. Rebuilt when the home team, the
 // drive direction (MIRROR: the un-mirrored logo / names / numbers), the logo sheet or the canvas resolution (RK: graphics mode, window size) changes.
@@ -2125,13 +2488,15 @@ function fieldCacheDraw() {   // true = the static field was drawn from the cach
   if (on > s * FIELD_CACHE.up) return false;
   const hk = homeKey(), logo = !!LOGOS[hk];
   let F = fieldImg;
-  if (!F || F.s !== s || F.hk !== hk || F.mir !== MIRROR || F.logo !== logo || F.tui !== TUI.on) {
+  const mk = markerOn();
+  if (!F || F.s !== s || F.hk !== hk || F.mir !== MIRROR || F.logo !== logo || F.tui !== TUI.on || F.mk !== mk) {
     if (F) freeCanvas(F.c);
+    markerFree();   // (the marker tiles go with it; drawFieldStatic makes the ones it needs again)
     const c = document.createElement('canvas'); c.width = Math.ceil(w * s); c.height = Math.ceil(h * s);
     const g = c.getContext('2d'), main = ctx;
     ctx = g;
     try { g.setTransform(s, 0, 0, s, ox * s, M * s); drawFieldStatic(); } finally { ctx = main; }
-    F = fieldImg = { c, s, hk, mir: MIRROR, logo, tui: TUI.on };
+    F = fieldImg = { c, s, hk, mir: MIRROR, logo, tui: TUI.on, mk };
   }
   // the part of it on screen (canvas px -> world -> cache px, a pixel of slack each side)
   const xa = -m.e / m.a, xb = (canvas.width - m.e) / m.a, ya = -m.f / m.d, yb = (canvas.height - m.f) / m.d;
@@ -2144,7 +2509,7 @@ function fieldCacheDraw() {   // true = the static field was drawn from the cach
   return true;
 }
 function drawField() {
-  ctx.fillStyle = '#4c6e45';
+  ctx.fillStyle = markerOn() ? markerFill(MARKER.outside.col, 1, true) : MARKER.outside.flat;   // (marker: lighter and sparser out here, so names and callouts stay readable)
   ctx.fillRect(-ENDZONE - 60 * YD, -40 * YD, FIELD + 2 * ENDZONE + 120 * YD, FW + 80 * YD);
   if (!lightGfx() || IS_MOBILE) drawCrowd();   // (a slow desktop in performance mode: no stands. A phone always keeps the stands and the sideline: drawCrowd already culls everything off-view)
   if (!fieldCacheDraw()) drawFieldStatic();
@@ -2153,22 +2518,40 @@ function drawField() {
 }
 // the part of the field that never changes within a game (drawField: live, or once into FIELD_CACHE's canvas)
 function drawFieldStatic() {
-  ctx.fillStyle = '#2f8f3a';
+  const mk = markerOn();
+  ctx.fillStyle = mk ? markerFill('#2f8f3a', 1) : '#2f8f3a';
   ctx.fillRect(-ENDZONE, 0, FIELD + 2 * ENDZONE, FW);
 
-  ctx.fillStyle = '#2a8334';
+  ctx.fillStyle = mk ? markerFill('#2a8334', -1) : '#2a8334';   // (marker: the strokes run the other way on these bands)
   for (let x = 0, i = 0; x < FIELD; x += 5 * YL, i++) if (i % 2 === 0) ctx.fillRect(x, 0, 5 * YL, FW);
 
-  ctx.fillStyle = homeColor();   // both end zones in the home team's colour
+  ctx.fillStyle = mk ? markerFill(homeColor(), 1) : homeColor();   // both end zones in the home team's colour
   ctx.fillRect(-ENDZONE, 0, ENDZONE, FW);
   ctx.fillRect(FIELD, 0, ENDZONE, FW);
   drawEndZoneName(-ENDZONE / 2, 1); drawEndZoneName(FIELD + ENDZONE / 2, -1);
 
-  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
   ctx.lineWidth = 4;
-  ctx.beginPath();
-  for (let x = 5 * YL; x < FIELD; x += 5 * YL) penLine(x, 0, x, FW, x);   // (hand-drawn: a little off straight)
-  ctx.stroke();
+  if (mk) {   // pencil pressure: each yard line in a few pieces, each piece in one of FIELD_PRESS.a's alphas (one path a shade)
+    const P = FIELD_PRESS;
+    for (let b = 0; b < P.a.length; b++) {
+      ctx.strokeStyle = `rgba(255,255,255,${P.a[b]})`; ctx.beginPath();
+      for (let x = 5 * YL; x < FIELD; x += 5 * YL) {
+        let y0 = 0;
+        for (let k = 0; k < P.n; k++) {
+          penSeed(x * 7 + k * 13 + 5); const y1 = k === P.n - 1 ? FW : y0 + FW / P.n * (0.6 + 0.8 * penNext()), sh = Math.floor(penNext() * P.a.length);
+          if (sh === b) penLine(x, y0, x, y1, x + k * 101);
+          y0 = y1;
+        }
+      }
+      ctx.stroke();
+    }
+  } else {
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.beginPath();
+    for (let x = 5 * YL; x < FIELD; x += 5 * YL) penLine(x, 0, x, FW, x);   // (hand-drawn: a little off straight)
+    ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
   ctx.lineWidth = 8;
   ctx.beginPath();
   penLine(0, 0, 0, FW, 3, 1.8); penLine(FIELD, 0, FIELD, FW, 5, 1.8);
@@ -2176,20 +2559,27 @@ function drawFieldStatic() {
 
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = 0.6 * YD;
-  ctx.strokeRect(-ENDZONE - 0.3 * YD, -0.3 * YD, FIELD + 2 * ENDZONE + 0.6 * YD, FW + 0.6 * YD);
+  { const x0 = -ENDZONE - 0.3 * YD, y0 = -0.3 * YD, x1 = FIELD + ENDZONE + 0.3 * YD, y1 = FW + 0.3 * YD;   // (sidelines + end lines: hand-drawn, a little off straight; cached with the field, so free per frame)
+    ctx.lineJoin = 'round'; ctx.beginPath(); penPoly([[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]], 11, 3); ctx.closePath(); ctx.stroke(); }
 
   const tick = 0.67 * YD;
-  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
   ctx.lineWidth = 4;
-  ctx.beginPath();
-  for (let yd = 1; yd < 100; yd++) {
-    if (yd % 5 === 0) continue;
-    const x = yd * YL;
-    for (const a of [0.1 * YD, FW - 0.1 * YD - tick, HASH_IN - tick / 2, FW - HASH_IN - tick / 2]) {
-      ctx.moveTo(x, a); ctx.lineTo(x, a + tick);
+  const hashA = mk ? FIELD_PRESS.a : FIELD_PRESS.flat;   // (marker on: the ticks get the yard lines' wobble and are split between the pressure shades)
+  for (let b = 0; b < hashA.length; b++) {
+    ctx.strokeStyle = `rgba(255,255,255,${hashA[b]})`;
+    ctx.beginPath();
+    for (let yd = 1; yd < 100; yd++) {
+      if (yd % 5 === 0) continue;
+      const x = yd * YL;
+      for (let j = 0; j < 4; j++) {
+        const a = j === 0 ? 0.1 * YD : j === 1 ? FW - 0.1 * YD - tick : j === 2 ? HASH_IN - tick / 2 : FW - HASH_IN - tick / 2, sd = yd * 4 + j;
+        if (!mk) { ctx.moveTo(x, a); ctx.lineTo(x, a + tick); continue; }
+        if ((sd * 7919) % hashA.length !== b) continue;
+        penLine(x, a, x, a + tick, sd * 31 + 9, FIELD_PRESS.hashAmp);
+      }
     }
+    ctx.stroke();
   }
-  ctx.stroke();
 
   drawFieldLogo(FIELD / 2, MID, 4.2 * YD);
   drawFieldNumbers();
@@ -2203,9 +2593,12 @@ function drawFieldRest() {   // (the live part of drawField, over the weather's 
     ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(-pw / 2 + 4, -3, pw, 8);   // shadow
     if (p.sideways) ctx.rotate(p.dir * ang);                           // tipped over along the field
     else ctx.scale(1, Math.max(0.3, Math.cos(ang)));                    // tipped toward / away from the camera
-    ctx.fillStyle = '#c84f0c'; ctx.fillRect(-pw / 2, -ph, pw, ph);
-    ctx.fillStyle = '#ff7a1a'; ctx.fillRect(-pw / 2 + 2, -ph + 2, pw * 0.55, ph - 4);
-    ctx.fillStyle = '#ffd2a8'; ctx.fillRect(-pw / 2, -ph, pw, 4);
+    const tp = ph * 0.28;   // (a crayon: paper wrapper with its bands, the worn wax tip on top; same box)
+    ctx.fillStyle = '#c84f0c'; ctx.fillRect(-pw / 2, -ph + tp, pw, ph - tp);
+    ctx.fillStyle = '#ff7a1a'; ctx.fillRect(-pw / 2 + 2, -ph + tp + 2, pw * 0.5, ph - tp - 4);
+    ctx.fillStyle = '#7a2a06'; ctx.fillRect(-pw / 2, -ph + tp + 4, pw, 3); ctx.fillRect(-pw / 2, -6, pw, 3);
+    ctx.fillStyle = '#e8660f'; ctx.beginPath(); ctx.moveTo(-pw / 2, -ph + tp); ctx.lineTo(-pw * 0.18, -ph); ctx.lineTo(pw * 0.18, -ph); ctx.lineTo(pw / 2, -ph + tp); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(60,20,4,0.6)'; ctx.lineWidth = 1.5; ctx.stroke();
     ctx.restore();
   }
 
@@ -2247,6 +2640,7 @@ function drawPlayLines() {
     ctx.beginPath(); penLine(lineToGain, 0, lineToGain, FW, 778); ctx.stroke();
   }
   drawAwareness();   // (blitz arrows / OPEN arms: QB awareness)
+  drawLegsPips();   // (legs zones before the snap)
 }
 
 function drawBlockArt(p, ex, ey) {
@@ -2265,8 +2659,8 @@ function drawBlockArt(p, ex, ey) {
 const RUSH_ART = { short: 1.4, col: '#ffd23f', jamCol: '#ffffff', w: 5, max: 3.5 };   // max = longest arrow (yd): just the first steps of his lane
 function rushArtArrow(p, tx, ty, col) {
   const off = FOOT - 2, dx = tx - p.x, dy = ty - p.y, d = Math.hypot(dx, dy) || 1, L = Math.min(RUSH_ART.max * YD, Math.max(0, d - RUSH_ART.short * YD)), ex = p.x + dx / d * L, ey = p.y + dy / d * L, a = Math.atan2(dy, dx), hd = 16;
-  ctx.strokeStyle = ctx.fillStyle = col; ctx.lineWidth = RUSH_ART.w; ctx.setLineDash([18, 12]);
-  ctx.beginPath(); ctx.moveTo(p.x, p.y + off); ctx.lineTo(ex, ey + off); ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle = ctx.fillStyle = col; ctx.lineWidth = RUSH_ART.w; ctx.lineCap = 'round';
+  ctx.beginPath(); penDashLine(p.x, p.y + off, ex, ey + off, (p.num | 0) * 17 + 3, 18, 12); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(ex + Math.cos(a) * hd, ey + off + Math.sin(a) * hd); ctx.lineTo(ex + Math.cos(a + 2.5) * hd, ey + off + Math.sin(a + 2.5) * hd); ctx.lineTo(ex + Math.cos(a - 2.5) * hd, ey + off + Math.sin(a - 2.5) * hd); ctx.closePath(); ctx.fill();
 }
 function drawRushArt() {
@@ -2284,6 +2678,7 @@ function drawRushArt() {
   ctx.restore();
 }
 const HG_ART = { back: 1.2, side: 0.9 };   // hitch & go route art: the hitch jabs back this many yards (YL) and across (YD)
+const ROUTE_PTS = [];
 function drawRoute(r) {
   // hitch & go (before the hitch): stem, a short jab back and across (the hitch), then straight up the field
   const hg = r.route.chatter && r.leg < 2, hit = hg && r.path[0];
@@ -2293,14 +2688,14 @@ function drawRoute(r) {
   if (!r.route.stop) pts.push([lx + r.cont.x * 5 * YD, clampRouteY(ly + r.cont.y * 5 * YD)]);
   const off = FOOT - 2;
   ctx.strokeStyle = ctx.fillStyle = r.color;
-  ctx.lineWidth = 6;
-  ctx.setLineDash([24, 16]);
+  ctx.lineWidth = 6; ctx.lineCap = 'round';
   ctx.beginPath();
-  const rs = Math.round((r.num | 0) * 31 + r.x * 0.01);   // (pencil: wandering line, a thin second pass over it, an open scribbled arrowhead)
-  penPoly(pts.map(([x, y]) => [x, y + off]), rs);
+  const rs = Math.round((r.num | 0) * 31 + r.x * 0.01);   // (pencil: hand-drawn dashes of uneven length, a thin second pass over them, an open scribbled arrowhead)
+  const F = ROUTE_PTS; F.length = 0; for (const q of pts) F.push(q[0], q[1] + off);   // (a reused flat list: the route's own path arrays are never touched)
+  penDash(F, rs, 24, 16, 2);
   ctx.stroke();
-  ctx.save(); ctx.globalAlpha *= 0.45; ctx.lineWidth = 2.5; ctx.beginPath(); penPoly(pts.map(([x, y]) => [x + 1.5, y + off - 1.5]), rs + 9, 3.2); ctx.stroke(); ctx.restore();
-  ctx.setLineDash([]);
+  for (let i = 0; i < F.length; i += 2) { F[i] += 1.5; F[i + 1] -= 1.5; }
+  ctx.save(); ctx.globalAlpha *= 0.45; ctx.lineWidth = 2.5; ctx.beginPath(); penDash(F, rs + 9, 24, 16, 3); ctx.stroke(); ctx.restore();
   if (hg) {   // the hitch itself drawn solid so the little Z reads through the dashes
     ctx.beginPath();
     ctx.moveTo(hit[0] - HG_ART.back * YL, hit[1] + off); ctx.lineTo(hit[0], hit[1] + off);
@@ -2571,7 +2966,7 @@ const POST_DIVE = { roll: 0.25, rollFast: 0.45, fast: 7, rollDur: 0.5, rollYd: 0
 function postDive(p, a, dt) {
   if (a.pt == null) {   // just landed: decide once
     if (!p.hasBall) { p.reach = false; p.overShoulder = false; }   // (an empty-handed landing: no stale reaching / over-the-shoulder hands on top of the landing's own)
-    wetSfx(SND_USE.wetDive);
+    wetSfx(SND_USE.wetDive, 'dive');
     const L = Math.hypot(a.tx - a.fx, a.ty - a.fy), sp = a.kin ? a.kin.v / YD : L / YD / Math.max(0.15, a.dur);
     // (how he lands goes with the look he dove with; a tackler, a ball carrier and anyone after the whistle always skids on his chest: his spot must not move)
     // (v0.43 looks: belly = a skid, rollOut = a roll, by the same odds: the old skid / roll weights were split between them, so a man rolls (and
@@ -3128,9 +3523,10 @@ function poseFx(p, ac) {
 // frame or two earlier) all read the same numbers, and nothing eased per frame is kept on the player. drawPlayer takes the pose through the same fx hook as
 // poseFx (cq). The ball is scripted too (drawn here, the real one hidden) and is put down for real where the script leaves it when the celebration ends.
 const CELEB = {
-  dropTail: 0.3,                             // s before a move's end that a ball still held in his hand is let go (falls, one small bounce): no celebration ends with him holding it
-  ballK: 0.78,                         // the scripted loose ball (spikes, flips, top spins) vs a football in the air: about the size of the ball in his hands, so it doesn't grow as it leaves them
-  jog: { walk: 3, run: 7, rate0: 7, rateK: 1.6, rateMax: 26, swing: [0.45, 0.95], knee: [0.45, 1.15] },   // cast men going to their marks: yd/s that reads as a walk / a full run, leg cycle (rad/s = rate0 + rateK x speed, capped), leg swing and knee lift (walk, run)
+  propIn: 0.2, propOut: 0.2,                 // props (the doodles in his hands: bow, pan, cooler...) are sketched in over their first propIn s and erased over their last propOut s
+  propW: 0.75, propJit: 0.55, propOff: 0.45, propInk: [52, 52, 60],   // ...their pencil outline (sprite units), how far its points boil (x dfBoil), how far the colour sits off the line (seeded, never timed), graphite
+  dropTail: 0.3,                            // s before a move's end that a ball still held in his hand is let go (falls, one small bounce): no celebration ends with him holding it
+  jog: { walk: 3, run: 7, rate0: 7, rateK: 1.6, rateMax: 26, swing: [0.45, 0.95], knee: [0.45, 1.15], sprint: { swing: 1.35, knee: 1.3, rate: 0.75 } },   // sprint = x swing / knee / step rate on a post move's run-up (fewer, longer strides)   // cast men going to their marks: yd/s that reads as a walk / a full run, leg cycle (rad/s = rate0 + rateK x speed, capped), leg swing and knee lift (walk, run)
   upForce: 1.6,                              // s after his celebration could start that a man still down (pinned, kneeling, sitting, held on the turf) is made to get up
   bumpShake: 6,                              // camera jolt when a chest bump lands (a fist bump = half)
   quickMax: 1.6, scoreMax: 3.8, endMax: 5,   // longest celebration, s: non-scoring / scoring / end of game (a longer move is played faster to fit)
@@ -3143,7 +3539,8 @@ const CELEB = {
   // (tried every `step` yd in `dirs` directions, `edge` yd inside the lines; each yd further costs `far` yd of room), at `speed` yd/s
   // (tried every `step` yd in `dirs` directions, `edge` yd inside the lines; each yd further costs `far` yd of room). A spot under `runFrom` yd away he walks to
   // (`walk` yd/s), a further one he runs to (`run`), building up at `accel` yd/s^2; a man lying on the turf counts as `lie` x closer; up to `hops` moves, a `beat` s stand after one
-  open: { clear: 3.6, max: 9, step: 1.5, dirs: 12, edge: 1.5, far: 0.16, gain: 0.8, walk: 3.4, run: 6.8, runFrom: 3.5, accel: 13, lie: 0.75, hops: 2, beat: 0.15 },
+  open: { front: 1.8, fwd: 1.2, minGain: 0.2, fwdEv: ['first', 'long', 'catch', 'miss', 'stiff'],   // v0.52: a body in front of him on screen (nearer the camera) counts as front x closer; fwd = score for spots the way his team attacks on those events; under `clear` any spot minGain yd roomier is taken
+          clear: 3.6, max: 9, step: 1.5, dirs: 12, edge: 1.5, far: 0.16, gain: 0.8, walk: 3.4, run: 6.8, runFrom: 3.5, accel: 13, lie: 0.75, hops: 2, beat: 0.15 },
   upWait: 2.5, upMax: 9,                      // getting up first: s the ask is kept alive past each moment he is still down / rising, for at most upMax s after the whistle
   overHelmet: 7.6,                           // a near hand this close (sprite units) to the helmet's centre is on the helmet: drawn over it (celebArmOver)
   squashMin: 0.78, squashMax: 1.22,          // whole-figure squash / stretch clamp (scaleY = k, scaleX = 1 / k, anchored at the feet)
@@ -3180,15 +3577,33 @@ const CELEB = {
   // the goal post (postShakeAt / postShake): a hit of size 1 shifts the crossbar `amp` px, ringing at `freq` rad/s and settled after `settle` s; the uprights'
   // tops whip x `tip`; the crowd's pop = popK x the size, with an ooh from oohFrom; a cast man sprinting in (`run`) builds up at `accel` yd/s^2 to his own top
   // speed; the pad gives `squish` of its depth under a hug. Then each move's hit size.
-  post: { amp: 5, freq: 42, settle: 0.6, tip: 1.7, popK: 0.45, oohFrom: 0.9, accel: 9, squish: 0.24,
+  post: { amp: 5, freq: 42, settle: 0.6, tip: 1.7, popK: 0.45, oohFrom: 0.9, accel: 9, squish: 0.24, runUp: 4.5, backV: 6,   // v0.52: runUp = least yd of sprint into a post move (closer = he backs out first, at backV yd/s)
           dunk: 1, hug: 0.6, lob: 1.1, oop: 1.25, dbl: 1.35, windmill: 1.15, reverse: 1, spin: 1.15, hang: 1.7, swing: 0.4, roll: 0.3, miss: 0.9 },
   // seeded moves (a move with `gen`: its branches, parts and timing come from cel.sd): one member is off the beat by offBy s and catches up (chance `off`) /
   // one falls over mid-move (`fall`) / the last man joins lateBy s late at a sprint (`late`, casts of 4+) / every mate's start jitters up to jit s and his
   // energy (jump height, squash) by +-energy / a group move may run `max` s at full hype / `rolls` tries at a branch combination that is not the last one
   // played / a hero within `side` yd of a sideline: the formation is set up `shift` yd infield
   group: { off: 0.35, offBy: 0.14, fall: 0.2, late: 0.25, lateBy: 0.7, jit: 0.08, energy: 0.3, max: 9, rolls: 6, side: 5, shift: 3 },
+  // v0.51 lead-ins / exits (CELEB_PRE / CELEB_POST): only from this hype (under it: the plain dip / ease) / s a clip blends into the move (and out of it) /
+  // what a quick event may use / events with none / s a teammate jogs in to pat his helmet (poHelmetTap), from at most patYd yd / pick weights
+  pre: { minHype: 0.3, mix: 0.22, quick: ['prLookAround', 'prGloves', 'poNod'], none: ['poWin', 'bowlWin'], patG: 0.6, patYd: 4,
+         w: { prLookAround: 1, prGloves: 0.8, prBallToRef: 0.7, prWaveOver: 1, prStrut: 0.7, prPoint: 1.5 },
+         wPost: { poNod: 1, poPointBack: 0.8, poHelmetTap: 0.7, poJogOff: 0.8, poHandBall: 1.2, poWalkNod: 0.6 } },
+  // v0.51 crowd moves: a wall move needs the hero within reach yd of the top / an end wall's foot (`near` for the stand taunts); body = yd his mark stands off
+  // the wall; endH = an end wall's drawn height (sprite units: they are seen edge-on)
+  wall: { reach: 9, near: 12, body: 0.5, endH: 8 },
+  // v0.51 camera moves: a cameraman / photographer this close (yd, celebCamNear) / the hero stands this far off him / the game camera's zoom-in while a lens move
+  // plays (x) / a photo run's longest sprint (s: further = the cast is moved closer first) and the speed it is planned at (yd/s) / the computer's photo run is cut to cpuMax s
+  cam: { reach: 12, stand: 1.6, zoom: 1.15, runMax: 7, runV: 7.5, cpuMax: 5, ezDeep: 3 },
+  // v0.51 mascot moves: the hero within reach yd of a standing mascot / stands `stand` yd off him / piggyback only under lb pounds. bench = yd from his bench for the bench moves
+  mascot: { reach: 14, stand: 1.3, lb: 215 }, bench: { reach: 10, five: 6 },
+  // v0.51 fines (celebFineRoll): chance a taunt by your player is fined / x for a `rude` move or a showboat into the end zone / x per earlier fine of his this
+  // season / x for the other teams' players (a Post note only, no credits)
+  fine: { odds: 0.05, rudeK: 3, repeatK: 1.5, cpuK: 0.1 },
+  forceHome: null,                               // test mode (celTStage): true / false = the hero counts as the home / road team
   force: null, forceHype: null,                  // test mode: the next celebration's move id / its hype (celebPick, celebHype)
   // chance each event celebrates at all
+  always: ['first', 'miss', 'stiff'],   // v0.52: events that skip the odds roll when the hero is yours (celebNeedsKey): the click option is always there
   odds: { td: 1, tdPass: 1, two: 1, pat: 0.25, fg: 0.6, bigKick: 1, safety: 1, first: 0.35, long: 0.6, catch: 0.6, miss: 0.4, pancake: 0.5,
           pick: 1, pbu: 0.8, sack: 1, hit: 0.7, tfl: 0.3, fumRec: 1, fumForce: 0.6, stop: 1, block: 1, fgMiss: 0.6, onside: 1, puntDeep: 0.7, puntDeepK: 0.7,
           win: 1, otWin: 1, poWin: 1, bowlWin: 1, xf: 1, ooWin: 1 },
@@ -3201,7 +3616,7 @@ const CELEB = {
 // l0 / l1 = back / front leg [hip x, thigh angle, knee bend], u / v = spare channels a move's own fx reads
 const CELEB_REST = { k: 1, R: 0, rot: 0, lift: 0, sink: 0, ox: 0, tw: 1, hd: 0, yaw: 0, al: 1, u: 0, v: 0, fh: [0, 0.5], nh: [3, 2], fe: 0, ne: 0, l0: [-3.5, 0, 0.05], l1: [3.5, 0, 0.05] };
 const CELEB_NUM = ['k', 'R', 'rot', 'lift', 'sink', 'ox', 'tw', 'hd', 'yaw', 'al', 'u', 'v'], CELEB_VEC = ['fh', 'nh', 'l0', 'l1'];
-const CELEB_PIV = -3, CELEB_BALL_R = 2.6 * CELEB.ballK;    // the middle a flip turns about (sprite y) / a football's half height (sprite units): its centre sits this far above the turf
+const CELEB_PIV = -3, CELEB_BALL_R = 2.6 * BALL_DEAD_K;    // the middle a flip turns about (sprite y) / a football's half height (sprite units): its centre sits this far above the turf
 const CELEB_SH = { fh: [-1, -10.5], nh: [2, -9] };   // the shoulders
 const CELEB_EASE = { lin: u => u, in: u => u * u, out: u => 1 - (1 - u) * (1 - u), io: smooth01, snap: u => 1 - Math.pow(1 - u, 3),
                      back: u => 1 + 2.7 * Math.pow(u - 1, 3) + 1.7 * Math.pow(u - 1, 2), step: u => (u < 1 ? 0 : 1) };   // (step: no easing at all, the pose just changes: the robot)   // (back: overshoots, then settles)
@@ -3442,7 +3857,7 @@ const CELEB_MOVES = {
     [0.95, 'io',   { sink: 2.2, k: 0.88, hd: 0.15, v: 0 }],                                                   // a bob
     [1.08, 'io',   { sink: 0.6, k: 0.98, hd: 0 }],
   ] },
-  thumbsDown: { tag: 'N', secs: 0.8, cast: 1, needs: null, digit: ['nh', 1, Math.PI / 2, 0.14, 0.66], keys: [
+  thumbsDown: { tag: 'N', secs: 0.8, cast: 1, needs: null, digit: ['nh', 1, Math.PI / 2, 0.14, 0.66, 'thumb'], keys: [
     [0.14, 'out',  { nh: [14, -10], al: 1.05 }],
     [0.30, 'in',   { nh: [14, -5], k: 0.96 }],                                                                // pumped down
     [0.40, 'out',  { nh: [14, -10], k: 1 }],
@@ -3564,7 +3979,7 @@ function celebFaceMarks(r) {   // two men meet half way, facing each other, r yd
 const celebRowMarks = gap => (h, m) => [h, ...m].map((p, i) => ({ x: h.x + celebRowOff[i] * gap * YD, y: h.y, face: h.face }));   // shoulder to shoulder along the field
 // goalpost moves (v0.39): he SPRINTS in (`run`: accelerating to his own top speed, see celebMake), plants `out` yd short of the crossbar and carries the last
 // of it into the leap (dx). The crossbar is hit with a 'post:size' beat (sizes: CELEB.post). g = the longest the run-up may take.
-const CPOST = CELEB.post, POST_G = 1.3;
+const CPOST = CELEB.post, POST_G = 1.8;   // (v0.52: 1.3 -> 1.8, room for the longer run-up)
 const celebPostY = (h, e) => Math.max(e.mid - GOAL_HALF + 0.4 * YD, Math.min(e.mid + GOAL_HALF - 0.4 * YD, h.y));
 const celebPostMark = out => (h, m, e) => [{ x: e.postX - e.away * (0.55 + out) * YD, y: celebPostY(h, e), face: e.away }];
 const celebPostDx = (d, from = 0.04, len = 0.36) => t => d * smooth01((t - from) / len);
@@ -3628,10 +4043,10 @@ Object.assign(CELEB_MOVES, {
     dx: t => 1.75 * smooth01((t - 0.12) / 0.24) - 0.8 * smooth01((t - 1.45) / 0.25),
     marks: (h, m, e) => [{ x: e.postX + e.away * (POST_PAD.back * YL - 1.5 * YD), y: e.mid + (POST_PAD.y + POST_PAD.wide / 2) * YD, face: e.away }], keys: [
     [0.10, 'out',  { k: 0.84, sink: 2, ...CLG.crouch, R: 0.14, nh: [-3, 0], fh: [-5, -1] }, 'stomp:0.6'],                                       // the plant
-    [0.30, 'snap', { k: 1.16, sink: 0, lift: 7, R: 0.05, nh: [9, -15], fh: [8, -19], l0: [-2, -0.9, 0.6], l1: [3, -1.1, 0.7] }, 'whoosh'],       // the leap, arms and legs out in front
-    [0.38, 'in',   { k: 0.86, lift: 3.5, R: 0.1, nh: [10, -9], fh: [9, -13], l0: [-1, -1.2, 1.3], l1: [2, -1.3, 1.4], hd: 0.25, v: 1 }, ['slap', 'post:' + CPOST.hug]],   // wrapped round the pad
+    [0.30, 'snap', { k: 1.12, sink: 0, lift: 4, R: 0.05, nh: [9, -11], fh: [8, -15], l0: [-2, -0.9, 0.6], l1: [3, -1.1, 0.7] }, 'whoosh'],       // the leap, arms and legs out in front
+    [0.38, 'in',   { k: 0.86, lift: 1.5, R: 0.1, nh: [10, -5], fh: [9, -9], l0: [-1, -1.2, 1.3], l1: [2, -1.3, 1.4], hd: 0.25, v: 1 }, ['slap', 'post:' + CPOST.hug]],   // wrapped round the pad
     [1.00, 'lin',  {}],                                                                                                                         // clinging on, cheek on it
-    [1.45, 'io',   { lift: 0, k: 0.9, sink: 2.5, ...CLG.crouch, nh: [10, -4], fh: [9, -8], v: 0 }, 'scrape:1.3'],                               // slides down it
+    [1.45, 'io',   { lift: 0, k: 0.9, sink: 2.5, ...CLG.crouch, nh: [10, -1], fh: [9, -4], v: 0 }, 'scrape:1.3'],                               // slides down it
     [1.70, 'io',   { k: 1, sink: 0, R: 0.03, ...CLG.stand, nh: [8, -7], fh: [0, 0.5], hd: 0.12 }],
     [1.84, 'in',   { nh: [11, -8] }, 'slap:0.5'],                                                                                               // pat
     [1.96, 'out',  { nh: [8, -7] }],
@@ -3953,7 +4368,7 @@ const CELEB_VAR = new Map();
 function celebMvOf(c) {
   const b = c && CELEB_MOVES[c.id];
   if (!b || !b.gen) return b;
-  const G = { sd: c.sd || 1, n: Math.max(celebCastN(b)[0], c.n || 1), big: !!c.big, h: Math.round((c.hy || 0) * 4) / 4 }, key = c.id + '|' + G.sd + '|' + G.n + '|' + (G.big ? 1 : 0) + '|' + G.h;
+  const G = { sd: c.sd || 1, n: Math.max(celebCastN(b)[0], c.n || 1), big: !!c.big, h: Math.round((c.hy || 0) * 4) / 4, r: c.rg || 0 }, key = c.id + '|' + G.sd + '|' + G.n + '|' + (G.big ? 1 : 0) + '|' + G.h + '|' + G.r;   // (r: a run's planned time, v0.51)
   let V = CELEB_VAR.get(key);
   if (!V) {
     if (CELEB_VAR.size > 60) CELEB_VAR.clear();
@@ -4887,7 +5302,7 @@ Object.assign(CELEB_MOVES, {
     [1.25, 'io',   { nh: [4, -2], fh: [0, 1], hd: 0 }],
     [1.85, 'in',   { nh: [4, -1] }, 'slap:0.4'], [1.95, 'out', { nh: [5, -3] }], [2.05, 'in', { nh: [4, -1] }, 'slap:0.4'],
   ] },
-  dfSackCount: { tag: 'N', secs: 2.2, cast: 1, full: true, needs: null, pk: 0.2, after: dfCountAfter, digit: ['fh', 1, Math.PI, 0.25, 1.9], keys: [   // one arm up, counting his sacks on his fingers, a thumb at his chest
+  dfSackCount: { tag: 'N', secs: 2.2, cast: 1, full: true, needs: null, pk: 0.2, after: dfCountAfter, digit: ['fh', 1, Math.PI, 0.25, 1.9, 'thumb'], keys: [   // one arm up, counting his sacks on his fingers, a thumb at his chest
     [0.2,  'back', { nh: [3, -29], al: 1.45, fh: [5, -9], k: 1.05, hd: -0.1 }, 'pop:0.5'],
     [1.9,  'lin',  {}],
   ] },
@@ -5111,6 +5526,481 @@ Object.assign(CELEB_MOVES, {
     return grpDone(B, 2.0, { pk: 1.05, flavor: false });
   } }),
 });
+// --- v0.51 celebrations: crowd, camera, mascot, disrespect (solo moves; their ids are put in the event pools right after CELEB_EVENTS, celebPools)
+// the hero is the home team (the top-sideline bench; the same test as slReact)
+const celebHome = h => CELEB.forceHome != null ? CELEB.forceHome : celebFav(h) === MATCH.home;   // (celebFav: 'you' / 'opp', the side he plays for, flips and playable defense included)
+// the nearest wall foot he can use: the top sideline wall or an end wall (never the bottom one: it is seen from behind). { x, y, face, wh (its drawn height,
+// sprite units), end, d (yd from him) }; off = yd further out from the wall
+function celebWallMark(h, off = 0) {
+  const C = CROWD, W = CELEB.wall, U = YD / (S * FIGURE.grow), b = (W.body + off) * YD;
+  const top = { x: Math.max(-ENDZONE + YD, Math.min(FIELD + ENDZONE - YD, h.x)), y: -C.wall + b, face: h.face || 1, wh: Math.round(C.wallH / YD * U), end: 0 };
+  const far = h.x > FIELD / 2, ex = far ? FIELD + ENDZONE + C.endGap + C.wall - b : -ENDZONE - C.endGap - C.wall + b;
+  const end = { x: ex, y: Math.max(Y_MIN + 2 * YD, Math.min(Y_MAX - 2 * YD, h.y)), face: far ? 1 : -1, wh: W.endH, end: 1 };
+  const dt = Math.hypot(top.x - h.x, top.y - h.y), de = Math.hypot(end.x - h.x, end.y - h.y), m = de < dt ? end : top;
+  m.d = Math.min(dt, de) / YD;
+  return m;
+}
+// a wall move's lift: u = share of the wall's height (cel.wh) he is up; plus his own bounce (v)
+const celebWallFx = (q, t, c) => { q.lift += q.u * ((c && c.wh) || 25); if (q.v) q.lift += 1.3 * Math.abs(Math.sin(t * 15)) * q.v; };
+const celebWallBegin = (c) => { c.cels[0].wh = celebWallMark(c.hero).wh; };
+// fans' hands patting him from the stand behind (sprite space, over his arms) while he sits on the wall
+function celebFanHands(q, t) {
+  if (t < 0.75 || t > 3.35) return;
+  const A = ['#e7b48f', '#8d5a3b', '#c58c64'];
+  ctx.globalAlpha *= cpFade(t, 0.75, 3.35);
+  for (let i = 0; i < 3; i++) { const b = Math.abs(Math.sin(t * 7 + i * 1.9)) * 2.2, x = [-6, 5, -1][i], y = [-15, -14, -18][i] - b; cpRect(x - 0.8, y - 5, 1.6, 4, A[i], 370 + i * 20, 0.5); cpRect(x - 1.6, y - 1.6, 3.2, 3.2, A[i], 380 + i * 20, 0.5); }
+}
+// the ball over his shoulder into the stand: gone once it is over the wall (hand 'x' = no ball left on the turf, celebEnd)
+function celebWallBall(t) {
+  if (t < 1.6) return { hand: 'n', rot: -1.2 };
+  const U = YD / (S * FIGURE.grow), u = (t - 1.6) / 0.55;
+  if (u >= 1) return { hand: 'x' };
+  return { x: -2 - 6 * u, y: -4 * U * u, h: 40 + 50 * u * (1 - u) + 20 * u, rot: -1.2 + 8 * u };
+}
+const CW_SIT = [   // the hop onto the wall and the sit (shared by crWallSit / crWallBall)
+  [0.25, 'out', { k: 0.86, sink: 2, nh: [6, 4], fh: [-4, 4] }],
+  [0.5, 'snap', { k: 1.05, sink: 0, u: 1, lift: 3, nh: [6, -30], fh: [-4, -30], al: 1.2 }, 'whoosh'],
+  [0.75, 'io', { tw: 0.2, lift: -9, k: 0.95, l0: [-2, 2, 0.9], l1: [4, 2, 0.9], nh: [5, 2], fh: [-3, 2], al: 1 }, ['thud:0.5', 'swell:0.9']],
+  [0.95, 'io', { k: 1, v: 0.4 }]];
+const CW_DOWN = [[3.4, 'io', { lift: -6, v: 0, nh: [6, 0], fh: [-4, 0] }], [3.9, 'in', { u: 0, lift: 0, tw: 1, k: 0.88, ...CLG.stand }, 'thud:0.4'], [4.6, 'io', { k: 1 }]];
+const CR_WAG = (q, t) => { if (q.v) { const w = Math.sin(t * 2 * Math.PI * 5.4) * q.v; q.nh[0] += 2.2 * w; q.fh[0] -= 2.2 * w; q.yaw = 0.5 * w; } };
+Object.assign(CELEB_MOVES, {
+  // shushing the home crowd (road player only)
+  crShushWalk: { tag: ['N', 'taunt'], secs: 2.4, pk: 0.5, cast: 1, needs: 'away', turn: 'wall', digit: ['nh', 1, -Math.PI / 2, 0.3, 2.2],
+    dx: t => 3 * smooth01((t - 0.6) / 1.5), fx: (q, t) => { if (q.v) { grpLegs(q, t * 0.6); q.yaw = (0.5 - smooth01((t - 0.6) / 1.5)) * q.v; } }, keys: [
+    [0.3, 'snap', { nh: [10.5, -17.5], R: 0.1 }, ['whoosh:0.3', 'hush:2']], [0.6, 'io', { v: 1 }], [2.1, 'lin', { v: 1 }], [2.4, 'io', { v: 0, nh: [3, 2], R: 0 }]] },
+  crCantHear: { tag: ['N', 'taunt'], secs: 1.8, pk: 0.4, cast: 1, needs: 'away', turn: 'wall',
+    fx: (q, t) => { if (t > 1.2 && t < 1.6) q.yaw = 0.6 * Math.sin(2 * Math.PI * (t - 1.2) / 0.2); }, keys: [
+    [0.3, 'snap', { nh: [6, -21], R: -0.12, yaw: 0.5 }, 'hush'], [0.9, 'io', { fh: [-9, -6] }], [1.2, 'lin', {}], [1.6, 'io', { yaw: 0 }]] },
+  crShushBoth: { tag: ['N', 'taunt'], secs: 1.5, pk: 0.35, cast: 1, needs: 'away', turn: 'wall', digit: [['nh', 1, -Math.PI / 2, 0.25, 1.3], ['fh', 1, -Math.PI / 2, 0.25, 1.3]], keys: [
+    [0.25, 'snap', { nh: [9.5, -18], fh: [8.5, -17], yaw: -0.5 }, 'hush:3'], [1.2, 'lin', { yaw: 0.5 }]] },
+  // turn it up (home player only)
+  crPumpUp: { tag: 'N', secs: 2.0, pk: 1.5, cast: 1, needs: 'home', keys: [
+    [0.2, 'io', { nh: [8, -2], fh: [-6, -2], k: 0.94, al: 1.2 }], [0.45, 'snap', { nh: [9, -30], fh: [-7, -30], k: 1.05, lift: 1 }, 'swell:0.4'],
+    [0.7, 'io', { nh: [8, -2], fh: [-6, -2], k: 0.94, lift: 0 }], [0.95, 'snap', { nh: [9, -30], fh: [-7, -30], k: 1.05, lift: 1 }, 'swell:0.7'],
+    [1.2, 'io', { nh: [8, -2], fh: [-6, -2], k: 0.94, lift: 0 }], [1.5, 'snap', { nh: [9, -30], fh: [-7, -30], k: 1.05, lift: 1 }, 'swell:1'], [1.8, 'io', { lift: 0, k: 1 }]] },
+  crConductor: { tag: 'N', secs: 2.6, pk: 2.0, cast: 1, needs: 'home', keys: [
+    [0.4, 'out', { nh: [13, -22], fh: [-12, -22], al: 1.15 }, 'swell:0.8'], [1.1, 'snap', { nh: [10, -2], fh: [-8, -2], k: 0.92 }, 'hush:1:home'], [1.9, 'lin', {}],
+    [2.0, 'snap', { nh: [9, -30], fh: [-7, -30], lift: 3, k: 1.06 }, ['swell:1', 'pop:1']], [2.4, 'io', { lift: 0, k: 1 }]] },
+  crEarBoth: { tag: 'N', secs: 1.4, pk: 0.5, cast: 1, needs: 'home', fx: celebBounceFx, keys: [
+    [0.25, 'out', { nh: [6, -21], fh: [-4, -21], v: 1 }], [0.5, 'lin', {}, 'swell:0.6'], [1.1, 'lin', { v: 1 }], [1.4, 'io', { v: 0 }]] },
+  // up on the wall (home player, a score): he sprints to its foot first (run), then the hop
+  crWallSit: { tag: 'N', secs: 7.1, pk: 1.0, cast: 1, needs: ['tdOnly', 'wall', 'home'], full: true, run: 1, g: 2.5, wall: true, sl: true, marks: h => [celebWallMark(h)], onBegin: celebWallBegin,
+    fx: celebWallFx, props: celebFanHands, keys: [...CW_SIT, [1.9, 'lin', {}], [2.1, 'snap', { nh: [6, -32] }, 'pop:0.6'], [2.6, 'io', { nh: [5, 2] }], ...CW_DOWN] },
+  crWallBall: { tag: 'N', secs: 7.1, pk: 1.6, cast: 1, needs: ['tdOnly', 'wall', 'home', 'ball'], full: true, run: 1, g: 2.5, wall: true, sl: true, marks: h => [celebWallMark(h)], onBegin: celebWallBegin,
+    fx: celebWallFx, props: celebFanHands, ball: celebWallBall, keys: [...CW_SIT, [1.3, 'io', { nh: [-2, -30], al: 1.2 }], [1.6, 'snap', { nh: [4, -26] }, ['whoosh:0.6', 'pop:0.8']], [2.0, 'io', { nh: [5, 2], al: 1 }], ...CW_DOWN] },
+  crWallStand: { tag: 'N', secs: 6.1, pk: 0.9, cast: 1, needs: ['tdOnly', 'wall', 'home'], full: true, run: 1, g: 2.5, wall: true, sl: true, marks: h => [celebWallMark(h)], onBegin: celebWallBegin, fx: celebWallFx, keys: [
+    [0.25, 'out', { k: 0.86, sink: 2, nh: [6, 4], fh: [-4, 4] }], [0.5, 'snap', { k: 1.05, sink: 0, u: 1, lift: 2, nh: [6, -30], fh: [-4, -30], al: 1.2 }, 'whoosh'],
+    [0.75, 'io', { lift: 0, k: 0.95, nh: [14, -18], fh: [-13, -18], hd: -0.15, al: 1.15 }, 'thud:0.4'], [0.9, 'io', { k: 1 }, 'swell:1'],
+    [2.4, 'lin', { tw: -1 }], [2.6, 'lin', {}], [2.9, 'io', { k: 0.9, sink: 1.5, nh: [6, 2], fh: [-4, 2], hd: 0, tw: -1 }], [3.2, 'in', { u: 0, sink: 0, k: 0.88 }, 'thud:0.4'], [3.6, 'io', { k: 1, tw: 1 }]] },
+  // taunting the stand (road player)
+  crFakeLeap: { tag: ['N', 'taunt'], secs: 4.2, pk: 0.5, cast: 1, needs: ['away', 'wallNear'], full: true, run: 1, g: 2.0, wall: true, sl: true, marks: h => [celebWallMark(h, 1)], fx: CR_WAG,
+    dx: (t, c) => -1.5 * smooth01((t - 1.3) / 0.8), keys: [
+    [0.15, 'snap', { k: 0.85, R: -0.2, sink: 1.5 }, 'scrape'], [0.5, 'io', { k: 1, R: 0, sink: 0, nh: [10, -14], fh: [-8, -14], v: 1 }, ['swell:0.6', 'jeer:0.6']],
+    [1.2, 'lin', { v: 1 }], [1.3, 'io', { v: 0, tw: -1, nh: [3, 2], fh: [0, 0.5] }], [2.0, 'lin', {}], [2.2, 'io', { tw: 1 }]] },
+  crBowToBoos: { tag: ['N', 'taunt'], secs: 2.0, pk: 0.7, cast: 1, needs: ['away', 'wallNear'], turn: 'wall', keys: [
+    [0.3, 'out', { nh: [12, -10], fh: [-11, -10] }], [0.7, 'io', { R: 0.9, hd: 0.3, k: 0.92, nh: [6, 6], fh: [-2, 6] }, ['swell:0.7', 'jeer:0.7']], [1.2, 'lin', {}],
+    [1.5, 'io', { R: 0, hd: 0, k: 1, nh: [12, -26], fh: [-3, -4], al: 1.15 }], [1.8, 'io', { nh: [3, 2], al: 1 }]] },
+  crWaveBye: { tag: ['N', 'taunt'], secs: 1.6, pk: 0.4, cast: 1, needs: ['away', 'late', 'ahead'], fx: celebWaveFx, keys: [
+    [0.2, 'out', { nh: [8, -31], yaw: 0.4, v: 1, al: 1.2 }], [0.4, 'lin', {}, ['swell:0.6', 'jeer:0.5']], [1.3, 'lin', { v: 1 }], [1.6, 'io', { v: 0 }]] },
+  crScoreboard: { tag: ['N', 'taunt'], secs: 1.4, pk: 0.2, cast: 1, needs: ['away', 'ahead'], keys: [
+    [0.2, 'snap', { nh: [-6, -30], yaw: -0.5, al: 1.2 }, ['swell:0.6', 'jeer:0.5']], [0.7, 'io', { nh: [6, -8], fh: [2, -6], yaw: 0, al: 1 }], [0.85, 'io', { nh: [5, -6] }, 'tap'], [1.0, 'io', { nh: [6, -8] }, 'tap']] },
+});
+// --- cameramen (v0.51): the nearest standing cameraman / photographer on the sidelines (end = only past that end's goal line, any distance: the photo run)
+function celebCamNear(h, range, ezOnly, end) {
+  if (!SL.on || !SL.cast || liteLevel() >= 2) return null;
+  const ppl = SL.cast.people, lo = liteLevel() >= 1;
+  let best = null, bd = range * YD;
+  for (let i = 3; i < ppl.length; i++) {
+    const P = ppl[i];
+    if (!P || (P.k !== SLK.CAM && P.k !== SLK.PHOTO) || (lo && (P.tier | 0) > 0)) continue;
+    const hh = SL.H[i];
+    if (hh && SL.now - hh.t0 < slHitLen(hh)) continue;   // (knocked down / still sorting himself out)
+    slWhere(P, SL.W[i], hh, SL.now);
+    const x = SL_P.x, y = SL_P.y;
+    if (ezOnly ? !(end > 0 ? x > FIELD : x < 0) : slOffView(x, y)) continue;
+    const d = Math.hypot(x - h.x, y - h.y);
+    if (d < bd) { bd = d; best = { i, x, y, P }; }
+  }
+  return best;
+}
+// where a lens move is done: beside the cameraman, a little on the field side, facing him (extra = yd further off). m.cam = who
+function celebCamMark(h, extra = 0) {
+  const k = celebCamNear(h, CELEB.cam.reach);
+  if (!k) return { x: h.x, y: h.y, face: h.face };
+  const P = k.P, d = (CELEB.cam.stand + extra) * YD;
+  if (P.ez) return { x: k.x - P.ez * d, y: k.y, face: P.ez, cam: { i: k.i, x: k.x, y: k.y } };
+  const sd = h.x < k.x ? -1 : 1;
+  return { x: k.x + sd * d, y: k.y + (k.y < MID ? 0.6 : -0.6) * YD, face: -sd, cam: { i: k.i, x: k.x, y: k.y } };
+}
+// the cameraman turns onto the hero and holds there for the move (host; one aim record / routine through slEvent)
+function celebCamAim(i, tx, ty, r0) {
+  const P = SL.cast && SL.cast.people[i];
+  if (!P || (ONL.on && ONL.guest) || (rec && rec.replaying)) return;
+  const now = SL.now;
+  if (P.k === SLK.CAM) {
+    slWhere(P, SL.W[i], SL.H[i], now);
+    const a = SL.A[i], cur = a && a.a1 !== undefined ? slAim(P, a, now) : slAim0(P);
+    let a1 = Math.atan2(ty - 12 * S - (SL_P.y - (P.up || 0) - 16 * S), tx - SL_P.x) + (P.ke || 0);
+    while (a1 - cur > Math.PI) a1 -= SL_PI2; while (a1 - cur < -Math.PI) a1 += SL_PI2;
+    slEvent(i, 1, { t0: now + 0.15, a0: cur, a1, T: 0.6, id: SLRI.camHold, r0: r0 != null ? r0 : now });
+  } else slEvent(i, 1, { id: SLRI[r0 != null ? 'camKneel' : 'photoShoot'], t0: r0 != null ? r0 : now });
+}
+function celebCamBegin(c) {
+  const m = c.marks && c.marks[0], k = m && m.cam;
+  if (!k || !SL.cast) return;
+  c.cels[0].cm = k.i;
+  if ((ONL.on && ONL.guest) || (rec && rec.replaying)) return;
+  SL.celCam = k.i; SL.celCamT = SL.now + (c.t0 - clock) + c.mv.secs + 1.5;
+  celebCamAim(k.i, m.x, m.y);
+}
+// the autograph on the lens: a looping pencil signature drawn on in screen space (bottom right), held, then rubbed out
+function celebAutograph(p, q) {
+  const t = q.t; if (t < 0.5 || t > 3.1) return;
+  const u = Math.min(1, (t - 0.5) / 1.0), a = 1 - smooth01((t - 2.7) / 0.4), I = CELEB_DF.ink, n = Math.max(2, Math.floor(70 * u));
+  ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0);
+  ctx.strokeStyle = `rgba(${I[0]},${I[1]},${I[2]},${0.9 * a})`; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  for (let i = 0; i <= n; i++) { const s = i / 70, x = W - 230 + 170 * s + 9 * Math.cos(s * 38), y = H - 92 - 15 * Math.sin(s * 38) * (0.6 + 0.4 * Math.sin(s * 7)); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+  if (u >= 1) { ctx.moveTo(W - 225, H - 62); ctx.quadraticCurveTo(W - 140, H - 52, W - 50, H - 70); }   // (the underline)
+  ctx.stroke(); ctx.restore();
+}
+// the director's frame: a pencil rectangle between his hands
+function celebFrameProp(q, t) {
+  if (t < 0.3 || t > 2.4) return;
+  const x = q.fh[0] - 1, y = Math.min(q.nh[1], q.fh[1]) - 4, w = q.nh[0] - q.fh[0] + 3;
+  ctx.save(); ctx.globalAlpha *= cpFade(t, 0.3, 2.4); cpPen(0.9, 0.9); ctx.beginPath();
+  cpLine(x - 0.6, y, x + w + 0.6, y, 340); cpLine(x + w, y - 0.6, x + w, y + 7.6, 346); cpLine(x + w + 0.6, y + 7, x - 0.6, y + 7, 352); cpLine(x, y + 7.6, x, y - 0.6, 358);   // (each side runs a touch past its corner, like a sketch)
+  ctx.stroke(); ctx.restore();
+}
+// posing spots in front of a photographer at S: rows across the way (dx, dy) points (unit, toward the field), facing him
+function celebPoseMarks(S, n, dx, dy, back = 2.6) {
+  const px = -dy, py = dx, slots = [[0, 0], [0, 1.15], [0, -1.15], [0, 2.3], [0, -2.3], [0.9, 0.6], [0.9, -0.6], [0.9, 1.8]], out = [];
+  for (let i = 0; i < n; i++) {
+    const s = slots[i] || [1.8, (i - 7) * 1.1], r = back + s[0];
+    const x = Math.max(-ENDZONE - 4 * YD, Math.min(FIELD + ENDZONE + 4 * YD, S.x + (dx * r + px * s[1]) * YD)), y = Math.max(Y_MIN - 3 * YD, Math.min(Y_MAX + 3 * YD, S.y + (dy * r + py * s[1]) * YD));
+    out.push({ x, y, face: Math.abs(S.x - x) > 0.3 * YD ? Math.sign(S.x - x) : 1 });
+  }
+  return out;
+}
+// the photo run's photographer: the nearer end's crew / photographer past its goal line, or (none there) a spot ezDeep yd into that end zone. Also its field direction.
+let CELEB_PS = null;   // (prep -> marks, same frame)
+function celebPhotoSpot(h) {
+  const end = h.x > FIELD / 2 ? 1 : -1, k = celebCamNear(h, 999, true, end);
+  const S = k ? { x: k.x, y: k.y, i: k.i } : { x: end > 0 ? FIELD + CELEB.cam.ezDeep * YL : -CELEB.cam.ezDeep * YL, y: MID, i: -1 };
+  const tx = (end > 0 ? FIELD + ENDZONE / 2 : -ENDZONE / 2) - S.x, ty = MID - S.y, l = Math.hypot(tx, ty) || 1;
+  if (S.i < 0) { S.dx = -end; S.dy = 0; } else { S.dx = tx / l; S.dy = ty / l; }
+  S.end = end;
+  return S;
+}
+// a run to a photographer: returns the planned run (s, 0.5 steps). Nobody is ever moved: a spot farther than one run is ruled out by the need photoNear
+const celebPhotoMax = () => CELEB.cam.runV * (CELEB.cam.runMax - 0.8);   // (yd: the longest run the move plays)
+function celebPhotoPrep(h, mates, spot) {
+  const C = CELEB.cam, S = CELEB_PS = spot, d = Math.hypot(S.x - h.x, S.y - h.y) / YD, max = celebPhotoMax();
+  return Math.round(Math.min(C.runMax, Math.min(d, max) / C.runV + 0.8) * 2) / 2;
+}
+const CM_LEGS = (q, t) => { if (q.v) grpLegs(q, t); };
+// --- the mascot (v0.51): the home team's one mascot, standing, within CELEB.mascot.reach yd -> { i, x, y, P }
+function celebMascot(h) {
+  if (!SL.on || !SL.cast || liteLevel() >= 2) return null;
+  const ppl = SL.cast.people;
+  for (let i = 3; i < ppl.length; i++) {
+    const P = ppl[i]; if (!P || P.k !== SLK.MASCOT) continue;
+    const hh = SL.H[i]; if (hh && SL.now - hh.t0 < slHitLen(hh)) return null;
+    slWhere(P, SL.W[i], hh, SL.now);
+    return Math.hypot(SL_P.x - h.x, SL_P.y - h.y) < CELEB.mascot.reach * YD ? { i, x: SL_P.x, y: SL_P.y, P } : null;
+  }
+  return null;
+}
+function celebMascotMark(h, on) {
+  const k = celebMascot(h); if (!k) return { x: h.x, y: h.y, face: h.face };
+  const sd = h.x < k.x ? -1 : 1, d = on ? 0.2 * YD : CELEB.mascot.stand * YD;
+  return { x: k.x + sd * d, y: k.y + (k.y < MID ? 0.4 : -0.4) * YD, face: -sd, ms: k.i };
+}
+// the mascot's part: one routine record, timed to the hero's own clock (his keys start at t0 + g)
+const celebMascotGo = id => c => { const m = c.marks && c.marks[0]; if (!m || m.ms == null || (ONL.on && ONL.guest) || (rec && rec.replaying)) return; slEvent(m.ms, 1, { id: SLRI[id], t0: SL.now + (c.t0 - clock) + (c.mv.g || 0) }); };
+// his team's bench: the middle of its seats on its sideline -> { x, y, s, d (yd from him) }
+function celebBenchAt(h) {
+  if (!SL.on || !SL.cast) return null;
+  const s = celebHome(h) ? 0 : 1, ppl = SL.cast.people; let sx = 0, n = 0;
+  for (let i = 3; i < ppl.length; i++) { const P = ppl[i]; if (P && P.s === s && P.k === SLK.BENCH && P.bn >= 0) { sx += P.hx; n++; } }
+  if (!n) return null;
+  const x = sx / n, y = s ? Y_MAX + 0.8 * YD : Y_MIN - 0.8 * YD;
+  return { x, y, s, d: Math.hypot(x - h.x, y - h.y) / YD };
+}
+// bench people he passes on the high-five line: one low five each as he goes by (host)
+function celebBenchFives(c) {
+  if (!SL.cast || (ONL.on && ONL.guest) || (rec && rec.replaying)) return;
+  const h = c.hero, m = c.marks && c.marks[0], b = celebBenchAt(h); if (!m || !b) return;
+  const ppl = SL.cast.people, at0 = SL.now + (c.t0 - clock) + (c.mv.g || 0), f = m.face; let k = 0;
+  for (let i = 3; i < ppl.length && k < 5; i++) {
+    const P = ppl[i]; if (!P || P.s !== b.s || !(P.k === SLK.BENCH || P.k === SLK.STAFF || P.k === SLK.GETBACK)) continue;
+    const along = (P.hx - m.x) * f / YD;
+    if (along < 0.3 || along > 5) continue;
+    slEvent(i, 1, { id: SLRI.benchLowFive, t0: at0 + 0.3 + along / 5 * 1.8 }); k++;
+  }
+}
+const CELEB_SH_W = '#f4f1e6';
+Object.assign(CELEB_MOVES, {
+  msChestBump: { tag: 'N', secs: 4.4, pk: 0.9, cast: 1, needs: 'mascot', full: true, run: 1, g: 2, sl: true, marks: h => [celebMascotMark(h)], onBegin: celebMascotGo('mascotBump'), keys: [
+    [0.5, 'out', { k: 0.88, sink: 2 }], [0.8, 'snap', { k: 1.08, sink: 0, lift: 7, nh: [8, -20], fh: [-6, -20], R: 0.15 }], [0.9, 'lin', {}, 'foam'], [1.15, 'in', { lift: 0, k: 0.9, sink: 1, R: 0 }, 'boing'],
+    [1.4, 'io', { nh: [9, -22], fh: [-7, -22], k: 1.05, sink: 0 }], [1.9, 'io', { nh: [12, 2], fh: [0, 0.5], R: 0.3, k: 1 }], [2.3, 'lin', {}]] },
+  msHandshake: { tag: 'N', secs: 4.4, pk: 0.35, cast: 1, needs: 'mascot', full: true, run: 1, g: 2, sl: true, marks: h => [celebMascotMark(h)], onBegin: celebMascotGo('mascotShake'),
+    fx: (q, t) => { if (t > 1.1 && t < 1.6) celebSpinFx(q); }, digit: ['nh', 1, 'arm', 1.9, 2.3], keys: [
+    [0.35, 'snap', { nh: [10, -24], al: 1.15 }, 'slap'], [0.5, 'io', { nh: [6, -6] }], [0.75, 'snap', { nh: [11, 4] }, 'slap'], [0.9, 'io', { nh: [3, 2], al: 1 }], [1.1, 'io', { u: 0 }],
+    [1.6, 'lin', { u: 1 }], [1.9, 'snap', { nh: [14, -12], al: 1.15 }], [2.3, 'lin', {}]] },
+  msGiveBall: { tag: 'N', secs: 3.8, pk: 0.6, cast: 1, needs: ['mascot', 'ball'], full: true, run: 1, g: 2, sl: true, marks: h => [celebMascotMark(h)], onBegin: celebMascotGo('mascotBallUp'),
+    ball: t => t < 0.6 ? { hand: 'n', rot: -1.2 } : { hand: 'x' }, keys: [
+    [0.3, 'io', { nh: [12, -10], al: 1.15 }], [0.6, 'lin', {}, 'squeak'], [0.8, 'io', { nh: [3, 2], al: 1 }], [1.0, 'lin', {}, 'squeak'], [1.1, 'io', { nh: [11, -24], al: 1.2 }, 'foam:0.5'],
+    [1.3, 'io', { nh: [11, -22] }, 'squeak'], [1.5, 'io', { nh: [3, 2], al: 1 }]] },
+  msCopy: { tag: ['N', 'dance'], secs: 5.2, pk: 0.9, cast: 1, needs: 'mascot', full: true, run: 1, g: 2, sl: true, marks: h => [celebMascotMark(h)], onBegin: celebMascotGo('mascotCopy'),
+    fx: (q, t, c) => { const D = CELEB_MOVES.dnShimmy; if (t < D.secs && D.fx) D.fx(q, t, c); if (t > 2.6 && t < 2.95) q.yaw = 0.6 * Math.sin(2 * Math.PI * (t - 2.6) / 0.175); },
+    keys: [...CELEB_MOVES.dnShimmy.keys.filter(k => k[0] < CELEB_MOVES.dnShimmy.secs), [CELEB_MOVES.dnShimmy.secs + 0.3, 'io', { ...PZ.rest, v: 0, nh: [5, -2], fh: [-4, -2] }], [3.0, 'lin', {}]] },
+  msPiggyback: { tag: 'A', secs: 4.6, pk: 0.8, cast: 1, needs: ['mascot', 'light'], full: true, run: 1, g: 2, sl: true, marks: h => [celebMascotMark(h, true)], onBegin: celebMascotGo('mascotCarry'),
+    fx: (q, t) => { if (t > 0.8 && t < 2.2) q.lift += Math.abs(Math.sin(t * 12)); }, keys: [
+    [0.3, 'out', { k: 0.88, sink: 2 }], [0.5, 'snap', { lift: 9, ox: -2, sink: 0, k: 1, l0: [-3, 0.6, 1.2], l1: [3, 0.4, 1.2] }], [0.8, 'io', { nh: [6, -32], al: 1.2 }],
+    [1.0, 'lin', {}, 'squeak'], [1.2, 'lin', { tw: 0.2 }], [1.4, 'lin', {}, 'squeak'], [1.6, 'lin', { tw: -1 }], [1.8, 'lin', {}, 'squeak'], [2.0, 'lin', { tw: 0.2 }], [2.2, 'lin', { tw: 1 }],
+    [2.4, 'in', { lift: 0, ox: 0, ...CLG.stand, nh: [3, 2], al: 1, k: 0.9 }, 'thud:0.3'], [2.6, 'io', { k: 1 }]] },
+  msShushMascot: { tag: ['N', 'taunt'], secs: 3.8, pk: 0.3, cast: 1, needs: ['away', 'mascot2'], full: true, run: 1, g: 2, sl: true, marks: h => [celebMascotMark(h)], onBegin: celebMascotGo('mascotSad'),
+    digit: ['nh', 1, -Math.PI / 2, 0.3, 1.5], keys: [[0.3, 'snap', { nh: [14, -20], al: 1.2, R: 0.12 }, 'hush:1'], [1.5, 'lin', {}], [1.8, 'io', { nh: [3, 2], al: 1, R: 0 }]] },
+  // at his own bench
+  slHighFiveLine: { tag: 'N', secs: 3.8, pk: 0.6, cast: 1, needs: 'bench', full: true, run: 1, g: 1.5, sl: true, onBegin: celebBenchFives,
+    marks: h => { const b = celebBenchAt(h), f = b && b.x > h.x ? 1 : -1; return [b ? { x: b.x - f * 2.5 * YD, y: b.y, face: f } : { x: h.x, y: h.y, face: h.face }]; },
+    dx: t => 5 * Math.min(1, t / 2.0), fx: CM_LEGS, keys: [[0.1, 'out', { v: 1, nh: [12, -10], al: 1.15 }], [0.6, 'lin', {}, 'slap:0.4'], [1.0, 'lin', {}, 'slap:0.4'], [1.4, 'lin', {}, 'slap:0.4'], [1.8, 'lin', {}, 'slap:0.4'], [2.0, 'io', { v: 0, nh: [3, 2], al: 1 }]] },
+  slBenchSeat: { tag: 'N', secs: 4.1, pk: 0.3, cast: 1, needs: 'bench', full: true, run: 1, g: 1.5, sl: true,
+    marks: h => { const b = celebBenchAt(h); return [b ? { x: b.x, y: b.y, face: h.x < b.x ? 1 : -1 } : { x: h.x, y: h.y, face: h.face }]; },
+    onBegin: c => { const b = celebBenchAt(c.hero); if (!b || (ONL.on && ONL.guest)) return; const ppl = SL.cast.people; let bi = -1, bd = 1e9;
+      for (let i = 3; i < ppl.length; i++) { const P = ppl[i]; if (P && P.k === SLK.WATER && P.s === b.s) { const d = Math.abs(P.hx - b.x); if (d < bd) { bd = d; bi = i; } } }
+      if (bi >= 0) slEvent(bi, 1, { id: SLRI.serve, t0: SL.now + (c.t0 - clock) + 1.5 + 0.3 }); },
+    props: (q, t) => { if (t < 0.5 || t > 1.8) return; ctx.fillStyle = CELEB_SH_W; ctx.fillRect(q.nh[0] - 3, q.nh[1] - 2, 6, 7); },   // (the towel)
+    keys: [[0.3, 'io', { sink: 7, R: -0.05, l0: [-3.5, -0.2, 0.9], l1: [3.5, -0.3, 0.9] }], [0.6, 'io', { nh: [6, -18], fh: [-2, -18] }], [1.0, 'io', { nh: [4, -22] }], [1.4, 'io', { nh: [6, -18] }],
+      [1.8, 'io', { nh: [3, 2], fh: [0, 0.5] }], [2.3, 'lin', {}]] },
+});
+Object.assign(CELEB_MOVES, {
+  cmSignLens: { tag: 'A', secs: 5.7, pk: 1.6, cast: 1, needs: 'cam', full: true, run: 1, g: 2.5, sl: true, marks: h => [celebCamMark(h)], onBegin: celebCamBegin, zoomIn: [0.3, 2.4], after: celebAutograph,
+    dx: t => -0.6 * smooth01((t - 1.9) / 0.5), fx: (q, t) => { if (q.v) { q.nh[0] += 2 * Math.sin(t * 2 * Math.PI * 6) * q.v; q.nh[1] += 1.5 * Math.cos(t * 2 * Math.PI * 6) * q.v; } }, keys: [
+    [0.3, 'out', { R: 0.2, k: 0.97, nh: [14, -14], al: 1.15 }], [0.5, 'lin', { v: 1 }, 'marker'], [1.0, 'lin', { v: 1 }, 'marker'], [1.5, 'io', { v: 0 }], [1.6, 'snap', { nh: [16, -14] }, 'tap'],
+    [1.9, 'io', { nh: [13, -16], R: 0.05 }], [2.4, 'io', { R: -0.05, nh: [3, 2], k: 1, al: 1 }], [3.1, 'lin', {}]] },
+  cmFlex: { tag: 'S', secs: 4.5, pk: 0.8, cast: 1, needs: 'cam', full: true, run: 1, g: 2.5, sl: true, marks: h => [celebCamMark(h)], onBegin: celebCamBegin, keys: [
+    [0.3, 'out', { k: 0.86, sink: 2, nh: [5, 0], fh: [-3, 0] }], [0.8, 'snap', { k: 1.06, sink: 0, nh: [9, -22], fh: [-7, -22] }, ['flash', 'slflash:3']],
+    [1.2, 'io', { tw: 0.3, nh: [8, -23], fh: [3, -8], k: 1.02 }, 'flash'], [1.6, 'io', { hd: 0.15, yaw: 0.4 }], [1.85, 'io', { tw: 1, hd: 0, yaw: 0 }]] },
+  cmShout: { tag: 'N', secs: 4.9, pk: 1.4, cast: 1, needs: 'cam', full: true, run: 1, g: 2.5, sl: true, marks: h => [celebCamMark(h, 1.4)], onBegin: c => { celebCamBegin(c); celebCamStep(c, 1.4); }, zoomIn: [1.0, 2.2],
+    dx: t => 1.4 * smooth01(t / 1.2), props: (q, t) => { if (t > 1.4 && t < 2.1) celebShoutProp(q, t - 1.2); },
+    fx: (q, t) => { if (q.v) grpLegs(q, t); if (q.u) { const s = Math.sin(t * 58) * q.u; q.nh[0] += 0.5 * s; q.fh[0] -= 0.5 * s; } }, keys: [
+    [0.15, 'out', { v: 1, nh: [10, -2], fh: [-8, -2] }], [1.2, 'lin', { v: 1 }], [1.4, 'snap', { v: 0, u: 1, R: 0.3, hd: -0.1, k: 1.04, nh: [8, -12], fh: [-4, -12] }, 'scream:0.7'],
+    [2.0, 'lin', { u: 1 }], [2.3, 'io', { u: 0, R: 0, hd: 0, k: 1 }]] },
+  cmLensTap: { tag: 'A', secs: 3.9, pk: 0.25, cast: 1, needs: 'cam', full: true, run: 1, g: 2.5, sl: true, marks: h => [celebCamMark(h)], onBegin: celebCamBegin,
+    dx: t => -1.2 * smooth01((t - 0.9) / 0.5), fx: CM_LEGS, keys: [
+    [0.25, 'snap', { nh: [15, -14], al: 1.15 }, 'tap'], [0.4, 'io', { nh: [13, -14] }], [0.55, 'snap', { nh: [15, -14] }, 'tap'], [0.7, 'io', { nh: [13, -14], yaw: 0.3 }],
+    [0.9, 'io', { yaw: 0, nh: [3, 2], al: 1, v: 1 }], [1.3, 'lin', { v: 1 }], [1.4, 'io', { v: 0 }]] },
+  cmSlideIn: { tag: 'A', secs: 4.7, pk: 1.2, cast: 1, needs: 'cam', full: true, run: 1, g: 2.5, sl: true, marks: h => [celebCamMark(h, 1.5)], onBegin: celebCamBegin,
+    dx: t => 1.5 * (1 - Math.pow(1 - Math.min(1, t / 0.5), 2)), after: (p, q) => celebSlideAfter(p, { t: q.t + 0.45 }), keys: [
+    [0.1, 'snap', { ...CLG.kneel, sink: 6, R: -0.2, nh: [12, -12], fh: [-11, -12], al: 1.1 }, 'scrape:1.2'], [0.6, 'io', { R: -0.1 }], [1.2, 'lin', {}, ['flash', 'slflash:3']], [1.5, 'lin', {}, 'flash'],
+    [1.8, 'io', { ...CLG.stand, sink: 0, R: 0, nh: [3, 2], fh: [0, 0.5], al: 1 }]] },
+  cmDirector: { tag: 'N', secs: 2.8, pk: 0.9, cast: 2, needs: null, sl: true, marks: h => [{ x: h.x, y: h.y, face: h.face }, { x: h.x + h.face * 2.5 * YD, y: h.y, face: -h.face }], roles: [
+    { props: celebFrameProp, keys: [[0.3, 'out', { nh: [10, -16], fh: [8, -16] }], [0.9, 'lin', {}, 'shutter'], [1.6, 'lin', {}, 'shutter'], [2.4, 'io', { nh: [3, 2], fh: [0, 0.5] }]] },
+    { g: 0.6, keys: [[0.0, 'lin', {}], [0.25, 'snap', { ...PZ.flex }], [0.9, 'lin', {}], [1.0, 'snap', { ...PZ.rest, ...PZ.cross }], [1.7, 'lin', {}], [2.0, 'io', { ...PZ.rest }]] }] },
+  // the group pose at a camera (seeded): two rows, the front kneeling, two shots
+  cmGroupPose: grpBase([3, 6], { needs: 'cam', full: true, sl: true, reach: 8, prep: (h, m) => { const k = celebCamNear(h, CELEB.cam.reach); if (!k) return 0; const S = { x: k.x, y: k.y, i: k.i };
+      if (k.P.ez) { S.dx = -k.P.ez; S.dy = 0; } else { S.dx = 0; S.dy = k.y < MID ? 1 : -1; } return celebPhotoPrep(h, m, S); }, onBegin: c => celebPhotoBegin(c, 0.45), gen: G => celebPoseGen(G, false) }),
+  // the defense's photo run after a takeaway: the nearer end zone's photographer, everyone sprints there, two shots, a jump and away (seeded)
+  dgPhotoRun: grpBase([3, 7], { needs: ['d6', 'photoNear'], full: true, sl: true, reach: 10, cpuMax: CELEB.cam.cpuMax, prep: (h, m) => celebPhotoPrep(h, m, celebPhotoSpot(h)), onBegin: c => celebPhotoBegin(c, 0.45), gen: G => celebPoseGen(G, true) }),
+});
+// the cameraman takes a step back as the hero leans in (cmShout): one round-trip walk record
+function celebCamStep(c, at) {
+  const m = c.marks && c.marks[0], k = m && m.cam;
+  if (!k || (ONL.on && ONL.guest) || (rec && rec.replaying)) return;
+  const P = SL.cast.people[k.i]; slWhere(P, SL.W[k.i], SL.H[k.i], SL.now);
+  const x = SL_P.x, y = SL_P.y, sx = Math.sign(x - m.x) || 1, L = 0.5 * YD, t0 = SL.now + (c.t0 - clock) + (c.mv.g || 0) + at;
+  slEvent(k.i, 0, { fx: x, fy: y, tx: x + (P.ez ? sx * L : 0), ty: y + (P.ez ? 0 : (y < MID ? -L : L)), t0, T: 0.4, L, d0: 0, d1: 0, fs: 1, fe: 1, rt: t0 + 1.2 });
+}
+// the photo moves' start (host): the photographer kneels and shoots at the first flash, or (none at that end) the nearest sideline camera turns to the spot
+function celebPhotoBegin(c, at) {
+  const S = c.marks && c.marks.spot;
+  if (!S || !SL.cast || (ONL.on && ONL.guest) || (rec && rec.replaying)) return;
+  const r0 = SL.now + (c.t0 - clock) + ((c.mv.roles && c.mv.roles[0].g) || 0) + at;
+  if (S.i >= 0) { c.cels[0].cm = S.i; SL.celCam = S.i; SL.celCamT = r0 + 4; celebCamAim(S.i, c.marks[0].x, c.marks[0].y, r0); return; }
+  const k = celebCamNear(S, 60); if (k && k.P.k === SLK.CAM && !k.P.ez) { c.cels[0].cm = k.i; SL.celCam = k.i; SL.celCamT = r0 + 4; celebCamAim(k.i, S.x, S.y); }
+}
+// the posing group (cmGroupPose / dgPhotoRun): everyone sprints in (run, planned G.r s), slot 1 = each man's pose + a shot, slot 2 = a new pose + a shot,
+// then a jump and they jog away. The hero holds the ball out at the lens; front-row mates kneel in a big group.
+function celebPoseGen(G, run) {
+  const B = grpB(G, Math.max(0.6, G.r || 1.2)), M = B.mates, poses = ['flex', 'cross', 'point', 'sky', 'shoulder'], kneel = G.n > 4;
+  const pz = (i, nm) => nm === 'shoulder' ? { ...PZ.rest, nh: [9, -14], fh: [-2, 0] } : { ...PZ.rest, ...PZ[nm] };
+  B.k(0, 0.3, 'out', { ...PZ.rest, nh: [13, -14], al: 1.15, k: 1.03 });   // the ball out at the lens
+  let t = 0.3;
+  for (let s = 0; s < 2; s++) {
+    M.forEach((i, j) => { const nm = B.pick(poses); B.k(i, t, 'snap', { ...pz(i, nm), ...(kneel && i <= 4 ? { ...CLG.kneel, sink: 6 } : null) }, j ? null : 'whoosh:0.3'); });
+    B.k(0, t + 0.3, 'lin', {}, ['shutter', 'flash', 'slflash:4']); B.hold(t + 0.75, M); t += 0.9;
+  }
+  B.all(t + 0.15, 'out', PZ.crouch); B.all(t + 0.35, 'snap', PZ.jump, 'whoosh'); B.all(t + 0.6, 'in', PZ.land, 'stomp:0.5'); B.all(t + 0.75, 'io', PZ.rest);
+  M.forEach(i => B.mv(i, t + 0.75, t + 1.3, 0, (i % 2 ? 1 : -1) * 1.6));
+  const V = grpDone(B, t + 1.3, { pk: 0.6, noLate: true, flavor: false });
+  V.roles.forEach(R => { R.run = 1; });
+  V.roles[0].ball = () => ({ hand: 'n', rot: -1.2 });
+  if (run) V.roles[0].runNh = [6, -30];
+  V.marks = h => { const S = CELEB_PS || { x: h.x + h.face * 4 * YD, y: h.y, dx: -h.face, dy: 0, i: -1 }, out = celebPoseMarks(S, G.n, S.dx, S.dy); out.spot = S; return out; };
+  return V;
+}
+// --- disrespect (v0.51): taunts with the `rude` tag (CELEB_TAGS: more likely to be fined). TAUNTS OFF removes them like any taunt.
+// the spike after two pump fakes: thrown down from the hand at tr
+function rdSpikeBall(t, q, mv, c) {
+  const tr = 1.1, th = 0.05, T = 0.5;
+  if (t < tr) return { hand: 'n', rot: -1.2 };
+  const q0 = celebAtL(mv, tr, c), [x0, y0] = celebMap(q0, q0.nh[0], q0.nh[1]), xg = x0 + 5;
+  if (t < tr + th) { const u = (t - tr) / th; return { x: x0 + (xg - x0) * u, y: 2 * u, h: Math.max(0, 14 - y0 - CELEB_BALL_R / FIGURE.grow) * (1 - u), rot: -1.2 + 2 * u }; }
+  const u = Math.min(1, (t - tr - th) / T);
+  return { x: xg + 24 * u, y: 2 - 7 * u, h: 104 * u * (1 - u), rot: 0.8 + 9 * u * T };
+}
+// tossed to the defender's feet and set spinning there (cel.dist = how far off he is)
+function rdSpinAtBall(t, q, mv, c) {
+  if (t < 0.35) return { hand: 'n', rot: -1.2 };
+  const U = YD / (S * FIGURE.grow), xe = Math.max(0.6, ((c && c.dist) || 2) - 0.6) * U, te = mv.secs - 0.2, D = Math.max(0.3, te - 0.55), u = Math.min(1, (t - 0.35) / 0.2);
+  if (u < 1) return { x: 13 + (xe - 13) * u, y: 1, h: 8 * (1 - u) + 10 * u * (1 - u), rot: -1.2 + 4 * u };
+  const sp = Math.max(0, Math.min(D, t - 0.55));
+  return { x: xe, y: 1, h: 0, rot: 0, top: 44 * sp * (1 - sp / (2 * D)), wob: 0.13 * Math.sin(sp * 9) * Math.min(1, sp * 2), fall: smooth01((t - te) / 0.18) };
+}
+// the nap's pillow: let go behind his head as he lies down
+function rdNapBall(t) {
+  if (t < 0.25) return { hand: 'n', rot: -1.2 };
+  const u = Math.min(1, (t - 0.25) / 0.2);
+  return { x: 4 + (-17 - 4) * u, y: 1, h: 16 * (1 - u * u), rot: -1.2 + 1.2 * u };
+}
+// Z Z Z drifting up off his head (pencil, world space)
+function rdNapZ(p, q) {
+  const t = q.t; if (t < 0.7 || t > 2.1) return;
+  const bk = dfInk(p, 1 - smooth01((t - 1.8) / 0.3));
+  for (let i = 0; i < 3; i++) {
+    const s = ((t - 0.7) * 0.8 + i * 0.33) % 1, x = p.x + p.face * (-15 + 6 * s + 2 * i) * bk, y = p.y + FOOT - (8 + 26 * s) * bk, z = (2.2 + 1.2 * i) * bk;
+    ctx.beginPath(); ctx.moveTo(x - z, y - z); ctx.lineTo(x + z, y - z); ctx.lineTo(x - z, y + z); ctx.lineTo(x + z, y + z); ctx.stroke();
+  }
+}
+// the man flinching at each pump fake (rdTwoPump): a small side cel on the nearest defender standing within 6 yd
+function rdFlinchers(c) {
+  const h = c.hero, d = allPlayers().filter(p => p.team !== h.team && !p.action && !p.cel && !p.slOut && !lyingDown(p) && dist(p, h) < 6 * YD).sort((a, b) => dist(a, h) - dist(b, h))[0];
+  if (!d) return;
+  const x = celebMake('rxFlinch', d, [], { t0: c.t0 + 0.32 / (c.cels[0].rate || 1) });
+  Object.assign(x.cels[0], { rx: 1, ld: 0.1, tl: 0.3 });
+  d.cel = x.cels[0];
+  celebLive.push(Object.assign(x, { ev: 'rx', dur: CELEB_MOVES.rxFlinch.secs + 0.4, side: true, rx: true, hy: 0 }));
+}
+const RD_WAVE = (q, t) => { if (q.v) { const w = Math.sin(2 * Math.PI * 3 * t) * q.v; q.nh[0] += 3 * w; q.fh[0] += 3 * w; grpLegs(q, -t); } };
+Object.assign(CELEB_MOVES, {
+  rxFlinch: { tag: 'R', secs: 0.8, cast: 1, needs: null, keys: [[0.1, 'snap', { k: 0.93, R: -0.1 }], [0.25, 'io', { k: 1, R: 0 }], [0.43, 'snap', { k: 0.93, R: -0.1 }], [0.6, 'io', { k: 1, R: 0 }]] },
+  rdTwoPump: { tag: ['N', 'taunt'], secs: 1.6, pk: 1.15, cast: 1, needs: 'ball', ball: rdSpikeBall, onBegin: rdFlinchers, keys: [
+    [0.25, 'snap', { nh: [5, -33], k: 1.05, al: 1.2 }], [0.42, 'snap', { nh: [9, -2], k: 0.9 }, 'whoosh'], [0.58, 'io', { nh: [5, -33], k: 1.05 }], [0.75, 'snap', { nh: [9, -2], k: 0.9 }, 'whoosh'],
+    [0.92, 'io', { nh: [5, -33], k: 1.05, yaw: 0.5 }], [1.08, 'lin', {}], [1.15, 'snap', { nh: [10, 4], k: 0.92, R: 0.2, yaw: 0 }, 'thud'], [1.4, 'io', { R: 0, k: 1, nh: [3, 2], al: 1 }]] },
+  rdStandOver: { tag: ['N', 'taunt'], secs: 1.8, pk: 0.8, cast: 1, needs: 'down', turn: 'tgt', dx: (t, c) => ((c && c.dist) || 1.2) * (smooth01((t - 0.1) / 0.4) - 0.7 * smooth01((t - 1.4) / 0.35)), keys: [
+    [0.5, 'io', { ...CLG.wide, hd: 0.3, nh: [3, 3], fh: [0, 2] }], [0.8, 'io', { hd: 0.42 }], [0.95, 'io', { hd: 0.3 }], [1.15, 'io', { hd: 0.42 }], [1.3, 'io', { hd: 0.3 }], [1.5, 'io', { ...CLG.stand, hd: 0 }]] },
+  rdBallSpinAt: { tag: ['N', 'taunt'], secs: 1.6, pk: 0.4, cast: 1, needs: ['foe', 'ball'], turn: 'tgt', ball: rdSpinAtBall, keys: [
+    [0.2, 'out', { nh: [6, 4], R: 0.25, k: 0.94 }], [0.35, 'snap', { nh: [13, 6], R: 0.3 }, 'whoosh:0.3'], [0.6, 'io', { R: 0, k: 1, nh: [3, 2] }], [0.9, 'io', { nh: [9, -6], fh: [-7, -6], k: 1.02 }], [1.3, 'io', { nh: [3, 2], fh: [0, 0.5], k: 1 }]] },
+  rdFakeShake: { tag: ['N', 'taunt'], secs: 1.8, pk: 0.9, cast: 1, needs: 'foe', turn: 'tgt', keys: [
+    [0.3, 'io', { nh: [13, -8], al: 1.15 }], [0.75, 'lin', {}], [0.9, 'snap', { nh: [3, -27], al: 1 }, 'whoosh:0.3'], [1.1, 'io', { nh: [1, -28] }], [1.3, 'io', { nh: [3, -27] }], [1.6, 'io', { nh: [3, 2] }]] },
+  rdNap: { tag: ['N', 'taunt'], secs: 2.6, pk: 0.45, cast: 1, needs: null, ball: rdNapBall, after: rdNapZ, keys: [
+    [0.15, 'out', { k: 0.9, sink: 2 }], [0.45, 'io', { ...PZ.back }, 'thud:0.4'], [2.0, 'lin', {}], [2.3, 'snap', { ...PZ.rest }, 'whoosh:0.3']] },
+  rdWaveOff: { tag: ['N', 'taunt'], secs: 1.4, pk: 0.3, cast: 1, needs: null, fx: RD_WAVE, dx: t => -1 * smooth01(t / 1.2), keys: [
+    [0.2, 'out', { nh: [12, -6], fh: [9, -6], v: 1 }], [1.1, 'lin', { v: 1 }], [1.4, 'io', { v: 0 }]] },
+  rdCountSteps: { tag: ['N', 'taunt'], secs: 1.6, pk: 0.4, cast: 1, needs: ['foe', 'ball'], turn: 'tgt', digit: [['fh', 1, -Math.PI / 2, 0.4, 0.7], ['fh', 2, -Math.PI / 2, 0.7, 1.0], ['fh', 3, -Math.PI / 2, 1.0, 1.45]],
+    ball: () => ({ hand: 'n', rot: -1.2 }), keys: [[0.2, 'io', { nh: [13, -10], fh: [6, -16], al: 1.15 }], [1.4, 'lin', {}]] },
+});
+// --- fines (v0.51): a taunt by one of YOUR named players in your franchise may be fined (CELEB.fine; at most one a game); the other teams' players at a tenth of the
+// odds, a Post note only. Kept on LEAGUE.celFines and settled in the next homeNews (celFineNews, 11): -1 / 2 / 3 credits (normal / rude / repeat offender).
+function celebFineRoll(q, h, mv, id) {
+  const tg = [].concat(mv.tag), name = h.src && h.src.name;
+  if (!tg.includes('taunt') || q.side || q.forceId || !xpcOn() || !game || tut || !name || (typeof CO !== 'undefined' && CO)) return;
+  const mine = celebFav(h) === 'you', F = LEAGUE.celFines || (LEAGUE.celFines = []), yr = LEAGUE.year || 1, past = F.filter(f => f.name === name && f.yr === yr).length;
+  const rude = tg.includes('rude'), show = celebFlags.show && celebFlags.show.p === h, C = CELEB.fine;
+  if (mine && game.celFined) return;
+  let k = rude ? C.rudeK : 1;
+  if (show && typeof SHOW !== 'undefined') k = Math.max(k, SHOW.fineK);
+  const p = C.odds * k * Math.pow(C.repeatK, past) * (mine ? 1 : C.cpuK);
+  if (Math.random() >= p) return;
+  if (mine) game.celFined = 1;
+  F.push({ name, move: id, wk: season ? season.week : 0, yr, cr: past ? 3 : rude || show ? 2 : 1, cpu: mine ? 0 : 1, team: MATCH[celebFav(h)] });
+}
+// --- v0.51 lead-ins and exits: clips in the move key format the hero of a solo move plays in the lead-in (cel.pr) and the wind-down (cel.po) instead of
+// the plain blend (prWaveOver: before a cast move). Picked in celebBegin (celebPrePick), drawn by celebPose (celebClipPose), travel in celebPlace (dx along his
+// facing, dy toward his bench), beats in celebFxMen (celebClipBeats). ok(h, q, mv, x) = can it play here. Looks / sound only.
+const CELEB_PRE = {
+  prBreath: { secs: 0.9, ok: (h, q, mv, x) => x.gas, keys: [[0.15, 'out', { k: 0.93, R: 0.22, sink: 1.2, hd: 0.15, nh: [5, 3], fh: [3, 3], ...CLG.bend }], [0.35, 'io', { k: 0.9 }], [0.6, 'io', { k: 0.95 }], [0.9, 'io', { k: 1, R: 0, sink: 0, hd: -0.1, nh: [3, 2], fh: [0, 0.5], ...CLG.stand }]] },
+  prLookAround: { secs: 0.8, keys: [[0.12, 'out', { nh: [10, -2], fh: [-8, -2] }], [0.25, 'io', { yaw: 0.6 }], [0.5, 'io', { yaw: -0.6 }], [0.7, 'io', { yaw: 0 }]] },
+  prBallToRef: { secs: 0.7, ok: (h, q, mv, x) => x.hb && !x.ball && !x.cast, ball: (t, q, c) => {   // an underhand flick: a 2 yd lob toward the nearer sideline, lands, lies there
+      if (t < 0.3) return { hand: 'n', rot: -1.2 };
+      const U = YD / (S * FIGURE.grow), u = Math.min(1, (t - 0.3) / 0.32), v = Math.max(0, Math.min(1, (t - 0.62) / 0.2)), sd = (c && c.ps) || 1;
+      return { x: 12 + (0.6 * U - 12) * u + 3 * v, y: sd * 2 * U * u + sd * 4 * v, h: 18 * (1 - u) + 30 * u * (1 - u) + 5 * v * (1 - v), rot: -1.2 + 6 * u + 2 * v };
+    }, keys: [[0.15, 'out', { nh: [4, 4], R: 0.05 }], [0.3, 'snap', { nh: [12, -6], al: 1.1 }, 'whoosh:0.2'], [0.55, 'io', { nh: [3, 2], al: 1, R: 0 }]] },
+  prWaveOver: { secs: 0.9, ok: (h, q, mv, x) => x.cast, keys: [[0.2, 'out', { nh: [13, -12], yaw: 0.4 }], [0.35, 'io', { nh: [6, -8] }], [0.5, 'io', { nh: [13, -12] }], [0.65, 'io', { nh: [6, -8] }], [0.85, 'io', { nh: [3, 2], yaw: 0 }]] },
+  prGloves: { secs: 0.6, keys: [[0.15, 'out', { nh: [4, -6], fh: [3, -6] }], [0.25, 'io', { ox: 0.3 }], [0.33, 'io', { ox: -0.3 }], [0.4, 'io', { ox: 0.3 }], [0.48, 'io', { ox: 0 }]] },
+  prStrut: { secs: 1.0, ok: (h, q, mv, x) => x.hy >= 0.6 && !x.marks, dx: t => 1.2 * smooth01(t / 1), fx: (q, t) => { if (q.v) { grpLegs(q, t * 0.5); q.k *= 1 + 0.02 * Math.sin(t * 2 * Math.PI * 2) * q.v; } },
+    keys: [[0.15, 'out', { R: -0.08, v: 1 }], [0.85, 'lin', { v: 1 }], [1.0, 'io', { R: 0, v: 0 }]] },
+  prPoint: { secs: 0.5, ok: (h, q, mv, x) => x.marks, fx: (q, t, c) => celebPointFx(q, t, { aim: c && c.pa != null ? c.pa : 0.1 }), digit: ['nh', 1, 'arm', 0.15, 0.45],
+    keys: [[0.15, 'snap', { u: 1 }], [0.4, 'io', { u: 1 }], [0.5, 'io', { u: 0 }]] },
+};
+const CELEB_POST = {
+  poNod: { secs: 0.7, keys: [[0.12, 'out', { nh: [5, -2], fh: [-4, -2] }], [0.22, 'io', { hd: 0.12 }], [0.34, 'io', { hd: 0 }], [0.46, 'io', { hd: 0.12 }], [0.58, 'io', { hd: 0 }]] },
+  poPointBack: { secs: 0.8, turn: true, ok: (h, q, mv, x) => !!x.tgt, fx: (q, t, c) => celebPointFx(q, t, { aim: c && c.pa != null ? c.pa : 0.1 }), digit: ['nh', 1, 'arm', 0.2, 0.6],
+    keys: [[0.2, 'snap', { u: 1 }], [0.6, 'io', { u: 1 }], [0.8, 'io', { u: 0 }]] },
+  poHelmetTap: { secs: 0.6, ok: (h, q, mv, x) => !!x.mate, keys: [[0.15, 'io', { k: 0.96, hd: 0.1 }, 'slap:0.3'], [0.25, 'io', { k: 1, hd: 0 }], [0.35, 'io', { k: 0.96, hd: 0.1 }, 'slap:0.3'], [0.45, 'io', { k: 1, hd: 0 }]] },
+  poJogOff: { secs: 0.9, dy: t => 2 * smooth01(t / 0.9), fx: (q, t) => { if (q.v) grpLegs(q, t); }, keys: [[0.1, 'out', { v: 1, nh: [6, -4] }], [0.8, 'lin', { v: 1 }], [0.9, 'io', { v: 0, nh: [3, 2] }]] },
+  poHandBall: { secs: 0.6, ok: (h, q, mv, x) => x.held, ball: (t, q, c) => {   // held out, let go: straight down, a small bounce
+      if (t < 0.35) return { hand: 'n', rot: -1.2 };
+      const q0 = celebClipAt(CELEB_POST.poHandBall, 0.35, c), [x0, y0] = celebMap(q0, q0.nh[0], q0.nh[1]), h0 = Math.max(0, 14 - y0 - CELEB_BALL_R / FIGURE.grow);
+      const u = Math.min(1, (t - 0.35) / 0.18), v = Math.max(0, Math.min(1, (t - 0.53) / 0.2));
+      return { x: x0 + u + 2 * v, y: 1 + v, h: h0 * (1 - u * u) + 10 * v * (1 - v), rot: -1.2 + 2.6 * u + v };
+    }, keys: [[0.15, 'out', { nh: [12, -8], al: 1.1 }], [0.45, 'lin', { nh: [12, -8] }], [0.6, 'io', { nh: [3, 2], al: 1 }]] },
+  poWalkNod: { secs: 1.0, ok: (h, q, mv, x) => x.hy >= 0.7, dx: t => smooth01(t / 1), fx: (q, t) => { if (q.v) { grpLegs(q, t * 0.6); q.hd = 0.12 * Math.max(0, Math.sin(t * 2 * Math.PI * 2)) * q.v; } },
+    keys: [[0.1, 'out', { v: 1, nh: [5, -2], fh: [-4, -2] }], [0.9, 'lin', { v: 1 }], [1.0, 'io', { v: 0 }]] },
+};
+// the teammate who pats his helmet (poHelmetTap): jogs to a spot in front of him, two pats (tag R: never in a pool)
+Object.assign(CELEB_MOVES, { poPatMate: { tag: 'R', secs: 1.2, cast: 1, needs: null, g: 0.6, marks: (h, m, e) => [e.pat || { x: h.x + h.face * YD, y: h.y, face: -h.face }], keys: [
+  [0.1, 'out', { nh: [8, -24], al: 1.1 }], [0.2, 'io', { nh: [8, -21] }], [0.3, 'io', { nh: [8, -24] }], [0.4, 'io', { nh: [8, -21] }], [0.55, 'io', { nh: [3, 2], al: 1 }]] } });
+// a clip's pose at t (its own clock) / q eased toward z by w
+function celebClipAt(P, t, c) { const tt = Math.max(0, Math.min(P.secs, t)), q = celebSample(P, P, tt); if (P.fx) P.fx(q, tt, c, tt); return q; }
+function celebMix(q, z, w) { for (const k of CELEB_NUM) q[k] += (z[k] - q[k]) * w; for (const k of CELEB_VEC) q[k] = q[k].map((v, j) => v + (z[k][j] - v) * w); }
+// the lead-in (pre = true: z = the move's first pose, blended into at its end) or the exit (z = the move's last pose, blended out of at its start)
+function celebClipPose(P, tp, c, mv, z, pre, pkS) {
+  const q = celebClipAt(P, tp, c), M = CELEB.pre.mix, w = pre ? smooth01((tp - (P.secs - M)) / M) : 1 - smooth01(tp / M);
+  if (w > 0) celebMix(q, z, w);
+  q.k = Math.max(CELEB.squashMin, Math.min(CELEB.squashMax, q.k));
+  if (c.b) q.ball = P.ball ? P.ball(tp, q, c) : pre ? { hand: 'n', rot: -1.2 } : celebBallAt(mv, mv.secs, null, c);
+  q.cel = c; q.mv = mv; q.role = P; q.tg = pre ? 0 : mv.secs; q.t = tp; q.legs = [q.l0, q.l1]; q.pkS = pkS;
+  return q;
+}
+// pre / post clip beats (celebFxMen): uA -> uB = the hero's move clock this frame
+function celebClipBeats(c, mv, uA, uB, fav) {
+  const r = c.rate || 1, sp = celebWarpOf(mv, c.hy).span, P = c.pr && CELEB_PRE[c.pr], Po = c.po && CELEB_POST[c.po];
+  const fire = (K, a, b) => { if (K && b > a) for (const [bt, sfx] of celebBeatsOf(K)) if (bt > a && bt <= b) celebSfx(sfx, fav); };
+  if (P) fire(P, uA / r + (c.ld || 0), uB / r + (c.ld || 0));
+  if (Po) fire(Po, (uA - sp) / r, (uB - sp) / r);
+}
+// which clips this celebration gets: { pr, po, tgt, mate } (none under CELEB.pre.minHype, for a side / chained one, the tutorial or the cold open)
+function celebPrePick(q, h, V, hy, gas, mates, E, chain) {
+  const P = CELEB.pre, o = {};
+  if (hy < P.minHype || q.side || q.chained || P.none.includes(q.ev) || tut || (typeof CO !== 'undefined' && CO)) return o;
+  const R0 = V.roles ? V.roles[0] : V, hb = !!(h.hasBall || (h === qb && runner === qb && !ball.loose && !ball.inAir));
+  let held = false;
+  if (hb && R0.ball && !mates.length) try { const tt = V.secs - CELEB.dropTail - 0.02, b = R0.ball(tt - (R0.g || 0), celebAt(V, tt, { i: 0 }), V, { i: 0 }); held = !!(b && b.hand === 'n'); } catch (e) {}
+  const pass = typeof playPass !== 'undefined' && playPass && qb && qb.team === h.team && h !== qb ? qb : null;
+  const tgt = (q.o && q.o.tgt && q.o.tgt.team === h.team && q.o.tgt !== h ? q.o.tgt : null) || (q.ev === 'td' ? pass : null) || celebMates(h, CELEB.teamRange)[0] || null;
+  const mate = celebMates(h, P.patYd, CELEB_MATE.ol)[0] || celebMates(h, P.patYd)[0] || null;
+  const x = { hb, gas: !!gas, cast: mates.length > 0, marks: !!V.marks, ball: !!R0.ball, held, tgt, mate, hy };
+  const roll = (T, W) => {
+    const ids = Object.keys(T).filter(id => (E.cap !== 'quick' || P.quick.includes(id)) && (!T[id].ok || T[id].ok(h, q, V, x)));
+    if (!ids.length) return null;
+    let sum = 0; const ws = ids.map(id => sum += (W[id] || 0.5)); const r = Math.random() * sum;
+    return ids[ws.findIndex(w => r < w)] || ids[0];
+  };
+  if (x.cast) { if (CELEB_PRE.prWaveOver.ok(h, q, V, x)) o.pr = 'prWaveOver'; return o; }
+  o.pr = gas && E.cap !== 'quick' ? 'prBreath' : roll(Object.fromEntries(Object.entries(CELEB_PRE).filter(([k]) => k !== 'prBreath' && k !== 'prWaveOver')), P.w);
+  if (!chain) {
+    o.po = roll(CELEB_POST, P.wPost);
+    if (SL.on && SL.ra && SL.ra.td && SL.cast && SL.ra.ids.some(i => { slWhere(SL.cast.people[i], SL.W[i], SL.H[i], SL.now); return Math.hypot(SL_P.x - h.x, SL_P.y - h.y) < CELEB.bench.five * YD; })) o.po = 'poJogOff';   // (the bench ran down with him: he jogs past them)
+    if (o.po === 'poPointBack') o.tgt = tgt; if (o.po === 'poHelmetTap') o.mate = mate;
+  }
+  return o;
+}
+// the aim of a point at spot g (x, y) from h facing f (the celebPointFx angle)
+const celebAimAt = (h, g, f) => { const bk = S * figK(h); return Math.round(Math.atan2((g.y - h.y) / bk + 2, Math.max(1, (g.x - h.x) * f / bk)) * 100) / 100; };
 const CELEB_EVENTS = {
   td:      { pri: 3, cap: 'score', turn: 'field', moves: { spike: 1, ballSpin: 1, topSpin: 1, flexDouble: 1, flexOne: 1, backflip: 1, headstand: 1, paperShuffle: 1, goalpostDunk: 1, goalpostHug: 1, teammateDunk: 1,
                         postSelfLob: 0.5, postWindmill: 0.5, postReverse: 0.5, postSpin360: 0.5, postHangSwing: 0.6, postFingerRoll: 0.4, postBounceMiss: 0.25, postAlleyOop: 0.7, postDoubleOop: 0.5,
@@ -5159,6 +6049,26 @@ const CELEB_EVENTS = {
   test:    { pri: 5, cap: 'end', moves: {} },                                                 // the celebration test panel's PLAY NOW (12-modes-settings)
   rx:      { pri: 0, cap: 'quick', moves: {} },                                               // a defender's reaction beside someone else's celebration (celebReactors)
 };
+// v0.51: the new moves' place in the event pools (event -> { id: weight }; team: the team pool)
+function celebPools(T) { for (const ev of Object.keys(T)) for (const [k, ids] of Object.entries(T[ev])) Object.assign(k === 'team' ? (CELEB_EVENTS[ev].team = CELEB_EVENTS[ev].team || {}) : CELEB_EVENTS[ev].moves, ids); }
+celebPools({
+  td: { m: { crPumpUp: 0.6, crConductor: 0.4, crEarBoth: 0.5, crWallSit: 0.7, crWallBall: 0.4, crWallStand: 0.4, crShushWalk: 0.5, crCantHear: 0.5, crShushBoth: 0.4, crFakeLeap: 0.4, crBowToBoos: 0.4, crScoreboard: 0.3 } },
+  pick: { m: { crShushWalk: 0.5, crCantHear: 0.5, crShushBoth: 0.5, crPumpUp: 0.5 } },
+  sack: { m: { crPumpUp: 0.4, crCantHear: 0.4 } }, stop: { m: { crPumpUp: 0.4, crCantHear: 0.4 } },
+  long: { m: { crWaveBye: 0.4 } },
+});
+celebPools({
+  td: { m: { cmSignLens: 0.5, cmFlex: 0.5, cmShout: 0.5, cmLensTap: 0.5, cmSlideIn: 0.5, cmDirector: 0.3 }, team: { cmGroupPose: 0.8, dgPhotoRun: 2.5 } },
+  pick: { team: { dgPhotoRun: 2.5 } }, fumRec: { team: { dgPhotoRun: 2.5 } },
+});
+celebPools({
+  td: { m: { rdTwoPump: 0.3, rdStandOver: 0.3, rdBallSpinAt: 0.3, rdFakeShake: 0.3, rdNap: 0.3, rdWaveOff: 0.3, rdCountSteps: 0.3, msChestBump: 0.5, msHandshake: 0.5, msGiveBall: 0.5, msCopy: 0.5, msPiggyback: 0.5, msShushMascot: 0.15, slHighFiveLine: 0.5, slBenchSeat: 0.5 } },
+  pick: { m: { msChestBump: 0.4, msHandshake: 0.4 } }, fumRec: { m: { msChestBump: 0.4, msHandshake: 0.4 } },
+});
+celebPools({
+  miss: { m: { rdStandOver: 0.6, rdFakeShake: 0.5 } }, stiff: { m: { rdStandOver: 0.6, rdFakeShake: 0.5 } },
+  sack: { m: { rdStandOver: 0.5, rdWaveOff: 0.5 } }, pick: { m: { rdWaveOff: 0.5, rdBallSpinAt: 0.4 } },
+});
 // --- sound beats, peaks and extra tags for the moves above (new moves write them inline: a key's 4th item = its sfx, `pk` = the peak, tag lists).
 // id -> [peak (s on the hero's clock), the hero's beats [s, sfx] ..., then one list per further role]. Landings off a jump and the scripted ball hitting
 // the turf need no beat: celebFxTick reads those off the pose.
@@ -5169,25 +6079,25 @@ const CELEB_BEATS = {
   paperShuffle: [1.7, [[0.36, 'scrape:0.6'], [0.62, 'scrape:0.6'], [0.88, 'scrape:0.6'], [1.16, 'scrape:0.6'], [1.26, 'whoosh'], [1.7, 'snap']]],
   doubleFistPump: [0.32, [[0.32, 'whoosh:0.6'], [0.32, 'grunt:0.7'], [0.56, 'whoosh:0.6']]], pointTo: [0.22, [[0.22, 'whoosh:0.5']]], twoFingers: [0.24, [[0.24, 'whoosh:0.5']]],
   armWindmill: [0.74, [[0.2, 'whoosh'], [0.44, 'whoosh'], [0.74, 'snap']]], firstDownPoint: [0.22, [[0.22, 'whoosh']]], chestPound: [0.2, [[0.2, 'stomp:0.7'], [0.4, 'stomp:0.7']]],
-  catchSignal: [0.22, [[0.22, 'slap:0.5'], [0.44, 'slap:0.5']]], stickyHands: [0.3, [[0.3, 'clap'], [0.75, 'scrape:0.5']]], helmetTap: [0.2, [[0.2, 'slap:0.6'], [0.38, 'slap:0.6']]],
-  scream: [0.24, [[0.24, 'grunt:1.4']]], stepOver: [0.45, [[0.7, 'stomp:0.4']]], lookBack: [0.25, [[0.25, 'whoosh:0.3']]],
+  catchSignal: [0.22, [[0.22, 'slap:0.5'], [0.44, 'slap:0.5']]], stickyHands: [0.3, [[0.3, 'clap'], [0.4, 'pencil:0.4'], [0.75, 'scrape:0.5']]], helmetTap: [0.2, [[0.2, 'slap:0.6'], [0.38, 'slap:0.6']]],
+  scream: [0.24, [[0.24, 'scream:0.8']]], stepOver: [0.45, [[0.7, 'stomp:0.4']]], lookBack: [0.25, [[0.25, 'whoosh:0.3']]],
   shoulderDust: [0.17, [[0.17, 'scrape:0.6'], [0.31, 'scrape:0.6'], [0.49, 'scrape:0.6'], [0.63, 'scrape:0.6']]], fingerWag: [0.3, [[0.12, 'whoosh:0.3']]],
-  pancakeFlip: [0.9, [[0.4, 'whoosh'], [0.9, 'slap']]], straps: [0.56, [[0.5, 'scrape'], [0.56, 'snap'], [0.78, 'slap:0.5']]], handcuffs: [0.14, [[0.14, 'snap'], [0.56, 'snap:0.6']]],
+  pancakeFlip: [0.9, [[0.04, 'pencil:0.5'], [0.4, 'whoosh'], [0.9, 'slap']]], straps: [0.56, [[0.2, 'pencil:0.4'], [0.5, 'scrape'], [0.56, 'snap'], [0.78, 'slap:0.5']]], handcuffs: [0.14, [[0.14, 'snap'], [0.56, 'snap:0.6']]],
   shadowBox: [0.7, [[0.37, 'whoosh:0.5'], [0.52, 'whoosh:0.5'], [0.7, 'whoosh']]], thumbsDown: [0.3, [[0.3, 'whoosh:0.4'], [0.5, 'whoosh:0.4']]],
   armsWave: [0.25, [[0.25, 'whoosh:0.4'], [0.51, 'whoosh:0.4']]], groundPound: [0.46, [[0.24, 'whoosh'], [0.46, 'stomp:1.3'], [0.46, 'grunt']]],
-  bowArrow: [0.8, [[0.55, 'scrape:0.6'], [0.8, 'snap'], [0.82, 'whoosh']]], getBack: [0.2, [[0.2, 'whoosh:0.5'], [0.44, 'whoosh:0.5']]], ballHigh: [0.14, [[0.14, 'whoosh:0.5']]],
+  bowArrow: [0.8, [[0.15, 'pencil:0.5'], [0.55, 'scrape:0.6'], [0.8, 'snap'], [0.82, 'whoosh']]], getBack: [0.2, [[0.2, 'whoosh:0.5'], [0.44, 'whoosh:0.5']]], ballHigh: [0.14, [[0.14, 'whoosh:0.5']]],
   pointOtherWay: [0.22, [[0.22, 'whoosh']]], punchOut: [0.2, [[0.2, 'whoosh'], [0.2, 'slap:0.5']]], deniedX: [0.2, [[0.2, 'slap']]], fistPump: [0.24, [[0.24, 'whoosh'], [0.24, 'grunt:0.7']]],
-  golfSwing: [0.72, [[0.72, 'whoosh'], [0.74, 'snap']]], cash: [0.2, [[0.2, 'snap:0.6'], [0.4, 'snap:0.6'], [0.6, 'snap:0.6'], [0.8, 'snap:0.6']]],
+  golfSwing: [0.72, [[0.72, 'whoosh'], [0.74, 'snap']]], cash: [0.2, [[0.02, 'pencil:0.4'], [0.2, 'snap:0.6'], [0.4, 'snap:0.6'], [0.6, 'snap:0.6'], [0.8, 'snap:0.6']]],
   kneeSlide: [0.52, [[0.52, 'scrape:1.3'], [0.52, 'stomp:0.5']]], safetySignal: [0.24, [[0.24, 'clap']]], powerUp: [0.36, [[0.36, 'whoosh'], [0.36, 'grunt']]], waveBye: [0.14, [[0.14, 'whoosh:0.3']]],
   goalpostDunk: [0.5, [[0.12, 'stomp:0.5'], [0.3, 'whoosh'], [0.5, 'post:' + CELEB.post.dunk]]],
   chestBump: [0.36, [[0.2, 'stomp:0.5'], [0.3, 'whoosh'], [0.36, 'smash'], [0.68, 'stomp'], [1.02, 'grunt:1.3']]], fistBump: [0.34, [[0.26, 'whoosh'], [0.34, 'smash:0.6'], [0.66, 'stomp:0.4']]], highFive: [0.27, [[0.27, 'clap']]],
   teammateDunk: [1.04, [[0.82, 'whoosh'], [1.04, 'pop:0.4']]], linemanLift: [0.86, [[0.62, 'whoosh:0.5']], [[0.36, 'grunt']]], campfire: [0.9, [[0.54, 'snap']]],
   goalLineLounge: [0.36, [[0.36, 'stomp:0.4']]], crossedArms: [0.24, [[0.24, 'slap:0.6']]], bowlingRoll: [1.5, [[0.98, 'whoosh']], [[0.9, 'clap'], [0.97, 'stomp']]],
   groupFlex: [0.24, [[0.24, 'grunt']]], groupJump: [0.22, [[0.22, 'whoosh'], [0.5, 'whoosh']]], carriedOff: [0.95, [], [[0.35, 'grunt']]],
-  dogpile: [0.42, [[0.42, 'stomp']], [[0.33, 'stomp:0.8']]], coolerDump: [0.66, [[0.66, 'whoosh'], [0.7, 'scrape:1.3']]], helmetRaise: [0.3, [[0.3, 'whoosh']]],
+  dogpile: [0.42, [[0.42, 'stomp']], [[0.33, 'stomp:0.8']]], coolerDump: [0.66, [[0.66, 'whoosh'], [0.7, 'scrape:1.3']]], helmetRaise: [0.3, [[0.24, 'pencil:0.4'], [0.3, 'whoosh']]],
 };
 // extra tags beside S / A / N: taunt (weighted by CELEB.tauntK), dance, shake (a handshake). The test panel filters by them.
-const CELEB_TAGS = { taunt: ['waveBye', 'fingerWag', 'stepOver', 'thumbsDown', 'getBack', 'lookBack', 'shoulderDust', 'deniedX'], dance: ['paperShuffle', 'shadowBox'], shake: ['chestBump', 'fistBump', 'highFive'] };
+const CELEB_TAGS = { rude: ['rdTwoPump', 'rdStandOver', 'rdBallSpinAt', 'rdFakeShake', 'rdNap', 'rdWaveOff', 'rdCountSteps'], taunt: ['waveBye', 'fingerWag', 'stepOver', 'thumbsDown', 'getBack', 'lookBack', 'shoulderDust', 'deniedX'], dance: ['paperShuffle', 'shadowBox'], shake: ['chestBump', 'fistBump', 'highFive'] };
 // a defender's reaction to a celebration next to him (tag R: never picked from a pool; celebReactors)
 Object.assign(CELEB_MOVES, {
   rxHips: { tag: 'R', secs: 1.6, cast: 1, needs: null, pk: 0.3, keys: [
@@ -5210,6 +6120,135 @@ Object.assign(CELEB_MOVES, {
     [1.15, 'lin',  {}],
   ] },
 });
+// --- prop moves (v0.53): jackhammer, shovel, fishing rod, tape measure, paper crown, paper airplane. Props drawn with the cp pencil kit (sketched in / erased
+// through celebArms' fade); bits of turf, dirt = particles (celebParts() only). Hand spots stay inside each arm's reach (4.7 + 10.5 x al from CELEB_SH).
+const CP_TIP = [-1.2, 0, 1.2, 0, 0, 2.6], CP_BLADE = [0, -2.2, 4.5, -1.8, 5.8, 0, 4.5, 1.8, 0, 2.2];
+const CP_FISH = [0, 0, 2, -1.8, 5.5, -1.6, 7.2, 0, 9.6, -1.8, 9.2, 0, 9.6, 1.8, 7.2, 0, 5.5, 1.6, 2, 1.8];
+const CP_CROWN = [-4.5, 0, 4.5, 0, 4.8, -4.6, 2.6, -2.2, 0, -5.4, -2.6, -2.2, -4.8, -4.6], CP_PLANE = [6, 0, -5, -4, -2.4, 0, -5, 4];
+function cpBits(x, y, t0, t, n, col) {   // (a few specks thrown up from a spot: pure function of the time since t0)
+  const s0 = t - t0; if (s0 < 0 || s0 > 0.45 || !celebParts()) return;
+  ctx.fillStyle = col;
+  for (let i = 0; i < n; i++) { const s = s0 + i * 0.02, dx = (i % 2 ? 1 : -1) * (1.5 + i * 1.3) * s * 8; ctx.fillRect(x + dx, y - 22 * s + 60 * s * s, 1, 1); }
+}
+function celebJackProp(q, t) {   // the jackhammer between his hands, bit on the turf, juddering
+  if (t < 0.12) return;
+  const jd = t > 0.4 && t < 1.3 ? Math.sin(t * 95) * 0.6 : 0, cx = (q.nh[0] + q.fh[0]) / 2 + 1, hy = Math.min(q.nh[1], q.fh[1]) + jd, bot = 11.4 + jd * 0.5;
+  cpPen(1, 1.8); ctx.beginPath(); cpLine(cx - 4.5, hy, cx + 4.5, hy, 400); ctx.stroke();       // handles
+  cpRect(cx - 1.8, hy + 1, 3.6, Math.max(2, bot - hy - 1), '#e8b52a', 406);                       // body
+  cpRect(cx - 2.2, hy + 2.5, 4.4, 2, '#4a4a52', 414, 0.5);                                         // motor band
+  ctx.save(); ctx.translate(cx, bot); cpShape(CP_TIP, '#9a9aa4', 422, 0.5); ctx.restore();          // bit
+  if (jd && celebParts()) { ctx.fillStyle = '#6f8f4a'; for (let i = 0; i < 5; i++) { const s = (t * 6 + i / 5) % 1; ctx.fillRect(cx + (i % 2 ? 1 : -1) * (1 + 6 * s), bot + 2.6 - 9 * s + 14 * s * s, 1, 1); } }
+}
+function celebShovelProp(q, t) {   // the shovel from the top hand through the lower one; planted in the turf at the end
+  if (t < 0.08) return;
+  const plant = t > 1.16, hx = q.fh[0], hy = q.fh[1];
+  let ex = 12, ey = 12;
+  if (!plant) { const dx = q.nh[0] - hx, dy = q.nh[1] - hy, L = Math.hypot(dx, dy) || 1; ex = q.nh[0] + dx / L * 7; ey = q.nh[1] + dy / L * 7; }
+  const a = Math.atan2(ey - hy, ex - hx);
+  cpPen(1, 1.7); ctx.beginPath(); cpLine(hx, hy, ex, ey, 430); ctx.stroke();
+  cpPen(1, 0.9, '#b07a40'); ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(ex, ey); ctx.stroke();
+  cpPen(1, 1.2); ctx.beginPath(); cpLine(hx - Math.sin(a) * 1.8, hy + Math.cos(a) * 1.8, hx + Math.sin(a) * 1.8, hy - Math.cos(a) * 1.8, 436); ctx.stroke();   // T grip
+  ctx.save(); ctx.translate(ex, ey); ctx.rotate(a); cpShape(CP_BLADE, '#a9adb5', 442, 0.6); ctx.restore();
+  if (plant) cpEll(ex + 0.5, 14, 4, 1.2, '#7a5a35', 450, 0.5);   // (the dirt it went into)
+  for (const t0 of [0.5, 0.9]) cpBits(4, -10, t0, t, 6, '#7a5a35');   // (dirt off the blade, over his shoulder)
+}
+function celebReelProp(q, t) {   // the rod in the near hand (angle = u), the line out to the turf (length v), then the catch on it and held up
+  if (t < 0.1) return;
+  const a = -0.5 - 1.6 * q.u, tx = q.nh[0] + Math.cos(a) * 15, ty = q.nh[1] + Math.sin(a) * 15, fish = t > 1.42;
+  cpPen(1, 1.4); ctx.beginPath(); cpLine(q.nh[0], q.nh[1], tx, ty, 456); ctx.stroke();
+  cpPen(1, 0.7, '#6b4a2a'); ctx.beginPath(); ctx.moveTo(q.nh[0], q.nh[1]); ctx.lineTo(tx, ty); ctx.stroke();
+  cpEll(q.nh[0] + Math.cos(a) * 2.5, q.nh[1] + Math.sin(a) * 2.5 + 1, 1.2, 1.2, '#6a6a72', 462, 0.4);   // reel
+  let lx = tx, ly = ty + 2;
+  if (fish) { if (t < 1.55) ly = ty + 5; else { lx = q.fh[0]; ly = q.fh[1] + 1; } }
+  else if (t >= 0.5) { lx = tx + 34 * q.v; ly = 13.5; }
+  cpPen(0.8, 0.35); ctx.beginPath(); cpCurve(tx, ty, (tx + lx) / 2, Math.max(ty, ly) + 3, lx, ly, 466); ctx.stroke();
+  if (fish) { ctx.save(); ctx.translate(lx, ly); ctx.rotate(Math.PI / 2 + 0.25 * Math.sin(t * 9)); cpShape(CP_FISH, '#7fb8d6', 470, 0.5); ctx.fillStyle = cpInk(1); ctx.fillRect(1.6, -0.7, 0.6, 0.6); ctx.restore(); }
+}
+function celebTapeProp(q, t) {   // the case in the far hand; the tape pulled out along the turf (v), let go, then zipped back (u)
+  if (t < 0.1) return;
+  const cx = q.fh[0], cy = q.fh[1];
+  let ex = t < 0.5 ? q.nh[0] : 15 + 30 * q.v, ey = t < 0.5 ? q.nh[1] : 13.5;
+  ex += (cx - ex) * q.u; ey += (cy - ey) * q.u;
+  const L = Math.hypot(ex - cx, ey - cy);
+  if (L > 1) {
+    cpPen(1, 1.9); ctx.beginPath(); cpLine(cx, cy, ex, ey, 480); ctx.stroke();
+    cpPen(1, 1.1, '#f2d230'); ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(ex, ey); ctx.stroke();
+    const ux = (ex - cx) / L, uy = (ey - cy) / L, n = Math.min(24, Math.floor(L / 2.5));
+    cpPen(0.7, 0.25); ctx.beginPath(); for (let i = 1; i <= n; i++) { const x = cx + ux * i * 2.5, y = cy + uy * i * 2.5; ctx.moveTo(x - uy * 0.6, y + ux * 0.6); ctx.lineTo(x, y); } ctx.stroke();   // (the marks)
+  }
+  cpRect(cx - 2, cy - 1.8, 4, 3.6, '#d9b21a', 490); cpEll(cx, cy, 0.9, 0.9, '#4a4a52', 498, 0.4);
+}
+function celebCrownProp(q, t) {   // a paper crown: between his hands, then on his helmet
+  if (t < 0.12) return;
+  const on = t >= 0.72, x = on ? 0.3 : (q.nh[0] + q.fh[0]) / 2, y = on ? -26.8 : Math.min(q.nh[1], q.fh[1]) - 0.5;
+  ctx.save(); ctx.translate(x, y); cpShape(CP_CROWN, '#f6e27a', 510, 0.6);
+  ctx.fillStyle = '#e8433a'; ctx.fillRect(-0.4, -2.4, 0.9, 0.9); ctx.fillStyle = '#4fa3ff'; ctx.fillRect(-3.2, -1.6, 0.8, 0.8); ctx.fillRect(2.5, -1.6, 0.8, 0.8);   // (crayon jewels)
+  ctx.restore();
+}
+function celebPlaneProp(q, t) {   // a sheet folded into a paper airplane, thrown up and away
+  if (t < 0.1) return;
+  const mx = (q.nh[0] + q.fh[0]) / 2, my = (q.nh[1] + q.fh[1]) / 2;
+  if (t < 0.45) { ctx.save(); ctx.translate(mx, my - 1); ctx.rotate(0.15 * Math.sin(t * 20)); cpRect(-3.5, -2.5, 7, 5, '#ffffff', 520, 0.5); ctx.restore(); return; }
+  let x = mx, y = my - 1, a = 0;
+  if (t >= 0.95) { const s = t - 0.95; x = 15 + 150 * s; y = -21 - 55 * s + 3 * Math.sin(s * 14); a = -0.35 + 0.25 * Math.sin(s * 9); }
+  else if (t >= 0.75) { x = q.nh[0]; y = q.nh[1] - 1; a = -0.6; }
+  ctx.save(); ctx.translate(x, y); ctx.rotate(a); cpShape(CP_PLANE, '#ffffff', 530, 0.55); cpPen(1, 0.4); ctx.beginPath(); cpLine(6, 0, -2.4, 0, 540); ctx.stroke(); ctx.restore();
+}
+Object.assign(CELEB_MOVES, {
+  jackhammer: { tag: 'S', secs: 1.6, cast: 1, needs: null, pk: 0.5, props: celebJackProp,
+    fx: (q, t) => { if (t > 0.4 && t < 1.3) { const s = Math.sin(t * 95); q.k += 0.03 * s; q.lift += 0.5 * Math.abs(s); q.hd += 0.05 * s; } }, keys: [
+    [0.20, 'out',  { ...CLG.wide, sink: 1, R: 0.12, nh: [10, -2], fh: [7, -3], hd: 0.2 }, 'pencil:0.5'],        // both hands on the handles
+    [0.40, 'lin',  {}, 'stomp:0.6'],                                                                           // it bites in: judders (fx)
+    [0.60, 'lin',  {}, 'stomp:0.4'], [0.80, 'lin', {}, 'stomp:0.4'], [1.00, 'lin', {}, 'stomp:0.4'], [1.20, 'lin', {}, 'stomp:0.4'],
+    [1.45, 'io',   { nh: [10, -6], fh: [7, -7], k: 1.04, sink: 0, R: 0.02, hd: -0.1 }],                        // lifts it out
+  ] },
+  shovelDig: { tag: 'S', secs: 1.6, cast: 1, needs: null, pk: 1.2, props: celebShovelProp, keys: [
+    [0.15, 'out',  { ...CLG.stag, nh: [8, -2], fh: [3, -8], R: 0.05 }, 'pencil:0.5'],
+    [0.35, 'in',   { nh: [11, 4], fh: [6, -2], R: 0.25, sink: 1.2, k: 0.94, hd: 0.2 }, 'scrape:0.8'],          // in...
+    [0.55, 'out',  { nh: [4, -8], fh: [-1, -14], R: -0.05, sink: 0, k: 1.03, hd: -0.1 }, 'whoosh:0.5'],        // ...and over the shoulder
+    [0.75, 'in',   { nh: [11, 4], fh: [6, -2], R: 0.25, sink: 1.2, k: 0.94, hd: 0.2 }, 'scrape:0.8'],
+    [0.95, 'out',  { nh: [4, -8], fh: [-1, -14], R: -0.05, sink: 0, k: 1.03, hd: -0.1 }, 'whoosh:0.5'],
+    [1.20, 'snap', { nh: [10, -5], fh: [9, -7], R: 0.06, k: 0.97, hd: 0 }, 'stomp:0.8'],                       // planted
+    [1.50, 'lin',  { R: 0.1, k: 1 }],                                                                          // leaning on it
+  ] },
+  fishReel: { tag: 'N', secs: 1.8, cast: 1, needs: null, pk: 1.55, props: celebReelProp,
+    fx: (q, t) => { if (t > 0.65 && t < 1.3) { const r = 1.7 * Math.min(1, (t - 0.65) / 0.05); q.fh = [7 + r * Math.cos(t * 22), -3 + r * Math.sin(t * 22)]; } }, keys: [   // (fx: the crank going round)
+    [0.15, 'out',  { nh: [6, -6], fh: [3, -4], u: 0, v: 0 }, 'pencil:0.5'],
+    [0.35, 'io',   { nh: [1, -16], u: 1, R: -0.08, hd: -0.1 }],                                                // rod back...
+    [0.50, 'snap', { nh: [11, -12], u: -0.1, R: 0.08, v: 1 }, 'whoosh'],                                       // ...cast
+    [0.65, 'io',   { nh: [8, -6], fh: [7, -3], u: 0.05, R: 0, hd: 0, v: 1 }],
+    [0.80, 'lin',  { v: 0.75 }, 'scrape:0.4'], [0.97, 'lin', { v: 0.5 }, 'scrape:0.4'], [1.14, 'lin', { v: 0.3 }, 'scrape:0.4'], [1.30, 'lin', { v: 0.12 }],   // reeling in
+    [1.42, 'snap', { nh: [6, -14], u: 0.35, v: 0.1, k: 1.04 }, 'pop:0.5'],                                    // up it comes
+    [1.55, 'out',  { fh: [15, -16], al: 1.2, hd: -0.1, k: 1.05 }],                                             // the catch held out at arm's length (clear of his facemask: the helmet is drawn over the arms)
+    [1.75, 'lin',  {}],
+  ] },
+  tapeMeasure: { tag: 'N', secs: 1.4, cast: 1, needs: null, turn: 'down', pk: 0.75, props: celebTapeProp, keys: [
+    [0.15, 'out',  { ...CLG.bend, sink: 1.5, R: 0.2, fh: [3, 2], nh: [6, 3], hd: 0.15, v: 0, u: 0 }, 'pencil:0.5'],
+    [0.50, 'io',   { nh: [15, 8], al: 1.1, R: 0.35, sink: 2, k: 0.92, v: 0 }, 'scrape:0.7'],                  // pulls it out along the turf...
+    [0.75, 'out',  { hd: 0.05, v: 1 }],                                                                        // ...it runs on toward the sticks
+    [0.95, 'io',   { nh: [8, -4], R: 0.1, sink: 0.8, k: 1, hd: -0.1, al: 1, v: 1 }],
+    [1.12, 'snap', { fh: [4, 0], u: 1 }, 'snap'],                                                              // zip: back in the case
+    [1.30, 'io',   { ...CLG.stand, R: 0, sink: 0 }],
+  ] },
+  paperCrown: { tag: 'N', secs: 1.6, cast: 1, needs: null, pk: 0.95, props: celebCrownProp, keys: [
+    [0.20, 'out',  { nh: [5, -14], fh: [2, -15] }, 'pencil:0.5'],                                              // the crown in his hands
+    [0.50, 'io',   { nh: [6, -27], fh: [-5, -27], al: 1.3, k: 1.03, hd: -0.1 }],                               // up over his helmet...
+    [0.72, 'io',   { nh: [7, -25], fh: [-6, -25.5], hd: 0, k: 0.98 }, 'pop:0.4'],                              // ...and on
+    [0.95, 'snap', { nh: [16, -14], fh: [-13, -15], al: 1.2, k: 1.05, R: -0.04 }, 'whoosh:0.5'],               // arms out: the king
+    [1.40, 'lin',  {}],
+  ] },
+  paperPlane: { tag: 'A', secs: 1.5, cast: 1, needs: null, pk: 0.95, props: celebPlaneProp, keys: [
+    [0.15, 'out',  { nh: [7, -10], fh: [6, -11] }, 'pencil:0.5'],                                              // the sheet
+    [0.30, 'io',   { nh: [8, -9], fh: [5, -11] }, 'scrape:0.4'], [0.45, 'io', { nh: [7, -11], fh: [6, -10] }, 'scrape:0.4'], [0.60, 'io', { nh: [8, -10], fh: [6, -11] }, 'scrape:0.4'],   // folded
+    [0.80, 'io',   { nh: [-1, -17], fh: [6, -12], R: -0.1, tw: 0.85 }],                                       // wound up
+    [0.95, 'snap', { nh: [15, -20], al: 1.25, R: 0.1, tw: 1, k: 1.04 }, 'whoosh'],                            // let fly
+    [1.20, 'io',   { hd: -0.3 }],                                                                              // watches it go
+    [1.40, 'lin',  {}],
+  ] },
+});
+Object.assign(CELEB_EVENTS.td.moves, { jackhammer: 0.6, shovelDig: 0.6, fishReel: 0.6, paperCrown: 0.6, paperPlane: 0.6 });
+Object.assign(CELEB_EVENTS.sack.moves, { shovelDig: 0.8 });
+Object.assign(CELEB_EVENTS.first.moves, { tapeMeasure: 1, paperPlane: 0.6 });
 for (const id of Object.keys(CELEB_MOVES)) {
   const mv = CELEB_MOVES[id], B = CELEB_BEATS[id];
   if (B) { if (mv.pk == null) mv.pk = B[0]; (mv.roles || [mv]).forEach((R, i) => { if (B[i + 1]) R.sfx = B[i + 1]; }); }
@@ -5226,6 +6265,16 @@ const CELEB_NEEDS = {
   goal: h => Math.abs(h.x - celebEnv(h).goalX) < 5 * YD,
   late: () => !!game && game.quarter >= 4 && game.secs <= lateS(CELEB_DF.lateS),   // (v0.43: the last minutes of the 4th, or overtime)
   d6: h => h.team === 'def',                                                      // (v0.43: a defender: a score / recovery of theirs)
+  photoNear: h => { const S = celebPhotoSpot(h); return Math.hypot(S.x - h.x, S.y - h.y) / YD <= celebPhotoMax(); },   // (the photo run's photographer is within one run: never a jump)
+  tdOnly: (h, q) => q.ev === 'td' || q.ev === 'test',                              // (only after a touchdown: the three wall moves; 'test' = the test panel)
+  home: h => celebHome(h), away: h => !celebHome(h),                              // (v0.51: his team is the home team: the top-sideline bench, the crowd's favourite)
+  wall: h => celebWallMark(h).d < CELEB.wall.reach, wallNear: h => celebWallMark(h).d < CELEB.wall.near,   // (the top / an end wall's foot is this close)
+  ahead: h => { const g = game || {}, d = (g.blue || 0) - (g.red || 0); return h.team === 'off' ? d > 0 : d < 0; },   // (his team leads: BLUE = the side with the ball)
+  ball: h => !!(h.hasBall || (h === qb && runner === qb && !ball.loose && !ball.inAir)),
+  cam: h => !!celebCamNear(h, CELEB.cam.reach),                                 // (v0.51: a standing cameraman / photographer on camera, close by)
+  mascot: h => celebHome(h) && !!celebMascot(h), mascot2: h => !!celebMascot(h),  // (v0.51: the home mascot standing close by; mascot2 = whoever's player)
+  light: h => (h.wt || 200) < CELEB.mascot.lb,
+  bench: h => { const b = celebBenchAt(h); return !!b && b.d < CELEB.bench.reach; },
   down: (h, q) => !!(q.down = allPlayers().filter(o => o.team !== h.team && lyingDown(o) && Math.abs(o.x - h.x) > 0.5 * YD && Math.abs(o.x - h.x) < CELEB.nearYd * YD && Math.abs(o.y - h.y) < 0.7 * YD)
                                           .sort((a, b) => dist(a, h) - dist(b, h))[0]),
 };
@@ -5279,7 +6328,7 @@ function celebCan(m, q, arch, E) {
   if (arch === 'S' && !tags.includes('S') && !tags.includes('N')) return false;   // (a strength player never gets an agile move)
   if (most > 2 && liteLevel() >= 2) return false;                                 // (performance mode's lower level: no team celebrations)
   if (q.chained && (most > 1 || m.marks || m.ball || m.needs || m.g)) return false;   // (the second move of a chain: a plain solo one, where he stands)
-  if (m.needs && !(CELEB_NEEDS[m.needs] && CELEB_NEEDS[m.needs](q.hero, q, m))) return false;
+  if (m.needs && ![].concat(m.needs).every(n => CELEB_NEEDS[n] && CELEB_NEEDS[n](q.hero, q, m))) return false;   // (a string or a list: all must pass)
   if (most > 1) {   // partners: his nearest free teammates (the ask remembers them for celebBegin)
     const ms = celebMates(q.hero, m.reach || CELEB.teamRange, CELEB_MATE[m.mate || E.mate]);
     if (ms.length < cn[0] - 1) return false;
@@ -5308,6 +6357,7 @@ function celebPick(q) {
 // the play code's one call: this event just happened to hero; o.tgt = who / what it is about (a player, or a spot { x, y }). Nothing in a replay, on the
 // guest's screen or for a simulated drive: those never get here.
 function celebAsk(ev, hero, o) {
+  if ((typeof stSimming !== 'undefined' && stSimming) || LG_SAND) return;   // (SIM SPECIAL TEAMS: a simulated kick has no celebration; nor a league tape being made)
   const E = CELEB_EVENTS[ev];
   if (!E || !hero || (rec && rec.replaying)) return false;
   if (slSevere()) return false;   // (a man badly hurt on the play: nobody celebrates in that dead ball, on the field or the sidelines)
@@ -5315,8 +6365,8 @@ function celebAsk(ev, hero, o) {
   if (!E.kick && celebArch(hero) === 'K') return false;   // (kickers only use the kick pools)
   const side = !!(E.side || (o && o.side));   // (o.side: this one runs beside the play's main celebration)
   if (!side && ((celebUsed && E.pri < 4) || (celebQ && celebQ.pri >= E.pri))) return false;   // (one a play, the bigger one; only a won game may follow one already played)
-  if (Math.random() >= (CELEB.odds[ev] ?? 1)) return false;
   const key = celebNeedsKey(hero);
+  if (!(key && CELEB.always.includes(ev)) && Math.random() >= (CELEB.odds[ev] ?? 1)) return false;   // (v0.52: your own player on a first down / big broken tackle always gets the choice: it waits for your click as before)
   const q = { ev, hero, pri: E.pri, at: clock + CELEB.delay, till: clock + CELEB.delay + (key ? CELEB.keyWait : CELEB.wait), o: o || {}, side, key, own: celebOwn(hero) };
   if (side) { if (!celebSides.some(s => s.hero === hero)) celebSides.push(q); } else celebQ = q;
   return true;
@@ -5389,7 +6439,7 @@ function celebMake(id, h, mates, o) {
   if (base.sort) { const sp = p => { try { const v = ownTop(p); return isFinite(v) ? v : 0; } catch (e) { return 0; } }; mates = [...mates].sort(base.sort === 'heavy' ? (a, b) => (b.wt || 0) - (a.wt || 0) : (a, b) => sp(b) - sp(a)); }   // (parts by build: the heaviest / the fastest mates first)
   const cast = [h, ...mates], sd = base.gen ? (o.sd || 1 + Math.floor(Math.random() * 1e6)) : 0;
   const big = o.big != null ? !!o.big : !!(base.big && cast.some(p => celebArch(p) === 'S'));   // (a big man in it: the heavier version)
-  const mv = base.gen ? celebMvOf({ id, sd, n: cast.length, big, hy: o.hy }) : base;   // (a seeded move: this celebration's own version of it)
+  const mv = base.gen ? celebMvOf({ id, sd, n: cast.length, big, hy: o.hy, rg: o.rg }) : base;   // (a seeded move: this celebration's own version of it)
   const marks = mv.marks ? mv.marks(h, mates, o.env || celebEnv(h), mv) : null;
   const hb = h.hasBall || (h === qb && runner === qb && !ball.loose && !ball.inAir) ? 1 : 0;
   const starts = cast.map(p => ({ x: p.x, y: p.y, face: p.face }));
@@ -5397,14 +6447,26 @@ function celebMake(id, h, mates, o) {
     const ri = mv.roles ? Math.min(i, mv.roles.length - 1) : 0, R = mv.roles ? mv.roles[ri] : mv, g = (R.g || 0) + (R.lag || 0) * (i - ri);
     const c = { id, i, n: cast.length, t0: o.t0, b: i ? 0 : hb };
     if (sd) c.sd = sd;
+    if (o.rg) c.rg = o.rg;
     if (o.hy) c.hy = o.hy;
     if (g) c.g = Math.round(g * 100) / 100;
     { const jd = marks && marks[i] ? Math.hypot(marks[i].x - p.x, marks[i].y - p.y) : 0; if (jd > 0.25 * YD) c.j = Math.max(0.3, Math.round(jd / YD * 10) / 10); }   // (he has somewhere to jog to: j = how far, yd)
+    if (R.run && marks && marks[i] && base.needs === 'post' && (c.j || 0) < CELEB.post.runUp) {   // (v0.52: too close for a real run-up: he backs out along his approach line first, bo = that spot)
+      const m = marks[i], RU = CELEB.post.runUp * YD; let ux = p.x - m.x, uy = p.y - m.y, L = Math.hypot(ux, uy);
+      if (L < 0.3 * YD) { ux = -(m.face || 1); uy = 0; L = 1; }
+      ux /= L; uy /= L;
+      let bx = m.x + ux * RU, by = m.y + uy * RU;
+      by = Math.max(Y_MIN + YD, Math.min(Y_MAX - YD, by));
+      bx = m.x > FIELD / 2 ? Math.max(FIELD + 0.5 * YD, Math.min(FIELD + ENDZONE - 0.5 * YD, bx)) : Math.max(-ENDZONE + 0.5 * YD, Math.min(-0.5 * YD, bx));   // (inside his end zone's depth)
+      const bd = Math.hypot(bx - p.x, by - p.y) / YD;
+      c.bo = [Math.round(bx), Math.round(by)]; c.bd = Math.round(bd * 10) / 10; c.bt = Math.round(Math.max(0.15, bd / CELEB.post.backV) * 100) / 100;
+      c.j = Math.max(0.3, Math.round(Math.hypot(m.x - bx, m.y - by) / YD * 10) / 10);
+    }
     if (R.run && c.j) {   // a sprint, not a jog: he builds up to his own top speed (rv, yd/s), setting off (rs) so that he gets there as his keys start
       let v = 6.5; try { const o = ownTop(p) / YD; if (isFinite(o) && o > 0) v = o; } catch (e) {}
       v = Math.max(4.5, Math.min(10, v));
       const a = CELEB.post.accel, T = c.j >= v * v / (2 * a) ? c.j / v + v / (2 * a) : Math.sqrt(2 * c.j / a);
-      c.rv = Math.round(v * 10) / 10; c.rs = Math.max(0, Math.round((g - T) * 100) / 100);
+      c.rv = Math.round(v * 10) / 10; c.rs = Math.max(c.bt || 0, Math.round((g - T) * 100) / 100);
     }
     if (o.rate) c.rate = o.rate;
     if (big) c.big = 1;
@@ -5430,7 +6492,8 @@ function celebHype(ev, hero) {
     if (MATCH.playoff) h += po && po.round >= PO_ROUNDS.length - 1 ? H.bowl : H.playoff;
     if (ev === 'td' && off) h += H.longK * Math.max(0, Math.min(1, ((FIELD - los) / YL - 10) / (H.longTd - 10)));
     if (F.miss && F.miss.p === hero) h += H.miss;
-    if (F.stiff && F.stiff.p === hero) h += H.stiff ?? H.miss * 0.5;   // (v0.46: he won a stiff arm on the play)
+    if (F.stiff && F.stiff.p === hero) h += H.stiff ?? H.miss * 0.5;
+    if (F.show && F.show.p === hero) h += SHOW.hype;   // (v0.51: he showed off into the end zone)   // (v0.46: he won a stiff arm on the play)
     if (xfGlow(hero)) h += H.xf;
     if (F.rec) h += H.rec;
     if (Math.abs(mine) > H.blowout) h *= H.blowoutK;
@@ -5482,6 +6545,10 @@ function celebPunch() {
     if (!mv) continue;
     const r = c.rate || 1, s = ((ac - c.t0) * r - celebWarpOf(mv, c.hy).uPk) / r;
     if (s >= 0 && s < 2) v = Math.max(v, CELEB.punch * (0.4 + 0.6 * (c.hy || 0)) * (s < CELEB.punchIn ? s / CELEB.punchIn : Math.exp(-3 * (s - CELEB.punchIn) / CELEB.punchOut)));
+    if (mv.zoomIn) {   // (v0.51: a lens move: the game camera eases in while it plays)
+      const tl = celebWarp(mv, c, (ac - c.t0) * r) - (c.g || 0), Z = mv.zoomIn, w = smooth01((tl - Z[0]) / 0.4) * (1 - smooth01((tl - Z[1]) / 0.5));
+      if (w > 0) v = Math.max(v, (CELEB.cam.zoom - 1) * w);
+    }
   }
   celebPunchC = { f: ac, v };
   return v;
@@ -5508,15 +6575,18 @@ function celebBegin(q) {
   if (mates.length < celebCastN(mv)[0] - 1) return;
   // a seeded move: roll this celebration's version (never the same branches as the last time this move was played)
   const big = q.big != null ? !!q.big : !!(mv.big && [h, ...mates].some(p => celebArch(p) === 'S'));
+  const rg = mv.prep ? mv.prep(h, mates, q) || 0 : 0;   // (v0.51: a run to a far mark: its planned time, part of the seeded version)
   let sd = 0, V = mv;
   if (mv.gen) {
-    for (let r = 0; r < CELEB.group.rolls; r++) { sd = 1 + Math.floor(Math.random() * 1e6); V = celebMvOf({ id, sd, n: mates.length + 1, big, hy }); if (V.combo !== CELEB_LASTC[id]) break; }
+    for (let r = 0; r < CELEB.group.rolls; r++) { sd = 1 + Math.floor(Math.random() * 1e6); V = celebMvOf({ id, sd, n: mates.length + 1, big, hy, rg }); if (V.combo !== CELEB_LASTC[id]) break; }
     CELEB_LASTC[id] = V.combo;
   }
   const capS = Math.max((CELEB[E.cap + 'Max'] || CELEB.quickMax) * (1 + CELEB.time.capK * hy), mv.full ? V.secs : 0), span = celebWarpOf(V, hy).span;   // (full: a v0.43 defensive move longer than its event's cap keeps its own length)
-  const dur = Math.min(span, mates.length > 1 ? Math.max(capS, CELEB.group.max * (0.6 + 0.4 * hy)) : capS);   // (a group move may run longer)
-  const turn = mv.turn || E.turn, tg = mv.needs === 'down' ? q.down : mv.needs === 'foe' ? q.foe : q.o.tgt, away = h.team === 'off' ? 1 : -1;   // (away: the way his team attacks, in world x, whichever way the screen is mirrored)
-  if (turn === 'field') h.face = -away;
+  let dur = Math.min(span, mates.length > 1 ? Math.max(capS, CELEB.group.max * (0.6 + 0.4 * hy)) : capS);   // (a group move may run longer)
+  if (mv.cpuMax && !celebNeedsKey(h)) dur = Math.min(dur, mv.cpuMax);   // (v0.51: the computer's long ones never hold the game up)
+  const nd = [].concat(mv.needs || []), turn = mv.turn || E.turn, tg = nd.includes('down') ? q.down : nd.includes('foe') ? q.foe : q.o.tgt, away = h.team === 'off' ? 1 : -1;   // (away: the way his team attacks, in world x, whichever way the screen is mirrored)
+  if (turn === 'wall') { const wm = celebWallMark(h); if (wm.end) h.face = wm.face; }   // (v0.51: toward the nearest wall: only an end wall can be faced)
+  else if (turn === 'field') h.face = -away;
   else if (turn === 'down') h.face = away;
   let aim = null, far = null;
   if (tg) {   // what he points at / steps over: its angle from his shoulder (in his own frame) and how far off it is
@@ -5525,11 +6595,18 @@ function celebBegin(q) {
     aim = Math.round(Math.atan2((tg.y - h.y) / bk + 26 - hz, Math.max(1, dxw * h.face / bk)) * 100) / 100;
     far = Math.round(Math.abs(dxw) / YD * 10) / 10;
   }
-  const lk = E.cap === 'quick' ? CELEB.quickK : 1, lead = Math.round(CELEB.lead * lk * 100) / 100, tail = Math.round(CELEB.tail * lk * (1 + CELEB.time.tailK * hy) * 100) / 100;
-  const gas = !q.chained && h.ranPid === runPid && (h.ranYd || 0) >= CELEB.gasYd ? CELEB.gasSecs : 0;   // (a long run: he gets his breath back first, hands on his knees)
-  const c = celebMake(id, h, mates, { t0: clock + lead + gas, rate: dur < span ? Math.round(span / dur * 100) / 100 : 0, sd, hy, big });   // (rate: longer than this event allows, so played faster; t0 = when the move itself starts, after the lead-in)
+  const lk = E.cap === 'quick' ? CELEB.quickK : 1;
+  let lead = Math.round(CELEB.lead * lk * 100) / 100, tail = Math.round(CELEB.tail * lk * (1 + CELEB.time.tailK * hy) * 100) / 100;
+  let gas = !q.chained && h.ranPid === runPid && (h.ranYd || 0) >= CELEB.gasYd ? CELEB.gasSecs : 0;   // (a long run: he gets his breath back first, hands on his knees)
+  const chain0 = hy >= CELEB.chainAt && !q.side && !q.chained && !q.forceId && !E.kick && !mates.length && E.cap !== 'end';
+  const pp = celebPrePick(q, h, V, hy, gas, mates, E, chain0);   // (v0.51: a lead-in / exit clip: its length is the lead / tail; prBreath replaces the hands-on-knees)
+  if (pp.pr) { lead = CELEB_PRE[pp.pr].secs; gas = 0; }
+  if (pp.po) tail = CELEB_POST[pp.po].secs;
+  const c = celebMake(id, h, mates, { t0: clock + lead + gas, rate: dur < span ? Math.round(span / dur * 100) / 100 : 0, sd, hy, big, rg });   // (rate: longer than this event allows, so played faster; t0 = when the move itself starts, after the lead-in)
   for (const cl of c.cels) { cl.ld = lead; cl.tl = tail; }
   if (gas) c.cels[0].gs = gas;
+  if (pp.pr || pp.po) celebClipSet(c, pp, h);
+  if (mv.onBegin) try { mv.onBegin(c, q); } catch (e) {}   // (v0.51: a move's own start (host): the wall's height, a cameraman's aim, the mascot's routine)
   c.cels[0].ev = q.ev;
   if (hy >= CELEB.confettiAt || q.ev === 'poWin' || q.ev === 'bowlWin') c.cels[0].cf = 1;
   if (aim != null) { c.cels[0].aim = aim; c.cels[0].dist = far; }
@@ -5537,30 +6614,57 @@ function celebBegin(q) {
   if (h.coast) h.coast.v = 0;
   const chain = hy >= CELEB.chainAt && !q.side && !q.chained && !q.forceId && !E.kick && c.cast.length === 1 && E.cap !== 'end';   // (a big enough moment: a second move follows)
   celebLive.push(Object.assign(c, { ev: q.ev, dur: span / (c.cels[0].rate || 1) + tail * (chain ? 0.5 : 1), side: q.side, hy, q, chain }));   // (it ends after the wind-down)
+  if (pp.po === 'poHelmetTap' && pp.mate) celebPatMate(c, pp.mate, span);
+  if (pp.po === 'poJogOff') celebClipFives(c);
   if (rec && !rec.replaying && !q.side && (!rec.cel || hy > rec.cel.hy)) rec.cel = { t: rec.t + lead + gas, hy, n: c.cast.length, ev: q.ev };   // (for the highlight reels: hsCollect keeps a big one in its play's clip)
   const taunted = [].concat(mv.tag).includes('taunt') && tg && tg.team && !lyingDown(tg) ? tg : null;   // (the man a taunt is aimed at always answers it)
   if (!q.side && !q.chained && (hy >= CELEB.rx.minHype || taunted)) celebReactors(c, taunted, hy >= CELEB.rx.minHype);
   if (!q.side) celebUsed = true;
   CELEB_LAST[celebKey(h)] = id;
   if (c.cast.length > 1) CELEB_LAST[celebTeamKey(h)] = id;
+  try { celebFineRoll(q, h, mv, id); } catch (e) {}   // (v0.51: a taunt may be fined by the league office: settled after the game, homeNews)
+}
+// v0.51: the clips' ids and what they aim at, on the hero's cel (plain props: taped and synced)
+function celebClipSet(c, pp, h) {
+  const cl = c.cels[0];
+  if (pp.pr) cl.pr = pp.pr;
+  if (pp.po) cl.po = pp.po;
+  cl.ps = h.y < MID ? -1 : 1;   // (the nearer sideline: prBallToRef's lob)
+  cl.pj = celebHome(h) ? -1 : 1;   // (his own bench: the home bench is the top sideline)
+  if (pp.pr === 'prPoint' && c.marks && c.marks[0]) cl.pa = celebAimAt(h, c.marks[0], h.face);
+  if (pp.po === 'poPointBack' && pp.tgt) { const g = pp.tgt, f = Math.abs(g.x - h.x) > 0.3 * YD ? Math.sign(g.x - h.x) : h.face; cl.pb = [Math.round(g.x), Math.round(g.y)]; cl.pa = celebAimAt(h, g, f); }
+}
+// (v0.51 phase 4: the bench run-along people near him: his exit jog goes past them for low fives)
+function celebClipFives(c) { const cl = c.cels[0]; if (cl.po === 'poJogOff' && SL.on && SL.cast) slRunFives(c.hero, SL.now + (c.t0 - clock) + celebWarpOf(c.mv, cl.hy).span / (cl.rate || 1)); }
+// the teammate's pats (poHelmetTap): his own small cel, timed to land on the hero's exit
+function celebPatMate(c, m, span) {
+  if (m.cel || m.action) return;
+  const h = c.hero, G = CELEB_MOVES.poPatMate.g, at = c.t0 + span / (c.cels[0].rate || 1) - G;
+  const pat = { x: h.x + h.face * 1.0 * YD, y: h.y + (m.y < h.y ? -0.35 : 0.35) * YD, face: -h.face };
+  const x = celebMake('poPatMate', m, [], { t0: at, env: Object.assign(celebEnv(m), { pat }) });
+  Object.assign(x.cels[0], { rx: 1, ld: 0.01, tl: 0.3 });
+  m.cel = x.cels[0];
+  celebLive.push(Object.assign(x, { ev: 'rx', dur: CELEB_MOVES.poPatMate.secs + 0.4, side: true, rx: true, hy: 0 }));
 }
 // the open spot he jogs to first (null = he is already in the clear, or nowhere near is any better)
-function celebOpenSpot(h) {
+function celebOpenSpot(h, ev) {
   const O = CELEB.open, others = allPlayers().filter(p => p !== h);
-  // (a man on the turf is a body to step clear of too, and wider than one standing: `lie` x his distance counts)
-  const room = (x, y) => { let m = 99; for (const p of others) m = Math.min(m, Math.hypot(p.x - x, p.y - y) / YD * (lyingDown(p) ? O.lie : 1)); if (SL.on) m = Math.min(m, slRoom(x, y)); return m; };   // (sideline people count as bodies too)
+  // (a man on the turf is a body to step clear of too, and wider than one standing: `lie` x his distance counts; a man in FRONT of the spot on screen
+  //  (larger y, about the same x) hides him most: `front` x closer)
+  const room = (x, y) => { let m = 99; for (const p of others) { const fr = p.y > y && Math.abs(p.x - x) < 1.6 * YD ? O.front : 1; m = Math.min(m, Math.hypot(p.x - x, p.y - y) / YD * (lyingDown(p) ? O.lie : 1) / fr); } if (SL.on) m = Math.min(m, slRoom(x, y)); return m; };   // (sideline people count as bodies too)
   const here = room(h.x, h.y);
   if (here >= O.clear) return null;
   // (a scorer stays in the end zone he scored in: the move belongs there, not back out on the field)
   const ez = h.x > FIELD ? 1 : h.x < 0 ? -1 : 0, xLo = ez > 0 ? FIELD + 0.5 * YD : -ENDZONE + O.edge * YD, xHi = ez < 0 ? -0.5 * YD : FIELD + ENDZONE - O.edge * YD;
   let best = null;
+  const dir = !ez && O.fwdEv.includes(ev) ? celebEnv(h).away : 0;   // (v0.52: a first down / long gain / beaten tackler: downfield, the way his team attacks (world x: right on either mirror / flip); touchdowns keep the end-zone rule)
   for (let r = O.step; r <= O.max + 0.01; r += O.step) for (let i = 0; i < O.dirs; i++) {
     const a = i / O.dirs * Math.PI * 2, x = h.x + Math.cos(a) * r * YD, y = h.y + Math.sin(a) * r * YD;
     if (y < Y_MIN + O.edge * YD || y > Y_MAX - O.edge * YD || x < xLo || x > xHi) continue;
-    const rm = Math.min(O.clear, room(x, y)), sc = rm - r * O.far;
+    const rm = Math.min(O.clear, room(x, y)), sc = rm - r * O.far + (dir ? O.fwd * Math.max(-1, Math.min(1, (x - h.x) * dir / (O.max * YD))) : 0);
     if (!best || sc > best.sc) best = { x, y, sc, r, rm };
   }
-  return best && best.rm >= here + O.gain ? best : null;
+  return best && best.rm >= here + O.minGain ? best : null;   // (v0.52: under `clear`, any roomier spot beats celebrating covered)
 }
 // on his way to the open spot: a few steps = a walk, further = a run (O.runFrom). He builds up to his pace and eases down into the spot (no sliding start / dead stop)
 function celebWalkStep(p, dt) {   // (from settle, 04: a real move, so the guest and the tape see it)
@@ -5600,7 +6704,7 @@ function celebTry(q) {
   }
   const preM = q.pre && CELEB_MOVES[q.pre], crowdMove = !!(preM && (preM.needs || preM.marks || preM.gen || celebCastN(preM).pop() > 1));
   if (!crowdMove && (q.hops || 0) < CELEB.open.hops) {   // out of the crowd, into open space where the move can be seen
-    const O = CELEB.open, s = celebOpenSpot(h);
+    const O = CELEB.open, s = celebOpenSpot(h, q.ev);
     if (s) {
       const v = s.r >= O.runFrom ? O.run : O.walk;
       q.hops = (q.hops || 0) + 1; q.stillT = null;
@@ -5666,8 +6770,9 @@ function celebFxMen(list, ac, live) {   // live: not a replay / the library (tho
       if (live && hero && u < 0.3) crowdCeleb('build', hy, fav, ev);
       continue;
     }
-    const dt = t - s.t, t0 = s.t;
+    const dt = t - s.t, t0 = s.t, uA = s.u;
     s.u = u; s.t = t; s.n = celebFxN;
+    if (hero && (c.pr || c.po)) celebClipBeats(c, mv, uA, u, fav);   // (v0.51: lead-in / exit beats)
     if (!(dt > 0)) continue;
     const g = c.g || 0, q = celebAt(mv, t, c), lift = q.lift || 0;
     for (const [bt, sfx] of celebBeatsOf(celebRole(mv, c))) if (bt + g > t0 && bt + g <= t) { celebSfx(sfx, fav); if (!c.i && String(sfx).slice(0, 5) === 'smash' && celebParts()) impacts.push({ x: p.x + p.face * 1.5 * YD, y: p.y - 14 * S, t: 0 }); }
@@ -5697,16 +6802,33 @@ function celebPlace(c, tm) {
     let x = s.x, y = s.y, f = s.face;
     if (m) {
       const u = g > 0 ? Math.min(1, tm / g) : 1;
-      let e = 1 - Math.pow(1 - u, 1.6);
-      if (cel.rs != null && u < 1) {   // (a sprint: standing until rs, then accelerating to rv and still at full speed when he gets there)
-        const a = CELEB.post.accel, v = cel.rv, tt = Math.max(0, tm - cel.rs), ta = v / a;
-        e = Math.min(1, (tt < ta ? a * tt * tt / 2 : v * v / (2 * a) + v * (tt - ta)) / cel.j);
+      let e = 1 - Math.pow(1 - u, 1.6), sx = s.x, sy = s.y, back = false;
+      if (cel.bo && u < 1) {   // (v0.52: backing out to the run-up spot before the sprint)
+        if (tm < cel.rs) { const k = smooth01(Math.min(1, tm / Math.max(0.05, cel.bt))); x = s.x + (cel.bo[0] - s.x) * k; y = s.y + (cel.bo[1] - s.y) * k; back = true; }
+        else { sx = cel.bo[0]; sy = cel.bo[1]; }
       }
-      x += (m.x - s.x) * e; y += (m.y - s.y) * e;
-      f = u >= 1 ? m.face : Math.abs(m.x - s.x) > 0.2 * YD ? Math.sign(m.x - s.x) : s.face;   // (he runs the way he is going, then turns the way his mark says)
+      if (!back) {
+        if (cel.rs != null && u < 1) {   // (a sprint: standing until rs, then accelerating to rv and still at full speed when he gets there)
+          const a = CELEB.post.accel, v = cel.rv, tt = Math.max(0, tm - cel.rs), ta = v / a;
+          e = Math.min(1, (tt < ta ? a * tt * tt / 2 : v * v / (2 * a) + v * (tt - ta)) / cel.j);
+        }
+        x = sx + (m.x - sx) * e; y = sy + (m.y - sy) * e;
+      }
+      f = u >= 1 ? m.face : back ? (Math.sign(m.x - x) || s.face) : Math.abs(m.x - sx) > 0.2 * YD ? Math.sign(m.x - sx) : s.face;   // (he runs the way he is going (backing out: still facing the post), then turns the way his mark says)
     }
     if (R.dx) x += f * R.dx(Math.max(0, tm - g), cel) * YD;
     if (R.mv2 && tm >= g) { const o = R.mv2(tm - g); x += (c.fx || 1) * o[0] * YD; y += (c.fy || 1) * o[1] * YD; if (o[2]) f = (c.fx || 1) * o[2]; }   // (a role's own travel in two directions: a seeded group move's steps, circles and runs)
+    if (!i && (cel.pr || cel.po)) {   // (v0.51: a lead-in / exit clip's own travel)
+      const P = cel.pr && CELEB_PRE[cel.pr], Po = cel.po && CELEB_POST[cel.po];
+      if (P && P.dx) x += f * P.dx(Math.max(0, Math.min(P.secs, clock - c.t0 + (cel.ld || 0))), cel) * YD;
+      const ov = clock - c.t0 - celebWarpOf(mv, cel.hy).span / (cel.rate || 1);
+      if (Po && ov > 0) {
+        const tp = Math.min(Po.secs, ov);
+        if (Po.dx) x += f * Po.dx(tp, cel) * YD;
+        if (Po.dy) y += (cel.pj || 1) * Po.dy(tp, cel) * YD;
+        if (Po.turn && cel.pb && Math.abs(cel.pb[0] - x) > 0.3 * YD) f = Math.sign(cel.pb[0] - x);
+      }
+    }
     p.x = m ? x : Math.max(-ENDZONE + YD, Math.min(FIELD + ENDZONE - YD, x)); p.y = y; p.face = f;
   });
 }
@@ -5718,14 +6840,19 @@ function celebEnd(c, quiet) {
   if (!quiet && mv) {
     celebPlace(c, mv.secs);
     if (c.cels[0].b) {
-      const w = celebBallW(h, celebBallAt(mv, mv.secs, null, c.cels[0]));
-      if (!w.held) {
+      const hc = c.cels[0], Po = hc.po && CELEB_POST[hc.po];
+      const b = Po && Po.ball ? Po.ball(Po.secs, null, hc) : celebBallAt(mv, mv.secs, null, hc), w = celebBallW(h, b);
+      if (b && b.hand === 'x') {   // (v0.51: thrown into the stand: no ball left on the turf)
+        h.hasBall = false;
+        Object.assign(ball, { x: h.x, y: bowlGeo().Y0 - bowlGeo().D - 10 * YD, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, loose: true, live: false, inAir: false, tucked: false });
+      } else if (!w.held) {
         h.hasBall = false;
         Object.assign(ball, { x: w.x, y: w.y, z: 0, vx: 0, vy: 0, vz: 0, rot: w.rot, spin: 0, loose: true, live: false, inAir: false, tucked: false });
       }
     }
   }
   for (const p of c.cast) p.cel = null;
+  if (c.cels[0].cm != null && SL.celCam === c.cels[0].cm) SL.celCam = -1;   // (v0.51: the cameraman held for it goes back to the game)
   if (!quiet && rec && !rec.replaying) rec.celEnd = (rec.doneT || 0) + CELEB.tape;
 }
 // any key or tap (true: one was skipped). The press still does whatever else it does.
@@ -5739,6 +6866,7 @@ function celebSkip() {
 function celebReset() {
   for (const c of [...celebLive]) celebEnd(c, true);
   celebQ = null; celebSides = []; celebUsed = false; celebFlags = {};
+  if (typeof SL !== 'undefined') SL.celCam = -1;
   if (ols && ols.length) for (const p of allPlayers()) { p.cel = null; p.celWalk = null; }
 }
 
@@ -5770,8 +6898,9 @@ function celebAt(mv, t, c) {
   t = Math.max(0, Math.min(mv.secs, t));
   const tl = t - g, q = celebSample(R, mv, Math.max(0, tl));
   if (tl < 0) {
-    if (c.j && c.rs != null) { if (t >= c.rs) celebJog(q, t - c.rs, g - c.rs, Math.max(c.j, 7 * (g - c.rs))); else { q.sink += 1.2; q.R += 0.14; q.k -= 0.04; } }   // (a sprint: set, then a full run)
+    if (c.j && c.rs != null) { if (t >= c.rs) celebJog(q, t - c.rs, g - c.rs, Math.max(c.j, 7 * (g - c.rs)), true); else if (c.bo && t < c.bt) { celebJog(q, t, c.bt, c.bd || 1); q.R -= 0.12; } else { q.sink += 1.2; q.R += 0.14; q.k -= 0.04; } }   // (a sprint: (backing out,) set, then a full run in long strides)
     else if (c.j) celebJog(q, t, g, c.j);
+    if (R.runNh) q.nh = R.runNh.slice();   // (v0.51: the ball held up as he runs in)
   }
   else if (R.fx) R.fx(q, tl, c, t);
   if (mv.out && t > mv.secs - mv.out) {   // a cast move: everyone eases back to standing together over its last `out` seconds
@@ -5783,10 +6912,10 @@ function celebAt(mv, t, c) {
   return q;
 }
 // on his way to his mark: a walk, jog or run by how fast he has to cover it (jd yd in g s): the legs cycle and swing with his pace, arms pump, he leans in; easing out as he gets there
-function celebJog(q, t, g, jd = 1) {
-  const J = CELEB.jog, v = jd / Math.max(0.1, g), run = Math.min(1, Math.max(0, (v - J.walk) / (J.run - J.walk)));   // (v yd/s; run 0 = a walk, 1 = a full run)
-  const e = Math.max(0, Math.min(1, (g - t) / 0.12)), ph = t * Math.min(J.rateMax, J.rate0 + J.rateK * v), s = Math.sin(ph), c = Math.cos(ph);
-  const sw = (J.swing[0] + (J.swing[1] - J.swing[0]) * run) * e, kn = (J.knee[0] + (J.knee[1] - J.knee[0]) * run) * e, arm = (3 + 4 * run) * e;
+function celebJog(q, t, g, jd = 1, sprint = false) {
+  const J = CELEB.jog, v = jd / Math.max(0.1, g), run = Math.min(1, Math.max(0, (v - J.walk) / (J.run - J.walk))), SP = sprint ? J.sprint : null;   // (v yd/s; run 0 = a walk, 1 = a full run; sprint = a post move's run-up: longer strides)
+  const e = Math.max(0, Math.min(1, (g - t) / 0.12)), ph = t * Math.min(J.rateMax, J.rate0 + J.rateK * v) * (SP ? SP.rate : 1), s = Math.sin(ph), c = Math.cos(ph);
+  const sw = (J.swing[0] + (J.swing[1] - J.swing[0]) * run) * e * (SP ? SP.swing : 1), kn = (J.knee[0] + (J.knee[1] - J.knee[0]) * run) * e * (SP ? SP.knee : 1), arm = (3 + 4 * run) * e;
   q.l0 = [-1.5, -sw * s, 0.15 + Math.max(0, c) * kn]; q.l1 = [1.5, sw * s, 0.15 + Math.max(0, -c) * kn];
   q.nh = [3 + arm * s, 2 - arm * Math.abs(s)]; q.fh = [-arm * s, 0.5 - arm * Math.abs(s)];
   q.R += (0.05 + 0.14 * run) * e; q.lift += (0.3 + 1.1 * run) * Math.abs(s) * e;
@@ -5815,7 +6944,7 @@ function celebPileFx(q, tl, c, t) {   // the pile: each man lands a layer higher
 }
 function celebHoopProp(q) {   // the hoop his arms make, seen edge-on
   if (q.v < 0.5) return;
-  ctx.strokeStyle = celebInk(0.75); ctx.lineWidth = 0.9; ctx.beginPath(); ctx.ellipse(q.nh[0] - 3.2, q.nh[1] - 0.3, 3.4, 1.1, 0, 0, Math.PI * 2); ctx.stroke();
+  cpEll(q.nh[0] - 3.2, q.nh[1] - 0.3, 3.4, 1.1, null, 330, 0.9);
 }
 function celebCupFx(q, tl, c, t) { const w = Math.sin(2 * Math.PI * 1.6 * t); q.k += 0.04 * w * q.v; q.lift += 1.2 * Math.max(0, w) * q.v; }   // pumping the trophy
 function celebJumpFx(q, tl, c, t) { const ph = (t * 2.3 + ((c && c.i) || 0) * 0.37) % 1, h = 4 * ph * (1 - ph) * q.v; q.lift += 7.5 * h; q.k += 0.14 * (h - 0.4) * q.v; q.l1 = [3.5, -0.5 * h, 0.9 * h]; }   // jumping, each on his own beat
@@ -5857,7 +6986,8 @@ function celebPose(p, ac) {
   const u0 = (ac - c.t0) * (c.rate || 1), Wp = celebWarpOf(mv, c.hy), hy = c.hy || 0;
   let t = celebWarp(mv, c, u0), blend = 1, dip = 0, gas = 0;   // (blend: 1 = the move's own pose, 0 = standing; the lead-in and the wind-down ease between them)
   if (t < 0) {   // the lead-in: he gathers himself (a small dip) into the move's first pose
-    const s = ac - c.t0, ld = c.ld || 0;
+    const s = ac - c.t0, ld = c.ld || 0, P = c.pr && CELEB_PRE[c.pr];
+    if (P && s >= -ld) return celebClipPose(P, s + ld, c, mv, celebAt(mv, 0, c), true, (u0 - Wp.uPk) / (c.rate || 1));   // (v0.51: a lead-in clip)
     if (s < -ld) {   // before it, after a long run (c.gs): bent over, hands on his knees, getting his breath
       if (!c.gs || s < -(ld + c.gs)) return null;
       gas = smooth01(Math.min(1, (s + ld + c.gs) / 0.25, -(s + ld) / 0.25)); blend = 0;
@@ -5865,7 +6995,8 @@ function celebPose(p, ac) {
     t = 0;
   }
   if (t > mv.secs) {   // the wind-down: back to standing over the first part of it, then a beat
-    const over = (t - mv.secs) / (c.rate || 1);
+    const over = (t - mv.secs) / (c.rate || 1), Po = c.po && CELEB_POST[c.po];
+    if (Po && over <= Po.secs + 0.3) return celebClipPose(Po, over, c, mv, celebAt(mv, mv.secs, c), false, (u0 - Wp.uPk) / (c.rate || 1));   // (v0.51: an exit clip)
     if (c.tl && over <= c.tl + 0.3) blend = 1 - smooth01(over / (c.tl * 0.65));
     else if (!c.keep && t > mv.secs + 0.3) return null;   // (keep: the animation library holds the last frame; a guest a few frames behind the host does too)
     t = mv.secs;
@@ -5913,7 +7044,7 @@ function celebArms(T, skin, q) {
   const held = q.ball && q.ball.hand, mv = q.role;
   if (q.ball && q.ball.pre) q.ball.pre(q);   // (a move look's carried ball: under his arms, the hand wrapped over it)
   const arm = (s, h, al) => { const sh = CELEB_SH[s], el = (s === 'fh' ? q.fe : q.ne) || (h[0] - sh[0] >= 0 ? -1 : 1); drawArmTo(T, skin, sh[0], sh[1], h[0], h[1], 5 * al, 5.5 * al, el, 4.4); };
-  const inHand = h => { ctx.save(); ctx.translate(h[0], h[1]); ctx.rotate(q.ball.rot || 0); drawFootball(6, 3.9, 1, -0.3); ctx.restore(); };
+  const inHand = h => { ctx.save(); ctx.translate(h[0], h[1]); ctx.rotate(q.ball.rot || 0); drawFootball(7 * BALL_HELD, 4.5 * BALL_HELD, 1, -0.3); ctx.restore(); };
   for (const s of ['fh', 'nh']) {
     const tr = q.trail && q.trail[s];
     if (tr) for (let i = tr.length - 1; i >= 0; i--) { ctx.save(); ctx.globalAlpha *= CELEB.smearA / (i + 1); arm(s, tr[i][0], tr[i][1]); if (held === s[0]) inHand(tr[i][0]); ctx.restore(); }
@@ -5921,28 +7052,70 @@ function celebArms(T, skin, q) {
     if (held === s[0]) inHand(q[s]);
   }
   celebDigits(T, q);
-  if (mv.props) { ctx.save(); mv.props(q, q.t, T); ctx.restore(); }
+  if (mv.props) { ctx.save(); if (mv.secs) ctx.globalAlpha *= cpFade(q.t, 0, mv.secs); mv.props(q, q.t, T); ctx.restore(); }   // (sketched in / erased at the move's ends; props with their own window fade at it too)
 }
-// fingers out of the glove (a point, two fingers, a thumb); only = that hand alone
+// fingers out of the glove (a point, two fingers, a thumb); only = that hand alone. Sprite units: edge = how far off the fist's centre the index finger starts
+// (its top edge), len = finger from / to along the point, gap / spread = the middle finger beside it, tuck = the thumb across the fist [back, along, front, along]
+const CELEB_DIGIT = { edge: 1.3, len: [1.0, 4.6], w: 1.4, gap: 1.1, spread: 0.1, tuck: [0.9, 0.9, 0.5, 1.5], tuckW: 1.1, thumb: [1.0, 3.8], thumbW: 2.1 };
 function celebDigits(T, q, only) {
   const mv = q.role, DS = mv.digit ? (Array.isArray(mv.digit[0]) ? mv.digit : [mv.digit]) : [];   // (one hand, or a list: both hands)
   for (const D of DS) if (q.t >= D[3] && q.t <= D[4] && (!only || D[0] === only)) {   // fingers out of the glove (a point, two fingers, a thumb)
-    const h = q[D[0]], sh = CELEB_SH[D[0]], a0 = D[2] === 'arm' ? Math.atan2(h[1] - sh[1], h[0] - sh[0]) : D[2];
-    ctx.save(); ctx.strokeStyle = T.glove; ctx.lineWidth = 1.5; ctx.lineCap = 'round'; ctx.beginPath();
-    for (let i = 0; i < D[1]; i++) { const a = a0 + (i - (D[1] - 1) / 2) * 0.5; ctx.moveTo(h[0] + Math.cos(a) * 1.6, h[1] + Math.sin(a) * 1.6); ctx.lineTo(h[0] + Math.cos(a) * 5.6, h[1] + Math.sin(a) * 5.6); }
+    const h = q[D[0]], sh = CELEB_SH[D[0]], a0 = D[2] === 'arm' ? Math.atan2(h[1] - sh[1], h[0] - sh[0]) : D[2], G = CELEB_DIGIT;
+    const dx = Math.cos(a0), dy = Math.sin(a0);
+    let px = -dy, py = dx; if (py > 0 || (py === 0 && px < 0)) { px = -px; py = -py; }   // (across the fist: always its upper edge on screen; sprite y is never mirrored by his facing)
+    const ray = (o, a, r0, r1) => { const c = Math.cos(a), s = Math.sin(a), bx = h[0] + px * o, by = h[1] + py * o; ctx.moveTo(bx + c * r0, by + s * r0); ctx.lineTo(bx + c * r1, by + s * r1); };
+    ctx.save(); ctx.strokeStyle = T.glove; ctx.lineCap = 'round'; ctx.beginPath();
+    if (D[5] === 'thumb') { ctx.lineWidth = G.thumbW; ray(G.edge, a0, G.thumb[0], G.thumb[1]); }   // (a thumb: short and thick, off the side of the fist)
+    else {
+      ctx.lineWidth = G.w;
+      for (let i = 0; i < Math.min(2, D[1]); i++) ray(G.edge - i * G.gap, a0 + i * G.spread, G.len[0], G.len[1]);   // (the index finger off the fist's top edge; two = index + middle side by side)
+      ctx.stroke(); ctx.beginPath(); ctx.lineWidth = G.tuckW;   // (the tucked thumb across the front: the rest reads as a closed fist)
+      ctx.moveTo(h[0] - px * G.tuck[0] + dx * G.tuck[1], h[1] - py * G.tuck[0] + dy * G.tuck[1]); ctx.lineTo(h[0] + px * G.tuck[2] + dx * G.tuck[3], h[1] + py * G.tuck[2] + dy * G.tuck[3]);
+    }
     ctx.stroke(); ctx.restore();
   }
 }
 // the near hand ON his helmet (a fin on the facemask, a hand cupped to the ear, a salute, a hand over his eyes): the arms are drawn before the head, so a
 // near hand inside the shell would be hidden behind it. drawPlayer calls this after the head: that arm again, over it. (The far hand stays behind.)
 function celebArmOver(T, skin, q) {
+  if (q.overF) { const f = q.fh, sf = CELEB_SH.fh; if (Math.hypot(f[0], f[1] + 20) < CELEB.overHelmet + 4) drawArmTo(T, skin, sf[0], sf[1], f[0], f[1], 5 * q.al, 5.5 * q.al, q.fe || (f[0] - sf[0] >= 0 ? -1 : 1), 4.4); }   // (v0.51: a showboat's helmet slap with the far hand)
   const h = q.nh, sh = CELEB_SH.nh;
   if (Math.hypot(h[0], h[1] + 20) >= CELEB.overHelmet || (q.ball && q.ball.hand === 'n')) return;
   drawArmTo(T, skin, sh[0], sh[1], h[0], h[1], 5 * q.al, 5.5 * q.al, q.ne || (h[0] - sh[0] >= 0 ? -1 : 1), 4.4);
   celebDigits(T, q, 'nh');
 }
-// --- doodles (his sprite space, over his arms): plain strokes and shapes, no art
+// --- doodles (his sprite space, over his arms): pencil props. cp* = the sprite-space pencil kit: a graphite outline whose points boil (dfBoil, ICON.boil a second),
+// the colour laid a little past it (a seeded offset, never timed); off in performance / small-player LOD (penPlain: no boil). No allocations.
 const celebInk = (a = 0.85) => `rgba(255,255,255,${a})`;
+const cpJ = n => penPlain() ? 0 : dfBoil(n) * CELEB.propJit;   // (one point's boil)
+const cpO = n => Math.sin(n * 12.9898) * CELEB.propOff;         // (the colour's fixed offset off the line)
+const cpInk = a => { const I = CELEB.propInk; return `rgba(${I[0]},${I[1]},${I[2]},${0.9 * a})`; };
+function cpFade(t, t0, t1) { return Math.max(0, Math.min(1, (t - t0) / CELEB.propIn, (t1 - t) / CELEB.propOut)); }   // sketched in / erased at a prop's ends
+function cpPen(a = 1, w = CELEB.propW, col) { ctx.strokeStyle = col || cpInk(a); ctx.lineWidth = w; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; }
+function cpLine(x0, y0, x1, y1, n) {   // (adds a boiled line to the path: the ends jitter, the middle bows a little)
+  ctx.moveTo(x0 + cpJ(n), y0 + cpJ(n + 1)); ctx.quadraticCurveTo((x0 + x1) / 2 + cpJ(n + 2) * 1.6, (y0 + y1) / 2 + cpJ(n + 3) * 1.6, x1 + cpJ(n + 4), y1 + cpJ(n + 5));
+}
+function cpCurve(x0, y0, cx, cy, x1, y1, n) { ctx.moveTo(x0 + cpJ(n), y0 + cpJ(n + 1)); ctx.quadraticCurveTo(cx + cpJ(n + 2) * 1.6, cy + cpJ(n + 3) * 1.6, x1 + cpJ(n + 4), y1 + cpJ(n + 5)); }
+function cpShape(P, fill, n, w) {   // a flat polygon [x0, y0, x1, y1, ...] in the current transform: the colour (off the line), then the pencil outline
+  const ox = cpO(n), oy = cpO(n + 7), m = P.length >> 1;
+  ctx.fillStyle = fill; ctx.beginPath();
+  for (let i = 0; i < m; i++) i ? ctx.lineTo(P[2 * i] + ox, P[2 * i + 1] + oy) : ctx.moveTo(P[0] + ox, P[1] + oy);
+  ctx.closePath(); ctx.fill();
+  cpPen(1, w); ctx.beginPath();
+  for (let i = 0; i < m; i++) { const x = P[2 * i] + cpJ(n + 2 * i), y = P[2 * i + 1] + cpJ(n + 2 * i + 1); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+  ctx.closePath(); ctx.stroke();
+}
+function cpRect(x, y, w, h, fill, n, lw) {
+  ctx.fillStyle = fill; ctx.fillRect(x + cpO(n), y + cpO(n + 7), w, h);
+  cpPen(1, lw); ctx.beginPath();
+  ctx.moveTo(x + cpJ(n), y + cpJ(n + 1)); ctx.lineTo(x + w + cpJ(n + 2), y + cpJ(n + 3)); ctx.lineTo(x + w + cpJ(n + 4), y + h + cpJ(n + 5)); ctx.lineTo(x + cpJ(n + 6), y + h + cpJ(n + 7));
+  ctx.closePath(); ctx.stroke();
+}
+function cpEll(cx, cy, rx, ry, fill, n, lw) {
+  if (fill) { ctx.fillStyle = fill; ctx.beginPath(); ctx.ellipse(cx + cpO(n), cy + cpO(n + 7), rx, ry, 0, 0, Math.PI * 2); ctx.fill(); }
+  cpPen(1, lw); ctx.beginPath(); ctx.ellipse(cx + cpJ(n), cy + cpJ(n + 1), Math.max(0.1, rx + cpJ(n + 2) * 0.5), Math.max(0.1, ry + cpJ(n + 3) * 0.3), cpJ(n + 4) * 0.1, 0, Math.PI * 2); ctx.stroke();
+}
+const CP_ARROWHEAD = [0, 0, -2.4, -1.2, -1.8, 0, -2.4, 1.2];   // (the arrow's tip, pointing +x)
 function celebTicks(x, y, n, a0, a1, r0, r1, col, w = 1.2) {   // short lines fanning out from a spot
   ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = 'round'; ctx.beginPath();
   for (let i = 0; i < n; i++) { const a = a0 + (a1 - a0) * (n > 1 ? i / (n - 1) : 0.5); ctx.moveTo(x + Math.cos(a) * r0, y + Math.sin(a) * r0); ctx.lineTo(x + Math.cos(a) * r1, y + Math.sin(a) * r1); }
@@ -5956,44 +7129,56 @@ function celebWindmillRing(q) {   // the arm circles' smear ring: an arc behind 
 function celebStringsProp(q, t) {   // glued palms: strings stretch between them as they peel apart, thinning out
   if (t < 0.4 || t > 0.8) return;
   const u = (t - 0.4) / 0.4, a = q.fh, b = q.nh;
-  ctx.strokeStyle = celebInk(0.9 * (1 - u)); ctx.lineWidth = 0.9; ctx.beginPath();
-  for (let i = -1; i <= 1; i++) { ctx.moveTo(a[0] + 1, a[1] + i * 1.3); ctx.quadraticCurveTo((a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + i * 1.3 + 2.5 * u, b[0] - 1, b[1] + i * 1.3); }
+  ctx.globalAlpha *= cpFade(t, 0.4, 0.8 + CELEB.propOut);
+  cpPen(0.9 * (1 - u), 0.6); ctx.beginPath();
+  for (let i = -1; i <= 1; i++) cpCurve(a[0] + 1, a[1] + i * 1.3, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + i * 1.3 + 2.5 * u, b[0] - 1, b[1] + i * 1.3, 40 + i * 6);
   ctx.stroke();
 }
 function celebShoutProp(q, t) {   // shout lines out of the facemask
   if (t < 0.22 || t > 0.86) return;
   const g = 1 + 0.25 * Math.sin(t * 40);
-  celebTicks(8, -24, 4, -0.95, 0.25, 6 * g, 11 * g, celebInk(0.9), 1.4);
+  ctx.globalAlpha *= cpFade(t, 0.22, 0.86);
+  cpPen(0.9, 1.1); ctx.beginPath();
+  for (let i = 0; i < 4; i++) { const a = -0.95 + 1.2 * i / 3, c = Math.cos(a), s = Math.sin(a); cpLine(8 + c * 6 * g, -24 + s * 6 * g, 8 + c * 11 * g, -24 + s * 11 * g, 60 + i * 6); }
+  ctx.stroke();
 }
 function celebPanProp(q, t) {   // a pan in one hand, a spatula in the other, the pancake flipped up and caught
   const h = q.nh, f = q.fh, px = h[0] + 7.5, py = h[1] + 0.5, ph = celebPanH(t);
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = '#3a3a3a'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(h[0], h[1]); ctx.lineTo(px - 4, py); ctx.stroke();   // handle
-  ctx.fillStyle = '#4a4a4a'; ctx.beginPath(); ctx.ellipse(px, py, 4.6, 1.5, 0, 0, Math.PI * 2); ctx.fill();                          // pan
-  ctx.strokeStyle = '#cfcfcf'; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.moveTo(f[0], f[1]); ctx.lineTo(f[0] + 4.5, f[1] - 2); ctx.stroke();   // spatula
-  ctx.fillStyle = '#cfcfcf'; ctx.fillRect(f[0] + 4, f[1] - 3.6, 3, 1.8);
-  if (t > 0.12) { const flip = ph > 0 ? Math.abs(Math.cos((t - 0.4) / 0.5 * Math.PI * 2)) : 1; ctx.fillStyle = '#d9a253'; ctx.beginPath(); ctx.ellipse(px, py - 1 - ph, 3.6, 0.5 + 0.9 * flip, 0, 0, Math.PI * 2); ctx.fill(); }   // pancake
+  cpPen(1, 2.2); ctx.beginPath(); cpLine(h[0], h[1], px - 4, py, 80); ctx.stroke();                           // handle (graphite edge...)
+  cpPen(1, 1.1, '#4a4a4a'); ctx.beginPath(); ctx.moveTo(h[0], h[1]); ctx.lineTo(px - 4, py); ctx.stroke();      // (...over the colour)
+  cpEll(px, py, 4.6, 1.5, '#4a4a4a', 86);                                                                       // pan
+  cpPen(1, 1.6); ctx.beginPath(); cpLine(f[0], f[1], f[0] + 4.5, f[1] - 2, 92); ctx.stroke();                   // spatula
+  cpRect(f[0] + 4, f[1] - 3.6, 3, 1.8, '#d8d8d8', 98);
+  if (t > 0.12) { const flip = ph > 0 ? Math.abs(Math.cos((t - 0.4) / 0.5 * Math.PI * 2)) : 1; cpEll(px, py - 1 - ph, 3.6, 0.5 + 0.9 * flip, '#d9a253', 106, 0.6); }   // pancake
 }
 function celebStrapProp(q, t) {   // the strap from the far shoulder to his hand, and a click mark as it locks
   if (t < 0.2 || t > 0.92) return;
-  const h = q.nh;
-  ctx.strokeStyle = celebInk(0.85); ctx.lineWidth = 1.4; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(-2.5, -13); ctx.lineTo(t < 0.56 ? h[0] : 5.5, t < 0.56 ? h[1] : 2); ctx.stroke();
-  if (t >= 0.56 && t < 0.74) { const u = (t - 0.56) / 0.18; celebTicks(6.5, 2.5, 5, -1.2, 1.4, 2 + 3 * u, 4 + 4 * u, celebInk(1 - u), 1.2); }
+  const h = q.nh, x1 = t < 0.56 ? h[0] : 5.5, y1 = t < 0.56 ? h[1] : 2;
+  ctx.globalAlpha *= cpFade(t, 0.2, 0.92);
+  cpPen(1, 2); ctx.beginPath(); cpLine(-2.5, -13, x1, y1, 110); ctx.stroke();
+  cpPen(1, 1, '#f2f2f2'); ctx.beginPath(); ctx.moveTo(-2.5, -13); ctx.lineTo(x1, y1); ctx.stroke();
+  if (t >= 0.56 && t < 0.74) { const u = (t - 0.56) / 0.18; celebTicks(6.5, 2.5, 5, -1.2, 1.4, 2 + 3 * u, 4 + 4 * u, cpInk(1 - u), 0.9); }
 }
 function celebBowProp(q, t) {   // a bow in the front hand, the string to the drawing hand, the arrow let go at 0.8
   if (t < 0.15 || t > 1.1) return;
-  const b = q.fh, d = q.nh, top = [b[0] - 2.5, b[1] - 8], bot = [b[0] - 2.5, b[1] + 8], drawn = t < 0.8;
-  ctx.lineCap = 'round'; ctx.strokeStyle = '#7a5230'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(top[0], top[1]); ctx.quadraticCurveTo(b[0] + 3.5, b[1], bot[0], bot[1]); ctx.stroke();   // bow
-  ctx.strokeStyle = celebInk(0.8); ctx.lineWidth = 0.7; ctx.beginPath(); ctx.moveTo(top[0], top[1]);
-  if (drawn) ctx.lineTo(d[0], d[1]);
-  ctx.lineTo(bot[0], bot[1]); ctx.stroke();                                                                           // string
+  const b = q.fh, d = q.nh, tx = b[0] - 2.5, ty = b[1] - 8, bx = b[0] - 2.5, by = b[1] + 8, drawn = t < 0.8;
+  ctx.globalAlpha *= cpFade(t, 0.15, 1.1);
+  cpPen(1, 2.3); ctx.beginPath(); cpCurve(tx, ty, b[0] + 3.5, b[1], bx, by, 120); ctx.stroke();           // bow: graphite edge...
+  cpPen(1, 1.2, '#a8743e'); ctx.beginPath(); ctx.moveTo(tx, ty); ctx.quadraticCurveTo(b[0] + 3.5 + cpO(120), b[1], bx, by); ctx.stroke();   // ...the wood coloured in
+  cpPen(0.85, 0.45); ctx.beginPath();                                                                       // string
+  if (drawn) { cpLine(tx, ty, d[0], d[1], 128); cpLine(d[0], d[1], bx, by, 134); } else cpLine(tx, ty, bx, by, 128);
+  ctx.stroke();
   const ax = drawn ? d[0] : d[0] + 420 * (t - 0.8), al = b[0] + 4 - d[0], fade = drawn ? 1 : Math.max(0, 1 - (t - 0.8) / 0.25);
-  if (fade > 0) { ctx.strokeStyle = celebInk(0.95 * fade); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(ax, d[1] + (drawn ? 0 : -1)); ctx.lineTo(ax + Math.max(8, al), b[1] - 0.5); ctx.stroke(); }   // arrow
+  if (fade > 0) {   // arrow: a pencil shaft, two fletching flicks at the nock, a filled tip
+    const ay = d[1] + (drawn ? 0 : -1), ex = ax + Math.max(8, al), ey = b[1] - 0.5, ang = Math.atan2(ey - ay, ex - ax);
+    ctx.globalAlpha *= fade;
+    cpPen(1, 0.8); ctx.beginPath(); cpLine(ax, ay, ex, ey, 140); cpLine(ax, ay, ax - 1.6, ay - 1.4, 146); cpLine(ax, ay, ax - 1.6, ay + 1.4, 152); ctx.stroke();
+    ctx.save(); ctx.translate(ex, ey); ctx.rotate(ang); cpShape(CP_ARROWHEAD, '#b9b9c2', 158, 0.5); ctx.restore();
+  }
 }
 function celebCashProp(q, t) {   // the stack on his palm, and bills flicked off it fluttering down (the bills are particles: none in performance mode)
   const f = q.fh;
-  ctx.fillStyle = '#5fa34a'; ctx.fillRect(f[0] - 1.5, f[1] - 3.4, 4.6, 1.6); ctx.fillStyle = '#7cc463'; ctx.fillRect(f[0] - 1.5, f[1] - 4.4, 4.6, 1);
+  cpRect(f[0] - 1.5, f[1] - 3.4, 4.6, 1.6, '#5fa34a', 170, 0.5); cpRect(f[0] - 1.5, f[1] - 4.4, 4.6, 1, '#7cc463', 178, 0.5);
   if (!celebParts()) return;
   for (let i = 0; i < 4; i++) {
     const s = t - (0.2 + i * 0.2);
@@ -6048,15 +7233,19 @@ function celebSlideAfter(p, q) {   // turf spray off the knees (particles)
 function celebHelmetProp(q, t, T) {   // his helmet, off, in the raised hand
   if (!q.bare) return;
   const x = q.nh[0], y = q.nh[1] - 5.5;
-  ctx.fillStyle = T.shell; ctx.beginPath(); ctx.arc(x, y, 6.4, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = T.stripe; ctx.lineWidth = 1.7; ctx.beginPath(); ctx.arc(x, y, 5.1, -Math.PI * 0.95, -Math.PI * 0.25); ctx.stroke();
-  ctx.strokeStyle = '#d0d0d0'; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.moveTo(x + 3.5, y - 0.8); ctx.lineTo(x + 8.6, y - 0.8); ctx.moveTo(x + 3.5, y + 2.2); ctx.lineTo(x + 8.6, y + 2.2); ctx.moveTo(x + 8.6, y - 2); ctx.lineTo(x + 8.6, y + 4.8); ctx.lineTo(x + 4.2, y + 5.2); ctx.stroke();
+  ctx.globalAlpha *= cpFade(t, 0.24, 1.04);
+  cpEll(x, y, 6.4, 6.4, T.shell, 200);
+  ctx.strokeStyle = T.stripe; ctx.lineWidth = 1.7; ctx.beginPath(); ctx.arc(x + cpO(206), y, 5.1, -Math.PI * 0.95, -Math.PI * 0.25); ctx.stroke();
+  cpPen(1, 1.5); ctx.beginPath(); cpLine(x + 3.5, y - 0.8, x + 8.6, y - 0.8, 210); cpLine(x + 3.5, y + 2.2, x + 8.6, y + 2.2, 216); cpLine(x + 8.6, y - 2, x + 8.6, y + 4.8, 222); cpLine(x + 8.6, y + 4.8, x + 4.2, y + 5.2, 228); ctx.stroke();   // facemask: graphite under...
+  ctx.strokeStyle = '#d0d0d0'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(x + 3.5, y - 0.8); ctx.lineTo(x + 8.6, y - 0.8); ctx.moveTo(x + 3.5, y + 2.2); ctx.lineTo(x + 8.6, y + 2.2); ctx.moveTo(x + 8.6, y - 2); ctx.lineTo(x + 8.6, y + 4.8); ctx.lineTo(x + 4.2, y + 5.2); ctx.stroke();   // ...the grey bars
 }
+const CP_COOLER = [-5, -4, 5, -4, 5, 4, -5, 4], CP_LID = [-5.4, -5.4, 5.4, -5.4, 5.4, -3.7, -5.4, -3.7];
 function celebCoolerProp(q, t) {   // a plain cooler between his hands, tipped (q.u), and the water out of it
   if (t < 0 || q.v > 0.5) return;
   const cx = (q.nh[0] + q.fh[0]) / 2 + 1, cy = (q.nh[1] + q.fh[1]) / 2 - 1.5;
   ctx.save(); ctx.translate(cx, cy); ctx.rotate(1.7 * q.u);
-  ctx.fillStyle = '#e8762c'; ctx.fillRect(-5, -4, 10, 8); ctx.fillStyle = '#f4f4f4'; ctx.fillRect(-5.4, -5.4, 10.8, 1.7); ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.fillRect(-5, 2.6, 10, 1.4);
+  cpShape(CP_COOLER, '#e8762c', 240); cpShape(CP_LID, '#f4f4f4', 250, 0.6);
+  cpPen(0.5, 0.5); ctx.beginPath(); for (let i = 0; i < 3; i++) cpLine(-4 + i * 1.2, 3.5, -2.6 + i * 1.2, 1.6, 260 + i * 6); ctx.stroke();   // (a pencil-hatched shadow along the bottom)
   ctx.restore();
   ctx.fillStyle = 'rgba(150,205,255,0.9)';
   for (let i = 0; i < 11; i++) { const s = t - 0.62 - i * 0.035; if (s > 0 && s < 0.42) ctx.fillRect(cx + 4 + 5 * s + (i % 3) * 1.4, cy + 2 + 150 * s * s, 1.7, 4); }   // (the stream: a doodle, not particles)
@@ -6071,11 +7260,13 @@ function celebSplashProp(q, t) {   // the water landing on the coach: a splash o
 function celebCupProp(q, t) {   // the trophy: a plain gold cup (bowl, handles, stem, base) between his hands
   if (t < 0.25) return;
   const x = (q.nh[0] + q.fh[0]) / 2 + 0.5, y = Math.min(q.nh[1], q.fh[1]) + 1;
-  ctx.save(); ctx.translate(x, y); ctx.fillStyle = '#f2c230'; ctx.strokeStyle = '#8a5a00'; ctx.lineWidth = 0.8; ctx.lineJoin = 'round';
-  ctx.beginPath(); ctx.arc(-4.4, -8.2, 2.2, Math.PI * 0.5, Math.PI * 1.5); ctx.moveTo(4.4, -10.4); ctx.arc(4.4, -8.2, 2.2, -Math.PI * 0.5, Math.PI * 0.5); ctx.stroke();   // handles
-  ctx.beginPath(); ctx.moveTo(-4.6, -11.5); ctx.lineTo(4.6, -11.5); ctx.quadraticCurveTo(4.2, -4.6, 0, -4); ctx.quadraticCurveTo(-4.2, -4.6, -4.6, -11.5); ctx.fill(); ctx.stroke();   // bowl
-  ctx.fillRect(-0.9, -4.2, 1.8, 2.8); ctx.beginPath(); ctx.rect(-3.4, -1.6, 6.8, 1.9); ctx.fill(); ctx.stroke();   // stem, base
-  ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.fillRect(-3, -10.6, 1.2, 4);
+  ctx.save(); ctx.globalAlpha *= cpFade(t, 0.25, 1e9); ctx.translate(x, y);
+  cpPen(1, 0.9); ctx.beginPath(); cpCurve(-4.4, -10.4, -7.4, -8.2, -4.4, -6, 270); cpCurve(4.4, -10.4, 7.4, -8.2, 4.4, -6, 276); ctx.stroke();   // handles
+  const o = cpO(282);
+  ctx.fillStyle = '#f2c230'; ctx.beginPath(); ctx.moveTo(-4.6 + o, -11.5); ctx.lineTo(4.6 + o, -11.5); ctx.quadraticCurveTo(4.2 + o, -4.6, o, -4); ctx.quadraticCurveTo(-4.2 + o, -4.6, -4.6 + o, -11.5); ctx.fill();   // bowl (colour)...
+  cpPen(1, 0.8); ctx.beginPath(); cpLine(-4.6, -11.5, 4.6, -11.5, 284); cpCurve(4.6, -11.5, 4.2, -4.6, 0, -4, 290); cpCurve(0, -4, -4.2, -4.6, -4.6, -11.5, 296); ctx.stroke();   // ...and its pencil edge
+  cpRect(-0.9, -4.2, 1.8, 2.8, '#f2c230', 302, 0.6); cpRect(-3.4, -1.6, 6.8, 1.9, '#f2c230', 310);   // stem, base
+  cpPen(1, 0.7, 'rgba(255,255,255,0.7)'); ctx.beginPath(); cpLine(-2.4, -10.6, -2.4, -6.8, 318); ctx.stroke();   // glint
   ctx.restore();
 }
 // confetti (particles: none in performance mode): pieces fall round him and lie where they land, every one a pure function of the time
@@ -6153,10 +7344,12 @@ function celebBareHead(look, skin, hy, cap) {
 // y = toward the camera, h = up off the turf; top = spinning upright on its point, fall = tipping over)
 function celebBallAt(mv, t, q, c) {
   t = Math.max(0, t);
+  const pb = c && c.pr && CELEB_PRE[c.pr] && CELEB_PRE[c.pr].ball;
+  if (pb) return pb(9, null, c);   // (v0.51: flicked away in the lead-in: it lies where that left it)
   const tl = t - ((c && c.g) || 0);
   if (tl < 0) return { hand: 'n', rot: -1.2 };   // (still jogging to his mark: carried)
   const b = (celebRole(mv, c).ball || celebDropBall)(tl, q || celebAt(mv, t, c), mv, c);
-  if (b && b.hand === 'n') {   // still held near the end: let it go so it lies on the turf when the move (or a skip) ends
+  if (b && b.hand === 'n' && !(c && c.po && CELEB_POST[c.po] && CELEB_POST[c.po].ball)) {   // still held near the end: let it go so it lies on the turf when the move (or a skip) ends (an exit clip with a ball lets it go itself)
     const tr = Math.max(0, mv.secs - ((c && c.g) || 0) - CELEB.dropTail);
     if (tl >= tr) return celebFallBall(tl, mv, c, tr, 0.22, 2);
   }
@@ -6227,13 +7420,13 @@ function celebAfter(p, q) {
   const one = (b, alpha, shadow) => {
     const w = celebBallW(p, b);
     ctx.save(); ctx.globalAlpha *= alpha;
-    if (shadow && w.z > 0.5) { const sk = 1 / (1 + w.z / (40 * S)); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(w.x, w.y + CELEB_BALL_R * S, 6 * S * BALL_SIZE * CELEB.ballK * sk, 3 * S * BALL_SIZE * CELEB.ballK * sk, 0, 0, Math.PI * 2); ctx.fill(); }
+    if (shadow && w.z > 0.5) { const sk = 1 / (1 + w.z / (40 * S)); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(w.x, w.y + CELEB_BALL_R * S, 6 * S * BALL_SIZE * BALL_DEAD_K * sk, 3 * S * BALL_SIZE * BALL_DEAD_K * sk, 0, 0, Math.PI * 2); ctx.fill(); }
     if (b.top != null) {   // stood on its point, twirling on its long axis (laces rolling round); tips over flat as it stops
       const up = 1 - (b.fall || 0), c = Math.cos(b.top), sn = Math.sin(b.top);
-      ctx.translate(w.x, w.y - w.z - (7 * BALL_SIZE * CELEB.ballK - CELEB_BALL_R) * S * up); ctx.scale(S * CELEB.ballK, S * CELEB.ballK); ctx.rotate((-Math.PI / 2 + (b.wob || 0)) * up * p.face);
+      ctx.translate(w.x, w.y - w.z - (7 * BALL_SIZE * BALL_DEAD_K - CELEB_BALL_R) * S * up); ctx.scale(S * BALL_DEAD_K, S * BALL_DEAD_K); ctx.rotate((-Math.PI / 2 + (b.wob || 0)) * up * p.face);
       drawFootball(7, 4.4, up < 0.5 ? 1 : sn > -0.2 ? Math.min(1, 0.4 + sn) : 0, up < 0.5 ? -0.3 : c * 2.6);
       if (up >= 0.5) { ctx.fillStyle = 'rgba(0,0,0,0.28)'; ctx.beginPath(); ctx.ellipse(0, -c * 1.6, 6.6, 2.4, 0, 0, Math.PI * 2); ctx.fill(); }
-    } else { ctx.translate(w.x, w.y - w.z); ctx.scale(S * CELEB.ballK, S * CELEB.ballK); ctx.rotate(w.rot); drawFootball(7, 4.5, 1, -0.3); }
+    } else { ctx.translate(w.x, w.y - w.z); ctx.scale(S * BALL_DEAD_K, S * BALL_DEAD_K); ctx.rotate(w.rot); drawFootball(7, 4.5, 1, -0.3); }
     ctx.restore();
   };
   const tr = q.ballTrail;
@@ -6303,14 +7496,70 @@ const KICK_EASE = { arms: 9, wind: 0.4, up: 0.3 };   // kicker / holder looks: a
 // shot (the normal play camera is ~0.9 px per unit at 1x, more on a sharper canvas, so the usual picture is unchanged); perf = performance mode: the normal shot too; the slow-frame step:
 // always. QUALITY: never. Only draw()'s own players: menus, cards, the library and the shows always get full detail.
 const PLAYER_LOD = { auto: 0.75, perf: 1.3 };
-let plLod = false;
-const plLodNow = () => !gfxHi() && (liteSlow || camZ() * RK * S * FIGURE.grow < (liteGame() ? PLAYER_LOD.perf : PLAYER_LOD.auto));
+let plLod = false, plGame = false;   // (plGame: draw()'s own player loop, so performance mode can keep the flat look there; menus / cards / the library / shows always get the full doodle)
+// --- doodle players (looks only: never a spot, size, hitbox or timing). Each limb piece and the torso get a graphite edge = a slightly larger dark box
+// drawn under the colour (one fillRect each, no paths), offset a little so the colour sits off the line like colouring past it; the offset is
+// seeded by his number and boils between DOODLE_PL.sets pre-made sets ICON.boil times a second. Levels (dpBegin): 0 = flat (DOODLE_PL.on false, or
+// performance mode in a game), 1 = edges, no boil (small on screen: plLod), 2 = AUTO: edges + boil, 3 = QUALITY / menus: + glove / shoe edges, a
+// lighter marker streak on each limb and the jersey, a scribbled shadow. Nothing here is stored on the player, taped or sent online.
+// w = edge width (sprite units), off = seeded offset, boil = offset swing, ink / inkS = edge colours (inkS = the sideline people's), streak = the
+// marker streak's alpha, lump = how far off round the helmet is, shadow = scribble sprite px / strokes; rain* = the bled second pass (C3)
+const DOODLE_PL = { on: true, w: 0.75, off: 0.35, boil: 0.32, sets: 3, ink: 'rgba(34,34,44,0.9)', inkS: 'rgba(34,34,44,0.75)', streak: 0.22, lump: 0.045,
+  shadow: { px: 96, n: 9, w: 7 }, rainAt: 0.3, rainW: 1.7, rainOff: 0.6, rainInk: 'rgba(34,34,44,0.28)' };
+const DP = { lv: 0, ox: 0, oy: 0, j: 0, n: 0, rain: false };
+// paper reactions (looks only; p.crease / p.flat are plain props set by the play code, so taped and synced like any other):
+// creaseTilt = sprite units the fold slants, creaseW / creaseShade = the shaded side; flatK = how flat a pancaked man is drawn, flatIn / flatHold / flatOut = s
+const PAPER_FX = { creaseTilt: 3, creaseW: 3, creaseShade: 'rgba(0,0,0,0.26)', creaseHi: 'rgba(255,255,255,0.7)', flatK: 0.62, flatIn: 0.2, flatHold: 0.5, flatOut: 0.2 };
+function paperFlat(p) {   // 1 = normal; under 1 while a pancaked man is on the turf
+  const f = p.flat; if (!f || !DP.lv) return 1;
+  if (!(p.action === 'sit' || p.action === 'down' || p.action === 'dive' || p.action === 'slide')) return 1;
+  const F = PAPER_FX, s = (rec && rec.replaying ? rec.rt : clock) - f.t; if (s < 0) return 1;
+  const k = s < F.flatIn ? smooth01(s / F.flatIn) : s < F.flatIn + F.flatHold ? 1 : 1 - smooth01((s - F.flatIn - F.flatHold) / F.flatOut);
+  return k > 0 ? 1 - (1 - F.flatK) * k : 1;
+}
+const dpH = k => { const x = Math.sin(k * 12.9898) * 43758.5453; return x - Math.floor(x); };   // (a seeded 0-1 number: no allocation)
+function dpBegin(p) {
+  const D = DOODLE_PL;
+  DP.lv = !D.on || (plGame && liteOn()) ? 0 : plLod ? 1 : (gfxHi() || !plGame) ? 3 : 2;
+  if (!DP.lv) return;
+  const n = DP.n = p.num | 0, j = DP.j = DP.lv >= 2 ? Math.floor(animNow() / 1000 * ICON.boil) % D.sets : 0;
+  DP.ox = (dpH(n * 3 + 1) - 0.5) * 2 * D.off + (DP.lv >= 2 ? (dpH(n * 11 + j * 7 + 2) - 0.5) * 2 * D.boil : 0);
+  DP.oy = (dpH(n * 3 + 2) - 0.5) * 2 * D.off + (DP.lv >= 2 ? (dpH(n * 13 + j * 5 + 3) - 0.5) * 2 * D.boil : 0);
+  DP.rain = DP.lv >= 2 && typeof WXI !== 'undefined' && WXI.rain > D.rainAt && wxLive();
+}
+function dpBox(x, y, w, h, main) {   // the graphite edge under a colour box (main: also gets the rain's bled pass in AUTO; every box does in QUALITY)
+  const D = DOODLE_PL, W = D.w;
+  if (DP.rain && (main || DP.lv >= 3)) { const R = W * D.rainW, o = D.rainOff; ctx.fillStyle = D.rainInk; ctx.fillRect(x - R + DP.ox + o, y - R + DP.oy + o, w + 2 * R, h + 2 * R); }
+  ctx.fillStyle = D.ink; ctx.fillRect(x - W + DP.ox, y - W + DP.oy, w + 2 * W, h + 2 * W);
+}
+function dpStreak(x, y, w, h) { if (DP.lv < 3) return; ctx.fillStyle = `rgba(255,255,255,${DOODLE_PL.streak})`; ctx.fillRect(x, y, w, h); }
+// the scribbled shadow: DOODLE_PL.sets pre-drawn sprites of graphite zigzags filling an oval (built once), one drawImage instead of the solid oval
+let DP_SHADOW = null;
+function dpShadowImg(j) {
+  if (!DP_SHADOW) {
+    const Sh = DOODLE_PL.shadow, P = Sh.px; DP_SHADOW = [];
+    for (let k = 0; k < DOODLE_PL.sets; k++) {
+      const c = document.createElement('canvas'); c.width = P; c.height = P / 3; const g = c.getContext('2d');
+      g.strokeStyle = '#000'; g.lineCap = 'round'; g.lineJoin = 'round'; g.lineWidth = Sh.w;
+      g.beginPath(); g.ellipse(P / 2, P / 6, P / 2 - Sh.w, P / 6 - Sh.w / 2, 0, 0, Math.PI * 2); g.save(); g.clip();
+      penSeed(k * 97 + 5); g.beginPath();
+      for (let i = 0; i <= Sh.n * 2; i++) { const x = (i / (Sh.n * 2)) * P + (penNext() - 0.5) * 6, y = i % 2 ? P / 3 + 4 : -4; i ? g.lineTo(x, y) : g.moveTo(x, y); }
+      g.stroke(); g.restore();
+      DP_SHADOW.push(c);
+    }
+  }
+  return DP_SHADOW[j % DP_SHADOW.length];
+}
+const plLodNow =() => !gfxHi() && (liteSlow || camZ() * RK * S * FIGURE.grow < (liteGame() ? PLAYER_LOD.perf : PLAYER_LOD.auto));
 function drawArm(t, skin, sx, sy, a, l1, bend, l2, glove = 4.4) {
   ctx.save();
   ctx.translate(sx, sy); ctx.rotate(a);
+  if (DP.lv) dpBox(-1, -2, l1 + 4, 4);                                   // (doodle: the upper arm's pencil edge)
   ctx.fillStyle = skin;          ctx.fillRect(2, -1.7, l1 + 1, 3.4);    // biceps / triceps
   ctx.fillStyle = t.jersey;      ctx.fillRect(-1, -2, 5, 4);            // sleeve
+  dpStreak(2.5, -1.1, l1, 0.7);
   ctx.translate(3 + l1, 0); ctx.rotate(bend);
+  if (DP.lv) { dpBox(-0.6, -1.4, l2 + 0.6, 2.8); if (DP.lv >= 3) dpBox(l2 - 0.5, -glove / 2, glove, glove); }   // (forearm; QUALITY: the glove too)
   ctx.fillStyle = skin;          ctx.fillRect(-0.6, -1.4, l2 + 0.6, 2.8);   // forearm
   if (!plLod) { ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(-1.2, -1.5, 2.2, 3); }   // elbow
   ctx.fillStyle = t.glove;       ctx.fillRect(l2 - 0.5, -glove / 2, glove, glove);
@@ -6335,8 +7584,11 @@ function drawArmTo(t, skin, sx, sy, tx, ty, l1, l2, elbow = 1, glove = 4.4) {
 function drawLeg(t, hx, hy, a, bend, tip) {
   ctx.save();
   ctx.translate(hx, hy); ctx.rotate(a);
+  if (DP.lv) dpBox(-2.5, 0, 5, 5.6);                                        // (doodle: the thigh's pencil edge)
   ctx.fillStyle = t.pants;            ctx.fillRect(-2.5, 0, 5, 5.6);        // thigh
+  dpStreak(-1.2, 0.6, 0.8, 4.4);
   ctx.translate(0, 5); ctx.rotate(bend);
+  if (DP.lv) { dpBox(-2.5, -0.6, 5, 5.6); if (DP.lv >= 3) { if (tip) dpBox(-1.5, 5, 3.5, 3.5); else dpBox(-2.5, 5, 6.5, 2); } }   // (shin; QUALITY: the shoe too)
   ctx.fillStyle = t.pants;            ctx.fillRect(-2.5, -0.6, 5, 2.6);     // knee / lower pant leg
   if (!plLod) { ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(-2.5, -0.6, 5, 1.3); }   // knee crease
   ctx.fillStyle = t.sock;             ctx.fillRect(-2.5, 2, 5, 3);          // shin
@@ -6785,7 +8037,7 @@ const mlLandPick = p => MV_LOOKS[MOVE_LOOK.force.land] && MV_LOOKS[MOVE_LOOK.for
   : Math.hypot(p.vx || 0, p.vy || 0) / YD > MOVE_LOOK.oneFootV || (p.catchFx && LAND.awk[p.catchFx.style]) || p.oneHanded ? 'landOneFoot' : 'landFeet';
 // a man brought down in the air: right at the catch = spun round before he lands, else flipped flat onto his far shoulder
 const mlAirHit = c => MOVE_LOOK.force.land === 'spinAir' || MOVE_LOOK.force.land === 'flipped' ? MOVE_LOOK.force.land : c.catchFx && clock - c.catchFx.t < MOVE_LOOK.catchHit ? 'spinAir' : 'flipped';
-const mlBallDraw = q => { const b = q.ball; if (!b || b.x == null) return; ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.rot); drawFootball(7 * b.k, 4.5 * b.k, 1, -0.3); ctx.restore(); };
+const mlBallDraw = q => { const b = q.ball; if (!b || b.x == null) return; ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.rot); const k = BALL_HELD * (b.k || ML_BALL.k) / ML_BALL.k; drawFootball(7 * k, 4.5 * k, 1, -0.3); ctx.restore(); };
 const ML_ROLE = {};   // (celebArms' role: no props of its own; the ball goes under the arms through q.ball.pre)
 const mlAgi = c => MOVE_LOOK.rate != null ? MOVE_LOOK.rate : typeof rm === 'function' && c ? rm(c, agil(c), 'moves') : 1;
 function mlNear(c, r, pool) {   // the nearest defender on his feet within r yd: { o, d (yd) } or null
@@ -6818,6 +8070,47 @@ function moveLookPick(c, fam, a, pool) {
 }
 const mlTightW = p => p.mlTight != null ? p.mlTight : state === 'run' && runner === p && Math.abs(p.vx || 0) > 1.5 * Math.abs(p.vy || 0) && Math.abs(p.vx || 0) > 2 * YD
   ? smooth01((MOVE_LOOK.tight - Math.max(0, toSideline(p) / YD)) / MOVE_LOOK.tightIn) : 0;
+// --- showboating looks (v0.51; p.show, 05): family 'show', drawn while he shows off. LOOKS ONLY. Keys use the near hand as the ball hand (mvPose swaps them for
+// the far side). m.st = s since this look began; running legs come from his stride (shStride).
+const shStride = (q, m, k = 1) => mlStride(q, (m.p.run || 0) * k, LEG_SWING, LEG_KNEE);
+const shStill = m => Math.hypot(m.p.vx || 0, m.p.vy || 0) < 0.5 * YD;
+Object.assign(MV_LOOKS, {
+  shPeace: { fam: 'show', secs: 1, hold: true, digit: ['fh', 2, 'arm', 0, 9], keys: [[0, 'io', { ...ML_RUN, fh: [-10, -20], nh: [5.5, -4], al: 1.1 }]],
+    fx: (q, t, m) => { shStride(q, m); const u = (m.st || 0) % 1.4; q.yaw = u < 0.5 ? -0.7 * smooth01(u / 0.15) : -0.7 * (1 - smooth01((u - 0.5) / 0.2)); } },
+  shBallOut: { fam: 'show', secs: 1, hold: true, keys: [[0, 'io', { ...ML_RUN, nh: [6, -14], al: 1.25, fh: [-2, -2] }]], ball: { ox: 1, oy: -1.5, rot: -0.1, k: 0.74 },
+    fx: (q, t, m) => { shStride(q, m); q.nh = [q.nh[0] + 1.5 * Math.sin(m.p.run || 0), q.nh[1]]; } },
+  shHighStep: { fam: 'show', secs: 1, hold: true, keys: [[0, 'io', { ...ML_RUN, R: -0.1, fh: [-3, -6] }]],
+    fx: (q, t, m) => { const s = Math.sin(m.p.run || 0), up = (a) => [a, -1.35, 1.6], dn = (a) => [a, 0.3, 0.15]; q.l0 = s > 0 ? up(-2.5) : dn(-3); q.l1 = s > 0 ? dn(3) : up(2.5); q.fh = [q.fh[0] + 3 * s, q.fh[1] - 2 * Math.abs(s)]; q.lift += 1.2 * Math.abs(s); } },
+  shHelmetTap: { fam: 'show', secs: 1, hold: true, fOver: true, keys: [[0, 'io', { ...ML_RUN, fh: [1, -28] }]],
+    fx: (q, t, m) => { shStride(q, m); const u = ((m.st || 0) * 2) % 1, w = Math.sin(Math.PI * Math.min(1, u / 0.5)); q.fh = [1 + 2 * w, -28 - 3 * w]; } },
+  shLookBackWave: { fam: 'show', secs: 1, hold: true, keys: [[0, 'io', { ...ML_RUN, yaw: -0.9, fh: [-7, -22], al: 1.1 }]],
+    fx: (q, t, m) => { shStride(q, m); const s = m.st || 0; q.fh = [q.fh[0] + 3.2 * Math.sin(2 * Math.PI * 3 * s), q.fh[1]]; q.ox += 0.4 * Math.sin(s * 4); } },
+  shPointGoal: { fam: 'show', secs: 1, hold: true, digit: ['fh', 1, 'arm', 0, 9], keys: [[0, 'io', { ...ML_RUN, fh: [14, -13], al: 1.15, hd: -0.1 }]], fx: (q, t, m) => shStride(q, m) },
+  shFlexRun: { fam: 'show', secs: 1, hold: true, keys: [[0, 'io', { ...ML_RUN, fh: [-5, -22] }]], fx: (q, t, m) => { shStride(q, m); q.k *= 1 + 0.04 * Math.abs(Math.sin(m.p.run || 0)); } },
+  shDeuces: { fam: 'show', secs: 1, hold: true, keys: [[0, 'io', { ...ML_RUN, nh: [9, -16], fh: [-9, -16], R: -0.12, al: 1.15 }]], ball: { ox: 0.8, oy: -1, rot: -0.1, k: 0.74 }, fx: (q, t, m) => shStride(q, m) },
+  shBackpedal: { fam: 'show', secs: 1, hold: true, keys: [[0, 'io', { ...ML_RUN, tw: -1, R: -0.08, nh: [10, -12], al: 1.15 }]], ball: { ox: 0.8, oy: -1, rot: -0.1, k: 0.74 }, fx: (q, t, m) => shStride(q, m, -1) },
+  // the finishes
+  shGoalPlace: { fam: 'show', secs: 1, hold: true, keys: [[0, 'io', { ...ML_RUN, R: 0.02, nh: [8, -9] }]],
+    fx: (q, t, m) => {
+      const s = m.p.show || {}, e = s.pt != null ? smooth01(((m.ac || 0) - (m.ptA || 0)) / 0.35) : 0;
+      if (shStill(m)) { q.l0 = [-3.5, 0, 0.05]; q.l1 = [3.5, 0, 0.05]; } else shStride(q, m);
+      q.R += 0.68 * e; q.k -= 0.08 * e; q.nh = [q.nh[0] + (12 - q.nh[0]) * e, q.nh[1] + (9 - q.nh[1]) * e]; q.al += 0.15 * e;
+    },
+    ballAt: (q, m) => { const s = m.p.show; if (!s || s.pt == null) return null; const bk = S * figK(m.p), x = showPlaceX(m.p); return x == null ? null : { hand: 'x', x: (x - m.p.x) * m.p.face / bk, y: 12.5, rot: 0, k: ML_BALL.k, pre: mlBallDraw }; } },
+  shWalkIn: { fam: 'show', secs: 1, hold: true, keys: [[0, 'io', { ...ML_RUN, R: -0.04, hd: -0.05, nh: [10, -10], al: 1.1 }]], ball: { ox: 0.5, oy: -2.2, rot: 0, k: 0.74 },
+    fx: (q, t, m) => { shStride(q, m, 0.6); q.lift += 0.8 * Math.abs(Math.sin(m.p.run || 0)); } },
+  shBackIn: { fam: 'show', secs: 1, hold: true, keys: [[0, 'io', { ...ML_RUN, tw: -1, R: -0.06, nh: [9, -14], fh: [-9, -14], al: 1.15 }]], ball: { ox: 0.8, oy: -1, rot: -0.1, k: 0.74 }, fx: (q, t, m) => shStride(q, m, -1) },
+  shDiveIn: { fam: 'show', secs: 1, hold: true, keys: [[0, 'io', { ...ML_RUN, nh: [7, -12] }]], fx: (q, t, m) => shStride(q, m) },
+  shStopStep: { fam: 'show', secs: 1, hold: true, keys: [[0, 'io', { ...ML_RUN }]],
+    fx: (q, t, m) => {
+      const s = m.p.show || {};
+      if (s.st == null) { shStride(q, m); return; }
+      const u = (m.ac || 0) - (m.stA || 0);
+      q.l0 = [-3.5, 0, 0.05]; q.l1 = [3.5, 0, 0.05];
+      if (u < 0.9) q.yaw = 0.6 * Math.sin(2 * Math.PI * u / 0.9);
+      else { const w = Math.sin(Math.PI * Math.min(1, (u - 0.9) / 0.6)); q.l1 = [3.5, -1.2 * w, 1.4 * w]; q.lift += 2 * w; q.R -= 0.1 * w; }
+    } },
+});
 function mlAt(L, t, m) { const q = celebSample(L, L, Math.max(0, Math.min(L.secs + (L.tail || 0), t))); if (L.fx) L.fx(q, t, m); return q; }
 function mlMix(q, b, w) { if (w <= 0) return q; for (const k of CELEB_NUM) q[k] += (b[k] - q[k]) * w; for (const k of CELEB_VEC) q[k] = q[k].map((v, j) => j > 2 ? (w > 0.5 ? b[k][j] : v) : v + (b[k][j] - v) * w); return q; }
 // the move look on him this frame, as a celebration-style pose for drawPlayer (null: none). ac = the animation clock
@@ -6835,12 +8128,19 @@ function mvPose(p, ac) {
     const L0 = MV_LOOKS[p.mvFx.k], s = ac - p.mvFx.t, tt = (p.mvFx.o || 0) + s;
     if (s >= 0 && tt < L0.secs + (L0.tail || 0)) { L = L0; t = tt; tail = true; }
   }
+  let shM = null;
+  if (!L && !p.action && p.show && p.hasBall && MV_LOOKS[p.show.id]) {   // (v0.51: showing off: its look; m.st = s into it, the finishes' own moments on the animation clock)
+    L = MV_LOOKS[p.show.id]; const s = p.show, k = s.k0 == null ? (s.k0 = ac) : s.k0;
+    if (s.pt != null && s.ptA == null) s.ptA = ac;
+    if (s.st != null && s.stA == null) s.stA = ac;
+    shM = { st: ac - k, ac, ptA: s.ptA, stA: s.stA };
+  }
   if (!L && !p.action && !p.stiff && p.hasBall && ball.tucked) {
     if (p.truck) L = MV_LOOKS.truckRun;
     else if ((w = mlTightW(p)) > 0.01) L = MV_LOOKS.tightrope;
   }
   if (!L) return null;
-  const m = { p, a, side: (act && a && a.side) || (p.mvFx && p.mvFx.side) || 1 }, sm = CELEB.smearDt * dtK;
+  const m = Object.assign({ p, a, side: (act && a && a.side) || (p.mvFx && p.mvFx.side) || 1 }, shM), sm = CELEB.smearDt * dtK;
   const at = tt => {
     const q = mlAt(L, tt, m);
     if (stum != null) { const ts = stum - (t - tt) / dtK, q2 = mlAt(MV_LOOKS.spinStumble, Math.max(0, ts), m), tw = q.tw; mlMix(q, q2, smooth01(ts / 0.08)); q.tw = tw; }
@@ -6857,9 +8157,11 @@ function mvPose(p, ac) {
   if (p.hasBall && ball.tucked) {   // the ball in the ball hand (slid toward the other one by v), drawn by ML_ROLE over the hands
     const B = L.ball || ML_BALL, bh = far ? q.fh : q.nh, oh = far ? q.nh : q.fh, v = q.v || 0;
     q.ball = { hand: 'x', x: bh[0] + (oh[0] - bh[0]) * v + B.ox * (1 - 2 * v), y: bh[1] + (oh[1] - bh[1]) * v + B.oy, rot: B.rot * (1 - 2 * v), k: B.k, pre: mlBallDraw };
+    if (L.ballAt) { const b2 = L.ballAt(q, m); if (b2) q.ball = b2; }   // (v0.51: the showboat's ball set down on the turf)
   }
   q.legs = (tail && !L.tailLegs) || L.legs === false ? null : [q.l0, q.l1];
-  q.mvl = L; q.role = ML_ROLE; q.mv = L; q.cel = null; q.t = t; q.m = m; q.tail = tail;
+  q.mvl = L; q.role = L.digit ? L : ML_ROLE; q.mv = L; q.cel = null; q.t = t; q.m = m; q.tail = tail;
+  if (L.fOver) q.overF = !far;   // (v0.51: the free hand on top of his helmet is drawn over it: celebArmOver)
   return q;
 }
 // the belly slide's pencil scuffs (v0.43): two short graphite strokes on the turf behind his dragging toes, fading (world space, under him)
@@ -6985,7 +8287,10 @@ function jumpAim(p) {   // -> where the pass meets him, as a world offset from h
 // (drawPlayer's small helpers, kept outside it: it runs ~25 times a frame, and each of these was a new function / object per call)
 const kickEz = (v, to, k) => { v = v || 0; return Math.abs(to - v) < 0.005 ? to : v + (to - v) * k; };
 const LOOK3 = { x: 0, y: 0 };   // (where the ball is from his head: read by headLook at once, never kept)
+let BALL_HELD = 0.8;   // (set at the top of drawPlayer: BALL_K / figK(p), the held / tucked ball's sprite-space scale so it draws at the one ball size)
 function drawPlayer(p) {
+  BALL_HELD = BALL_K / (figK(p) || 1);
+  dpBegin(p);   // (the doodle look's level and this frame's edge offset: see DOODLE_PL)
   const t = p.coach ? celebCoachKit(TEAMS[p.team]) : TEAMS[p.team];   // (the head coach in a celebration: see celebrations)
   if (p.action === 'jump' && p.act && p.act.over === undefined && !(rec && rec.replaying)) p.act.over = overJumpOK(p);
   const overJ = p.action === 'jump' && p.act && p.act.over;
@@ -7041,26 +8346,23 @@ function drawPlayer(p) {
   const st = stK ? { ...STANCE[stK], lean: STANCE[stK].lean * stk, sink: STANCE[stK].sink * stk } : null, stArms = !!st && stk >= STANCE_ANIM.arms;
   const inNear = p.y < (ball ? ball.y : MID) - 0.3 * YD;   // the ball is on his near (screen-bottom) side
 
-  if (xfGlow(p)) {   // X-Factor in the zone: a pulsing yellow glow around him
-    const pulse = 0.8 + 0.2 * Math.sin(animNow() / 160), gy = p.y + FOOT - 15 * S * figK(p) * FIGURE.tall, gr = 46 * S * FIGURE.grow * pulse;
-    if (TUI.on) ctx.fillStyle = 'rgba(255,215,40,0.3)';   // (phones: a flat glow, no gradient per frame)
-    else {
-      const g = ctx.createRadialGradient(p.x, gy, 4 * S, p.x, gy, gr);
-      g.addColorStop(0, 'rgba(255,225,60,0.55)'); g.addColorStop(0.55, 'rgba(255,205,0,0.28)'); g.addColorStop(1, 'rgba(255,200,0,0)');
-      ctx.fillStyle = g;
+  if (xfGlow(p)) {   // Star Factor in the zone: a yellow highlighter swiped behind him (a few wide round strokes, seeded by his number; only the alpha pulses)
+    const Hl = XF_HL, u = S * FIGURE.grow, gy = p.y + FOOT - Hl.up * S * figK(p) * FIGURE.tall;
+    ctx.save(); ctx.globalAlpha *= Hl.a * (1 - Hl.pulse + Hl.pulse * Math.sin(animNow() / Hl.rate)); ctx.strokeStyle = Hl.col; ctx.lineCap = 'round'; ctx.lineWidth = Hl.w * u;
+    penSeed((p.num | 0) * 13 + 7);
+    for (let i = 0; i < Hl.n; i++) {
+      const oy = ((i - (Hl.n - 1) / 2) * Hl.gap + (penNext() - 0.5) * Hl.jit) * u, ox = (penNext() - 0.5) * Hl.jit * u, L = Hl.len * u * (0.85 + 0.3 * penNext()) / 2, tl = Hl.tilt * u;
+      ctx.beginPath(); ctx.moveTo(p.x - L + ox, gy + oy + tl); ctx.lineTo(p.x + L + ox, gy + oy - tl); ctx.stroke();
     }
- ctx.beginPath(); ctx.arc(p.x, gy, gr, 0, Math.PI * 2); ctx.fill();
-    if (!(p === ud && defLive())) {   // (the defender you steer already has his own yellow ring: no second one)
-      ctx.strokeStyle = `rgba(255,222,70,${0.55 * pulse})`; ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.ellipse(p.x, p.y + FOOT, 16 * S * FIGURE.grow * pulse, 5.5 * S * FIGURE.grow * pulse, 0, 0, Math.PI * 2); ctx.stroke();
-    }
-  }
+    ctx.restore();
+  }   // (no smooth ring at his feet any more: it sat inside the hand-drawn ring of whoever you control; the swipe is enough)
   xfFieldMarks(p);   // (Star Factor meter ring, Tunnel Vision's open man)
   // shadow: smaller and fainter the higher he is (a leap reads as height); a diver's stretches out along his body (a dive reads as laid out)
   const shLift = 1 / (1 + Math.max(0, (p.z || 0) + (cq ? cq.lift * S * figK(p) : 0)) / (DIVE_LOOK.shadowLift * S));
   const shDive = p.action === 'dive' && p.act && p.act.dur ? smooth01(p.act.t / (p.act.dur * 0.4)) : 0;
-  ctx.fillStyle = `rgba(0,0,0,${0.25 * (0.5 + 0.5 * shLift)})`;
-  ctx.beginPath(); ctx.ellipse(p.x, p.y + FOOT, Math.max((12 + (p.big ? 2 * bulkOf(p) : 0)) * shLift, DIVE_LOOK.shadowLen * shDive) * S * FIGURE.grow, 4 * S * FIGURE.grow * (0.6 + 0.4 * shLift), 0, 0, Math.PI * 2); ctx.fill();
+  { const shA = 0.25 * (0.5 + 0.5 * shLift), shRx = Math.max((12 + (p.big ? 2 * bulkOf(p) : 0)) * shLift, DIVE_LOOK.shadowLen * shDive) * S * FIGURE.grow, shRy = 4 * S * FIGURE.grow * (0.6 + 0.4 * shLift);
+    if (DP.lv >= 3) { const a = ctx.globalAlpha; ctx.globalAlpha = a * shA * 1.6; ctx.drawImage(dpShadowImg(DP.j + DP.n), p.x - shRx, p.y + FOOT - shRy, shRx * 2, shRy * 2); ctx.globalAlpha = a; }   // (QUALITY / menus: a scribbled shadow, same size and fade)
+    else { ctx.fillStyle = `rgba(0,0,0,${shA})`; ctx.beginPath(); ctx.ellipse(p.x, p.y + FOOT, shRx, shRy, 0, 0, Math.PI * 2); ctx.fill(); } }
   drawToeFx(p);
   drawDiveSpray(p);
   mlDiveScuff(p);
@@ -7231,6 +8533,7 @@ function drawPlayer(p) {
   if (gNote) { p.gPose = gM0.inverse().multiply(ctx.getTransform()); p.gPoseT = clock; }
   // taller figure: everything from here on is stretched up from his feet (sprite y 14) by FIGURE.tall (the helmet is drawn round again)
   ctx.translate(0, 14); ctx.scale(1, FIGURE.tall); ctx.translate(0, -14);
+  { const fl = paperFlat(p); if (fl < 1) { ctx.translate(0, 14); ctx.scale(1, fl); ctx.translate(0, -14); } }   // (a pancake: squashed flat for a beat, anchored at his feet; on top of the down animation)
   // where the ball is in his sprite space (+x = the way he faces), for hands that go to it
   // (bk = world px per sprite unit across, bkY = up and down with the stretch; another player's spot: (his y - ours) / bkY + the spot on his body)
   const bk = S * sz, bkY = bk * FIGURE.tall;
@@ -7311,10 +8614,18 @@ function drawPlayer(p) {
     drawArm(t, '#a8734b', -1, -9 + bob, Math.PI / 2 - s * pump, 2.5, -1.1 + s * 0.3, 3.5, 3);
   }
   const tw = FIGURE.torso, pw = FIGURE.pads, trx = FIGURE.trim;   // (jersey / pad half-widths)
+  if (DP.lv) dpBox(-tw, -9 + bob, tw * 2, 12, true);   // (doodle: the torso's pencil edge)
   ctx.fillStyle = t.jersey;
   ctx.fillRect(-tw, -9 + bob, tw * 2, 12);
   ctx.fillStyle = 'rgba(0,0,0,0.35)';
   ctx.fillRect(-tw, 1.5 + bob, tw * 2, 1.5);
+  dpStreak(-tw + 1, -6.5 + bob, tw * 2 - 2, 0.8);   // (QUALITY: a lighter marker streak across the jersey)
+  if (p.crease && DP.lv) {   // a hit stick creased him like paper: one pencil fold across the torso, a faint shade on one side (until the next play)
+    const a = p.crease.a * PAPER_FX.creaseTilt, y0 = -6 + bob - a, y1 = 0 + bob + a;
+    ctx.fillStyle = PAPER_FX.creaseShade; ctx.beginPath(); ctx.moveTo(-tw, y0); ctx.lineTo(tw, y1); ctx.lineTo(tw, y1 + PAPER_FX.creaseW); ctx.lineTo(-tw, y0 + PAPER_FX.creaseW); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = PAPER_FX.creaseHi; ctx.lineWidth = 0.6; ctx.beginPath(); ctx.moveTo(-tw, y0 - 0.6); ctx.lineTo(tw, y1 - 0.6); ctx.stroke();   // (the lit edge of the fold: reads on a dark jersey)
+    ctx.strokeStyle = DOODLE_PL.ink; ctx.lineWidth = 0.55; ctx.beginPath(); ctx.moveTo(-tw - 0.4, y0); ctx.lineTo(tw + 0.4, y1); ctx.stroke();
+  }
 
   // ball tucked between the pads and the carrying arm. In the far arm (toward the top sideline) it's drawn under the torso, so only a sliver
   // shows; in the near arm (ballSide > 0) it's drawn over the torso, under the arm wrapped round it (drawTuck, after the jersey)
@@ -7325,20 +8636,20 @@ function drawPlayer(p) {
     ctx.save();
     if (nearTuck && !stiff) { ctx.beginPath(); ctx.rect(TUCK_BALL.hideX, -30, 30, 50); ctx.clip(); }   // (the tail end behind his carrying arm is hidden: only the part in front of the arm shows)
     ctx.translate(stiff ? -3.5 + ti : guardTuck ? 2.5 - ti : nearTuck ? 2 - ti : 3.5 - ti, guardTuck ? -6.2 + bob : (nearTuck ? -7 : -6.5) + bob); ctx.rotate(guardTuck ? 0 : TUCK_BALL.tilt);   // (diagonal: tail in the crook of the elbow, nose out at the hand, the side against the chest; G = flat across the belly)
-    drawFootball(7 * tk, 4.5 * tk);
+    drawFootball(7 * BALL_HELD, 4.5 * BALL_HELD);
     ctx.restore();
   };
   if (tucked && !nearTuck) drawTuck();
 
   ctx.save();
   ctx.scale(lying ? MIRROR : MIRROR * p.face, 1);   // (undoes the world mirror, whichever way the drive goes)
-  if (!p.coach) drawTextCached(String(p.num), 7, 'bold', 'monospace', 0, -2.5 + bob, t.num || '#fff', null, 0, 6);
+  if (!p.coach) drawTextCached(String(p.num), 7, 'bold', DP.lv ? HAND_FONT : 'monospace', 0, -2.5 + bob, t.num || '#fff', null, 0, 6);   // (doodle: hand-lettered, still cached)
   ctx.restore();
 
   ctx.fillStyle = t.jersey;
   ctx.beginPath(); ctx.ellipse(0, -9.5 + bob, pw, 4.5, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-  ctx.lineWidth = 1;
+  ctx.strokeStyle = DP.lv ? DOODLE_PL.ink : 'rgba(0,0,0,0.35)';   // (doodle: the pads' existing edge in graphite)
+  ctx.lineWidth = DP.lv ? DOODLE_PL.w * 1.4 : 1;
   ctx.stroke();
   ctx.fillStyle = 'rgba(255,255,255,0.25)';
   ctx.fillRect(-tw, -13 + bob, tw * 2, 1.2);
@@ -7440,13 +8751,13 @@ function drawPlayer(p) {
     const hx = 6.2 + (2 + 16.5 * ca - 6.2) * e, hy = -7.4 + bob + (-9 + 16.5 * sa + 7.4) * e;   // (long enough that the ball clears his helmet once he's laid out)
     drawArmTo(t, skin, -1, -10.5 + bob, 2.5, -1 + bob, 4.5, 5, -1, 3.6);
     drawArmTo(t, skin, 2, -9 + bob, hx, hy, 7, 7.5, -1, 4);
-    ctx.save(); ctx.translate(hx + 2.4 * ca * e, hy + 2.4 * sa * e); ctx.rotate(TUCK_BALL.tilt + (ang - TUCK_BALL.tilt) * e); drawFootball(7 * TUCK_BALL.scale, 4.5 * TUCK_BALL.scale, 1, -0.3); ctx.restore();
+    ctx.save(); ctx.translate(hx + 2.4 * ca * e, hy + 2.4 * sa * e); ctx.rotate(TUCK_BALL.tilt + (ang - TUCK_BALL.tilt) * e); drawFootball(7 * BALL_HELD, 4.5 * BALL_HELD, 1, -0.3); ctx.restore();
   } else if (p.action === 'dive' && p.hasBall && diveLook(p) && diveLook(p).ballUp) {
     // the goal-line leap (move looks): laid out over the pile, the ball held out in both hands over his head toward the goal line
     const e = smooth01(Math.min(1, p.act.t / Math.max(0.08, p.act.dur * 0.45))), hx = 5 - 3 * e, hy = -8 + bob - 18.5 * e;   // (straight up past his helmet in his own frame: along the dive, toward the goal line)
     drawArmTo(t, skin, -1, -10.5 + bob, hx - 1.2, hy + 1, 7, 7.5, 1, 4);
     drawArmTo(t, skin, 2, -9 + bob, hx + 1.2, hy - 0.5, 7, 7.5, -1, 4);
-    ctx.save(); ctx.translate(hx + 0.4, hy - 3.6 * e); ctx.rotate(-1.45 * e + TUCK_BALL.tilt * (1 - e)); drawFootball(7 * TUCK_BALL.scale, 4.5 * TUCK_BALL.scale, 1, -0.3); ctx.restore();
+    ctx.save(); ctx.translate(hx + 0.4, hy - 3.6 * e); ctx.rotate(-1.45 * e + TUCK_BALL.tilt * (1 - e)); drawFootball(7 * BALL_HELD, 4.5 * BALL_HELD, 1, -0.3); ctx.restore();
   } else if (fx && fx.hands) {
     for (const h of fx.hands) mlHand(t, skin, h, bob, bl);   // a beaten man's reaching / grabbing / bracing hands (REEL_SKIN), a pick / tip look's hands (to the ball by h[8])
   } else if (fx && fx.arms) {
@@ -7481,6 +8792,7 @@ function drawPlayer(p) {
     if (!headTopping) claspBall();   // just caught it: both hands still on it out in front (head top: drawn over the helmet, below)
   } else if (p.action === 'dive' && p.hitStick) {
     // a big hit: no reaching or grabbing, arms folded in tight and the shoulder pads lead into him
+    if (DP.lv) dpBox(2, -13 + bob, 7, 8);
     ctx.fillStyle = t.jersey; ctx.fillRect(2, -13 + bob, 7, 8);        // lead shoulder pad
     ctx.fillStyle = t.trim;   ctx.fillRect(2, -13 + bob, 7, 1.5);
     ctx.fillStyle = skin;     ctx.fillRect(-4, -8 + bob, 8, 2.6);      // forearms across the chest
@@ -7599,7 +8911,7 @@ function drawPlayer(p) {
       const mH = lefty ? botH : topH, bx = lz((topH.x + botH.x) / 2, mH.x + 0.5), by = lz((topH.y + botH.y) / 2, mH.y);
       const ang = lz(Math.atan2(topH.y - botH.y, topH.x - botH.x), -0.5 + 0.18 * pump);   // (standing up between two hands, then angled along the carrying forearm)
       ctx.save(); ctx.translate(bx, by); ctx.rotate(ang);
-      drawFootball(7 * TUCK_BALL.qb, 4.5 * TUCK_BALL.qb, 1, -0.3);
+      drawFootball(7 * BALL_HELD, 4.5 * BALL_HELD, 1, -0.3);
       ctx.restore();
     }
     drawArmTo(t, skin, -1, -10.5 + bob, topH.x + (isQb ? 0.6 * (1 - cs) : 0), topH.y + (isQb ? 0.4 * (1 - cs) : 0), 3.5, 4, 1, 3.4);
@@ -7798,7 +9110,12 @@ function drawPlayer(p) {
   if (look && look.style === 3) { ctx.fillStyle = look.hair; ctx.fillRect(-7.5, hy + 1, 4.5, 9); }   // long hair / locks out the back
   if (look && look.style === 4) { ctx.fillStyle = look.hair; for (let i = 0; i < 3; i++) ctx.fillRect(-7.5 + i * 1.6, hy + 1, 1.1, 8 + (i % 2) * 2); }   // braids hanging out the back
   ctx.fillStyle = t.shell;
-  ctx.beginPath(); ctx.arc(0, hy, 7.5, 0, Math.PI * 2); ctx.fill();
+  if (DP.lv) {   // doodle: a slightly lumpy shell (seeded by his number) with a graphite edge (the path's own stroke: one call)
+    const L = DOODLE_PL.lump, n = DP.n;
+    ctx.beginPath(); ctx.ellipse(0, hy, 7.5 * (1 + (dpH(n * 5 + 7) - 0.5) * 2 * L), 7.5 * (1 + (dpH(n * 5 + 8) - 0.5) * 2 * L), dpH(n * 5 + 9) * 3, 0, Math.PI * 2); ctx.fill();
+    if (DP.rain) { ctx.strokeStyle = DOODLE_PL.rainInk; ctx.lineWidth = DOODLE_PL.w * DOODLE_PL.rainW * 2; ctx.stroke(); }
+    ctx.strokeStyle = DOODLE_PL.ink; ctx.lineWidth = DOODLE_PL.w * 1.3; ctx.stroke();
+  } else { ctx.beginPath(); ctx.arc(0, hy, 7.5, 0, Math.PI * 2); ctx.fill(); }
   faceOn();
   ctx.fillStyle = skin;
   ctx.fillRect(3.5, hy - 1, 4, 5.5);
@@ -7945,10 +9262,13 @@ function drawNameTags() {
     ctx.translate(p.x, p.y + FOOT + 0.25 * YD);
     ctx.scale(MIRROR, 1);                   // undo the world mirror for text
     drawTextCached(p.name, NAME_SIZE * YD, 'bold', 'monospace', 0, 0.5 * NAME_SIZE * YD, p.team === 'off' ? '#bfe8ff' : '#ffc4bd', 'rgba(0,0,0,0.7)', 4, TOUCH ? 3.6 : GAME_RES.name);   // (sharp name text at every zoom)
-    // a Star Factor star: a small gold star right beside his name, text-sized
+    // a Star Factor sticker right beside his name: the gold star on a white die-cut edge with a small glint, brighter while he's in the zone
     if (!tut && p.src && p.src.tier === 'X' && XF_RULES[p.src.ability]) {
-      const r = 0.3 * YD;
-      drawStar(-ctx.measureText(p.name).width / 2 - r - 3, 0.32 * YD, r, '#ffd23f', xfGlow(p) ? '#fff3a0' : '#b8860b', 1);
+      const r = 0.3 * YD, on = xfGlow(p), sx = -ctx.measureText(p.name).width / 2 - r - 5, sy = 0.32 * YD;
+      drawStar(sx, sy, r * 1.55, '#ffffff', 'rgba(0,0,0,0.35)', 1);
+      drawStar(sx, sy, r, on ? '#ffe14a' : '#e0ac2a', on ? '#b8860b' : '#8a5a00', 1);
+      ctx.strokeStyle = on ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.6)'; ctx.lineWidth = r * 0.22; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(sx - r * 0.42, sy - r * 0.2); ctx.lineTo(sx - r * 0.15, sy - r * 0.5); ctx.stroke();
     }
     ctx.restore();
   }
@@ -7956,7 +9276,11 @@ function drawNameTags() {
 }
 
 // Star Factor marks on the field (looks only; pure functions of the live state, nothing eased is stored on the player)
-const XF_RING = { r: 15, ry: 5.2, w: 2.5, from: 0.04, back: 'rgba(255,210,63,0.22)', col: '#ffd23f', open: 'rgba(120,255,140,0.7)' };
+const XF_RING = { r: 15, ry: 5.2, w: 2.5, from: 0.04, back: 'rgba(255,210,63,0.45)', col: '#ffd23f', open: 'rgba(120,255,140,0.7)',
+  star: 0.92, inner: 0.45, hatch: 3.5 };   // star = the meter star's size in the ring, inner = its inner points, hatch = px between its gold strokes
+// the Star Factor highlighter behind a man in the zone (sprite units x S x grow): n strokes, w wide, len long, gap apart, jit = seeded jitter, tilt = slant,
+// up = height of their middle; a = alpha, pulse = share of it that pulses, rate = ms per radian
+const XF_HL = { n: 3, w: 15, len: 40, gap: 9, jit: 5, tilt: 4, up: 15, col: '#fff200', a: 0.42, pulse: 0.25, rate: 220 };
 const XF_MARK = { t: -1, open: null };
 function xfMarksFrame() {   // once a frame: Tunnel Vision's most open receiver
   const t = Math.floor(performance.now() / 8); if (XF_MARK.t === t) return;   // (one pass per frame)
@@ -7966,6 +9290,14 @@ function xfMarksFrame() {   // once a frame: Tunnel Vision's most open receiver
     XF_MARK.open = catchers().filter(r => !r.isPasser).sort((a, b) => gap(b) - gap(a))[0] || null;
   }
 }
+function xfStarPath(cx, cy, kx, ky, sd, plain) {   // (a new path: the meter's lumpy 5-point star, flattened like the ring; seeded, so both calls trace the same star)
+  penSeed(sd); ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + i * Math.PI / 5, rr = (i % 2 ? XF_RING.inner : 1) * (plain ? 1 : 1 + (penNext() - 0.5) * 0.12), x = cx + Math.cos(a) * kx * rr, y = cy + Math.sin(a) * ky * rr;
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.closePath();
+}
 function xfFieldMarks(p) {
   if (tut || (rec && rec.replaying) || liteLevel() >= 2 || !p.src || p.action === 'down') return;
   xfMarksFrame();
@@ -7974,12 +9306,19 @@ function xfFieldMarks(p) {
   if (p.src.tier === 'X' && state === 'pre' && !xfGlow(p)) {   // the meter: a gold ring that fills toward activation (before the snap)
     const v = xfProg(p.src);
     if (v > XF_RING.from) {
-      ctx.strokeStyle = XF_RING.back; ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); ctx.stroke();
-      ctx.strokeStyle = XF_RING.col; ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * v); ctx.stroke();
+      const sd = (p.num | 0) * 7 + 3;   // (pencil: the same lumpy loop as the one you draw)
+      ctx.strokeStyle = XF_RING.back; penEllipse(cx, cy, rx, ry, sd); ctx.stroke();
+      // a star outline lying in the ring, coloured in with gold pencil from the bottom up as it charges
+      const plain = penPlain(), so = XF_RING.star, kx = rx * so, ky = ry * so;
+      xfStarPath(cx, cy, kx, ky, sd + 2, plain);
+      ctx.save(); ctx.clip(); ctx.beginPath(); ctx.rect(cx - kx, cy + ky - 2 * ky * v, 2 * kx, 2 * ky * v);
+      if (plain) { ctx.fillStyle = XF_RING.col; ctx.globalAlpha *= 0.6; ctx.fill(); } else penHatchE(cx, cy, kx, ky, XF_RING.col, sd, XF_RING.hatch, 0.85);
+      ctx.restore();
+      xfStarPath(cx, cy, kx, ky, sd + 2, plain); ctx.strokeStyle = XF_RING.col; ctx.stroke();
     }
   }
   const mark = XF_MARK.open === p ? XF_RING.open : null;
-  if (mark) { ctx.strokeStyle = mark; ctx.lineWidth = XF_RING.w * 1.3; ctx.beginPath(); ctx.ellipse(cx, cy, rx * 1.15, ry * 1.15, 0, 0, Math.PI * 2); ctx.stroke(); }
+  if (mark) { ctx.strokeStyle = mark; ctx.lineWidth = XF_RING.w * 1.3; penEllipse(cx, cy, rx * 1.15, ry * 1.15, (p.num | 0) * 7 + 5); ctx.stroke(); }
   ctx.restore();
 }
 function drawPopups() {
@@ -8080,14 +9419,23 @@ function drawBall() {
   }
   drawBallBody();
 }
+let ballDkAt = 0;
+function ballDeadK() {   // the ball's size on the turf: BALL_DEAD_K once it's dead after the whistle (state done, not in the air), eased, never snapped; replays read the taped value
+  if (rec && rec.replaying) return ball.dk || BALL_K;
+  const now = performance.now(), dt = Math.min(0.1, (now - (ballDkAt || now)) / 1000); ballDkAt = now;
+  const to = state === 'done' && !ball.inAir ? BALL_DEAD_K : BALL_K, k = ball.dk || BALL_K;
+  ball.dk = k + (to - k) * Math.min(1, dt * BALL_DEAD_EASE);
+  return ball.dk;
+}
 function drawBallBody() {
+  const dk = ballDeadK();
   if (ball.z > 0.5) {
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    ctx.beginPath(); ctx.ellipse(ball.x, ball.y + 12 * S, 6 * S * BALL_SIZE, 3 * S * BALL_SIZE, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(ball.x, ball.y + 12 * S, 6 * S * BALL_SIZE * dk, 3 * S * BALL_SIZE * dk, 0, 0, Math.PI * 2); ctx.fill();
   }
   ctx.save();
   ctx.translate(ball.x, ball.y - ball.z - (rec && rec.replaying ? ball.liftR || 0 : ballLift()));
-  ctx.scale(S, S);
+  ctx.scale(S * dk, S * dk);
   const nose = ball.inAir && ball.nose != null ? ball.nose : ball.snapNose;   // (snapNose: a shotgun snap spirals back the same way)
   if (nose != null) {
     // spiral: nose along the flight path; the laces roll around the ball (in front, then out of sight behind)
@@ -8124,17 +9472,35 @@ function drawAim() {
   // stops where the ball comes down to a receiver's hands, not where it would hit the turf (no landing ring)
   // (a bullet's arc is barely above hands height, so its line runs all the way out to the target)
   const pEnd = bulletMode ? 1 : 1 - Math.asin(Math.min(1, AIM_CATCH_Z / h)) / Math.PI;
-  const P = thrower();
-  for (let i = 1; i <= 15; i++) {
-    const p = i / 15 * pEnd;
-    const x = P.x + (t.x - P.x) * p;
-    const y = P.y + (t.y - P.y) * p - Math.sin(Math.PI * p) * h;
-    ctx.fillRect(x - 6, y - 6, 12, 12);
+  const P = thrower(), col = ctx.fillStyle, A = AIM_LOOK, n = A.n, pts = AIM_PTS, G = bulletMode ? A.dart : A.glide, L = G.len, Wd = G.wide;
+  // one hand-drawn dashed trail through the same arc points (the old 15 squares), stopping short of the end so the airplane's nose sits just behind the X
+  const trail = Math.max(A.trail, 1 - (L * 0.55 + A.x * 1.6) / Math.max(1, t.dist));
+  for (let i = 0; i <= n; i++) {
+    const p = i / n * pEnd * trail;
+    pts[2 * i] = P.x + (t.x - P.x) * p; pts[2 * i + 1] = P.y + (t.y - P.y) * p - Math.sin(Math.PI * p) * h;
   }
-  // a ring where it is most likely to be caught: the end of the line (no landing / accuracy circle)
-  const ex = P.x + (t.x - P.x) * pEnd, ey = P.y + (t.y - P.y) * pEnd - Math.sin(Math.PI * pEnd) * h;
-  ctx.save(); ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(ex, ey, 11, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+  pts.length = 2 * (n + 1);
+  ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = col; ctx.lineWidth = A.w; ctx.beginPath(); penDash(pts, A.seed, A.dash, A.gap); ctx.stroke();
+  // the paper airplane at the trail's end, nose along its last leg: lob = a wide glider, bullet = a narrow dart (orange)
+  const ax = pts[2 * n], ay = pts[2 * n + 1], dx = ax - pts[2 * n - 2], dy = ay - pts[2 * n - 1];
+  ctx.translate(ax, ay); ctx.rotate(Math.atan2(dy, dx));
+  ctx.beginPath(); ctx.moveTo(L * 0.55, 0); ctx.lineTo(-L * 0.45, -Wd); ctx.lineTo(-L * G.tuck, 0); ctx.lineTo(-L * 0.45, Wd); ctx.closePath();
+  ctx.fillStyle = col; ctx.fill();
+  ctx.strokeStyle = A.ink; ctx.lineWidth = A.inkW; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(L * 0.55, 0); ctx.lineTo(-L * G.tuck, 0); ctx.moveTo(L * 0.2, 0); ctx.lineTo(-L * 0.45, -Wd * 0.35); ctx.stroke();   // (the centre fold + one wing crease)
+  ctx.restore();
+  // the spot it is most likely caught (the end of the line): a pencil X where the ring used to be
+  const ex = P.x + (t.x - P.x) * pEnd, ey = P.y + (t.y - P.y) * pEnd - Math.sin(Math.PI * pEnd) * h, X = A.x;
+  ctx.save(); ctx.strokeStyle = col; ctx.lineWidth = A.xw; ctx.lineCap = 'round';
+  ctx.beginPath(); penLine(ex - X, ey - X, ex + X, ey + X, A.seed + 1, 1.2); penLine(ex + X, ey - X, ex - X, ey + X, A.seed + 2, 1.2); ctx.stroke(); ctx.restore();
 }
+// the aim's look (drawAim): n = arc samples, trail = the least share of the line the dashes run (they stop where the airplane's nose lands just behind the X),
+// dash / gap / w = px; glide / dart = the lob's and the bullet's airplane (len, wide = half wingspan px, tuck = how far back the tail notch sits); ink = the
+// airplane's pencil outline; x / xw = the end X's half size / width
+const AIM_LOOK = { n: 15, trail: 0.6, seed: 71, dash: 14, gap: 9, w: 4, ink: 'rgba(40,40,48,0.75)', inkW: 2, x: 11, xw: 3.4,
+  glide: { len: 46, wide: 22, tuck: 0.28 }, dart: { len: 52, wide: 10, tuck: 0.38 } };
+const AIM_PTS = [];   // (drawAim's reused point list)
 const AIM_CATCH_Z = 20 * S;   // the aim line ends where the ball's this high on the way down (about hands height)
 // the ring under a pass in the air: the spot where it comes down to chest height (z) on the way down, where it's most likely caught,
 // not where it would hit the turf. Same arc as updateFlight; solved once per throw (cached on the ball)
@@ -8202,7 +9568,7 @@ function callTimeout(cpu = false, defense = false) {   // defense: two players, 
   else if (state === 'pre' && patMode === null) { saved = game.lastRunoff; game.secs = Math.min(QUARTER_SECS, game.secs + saved); game.lastRunoff = 0; }   // (before the snap it's always allowed, even with the clock already stopped)
   else if (!(tut && tutStep() && tutStep().id === 'timeout')) return;   // nothing to stop: don't burn one (the tutorial's lesson always counts)
   if (mine) twoP.to--; else game.timeouts--;
-  if (!cpu && !mine) timeoutRecover();   // (your timeout: a breather and a steadier locker room)
+  if (!cpu && !mine) timeoutRecover(); else if (cpu) timeoutRecover(true);   // (your timeout: a breather and a steadier locker room; theirs: their men catch their breath)
   const left = mine ? twoP.to : game.timeouts, nm = teamName(mine ? 'RED' : 'BLUE');
   if (tut) tutEvent('timeout');
   showBanner(`TIMEOUT  -  ${nm}`.toUpperCase(), '#ffffff', '#1b2a3a', `${left} left this half`);

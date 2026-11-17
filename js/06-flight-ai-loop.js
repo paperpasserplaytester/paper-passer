@@ -353,6 +353,7 @@ function updateFlight(dt) {
     } else if (gap <= R) return tryCatch('CAUGHT!', 'normal');
     // easter egg: a throw nobody was anywhere near gets a sandwich where it lands
     if (!tut && !allPlayers().some(o => o !== qb && dist(o, ball) <= ICON.sandwichYd * YD)) popup(qb, 'SANDWICH', '#ffffff', undefined, true, false, { k: 'sandwich', sx: ball.x, sy: ball.y, sz: 0 });
+    if (ballLandsOut() && !tut && !aiOff() && throwHeat >= SMART.awayHeat && !catchers().some(r => r !== qb && dist(r, ball) <= SMART.awayClear * YD)) popup(qb, 'SMART THROWAWAY', '#7dff8a');   // (your QB threw it away under pressure)
     incomplete(ballLandsOut() ? 'Out of bounds  -  incomplete' : 'Incomplete');
   }
 }
@@ -1685,7 +1686,7 @@ function drawFormation(f, x, y, w, h, o = {}) {
   ctx.fillStyle = FORM_COL.field; ctx.fillRect(x, y, w, h); ctx.strokeStyle = FORM_COL.line; ctx.lineWidth = 1;
   for (let k = 1; k < 6; k++) { ctx.beginPath(); ctx.moveTo(x, y + k * h / 6); ctx.lineTo(x + w, y + k * h / 6); ctx.stroke(); }
   ctx.strokeStyle = INK; ctx.lineWidth = 2.5; ctx.strokeRect(x, y, w, h);
-  ctx.setLineDash([8, 5]); ctx.beginPath(); ctx.moveTo(x + 4, los); ctx.lineTo(x + w - 4, los); ctx.stroke(); ctx.setLineDash([]);
+  ctx.beginPath(); penDashLine(x + 4, los, x + w - 4, los, 77, 8, 5, 0.8); ctx.stroke();   // (the line of scrimmage: pencil dashes)
   ctx.fillStyle = 'rgba(59,51,32,0.55)'; ctx.font = `bold ${big ? 13 : 10}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('DEFENSE', x + w / 2, y + (big ? 14 : 9)); ctx.textAlign = 'right'; if (big) ctx.fillText('LINE OF SCRIMMAGE (dashed)', x + w - 8, y + 14);
   const cx = x + w / 2, r = big ? 15 : 7;
@@ -2455,36 +2456,40 @@ function drawDbDebug() {
 // rings, the replay marker): ringFree(p) is true the first time a player is asked about
 const ringSeen = new Set();
 const ringFree = p => { if (!p || ringSeen.has(p)) return false; ringSeen.add(p); return true; };
-function drawDefOverlay() {
+// g = the GROUND pass (zone hatch / ellipses, the yellow rings under a man): draw() calls it before the players so they stand on it;
+// the plain call (after the world) draws the rest on top: labels, MAN lines, blitz arrows, the CHOP ring, the hint strip
+function drawDefOverlay(g) {
   if (rec && rec.replaying && aiOff()) {   // in the replay: a yellow circle under the defender you were playing at that moment
     const me = defenders().find(p => p.isUd);
-    if (me && ringFree(me)) {
+    if (g && me && ringFree(me)) {
       const z = camZ(), sx = W / 2 + MIRROR * (me.x - camX) * z, sy = viewCenterY() + (me.y - camY) * z + FOOT * z;
       ctx.save(); ctx.strokeStyle = '#ffd94a'; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.ellipse(sx, sy, 1.3 * YD * z, 0.55 * YD * z, 0, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+      penRingHatch(sx, sy, 1.3 * YD * z, 0.55 * YD * z, '#ffd94a', 41);
+      penEllipse(sx, sy, 1.3 * YD * z, 0.55 * YD * z, 41); ctx.stroke(); ctx.restore();
     }
     return;
   }
-  if (state === 'kick' && kick && kick.me && defLive() && !bannerUp() && !(rec && rec.replaying) && ringFree(kick.me)) {   // their kick: a yellow ring under the rusher you steer
+  if (g && state === 'kick' && kick && kick.me && defLive() && !bannerUp() && !(rec && rec.replaying) && ringFree(kick.me)) {   // their kick: a yellow ring under the rusher you steer
     const z = camZ(), sx = W / 2 + MIRROR * (kick.me.x - camX) * z, sy = viewCenterY() + (kick.me.y - camY) * z + FOOT * z;
     ctx.save(); ctx.strokeStyle = '#ffd94a'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.ellipse(sx, sy, 1.3 * YD * z, 0.55 * YD * z, 0, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+    penRingHatch(sx, sy, 1.3 * YD * z, 0.55 * YD * z, '#ffd94a', 41);
+    penEllipse(sx, sy, 1.3 * YD * z, 0.55 * YD * z, 41); ctx.stroke(); ctx.restore();
   }
   if (!ud || state === 'done' || state === 'sim' || state === 'kick' || state === 'kickoff' || bannerUp() || (rec && rec.replaying)) return;
   const z = camZ(), sp = p => [W / 2 + MIRROR * (p.x - camX) * z, viewCenterY() + (p.y - camY) * z];
   ctx.save();
   { const L = ud.stiffBy && ud.stiffBy.stiffLock;   // held off by a stiff arm: the CHOP window flashes as a white ring (X / tap him)
-    if (L && L.d === ud && !L.noTug) { const [x, y] = sp(ud), on = saChopWin(L, clock); ctx.strokeStyle = on ? '#ffffff' : 'rgba(255,255,255,0.3)'; ctx.lineWidth = on ? 4 : 2;
-      ctx.beginPath(); ctx.ellipse(x, y + FOOT * z, (on ? 1.15 : 0.9) * YD * z, (on ? 0.5 : 0.4) * YD * z, 0, 0, Math.PI * 2); ctx.stroke();
+    if (!g && L && L.d === ud && !L.noTug) { const [x, y] = sp(ud), on = saChopWin(L, clock); ctx.strokeStyle = on ? '#ffffff' : 'rgba(255,255,255,0.3)'; ctx.lineWidth = on ? 4 : 2;
+      penEllipse(x, y + FOOT * z, (on ? 1.15 : 0.9) * YD * z, (on ? 0.5 : 0.4) * YD * z, 43); ctx.stroke();
       if (on) { ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.fillText(TOUCH ? 'TAP' : 'X', x, y - 2.4 * YD * z); } } }
   if (state === 'pre') {   // the whole defense's job before the snap: zones as circles, man coverage as a line to his receiver
     ctx.lineWidth = 2; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     // everybody going at the quarterback (the linemen and the blitzers): a red dashed line, the same as the man / zone lines, ending in an arrow
-    { const [qx, qy] = sp(qb);
+    if (!g) { const [qx, qy] = sp(qb);
       ctx.strokeStyle = ctx.fillStyle = '#ff3b30';
       for (const r of [...dl, ...back7.filter(b => b.blitz)].filter(r => !(tut && tut.bench.includes(r)) && !(oo && oo.bench.includes(r)))) {   // (a benched tutorial defender is parked off the field: no lines from him)
         const [rx, ry] = sp(r), ry2 = ry + FOOT * z, qy2 = qy + FOOT * z, L = Math.hypot(qx - rx, qy2 - ry2) || 1, ux = (qx - rx) / L, uy = (qy2 - ry2) / L, ex = qx - ux * 58 * z, ey = qy2 - uy * 58 * z;   // (stops well short of the QB)
-        ctx.setLineDash([5, 5]); ctx.beginPath(); ctx.moveTo(rx, ry2); ctx.lineTo(ex, ey); ctx.stroke(); ctx.setLineDash([]);
+        ctx.beginPath(); penDashLine(rx, ry2, ex, ey, (r.num | 0) * 13 + 1, 5, 5, 1); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(ex + ux * 9, ey + uy * 9); ctx.lineTo(ex - uy * 6, ey + ux * 6); ctx.lineTo(ex + uy * 6, ey - ux * 6); ctx.closePath(); ctx.fill();
       } }
     for (const d of back7) {
@@ -2493,20 +2498,24 @@ function drawDefOverlay() {
       ctx.strokeStyle = mine ? '#ffd94a' : wxInkA(0.75); ctx.fillStyle = ctx.strokeStyle;
       if (d.blitz) continue;   // (drawn below with the line: everyone coming at the QB gets the same red arrow)
       if (d.man) {
+        if (g) continue;
         const [mx, my] = sp(d.man);
-        ctx.setLineDash([5, 5]); ctx.beginPath(); ctx.moveTo(dx, dy + FOOT * z); ctx.lineTo(mx, my + FOOT * z); ctx.stroke(); ctx.setLineDash([]);
+        ctx.beginPath(); penDashLine(dx, dy + FOOT * z, mx, my + FOOT * z, (d.num | 0) * 13 + 5, 5, 5, 1); ctx.stroke();
         ctx.fillText('MAN', dx, dy - 40 * z);
       } else if (d.zone) {
         const zs = zoneShape(d), [zx, zy] = sp({ x: los + (d.zone.d || 0) * YL, y: zs.cy }), rr = zs.rx * z, rv = zs.ry * z;
-        ctx.globalAlpha = 0.18; ctx.beginPath(); ctx.ellipse(zx, zy, rr, rv, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
-        ctx.beginPath(); ctx.ellipse(zx, zy, rr, rv, 0, 0, Math.PI * 2); ctx.stroke();
+        if (g) {
+          if (plLod || liteOn()) { ctx.globalAlpha = 0.18; ctx.beginPath(); ctx.ellipse(zx, zy, rr, rv, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1; }
+          else penRingHatch(zx, zy, rr, rv, ctx.strokeStyle, (d.num | 0) * 13 + 7, true);   // (the zone coloured in with a light, wide pencil hatch)
+          penEllipse(zx, zy, rr, rv, (d.num | 0) * 13 + 7); ctx.stroke(); continue;
+        }
         ctx.fillText(d.zone.deep ? 'DEEP' : 'ZONE', zx, zy - 8 * z);
-        ctx.setLineDash([5, 5]); ctx.beginPath(); ctx.moveTo(zx, zy); ctx.lineTo(dx, dy + FOOT * z); ctx.stroke(); ctx.setLineDash([]);   // (the middle of his zone to the man who owns it)
+        ctx.beginPath(); penDashLine(zx, zy, dx, dy + FOOT * z, (d.num | 0) * 13 + 9, 5, 5, 1); ctx.stroke();   // (the middle of his zone to the man who owns it)
       }
     }
   }
   ctx.restore();
-  if (SETTINGS.defHints && state !== 'run' && !TOUCH) {   // (U hides this strip; no key tips on a phone)
+  if (!g && SETTINGS.defHints && state !== 'run' && !TOUCH) {   // (U hides this strip; no key tips on a phone)
     ctx.save(); ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const t = pvpDef() && !pvpRightOff() ? 'IJKL move  -  U switch player  -  Y jump for the ball  -  B dive tackle  H secure tackle  N hit stick  M audible'
                        : `${tutText('{move}')} move  -  ${tutText('{hurdle}')} / ${tutText('{switchD}')} / click: switch player  -  ${tutText('{spin}')} jump / spin  -  ${tutText('{truck}')} hit stick (or knock the ball out of a receiver)  ${tutText('{dive}')} dive  ${tutText('{protect}')} secure tackle  ${tutText('{audibleD}')} audible  -  ${tutText('{hints}')} hides this`;
@@ -2517,18 +2526,22 @@ function drawDefOverlay() {
   const [sx, sy] = sp(ud), fy = sy + FOOT * z;
   ctx.save();
   ctx.strokeStyle = '#ffd94a'; ctx.lineWidth = 3;
-  if (!(ud.hasBall && (state === 'picked' || state === 'run')) && ringFree(ud)) { ctx.beginPath(); ctx.ellipse(sx, fy, 1.3 * YD * z, 0.55 * YD * z, 0, 0, Math.PI * 2); ctx.stroke(); }   // (the ball carrier already has the flashing ring: no second one under your returner)
+  if (g && !(ud.hasBall && (state === 'picked' || state === 'run')) && ringFree(ud)) { penRingHatch(sx, fy, 1.3 * YD * z, 0.55 * YD * z, '#ffd94a', 41); penEllipse(sx, fy, 1.3 * YD * z, 0.55 * YD * z, 41); ctx.stroke(); }   // (the ball carrier already has the flashing ring: no second one under your returner)
   // during the play: a line from your defender to each assignment, no text. Man: his man. Zone: the receivers inside it (and the zone itself)
-  ctx.lineWidth = 2; ctx.setLineDash([6, 6]); ctx.globalAlpha = 0.8;
-  const line = (px, py) => { ctx.beginPath(); ctx.moveTo(sx, fy); ctx.lineTo(px, py); ctx.stroke(); };
+  ctx.lineWidth = 2; ctx.globalAlpha = 0.8; let lnS = 61;
+  const line = (px, py) => { if (g) return; ctx.beginPath(); penDashLine(sx, fy, px, py, lnS += 7, 6, 6, 1); ctx.stroke(); };   // (pencil dashes, each line its own seed in a fixed order)
   if (state === 'flight' && tgt) { const [tx, ty] = sp(tgt); line(tx, ty + FOOT * z); }   // once it's thrown, his one job is the man it's thrown to...
   else if (state === 'run' && runner && runner.team === 'off' && runner.hasBall && !runner.awaiting) { const [tx, ty] = sp(runner); line(tx, ty + FOOT * z); }   // ...then whoever has the ball
   else if ((state === 'drop' || state === 'pocket') && !ud.blitz && !dl.includes(ud)) {
     if (ud.man) { const [mx, my] = sp(ud.man); line(mx, my + FOOT * z); }
     else if (ud.zone) {
       const zs = zoneShape(ud), [zx, zy] = sp({ x: los + (ud.zone.d || 0) * YL, y: zs.cy }), rr = zs.rx * z, rv = zs.ry * z;
-      ctx.globalAlpha = 0.12; ctx.fillStyle = '#ffd94a'; ctx.beginPath(); ctx.ellipse(zx, zy, rr, rv, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 0.8;
-      ctx.beginPath(); ctx.ellipse(zx, zy, rr, rv, 0, 0, Math.PI * 2); ctx.stroke();
+      if (g) {
+        if (plLod || liteOn()) { ctx.globalAlpha = 0.12; ctx.fillStyle = '#ffd94a'; ctx.beginPath(); ctx.ellipse(zx, zy, rr, rv, 0, 0, Math.PI * 2); ctx.fill(); }
+        else penRingHatch(zx, zy, rr, rv, '#ffd94a', 47, true);
+        ctx.globalAlpha = 0.8;
+        penEllipse(zx, zy, rr, rv, 47); ctx.stroke();
+      }
       line(zx, zy);
       for (const r of catchers()) {
         const [rx, ry] = sp(r);
@@ -2675,6 +2688,7 @@ function update(dt) {
   if (tut && tut.defAsk) return;   // (the tutorial's "play defense or sim it?" card: nothing moves until you pick)
   clock += dt;
   if (SL.on) slTick(dt);   // (sideline people: their clock; hides the chain crew for kicks)
+  showTick();   // (v0.51: a showboating carrier: looks, finishes, when it ends)
   injKneelTick();   // (an injury timeout's kneel, then the clap: 07)
   wxTick(dt);
   // each defender's real movement over the last frame, whatever code moved him (pursue picks its speed up from it)
@@ -2704,7 +2718,7 @@ function update(dt) {
   }
   for (const r of [...dl, ...recs, ...back7]) if (r.swimLeft > 0) r.swimLeft = Math.max(0, r.swimLeft - dt);   // the swim's arm-over
   for (const r of defenders()) { if (r.spinFx > 0) r.spinFx = Math.max(0, r.spinFx - dt); if (r.bullFx > 0) r.bullFx = Math.max(0, r.bullFx - dt); }
-  if (fgExit.length && state !== 'kick' && state !== 'pre' && state !== 'punt') fgExit = [];   // (the swapped-out players' stand-ins only exist during a unit change: never left standing as duplicates once the next play is under way)
+  if (fgExit.length && state !== 'kick' && state !== 'pre' && state !== 'punt') { slSubFlush(); fgExit = []; }   // (anyone still walking off finishes as a sideline person: slSubFlush)   // (the swapped-out players' stand-ins only exist during a unit change: never left standing as duplicates once the next play is under way)
   if (state !== 'pre' && state !== 'done') recordSnap();
   // a simmed game ticks itself along
   // (fast while simming ahead)
@@ -3050,9 +3064,10 @@ const CAM = { touch: 0.55,   // phone / tablet: camera pan and zoom speed x this
               sprintZoom: 0.97,   // x zoom while the carrier sprints (was 0.9: the view pumped in and out with every tap of the sprint key)
               looseZoom: 0.92,
               tdZoom: 0.1, tdHold: 2.5, tdEase: 1.5,   // touchdown: extra zoom-in on the scorer, seconds held before pulling back, slow ease (1/s)
-              fgEase: 2.5, maxPan: 40 * YD };   // field goal: steady, slow pan / zoom (1/s)   // loose ball / fumble / pick: x zoom (< 1 = out to show the chase)
+              fgEase: 2.5, maxPan: 40 * YD,
+              preEase: 1.5, preTime: 0.9, zoomMax: 0.9 };   // after a play: the pre-snap pan / zoom ease (1/s) for the first preTime s of 'pre' (the tight whistle shot used to snap out wide); zoom speed cap (x zoom per s)   // field goal: steady, slow pan / zoom (1/s)   // loose ball / fumble / pick: x zoom (< 1 = out to show the chase)
 let camPre = { pid: -1 };   // the computer offense's pre-snap shot, set once a play (its audibles / shifts never move the camera)
-const camS = { vx: 0, vy: 0, vz: 0, x: null, y: null, z: null };   // the camera spring's velocity, and where it last put the camera
+const camS = { vx: 0, vy: 0, vz: 0, x: null, y: null, z: null, st: null, pre: 99 };   // (st / pre: last state seen, seconds into this 'pre')   // the camera spring's velocity, and where it last put the camera
 // one step of a critically damped spring toward `to` (w = stiffness, 1/s); exact for any frame time, speed capped at `cap`
 function camSpring(cur, to, v, w, dt, cap) {
   const e = Math.exp(-w * dt), d = cur - to, t = (v + w * d) * dt;
@@ -3203,7 +3218,9 @@ function updateCamera(dt) {
   const slowKO = state === 'kickoff' || (state === 'kick' && kick && kick.kickoff) || (kickoffPlay && state === 'run' && clock - runStart < CAM.koSettle);
   const puntCam = state === 'punt' || (state === 'kick' && kick && kick.punt);
   const tc = TOUCH ? CAM.touch : 1;   // (phones: slower, smoother follow; frame-rate independent)
-  const slowOther = scorer ? CAM.tdEase : (state === 'kick' && kick && !kick.punt && !kick.kickoff) ? CAM.fgEase : 0;   // (touchdown hold / field goal: a slow, steady ease)
+  if (state === 'pre') camS.pre = camS.st === 'pre' ? camS.pre + dt : (camS.st && camS.st !== 'sim' ? 0 : 99); else camS.pre = 99;   // (just reset after a live play: ease out slowly)
+  camS.st = state;
+  const slowOther = scorer ? CAM.tdEase : (state === 'kick' && kick && !kick.punt && !kick.kickoff) ? CAM.fgEase : camS.pre < CAM.preTime ? CAM.preEase : 0;   // (touchdown hold / field goal: a slow, steady ease)
   // the pan and the zoom ride a critically damped spring (they were a plain ease toward the target: whenever the target switched, at the snap, the throw, the catch,
   // a turnover, the whistle, the camera lurched off at full speed that very frame). The spring keeps its speed, so every switch is eased into as well as out of.
   const wp = CAM.smooth * tc * (slowKO ? CAM.koPan : puntCam ? CAM.puntPan : slowOther || CAM.pan), wz = CAM.smooth * tc * (slowKO ? CAM.koZoom : puntCam ? CAM.puntZoom : slowOther || CAM.zoomEase);
@@ -3211,7 +3228,7 @@ function updateCamera(dt) {
   const capV = CAM.maxPan * tc;   // (a long trip, e.g. from the extra point out to midfield, pans at a steady speed instead of one lunge)
   [camX, camS.vx] = camSpring(camX, cx, camS.vx, wp, dt, capV);
   [camY, camS.vy] = camSpring(camY, cy, camS.vy, wp, dt, capV);
-  [zoom, camS.vz] = camSpring(zoom, wantZ, camS.vz, wz, dt, Infinity);
+  [zoom, camS.vz] = camSpring(zoom, wantZ, camS.vz, wz, dt, zoom > 0.2 && isFinite(zoom) ? CAM.zoomMax * zoom * tc : Infinity);   // (no cap from an unset / zero zoom: it could never grow)
   camS.x = camX; camS.y = camY; camS.z = zoom;
   // passing: pull back (past any wheel zoom-in) so the deepest receiver and the QB stay on screen
   let pull = 1;

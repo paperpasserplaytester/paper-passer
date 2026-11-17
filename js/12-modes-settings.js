@@ -762,7 +762,19 @@ const CELT_B = (() => {
 })();
 const CELT_BOT = CELT_B.ev.y + 26 + 92;   // (the readout's four lines end here)
 const celTNew = () => ({ ev: 0, tag: 0, page: 0, id: 'spike', spd: 0, loop: false, mir: false, lock: true, zoom: 0, big: false, cast: 0, hy: 0.5, force: false, wait: null, played: false, uz0: userZoom });
-function celTOff() { if (!celT) return; userZoom = celT.uz0; celT = null; CELEB.force = CELEB.forceHype = null; }
+function celTOff() { if (!celT) return; userZoom = celT.uz0; celT = null; CELEB.force = CELEB.forceHype = CELEB.forceHome = null; }
+// v0.51: a move that needs a place is staged there (the wall, a cameraman, the mascot, his bench) and HOME / AWAY is forced to what it needs (CELEB.forceHome)
+function celTStage(mv, h) {
+  const nd = [].concat(mv.needs || []);
+  CELEB.forceHome = nd.includes('home') || nd.includes('mascot') || nd.includes('bench') ? true : nd.includes('away') ? false : null;
+  const ppl = SL.cast ? SL.cast.people : [], near = k => { let b = -1, bd = 1e9; for (let i = 3; i < ppl.length; i++) { const P = ppl[i]; if (P && P.k === k && !P.ez) { const d = Math.abs(P.hx - h.x); if (d < bd) { bd = d; b = i; } } } return b; };
+  const by = (i, yd) => { const P = ppl[i]; slWhere(P, SL.W[i], SL.H[i], SL.now); h.x = SL_P.x + 4 * YD; h.y = SL_P.y + (SL_P.y < MID ? yd : -yd) * YD; };
+  if (nd.includes('wall') || nd.includes('wallNear')) { h.y = Y_MIN + 1.5 * YD; return; }
+  if (!SL.on || !SL.cast) return;
+  if (nd.includes('cam')) { const i = near(SLK.CAM); if (i >= 0) { by(i, 4); camX = h.x; camY = h.y; } }   // (the camera there now: celebCamNear wants him on screen)
+  else if (nd.includes('mascot') || nd.includes('mascot2')) { const i = near(SLK.MASCOT); if (i >= 0) by(i, 5); }
+  else if (nd.includes('bench')) { const b = celebBenchAt(h); if (b) { h.x = b.x + 4 * YD; h.y = b.s ? Y_MAX - 3 * YD : Y_MIN + 3 * YD; } }
+}
 const celTSpeed = () => celT && state === 'done' && !(rec && rec.replaying) ? CELT.speeds[celT.spd] : 1;
 const celTSync = () => { CELEB.force = celT.force ? celT.id : null; CELEB.forceHype = celT.force ? celT.hy : null; };
 function celTIs(id, f) {
@@ -794,6 +806,7 @@ function celTPlay() {
   const ev = CELT_EVS[T.ev], def = celTDef(id), h = celTHero(mv, id), n = ev !== 'test' ? Math.max(5, celTCast(mv)) : celTCast(mv), ez = mv.needs === 'post' || mv.needs === 'goal';   // (an event's pool: four teammates brought in, so its team moves can come up)
   h.x = mv.needs === 'post' ? POST_X - 5.5 * YD : mv.needs === 'goal' ? FIELD + 1.5 * YD : Math.max(4 * YL, los - CELT.back * YL);   // (the post moves: a sprint's worth short of it, inside CELEB.postRange)
   h.y = MID + (mv.needs === 'post' ? 1 * YD : 0); h.face = T.mir ? -1 : 1; h.hasBall = true;
+  celTStage(mv, h);   // (v0.51: wall / camera / mascot / bench moves, HOME / AWAY)
   Object.assign(ball, { x: h.x, y: h.y, z: 0, vx: 0, vy: 0, vz: 0, inAir: false, loose: false, live: false, tucked: true });
   // his cast: the nearest go beside him, everyone else of his team stays out of reach
   const pool = (def ? (mv.mate === 'ol' ? dl : [...back7, ...dl]) : mv.mate === 'ol' ? ols : [...recs, rb, ...ols]).filter(p => p !== h).slice(0, n - 1), spots = [[-2.4, 1.3], [-2.4, -1.3], [-3.4, 2.4], [-3.4, -2.4], [-4.2, 0]];
@@ -1313,6 +1326,9 @@ function wxThrow(P, t, bullet) {
 // (falling snow fills them faster: fill x snowfall), max = most kept, w / h = a print's size (yd)
 const WX_LOOK = { stands: 0.42,   // stands = how white the stands get at full snow cover; inkAt = snow cover (coat x cover) where white on-field aids turn to ink (`wxInk`)
                   inkAt: 0.5, ink: '#111', inkRGB: '17,17,17',
+                  // rain bleed (wxBleed): k = its canvas px per world px, from = rain it starts at, a = alpha at full rain; blots / blotR (yd) / blotA = the darker
+                  // blotches; lineW (yd) / lineA = the feathered light edge along each white line
+                  bleed: { k: 0.12, from: 0.02, a: 0.85, blots: 70, blotR: [1.5, 4], blotA: 0.07, lineW: 1.1, lineA: 0.07 },
                   coatTime: 150, melt: 400, meltRain: 150, coatStart: 0.3, cover: 0.86, grain: 0.55, edge: 4, wet: 0.16,
                   dark: 0.26, haze: 0.2, drops: 2.6, dropLife: [1.4, 3], dropMax: 30,
                   prints: { deep: 0.3, stride: 0.95, life: 40, fill: 2.5, max: 1800, w: 0.24, h: 0.15, alpha: 0.4 } };
@@ -1375,11 +1391,36 @@ function wxPrintTick(dt) {
 const wxSnowy = () => wxLive() && (game.wx.coat || 0) * WX_LOOK.cover >= WX_LOOK.inkAt;
 function wxInk(light, dark = WX_LOOK.ink) { return wxSnowy() ? dark : light; }
 function wxInkA(a) { return wxSnowy() ? `rgba(${WX_LOOK.inkRGB},${a})` : `rgba(255,255,255,${a})`; }   // the same with a white's alpha kept
+// rain on the marker field: ONE low-resolution canvas (WX_LOOK.bleed.k of a world px) of soft darker blotches and feathered light edges along the
+// white lines, built the first time it rains and freed once it stops; each frame = one drawImage at WXI.rain x bleed.a. Off in performance mode.
+let WX_BLEED = null;
+function wxBleed(x0, y0, w, h) {
+  const B = WX_LOOK.bleed;
+  if (WXI.rain < B.from || !markerOn()) { if (WX_BLEED && WXI.rain < B.from) { freeCanvas(WX_BLEED); WX_BLEED = null; } return; }
+  if (!WX_BLEED) {
+    const k = B.k, c = WX_BLEED = document.createElement('canvas'); c.width = Math.ceil(w * k); c.height = Math.ceil(h * k);
+    const g = c.getContext('2d'); g.scale(k, k); g.translate(-x0, -y0);
+    let s = 4241; const r = () => (s = (s * 16807) % 2147483647) / 2147483647;
+    for (let i = 0; i < B.blots; i++) {   // soft blotches: a few overlapping faint discs each, smoothed by the low resolution
+      const bx = x0 + r() * w, by = y0 + r() * h, br = (B.blotR[0] + (B.blotR[1] - B.blotR[0]) * r()) * YD;
+      g.fillStyle = `rgba(10,30,20,${B.blotA})`;
+      for (let j = 0; j < 3; j++) { g.beginPath(); g.arc(bx + (r() - 0.5) * br, by + (r() - 0.5) * br, br * (0.5 + 0.5 * r()), 0, Math.PI * 2); g.fill(); }
+    }
+    g.lineCap = 'round'; g.strokeStyle = `rgba(255,255,255,${B.lineA})`;   // feathered edges: wide faint passes along the yard, goal and side lines
+    for (const wd of [B.lineW, B.lineW * 0.55]) {
+      g.lineWidth = wd * YD; g.beginPath();
+      for (let x = 0; x <= FIELD + 1; x += 5 * YL) { g.moveTo(x, 0); g.lineTo(x, FW); }
+      g.rect(-ENDZONE, 0, FIELD + 2 * ENDZONE, FW); g.stroke();
+    }
+  }
+  ctx.save(); ctx.globalAlpha *= Math.min(1, WXI.rain) * B.a; ctx.imageSmoothingEnabled = true; ctx.drawImage(WX_BLEED, x0, y0, w, h); ctx.restore();
+}
 function wxGround() {
   if (!wxLive()) return;
   const L = WX_LOOK, a = WXI.rain * L.wet, coat = game.wx.coat || 0, e = L.edge * YD;
   const x0 = -ENDZONE - e, y0 = -e, w = FIELD + 2 * ENDZONE + 2 * e, h = FW + 2 * e;
   if (a >= 0.005) { ctx.fillStyle = `rgba(20,32,55,${a})`; ctx.fillRect(x0, y0, w, h); }
+  wxBleed(x0, y0, w, h);   // (rain: the marker bleeds a little)
   if (coat < 0.01) return;
   ctx.fillStyle = `rgba(241,245,251,${Math.min(1, coat) * L.cover})`; ctx.fillRect(x0, y0, w, h);
   ctx.save(); ctx.globalAlpha = Math.min(1, coat * 1.5) * L.grain; ctx.fillStyle = wxGrain(); ctx.fillRect(x0, y0, w, h); ctx.restore();
@@ -1724,23 +1765,39 @@ function wxPickNext() {
 // s.benchNext = you benched him for the next game (roster page); s.outGame = out for the rest of this one;
 // s.missed = wasn't available when this game started.
 const INJURY = {
-  hit: { tackle: 0.0009, stick: 0.004, sack: 0.0014 }, // chance per hit at full condition...
+  hit: { tackle: 0.0007, stick: 0.004, sack: 0.0011,   // chance per hit at full condition (tackle / sack cut ~0.8x: the legs zones and hit types carry the risk now)...
+         qbOpen: 0.0024, blind: 0.0028, moveFail: 0.003 }, // ...the QB tackled as a runner, a blindside sack, a failed move on red legs
+  diffHit: ['stick', 'sack', 'blind'],                 // kinds difficulty makes likelier (their odds are divided back out: never more injuries)
+  danger: ['qbOpen', 'blind', 'moveFail'],             // hit types that count as a stacked (self-inflicted) factor
+  blindAt: 0.5,                                        // qbBlind over this = a blindside sack
+  moveFailT: 1.2,                                      // s after a clipped hurdle's landing that a tackle still counts as the failed move
+  whyCond: 60,                                         // condition under this shows WORN DOWN in the cause (under COND_EDGE.lo = LOW CONDITION)
+  stackSev: 0.12,                                      // severity shift toward severe per stacked factor (red legs, low condition, playing hurt, a dangerous hit)
+  maxStack: 8, stackWk: 1,                             // with 2+ stacked factors: most weeks out / extra weeks per stacked factor past the first
   condK: 6,                                            // ...x (1 + condK x (1 - condition)^2): 7x at 0
   post: 0.004,                                         // after a game, per star who played (same condition factor)
-  cond: { tackle: 2, stick: 6, sack: 3 }, weekly: 5, weeklyRnd: 2,   // condition lost per hit / per game played (+ 0..weeklyRnd more: it wears down overall)
+  cond: { tackle: 2, stick: 6, sack: 3, qbOpen: 4, blind: 5, moveFail: 4 }, weekly: 5, weeklyRnd: 2,   // condition lost per hit / per game played (+ 0..weeklyRnd more: it wears down overall)
   play: 0.1,                                           // ratings lost at 0 condition (less above it)
   sevOdds: [0.62, 0.28, 0.1], sevShift: 0.35,          // mild / bad / severe at full condition; poor condition shifts toward severe
   hurt: [0.9, 0.78, 0.62],                             // ratings x while playing hurt
   reinjure: [0.15, 0.3, 0.5],                          // chance per hit while playing hurt (x1.5 for a hit stick)
   weeks: [[0, 0], [0, 2], [2, 4]],                     // weeks out (min, max); 0 = just the rest of this game (benched, he's back next week)
   max: 5, maxKept: 7,                                  // most weeks out: benched / kept playing
+  ironAt: 4, ironK: 0.8,                               // iron man: this many straight games played without going red or getting hurt = weekly condition cost x ironK
 };
 const SEV_NAME = ['MILD', 'BAD', 'SEVERE'], SEV_COLOR = ['#c98a00', '#d9601a', '#c81b1b'];
+// SEASON-ENDING: a rare share of SEVERE injuries (`season: true` on s.inj, still sev 2) keeps him out for the rest of the season, playoffs included (weeks = INJ_SEASON.weeks,
+// never shortened); healAll clears it at the new season. share x (1 - medK per medical building level above 1, never under medMin) for your team
+const INJ_SEASON = { share: 1 / 6, medK: 0.2, medMin: 0.3, weeks: 99, name: 'SEASON-ENDING', col: '#7a0d22' };
+function seasonEnder(sev, mine) { return sev === 2 && !!SETTINGS.injuries && Math.random() < INJ_SEASON.share * (mine ? Math.max(INJ_SEASON.medMin, 1 - INJ_SEASON.medK * facLvl('med')) : 1); }
+const sevName = inj => inj && inj.season ? INJ_SEASON.name : SEV_NAME[inj ? inj.sev : 0];
+const sevColor = inj => inj && inj.season ? INJ_SEASON.col : SEV_COLOR[inj ? inj.sev : 0];
+const injWk = inj => inj && inj.season ? 'the season' : `${inj ? inj.weeks : 0} wk`;
 let injuryCall = null;   // the injury timeout: { p (on the field), s (his ROSTER entry), re (reinjured: he's done) }
 const injuriesOn = () => SETTINGS.injuries && !exhibition && !tut;
 const yourStars = off => (ROSTER[MATCH.you] || []).filter(s => !off || OFF_GROUPS.includes(s.group));   // (off: just the offense; defenders wear down in simmed plays too)
 // a simmed tackle / sack / pick return on one of your defenders: condition goes down (kind: tackle / stick / sack)
-function simDefHit(p, kind) { if (p && injuriesOn() && ROSTER[MATCH.you].includes(p) && !isOut(p)) p.cond = Math.max(0, condOf(p) - INJURY.cond[kind]); }
+function simDefHit(p, kind) { if (p && injuriesOn() && ROSTER[MATCH.you].includes(p) && !isOut(p) && !p.restGame) p.cond = Math.max(0, condOf(p) - INJURY.cond[kind]); }
 const condOf = s => Math.round(s.cond ?? 100);
 const COND_EDGE = { hi: 90, lo: 30, cap: 20 };   // condition 90+ = every attribute +1 (never past cap), under 30 = every attribute -1
 const condShift = s => !s || !injuriesOn() ? 0 : condOf(s) >= COND_EDGE.hi ? 1 : condOf(s) < COND_EDGE.lo ? -1 : 0;
@@ -1750,32 +1807,45 @@ const isOut = s => !exhibition && !tut && !!(s.benchNext || s.outGame || s.susp 
 const rint = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
 let playEndedAt = 0;   // when the last play ended: the injury card waits for the whistle (it sounds 150 ms after)
 const injuryShowing = () => !!injuryCall && state === 'done' && playSettled() && performance.now() - playEndedAt > 700 && !(rec && rec.replaying);   // (only once the play is over: tackle landed, whistle, celebration)
-function rollSev(s) {
-  const k = INJURY.sevShift * (1 - condOf(s) / 100), o = INJURY.sevOdds;
+function rollSev(s, stack = 0) {
+  const k = INJURY.sevShift * (1 - condOf(s) / 100) + INJURY.stackSev * stack, o = INJURY.sevOdds;
   const w = [o[0] - k, o[1] + k * 0.5, o[2] + k * 0.5], r = Math.random() * (w[0] + w[1] + w[2]);
   return r < w[0] ? 0 : r < w[0] + w[1] ? 1 : 2;
 }
 // ratings x for one of your stars on the field: his condition, and playing hurt
 const starForm = s => !injuriesOn() ? 1 : (1 - INJURY.play * (1 - condOf(s) / 100)) * (s.inj ? INJURY.hurt[s.inj.sev] : 1) * (isLimited(s) ? RECOVERY.limited.ratings : 1);
-// one of your stars takes a hit (kind: tackle / stick / sack)
-function injuryHit(p, kind) {
+// what made an injury likelier (shown on the injury card and the week's notes) and how many self-inflicted factors stacked up
+const INJ_KIND_WHY = { stick: 'BIG HIT', sack: 'SACK', blind: 'BLINDSIDE SACK', qbOpen: 'QB IN THE OPEN' };
+function injuryWhy(s, z, kind, how, snow, hurt) {
+  const c = condOf(s), w = [];
+  if (hurt) w.push('PLAYING HURT');
+  if (z === 2) w.push('RED LEGS'); else if (z === 1) w.push('TIRED LEGS');
+  if (c < COND_EDGE.lo) w.push('LOW CONDITION'); else if (c < INJURY.whyCond) w.push('WORN DOWN');
+  const k = how || INJ_KIND_WHY[kind]; if (k) w.push(k);
+  if (snow > 0.3) w.push('FROZEN FIELD');
+  return w.length ? w.slice(0, 3).join(' + ') : 'BAD LUCK';
+}
+const injuryStack = (s, z, kind) => (z === 2) + (condOf(s) < COND_EDGE.lo) + !!s.inj + INJURY.danger.includes(kind);
+// one of your stars takes a hit (kind: tackle / stick / sack / qbOpen / blind / moveFail; how = the failed move's label)
+function injuryHit(p, kind, how) {
   const s = p && p.src;
-  if (tut || !injuriesOn() || !s || p.team !== 'off' || !yourStars(true).includes(s)) return;
+  if (tut || LG_SAND || !injuriesOn() || !s || p.team !== 'off' || !yourStars(true).includes(s)) return;
   s.cond = Math.max(0, condOf(s) - INJURY.cond[kind]);
   if (injuryCall || s.outGame) return;
-  const tired = (1 + WEAR.injury * (p.wear || 0)) * (1 + WXF.inj * wxSnow()) * diffX('injK');   // (difficulty: injuryK; a worn-down player is easier to hurt; so is one on a frozen field)
+  const z = wearZone(p), snow = wxSnow(), why = injuryWhy(s, z, kind, how, snow, !!s.inj), stack = injuryStack(s, z, kind);
+  const tired = WEAR.zoneInj[z] * (1 + WXF.inj * snow) * diffX('injK');   // (difficulty: injuryK; legs zone: red legs get hurt; so does a man on a frozen field)
   if (s.inj) {   // playing hurt: one more hit can make it worse (and he's done for the day)
-    const fresh = INJURY.hit[kind] * condFactor(s), re = INJURY.reinjure[s.inj.sev] * (kind === 'stick' ? 1.5 : 1);   // (Medical takes away the extra risk of playing hurt, down to a healthy man's odds)
+    const fresh = INJURY.hit[kind] * condFactor(s), re = INJURY.reinjure[s.inj.sev] * (kind === 'stick' ? 1.5 : 1) * (s.treatK || 1);   // (treatK: the recovery room's TREATMENT last week)   // (Medical takes away the extra risk of playing hurt, down to a healthy man's odds)
     if (Math.random() < (fresh + (re - fresh) * (1 - Math.min(1, FAC_FX.med.again * facLvl('med')))) * tired) {
-      s.inj.re = true; s.inj.sev = Math.min(2, s.inj.sev + 1); s.outGame = true;
-      injuryCall = { p, s, re: true }; popup(p, 'REINJURED', '#ff6b6b'); injuryAuto();
+      s.inj.re = true; s.inj.sev = Math.min(2, s.inj.sev + 1); s.outGame = true; s.inj.why = why; s.inj.stack = Math.max(s.inj.stack || 0, stack);
+      injuryCall = { p, s, re: true, why }; popup(p, 'REINJURED', '#ff6b6b'); injuryAuto();
     }
     return;
   }
   // (difficulty makes big hits likelier, but never injuries: the hit-stick / sack odds are divided back out)
-  if (Math.random() < INJURY.hit[kind] * condFactor(s) * tired * (1 - FAC_FX.med.hit * facLvl('med')) / (kind === 'tackle' ? 1 : (diffLvl().hit || 1))) {
-    s.inj = { sev: rollSev(s), weeks: null, kept: false, re: false }; injuryBegin(s);
-    injuryCall = { p, s }; popup(p, 'INJURED', '#ff6b6b'); injuryAuto();
+  if (Math.random() < INJURY.hit[kind] * condFactor(s) * tired * (1 - FAC_FX.med.hit * facLvl('med')) / (INJURY.diffHit.includes(kind) ? (diffLvl().hit || 1) : 1)) {
+    s.inj = { sev: rollSev(s, stack), weeks: null, kept: false, re: false, why, stack }; if (seasonEnder(s.inj.sev, true)) s.inj.season = true; injuryBegin(s);
+    injuryCall = { p, s, why }; popup(p, 'INJURED', '#ff6b6b'); injuryAuto();
   }
 }
 // on defense (their drive, the computer running things) the injury timeout isn't yours: the staff decides (keep a mild one in, bench the rest)
@@ -1788,7 +1858,7 @@ function injuryAuto() {
 // a game starts: who's available
 let condStart = null;   // team condition when the game began (the end-of-week bar slides from it)
 function injuriesNewGame() {
-  injuryCall = null; condStart = LEAGUE.condition;
+  injuryCall = null; condStart = LEAGUE.condition; blowoutClear();
   for (const s of yourStars()) {
     s.outGame = !!(s.inj && s.inj.weeks == null && !s.inj.kept);   // (a restarted game: still hurt)
     s.missed = isOut(s);
@@ -1799,10 +1869,10 @@ function injuriesNewGame() {
 // with bye weeks after it). Returns lines for the end-of-week screen.
 // an injury can cost a player some of his potential: a chance by how bad it is, then a few attribute points off the most he can
 // reach (a little more for a severe one, nothing is rare); never below what he is now. Returns the points lost.
-const POT_LOSS = { chance: [0.35, 0.6, 0.9], max: [2, 4, 7], none: 0.04 };
-function injuryPotential(s, sev) {
+const POT_LOSS = { chance: [0.35, 0.6, 0.9], max: [2, 4, 7], none: 0.04, stackK: [0.5, 1, 1.3] };   // stackK = x chance by stacked factors (0 / 1 / 2+) on your in-game injuries: clean ones are kinder
+function injuryPotential(s, sev, stack) {
   s.injN = (s.injN || 0) + 1;   // (every new injury counts against his trade value: injury prone)
-  if (Math.random() >= POT_LOSS.chance[sev]) return 0;
+  if (Math.random() >= POT_LOSS.chance[sev] * (stack == null ? 1 : POT_LOSS.stackK[Math.min(2, stack)])) return 0;
   const now = scoreOf(s); let loss = Math.random() < POT_LOSS.none ? 0 : Math.min(ptsOf(s) - now, 1 + Math.floor(Math.random() * POT_LOSS.max[sev]));
   if (yoursEntry(s)) loss = Math.round(loss * (1 - FAC_FX.med.pot * facLvl('med')));   // (your medical staff saves some of it)
   if (loss <= 0) return 0;
@@ -1814,7 +1884,7 @@ function injuryPotential(s, sev) {
 const COND_PLAY = { min: 0.15, full: 0.85, max: 1.15 };
 function playShareK(s) {
   const sn = game && game.snaps, side = sn && (OFF_GROUPS.includes(s.group) ? sn.off : sn.def);
-  if (!side) return 1;
+  if (!side) { const r = game && game.restShare && game.restShare[s.name]; return r == null ? 1 : Math.min(COND_PLAY.max, COND_PLAY.min + (1 - COND_PLAY.min) * r / COND_PLAY.full); }   // (a simmed game: the share he played before a blowout rest)
   const share = (sn.by[s.name] || 0) / side;
   return Math.min(COND_PLAY.max, COND_PLAY.min + (1 - COND_PLAY.min) * share / COND_PLAY.full);
 }
@@ -1824,26 +1894,31 @@ function injuriesAfterGame(passed) {
     if (SETTINGS.injuries) {
       const inj = s.inj;
       let lost = 0;
+      let why = null;
       if (inj && inj.weeks == null) {   // hurt in this game
-        let w = rint(...INJURY.weeks[inj.sev]);
+        const st = inj.stack || 0;
+        let w = rint(...INJURY.weeks[inj.sev]) + Math.max(0, st - 1) * INJURY.stackWk;   // (self-inflicted factors stacked up: longer)
         if (inj.kept) w += (inj.re ? 1 : 0) + rint(0, 1);   // playing on it: a longer layoff
-        inj.weeks = medWeeks(Math.min(inj.kept ? INJURY.maxKept : INJURY.max, w));
-        lost = injuryPotential(s, inj.sev); moraleKeyInjury(s);
+        inj.weeks = inj.season ? INJ_SEASON.weeks : medWeeks(Math.min(Math.max(inj.kept ? INJURY.maxKept : INJURY.max, st >= 2 ? INJURY.maxStack : 0), w));
+        lost = injuryPotential(s, inj.sev, st); moraleKeyInjury(s); why = inj.why;
       } else if (inj && s.missed) inj.weeks--;   // sat this one out
       else if (!inj && !s.missed && Math.random() < INJURY.post * condFactor(s)) {
         const sev = rollSev(s);
-        s.inj = { sev, weeks: medWeeks(Math.max(1, rint(...INJURY.weeks[sev]))) }; injuryBegin(s);
+        why = condOf(s) < COND_EDGE.lo ? 'LOW CONDITION' : 'WEAR AND TEAR';
+        s.inj = { sev, weeks: medWeeks(Math.max(1, rint(...INJURY.weeks[sev]))), why }; if (seasonEnder(sev, true)) Object.assign(s.inj, { season: true, weeks: INJ_SEASON.weeks }); injuryBegin(s);
         lost = injuryPotential(s, sev); moraleKeyInjury(s);
       }
       if (s.inj && passed > 1) s.inj.weeks -= passed - 1;   // bye weeks count
       if (s.limited) rehabStep(s, passed);   // (back but LIMITED: every game played fills the rehab meter)
-      if (s.inj) notes.push(`${s.short} (${SEV_NAME[s.inj.sev]}): ${s.inj.weeks > 0 ? `out ${s.inj.weeks} wk` : 'back next week'}${lost ? `` : ''}`);
+      if (s.inj) notes.push(`${s.short} (${sevName(s.inj)}): ${s.inj.weeks > 0 ? `out ${injWk(s.inj)}` : 'back next week'}${why ? ` - ${why}` : ''}`);
       if (s.inj && s.inj.weeks <= 0) { const sev = s.inj.sev; s.inj = null; injuryReturn(s, sev, notes); }   // (back: LIMITED until rehab is full)
       else if (s.limited && rehabOf(s) >= 1) { s.limited = false; notes.push(`${s.short}: fully cleared`); }
-      s.cond = !s.missed && passed === 1 ? Math.max(0, condOf(s) - (INJURY.weekly + rint(0, INJURY.weeklyRnd)) * playShareK(s) * (1 - FAC_FX.rec.reset * facLvl('rec'))) : 100;   // (the more of the game he played, the more condition it cost)
+      if (!s.missed) s.iron = why !== null || (game.redSeen || {})[s.name] ? 0 : (s.iron || 0) + 1;   // (iron man: played and stayed out of red; red legs or an injury start it over)
+      s.cond = !s.missed && passed === 1 ? Math.max(0, condOf(s) - (INJURY.weekly + rint(0, INJURY.weeklyRnd)) * playShareK(s) * (1 - FAC_FX.rec.reset * facLvl('rec')) * (s.iron >= INJURY.ironAt ? INJURY.ironK : 1)) : 100;   // (the more of the game he played, the more condition it cost)
     }
-    s.benchNext = false; s.outGame = false;
+    s.benchNext = false; s.outGame = false; s.treatK = 0;   // (TREATMENT lasts one game)
   }
+  blowoutClear();   // (blowout rests last one game)
   autoPromote(MATCH.you);   // (a hurt starter with a healthy backup on the roster: the backup starts)
   recalcTeamStars();
   return notes;
@@ -1854,14 +1929,29 @@ function injuriesAfterGame(passed) {
 const LEAGUE_INJURY = { week: 0.022, def: 0.8, ageK: 0.04 };   // computer teams' weekly injury odds per player (defense x def; +ageK per year past 29)
 function leagueInjuries(me) {
   if (!SETTINGS.injuries) return;
+  const blow = new Set();   // (teams that won the week just played by a blowout: their starters rested late, a smaller roll)
+  try { for (const x of season.sched[season.week - 2] || []) if (x.hs != null && Math.abs(x.hs - x.as) >= BLOWOUT.lead) blow.add(x.hs > x.as ? x.h : x.a); } catch (e) {}
   for (const k of Object.keys(ROSTER).filter(k => NFL[k] && k !== me)) for (const s of ROSTER[k]) {
     if (s.inj) { if (--s.inj.weeks <= 0) s.inj = null; continue; }
-    if (s.group === 'K' || Math.random() >= LEAGUE_INJURY.week * (OFF_GROUPS.includes(s.group) ? 1 : LEAGUE_INJURY.def) * (1 + LEAGUE_INJURY.ageK * Math.max(0, (s.age || 25) - 29))) continue;
+    if (s.group === 'K' || Math.random() >= (blow.has(k) ? BLOWOUT.simInj : 1) * LEAGUE_INJURY.week * (OFF_GROUPS.includes(s.group) ? 1 : LEAGUE_INJURY.def) * (1 + LEAGUE_INJURY.ageK * Math.max(0, (s.age || 25) - 29))) continue;
     const sev = rollSev(s);
     s.inj = { sev, weeks: Math.max(1, rint(...INJURY.weeks[sev])) };
+    if (seasonEnder(sev, false)) Object.assign(s.inj, { season: true, weeks: INJ_SEASON.weeks });
     injuryPotential(s, sev);
+    injNewsAdd(s, k);   // (a big name hurt badly: the week's league injury news)
   }
 }
+// the week's league injury news: a SEVERE or SEASON-ENDING injury to an important player of another team (named, a starter by his group's depth, INJ_NEWS.stars or better)
+// is kept on LEAGUE.injNews { name, team, pos, season, weeks } for the home screen card after the week (homeNews) and the Post's league notes, then cleared
+const INJ_NEWS = { stars: 4, starters: { QB: 1, RB: 1, WR: 3, TE: 1, OL: 5, DL: 4, LB: 3, CB: 2, S: 2, K: 1 } };
+function injNewsAdd(s, k) {
+  if (!s.inj || s.inj.sev < 2 || !s.name || (s.stars || 0) < INJ_NEWS.stars) return;
+  const mates = (ROSTER[k] || []).filter(q => q.group === s.group).sort((a, b) => scoreOf(b) - scoreOf(a));
+  if (mates.indexOf(s) >= (INJ_NEWS.starters[s.group] || 1)) return;
+  (LEAGUE.injNews || (LEAGUE.injNews = [])).push({ name: s.name, team: k, pos: s.group, season: !!s.inj.season, weeks: s.inj.weeks });
+  try { if (s.inj.season) postWire('injSeason', s, k); else postWire('injury', s, k, { n: s.inj.weeks }); } catch (e) {}   // (the Post's transaction wire: the week's league notes)
+}
+const injNewsLine = n => `${n.name} (${NFL[n.team] ? NFL[n.team].nick : n.team} ${n.pos}): ${n.season ? 'out for the season' : `out ${n.weeks} week${n.weeks === 1 ? '' : 's'}`}`;
 // a new season (or franchise): everyone fresh
 function healAll() { for (const s of Object.values(ROSTER).flat()) { s.cond = 100; s.inj = null; s.benchNext = s.outGame = s.missed = false; } }
 
@@ -1899,7 +1989,7 @@ const PRAC_FAC = {
   weight: { name: 'WEIGHT CENTER',   cost: [6, 10, 16, 24, 34, 46], wks: [2, 3, 4, 6, 7, 8], dev: 0.14, groups: ['OL', 'DL', 'RB', 'TE', 'LB'], text: 'Linemen, backs, TEs, LBs develop faster (+14% a level).' },
   film:   { name: 'FILM ROOM',       cost: [6, 10, 16, 24, 34, 46], wks: [2, 3, 4, 6, 7, 8], dev: 0.14, groups: ['QB', 'WR', 'TE', 'CB', 'S', 'LB'], text: 'QBs, receivers, LBs and DBs develop faster (+14% a level).' },
   med:    { name: 'MEDICAL / REHAB', cost: [8, 12, 18, 26, 36, 48], wks: [2, 3, 4, 6, 7, 8], dev: 0, groups: null, text: '-8% INJURY TIME, -5% INJURY CHANCE A LEVEL' },
-  rec:    { name: 'RECOVERY CENTER', cost: [8, 12, 18, 26, 36, 48], wks: [2, 3, 4, 6, 7, 8], dev: 0, groups: null, text: '+6% STAMINA RECOVERY A LEVEL' },
+  rec:    { name: 'RECOVERY CENTER', cost: [8, 12, 18, 26, 36, 48], wks: [2, 3, 4, 6, 7, 8], dev: 0, groups: null, text: '+6% STAMINA RECOVERY, STRONGER RECOVERY SLOTS A LEVEL' },
   lounge: { name: 'PLAYER LOUNGE',   cost: [8, 12, 18, 26, 36, 48], wks: [2, 3, 4, 6, 7, 8], dev: 0, groups: null, text: '+3 MORALE BASELINE, FASTER BOUNCE-BACK A LEVEL' },
 };
 // my facility's finished levels above 1 (what FAC_FX multiplies): 0 outside your franchise (scrimmage, 1v1, online, tutorial), so every effect is neutral there
@@ -1940,6 +2030,7 @@ function prac() {
   if (!P.pairs) P.pairs = {};
   if (P.report === undefined) P.report = null;
   if (P.unseen == null) P.unseen = false;
+  if (!P.rec) P.rec = { slots: [], touched: false };   // (the recovery room's weekly slots)
   return P;
 }
 // one look at the roster for a week of practice: starters (the game's own startersOf), each group's players, healthy veterans, depth
@@ -2000,19 +2091,62 @@ function pracPreview(side, load) {
   }
   return { upg, cd: n ? cd / n : 0, hurt, pAny: 1 - any };
 }
+// --- recovery room
+// The Recovery Center's weekly slots (career.prac.rec = { slots: [{ name, kind }], touched }): REST (healthy: no practice that week, a big
+// condition gain) or TREATMENT (hurt / LIMITED: a week off the layoff, maybe two, lower reinjury odds next game; LIMITED = an extra week of rehab).
+// Untouched weeks fill themselves with the most tired starters under autoBelow. Year 2+ only (facOn), needs injuries on. Applied in pracWeek.
+const REC_ROOM = {
+  slots: [2, 2, 3, 3, 4, 4, 5],     // slots by Recovery Center level
+  rest: 22, restLvl: 3,             // REST: condition + rest, + restLvl a level above 1
+  treat2: 0.1,                      // TREATMENT: chance a level above 1 of a second week off (never under 1 week left: medWeeks' floor)
+  treatK: 0.6,                      // ...and x his reinjury odds while playing hurt in his next game (s.treatK)
+  autoBelow: 80,                    // auto-fill: only starters under this condition are rested
+  listRows: 4,                      // roster list rows per column (2 columns a page)
+};
+const rrOn = () => facOn() && !!SETTINGS.injuries;
+const recN = () => REC_ROOM.slots[Math.min(REC_ROOM.slots.length, pracLvl('rec')) - 1];
+const recHurt = s => !!(s.inj && s.inj.weeks > 0);
+const recKindFor = s => recHurt(s) || s.limited ? 'treat' : 'rest';
+const recOK = (s, kind) => kind === 'treat' ? recHurt(s) || !!s.limited : !recHurt(s);
+const recGain = () => REC_ROOM.rest + REC_ROOM.restLvl * (pracLvl('rec') - 1);
+function recAuto() {   // what an untouched week does: the most tired healthy starters under autoBelow, on REST
+  const R = ROSTER[MATCH.you] || [];
+  return [...startersOf(MATCH.you)].filter(s => R.includes(s) && s.group !== 'K' && !recHurt(s) && condOf(s) < REC_ROOM.autoBelow).sort((a, b) => condOf(a) - condOf(b)).slice(0, recN()).map(s => ({ name: s.name, kind: 'rest' }));
+}
+function recSlots() {   // this week's slots, cleaned up: still on the roster, a kind that fits him, within the level's count. [{ name, kind, s }]
+  const P = prac(), R = ROSTER[MATCH.you] || [];
+  return (P.rec.touched ? P.rec.slots : recAuto()).map(x => ({ name: x.name, kind: x.kind, s: R.find(s => s.name === x.name) })).filter(x => x.s && recOK(x.s, x.kind)).slice(0, recN());
+}
+function recProj(s, kind) {   // his condition on game day after this week
+  if (kind === 'rest') return Math.min(100, condOf(s) + recGain());
+  const side = OFF_GROUPS.includes(s.group) ? 'off' : 'def';
+  return Math.round(Math.max(0, Math.min(100, condOf(s) + pracCalc(s, side, prac().load[side]).cd)));
+}
+function recTreat(s, lines) {   // TREATMENT on a hurt player (pracWeek's hurt branch)
+  if (s.inj.season) return;   // (out for the season: treatment can't shorten it)
+  const was = s.inj.weeks, cut = 1 + (Math.random() < REC_ROOM.treat2 * facLvl('rec') ? 1 : 0);
+  s.inj.weeks = Math.max(1, was - cut); s.treatK = REC_ROOM.treatK;
+  lines.push(`${s.short}: treatment, ${s.inj.weeks < was ? `out ${s.inj.weeks} wk (was ${was})` : 'reinjury risk down'}`);
+}
 // a week (or more, with byes) of practice after a game: XP, condition, injuries, rehab, construction. Returns lines for the injury report.
 function pracWeek(passed = 1) {
   if (!season || exhibition || tut) return [];
   const P = prac(), notes = [], got = [], hurtNew = [], cx = pracCtx();
   let xpSum = 0;
+  const recMap = new Map(), recLines = [];   // (the recovery room: this week's slots)
+  if (rrOn()) for (const x of recSlots()) recMap.set(x.s, x.kind);
   pracBuild(passed);
   hireWeek(passed);   // (the injury report only lists injuries: facility / hiring news is not pushed to `notes`)
   for (let w = 0; w < passed; w++) for (const side of ['off', 'def']) for (const s of pracUnit(side)) {
     if (s.inj && s.inj.weeks > 0) {   // hurt: the medical staff can shave a week off the layoff
       rehabStep(s); moraleShift(s, RECOVERY.weekMorale);   // (a week of rehab fills the meter; a week out costs morale)
+      if (w === 0 && recMap.get(s) === 'treat') recTreat(s, recLines);   // (recovery room: TREATMENT)
       if (Math.random() < PRAC.medRehab * (pracLvl('med') - 1) && --s.inj.weeks <= 0) { const sev = s.inj.sev; s.inj = null; injuryReturn(s, sev, notes); notes.push(`${s.short}: back early (rehab)`); }
       continue;
     }
+    const rk = w === 0 ? recMap.get(s) : null;
+    if (rk === 'treat') { rehabStep(s); recLines.push(`${s.short}: treatment, an extra week of rehab`); }   // (LIMITED: rehab fills faster)
+    if (rk === 'rest' && SETTINGS.injuries) { const was = condOf(s); s.cond = Math.min(100, was + recGain()); recLines.push(`${s.short}: rested, condition ${was} > ${condOf(s)}`); continue; }   // (REST: no practice, no XP, no practice injury)
     const c = pracCalc(s, side, P.load[side], cx);
     xpSum += c.xp * UPG.xpK;
     if (upgGain(s, c.xp)) got.push(s.name);
@@ -2020,9 +2154,9 @@ function pracWeek(passed = 1) {
       s.cond = Math.max(0, Math.min(100, condOf(s) + c.cd));
       if (pracInjOn() && !s.inj && Math.random() < c.risk) {
         const sev = rollSev(s);
-        s.inj = { sev, weeks: medWeeks(Math.max(1, rint(...INJURY.weeks[sev]))) }; injuryBegin(s);
+        s.inj = { sev, weeks: medWeeks(Math.max(1, rint(...INJURY.weeks[sev]))) }; if (seasonEnder(sev, true)) Object.assign(s.inj, { season: true, weeks: INJ_SEASON.weeks }); injuryBegin(s);
         injuryPotential(s, sev); moraleKeyInjury(s);
-        const line = `${s.short} (${SEV_NAME[sev]}): hurt in practice, out ${s.inj.weeks} wk`;
+        const line = `${s.short} (${sevName(s.inj)}): hurt in practice, out ${injWk(s.inj)}`;
         notes.push(line); hurtNew.push(line);
       }
     }
@@ -2033,7 +2167,9 @@ function pracWeek(passed = 1) {
   const pairs = pracPairs(), seen = P.pairs; let newPair = false;
   for (const x of pairs) { const k = x.m.name + '>' + x.e.name; if (!seen[k]) { seen[k] = 1; newPair = true; } }
   if (Object.keys(seen).length > 80) P.pairs = Object.fromEntries(pairs.map(x => [x.m.name + '>' + x.e.name, 1]));
-  P.report = { wk: season ? season.week : 0, xp: Math.round(xpSum), ups: [...new Set(got)], inj: hurtNew, battles: battles.map(b => b.line), pairs: pairs.slice(0, 4).map(x => ({ m: x.m.name, e: x.e.name, pct: Math.round(x.pct * 100) })), load: { ...P.load } };
+  notes.push(...recLines.filter(l => /treatment/.test(l)));
+  P.rec = { slots: [], touched: false };   // (the slots clear after the week)
+  P.report = { rec: recLines, wk: season ? season.week : 0, xp: Math.round(xpSum), ups: [...new Set(got)], inj: hurtNew, battles: battles.map(b => b.line), pairs: pairs.slice(0, 4).map(x => ({ m: x.m.name, e: x.e.name, pct: Math.round(x.pct * 100) })), load: { ...P.load } };
   if (battles.length || hurtNew.length || newPair) P.unseen = true;
   autoPromote(MATCH.you); recalcTeamStars();
   return notes;
@@ -2090,7 +2226,7 @@ function pracBattles() {
     const rec = { g, win: winner.name, lose: loser.name, stars, got, took, big, wk: season ? season.week : 0, yr: LEAGUE.year, line };
     P.hist.unshift(rec); P.hist.length = Math.min(P.hist.length, BATTLE.hist);
     out.push(rec);
-    if (big) (LEAGUE.pracNews = LEAGUE.pracNews || []).push(line);
+    if (big) (LEAGUE.pracNews = LEAGUE.pracNews || []).push(rec);   // (v0.52: the whole record: the home popup draws both cards)
   }
   if (out.length) { autoPromote(me); recalcTeamStars(); }
   return out;
@@ -2134,7 +2270,7 @@ function pracUpgrade(k) {
 // Four jobs: OC / DC (STAFF[you].oc / .dc) and the two trainers (career.prac.tr.off / .def). Every person has stars, a specialty
 // (coordinators: it sets the team's tend tokens; trainers: PRAC_SPEC), up to two traits, an age, a salary ($M a year) and a contract
 // (years; coordinators keep theirs in `years`, which offStaff also runs). Salaries add up to the crewPay, which can't pass the budget
-// (grows with fans and facilities). The pool (career.hire) is rebuilt each offseason; candidates can sign elsewhere during the year.
+// (grows with fans and facilities). The pool (career.hirePool) is rebuilt each offseason; candidates can sign elsewhere during the year.
 // A candidate may refuse: the odds come from your offer against his ask, your facilities, your record and fans, and his stars.
 const HIRE = { budget: 25, perFans: 0, perLevel: 0, poolSize: 5, scout: 1, elsewhere: 0.06, retire: 60, poach: 0.85, buyout: 4, reroll: 5, half: 0.45 };   // reroll = credits to redraw a role's pool; half = chance a 2-5 star candidate is a half star lower
 const HIRE_ROLE = { oc: { label: 'OFFENSIVE COORDINATOR', short: 'OC', side: 'off' }, dc: { label: 'DEFENSIVE COORDINATOR', short: 'DC', side: 'def' },
@@ -2295,8 +2431,23 @@ function hireFill(p, role) {   // old saves / coordinators from the league: age,
 }
 const hireAll = () => hireRolesAll().map(r => hireFill(hireGet(r), r));
 const crewPay = () => r1(hireAll().reduce((t, p) => t + p.sal, 0));
-const BUDGET_UP = { cost: 50, step: 5 };   // credits for +step $M of staff budget (hiring screen)
-const BUDGET_UP_BTN = { x: 1000, y: 606, w: 250, h: 40 };
+const BUDGET_UP = { cost: 25, step: 5 };   // credits for +step $M of staff budget (staff screen + hiring board)
+const BUDGET_UP_BTN = { x: 1000, y: 606, w: 250, h: 40 }, BOARD_BUDGET_BTN = { x: 1000, y: 640, w: 250, h: 44 };
+// the +5M BUDGET buy, shared by both screens
+function budgetBuy(btn) {
+  if (LEAGUE.coins < BUDGET_UP.cost) { HB.msg = { t: performance.now(), text: `NEED ${BUDGET_UP.cost} ¤` }; return; }
+  LEAGUE.coins -= BUDGET_UP.cost; LEAGUE.staffExtra = (LEAGUE.staffExtra || 0) + BUDGET_UP.step; spendFx(btn, BUDGET_UP.cost); autosaveSoon();
+}
+// the PAYROLL line + bar (B = the bar's box); returns the budget
+function payrollBar(B) {
+  const pay = crewPay(), bud = staffBudget();
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.line; ctx.font = 'bold 17px monospace';
+  ctx.fillText(`PAYROLL $${pay.toFixed(1)}M / $${bud.toFixed(1)}M`, B.x, B.y - 10);
+  ctx.fillStyle = '#e2dcc6'; ctx.fillRect(B.x, B.y, B.w, B.h);
+  ctx.fillStyle = pay > bud ? '#c81b1b' : '#2e8b57'; ctx.fillRect(B.x, B.y, B.w * Math.min(1, pay / bud), B.h);
+  ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(B.x, B.y, B.w, B.h);
+  return bud;
+}
 const staffBudget = () => r1((1 + conPerk('budget')) * (HIRE.budget +(scoutsOn() ? SCOUT.budget : 0) + (LEAGUE.staffExtra || 0) + HIRE.perFans * Math.min(1, LEAGUE.fans || 0) + HIRE.perLevel * (Object.values(prac().fac).reduce((t, f) => t + f.lvl, 0) - 4)) + originK('budget'));   // (+/- your origin early on)   // (x your HC deal's STAFF BUDGET perk)
 function hireAppeal() {   // 0 - 1: facilities, record, fans
   let succ = 0.5; try { const T = seasonTable()[season.team]; if (T && T.w + T.l + T.t) succ = winPct(T); } catch (e) {}
@@ -2305,7 +2456,8 @@ function hireAppeal() {   // 0 - 1: facilities, record, fans
 const acceptP = (c, sal, yrs) => Math.max(0.03, Math.min(0.97, 0.6 + 1.0 * (sal / c.ask - 1) + 0.9 * (hireAppeal() - (c.stars - 1) / 4 * 0.55) - 0.04 * Math.abs(yrs - c.want)));
 const buyoutOf = p => p.interim ? 0 : Math.ceil(p.sal * Math.max(0, p.years - 1) / HIRE.buyout);
 function hirePool() {
-  const H = career.hire || (career.hire = { pool: null });
+  if (career.hire && typeof career.hire === 'object') { career.hirePool = career.hire; career.hire = 'surprise'; }   // (old saves kept the pool on career.hire, which is now the questionnaire's hiring preference string: the pool was never made and the first game's results crashed)
+  const H = career.hirePool || (career.hirePool = { pool: null });
   if (!H.pool) H.pool = Object.fromEntries(HIRE_ROLES.map(r => [r, Array.from({ length: HIRE.poolSize }, () => hireCand(r))]));
   for (const r of SCOUT_ROLES) if (!H.pool[r]) H.pool[r] = Array.from({ length: HIRE.poolSize }, () => hireCand(r));   // (pools made before scouts existed)
   return H.pool;
@@ -2352,7 +2504,7 @@ function hireOffseason() {   // a year goes by: ages, contracts, retirements, po
     }
     if (gone) { lines.push(`${p.name} (${HIRE_ROLE[r].short}) ${gone}. An interim fills in: open the hiring board.`); hireSet(r, hireInterim(r)); }
   }
-  career.hire = null;   // (a fresh pool)
+  career.hirePool = null;   // (a fresh pool)
   return lines;
 }
 
@@ -2409,12 +2561,7 @@ function drawHire() {
   hirePageRoles().forEach((r, i) => { drawHireCard(HIRE_CARDS[i], hireGet(r), r, i); menuBtn(HIRE_FIRE[i], 'FIRE', RES.bright, 16); });
   if (scoutsOn()) menuBtn(HIRE_PG_BTN, HB.pg ? '< COACHES & TRAINERS' : 'SCOUTS >', RES.bright, 18);
   menuBtn(HIRE_BOARD_BTN, 'HIRING BOARD', RES.bright, 22);
-  const pay = crewPay(), bud = staffBudget(), B = { x: 410, y: 636, w: 560, h: 26 };   // (ends before the +5M BUDGET button)
-  ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = 'bold 17px monospace';
-  ctx.fillText(`PAYROLL $${pay.toFixed(1)}M / $${bud.toFixed(1)}M`, B.x, B.y - 10);
-  ctx.fillStyle = '#e2dcc6'; ctx.fillRect(B.x, B.y, B.w, B.h);
-  ctx.fillStyle = pay > bud ? '#c81b1b' : '#2e8b57'; ctx.fillRect(B.x, B.y, B.w * Math.min(1, pay / bud), B.h);
-  ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(B.x, B.y, B.w, B.h);
+  const B = { x: 410, y: 636, w: 560, h: 26 }, bud = payrollBar(B);   // (ends before the +5M BUDGET button)
   ctx.fillStyle = RES.dim; ctx.font = '13px monospace'; ctx.fillText(`The budget is $${bud.toFixed(0)}M. Stars cost more: you can't afford four.`, B.x, B.y + 44);
   menuBtn(BUDGET_UP_BTN, `+${BUDGET_UP.step}M BUDGET (${BUDGET_UP.cost} ¤)`, LEAGUE.coins >= BUDGET_UP.cost ? RES.bright : CARD_GRAY, 16);
   if (HB.msg && performance.now() - HB.msg.t < 3000) { ctx.textAlign = 'right'; ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.fillText(HB.msg.text, 1250, 614); }
@@ -2427,11 +2574,7 @@ function hireClick(pt) {
   if (tourQClick(pt)) return;
   if (inBtn(pt, BACK_BTN)) { results.screen = 'practice'; return; }
   if (inBtn(pt, HIRE_BOARD_BTN)) { HB.sel = null; HB.back = 'hire'; results.screen = 'board'; return; }
-  if (inBtn(pt, BUDGET_UP_BTN)) {
-    if (LEAGUE.coins < BUDGET_UP.cost) { HB.msg = { t: performance.now(), text: `NEED ${BUDGET_UP.cost} ¤` }; return; }
-    LEAGUE.coins -= BUDGET_UP.cost; LEAGUE.staffExtra = (LEAGUE.staffExtra || 0) + BUDGET_UP.step; autosaveSoon();
-    return;
-  }
+  if (inBtn(pt, BUDGET_UP_BTN)) { budgetBuy(BUDGET_UP_BTN); return; }
   if (scoutsOn() && inBtn(pt, HIRE_PG_BTN)) { HB.pg = HB.pg ? 0 : 1; return; }
   hirePageRoles().forEach((r, i) => {
     if (!inBtn(pt, HIRE_FIRE[i])) return;
@@ -2551,7 +2694,9 @@ function drawBoard() {
     menuBtn(BN.sal.m, '-', RES.bright, 22); menuBtn(BN.sal.p, '+', RES.bright, 22); menuBtn(BN.yrs.m, '-', RES.bright, 22); menuBtn(BN.yrs.p, '+', RES.bright, 22);
     menuBtn(BN.offer, 'MAKE OFFER', '#6cc070', 22);
   } else { ctx.fillStyle = RES.dim; ctx.font = '15px monospace'; ctx.textAlign = 'center'; ctx.fillText(c ? 'He will not talk to you again this year.' : 'Click a card, then set a salary and contract.', 955, 530); }
-  if (HB.msg && performance.now() - HB.msg.t < 3000) { ctx.textAlign = 'center'; ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.fillText(HB.msg.text, 820, 664); }
+  payrollBar({ x: 430, y: 656, w: 540, h: 22 });   // (the staff payroll + the +5M BUDGET buy, as on the staff screen)
+  menuBtn(BOARD_BUDGET_BTN, `+${BUDGET_UP.step}M BUDGET (${BUDGET_UP.cost} ¤)`, LEAGUE.coins >= BUDGET_UP.cost ? RES.bright : CARD_GRAY, 16);
+  if (HB.msg && performance.now() - HB.msg.t < 3000) { ctx.textAlign = 'center'; ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.fillText(HB.msg.text, 700, 702); }
   menuBtn(BOARD_REROLL, `REROLL ${HB.role === 'oc' || HB.role === 'dc' ? HIRE_ROLE[HB.role].short : HIRE_ROLE[HB.role].short.replace(' TRAINER', ' TRN')}  ${HIRE.reroll} ¤`, RES.bright, 18);
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
   drawSpendFx();
@@ -2563,6 +2708,7 @@ function boardClick(pt) {
   if (inBtn(pt, BACK_BTN)) { results.screen = HB.back || 'hire'; return; }
   const pool = hirePool()[HB.role];
   hireRolesAll().forEach((r, i, a) => { if (inBtn(pt, boardTab(i, a.length))) { HB.role = r; HB.sel = null; HB.cand = null; } });
+  if (inBtn(pt, BOARD_BUDGET_BTN)) { budgetBuy(BOARD_BUDGET_BTN); return; }
   if (inBtn(pt, BOARD_REROLL)) {
     if (LEAGUE.coins < HIRE.reroll) { HB.msg = { t: performance.now(), text: `NEED ${HIRE.reroll} ¤ TO REROLL` }; return; }
     LEAGUE.coins -= HIRE.reroll; hirePool()[HB.role] = Array.from({ length: HIRE.poolSize }, () => hireCand(HB.role));
@@ -2676,7 +2822,7 @@ const TOUR_STEPS = {
   prac: [   // FACILITIES (the campus alone)
     { scr: 'practice', enter: () => { PR.tab = 'fac'; }, rect: () => Object.values(PR_CELLS), text: 'FACILITIES: six buildings (field, weight room, film room, medical, recovery, lounge). Click one to see what it does and what an upgrade costs.' },
     { scr: 'practice', enter: () => { PR.tab = 'fac'; PR.sel = 'med'; }, rect: () => [PR_CELLS.med, PR_SIDE], text: 'Medical / Rehab: shorter injuries, fewer of them, and your injury report.' },
-    { scr: 'practice', enter: () => { PR.tab = 'fac'; PR.sel = 'rec'; }, rect: () => [PR_CELLS.rec], text: 'Recovery Center: tired players get their legs back faster, in games and between them.' },
+    { scr: 'practice', enter: () => { PR.tab = 'fac'; PR.sel = 'rec'; }, rect: () => [PR_CELLS.rec, PR_SIDE], text: 'Recovery Center: tired players get their legs back faster, in games and between them. Its RECOVERY ROOM has weekly slots: REST a tired player (no practice XP that week) or TREAT a hurt one. Empty weeks fill with your most tired starters. More slots, stronger slots a level.' },
     { scr: 'practice', enter: () => { PR.tab = 'fac'; PR.sel = 'lounge'; }, rect: () => [PR_CELLS.lounge, PR_SIDE], text: 'Player Lounge: lifts team morale. Morale gives a small edge on catches and fumbles.' },
     { scr: 'practice', enter: () => { PR.tab = 'fac'; }, rect: () => [{ x: 30, y: 492, w: 618, h: 120 }, PR_UP], text: 'The panel under the campus says what the building does and what the next level costs. UPGRADE spends credits, and upgrades take weeks to build (the crane shows it is going up).' },
     { scr: 'practice', enter: () => { PR.tab = 'fac'; }, rect: () => [PR_SCOUT.off, PR_SCOUT.def], text: 'SCOUTS (if the SCOUTS setting is on): your offense and defense scouts watch the next draft class all season and report generational or underrated prospects. Click one to assign him a position group or a few prospects by name: his reads on those get sharper.' },
@@ -2736,7 +2882,7 @@ function tourEnd() {
   if (tour.id === 'trade') { Object.assign(TR, { sel: s.sel, page: s.page, partner: s.partner, give: s.give, get: s.get, tab: s.tab, pg: s.pg }); TR.v++; TCX = null; }
   results.screen = s.scr; const was = tour.id; tour = null;
   if (was === 'pracAll') PR.tab = 'week';
-  if (was === 'home') tutPrompt = 'ready';   // (the intro is over: continue to the football tutorial?)
+  if (was === 'home') tutPrompt = LEAGUE.firstRun === 'after' ? 'setup' : 'ready';   // (the intro is over: continue to the football tutorial? first franchise: the setup questions first)
 }
 // facilities + practice unlock after the first offseason (year 2): a popup says so and the two buttons flash in
 const facOn = () => (LEAGUE.year || 1) > 1;
@@ -2879,6 +3025,7 @@ function pracClick(pt) {
   }
   if (PR.tab === 'fac') {   // the campus: pick a building, upgrade it
     if (scoutsOn()) for (const side of ['off', 'def']) if (inBtn(pt, PR_SCOUT[side])) { SCU = { side, page: 0 }; return; }
+    if (PR.sel === 'rec' && inBtn(pt, PR_SIDE)) { rrClick(pt); return; }   // (the recovery room's slots and roster list)
     for (const k of Object.keys(PR_CELLS)) if (inBtn(pt, PR_CELLS[k])) { PR.sel = k; if (inBtn(pt, PR_UP) ) break; return; }
     if (inBtn(pt, PR_UP)) pracUpgrade(PR.sel);
     return;
@@ -2965,10 +3112,108 @@ function pracDrawLounge(c, l, t) {   // player lounge: a couch facing a TV (seen
   if (l >= 5) { ctx.fillStyle = Math.sin(t * 4) > -0.3 ? '#ff5fa2' : '#8a3358'; ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(x + 8, y + h + 16, 70, 18, 6); ctx.fill(); ctx.stroke(); }   // neon sign
 }
 // the panel beside the campus: Medical = the injury report, Player Lounge = team morale, Recovery Center = team condition
+// the RECOVERY ROOM panel (PR_SIDE with the Recovery Center selected): team condition, the slots, the roster by condition
+const REC_UI = { rowY: 92, rowH: 34, listY: 282, listH: 22, colW: 262 };
+const REC_TOG = [0, 1, 2, 3, 4].map(i => ({ x: PR_SIDE.x + PR_SIDE.w - 24 - 26 - 8 - 112, y: PR_SIDE.y + REC_UI.rowY + i * REC_UI.rowH - 13, w: 112, h: 26 }));
+const REC_X = REC_TOG.map(b => ({ x: b.x + b.w + 8, y: b.y, w: 26, h: 26 }));
+const REC_PG = { prev: { x: PR_SIDE.x + PR_SIDE.w - 24 - 62, y: PR_SIDE.y + REC_UI.listY - 34, w: 28, h: 24 }, next: { x: PR_SIDE.x + PR_SIDE.w - 24 - 28, y: PR_SIDE.y + REC_UI.listY - 34, w: 28, h: 24 } };
+let REC_HITS = [];   // (roster list rows drawn this frame: [entry, rect])
+function drawRecRoom() {
+  const S = PR_SIDE, x = S.x + 24, r = S.x + S.w - 24, P = prac(), n = recN(), L = recSlots(), auto = !P.rec.touched;
+  resPanel(S.x, S.y, S.w, S.h, [['RECOVERY ROOM', 24]], RES.bright);
+  ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  const cnd = LEAGUE.condition == null ? 100 : LEAGUE.condition;
+  ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.fillText('TEAM CONDITION', x, S.y + 58);
+  ctx.fillStyle = RES.line; ctx.font = 'bold 20px monospace'; ctx.fillText(`${Math.round(cnd)}%`, x + 140, S.y + 58);
+  pencilBar(x + 214, S.y + 50, r - x - 214, 16, cnd / 100, condTone(cnd), 16, 5);
+  REC_HITS = [];
+  if (!SETTINGS.injuries) { ctx.fillStyle = RES.dim; ctx.font = 'bold 16px monospace'; ctx.fillText('INJURIES ARE OFF: condition never changes, so nobody needs a slot.', x, S.y + 140, r - x); return; }
+  for (let i = 0; i < REC_ROOM.slots[REC_ROOM.slots.length - 1]; i++) {
+    const y = S.y + REC_UI.rowY + i * REC_UI.rowH;
+    ctx.strokeStyle = 'rgba(122,134,163,0.35)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, y + REC_UI.rowH / 2); ctx.lineTo(r, y + REC_UI.rowH / 2); ctx.stroke();
+    ctx.textAlign = 'left';
+    if (i >= n) { ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.fillText(`SLOT ${i + 1}  LOCKED: LV ${REC_ROOM.slots.findIndex(c => c > i) + 1}`, x, y); continue; }
+    const e = L[i];
+    if (!e) { ctx.fillStyle = RES.dim; ctx.font = '14px monospace'; ctx.fillText(`SLOT ${i + 1}  empty: click a player below`, x, y); continue; }
+    const s = e.s;
+    ctx.globalAlpha = auto ? 0.55 : 1;
+    ctx.fillStyle = RES.line; ctx.font = 'bold 16px monospace'; ctx.fillText(s.short || s.name, x, y, 168);
+    ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.fillText(s.group, x + 176, y);
+    ctx.fillStyle = recHurt(s) ? sevColor(s.inj) : RES.line; ctx.fillText(recHurt(s) ? `OUT ${s.inj.season ? 'SEASON' : s.inj.weeks + ' WK'}` : `${condOf(s)} > ${recProj(s, e.kind)}`, x + 214, y);
+    ctx.globalAlpha = 1;
+    if (auto) { ctx.fillStyle = RES.dim; ctx.font = 'bold 12px monospace'; ctx.fillText('AUTO', x + 312, y); }
+    menuBtn(REC_TOG[i], e.kind === 'rest' ? 'REST' : 'TREATMENT', e.kind === 'rest' ? '#cfe8c4' : '#f3d0c8', 14);   // (a man who only fits one kind: the click does nothing)
+    menuBtn(REC_X[i], 'X', RES.bright, 14);
+  }
+  // the roster, lowest condition first (hurt men in their severity's colour), 2 columns a page
+  const ly = S.y + REC_UI.listY, inSlot = new Set(L.map(e => e.s)), per = REC_ROOM.listRows * 2;
+  const all = (ROSTER[MATCH.you] || []).filter(s => s.group !== 'K' && !inSlot.has(s)).sort((a, b) => (recHurt(b) - recHurt(a)) || condOf(a) - condOf(b));
+  const pages = Math.max(1, Math.ceil(all.length / per)), pg = PR.recPg = Math.max(0, Math.min(pages - 1, PR.recPg || 0));
+  ctx.textAlign = 'left'; ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.fillText(`ROSTER  (LOWEST CONDITION FIRST)  ${pg + 1}/${pages}`, x, ly - 22);
+  menuBtn(REC_PG.prev, '<', RES.bright, 14, null, pg > 0); menuBtn(REC_PG.next, '>', RES.bright, 14, null, pg < pages - 1);
+  all.slice(pg * per, pg * per + per).forEach((s, j) => {
+    const bx = x + Math.floor(j / REC_ROOM.listRows) * REC_UI.colW, by = ly + (j % REC_ROOM.listRows) * REC_UI.listH, rc = { x: bx - 4, y: by - 10, w: REC_UI.colW - 10, h: 20 };
+    REC_HITS.push([s, rc]);
+    if (hoverPt && inBtn(hoverPt, rc)) { ctx.fillStyle = 'rgba(246,226,122,0.55)'; ctx.fillRect(rc.x, rc.y, rc.w, rc.h); }
+    ctx.textAlign = 'left'; ctx.font = 'bold 14px monospace'; ctx.fillStyle = RES.line; ctx.fillText(s.short || s.name, bx, by, 140);
+    ctx.fillStyle = RES.dim; ctx.fillText(s.group, bx + 146, by);
+    ctx.textAlign = 'right'; ctx.fillStyle = recHurt(s) ? sevColor(s.inj) : s.limited ? '#b07a10' : RES.line; ctx.fillText(recHurt(s) ? `OUT ${s.inj.season ? 'SZN' : s.inj.weeks}` : s.limited ? `LTD ${condOf(s)}` : `${condOf(s)}%`, bx + REC_UI.colW - 20, by);
+  });
+  ctx.textAlign = 'left'; ctx.fillStyle = RES.dim; ctx.font = 'bold 13px monospace';
+  ctx.fillText('REST: no practice XP that week. Empty slots fill with your most tired starters.', x, S.y + S.h - 16, r - x);
+}
+function rrClick(pt) {   // a click inside the recovery room panel (any slot click makes the week manual)
+  const P = prac();
+  if (!SETTINGS.injuries) return;
+  const L = recSlots(), man = () => { P.rec.slots = L.map(e => ({ name: e.name, kind: e.kind })); P.rec.touched = true; };
+  for (let i = 0; i < L.length; i++) {
+    if (inBtn(pt, REC_X[i])) { man(); P.rec.slots.splice(i, 1); autosaveSoon(); return; }
+    if (inBtn(pt, REC_TOG[i])) { const o = L[i].kind === 'rest' ? 'treat' : 'rest'; if (!recOK(L[i].s, o)) return; man(); P.rec.slots[i].kind = o; autosaveSoon(); return; }
+  }
+  if (inBtn(pt, REC_PG.prev)) { PR.recPg = Math.max(0, (PR.recPg || 0) - 1); return; }
+  if (inBtn(pt, REC_PG.next)) { PR.recPg = (PR.recPg || 0) + 1; return; }
+  for (const [s, rc] of REC_HITS) if (inBtn(pt, rc)) {
+    if (L.length >= recN()) { PR.msg = { t: performance.now(), text: 'ALL SLOTS FULL: CLEAR ONE FIRST' }; return; }
+    man(); P.rec.slots.push({ name: s.name, kind: recKindFor(s) }); autosaveSoon(); return;
+  }
+}
+// PRACTICE FIELDS / WEIGHT CENTER / FILM ROOM: what the building adds now (read-only)
+function pracDevPanel(k) {
+  const S = PR_SIDE, x = S.x + 24, r = S.x + S.w - 24, F = PRAC_FAC[k], lv = pracLvl(k), P = prac(), bonus = Math.round(F.dev * (lv - 1) * 100);
+  resPanel(S.x, S.y, S.w, S.h, [[k === 'field' ? 'TEAM DEVELOPMENT' : k === 'weight' ? 'STRENGTH GROUPS' : 'FILM STUDY', 24]], RES.bright);
+  ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = 'bold 44px monospace'; ctx.fillText(`+${bonus}%`, x, S.y + 96);
+  ctx.fillStyle = RES.dim; ctx.font = 'bold 18px monospace'; ctx.fillText(k === 'field' ? 'DEVELOPMENT, EVERYONE' : `DEVELOPMENT: ${F.groups.join(' ')}`, x + 170, S.y + 100, r - x - 170);
+  pencilBar(x, S.y + 134, S.w - 48, 22, lv / FAC_MAX, lv >= FAC_MAX ? 'green' : null, FAC_MAX * 3, 6);
+  ctx.fillStyle = RES.dim; ctx.font = 'bold 13px monospace'; ctx.fillText(`LEVEL ${lv} OF ${FAC_MAX}  (+${Math.round(F.dev * 100)}% A LEVEL)`, x, S.y + 170);
+  let y = S.y + 204;
+  if (k === 'field') {
+    const rep = P.report;
+    ctx.fillStyle = RES.line; ctx.font = 'bold 17px monospace';
+    if (rep) { ctx.fillText(`LAST WEEK: ${rep.xp} PRACTICE XP`, x, y); ctx.fillText(`${rep.ups.length} UPGRADE${rep.ups.length === 1 ? '' : 'S'} EARNED`, x, y + 26); y += 64; }
+    else { ctx.fillText('NO PRACTICE WEEK YET THIS SEASON', x, y); y += 40; }
+    ctx.font = '16px monospace';
+    wrapLines('Practice XP = your training load (the TRAINING PLAN tab) x your trainers (stars and specialty) x the facilities. These fields speed up every position; the weight center and film room add to their groups on top.', 52).forEach((ln, i) => ctx.fillText(ln, x, y + i * 22));
+    return;
+  }
+  // the men in these groups closest to their next +1 (XP toward it / its cost)
+  const L = (ROSTER[MATCH.you] || []).filter(s => F.groups.includes(s.group) && upgRoom(s) > 0).map(s => [s, Math.min(1, (s.xp || 0) / upgCost(s))]).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.fillText('CLOSEST TO THEIR NEXT +1', x, y); y += 26;
+  if (!L.length) { ctx.fillStyle = RES.line; ctx.font = 'bold 16px monospace'; ctx.fillText('NOBODY IN THESE GROUPS HAS ROOM TO GROW', x, y); }
+  L.forEach(([s, f], i) => {
+    const yy = y + i * 26;
+    ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = 'bold 15px monospace'; ctx.fillText(s.short || s.name, x, yy, 170); ctx.fillStyle = RES.dim; ctx.fillText(s.group, x + 178, yy);
+    pencilBar(x + 220, yy - 7, 220, 14, f, f >= 0.8 ? 'green' : null, 10, 11 + i);
+    ctx.textAlign = 'right'; ctx.fillStyle = RES.line; ctx.fillText(`${Math.round(f * 100)}%`, r, yy);
+  });
+  ctx.textAlign = 'left'; ctx.fillStyle = RES.dim; ctx.font = 'bold 13px monospace';
+  ctx.fillText('Upgrades come from game XP and practice XP; this building speeds both up.', x, S.y + S.h - 16, r - x);
+}
 function pracSidePanel(k) {
   const S = PR_SIDE, x = S.x + 24, r = S.x + S.w - 24;
-  if (k !== 'med' && k !== 'lounge' && k !== 'rec') return;
-  resPanel(S.x, S.y, S.w, S.h, [[k === 'med' ? 'INJURY REPORT' : k === 'lounge' ? 'TEAM MORALE' : 'TEAM CONDITION', 24]], RES.bright);
+  if (k === 'rec') return drawRecRoom();
+  if (k === 'field' || k === 'weight' || k === 'film') return pracDevPanel(k);
+  if (k !== 'med' && k !== 'lounge') return;
+  resPanel(S.x, S.y, S.w, S.h, [[k === 'med' ? 'INJURY REPORT' : 'TEAM MORALE', 24]], RES.bright);
   ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace';
   if (k === 'med') {
     const hurt = (ROSTER[MATCH.you] || []).filter(s => s.inj && s.inj.weeks > 0 && SETTINGS.injuries).sort((a, b) => b.stars - a.stars).slice(0, FAC_FX.report.rows), exact = facLvl('med') >= FAC_FX.report.exact;
@@ -2976,7 +3221,7 @@ function pracSidePanel(k) {
     hurt.forEach((s, i) => {
       const y = S.y + 78 + i * 56, w = s.inj.weeks;
       ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.fillText(s.name, x, y, 280); ctx.fillStyle = RES.dim; ctx.fillText(s.group, x + 296, y);
-      ctx.textAlign = 'right'; ctx.fillStyle = SEV_COLOR[s.inj.sev]; ctx.fillText(exact ? `${w} GAME${w > 1 ? 'S' : ''}` : `${Math.max(1, w - 1)}-${w + 1} GAMES`, r, y);
+      ctx.textAlign = 'right'; ctx.fillStyle = sevColor(s.inj); ctx.fillText(s.inj.season ? 'THE SEASON' : exact ? `${w} GAME${w > 1 ? 'S' : ''}` : `${Math.max(1, w - 1)}-${w + 1} GAMES`, r, y);
     });
     ctx.textAlign = 'left'; ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.fillText(exact ? 'Returns are exact.' : `Returns are a range until MEDICAL reaches LV ${FAC_FX.report.exact + 1}.`, x, S.y + S.h - 24);
   } else if (k === 'lounge') {
@@ -2986,12 +3231,6 @@ function pracSidePanel(k) {
     ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.fillText('0', x, S.y + 192); ctx.textAlign = 'right'; ctx.fillText('100', r, S.y + 192);
     ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = '16px monospace';
     wrapLines(`The tick is the resting point (${moraleBase()}): morale drifts back to it every week, faster from below with a better lounge. Wins, streaks and titles lift it; losses, blowouts, a key injury or losing a star sink it.`, 50).forEach((ln, i) => ctx.fillText(ln, x, S.y + 232 + i * 24));
-  } else {
-    const cnd = LEAGUE.condition == null ? 100 : LEAGUE.condition;
-    ctx.font = 'bold 44px monospace'; ctx.fillText(`${Math.round(cnd)}%`, x, S.y + 96);
-    pencilBar(x, S.y + 140, S.w - 48, 34, cnd / 100, condTone(cnd), 20, 5);
-    ctx.fillStyle = RES.line; ctx.font = '16px monospace';
-    wrapLines('Each level: tired players get their legs back faster on the sideline, a game costs less condition, practice restores more, and long runs fade less in the 4th quarter and overtime.', 50).forEach((ln, i) => ctx.fillText(ln, x, S.y + 216 + i * 24));
   }
 }
 function pracConstruction(c, F, t) {   // hatching and a swinging crane over a building going up
@@ -3146,7 +3385,7 @@ function drawPracFac(plan) {   // plan = the TRAINING PLAN tab (load sliders, tr
     resPanel(30, 492, 618, 120, [[`${D.name}  LEVEL ${F.lvl} OF ${FAC_MAX}`, 24]], RES.bright);
     ctx.fillStyle = RES.line; ctx.font = '15px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     wrapLines(D.text, 40).slice(0, 2).forEach((ln, i) => ctx.fillText(ln, 48, 526 + i * 20));
-    ctx.fillStyle = RES.dim; ctx.fillText(F.build ? `UNDER CONSTRUCTION: ${F.build.left} of ${F.build.total} weeks to go` : F.lvl >= FAC_MAX ? 'FULLY UPGRADED' : `NEXT LEVEL: ${cost} ¤, ${D.wks[F.lvl - 1]} weeks to build`, 48, 574);
+    ctx.fillStyle = RES.dim; ctx.fillText(F.build ? `UNDER CONSTRUCTION: ${F.build.left} of ${F.build.total} weeks to go` : F.lvl >= FAC_MAX ? 'FULLY UPGRADED' : `NEXT LEVEL: ${cost} ¤, ${D.wks[F.lvl - 1]} weeks to build${k === 'rec' && REC_ROOM.slots[F.lvl] > REC_ROOM.slots[F.lvl - 1] ? ', +1 SLOT' : ''}`, 48, 574);
     const can = !F.build && F.lvl < FAC_MAX && LEAGUE.coins >= cost;
     const free = !F.build && F.lvl < FAC_MAX;
     menuBtn(PR_UP, free ? 'UPGRADE' : '', can ? '#6cc070' : RES.bright, 22, null, free);
@@ -3205,13 +3444,14 @@ function drawPracFac(plan) {   // plan = the TRAINING PLAN tab (load sliders, tr
 // the injury timeout: he's down on the field; keep him in or bench him (reinjured: he's out, OK)
 const INJ_BTNS = { keep: { x: W / 2 - 290, y: 440, w: 270, h: 66 }, bench: { x: W / 2 + 20, y: 440, w: 270, h: 66 }, ok: { x: W / 2 - 135, y: 440, w: 270, h: 66 } };
 function drawInjuryCall() {
-  const { s, re } = injuryCall, sev = s.inj.sev, [lo, hi] = INJURY.weeks[sev];
+  const { s, re } = injuryCall, sev = s.inj.sev, [lo, hi] = INJURY.weeks[sev], szn = !!s.inj.season;
   ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - FIELD_BOT);
   resPanel(W / 2 - 340, 210, 680, 320, [['INJURY TIMEOUT', null]], RES.bright);
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillStyle = RES.line; ctx.font = 'bold 32px monospace'; ctx.fillText(`${s.name}  ${s.tag}`, W / 2, 262);
-  ctx.fillStyle = SEV_COLOR[sev]; ctx.font = 'bold 26px monospace';
-  ctx.fillText(re ? `REINJURED: now ${SEV_NAME[sev]}` : `${SEV_NAME[sev]} INJURY`, W / 2, 306);
+  ctx.fillStyle = sevColor(s.inj); ctx.font = 'bold 26px monospace';
+  ctx.fillText(re ? `REINJURED: now ${sevName(s.inj)}` : `${sevName(s.inj)} INJURY`, W / 2, 302);
+  if (injuryCall.why) { ctx.fillStyle = RES.line; ctx.font = 'bold 15px monospace'; ctx.fillText(`CAUSE: ${injuryCall.why}`, W / 2, 328); }   // (what made it likelier)
   ctx.fillStyle = RES.dim; ctx.font = 'bold 17px monospace';
   if (re) {
     ctx.fillText('Playing on it made it worse. He is out for the game,', W / 2, 352);
@@ -3220,15 +3460,15 @@ function drawInjuryCall() {
     return;
   }
   ctx.fillText(`KEEP HIM IN: plays at ${Math.round(INJURY.hurt[sev] * 100)}%, ${Math.round(INJURY.reinjure[sev] * 100)}% reinjury risk per hit, longer layoff`, W / 2, 352);
-  ctx.fillText(`BENCH HIM: out for this game${hi ? `, then ${lo === hi ? lo : `${lo}-${hi}`} more week${hi > 1 ? 's' : ''}` : ''}`, W / 2, 378);
+  ctx.fillText(szn ? 'BENCH HIM: out for the rest of the season, playoffs included' : `BENCH HIM: out for this game${hi ? `, then ${lo === hi ? lo : `${lo}-${hi}`} more week${hi > 1 ? 's' : ''}` : ''}`, W / 2, 378);
   ctx.fillText(`condition ${condOf(s)}%`, W / 2, 404);
   const canKeep = keepAllowed(s);
   menuBtn(INJ_BTNS.keep, 'KEEP HIM IN', canKeep ? IN_GAME_PAPER.red : IN_GAME_PAPER.off, 24, null, canKeep);
   menuBtn(INJ_BTNS.bench, 'BENCH HIM', IN_GAME_PAPER.green, 24);
-  if (!canKeep) { ctx.fillStyle = RES.dim; ctx.font = 'bold 15px monospace'; ctx.fillText('too hurt to keep playing (scrimmage: only a mild injury)', W / 2, 520); }
+  if (!canKeep) { ctx.fillStyle = RES.dim; ctx.font = 'bold 15px monospace'; ctx.fillText(szn ? 'too hurt to keep playing: his season is over' : 'too hurt to keep playing (scrimmage: only a mild injury)', W / 2, 520); }
 }
 // (exhibition: a player hurt worse than mild can't stay in; franchise leaves the choice to you)
-const keepAllowed = s => !(exhibition && s.inj.sev > 0);
+const keepAllowed = s => !(exhibition && s.inj.sev > 0) && !s.inj.season;   // (a season-ending injury: never played on)
 function injuryClick(pt) {
   const c = injuryCall, keep = !c.re && keepAllowed(c.s) && inBtn(pt, INJ_BTNS.keep);
   if (!(c.re ? inBtn(pt, INJ_BTNS.ok) : keep || inBtn(pt, INJ_BTNS.bench))) return;   // (a refused KEEP click does nothing)
@@ -3308,7 +3548,7 @@ const SET_BTNS = {
   qtr: { x: SET_X, y: 350, w: 300, h: 58 }, setup: { x: SET_X + 310, y: 350, w: 130, h: 58 },   // (setup = RUN SETUP QUESTIONS again)
   // SOUND & SHOWS
   volDn: { x: SET_X, y: 434, w: 76, h: 38 }, volUp: { x: SET_X + 364, y: 434, w: 76, h: 38 },
-  ht: { x: SET_X, y: 478, w: SET_HALF, h: 38 }, pg: { x: SET_X2, y: 478, w: SET_HALF, h: 38 },
+  ht: { x: SET_X, y: 478, w: 104, h: 38 }, pg: { x: SET_X + 112, y: 478, w: 104, h: 38 }, recPop: { x: SET_X + 224, y: 478, w: 104, h: 38 }, batPop: { x: SET_X + 336, y: 478, w: 104, h: 38 },   // (recPop / batPop = the RECORD BOOK and PRACTICE BATTLES popups on the home screen: SETTINGS.hideRecPop / hideBattlePop)
   // EXTRAS
   dbg: { x: SET_X, y: 542, w: 80, h: 38 }, dark: { x: SET_X + 90, y: 542, w: 80, h: 38 }, post: { x: SET_X + 180, y: 542, w: 80, h: 38 }, lite: { x: SET_X + 270, y: 542, w: 80, h: 38 }, side: { x: SET_X + 360, y: 542, w: 80, h: 38 },   // (lite = PERFORMANCE MODE, see LITE; side = SIDELINE people, see 07)
   swap: { x: 665, y: 580, w: 540, h: 56 },   // (swap: touch only, in the controls panel)
@@ -3322,7 +3562,7 @@ const SL_MODES = ['ALL', 'CREW', 'OFF'];     // SETTINGS.sideline (sideline peop
 const SET_GAME_LOCK = ['setup', 'inj', 'pinj', 'wx', 'diff', 'dir', 'simDef', 'spd', 'morale', 'qtr', 'scouts', 'deals', 'post', 'save', 'load', 'dbg'];
 const setInGame = () => !results && typeof game !== 'undefined' && !!game && !game.over;
 const SET_TIP_Y = 598;   // the one-line tip / note under the last group
-const SET_TIPS = { setup: () => 'SETUP QUESTIONS: the coaching questionnaire again (game day, front office, realism, style...)', taunt: () => (SETTINGS.taunts || 'NORMAL') === 'OFF' ? 'TAUNTS: off = nobody celebrates by taunting the other team' : 'TAUNTS: how often a celebration is a taunt at a defender (looks only)', deals: () => SETTINGS.contracts !== false ? 'MANAGE CONTRACTS: you negotiate your deal, staff and player contracts' : 'MANAGE CONTRACTS: auto = the game handles every contract, no talks or alerts', scouts: () => SETTINGS.scouts !== false ? 'SCOUTS: hire and assign two scouts; they sharpen draft reads' : 'SCOUTS: off = the plain draft SCOUT button, no scouts to hire', simDef: () => SETTINGS.simDefense ? 'SIM DEFENSE: their drives are simulated' : 'SIM DEFENSE: you play defense on their drives', autoSw: () => 'AUTO SWITCH: on a pass, jump to the defender closest to the ball',
+const SET_TIPS = { recPop: () => SETTINGS.hideRecPop ? 'RECORDS: off = no RECORD BOOK popup after games (the Post still reports them)' : 'RECORDS: a popup after a game when a league or franchise record falls', batPop: () => SETTINGS.hideBattlePop ? 'BATTLES: off = no PRACTICE BATTLES popup (still in PRACTICE and the Post)' : 'BATTLES: a popup when a big practice battle is decided', setup: () => 'SETUP QUESTIONS: the coaching questionnaire again (game day, front office, realism, style...)', taunt: () => (SETTINGS.taunts || 'NORMAL') === 'OFF' ? 'TAUNTS: off = nobody celebrates by taunting the other team' : 'TAUNTS: how often a celebration is a taunt at a defender (looks only)', deals: () => SETTINGS.contracts !== false ? 'MANAGE CONTRACTS: you negotiate your deal, staff and player contracts' : 'MANAGE CONTRACTS: auto = the game handles every contract, no talks or alerts', scouts: () => SETTINGS.scouts !== false ? 'SCOUTS: hire and assign two scouts; they sharpen draft reads' : 'SCOUTS: off = the plain draft SCOUT button, no scouts to hire', simDef: () => SETTINGS.simDefense ? 'SIM DEFENSE: their drives are simulated' : 'SIM DEFENSE: you play defense on their drives', autoSw: () => 'AUTO SWITCH: on a pass, jump to the defender closest to the ball',
   morale: () => 'MORALE: plays and games move each player\'s morale, which scales his ratings (off = always neutral)',
   pinj: () => 'PRACTICE INJ: injuries from practice (needs INJURIES on too)', inj: () => 'INJURIES: game injuries, condition and wear',
   dir: () => 'DRIVE: which way the offense drives on screen', spd: () => SETTINGS.simST ? 'SIM KICKS: your kickoffs, punts, field goals and returns are simulated' : 'SIM KICKS: you play every kickoff, punt, field goal and return', rep: () => 'REPLAYS: how often replays run', wx: () => 'WEATHER: takes effect next game', ht: () => 'HALFTIME SHOW: choose its segments', pg: () => 'PREGAME SHOW: choose its segments', dbg: () => 'DEBUG: hitboxes, mobile mode, extra tools', dark: () => 'DARK MODE: grey menus instead of white paper', lite: () => ({ AUTO: 'GRAPHICS: AUTO = lighter looks only online / with 2 players, or when frames stay slow there', PERFORMANCE: 'GRAPHICS: PERFORMANCE = lighter stands, weather and sound in every game', QUALITY: 'GRAPHICS: QUALITY = sharpest picture, full stands and weather, never lightened (needs a fast device)' })[gfxMode()],
@@ -3501,6 +3741,7 @@ ${SETTINGS.camZoom !== false ? 'ON' : 'OFF'}`, Y, 10);
   menuBtn(B.lite, `GFX: ${GFX_SHORT[gfxMode()]}`, Y, 13);
   menuBtn(B.side, `SIDE: ${SETTINGS.sideline || 'ALL'}`, Y, 13);
   menuBtn(B.ht, 'HALFTIME', Y, 17); menuBtn(B.pg, 'PREGAME', Y, 17);
+  menuBtn(B.recPop, `RECORDS: ${SETTINGS.hideRecPop ? 'OFF' : 'ON'}`, Y, 12); menuBtn(B.batPop, `BATTLES: ${SETTINGS.hideBattlePop ? 'OFF' : 'ON'}`, Y, 12);
   if (setInGame()) for (const k of SET_GAME_LOCK) {   // (and a padlock in its corner)
     const b = B[k]; ctx.save(); ctx.fillStyle = RES.line; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('🔒', b.x + b.w - 3, b.y + 2); ctx.restore();
   }
@@ -3709,6 +3950,8 @@ function settingsClick(p) {
   else if (inBtn(p, B.lite)) SETTINGS.liteMode = gfxNext();
   else if (inBtn(p, B.side)) { SETTINGS.sideline = SL_MODES[(SL_MODES.indexOf(SETTINGS.sideline || 'ALL') + 1) % SL_MODES.length]; slSetting(); }
   else if (inBtn(p, B.post)) SETTINGS.post = SETTINGS.post === false;   // (the Paper Passer Post: newspaper, story arcs and midweek events; franchise only)
+  else if (inBtn(p, B.recPop)) SETTINGS.hideRecPop = !SETTINGS.hideRecPop;   // (v0.52: the home screen's RECORD BOOK popup; the Post still reports every record)
+  else if (inBtn(p, B.batPop)) SETTINGS.hideBattlePop = !SETTINGS.hideBattlePop;
   else if (inBtn(p, B.ht)) htUI = 'half';
   else if (inBtn(p, B.pg)) htUI = 'pre';
   else if (TUI.on && inBtn(p, B.swap)) SETTINGS.swapSides = !SETTINGS.swapSides;   // (touch: the joystick and the aim / swipe sides trade places)
@@ -3725,7 +3968,7 @@ function matchFixed(m, sn = season) {
 // A franchise's numbers live in two shared objects (LEAGUE, career). Both are wiped to a clean slate before a new career starts and before a
 // slot loads, so nothing a save doesn't hold (bought cap room / roster spots, cap hits, the XP bank, coach XP and stars, practice, goals,
 // seen-once tips...) can leak in from the franchise that was open before. CAREER_KEEP = your coach's identity + the tutorials already seen.
-const LEAGUE_NEW = () => ({ year: 1, fans: 0.4, morale: 55, coins: 15, injNotes: [], approval: 0.5, streak: 0, lastPay: null, capHit: {}, carry: [], picks: {}, awards: [], awardNews: [], tradeNews: [], upgNew: [],
+const LEAGUE_NEW = () => ({ firstRun: null, year: 1, fans: 0.4, morale: 55, coins: 15, injNotes: [], approval: 0.5, streak: 0, lastPay: null, capHit: {}, carry: [], picks: {}, awards: [], awardNews: [], tradeNews: [], upgNew: [],
   depth: null, xp: {}, post: null, fo: null, rb: null, lean: null });
 function leagueReset() {
   for (const [k, d] of Object.entries(Object.getOwnPropertyDescriptors(LEAGUE))) if ('value' in d) delete LEAGUE[k];   // (the getters stay)
@@ -4256,6 +4499,7 @@ function trashIcon(cx, cy, k = 1) {
 }
 function newCareerScreen() {   // (from the start screen's FRANCHISE, or a LOAD screen: possibly from inside a game)
   SETTINGS.diffMode = 'dynamic';   // (ADAPTIVE difficulty is ticked by default on the new career screen)
+  career.quick = typeof coldLocked === 'function' && coldLocked() && !slotMetas().some(m => m);   // (first time, straight out of the cold open: only the coach's name, then the field; see firstCareerGo)
   slotUI = null; settingsOpen = false; career.fav = false; career.hire = 'surprise'; career.origin = 'slate'; Object.assign(career, randCareer()); career.prac = null; career.tut = {}; PR.draft = null;   // (a new coach every time a franchise is set up;"start with favorite team" is off by default; the settings screen the load screen came from closes)
   if (!results) {
     let record = { w: 0, l: 0, t: 0 };
@@ -4807,10 +5051,10 @@ function qsClick(p) {
   const bx = -QS_SLIDE() * (QS.slide || 0);
   const ti = P.findIndex((_, i) => inBtn(p, { ...QS_TAB(i), x: QS_TAB(i).x + bx }));
   if (ti >= 0) { qsGo(ti); return; }
-  if (inBtn(p, B.back)) { if (QS.page) qsGo(QS.page - 1); else if (QS.full) { QS = null; results.screen = 'franchise'; } else QS = null; return; }
+  if (inBtn(p, B.back)) { if (QS.page) qsGo(QS.page - 1); else if (QS.full) { QS = null; results.screen = 'franchise'; } else { QS = null; firstRunQsDone(); } return; }
   if (!last && inBtn(p, B.rec)) { qsRecommend(); return; }
   if (!last && inBtn(p, B.next)) { qsGo(QS.page + 1); return; }
-  if (last && inBtn(p, QS_BTN.start)) { if (!QS.stamped) return; const full = QS.full, tours = QS.tours; QS = null; if (full) { careerStart(); career.tutOff = !tours; } return; }
+  if (last && inBtn(p, QS_BTN.start)) { if (!QS.stamped) return; const full = QS.full, tours = QS.tours; QS = null; if (full) { careerStart(); career.tutOff = !tours; } else firstRunQsDone(); return; }
   if (QS.turn) return;
   if (lockOn) { qsLockerClick(p); return; }
   for (const g of qsCardsOf(pg.id)) g.c.forEach((c, i) => { if (inBtn(p, QS_CARD(i, g.y, g.h))) c.set(); });

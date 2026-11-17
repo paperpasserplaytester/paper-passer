@@ -135,6 +135,7 @@ function carDiffFace(cx, cy, r, lvl, col) {   // a pencil doodle face that gets 
   ctx.restore();
 }
 function drawCareer() {
+  if (career.quick) return drawQuickCareer();
   paperBg();
   const now = performance.now(), T = now / 1000, k = career.team, [tc, tc2] = carCols(k), ink = RES.line;
   // changes (a new face / team) make the doodle and the pass bounce; a roll shuffles it all
@@ -334,8 +335,10 @@ function drawCareer() {
 // touch screens: a hidden text input takes the focus so the phone's keyboard comes up for the name fields
 const KB_TOUCH = ('ontouchstart' in window) || (window.matchMedia && matchMedia('(pointer: coarse)').matches);
 let kbIn = null;
+let KB_T = null;   // another text field using the same hidden input (the trade search): { get, set(v), done(key) }; null = the career name fields
 function kbSync() {
   if (!kbIn) return;
+  if (KB_T) { kbIn.value = KB_T.get(); kbIn.focus({ preventScroll: true }); return; }
   if (!career.focus) { kbIn.blur(); return; }
   kbIn.value = career[career.focus] || '';
   kbIn.focus({ preventScroll: true });
@@ -345,19 +348,58 @@ function kbSetup() {
   kbIn.type = 'text'; kbIn.maxLength = 14; kbIn.autocomplete = 'off'; kbIn.autocapitalize = 'words'; kbIn.spellcheck = false; kbIn.enterKeyHint = 'next';
   kbIn.style.cssText = 'position:fixed;left:0;bottom:0;width:1px;height:1px;opacity:0;border:0;padding:0;font-size:16px;z-index:-1;';
   kbIn.addEventListener('input', () => {
+    if (KB_T) { KB_T.set(kbIn.value); if (kbIn.value !== KB_T.get()) kbIn.value = KB_T.get(); return; }
     if (!career.focus) return;
     career[career.focus] = kbIn.value.replace(/[^A-Za-z '\-.]/g, '').slice(0, 14); career.sel = null;
     if (kbIn.value !== career[career.focus]) kbIn.value = career[career.focus];
   });
   kbIn.addEventListener('keydown', e => {
     e.stopPropagation();   // (the on-screen keyboard is the only typist here)
+    if (KB_T) { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); KB_T.done(e.key); kbSync(); } return; }
     if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); career.focus = career.focus === 'first' ? 'last' : career.focus === 'last' && e.key === 'Tab' ? 'first' : null; kbSync(); }
     else if (e.key === 'Escape') { career.focus = null; kbSync(); }
   });
   document.body.appendChild(kbIn);
 }
+// --- first franchise (first launch, out of the cold open): one small card for the coach's name, then straight onto the field. The setup questions, the hiring
+// card and the tours come after that first game (LEAGUE.firstRun: 'game' -> 'after' -> 'qs' -> cleared). Returning players and later franchises keep the full flow.
+const QC = { card: { x: 390, y: 52, w: 500, h: 360 }, go: { x: 530, y: 300, w: 220, h: 72 } };
+function drawQuickCareer() {
+  paperBg();
+  const C = QC.card, now = performance.now(), ink = RES.line;
+  ctx.save(); ctx.translate(4, 6); tornPath(C); ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fill(); ctx.restore();
+  tornPath(C); ctx.fillStyle = '#fffdf4'; ctx.fill();
+  ctx.fillStyle = ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `bold 30px ${CAR_HAND}`; ctx.fillText('SIGN HERE, COACH', W / 2, C.y + 44);
+  [['first', 'first name'], ['last', 'last name']].forEach(([key, ph]) => {
+    const f = CAR[key], foc = career.focus === key, base = f.y + f.h - 6, txt = career[key] || '';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.strokeStyle = foc ? '#2f5fb8' : ink; ctx.lineWidth = foc ? 3 : 1.8; ctx.beginPath(); ctx.moveTo(f.x, base + 2); ctx.lineTo(f.x + f.w, base + 2); ctx.stroke();
+    ctx.font = `bold 32px ${CAR_HAND}`; ctx.fillStyle = txt ? ink : 'rgba(34,48,90,0.28)'; ctx.fillText(txt || ph, f.x + 6, base - 6);
+    if (foc && now % 1000 < 550) { ctx.fillStyle = ink; ctx.fillRect(f.x + 8 + ctx.measureText(txt).width, f.y + 6, 2.5, f.h - 12); }
+  });
+  if (career.nameErr && now - career.nameErr < 2500) { ctx.fillStyle = '#d52b2b'; ctx.font = `bold 17px ${CAR_HAND}`; ctx.textAlign = 'center'; ctx.fillText('sign both lines to go on!', W / 2, 272); }
+  menuBtn(QC.go, 'START ▸', IN_GAME_PAPER.green, 26);
+}
+function firstCareerGo() {
+  for (const [k, v] of Object.entries(QS_REC)) if (k !== 'tours' && !(k === 'simDefense' && typeof ONL !== 'undefined' && ONL.on)) SETTINGS[k] = v;   // (the recommended answers: the questions themselves come after the first game)
+  saveSettings();
+  career.quick = false; career.hire = career.hire || 'surprise';
+  careerStart(); career.tutOff = false;
+  if (curSlot === null) return;   // (every slot full: the save picker is up, the normal hiring card follows)
+  LEAGUE.firstRun = 'game'; tutPrompt = null;
+  seasonMatch(); results.screen = 'matchup'; simMode = 'none'; reset();   // (as PLAY on the matchup screen: onto the field)
+}
+// the first game is over and the home screen comes up: now the hiring card, the home tour, then the setup questions
+function firstRunHome() { if (LEAGUE.firstRun === 'game' && LEAGUE.firstPlayed && season) { LEAGUE.firstRun = 'after'; tutPrompt = 'coach'; } }
+function firstRunQsDone() { if (LEAGUE.firstRun !== 'qs') return; LEAGUE.firstRun = null; settingsOpen = false; tutPrompt = 'ready'; autosaveSoon(); }
 function careerClick(p) {
   career.focus = inBtn(p, CAR.first) ? 'first' : inBtn(p, CAR.last) ? 'last' : null;
+  if (career.quick) {   // (the first-launch card: the name lines and START only)
+    if (KB_TOUCH) { if (!kbIn) kbSetup(); kbSync(); }
+    if (career.focus || !inBtn(p, QC.go)) return;
+    if (!String(career.first || '').trim() || !String(career.last || '').trim()) { career.nameErr = performance.now(); career.focus = String(career.first || '').trim() ? 'last' : 'first'; return; }
+    firstCareerGo(); return;
+  }
   if (KB_TOUCH) { if (!kbIn) kbSetup(); kbSync(); }
   if (career.focus) return;
   if (inBtn(p, COACH_FACE_BOX)) { coachOpen('franchise'); return; }
@@ -466,7 +508,7 @@ const tutText = s => TOUCH ? TOUCH_TUT_FIX.reduce((t, [re, to]) => t.replace(re,
 // (TUT_STEPS = the steps: a text table in js/00-text.js)
 // the same steps with touch wording (shown instead of a step's text on a phone / tablet): swipes and the on-screen buttons only
 const TUT_MOBILE = {
-  pass: 'Drag from the QB to aim, lift to throw. Hit the fade.',
+  pass: 'Drag back from anywhere behind the line to aim, lift to throw. Hit the fade.',
   bullet: 'Tap the joystick side for a bullet. Hit the slant.',
   jumpcatch: 'Throw, then swipe UP in the air to leap.',
   divecatch: 'Throw low, then swipe DOWN in the air to dive.',
@@ -643,6 +685,14 @@ function drawTutorial() {
   const st = tutStep(), w = 900, x = W / 2 - w / 2;
   let y = 0;   // (set below once the height is known: the card sits at the bottom of the screen)
   tutSkipBtn = tutResetBtn = null;
+  if (st && st.id === 'pass' && (state === 'pre' || ((state === 'drop' || state === 'pocket') && !aim))) {   // the pass lesson: a light pencil hatch over the backfield (a drag can start anywhere back there)
+    const z = camZ(), sp = (wx, wy) => [W / 2 + MIRROR * (wx - camX) * z, viewCenterY() + (wy - camY) * z], q = [sp(los, 0), sp(los - 12 * YL, 0), sp(los - 12 * YL, FW), sp(los, FW)];
+    const xs = q.map(v => v[0]), ys = q.map(v => v[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    ctx.save(); ctx.beginPath(); q.forEach(([a, b], i) => i ? ctx.lineTo(a, b) : ctx.moveTo(a, b)); ctx.closePath(); ctx.clip();
+    ctx.globalAlpha = 0.22; ctx.strokeStyle = '#fffdf4'; ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.beginPath();
+    for (let k = x0 - (y1 - y0); k < x1; k += 16) penLine(k, y1, k + (y1 - y0), y0, (k | 0) + 7, 1.6);
+    ctx.stroke(); ctx.restore();
+  }
   ctx.font = 'bold ' + TIP_FONT + 'px monospace';   // (one size throughout: long lines wrap onto the next line)
   const lines = [];
   if (st) for (const para of tutText(TUI.on && TUT_MOBILE[st.id] || st.text).split('\n')) {
@@ -733,7 +783,7 @@ function drawTutPrompt() {
     ctx.save(); ctx.translate(4, 6); tornPath(card); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill(); ctx.restore();
     tornPath(card); ctx.fillStyle = '#fffdf4'; ctx.fill();
     ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.arc(W / 2, card.y + 10, 7, 0, Math.PI * 2); ctx.fill();   // the pin
-    const t = NFL[MATCH.you], coach = [career.first, career.last].filter(Boolean).join(' ') || 'Coach';
+    const t = NFL[MATCH.you], coach = [career.first, career.last].filter(Boolean).join(' ') || 'Coach', fr = LEAGUE.firstRun === 'after';
     ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.font = 'bold 16px monospace'; ctx.fillText('BREAKING NEWS', W / 2, 196);
     ctx.fillStyle = RES.line; ctx.font = 'bold 36px monospace';
@@ -743,9 +793,8 @@ function drawTutPrompt() {
      `and handed the keys to ${coach}.`,
      `${(STAFF[MATCH.you] || STAFF.KC).oc.name} (offense) and ${(STAFF[MATCH.you] || STAFF.KC).dc.name} (defense)`,
      `stay on as coordinators.`,
-     `There's one game left in the regular season, then`,
-     `the real work starts: rebuilding this roster into a winner.`,
-     `The fans are hopeful. It's a fresh start.`].forEach((l, i) => ctx.fillText(l, W / 2, 300 + i * 30, 680));
+     ...(fr ? [`You've coached your first game. Now the real work`, `starts: meet your front office and your roster.`, `The fans are hopeful. It's a fresh start.`]
+        : [`There's one game left in the regular season, then`, `the real work starts: rebuilding this roster into a winner.`, `The fans are hopeful. It's a fresh start.`])].forEach((l, i) => ctx.fillText(l, W / 2, 300 + i * 30, 680));
     ctx.fillStyle = RES.dim; ctx.font = '15px monospace';
     ctx.fillText('click anywhere to continue', W / 2, 562);
   } else if (tutPrompt === 'ask' && results.screen === 'home') {
@@ -764,6 +813,19 @@ function drawTutPrompt() {
     ctx.fillText(`Finish it and earn ${TUT_BONUS} credits!`, W / 2, 380, 620);
     tourBtnDraw = true;
     menuBtn(TUT_ASK.yes, 'TUTORIAL', IN_GAME_PAPER.green, 26);
+    menuBtn(TUT_ASK.no, 'SKIP', RES.bright, 26);
+    tourBtnDraw = false;
+  } else if (tutPrompt === 'setup' && results.screen === 'home') {   // first franchise: after the home tour, the setup questions
+    ctx.fillStyle = 'rgba(30,25,10,0.45)'; ctx.fillRect(0, 0, W, H); uiModal();
+    const card = { x: W / 2 - 330, y: 190, w: 660, h: 320 };
+    ctx.save(); ctx.translate(4, 6); tornPath(card); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill(); ctx.restore();
+    tornPath(card); ctx.fillStyle = '#fffdf4'; ctx.fill();
+    ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = 'bold 38px monospace'; ctx.fillText('ONE MORE THING', W / 2, 240);
+    ctx.font = 'bold 19px monospace';
+    ctx.fillText('A few quick questions set up how you like', W / 2, 292); ctx.fillText('to play. You can change them any time in settings.', W / 2, 320);
+    tourBtnDraw = true;
+    menuBtn(TUT_ASK.yes, 'CONTINUE ▸', IN_GAME_PAPER.green, 26);
     menuBtn(TUT_ASK.no, 'SKIP', RES.bright, 26);
     tourBtnDraw = false;
   } else if (tutPrompt === 'ready' && results.screen === 'home') {   // the franchise intro is done: on to the football tutorial?
@@ -803,7 +865,12 @@ function drawTutPrompt() {
 // while the prompt is up, a click only does what it asks (true: the click was taken)
 function tutPromptClick(p) {
   if (!tutPrompt) return false;
-  if (tutPrompt === 'coach') tutPrompt = 'ask';
+  if (tutPrompt === 'coach' && LEAGUE.firstRun === 'after') { tutPrompt = null; tourStart('home'); if (!tour) tutPrompt = 'setup'; }   // (first franchise: no tutorial question, the home tour first)
+  else if (tutPrompt === 'coach') tutPrompt = 'ask';
+  else if (tutPrompt === 'setup') {
+    if (inBtn(p, TUT_ASK.yes)) { tutPrompt = null; LEAGUE.firstRun = 'qs'; settingsOpen = true; qsOpen(false); }
+    else if (inBtn(p, TUT_ASK.no)) { LEAGUE.firstRun = 'qs'; firstRunQsDone(); }
+  }
   else if (tutPrompt === 'ask') {
     if (inBtn(p, TUT_ASK.yes)) { tutPrompt = null; tourStart('home'); if (!tour) startTutorial(); }   // the franchise intro first, then 'ready'
     else if (inBtn(p, TUT_ASK.no)) tutPrompt = null;
@@ -1068,13 +1135,14 @@ canvas.addEventListener('pointerdown', e => {
     if (results.screen === 'chof') { if (e.button === 0) chofClick(pointerPos(e)); return; }
     if (results.screen === 'result' && results.pay && !results.injAlert) { if (e.button === 0) payClick(); return; }
     if (e.button === 0 && exhibition && results.screen === 'result' && inBtn(pointerPos(e), EX_STATS_BTN)) { gsOpen('result'); results.screen = 'exstats'; return; }
+    if (e.button === 0 && !exhibition && results.screen === 'result' && !results.injAlert && !results.pay && inBtn(pointerPos(e), RES_STATS_BTN)) { gsOpen('result'); results.screen = 'exstats'; return; }   // (this game's player stats; BACK = the result)
+    if (e.button === 0 && !exhibition && results.screen === 'result' && !results.injAlert && !results.pay && inBtn(pointerPos(e), RES_INJ_BTN)) { resInjReport(); return; }
     if (e.button === 0 && results.screen === 'result' && !results.injAlert && highlights.length && inBtn(pointerPos(e), HL_BTN)) { hlOpen(); return; }
     if (results.screen === 'pgx') { if (e.button === 0) pgxClick(pointerPos(e)); return; }
     if (results.screen === 'trophy') { if (e.button === 0) trophyClick(pointerPos(e)); return; }
     if (results.screen === 'scrap') { if (e.button === 0 && inBtn(pointerPos(e), BACK_BTN)) results.screen = 'trophy'; return; }
     if (e.button === 0 && results.screen === 'result' && !results.injAlert && inBtn(pointerPos(e), PGX_BTN)) { pgxOpen(); return; }
     if (results.screen === 'exstats') { if (e.button === 0) exStatsClick(pointerPos(e)); return; }
-    if (e.button === 0 && results.screen === 'week' && weekClick(pointerPos(e))) return;
     if (results.screen === 'test') { if (e.button === 0) testClick(pointerPos(e)); return; }
     if (results.screen === 'onevone') { if (e.button === 0) oneVOneClick(pointerPos(e)); return; }
     if (results.screen === 'oopick') { if (e.button === 0) ovPickClick(pointerPos(e)); return; }
@@ -1083,7 +1151,7 @@ canvas.addEventListener('pointerdown', e => {
     if (e.button === 0 && inBtn(pointerPos(e), nextBtn())) advanceResults();
     return;
   }
-  if (e.button === 0 && finalReplay() && !paused && FINAL_BTN.x !== undefined && inBtn(pointerPos(e), FINAL_BTN)) { finishLive(); return; }   // (the game's over: FINISH GAME first, before a celebration skip / tip / replay can take the press)
+  if (e.button === 0 && finalReplay() && !paused && btnHit(pointerPos(e), FINAL_BTN)) { finishLive(); return; }   // (the game's over: FINISH GAME first, before a celebration skip / tip / replay can take the press)
   celebSkip();   // (any tap ends a celebration; the tap still does whatever else it does)
   if (injuryShowing() && !paused && !showKeys && !overPauseButton(pointerPos(e))) { if (e.button === 0) injuryClick(pointerPos(e)); return; }   // the injury timeout
   if (tut && tut.defAsk) {   // the offense lessons are done: play the defense lessons, or let the computer play defense
@@ -1113,12 +1181,12 @@ canvas.addEventListener('pointerdown', e => {
     showKeys = false;
     return;
   }
-  if (e.button === 0 && finishShowing() && inBtn(pointerPos(e), finishBtn())) { finishReplay(); return; }   // (FINISH: same as tapping the replay to continue)
+  if (e.button === 0 && finishShowing() && btnHit(pointerPos(e), finishBtn())) { finishReplay(); return; }   // (FINISH: same as tapping the replay to continue)
   if (e.button === 0 && overPauseButton(pointerPos(e))) { if (noPause()) return; paused = !paused; resetAsk = false; pauseGoals = false; aim = null; return; }
-  if (e.button === 0 && pauseGearOn() && inBtn(pointerPos(e), PAUSE_GEAR)) { settingsOpen = true; return; }   // (the gear beside the pause icon)
+  if (e.button === 0 && pauseGearOn() && btnHit(pointerPos(e), PAUSE_GEAR)) { settingsOpen = true; return; }   // (the gear beside the pause icon)
   if (paused) {
     const p = pointerPos(e), hit = b => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
-    if (e.button === 0 && !ONL.on && dcShown() && hit(DC_BTN)) { if (dcWhich()) dcOpen(); return; }   // (DEPTH CHART: before the snap only)
+    if (e.button === 0 && !ONL.on && dcShown() && btnHit(p, DC_BTN)) { if (dcWhich()) dcOpen(); return; }   // (DEPTH CHART: before the snap only)
     if (pauseSim && state !== 'sim' && !tut) {   // the sim screen
       if (e.button === 0 && hit(PAUSE_MENU.back)) pauseSim = false;
       else if (e.button === 0) { const s = PAUSE_MENU.sims.find(b => hit(b) && simAvailable(b.id)); if (s) { pauseSim = false; simAhead(s.id); } }
@@ -1200,7 +1268,7 @@ canvas.addEventListener('pointerdown', e => {
   if (e.button !== 0) return;
   const p = pointerPos(e);
   if (finalReplay()) {   // the game's over: only FINISH GAME moves on (a click before the replay starts it)
-    if (FINAL_BTN.x !== undefined && inBtn(p, FINAL_BTN)) finishLive();
+    if (btnHit(p, FINAL_BTN)) finishLive();
     else if (rec && rec.replaying) pressAt = performance.now();
     else if (rec && rec.frames.length) startReplay();
     return;
@@ -1233,16 +1301,16 @@ canvas.addEventListener('pointerdown', e => {
     // snaps once you drag from there (a plain click does nothing)
     const w = screenToWorld(p), backfield = w.x < los && w.x > los - BACKFIELD_CLICK * YL && w.y >= 0 && w.y <= FW;
     if (!inCircle(p, qb)) {
-      if (backfield) { backfieldPress = { sx: p.x, sy: p.y }; canvas.setPointerCapture(e.pointerId); }
+      if (backfield) { backfieldPress = { sx: p.x, sy: p.y, pid: e.pointerId }; canvas.setPointerCapture(e.pointerId); }
       return;
     }
     // on the QB too: only a drag snaps it (a plain click does nothing)
-    backfieldPress = { sx: p.x, sy: p.y }; canvas.setPointerCapture(e.pointerId);
+    backfieldPress = { sx: p.x, sy: p.y, pid: e.pointerId }; canvas.setPointerCapture(e.pointerId);
     return;
   }
   if (state === 'drop' || state === 'pocket' || canPasserThrow()) {
     if (aim && aim.pid != null && aim.pid !== e.pointerId) return;   // (another finger is already aiming: this one never takes the aim over)
-    if (TOUCH && e.pointerType !== 'mouse' && !canPasserThrow() && !inCircle(p, qb)) return;   // (touch: only a drag from the QB aims; any other finger is a swipe / the stick)
+    if (TOUCH && e.pointerType !== 'mouse' && !canPasserThrow() && !inCircle(p, qb) && !passBackfield(p)) return;   // (touch: a drag from the QB or from anywhere behind the line aims; any other finger is a swipe / the stick)
     aim = { sx: p.x, sy: p.y, cx: p.x, cy: p.y, pid: e.pointerId };
     canvas.setPointerCapture(e.pointerId);
   }
@@ -1253,7 +1321,7 @@ window.addEventListener('pointerup', () => { qtrDrag = false; diffDrag = null; }
 let backfieldPress = null;
 const BACKFIELD_DRAG = 10;
 canvas.addEventListener('pointermove', e => {
-  if (!backfieldPress) return;
+  if (!backfieldPress || e.pointerId !== backfieldPress.pid) return;   // (only the finger that pressed counts: the stick's finger never drags it)
   const p = pointerPos(e), b = backfieldPress;
   if (state !== 'pre' || paused) { backfieldPress = null; return; }
   if (Math.hypot(p.x - b.sx, p.y - b.sy) < BACKFIELD_DRAG) return;
@@ -1268,8 +1336,10 @@ canvas.addEventListener('pointerup', e => {
     const p = pointerPos(e);
     if (Math.abs(p.y - d.sy) < 6) { const rows = schedRows(), i = rows.findIndex((w, k) => Math.abs(p.y - (schedY(k) - 4)) < SCHED.gap / 2); if (i >= 0 && p.x < SCHED_BOX.x + SCHED_BOX.w - 24) schedGameClick(rows[i]); }
   }
-  backfieldPress = null; SCHED.drag = null; AWH.drag = null;
+  if (backfieldPress && backfieldPress.pid === e.pointerId) backfieldPress = null;
+  SCHED.drag = null; AWH.drag = null;
 });
+canvas.addEventListener('pointercancel', e => { if (backfieldPress && backfieldPress.pid === e.pointerId) backfieldPress = null; });
 // the home screen's schedule: drag its scroll bar (pressed on the bar), or drag the strip itself sideways
 canvas.addEventListener('pointerdown', e => {
   if (e.button !== 0 || !results || results.screen !== 'home' || teamPick || tutPrompt || settingsOpen) return;
@@ -1360,6 +1430,10 @@ function releaseAim() {
   } else if (aim && (state === 'drop' || state === 'pocket')) throwBall(); else aim = null;
 }
 // scroll wheel zooms the view in and out (live or in the replay)
+// the result screen's scoring list: drag it up / down (finger or mouse)
+canvas.addEventListener('pointerdown', e => { const S = SC_SCROLL, p = pointerPos(e); if (results && results.screen === 'result' && !results.injAlert && S.max > 0 && S.box && inBtn(p, S.box)) S.drag = { y: p.y, off: S.off }; });
+canvas.addEventListener('pointermove', e => { const S = SC_SCROLL; if (S.drag) S.off = Math.max(0, Math.min(S.max, S.drag.off + (pointerPos(e).y - S.drag.y))); });
+for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, () => { SC_SCROLL.drag = null; });
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
   if (offPop && offPop.custom) { offPop.custom.wheel(e.deltaY * (e.deltaMode === 1 ? 38 : 1)); return; }   // (a category popup scrolls)
@@ -1373,7 +1447,7 @@ canvas.addEventListener('wheel', e => {
   if (results && results.screen === 'tradeb' && !offPop && tbWheel(e)) return;   // (the offer builder's player cards page)   // (the roster's formation view zooms)
   if (results && results.screen === 'staff' && pdWheel(e.deltaY * (e.deltaMode === 1 ? 38 : 1))) return;   // (FRONT OFFICE > PLAYER DEALS: the list scrolls)
   if (results && results.screen === 'records' && !teamPick) { recWheel(e.deltaY); return; }   // (the record book's list scrolls)
-  if (results && results.screen === 'week') { weekScroll = Math.max(0, Math.min(weekMax, weekScroll + Math.sign(e.deltaY) * WEEK_ROW)); return; }   // end-of-week player list
+  if (results && results.screen === 'result' && !results.injAlert && SC_SCROLL.box && inBtn(pointerPos(e), SC_SCROLL.box)) { SC_SCROLL.off = Math.max(0, Math.min(SC_SCROLL.max, SC_SCROLL.off - e.deltaY * (e.deltaMode === 1 ? 38 : 1))); return; }   // (the scoring list: wheel down = later scores)
   if (results && results.screen === 'home') {   // over the schedule strip: scroll through the season
     const p = pointerPos(e), d = (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) * (e.deltaMode === 1 ? 38 : 1);
     const S = SCHED_BOX, A = AWH_BOX;
@@ -1396,8 +1470,11 @@ canvas.addEventListener('contextmenu', e => {
   if (qsRight()) return;   // (the coaching questionnaire: USE RECOMMENDED)
   if (rec && rec.replaying) return;
   if (performance.now() - celebClickAt < 500 || celebGo(e) || celebSkip() || aiOff()) return;   // (a celebration: started (the right button's own pointerdown may already have done it) or skipped; on defense: no bullet toggle)
+  if (showCarry()) return;   // (v0.51: your carry is live: a right click counts toward showboating, never the bullet toggle)
   bulletMode = !bulletMode;
 });
+// v0.51 showboating: two quick clicks (either button) while your man carries the ball (showClick, 05). Fingers: the tap branch below (3 taps)
+canvas.addEventListener('pointerdown', e => { if (e.pointerType !== 'touch') showClick(e); });
 
 const GAME_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyR', 'KeyV', 'KeyG', 'KeyO', 'KeyF', 'KeyN', 'KeyC', 'KeyT', 'KeyX', 'Tab', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'];
 // IJKL work exactly like WASD (and so like the arrows for movement)
@@ -1445,7 +1522,7 @@ window.addEventListener('keydown', e => {
     if (!e.repeat || e.code === 'Escape') rebinding = null;
     return;
   }
-  if (!olKey(e) && !careerKey(e) && !qsKey(e) && !coachKey(e) && !nickKey(e) && !staffNameKey(e)) { const a = aliasKey(e); if (!e.repeat) heldKeys[e.code] = a; onKeyDown(a); }
+  if (!olKey(e) && !careerKey(e) && !trSearchKey(e) && !qsKey(e) && !coachKey(e) && !nickKey(e) && !staffNameKey(e)) { const a = aliasKey(e); if (!e.repeat) heldKeys[e.code] = a; onKeyDown(a); }
 });
 const heldKeys = {};   // (what each physical key was read as when it went down: it is let go as that, whatever has changed since (the snap, the drive direction))
 function onKeyDown(e) {
@@ -1620,20 +1697,42 @@ const BRIGHT_UP = brightCol(+(1 - 1 / BRIGHT.k).toFixed(5)), BRIGHT_DOWN = brigh
 // --- pencil cursor (desktop only: the system pointer is hidden over the canvas). Drawn last in frame(), in screen space (game units), after brightPass ---
 const CURSOR = { len: 34, w: 7, tilt: 0.75, tip: 7, eraser: 6, band: 2.5, press: 3, body: '#f2c230', bodyDark: '#c9971c', wood: '#f1d6a8', lead: '#3a3a3a', eraserCol: '#f08ca0', band2: '#b9bec6', ink: '#2a2a2a', edge: 'rgba(255,255,255,0.9)' };   // px at 1280 wide: length, width, tilt (rad from straight up, leaning right), sharpened tip, eraser, metal band, press-down (px along the pencil when a button is held)
 let curPt = null, curDown = false, cCursorSeen = 0;   // (cCursorSeen: the cold open drew its own prompt cursor this frame: no pencil on top of it)
-window.addEventListener('pointermove', e => { if (e.pointerType === 'mouse') { curPt = pointerPos(e); curDown = (e.buttons & 3) !== 0; } }, true);
-window.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse') { curPt = pointerPos(e); curDown = true; } }, true);
-window.addEventListener('pointerup', e => { if (e.pointerType === 'mouse') curDown = (e.buttons & 3) !== 0; }, true);
+window.addEventListener('pointermove', e => { if (e.pointerType === 'mouse') { curPt = pointerPos(e); const d = (e.buttons & 3) !== 0; if (d !== curDown) { curDown = d; cursorSync(); } } }, true);
+window.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse') { curPt = pointerPos(e); curDown = true; cursorSync(); } }, true);
+window.addEventListener('pointerup', e => { if (e.pointerType === 'mouse') { curDown = (e.buttons & 3) !== 0; cursorSync(); } }, true);
 canvas.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse' && !(e.buttons & 3)) curPt = null; });
-function drawCursor() {
-  const want = TOUCH ? '' : 'none'; if (canvas.style.cursor !== want) canvas.style.cursor = want;   // (desktop: hide the system arrow over the canvas)
-  if (TOUCH || !curPt || performance.now() - cCursorSeen < 120) return;
-  const C = CURSOR, x = curPt.x, y = curPt.y, pr = curDown ? C.press : 0, w = C.w / 2;
-  ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
-  ctx.translate(x, y); ctx.rotate(C.tilt); ctx.translate(0, -pr * 0.3);   // (the tip stays on the hot spot; pressed: it digs in a touch and the pencil drops back)
+// The pencil is the real system cursor now: painted ONCE into a small image (cursorPaint) and set as canvas.style.cursor, so the OS moves it with no
+// frame cost and no lag. Rebuilt only when its look changes (cursorSync: pressed / dark edge over deep snow / its on-screen size); TOUCH = no cursor.
+const CURSOR_IMG = { max: 32, pad: 3 };   // CSS px: largest the image may be (over 32 px the browser drops a cursor image that would stick out past the page edge: the arrow came back near the top / right edges), margin round the pencil
+let curKey = '';
+function cursorPaint(down, dark, k, dpr) {   // -> data URL; k = CSS px per game unit, dpr = device pixels per CSS px. The tip (hot spot) sits at the bottom left
+  const C = CURSOR, Lm = C.len + C.press + C.tip, sz = Math.min(CURSOR_IMG.max, Math.ceil(Lm * k * 0.92 + 2 * CURSOR_IMG.pad));
+  const c = document.createElement('canvas'); c.width = c.height = Math.round(sz * dpr);
+  const g0 = ctx; ctx = c.getContext('2d');   // (the shape code below draws on the global ctx: swapped, like the field cache)
+  try { const kk = k * dpr, ox = CURSOR_IMG.pad * dpr, oy = c.height - CURSOR_IMG.pad * dpr, kd = Math.min(kk, (c.height - 2 * CURSOR_IMG.pad * dpr) / (Lm * 0.92)); cursorShape(down, dark, kd, ox, oy); }
+  finally { ctx = g0; }
+  return { url: c.toDataURL('image/png'), sz, hx: CURSOR_IMG.pad, hy: sz - CURSOR_IMG.pad };
+}
+function cursorSync() {   // cheap: a string compare; called from the pointer listeners and the layout timer, never from frame()
+  const root = document.documentElement;   // (the page too: the letterbox round the canvas and DOM layers over it (ACCOUNT popup) show the pencil; text inputs keep the text cursor, index.html)
+  if (TOUCH) { if (canvas.style.cursor !== '') canvas.style.cursor = root.style.cursor = ''; curKey = ''; return; }
+  let k = 1; try { k = layRect(canvas).width / (W + 2 * PAD); } catch (e) {}
+  const dark = !!(typeof pageKey === 'function' && pageKey() === 'game' && !paused && wxSnowy()), dpr = Math.min(2, Math.max(1, Math.round(window.devicePixelRatio || 1)));
+  const key = `${curDown ? 1 : 0}${dark ? 1 : 0}${k.toFixed(2)}${dpr}`;
+  if (key === curKey) return; curKey = key;
+  const one = cursorPaint(curDown, dark, k, 1), two = dpr > 1 ? cursorPaint(curDown, dark, k, dpr) : null;
+  canvas.style.cursor = `url(${one.url}) ${one.hx} ${one.hy}, auto`;
+  if (two) { const s = `-webkit-image-set(url(${one.url}) 1x, url(${two.url}) 2x) ${one.hx} ${one.hy}, auto`; canvas.style.cursor = s; if (!canvas.style.cursor) canvas.style.cursor = `url(${one.url}) ${one.hx} ${one.hy}, auto`; }   // (sharp on high-DPI screens where the browser takes an image set)
+  root.style.cursor = canvas.style.cursor;
+}
+function cursorShape(down, dark, k, ox, oy) {
+  const C = CURSOR, pr = down ? C.press : 0, w = C.w / 2;
+  ctx.save(); ctx.setTransform(k, 0, 0, k, ox, oy); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  ctx.rotate(C.tilt); ctx.translate(0, -pr * 0.3);   // (the tip stays on the hot spot; pressed: it digs in a touch and the pencil drops back)
   const L = C.len + pr, tipY = -C.tip, bodyY = -(L - C.eraser - C.band), bandY = bodyY - C.band, topY = -L;
   const shape = () => { ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(w, tipY); ctx.lineTo(w, topY + 2); ctx.quadraticCurveTo(w, topY, w - 2, topY); ctx.lineTo(-w + 2, topY); ctx.quadraticCurveTo(-w, topY, -w, topY + 2); ctx.lineTo(-w, tipY); ctx.closePath(); };
   ctx.lineJoin = 'round';
-  shape(); ctx.strokeStyle = pageKey() === 'game' && !paused && wxSnowy() ? WX_LOOK.ink : C.edge; ctx.lineWidth = 4.5; ctx.stroke();   // (white outer edge: reads on grass and paper; dark over a snow-covered field)
+  shape(); ctx.strokeStyle = dark ? WX_LOOK.ink : C.edge; ctx.lineWidth = 4.5; ctx.stroke();   // (white outer edge: reads on grass and paper; dark over a snow-covered field)
   ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(w, tipY); ctx.lineTo(-w, tipY); ctx.closePath(); ctx.fillStyle = C.wood; ctx.fill();   // sharpened wood
   ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(w * 0.38, tipY * 0.38); ctx.lineTo(-w * 0.38, tipY * 0.38); ctx.closePath(); ctx.fillStyle = C.lead; ctx.fill();   // the lead
   ctx.fillStyle = C.body; ctx.fillRect(-w, bodyY, 2 * w, tipY - bodyY); ctx.fillStyle = C.bodyDark; ctx.fillRect(w * 0.25, bodyY, w * 0.75, tipY - bodyY);   // yellow body, a shaded facet
@@ -1688,6 +1787,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   if (!paused) pauseSim = false;   // (the pause menu always opens on its main screen)
   if (paused || showKeys || settingsOpen) { if (animFrozenAt === null) animFrozenAt = now; }
   else if (animFrozenAt !== null) { animShift += now - animFrozenAt; animFrozenAt = null; }
+  try { lgTapeTick(); } catch (e) { console.warn('league tapes', e); LGJ = null; }   // (v0.52: real league plays made while the matchup screen is up)
   if (pgPending && !settingsOpen) pgTry();   // (the pregame show, once a new game's screen is up)
   if (hl && hl.bg && (!results || (results.screen !== 'result' && results.screen !== 'pgx'))) hlClose();   // (the end-of-game reel ends once the result screen is left for good)
   const perfU0 = performance.now();
@@ -1736,7 +1836,6 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   ctx.restore();
   brightPass();
   ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0); perfDraw(performance.now() - paintT0, now); drawPerfHud(); ctx.restore();   // (the readout times the brighten pass too)
-  drawCursor();   // (the pencil pointer: last of all, never brightened)
   if (TUI.on) {   // how long painting took, smoothed: slow frames drop the paint rate to ~30 (so the game keeps up and the thread isn't always behind), fast ones bring it back
     paintAvg += (performance.now() - paintT0 - paintAvg) * 0.1;
     if (paintAvg > PAINT_SLOW) paintMin = PAINT_MIN_SLOW; else if (paintAvg < PAINT_SLOW * 0.65) paintMin = PAINT_MIN;
@@ -1838,14 +1937,12 @@ function randomizeWorld() {
 // canvas (a joystick + buttons for the current state) that feeds the real keyboard handlers with synthetic key events, so every
 // rule (remaps, drive-direction flips, double-taps, defense keys) is the keyboard's. The throw is still the drag on the QB.
 const TUI = {
-  q: new URLSearchParams(location.search).get('touch'),
+  q: TUI_Q,   // (read in 01-tuning, with IS_MOBILE: the top bar sizes from it)
   on: false, held: {}, set: '', fs: false,
   stick: 0.35,    // how far (0-1 of the pad radius) the stick must go to press a direction
   tapMs: 90,      // a tapped key is let go this long after (so per-frame key reads see it)
 };
 let touchLong = false;   // the last pointer was a finger: a long-press' contextmenu is not a right-click (bullet toggle)
-const IS_MOBILE = TUI.q === '1' || (TUI.q !== '0' && (/Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent) ||
-  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) || (matchMedia('(pointer: coarse)').matches && matchMedia('(hover: none)').matches)));
 const tuiEl = document.getElementById('tui'), tbtns = document.getElementById('tbtns'), tpad = document.getElementById('tpad'), tknob = document.getElementById('tknob'), trot = document.getElementById('trot');
 // (the touch buttons / swipes name the game's own forward (A) and back (D) keys; a keyboard A / D is flipped by the drive direction in aliasKey, so name the physical one that flips to it)
 // (the A / D swap follows the drive's direction. A key's RELEASE must be the very code its press sent: the direction can flip in between (a quarter break
@@ -1991,6 +2088,7 @@ function touchHalf(e) {
   return pointerPos(e).x >= losX ? 1 : -1;
 }
 window.addEventListener('pointerdown', e => {
+  if (coldOn()) return;   // (the cold open reads every finger itself: no stick)
   if (!TUI.on || !e.isTrusted || (e.pointerType !== 'touch' && e.button !== 0) || tpad._id != null || !stickOn(TUI.set) ||   /* (!isTrusted: the other player's presses, replayed here by the online host as mouse events, are never this finger) */ (e.target.closest && e.target.closest('#tbtns'))) return;
   const lp = layPt(e), py = pointerPos(e).y;
   if (overUiBtn(pointerPos(e))) return;
@@ -1998,7 +2096,7 @@ window.addEventListener('pointerdown', e => {
   if (touchHalf(e) !== stickSide()) return;
   e.stopImmediatePropagation();   // (this finger is the stick: the canvas never sees it, so it can't start a throw drag or a swipe)
   tpad._pts = []; tpad._flash = false; tpad.style.opacity = ''; if (tut) tut.flashUntil = 0;
-  tpad._id = e.pointerId; swipeFrom = null; bulletTap = null; tpad._t0 = performance.now(); tpad._p0 = lp;
+  tpad._id = e.pointerId; swipeEnd(); bulletTap = null; tpad._t0 = performance.now(); tpad._p0 = lp;
   tpad.style.display = 'block';
   const R = tpad.offsetWidth / 2;
   tpad.style.left = (lp.x - R) + 'px'; tpad.style.top = (lp.y - R) + 'px'; tpad.style.bottom = 'auto';
@@ -2017,16 +2115,16 @@ for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, e =
 const tpause = document.getElementById('tpause');   // (the real pause button is the one on the canvas: this one stays hidden)
 // every frame-ish: which buttons, whether the layer shows at all (not on menus / results / the pause menu), the rotate-me notice
 setInterval(() => {
-  fitScreen();
+  fitScreen(); cursorSync();   // (the pencil cursor follows the canvas's on-screen size and the snow)
   if (!TUI.on) return;
   if (MIRROR !== tuiLastMirror) {   // the drive switched ends (a quarter break): nothing stays held from the old direction, and the stick starts over
     tuiLastMirror = MIRROR;
     for (const k in TUI.held) if (TUI.held[k]) { TUI.held[k] = false; tkey(k, false); }
     if (tpad._id != null) tuiStickEnd({ clientX: 0, clientY: 0 });
-    swipeFrom = null;
+    swipeEnd();
   }
   let live = false, name = 'run';
-  try { live = !results && !showKeys && !settingsOpen && !slotUI && !hl && !paused && !(ONL.on && (ONL.lost || (ONL.view && ONL.view.pz))); if (live) name = tuiWhich(); } catch (err) { live = false; }   // (online pause / lost link: the stick lets go)
+  try { live = !coldOn() && !results && !showKeys && !settingsOpen && !slotUI && !hl && !paused && !(ONL.on && (ONL.lost || (ONL.view && ONL.view.pz))); if (live) name = tuiWhich(); } catch (err) { live = false; }   // (the cold open: no stick, buttons or swipes)   // (online pause / lost link: the stick lets go)
   if (tpad._id != null && (!live || !stickOn(name))) tuiStickEnd({ clientX: 0, clientY: 0 });   // (the play ended under his thumb)
   tbtns.style.display = live ? '' : 'none';
   tuiEl.classList.toggle('flip', live && stickOn(name) && stickSide() > 0);   // (stick on the right: the buttons go left)
@@ -2075,7 +2173,7 @@ const SWIPE = { min: 36 };   // px a finger must travel to count as a swipe
 // a double tap on the field before the throw flips lob / bullet. (A touch in the pocket starts the throw drag, so a tap that doesn't move is
 // cancelled here before its release throws, and two of them in a row switch the pass.)
 let bulletTap = null, lastTapAt = 0;
-window.addEventListener('pointerdown', e => { bulletTap = TUI.on && e.pointerType === 'touch' && (state === 'pocket' || state === 'drop') && tpad._id == null && (!ONL.on || onlIAmOff()) ? { id: e.pointerId, ...layPt(e), t: performance.now() } : null; }, true);
+window.addEventListener('pointerdown', e => { bulletTap = TUI.on && e.pointerType === 'touch' && !coldOn() && (state === 'pocket' || state === 'drop') && tpad._id == null && (!ONL.on || onlIAmOff()) ? { id: e.pointerId, ...layPt(e), t: performance.now() } : null; }, true);
 window.addEventListener('pointerup', e => {
   const s = bulletTap; if (!s || s.id !== e.pointerId) return;
   bulletTap = null;
@@ -2085,6 +2183,7 @@ window.addEventListener('pointerup', e => {
   if (now - lastTapAt < 400) { lastTapAt = 0; bulletMode = !bulletMode; popup(qb, bulletMode ? 'BULLET' : 'LOB', '#ffd94a'); }
   else lastTapAt = now;
 }, true);
+let showTap2 = 0;   // (v0.51: when the hurdle's second tap was: a third right after = showboating)
 const HURDLE_TAP = { move: 30, press: 320, gap: 600 };   // the double tap's slack: px a tap may drift, ms a tap may last (past the truck's press it's a hold), ms between the two taps
 const SWIPE_HOLD = { stiff: 450, truck: 350, press: 340 };   // ms the stiff arm key is held after the swipe; press = ms a finger rests on the field before it counts as a hold (the truck)
 // The ball carrier's moves (run / kick return) are one finger: swipe up / down = juke up / down (double-tap W / S), swipe toward / away from the way he runs
@@ -2100,12 +2199,27 @@ function circleSwept(pts) {   // a circle in either direction: the path turns a 
   }
   return Math.abs(turn) >= SPIN_GEST.turn && len >= SPIN_GEST.minPath;
 }
-let swipeFrom = null, runTapAt = 0;   // runTapAt: when the last quick tap with the ball was (two in a row = hurdle)
+let swipeFrom = null, runTapAt = 0;
+// every place a swipe is dropped (the stick's finger, the drive direction flipping, the play ending, a cancel, reset): a held stiff arm (Q) / truck (C) is let go with it.
+// (Q used to be released only by that finger's own pointerup: a dropped swipe left keys.KeyQ stuck, so every later carrier stiff-armed, the online guest's too)
+const coldOn = () => typeof CO !== 'undefined' && !!CO;   // (the cold open is running: the phone layer stands down, 15-coldopen reads every finger)
+function swipeEnd() { const s = swipeFrom; swipeFrom = null; if (!s) return; if (s.truck) tkey('KeyC', false); if (s.stiff) tkey('KeyQ', false); s.truck = s.stiff = false; }
+function tuiReleaseAll() {   // (reset: nothing held by a finger carries into the next play)
+  try { if (!TUI.on) return; } catch (e) { return; }   // (the very first reset runs at load, before TUI exists further down this file)
+  swipeEnd();
+  for (const k in TUI.held) if (TUI.held[k]) { TUI.held[k] = false; tkey(k, false); }
+}
+// a finger behind the line of scrimmage (between the sidelines, within BACKFIELD_CLICK yd) while the passer can still throw: a throw drag from anywhere back there
+function passBackfield(p) {
+  if (!(state === 'drop' || state === 'pocket') || !qb || !qb.hasBall) return false;
+  const w = screenToWorld(p); return w.x < los && w.x > los - BACKFIELD_CLICK * YL && w.y >= 0 && w.y <= FW;
+}   // runTapAt: when the last quick tap with the ball was (two in a row = hurdle)
 const lineUd = () => !!ud && !!(dl.includes(ud) || ud.blitz || ud.engaged) && (state === 'drop' || state === 'pocket' || state === 'run');   // (your defender is on the line, blitzing or locked up with a blocker: the pass-rush swipes)
 const swipeSet = () => (tut && tut.passed) ? '' : (state === 'flight' && !aiOff() && !onlDefSide()) ? 'flight' : ['run', 'kickoff', 'def', 'pocket'].includes(tuiWhich()) ? tuiWhich() : '';   // (pocket: the QB's moves, as a swipe that isn't a throw drag)
 canvas.addEventListener('pointerdown', e => {
-  const set = TUI.on && e.pointerType === 'touch' ? swipeSet() : '';
-  if (!set) { swipeFrom = null; return; }
+  const set = TUI.on && e.pointerType === 'touch' && !coldOn() ? swipeSet() : '';
+  if (!set) { swipeEnd(); return; }
+  if (set === 'pocket' && passBackfield(pointerPos(e))) { swipeEnd(); return; }   // (behind the line while he can still throw: always a throw drag, never a swipe: a drag pulled back was read as the stiff arm)
   const p = layPt(e), s = swipeFrom;
   if (s && s.set === set && s.fingers.size && !s.done) { s.fingers.set(e.pointerId, p); s.multi = true; return; }   // (a second finger on the screen)
   const ns = swipeFrom = { id: e.pointerId, set, fingers: new Map([[e.pointerId, p]]), multi: false, done: false, pts: [p], truck: false, t0: performance.now() };
@@ -2143,7 +2257,10 @@ window.addEventListener('pointerup', e => {
   const lp = layPt(e), dx = lp.x - st.x, dy = lp.y - st.y;
   if (Math.hypot(dx, dy) < HURDLE_TAP.move && !s.multi && (s.set === 'run' || s.set === 'kickoff') && swipeSet() === s.set && performance.now() - s.t0 < HURDLE_TAP.press) {   // a quick tap with the ball: two in a row = the hurdle
     const now = performance.now();
-    if (now - runTapAt < HURDLE_TAP.gap) { runTapAt = 0; tuiKey('KeyE'); } else runTapAt = now;
+    if (showCarry() && allPlayers().some(p => p.hasBall && p.show)) { showPhone(); return; }   // (v0.51: showing off: each tap keeps it going)
+    if (now - runTapAt < HURDLE_TAP.gap) { runTapAt = 0; showTap2 = now; tuiKey('KeyE'); }
+    else if (now - showTap2 < HURDLE_TAP.gap) { showTap2 = 0; showPhone(); }   // (a third tap right after the hurdle's two: showboating)
+    else runTapAt = now;
     return;
   }
   if (Math.hypot(dx, dy) < SWIPE.min || swipeSet() !== s.set) return;
@@ -2179,7 +2296,7 @@ window.addEventListener('pointerup', e => {
   }
   if (along) tuiKey('KeyV');   // (forward = dive; the truck is a press and hold)
 }, true);
-window.addEventListener('pointercancel', e => { if (swipeFrom) { if (swipeFrom.truck) tkey('KeyC', false); if (swipeFrom.stiff) tkey('KeyQ', false); swipeFrom.fingers.delete(e.pointerId); if (!swipeFrom.fingers.size) swipeFrom = null; } }, true);
+window.addEventListener('pointercancel', e => { if (swipeFrom) { swipeFrom.fingers.delete(e.pointerId); if (!swipeFrom.fingers.size) swipeEnd(); } }, true);
 // pinch to zoom in a replay (two fingers on the field; the wheel does the same on a computer)
 const pinch = { pts: new Map(), d: 0, mid: null, one: null };
 let touchScrub = 0;   // replay, one finger: swipe left + hold = +1 (fast forward), swipe right + hold = -1 (rewind)

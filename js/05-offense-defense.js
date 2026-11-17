@@ -838,6 +838,7 @@ function updateCarrier(c, top, dt) {
     if (ended && c.act.t >= c.act.dur) {
       if (pylonDive) c.z = 0;
       if (crossedGoal(c)) return touchdown();
+      if (c.action === 'slide' && c === qb && !aiOff() && !tut) popup(c, 'SMART SLIDE', '#7dff8a');   // (giving himself up: no hit on your QB)
       endPlay(`${c.action === 'slide' ? 'QB slide' : c === qb ? 'QB dives forward' : 'Dives forward'}, ${yardsFrom(markX(c))} yds`, markX(c));
     }
     return;
@@ -1207,6 +1208,114 @@ function exchPose() {
   else if (g != null && clock >= g && rbpLive() && rbp.fakeT && clock - rbp.fakeT < RBP.fake.time) qb.exK = 'fake';
 }
 
+// --- showboating (v0.51): YOUR ball carrier showing off mid-play, by choice: 2 quick clicks (either button; 3 taps on a phone: tap 2 is still the hurdle).
+// Each further click within SHOW.keep keeps it going and every SHOW.cycle s moves to the next look; inside the 5 with nobody near, the next click picks a
+// finish (shGoalPlace / shWalkIn / shBackIn / shDiveIn / shStopStep). Cost: top speed x SHOW.speed (showSpeedK in effTop), fumbles (tackleCarrier: SHOW.fum*),
+// no stiff arm / truck / protect (any of them, a move, a tackle or the whistle ends it). Reward: a score while (or within 1 s after) showing off adds SHOW.hype
+// to the celebration (celebNote 'show'). State p.show = { id, t0, n, k, fin, pt (shGoalPlace: s the ball went down), st (shStopStep: s he stopped) }: a plain
+// prop (taped, synced). Looks: MV_LOOKS family 'show' (07, mvPose). Never for the computer's carriers, the tutorial or the cold open.
+const SHOW_LOOKS = { S: ['shFlexRun', 'shHelmetTap', 'shBallOut'], A: ['shPeace', 'shHighStep', 'shDeuces', 'shLookBackWave'] };
+const SHOW_ALL = ['shPeace', 'shBallOut', 'shHighStep', 'shHelmetTap', 'shLookBackWave', 'shPointGoal', 'shFlexRun', 'shDeuces', 'shBackpedal'];
+const SHOW_FIN = ['shGoalPlace', 'shWalkIn', 'shBackIn', 'shDiveIn', 'shStopStep'];
+let showTaps = [], showPend = null;
+const showLive = () => state === 'run' || state === 'picked' || state === 'kickoff';
+const showToGoal = c => c.team === 'off' && state === 'run' ? (FIELD - c.x) / YL : 99;   // (yd to go: the finishes are for a run to the opponent's goal)
+const showFoes = (c, yd) => allPlayers().some(d => d.team !== c.team && !lyingDown(d) && !d.slOut && dist(d, c) < yd * YD);
+// may this click / tap start or keep it? (online: the host counts both its own clicks and the guest's, each for his own man: celebOwn)
+function showCan(c, e) {
+  if (!c || !c.hasBall || !showLive() || tut || (typeof CO !== 'undefined' && CO) || (rec && rec.replaying) || paused) return false;
+  if (ONL.on) return ONL.host && celebOwn(c) === (e && !e.isTrusted ? 'g' : 'h');
+  return c === controlledPlayer();
+}
+const showCarry = () => { const c = allPlayers().find(p => p.hasBall); return !!c && showCan(c, null); };   // (a carry of yours is live: right-click is no bullet toggle)
+// a click (desktop / the guest's): true = it was a showboat click
+function showClick(e) {
+  if (ONL.on && ONL.guest) return false;
+  const c = allPlayers().find(p => p.hasBall);
+  if (!showCan(c, e)) return false;
+  if (c.show) { showKeep(c); return true; }
+  const now = performance.now();
+  showTaps = showTaps.filter(t => now - t < SHOW.gap); showTaps.push(now);
+  if (showTaps.length >= 2) { showTaps = []; showStart(c); }
+  return true;
+}
+// the phone's third tap (the second was the hurdle): starts it when the hurdle lands, or at once if there was none
+function showPhone() {
+  const c = allPlayers().find(p => p.hasBall);
+  if (!showCan(c, null)) return;
+  if (c.show) { showKeep(c); return; }
+  if (c.action) showPend = { c, till: clock + 1.6 }; else showStart(c);
+}
+function showStart(c) {
+  const A = celebArch(c), pool = (SHOW_LOOKS[A] || SHOW_ALL).filter(id => showLookOK(c, id));
+  c.show = { id: pool[Math.floor(Math.random() * pool.length)] || 'shPeace', t0: clock, n: 0, k: clock };
+  c.guard = false;
+}
+const showLookOK = (c, id) => id !== 'shBackpedal' || (showToGoal(c) < 12 && !showFoes(c, 8));
+function showKeep(c) {
+  const s = c.show; s.k = clock;
+  if (!s.fin && showToGoal(c) < 5 && !showFoes(c, 5)) {   // inside the 5, nobody near: this click picks a finish
+    const fins = SHOW_FIN.filter(id => id !== 'shDiveIn' || showToGoal(c) > 1.5);
+    c.show = { id: fins[Math.floor(Math.random() * fins.length)], t0: clock, n: s.n + 1, k: clock, fin: 1 };
+  }
+}
+function showEnd(c) { c.show = null; c.showEnd = clock; }
+// his top speed x this while he shows off (effTop)
+function showSpeedK(p) {
+  const s = p.show; if (!s) return 1;
+  const d = showToGoal(p), Z = SHOW;
+  switch (s.id) {
+    case 'shBackpedal': case 'shBackIn': return 0.75;
+    case 'shWalkIn': return Z.slowTo;
+    case 'shGoalPlace': return s.pt != null || d <= Z.placeYd ? 0.02 : Z.slowTo + (1 - Z.slowTo) * Math.max(0, Math.min(1, (d - Z.placeYd) / (4 - Z.placeYd)));
+    case 'shStopStep': return s.st == null ? (d <= 1.05 ? 0.02 : Z.speed) : clock - s.st < 0.9 ? 0.02 : Z.slowTo;
+  }
+  return Z.speed;
+}
+// where the held ball is along the field while he sets it down (ballX, 04: the touchdown is called when IT crosses)
+const showPlaceX = c => { const s = c.show; if (!s || s.id !== 'shGoalPlace' || s.pt == null) return null; return c.x + c.face * (6 * S + ((SHOW.placeYd + 0.4) * YL - 6 * S) * smooth01((clock - s.pt) / 0.5)); };
+// every frame (update): ends it, cycles the looks, runs the finishes; the placed ball is left on the grass after the score
+function showTick() {
+  if (showPend && (clock > showPend.till || !showPend.c.hasBall)) showPend = null;
+  if (showPend && !showPend.c.action && showLive()) { showStart(showPend.c); showPend = null; }
+  if (!ols || !ols.length) return;
+  for (const c of allPlayers()) {
+    const s = c.show; if (!s) continue;
+    if (state === 'done' && s.id === 'shGoalPlace' && s.pt != null && c.hasBall) {   // scored by setting it down (its tip broke the plane): he finishes the reach, then the ball stays on the turf there
+      if (clock - s.pt < 0.5) continue;
+      const x = showPlaceX(c); c.hasBall = false;
+      Object.assign(ball, { x, y: c.y, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, rot: 0, loose: true, live: false, inAir: false, tucked: false });
+      showEnd(c); continue;
+    }
+    const diving = s.id === 'shDiveIn' && c.action === 'dive';
+    if (!c.hasBall || !showLive() || (c.action && !diving) || c.stiff || c.truck || c.guard) { showEnd(c); continue; }
+    if (!s.fin && clock - s.k > SHOW.keep) { showEnd(c); continue; }
+    if (s.fin) {
+      const d = showToGoal(c);
+      if (s.id === 'shGoalPlace' && s.pt == null && (d <= SHOW.placeYd + 0.05 || (d < 2.5 && Math.hypot(c.vx || 0, c.vy || 0) < 0.6 * YD))) s.pt = clock;
+      if (s.id === 'shStopStep' && s.st == null && d <= 1.05) { s.st = clock; celebSfx('scrape', celebFav(c)); }
+      if (s.id === 'shDiveIn' && !s.dv && d <= 3 && !c.action && c === runner) { s.dv = 1; runAction('Tab'); }
+      if (s.id === 'shDiveIn' && s.dv && !c.action && clock - s.t0 > 0.5) showEnd(c);
+    } else if (clock - s.t0 > SHOW.cycle && s.k > s.t0 + 0.2) {   // still clicking: the next look, never the same twice running
+      const pool = SHOW_ALL.filter(id => id !== s.id && showLookOK(c, id));
+      c.show = { id: pool[Math.floor(Math.random() * pool.length)] || s.id, t0: clock, n: s.n + 1, k: s.k };
+    }
+    if (c.show && c.show.id === 'shHelmetTap') { const ph = Math.floor((clock - c.show.t0) * 2); if (ph !== c.show.ph) { c.show.ph = ph; celebSfx('slap:0.3', celebFav(c)); } }   // (two slaps a second)
+  }
+}
+// tackled / stripped while showing off: the crowd groans, a callout, the Post hears about it (showFail: no credits)
+function showFail(c) {
+  popup(c, 'SHOWBOATING!', '#ffd94a');
+  try { if (celebHome(c)) crowdGroan(0.6); } catch (e) {}
+  const name = c.src && c.src.name;
+  if (name && xpcOn()) (LEAGUE.celFines || (LEAGUE.celFines = [])).push({ name, move: c.show.id, fail: 1, yr: LEAGUE.year || 1, wk: season ? season.week : 0, team: MATCH[celebFav(c)] });
+  showEnd(c);
+}
+// a score: showing off now or a second ago = the celebration's hype bonus (touchdown, before the whistle code)
+function showTd() {
+  const c = allPlayers().find(p => p.hasBall);
+  if (c && (c.show || clock - (c.showEnd ?? -9) < 1)) celebNote('show', c);
+}
 function runAction(code) {
   const c = runner;
   if (!c || c.action || c.awaiting) return;
@@ -3241,6 +3350,7 @@ function tryPancake(b, d, odds) {
   const mom = 1 + PANCAKE_MOM.k * Math.min(PANCAKE_MOM.cap, Math.hypot(b.vx || 0, b.vy || 0) / OL_RUN) * (b.spdMult || 1);
   if (!(isRunPlay && xfOn(b, 'bulldozer')) && Math.random() >= abilPanK(b) * (table[d.role] || 0) * PANCAKE_SCALE * (olBlock ? rmo(b, 'str', 'block') / rm(d, 'str', 'block') : rv(b, 'str', d, 'str', 'block')) * (olBlock ? mom : 1) / (kickoffPlay ? KICK_COVER.shed : 1)) return false;   // (the kickoff team sheds blocks better)
   d.tackling = false; d.shed = true; d.engaged = false; d.blockers = null;
+  d.flat = { t: clock };   // (looks only: drawn squashed flat for a beat once he's on the turf, see drawPlayer / PAPER_FX)
   xfEvent(b.src, 'pancake');
   b.assign = null;                   // and goes looking for someone else
   const L = PANCAKE_LOOK, bsp = Math.hypot(b.vx || 0, b.vy || 0), hx = d.x - b.x, hy = d.y - b.y, hl = Math.hypot(hx, hy) || 1;

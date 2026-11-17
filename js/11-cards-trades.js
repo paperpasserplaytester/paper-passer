@@ -102,19 +102,6 @@ function cardNote(b, tilt, body) {   // a yellow sticky note taped on at the top
 }
 let cardStatsOnly = false;   // a retired player's card (the new-season popup): nothing but STATS and BACK
 const RETIRE_FX = { gap: 0.16, drop: 0.38, stamp: 0.2, from: 260 };   // retirement cards: seconds between cards, the drop, the RETIRED stamp; px they fall from
-function rbRibbon(x, y, rh) {   // the gold record-book ribbon: RECORD, then how many league (LG) / franchise (TM) #1s he holds
-  const w = 62, h = 84;
-  ctx.save();
-  ctx.fillStyle = RES.shade; ctx.beginPath(); ctx.moveTo(x + 4, y + 4); ctx.lineTo(x + w + 4, y + 4); ctx.lineTo(x + w + 4, y + h + 4); ctx.lineTo(x + w / 2 + 4, y + h - 18); ctx.lineTo(x + 4, y + h + 4); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = RB.color; ctx.strokeStyle = RB.ink; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w / 2, y + h - 22); ctx.lineTo(x, y + h); ctx.closePath(); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = RB.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.font = 'bold 13px monospace'; ctx.fillText('RECORD', x + w / 2, y + 16, w - 6);
-  ctx.font = 'bold 12px monospace';
-  if (rh.lg) ctx.fillText(`LG ${rh.lg}`, x + w / 2, y + 34);
-  if (rh.fr) ctx.fillText(`TM ${rh.fr}`, x + w / 2, y + (rh.lg ? 50 : 34));
-  ctx.restore();
-}
 function drawPlayerCard(team, p, kr) {
   const od = offDetail();   // (offseason screens: the same card for draft / FA / re-sign / trade / Paper Bowl players, their action buttons sit in the right column)
   const C = CARD, own = team === MATCH.you && !od && !cardStatsOnly, g = p.group, at = ATTRS[g], { main, trim } = sideKit(team, p), INK = '#3b3320', DIM = 'rgba(59,51,32,0.6)';
@@ -150,7 +137,6 @@ function drawPlayerCard(team, p, kr) {
     drawBookmark(CARD_KR, p === kr, true);
     drawBookmark(CARD_HOF, HOF.some(h => h.p.name === p.name), true, 'HOF');
   }
-  { const rh = !exhibition && rbHolds(p.name); if (rh) rbRibbon(own ? CARD_HOF.x - 70 : CARD_KR.x, CARD_KR.y, rh); }   // (a record holder, any team: league / franchise #1s he holds)
 
   // the pentagon: rings, spokes, the position average (dotted), his potential (gold dashes), his ratings (pencil)
   const avg = cardAvgs(g), showPot = own || (od && (results.screen === 'fa' || results.screen === 'resign' || (results.screen === 'draft' && !!p.scout))), sp = shownPotential(p), potA = showPot ? potAttrs(p, sp.pts) : null;
@@ -172,7 +158,7 @@ function drawPlayerCard(team, p, kr) {
   raw.forEach((v, i) => { const [x, y] = pt(i, v); ctx.fillStyle = 'rgba(30,30,45,0.85)'; ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill(); });
   const R = 13.5 * C.u;
   ctx.fillStyle = RES.shade; ctx.beginPath(); ctx.ellipse(C.cx, C.cy + R * 0.98, R * 0.8, 7, 0, 0, Math.PI * 2); ctx.fill();
-  drawPortrait(p, C.cx, C.cy + R * 0.98, C.u, team);
+  drawPortrait(p, C.cx, C.cy + R * 0.98, C.u, team, true);   // (the full page: his yearbook photo)
 
   // the spokes' labels: name, value out of 15 (green above the position average, red below), the +1 buttons
   const hov = hoverPt && !behindPop() ? hoverPt : null;
@@ -245,6 +231,7 @@ function drawPlayerCard(team, p, kr) {
   cardNote(C.noteR, C.tilt, (w) => {
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = INK; ctx.font = 'bold 20px monospace'; ctx.fillText('STATUS', 16, 26);
     ctx.font = 'bold 14px monospace'; ctx.fillStyle = DIM; ctx.fillText('CONDITION', 16, 60);
+    if (own && SETTINGS.injuries && !exhibition && (p.iron || 0) >= INJURY.ironAt) { ctx.textAlign = 'right'; ctx.fillStyle = '#2e7d32'; ctx.fillText(`IRON MAN x${p.iron}`, w - 18, 60); ctx.textAlign = 'left'; }   // (iron man: cheaper weeks)
     ctx.font = 'bold 17px monospace'; ctx.fillStyle = INK; ctx.fillText(injLabel(p) || `${conditionLabel(condOf(p))} (${condOf(p)}%)`, 16, 83, w - 28);
     if (own && !p.inj && !exhibition) pencilBar(16, 96, w - 36, 16, condOf(p) / 100, condTone(condOf(p)), 10, 9);
     if (own && SETTINGS.injuries && !exhibition && (p.limited || p.inj)) {   // rehab: the meter fills each game (LIMITED = back, but slower and quicker to tire until it's full)
@@ -775,7 +762,7 @@ function autosaveSoon() {
 }
 const benchable = p => !exhibition && !(SETTINGS.injuries && p.inj && p.inj.weeks > 0);
 // hurt: "BAD INJURY (2 WK)"; null if he's fine
-const injLabel = p => SETTINGS.injuries && p.inj ? `${SEV_NAME[p.inj.sev]} INJURY${p.inj.weeks > 0 ? ` (${p.inj.weeks} WK)` : ''}` : null;
+const injLabel = p => SETTINGS.injuries && p.inj ? (p.inj.season ? 'OUT FOR THE SEASON' : `${SEV_NAME[p.inj.sev]} INJURY${p.inj.weeks > 0 ? ` (${p.inj.weeks} WK)` : ''}`) : null;
 function rosterClick(pt) {
   const team = viewTeam(), own = team === MATCH.you, ps = rosterPs(team);
   if (statsView && statsView.from === 'roster') {
@@ -2014,6 +2001,7 @@ function goalsReset() {   // the game was reset: this week's goals start over (c
   for (const q of g.list) { if (q.done) LEAGUE.coins = Math.max(0, LEAGUE.coins - (q.lv + (hcAbil('TASKMASTER') ? 1 : 0))); q.p = 0; q.done = false; }
 }
 function goalEvent(ev, val = 1) {
+  if (LG_SAND) return;   // (a league tape being made)
   const g = goalsEnsure();
   const simming = state === 'sim' || simGame || simFast || simMode === 'offense';
   const defEv = DEF_EVS.has(ev);
@@ -2176,6 +2164,19 @@ function upgradeAttr(team, p, a) {
 // never past his potential). On a coach's page: TRAIN (bank XP -> coachXP, the stars / traits / abilities come from the progression that was there).
 const XPC_POT_BTN = { x: 990, y: 586, w: 114, h: 36 }, XPC_UPG_BTN = { x: 1112, y: 586, w: 114, h: 36 }, XPC_COACH_BTN = { x: 100, y: 566, w: 220, h: 46 };
 const xpcCanBuy = () => xpcOn() && !dcg && !(results && rosterReturn === 'draft' && results.screen !== 'home');
+// v0.52: the one XP popup: the first time the bank can buy a potential boost on your roster, your best candidate's card + the bank (said once a career)
+let xpNudgeAt = 0;
+function xpNudge() {
+  if (!xpcOn() || career.xpNudged || !season || tut || exhibition) return;
+  const me = MATCH.you, R = (ROSTER[me] || []).filter(p => p.name && xpcPotOpen(p)); if (!R.length) return;
+  const need = XPC.nudge || Math.max(XPC.pot.base, Math.min(...R.map(xpcPotPrice))), bank = Math.floor(xpBank());
+  if (bank < need) return;
+  const c = R.filter(p => xpcPotPrice(p) <= bank).sort((a, b) => (b.stars || 0) - (a.stars || 0) || (a.age || 30) - (b.age || 30))[0]; if (!c) return;
+  career.xpNudged = 1; autosaveSoon();
+  const go = () => { coinGo(false); rosterView.tu = false; const sd = OFF_GROUPS.includes(c.group) ? 'off' : 'def'; rosterView.side = sd; rosterUI.side = sd; rosterUI.view = 'simple';
+    const i = rosterPs(me).indexOf(c); if (i >= 0) { rosterView.page = Math.floor(i / ROSTER_CARDS.length); rosterView.sel = i; } xpNudgeAt = performance.now(); };
+  offPopShow({ title: 'XP BANK', xpBig: bank, player: { p: c, k: me, open: go }, lines: [`POTENTIAL +½★  ${xpcPotPrice(c)} XP`], btns: [{ label: 'LATER' }, { label: 'UPGRADE', green: true, on: go }] });
+}
 const xpcPotOpen = p => starsOfScore(ptsOf(p)) < XPC.pot.max && ptsOf(p) < ATTR_TOTAL;
 const xpcPotPrice = p => Math.ceil(XPC.pot.base * Math.pow(XPC.pot.grow, (starsOfScore(ptsOf(p)) - 1) * 2) * (1 + XPC.pot.again * (p.potBuys || 0)));
 const xpcBoxes = p => { const caps = potAttrs(p, ptsOf(p)); return (ATTRS[p.group] || []).reduce((n, a) => n + Math.max(0, caps[a] - Math.round(p.raw[a])), 0); };   // empty boxes left under his potential
@@ -2186,7 +2187,7 @@ const xpcCoachMax = (c, role) => xpcCoachStars(c, role) >= (role === 'hc' ? care
 const xpcCoachPrice = (c, role) => Math.ceil((role === 'hc' ? XPC.coach.hc : XPC.coach.co) * (1 + XPC.coach.grow * xpcCoachStars(c, role)));
 function xpcBuy(price, title, lines, go) {   // pay `price` from the bank, then `go`; a large buy asks first
   if (!xpcCanBuy() || xpBank() < price) return;
-  const run = () => { if (!xpSpend(price)) return; go(); upgradeSfx(); autosaveSoon(); };
+  const from = spendRect(), run = () => { if (!xpSpend(price, from)) return; go(); upgradeSfx(); autosaveSoon(); };
   if (price >= XPC.confirm) offPopShow({ title, lines: [...lines, `Costs ${price} XP from the bank (you have ${Math.floor(xpBank())}).`], btns: [{ label: 'CANCEL' }, { label: 'BUY', green: true, on: run }] });
   else run();
 }
@@ -2251,6 +2252,7 @@ function xpcBtn(b, title, price, ok, star) {   // a bank button: what it buys, t
 }
 function drawXpcCard(p) {   // the two bank buttons under a player's upgrade bar
   if (!xpcCanBuy()) return;
+  if (xpNudgeAt && performance.now() - xpNudgeAt < XPC.nudgeGlow * 1000 && xpcPotOpen(p)) { const b = XPC_POT_BTN, k = 0.5 + 0.5 * Math.sin(performance.now() / 160); ctx.save(); ctx.strokeStyle = XPC.col; ctx.globalAlpha = 0.35 + 0.5 * k; ctx.lineWidth = 4 + 3 * k; ctx.strokeRect(b.x - 5, b.y - 5, b.w + 10, b.h + 10); ctx.restore(); }   // (v0.52: the XP nudge sent you here)
   xpcBtn(XPC_POT_BTN, xpcPotOpen(p) ? 'POTENTIAL +½★' : 'POTENTIAL MAX', xpcPotPrice(p), xpcPotOpen(p));
   xpcBtn(XPC_UPG_BTN, xpcUpgOpen(p) ? 'UPGRADE +1' : 'NO ROOM', xpcUpgPrice(p), xpcUpgOpen(p));
   if (xpcTierShown(p)) {   // only when he qualifies: right under his fit / ability on the STATUS note
@@ -2279,35 +2281,63 @@ function drawUpgradeBar(p, x = 690, y = 570, w = 480, wrap = 0, noText = false) 
   penOutline(x, by, w, 10, 5, RES.line, 2);
 }
 // the home screen after a game: who has an upgrade ready, and the big trades around the league
+// v0.51: celebration fines (celebFineRoll, 07) and showboats gone wrong, settled after the game: your players' fines cost credits (never below 0) with the spend
+// show; every one gets a Post note (the other teams' players: the note only)
+function celFineNews() {
+  const F = LEAGUE.celFines || [], lines = [];
+  for (const f of F) {
+    if (f.done) continue;
+    f.done = 1;
+    try { postNote(f.fail ? 'showFail' : 'fine', { p: f.name, team: pTeam(f.team) }, { w: f.cpu ? 3 : 7, team: f.team }); } catch (e) {}
+    if (f.cpu || f.fail) continue;
+    const cr = Math.min(f.cr || 1, LEAGUE.coins || 0);
+    lines.push(`${f.name} fined for his celebration: -${f.cr || 1} CR`);
+    if (cr > 0) { LEAGUE.coins -= cr; try { spendFx(HOME_BTNS[2], cr); } catch (e) {} }
+  }
+  if (F.length > 40) LEAGUE.celFines = F.slice(-40);
+  if (lines.length) offPopShow({ title: 'LEAGUE OFFICE', lines: lines.flatMap(t => wrapLines(t, 54)) });
+}
 function homeNews() {
   const up = LEAGUE.upgNew || [], tr = LEAGUE.tradeNews || [];
+  try { celFineNews(); } catch (e) { console.warn('fines', e); }   // (v0.51: celebration fines from the last game)
   if (LEAGUE.upgCoins) {   // maxed-out players paid credits: explained the first time only, then they just fly from the ROSTER button to the credits box
     const n = LEAGUE.upgCoins; LEAGUE.upgCoins = 0;
     if (!LEAGUE.maxedTipSeen) { LEAGUE.maxedTipSeen = 1; offPopShow({ title: 'MAXED-OUT PLAYERS', lines: wrapLines(`Players with no potential left turned their XP into ${n} credits.`, 54) }); }
     flyCoins(n, false, [HOME_BTNS[2].x + HOME_BTNS[2].w / 2, HOME_BTNS[2].y + HOME_BTNS[2].h / 2]);
   }
   const rb = [HOME_BTNS[2].x + HOME_BTNS[2].w / 2, HOME_BTNS[2].y + HOME_BTNS[2].h / 2];
-  if (LEAGUE.xpSim >= 1) { offPopShow({ title: 'XP BANK', lines: wrapLines(`Your players at their potential banked ${Math.round(LEAGUE.xpSim)} XP in the simulated game.`, 54) }); LEAGUE.xpSim = 0; }   // (simulated: banked quietly, one line here)
+  if (LEAGUE.xpSim >= 1) { flyXP(LEAGUE.xpSim, rb); LEAGUE.xpSim = 0; }   // (simulated: no popup, the tokens just fly like xpNew's)
   if (LEAGUE.xpNew >= 1) {   // XP banked by players at their potential: tokens fly from the ROSTER button to the credits box (after any credits)
-    if (false && !LEAGUE.xpTipSeen) { LEAGUE.xpTipSeen = 1; offPopShow({ title: 'XP BANK', lines: wrapLines(`Players with no potential left now bank their spare XP (${Math.round(LEAGUE.xpNew)} XP so far). Click the credits box to see the bank. Spend it on a player's card (more potential, a quick upgrade) or on your coaches in the front office.`, 54) }); }
     flyXP(LEAGUE.xpNew, rb); LEAGUE.xpNew = 0;
   }
-  if (up.length && !LEAGUE.upgTipSeen) { LEAGUE.upgTipSeen = 1; offPopShow({ title: 'UPGRADES READY', lines: [...wrapLines(up.slice(0, 8).join(', ') + (up.length > 8 ? ` +${up.length - 8} more` : ''), 54), '', 'Open the player on your ROSTER and press +1.'] }); }
+  const plOf = (name, team) => (ROSTER[team] || []).find(q => q.name === name || q.short === name);   // (v0.52: news popups show player cards)
+  if (up.length && !LEAGUE.upgTipSeen) { LEAGUE.upgTipSeen = 1; const me = MATCH.you, cards = up.map(n => plOf(n, me)).filter(Boolean).map(p => ({ p, team: me, ico: 'up', icoCol: '#2f9a4a', sub: '+1 READY' }));
+    if (cards.length) catPopShow({ title: 'UPGRADES READY', cats: [{ name: 'PRESS +1 ON HIS CARD', cards }], noOpen: true });
+    else offPopShow({ title: 'UPGRADES READY', lines: [...wrapLines(up.slice(0, 8).join(', '), 54), '', 'Open the player on your ROSTER and press +1.'] }); }
   if (tr.length) offPopShow({ title: 'AROUND THE LEAGUE', lines: tr.slice(0, 5).flatMap(t => wrapLines(t, 54)) });
+  LEAGUE.injNews = [];   // (league injuries: no popup, the Post's wire carries them, written in injNewsAdd)
   LEAGUE.upgNew = []; LEAGUE.tradeNews = []; if (season && !season.offseason) LEAGUE.tradeCards = [];   // (in-season deals were told here: the new-season popup shows the offseason ones)
   scoutWeek();
   { const sn = LEAGUE.scoutNews || []; if (sn.length && scoutsOn()) offPopShow({ title: 'SCOUTING REPORT', lines: [...sn.slice(0, 4).flatMap(t => wrapLines(t, 54)), '', 'Assign your scouts on the FACILITIES campus.'] }); LEAGUE.scoutNews = []; }
-  { const R = LEAGUE.rbk, rn = R ? R.news || [] : [], rc = R ? R.chase || [] : [];   // the record book: marks that fell in any game this week, and record chases (after week RB.chaseWk)
-    if (rn.length || rc.length) offPopShow({ title: 'RECORD BOOK', lines: [...rn.slice(-4).flatMap(t => wrapLines(t, 54)), ...(rn.length && rc.length ? [''] : []), ...rc.flatMap(t => wrapLines('CHASE: ' + t, 54))] });
-    if (R) { R.news = []; R.chase = []; } }
-  const pn = LEAGUE.pracNews || [];
-  if (pn.length) offPopShow({ title: 'PRACTICE BATTLES', lines: pn.slice(0, 4).flatMap(t => wrapLines(t, 54)) });
+  { const R = LEAGUE.rbk, rx = R ? R.newsX || [] : [], fresh = !!LEAGUE.recFresh;   // the record book (v0.52): only league / franchise marks that really fell, only on the first home screen after a game; ties and chases stay in the Post
+    if (fresh && rx.length && !SETTINGS.hideRecPop) {
+      const cats = rx.slice(-6).map(r => { const p = r.team ? null : plOf(r.n, r.t);
+        return { name: `${r.lg ? 'LEAGUE' : 'FRANCHISE'} ${r.sw.toUpperCase()} RECORD`, lines: [], feat: { card: p ? { p, team: r.t } : null, team: r.t, big: r.v, label: r.l, was: r.oldV, wasBy: r.oldBy ? `(${r.oldBy})` : '', mark: r.own ? 'OWN RECORD' : r.lg ? 'LEAGUE' : 'FRANCHISE', markCol: r.lg ? '#c81b1b' : '#2a62b0' } }; });
+      catPopShow({ title: 'RECORD BOOK', cats, hide: 'hideRecPop' });
+    }
+    if (R && (fresh || !season || season.offseason)) { R.news = []; R.chase = []; R.newsX = []; } }
+  LEAGUE.recFresh = 0;
+  const pn = LEAGUE.pracNews || [];   // (v0.52: each battle = the two cards, VS between, the winner stamped; old saves' text lines still show as text)
+  if (pn.length && !SETTINGS.hideBattlePop) {
+    const me = MATCH.you, cats = pn.slice(0, 4).map(b => { if (typeof b === 'string') return { name: 'PRACTICE BATTLE', lines: wrapLines(b, 80) };
+      const w = plOf(b.win, me), l = plOf(b.lose, me); if (!w || !l) return { name: `${b.g} BATTLE`, lines: wrapLines(b.line || '', 80) };
+      return { name: `${b.g} BATTLE`, lines: b.got ? [`+${b.stars.toFixed(1)} STARS${b.took ? '  -  TAKES THE STARTING JOB' : ''}`] : [b.took ? 'TAKES THE STARTING JOB' : ''], feat: { vs: [{ p: w, team: me, win: true }, { p: l, team: me, win: false }], label: b.g } }; });
+    catPopShow({ title: 'PRACTICE BATTLES', cats, hide: 'hideBattlePop' });
+  }
   LEAGUE.pracNews = [];
   const fn = LEAGUE.facNews || [];
   if (fn.length) offPopShow({ title: 'FACILITIES', lines: fn.flatMap(t => wrapLines(t, 54)) });
   LEAGUE.facNews = [];
-  const dn = LEAGUE.diffNews || [];
-  if (dn.length) offPopShow({ title: 'ADAPTIVE DIFFICULTY', lines: dn.flatMap(t => wrapLines(t, 54)) });
   LEAGUE.diffNews = [];
   try { conNews(); } catch (e) { console.warn('contracts', e); }   // (extensions signed, a poach attempt on your staff, deals running out)
   const cn = LEAGUE.coachNews || [];
@@ -2316,10 +2346,10 @@ function homeNews() {
   { const S = STAFF[MATCH.you] || {}, seen = LEAGUE.staffAlert || (LEAGUE.staffAlert = {}), ready = [];   // a coordinator with a trait upgrade (3 stars) or a second trait (5 stars) waiting: said once each
     for (const r of ['oc', 'dc']) {
       const c = S[r]; if (!c || tut || exhibition) continue;
-      if (c.stars >= 5 && !c.trait2) { if (!seen[r + '2']) { seen[r + '2'] = 1; ready.push(`${c.name} (${r.toUpperCase()}) can equip a second trait.`); } }
-      else if (c.stars >= 3 && (c.tlvl || 1) < 2 && !seen[r + '1']) { seen[r + '1'] = 1; ready.push(`${c.name} (${r.toUpperCase()}) can upgrade ${c.trait}.`); }
+      if (c.stars >= 5 && !c.trait2) { if (!seen[r + '2']) { seen[r + '2'] = 1; ready.push({ c, t: `${r.toUpperCase()}: SECOND TRAIT` }); } }
+      else if (c.stars >= 3 && (c.tlvl || 1) < 2 && !seen[r + '1']) { seen[r + '1'] = 1; ready.push({ c, t: `${r.toUpperCase()}: UPGRADE ${String(c.trait || '').toUpperCase()}` }); }
     }
-    if (ready.length) offPopShow({ title: 'COACH UPGRADE READY', lines: [...ready.flatMap(t => wrapLines(t, 54)), '', 'Open FRONT OFFICE and pick his page.'] }); }
+    if (ready.length) catPopShow({ title: 'COACH UPGRADE READY', cats: ready.map(x => ({ name: x.t, lines: ['FRONT OFFICE > his page'], cards: [{ staff: x.c, team: MATCH.you }] })), noOpen: true }); }
   { const g = season && !season.offseason ? goalsEnsure() : null;   // this week's goals, announced once
     if (g && g.fresh) { g.fresh = false; if (!SETTINGS.hideGoalsTip) goalsShow('NEW WEEKLY GOALS', true); } }
   if (season && !season.offseason) {   // the trade deadline: a heads-up three weeks out, and on the last week to deal
@@ -2331,9 +2361,10 @@ function homeNews() {
   }
   if (xpcOn() && !LEAGUE.cap100 && LEAGUE.coins >= CAP.nudge && (LEAGUE.cap || CAP.start) < CAP.max) {   // 100 credits for the first time in this franchise: off to TEAM UPGRADES, the first cap purchase at a discount
     LEAGUE.cap100 = 1; LEAGUE.capSale = 1; autosaveSoon();
-    offPopShow({ title: `${CAP.nudge} CREDITS!`, lines: [...wrapLines(`You have enough credits for a TEAM UPGRADE. More SALARY CAP (+${fmtM(CAP.step)}) is the best first buy: it lets you keep your stars and sign better players.`, 54), '', `FIRST TIME: ${Math.round((1 - CAP.firstOff) * 100)}% OFF (${capCost()} credits instead of ${capCost()}).`],
+    offPopShow({ title: `${CAP.nudge} CREDITS!`, lines: [...wrapLines(`You have enough credits for a TEAM UPGRADE. More SALARY CAP (+${fmtM(CAP.step)}) is the best first buy: it lets you keep your stars and sign better players.`, 54), '', `FIRST TIME: ${Math.round((1 - CAP.firstOff) * 100)}% OFF`], price: { was: CAP.cost, now: capCost() },
       btns: [{ label: 'LATER' }, { label: 'TEAM UPGRADES', green: true, on: () => coinGo(false) }] });
   }
+  try { xpNudge(); } catch (e) { console.warn('xp nudge', e); }   // (v0.52: the one XP popup, once)
   try { postEventShow(); } catch (e) { console.warn('post', e); }   // (a midweek event from the Post)
   offersShow();   // (other teams' offers for your players)
 }
@@ -2393,18 +2424,21 @@ function overpay(p) {   // $M a year over a fair deal, once he is overpaid by mo
 // his trade value: year by year (TRADE.horizon) his projected stars (growing toward his potential before his position's peak, declining after it) give a
 // production, his salary comes off it (a fair one once his contract is up, and only TRADE.resign of that year), each year discounted and weighed by the
 // chance he hasn't retired. m = the valuing team's { now, disc } (TRADE.mode; none = a neutral team).
+const tvMix = p => { const aStars = Math.max(0.5, Math.min(5, 1 + (scoreOf(p) - 20) / 8)); return p.stars * (1 - TRADE.attrW) + aStars * TRADE.attrW; };   // (attributes count too, not just the star rating)
 function tvPlayer(p, m) {
   const best = Math.max(...ATTRS[p.group].map(a => p.raw[a])), M = m || TRADE.mode.neutral, [pv, ps] = TRADE.pos[tradeKey(p)];
-  const aStars = Math.max(0.5, Math.min(5, 1 + (scoreOf(p) - 20) / 8)), mixSt = p.stars * (1 - TRADE.attrW) + aStars * TRADE.attrW;   // (attributes count too, not just the star rating)
+  const mixSt = tvMix(p), PS = perfShift(p);   // (PS.shift = how he is playing, in stars: strongest now, fading by TV_PERF.fade a year)
   const [a0, a1] = TRADE.peak[p.group] || [24, 30], dec = TRADE.decline[p.group] || TRADE.decline.def, pot = Math.max(mixSt, p.potential || p.stars), ra = retireAge(p) - (p.group === 'QB' ? 3 : 0);
-  let v = 0, alive = 1, st = mixSt;
+  let v = 0, v0 = 0, alive = 1, st = mixSt;   // (v0 = the same without his play: the guard below)
+  const yearV = (s, own) => { s = Math.max(0.5, Math.min(5, s)); const net = lerpTab(TRADE.prod, s) * pv - (own ? payOf(p) : lerpTab(TRADE.pay, s) * ps) * TRADE.payTV; return !own && net <= 0 ? 0 : (own ? 1 : TRADE.resign) * net; };   // (nobody re-signs a man who isn't worth it)
   for (let y = 0; y < TRADE.horizon; y++) {
     if (y) { const age = p.age + y; st = age <= a0 ? Math.min(pot, st + TRADE.grow) : age > a1 ? st - dec : st; alive *= 1 - Math.min(0.9, Math.max(0, (ra + y - TRADE.retire[0]) * TRADE.retire[1])); }
-    const s = Math.max(0.5, Math.min(5, st)), own = y < (p.years || 1), prod = lerpTab(TRADE.prod, s) * pv, net = prod - (own ? payOf(p) : lerpTab(TRADE.pay, s) * ps) * TRADE.payTV;
-    if (!own && net <= 0) continue;   // (nobody re-signs a man who isn't worth it)
-    v += (own ? 1 : TRADE.resign) * net * (y ? Math.pow(M.disc, y) : M.now) * alive;
+    const own = y < (p.years || 1), k = (y ? Math.pow(M.disc, y) : M.now) * alive;
+    v += yearV(st + PS.shift * Math.pow(TV_PERF.fade, y), own) * k;
+    if (PS.shift) v0 += yearV(st, own) * k;
   }
   v = Math.max(TRADE.floor, v);
+  if (PS.shift) { v0 = Math.max(TRADE.floor, v0); v = Math.max(v0 * (1 - TV_PERF.maxMove), Math.min(v0 * (1 + TV_PERF.maxMove), v)); }   // (a man paid about what he produces would swing wildly on a small shift)
   if (best >= TRADE.hi) v *= 1 + TRADE.attr; else if (best <= TRADE.lo) v *= 1 - TRADE.attr;
   v *= p.sagaTV || 1;   // (saga news moves it: ARC_FX tv)
   if (p.tier === 'X') v *= 1 + TRADE.xfStar; else if (p.tier === 'S') v *= 1 + TRADE.xf;
@@ -2415,28 +2449,91 @@ function tvPlayer(p, m) {
   }
   if (SETTINGS.injuries && p.injN) v *= Math.max(TRADE.proneMin, 1 - TRADE.prone * p.injN);   // (frequently injured: worth less)
   if (SETTINGS.injuries && p.inj && p.inj.weeks > 0) v *= p.inj.weeks > (season ? Math.max(0, SEASON_WEEKS - season.week + 1) : 17) ? 0.3 : 0.7;   // (and less again while hurt)
-  return v * perfMul(p);
+  return v * (1 + Math.max(-TV_PERF.down, Math.min(TV_PERF.up, TV_PERF.k * PS.z * PS.w)));   // (a small extra for recent form)
 }
-// how he has actually played: his per-game production over his last games (this season and last) against a normal starter at his
-// position (1 = average). Moves trade value by up to TV_PERF.up / down, trusted more the more games there are (games / (games + trust)).
-const TV_PERF = { k: 0.3, up: 0.2, down: 0.15, games: 17, trust: 6 };
-const PERF_OF = {
-  QB: g => (g.py + 20 * g.pt - 25 * g.pi + g.cy + 20 * g.ct) / 245, RB: g => (g.cy + g.ry + 20 * (g.ct + g.rt)) / 105,
-  WR: g => (g.ry + 20 * g.rt) / 66, TE: g => (g.ry + 20 * g.rt) / 44, OL: g => 1 + 0.08 * g.pk - 0.3 * g.sa - 0.06 * g.pr,
-  DL: g => (g.tk + 3 * g.sk) / 4.5, LB: g => (g.tk + 3 * g.sk + 5 * g.ic) / 7.5, CB: g => (g.tk + 6 * g.ic) / 4.8, S: g => (g.tk + 6 * g.ic) / 5.8,
-  K: g => g.fa ? (g.fg / g.fa) / 0.85 : 1,
+// how he has actually played: a per-game score by position (perfScore) against this season's starters at his position (perfLeague: z = SDs from
+// their mean; last season counts x lastK), turned into "played like an N-star" and blended into his rating in tvPlayer (perfShift), trusted by
+// real games played (n / (n + trust)). Scrimmages / tutorial / no lines = neutral.
+const TV_PERF = {
+  k: 0.05, up: 0.1, down: 0.1,             // end multiplier: x (1 + k x z x trust), capped at +up / -down
+  mix: 0.5, cap: 1, fade: 0.7,             // share of (played-like stars - rating) that moves his rating; played-like is kept within +-cap stars of his rating; x fade a year ahead
+  maxMove: 0.5,                            // his play never moves the base value by more than this share (before the end multiplier, so about +-0.6 in all)
+  zMax: 2.5, trust: 6, minSn: 20,          // z clamp; games for half trust; a game counts if he started or played minSn+ snaps
+  minGames: 3, minN: 3, lastK: 0.5,        // league games per starter before this season's baseline stands alone (blended toward last season until then); starters needed for a baseline; last season's weight
+  sdMin: { st: 0.25, sc: 0.05 },           // floors on the SD of starters' stars / of scores (x |mean|)
+  base: { ypc: 4.2, succ: 0.44, yprr: 1.4, ctch: 0.62, fg: 0.84, xp: 0.95 },   // a rate with no attempts behind it counts as this
+  w: {   // weights of each position's score (vol = per-game yards + 20 a TD, per 100)
+    QB: { eff: 1, vol: 2, to: 1.5 },                         // eff = adjusted net yards / attempt (xanya), to = picks + lost fumbles a game
+    RB: { ypc: 0.5, succ: 4, vol: 2, to: 1.5 },              // succ = successful plays / plays (ok / on)
+    WR: { yprr: 1, ctch: 2, drop: 4, vol: 2 },               // yards per route run, catch %, drops per target
+    TE: { yprr: 1, ctch: 2, drop: 4, vol: 2, blk: 0.02 },    // + blocking grade (xGrade TE, 0-100)
+    OL: { g: 0.1 }, DL: { g: 0.1 }, LB: { g: 0.1 }, CB: { g: 0.1 }, S: { g: 0.1 },   // grade (xGrade, 0-100)
+    K: { b: [1, 1.3, 1.7, 2.2], fg: 1, xp: 0.3 },            // FG % weighted by distance bucket (<30, 30s, 40s, 50+), XP %
+  },
 };
+function perfScore(t, grp) {   // per-game score of a pstSum total (needs t.gp); higher = better; null = nothing to judge
+  const W = TV_PERF.w[grp], B = TV_PERF.base, n = t.gp || 0, r = (a, b, d) => b > 0 ? a / b : d;
+  if (!W || !n) return null;
+  if (W.g) return W.g * xGrade(t, grp);
+  if (grp === 'QB') return t.pa + t.sq ? W.eff * xanya(t) + W.vol * (t.py + t.cy + 20 * (t.pt + t.ct)) / n / 100 - W.to * (t.pi + t.fl) / n : null;
+  if (grp === 'RB') return t.ca + t.tg ? W.ypc * r(t.cy, t.ca, B.ypc) + W.succ * r(t.ok, t.on, B.succ) + W.vol * (t.cy + t.ry + 20 * (t.ct + t.rt)) / n / 100 - W.to * t.fl / n : null;
+  if (grp === 'WR' || grp === 'TE') {
+    if (!(t.tg + t.rr + (W.blk ? t.rbn + t.pbn : 0))) return null;
+    return W.yprr * r(t.ry, t.rr, B.yprr) + W.ctch * r(t.rc, t.tg, B.ctch) - W.drop * r(t.dr, t.tg, 0) + W.vol * (t.ry + 20 * t.rt) / n / 100 + (W.blk ? W.blk * xGrade(t, 'TE') : 0);
+  }
+  if (grp === 'K') {
+    let wa = 0, wm = 0; for (let i = 1; i <= 4; i++) { wa += W.b[i - 1] * (t['a' + i] || 0); wm += W.b[i - 1] * (t['m' + i] || 0); }
+    const fg = wa ? wm / wa : t.fa ? t.fg / t.fa : null, xp = t.xa ? t.xp / t.xa : null;
+    return fg == null && xp == null ? null : W.fg * (fg == null ? B.fg : fg) + W.xp * (xp == null ? B.xp : xp);
+  }
+  return null;
+}
+// his lines of this season and last: [{ s: score, n: real games }, same for last season] (null = none). Folded seasons (gp) count as their games.
+function perfParts(name, grp) {
+  const yr = LEAGUE.year, cur = [], last = [], real = g => g.gp ? Math.min(g.gp, Math.max(g.gs || 0, Math.floor((g.sn || 0) / TV_PERF.minSn))) : (g.gs || g.sn >= TV_PERF.minSn ? 1 : 0);
+  for (const g of pstGames(name)) if (g.yr > 0 && (g.yr === yr || g.yr === yr - 1) && real(g)) (g.yr === yr ? cur : last).push(g);
+  const part = gs => { if (!gs.length) return null; const s = perfScore(pstSum(gs), grp); return s == null ? null : { s, n: gs.reduce((a, g) => a + real(g), 0) }; };
+  return [part(cur), part(last)];
+}
+// league baselines per position: mean / SD of this season's starters' scores (now), last season's (last), and of their stars (st). Rebuilt once a week.
+let PERF_LG = null;
+const perfTag = () => season ? `${LEAGUE.year}:${season.week}:${season.offseason ? 1 : 0}` : '-';
+function perfLeague() {
+  const tag = perfTag(); if (PERF_LG && PERF_LG.tag === tag) return PERF_LG;
+  const acc = {}, ms = (a, fl) => { const m = a.reduce((x, y) => x + y, 0) / a.length, sd = Math.sqrt(a.reduce((x, y) => x + (y - m) * (y - m), 0) / a.length); return { m, sd: Math.max(sd, fl(m)) }; };
+  for (const k of Object.keys(ROSTER)) {
+    if (!NFL[k]) continue;
+    for (const p of startersOf(k)) {
+      if (!p || !p.name || !TV_PERF.w[p.group]) continue;
+      const a = acc[p.group] || (acc[p.group] = { c: [], l: [], st: [], g: 0, n: 0 }), [c, l] = perfParts(p.name, p.group);
+      a.st.push(p.stars || 0); a.n++;
+      if (c) { a.c.push(c.s); a.g += c.n; }
+      if (l) a.l.push(l.s);
+    }
+  }
+  const G = {}, scFl = m => Math.abs(m) * TV_PERF.sdMin.sc + 1e-6;
+  for (const grp in acc) {
+    const a = acc[grp], cur = a.c.length >= TV_PERF.minN ? ms(a.c, scFl) : null, last = a.l.length >= TV_PERF.minN ? ms(a.l, scFl) : null, f = Math.min(1, a.g / a.n / TV_PERF.minGames);
+    const now = !cur ? null : f >= 1 ? cur : last ? { m: last.m + (cur.m - last.m) * f, sd: last.sd + (cur.sd - last.sd) * f } : null;   // (early season: leans on last season, or no baseline yet)
+    G[grp] = { now, last, st: ms(a.st, () => TV_PERF.sdMin.st) };
+  }
+  return (PERF_LG = { tag, G });
+}
+// { shift (stars added to his rating now), z (SDs from his position's starters), w (trust 0-1) }; cached per player per week (tvPlayer runs for every roster in aiTrades)
+const PERF_NONE = Object.freeze({ shift: 0, z: 0, w: 0, perfSt: null });
 const perfCache = new Map();
-function perfMul(p) {
-  if (!p || !p.name || !LEAGUE || !PERF_OF[p.group]) return 1;
-  const all = pstGames(p.name), ck = `${all.length}:${LEAGUE.year}`, hit = perfCache.get(p.name);
+function perfShift(p) {
+  if (!p || !p.name || !LEAGUE || !season || exhibition || tut || !TV_PERF.w[p.group]) return PERF_NONE;
+  const L = perfLeague(), ck = `${L.tag}:${p.group}`, hit = perfCache.get(p.name);
   if (hit && hit.k === ck) return hit.v;
-  const gs = all.filter(g => g.yr > 0 && g.yr >= LEAGUE.year - 1 && !g.gp).slice(-TV_PERF.games);
-  let v = 1;
-  if (gs.length) {
-    const t = pstSum(gs), n = gs.length, avg = {}; for (const k in t) avg[k] = t[k] / n;
-    const prod = PERF_OF[p.group](avg), w = n / (n + TV_PERF.trust);
-    v = 1 + Math.max(-TV_PERF.down, Math.min(TV_PERF.up, TV_PERF.k * (prod - 1) * w));
+  const g = L.G[p.group], [c, l] = g ? perfParts(p.name, p.group) : [null, null], zc = (s, b) => Math.max(-TV_PERF.zMax, Math.min(TV_PERF.zMax, (s - b.m) / b.sd));
+  let zs = 0, ws = 0;
+  if (c && g.now) { zs += zc(c.s, g.now) * c.n; ws += c.n; }
+  if (l && g.last) { const k = TV_PERF.lastK * l.n; zs += zc(l.s, g.last) * k; ws += k; }
+  let v = PERF_NONE;
+  if (ws > 0) {
+    const z = zs / ws, w = ws / (ws + TV_PERF.trust), mix = tvMix(p), perfSt = Math.max(mix - TV_PERF.cap, Math.min(mix + TV_PERF.cap, g.st.m + z * g.st.sd));
+    v = { shift: (perfSt - mix) * TV_PERF.mix * w, z, w, perfSt };
   }
   perfCache.set(p.name, { k: ck, v });
   return v;
@@ -2525,7 +2622,15 @@ function sugPage(i, L) {
 // --- category popups: a paper card with optional tabs (OFFENSE / DEFENSE), ◂ ▸ arrows between categories and a scrollable body of player cards (and text lines).
 // Used by the home screen's "what's missing" ? and the new-season news. catPopShow({ title, tabs: [{ label, cats }] | cats, tab, noOpen, done }); a category is
 // { name, lines: [text], cards: [{ p, team, sub } | { empty: 'WR' } | { staff, team }] }. A click on a player card opens his page (unless noOpen).
-const CPOP = { x: 70, y: 36, w: 1140, h: 648, top: 176, cols: 3, cw: 270, ch: 248, gap: 24, row: 272, line: 26 };
+const CPOP = { x: 70, y: 36, w: 1140, h: 648, top: 176, cols: 3, cw: 270, ch: 248, gap: 24, row: 272, line: 26, featW: 420, win: '#2f7d3a', lose: 'rgba(255,253,244,0.45)' };   // featW / win / lose: v0.52's featured cards (records, practice battles)
+const cpHideBtn = () => ({ x: CPOP.x + CPOP.w - 250, y: CPOP.y + CPOP.h - 62, w: 220, h: 44 });   // DON'T SHOW AGAIN (o.hide = the SETTINGS key)
+// a red rubber stamp, rotated (WIN, OWN RECORD, ...)
+function cpStamp(text, cx, cy, col = '#c81b1b', size = 24, rot = -0.2) {
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(rot); ctx.font = `bold ${size}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const w = ctx.measureText(text).width + 22, h = size + 14;
+  ctx.fillStyle = 'rgba(255,253,244,0.82)'; ctx.fillRect(-w / 2, -h / 2, w, h); ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.strokeRect(-w / 2, -h / 2, w, h); ctx.fillStyle = col; ctx.fillText(text, 0, 2);
+  ctx.restore();
+}
 const cpTabBtn = i => ({ x: CPOP.x + 40 + i * 190, y: CPOP.y + 62, w: 176, h: 40 });
 const cpArrow = d => ({ x: d ? CPOP.x + CPOP.w - 120 : CPOP.x + 40, y: CPOP.y + 112, w: 80, h: 44 });
 const cpOK = () => ({ x: CPOP.x + CPOP.w / 2 - 90, y: CPOP.y + CPOP.h - 66, w: 180, h: 52 });
@@ -2539,6 +2644,12 @@ function catPopCtl(o) {
     const c = cats()[S.cat], V = cpView(), items = [], list = c.cards || []; let y = 0;
     for (const t of c.lines || []) { items.push({ kind: 'line', y, t }); y += CPOP.line; }
     if ((c.lines || []).length) y += 10;
+    if (c.feat) {   // (v0.52) a featured layout: one card + its big number (records), or two cards with a VS between them (practice battles)
+      const F = c.feat, cw = CPOP.cw, ch = CPOP.ch;
+      if (F.vs) { const gap = 120, x0 = (V.w - 2 * cw - gap) / 2; items.push({ kind: 'card', d: F.vs[0], x: x0, y, w: cw, h: ch }, { kind: 'card', d: F.vs[1], x: x0 + cw + gap, y, w: cw, h: ch }, { kind: 'vs', x: V.w / 2, y: y + ch / 2, F }); }
+      else { const x0 = (V.w - cw - 30 - CPOP.featW) / 2; items.push(F.card ? { kind: 'card', d: F.card, x: x0, y, w: cw, h: ch } : { kind: 'logo', t: F.team, x: x0, y, w: cw, h: ch }, { kind: 'feat', F, x: x0 + cw + 30, y, w: CPOP.featW, h: ch }); }
+      y += ch + 44;
+    }
     let i = 0;
     while (i < list.length) {
       if (list[i].staff) { items.push({ kind: 'card', d: list[i], x: (V.w - 360) / 2, y, w: 360, h: 480 }); y += 500; i++; continue; }
@@ -2572,7 +2683,23 @@ function catPopCtl(o) {
       popBtnDraw = true;
       for (const it of L.items) {
         const y = V.y + it.y - S.scroll;
-        if (it.kind === 'line') { if (y > V.y - 30 && y < V.y + V.h) { ctx.fillStyle = RES.line; ctx.font = 'bold 17px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(it.t, V.x + 24, y + CPOP.line / 2, V.w - 100); } continue; }
+        if (it.kind === 'line') { if (y > V.y - 30 && y < V.y + V.h) { ctx.fillStyle = RES.line; ctx.font = 'bold 17px monospace'; ctx.textAlign = c.feat ? 'center' : 'left'; ctx.textBaseline = 'middle'; ctx.fillText(it.t, c.feat ? V.x + V.w / 2 : V.x + 24, y + CPOP.line / 2, V.w - 100); } continue; }
+        if (it.kind === 'vs') { drawDoodle('bolt', V.x + it.x, y - 26, 84, '#ffd23f'); ctx.fillStyle = RES.line; ctx.font = 'bold 36px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('VS', V.x + it.x, y + 40); if (it.F.label) { ctx.font = 'bold 16px monospace'; ctx.fillText(it.F.label, V.x + it.x, y + 78, 116); } continue; }
+        if (it.kind === 'logo') { resPanel(V.x + it.x, y, it.w, it.h, [], RES.bright); drawLogo(it.t, V.x + it.x + it.w / 2, y + it.h / 2, 150); continue; }
+        if (it.kind === 'feat') {   // the record: trophy, the new number big, what it is, the old mark struck through
+          const F = it.F, x = V.x + it.x;
+          drawDoodle(F.ico || 'trophy', x + 54, y + 62, 96, F.col || (typeof RB !== 'undefined' ? RB.color : '#e0b021'));
+          ctx.fillStyle = RES.line; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+          ctx.font = 'bold 60px monospace'; ctx.fillText(F.big, x + 116, y + 62, it.w - 120);
+          ctx.font = 'bold 18px monospace'; ctx.fillText(F.label || '', x + 8, y + 132, it.w - 12);
+          if (F.was) {
+            ctx.font = 'bold 26px monospace'; ctx.fillStyle = PRICE_TAG.was; const ww = ctx.measureText(F.was).width; ctx.fillText(F.was, x + 8, y + 182);
+            ctx.strokeStyle = PRICE_TAG.strike; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(x + 4, y + 186); ctx.quadraticCurveTo(x + 8 + ww / 2, y + 180, x + 12 + ww, y + 176); ctx.stroke();
+            if (F.wasBy) { ctx.font = 'bold 15px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(F.wasBy, x + 22 + ww, y + 184, it.w - ww - 30); }
+          }
+          if (F.mark) cpStamp(F.mark, x + it.w - 90, y + 222, F.markCol || '#c81b1b', 18, -0.12);
+          continue;
+        }
         if (y + it.h < V.y || y > V.y + V.h) continue;
         const bb = { x: V.x + it.x, y, w: it.w, h: it.h }, d = it.d;
         if (d.staff) menuBtn(bb, '', RES.bright, 20, b => drawStaffCard(b, d.staff, d.team));
@@ -2599,13 +2726,16 @@ function catPopCtl(o) {
         }
         else if (d.p) {
           rosterCard(d.p, bb, d.team, null, null);
+          if (d.win === false) { ctx.fillStyle = CPOP.lose; ctx.fillRect(bb.x, bb.y, bb.w, bb.h); }   // (v0.52: the battle's loser fades back, the winner gets the stamp)
+          if (d.win === true) { cpStamp('WIN', bb.x + bb.w - 58, bb.y + 132, CPOP.win, 26, 0.18); drawDoodle('check', bb.x + 34, bb.y + 34, 40, CPOP.win); }
+          if (d.ico) drawDoodle(d.ico, bb.x + bb.w - 28, bb.y + 30, 40, d.icoCol || RES.line);
           if (d.sub) { ctx.font = 'bold 14px monospace'; ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(d.sub, bb.x + bb.w / 2, bb.y + bb.h + 12, bb.w - 16); }   // (under the card, in the row gap: it used to sit on the stars)
         }
       }
       popBtnDraw = false;
       ctx.restore();
       if (L.max > 0) { popBtnDraw = true; menuBtn(cpScrollBtn(0), '▲', RES.bright, 20, undefined, S.scroll > 0); menuBtn(cpScrollBtn(1), '▼', RES.bright, 20, undefined, S.scroll < L.max); popBtnDraw = false; }
-      popBtnDraw = true; menuBtn(cpOK(), 'OK', IN_GAME_PAPER.green, 24); popBtnDraw = false;
+      popBtnDraw = true; menuBtn(cpOK(), 'OK', IN_GAME_PAPER.green, 24); if (o.hide) menuBtn(cpHideBtn(), "DON'T SHOW AGAIN", RES.bright, 15); popBtnDraw = false;
     },
     click(pt) {
       if (S.view) {   // (his page: STATS opens the stats page, BACK returns to the cards)
@@ -2615,6 +2745,7 @@ function catPopCtl(o) {
         return;
       }
       if (inBtn(pt, cpOK())) { offPopClose(); if (o.done) o.done(); return; }
+      if (o.hide && inBtn(pt, cpHideBtn())) { SETTINGS[o.hide] = true; saveSettings(); offPopClose(); if (o.done) o.done(); return; }   // (v0.52: settings can turn it back on)
       if (o.tabs) for (let i = 0; i < o.tabs.length; i++) if (inBtn(pt, cpTabBtn(i))) { S.tab = i; S.cat = 0; S.scroll = 0; S.t0 = performance.now(); return; }
       const n = cats().length;
       if (n > 1) for (const d of [0, 1]) if (inBtn(pt, cpArrow(d))) { S.cat = (S.cat + (d ? 1 : -1) + n) % n; S.scroll = 0; S.t0 = performance.now(); return; }
@@ -2976,7 +3107,8 @@ function offersClick(pt) {
 const TR_SUG_BTN = { x: 440, y: 640, w: 220, h: 58 };   // SUGGESTIONS (the cap bar is shortened to make room)   // (bottom row, after ROSTER)
 // --- the trade screens: 'trade' = every player in the league (best attribute total first), 'tradeb' = the offer
 const TR = { sel: null, page: 0, side: null, pos: 'ALL', team: null, dd: false, ret: 'staff', v: 0, partner: null, give: [], get: [], tab: [0, 1], pg: [0, 0], grp: ['ALL', 'ALL'], pendingGive: null };
-const TR_TEAM_BTN = { x: 240, y: 12, w: 160, h: 56 }, TR_NEW_BTN = { x: 880, y: 12, w: 160, h: 56 }, TR_GO_BTN = { x: 852, y: 614, w: 250, h: 68 }, TR_STATS_BTN = { x: 660, y: 614, w: 176, h: 68 };   // (both under the attributes card)
+const TR_TEAM_BTN = { x: W - 220, y: 12, w: 200, h: 60 },   // (the team filter: where the DEFENSE button was, drawn as its own kind of button, drawTrTeamBtn)
+  TR_NEW_BTN = { x: 880, y: 12, w: 160, h: 56 }, TR_GO_BTN = { x: 852, y: 614, w: 250, h: 68 }, TR_STATS_BTN = { x: 660, y: 614, w: 176, h: 68 };   // (both under the attributes card)
 const TB = { x: [40, 660], y: 100, w: 580, h: 470, rows: 8 };
 const tbTabBtn = rectCache((s, t) => ({ x: TB.x[s] + 12 + t * 156, y: TB.y + 44, w: 148, h: 36 }));
 const tbRow = rectCache((s, i) => ({ x: TB.x[s] + 12, y: TB.y + 88 + i * 42, w: TB.w - 24, h: 38 }));
@@ -3021,9 +3153,10 @@ function tbWheel(e) {   // the mouse wheel over a PLAYERS panel pages its cards
 }
 let TR_LIST = { key: '', list: [] };
 function trList() {
-  const key = `${TR.side}|${TR.pos}|${TR.team}|${TR.v}`;
+  const key = `${TR.side}|${TR.pos}|${TR.team}|${TR.v}|${TR.q || ''}`, qq = (TR.q || '').trim().toLowerCase();
   if (TR_LIST.key !== key) TR_LIST = { key, list: Object.keys(ROSTER).filter(k => NFL[k] && (!TR.team || k === TR.team)).flatMap(k => ROSTER[k].map(p => ({ p, k })))
     .filter(({ p }) => !TR.side || OFF_GROUPS.includes(p.group) === (TR.side === 'off')).filter(({ p }) => TR.pos === 'ALL' || (TR.pos === 'BM' ? TR_BM_SET.has(p.name) : p.group === TR.pos))
+    .filter(({ p }) => !qq || (p.name && p.name.toLowerCase().includes(qq)))
     .sort((a, b) => scoreOf(b.p) - scoreOf(a.p) || b.p.stars - a.p.stars) };
   return TR_LIST.list;
 }
@@ -3032,7 +3165,41 @@ const TR_BM_KEY = 'pocketPasser.trbm';
 let TR_BM_SET = new Set();
 try { TR_BM_SET = new Set(JSON.parse(localStorage.getItem(TR_BM_KEY)) || []); } catch (e) {}
 const TR_BM = ROSTER_CARDS.map(bb => ({ x: bb.x + 18, y: bb.y + 10, w: 30, h: 40 }));
-const TR_TABS = [0, 1, 2, 3].map(i => ({ x: 270 + i * 234, y: 640, w: 220, h: 58 }));   // the four folder tabs: same size, clear of the ? tip
+const TR_TABS = [1, 2, 3, 4].map(i => ({ x: 270 + i * 188, y: 640, w: 168, h: 58 }));   // the folder tabs: same size, clear of BACK and the ? tip (slot 0 = SEARCH, TR_SEARCH)
+// SEARCH (the first folder tab): typing a name filters the list to players whose name holds the text (any team, any case; side / position / team filters still apply)
+const TR_SEARCH = { tab: { x: 270, y: 640, w: 168, h: 58 }, box: { x: 270, y: 584, w: 400, h: 44 }, clr: { x: 626, y: 588, w: 36, h: 36 }, max: 18 };
+function trSearchDraw() {
+  const B = TR_SEARCH.box, q = TR.q || '', foc = !!TR.qFoc;
+  if (!foc && !q) return;
+  UI_BTNS.push(B);
+  ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(B.x + 3, B.y + 4, B.w, B.h);
+  ctx.fillStyle = '#fffdf4'; ctx.fillRect(B.x, B.y, B.w, B.h); ctx.strokeStyle = foc ? '#2f5fb8' : 'rgba(40,50,70,0.6)'; ctx.lineWidth = foc ? 3 : 2; ctx.strokeRect(B.x, B.y, B.w, B.h);
+  ctx.font = 'bold 20px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = q ? RES.line : 'rgba(60,60,70,0.45)'; ctx.fillText(q || 'type a name...', B.x + 14, B.y + B.h / 2 + 1, B.w - 70);
+  if (foc && Math.floor(performance.now() / 500) % 2 === 0) { const cx = B.x + 14 + (q ? Math.min(ctx.measureText(q).width, B.w - 70) : 0) + 2; ctx.fillStyle = RES.line; ctx.fillRect(cx, B.y + 10, 2, B.h - 20); }
+  ctx.restore();
+  if (q) menuBtn(TR_SEARCH.clr, 'x', RES.bright, 20);
+}
+function trSearchSet(v) { const q = String(v).replace(/[^A-Za-z '\-.]/g, '').slice(0, TR_SEARCH.max); if (q !== (TR.q || '')) { TR.q = q; TR.page = 0; TR.v++; } }
+function trSearchFocus(on) { TR.qFoc = on; KB_T = on ? { get: () => TR.q || '', set: trSearchSet, done: k => { if (k === 'Escape') trSearchSet(''); trSearchFocus(false); } } : null; if (KB_TOUCH) { if (!kbIn) kbSetup(); kbSync(); } }
+// typing while the search field has the focus: true = the key was taken (so no game key fires)
+function trSearchKey(e) {
+  if (!results || results.screen !== 'trade' || !TR.qFoc || TR.sel || teamPick) return false;
+  const q = TR.q || '';
+  if (e.key === 'Escape') { trSearchSet(''); trSearchFocus(false); }
+  else if (e.key === 'Enter') trSearchFocus(false);
+  else if (e.key === 'Backspace') trSearchSet((e.ctrlKey ? q.replace(/\s*[^\s]*\s*$/, '') : q.slice(0, -1)));
+  else if (!e.ctrlKey && !e.metaKey && e.key.length === 1) trSearchSet(q + e.key);
+  else if (e.key !== 'Tab') return false;
+  e.preventDefault(); return true;
+}
+function trSearchClick(pt) {   // true = taken
+  if (inBtn(pt, TR_SEARCH.tab)) { trSearchFocus(!TR.qFoc); return true; }
+  if ((TR.q || TR.qFoc) && inBtn(pt, TR_SEARCH.clr) && TR.q) { trSearchSet(''); return true; }
+  if ((TR.q || TR.qFoc) && inBtn(pt, TR_SEARCH.box)) { trSearchFocus(true); return true; }
+  if (TR.qFoc) trSearchFocus(false);   // (a click anywhere else: the field lets go of the keys, the filter stays)
+  return false;
+}
 const TR_FLAG = ROSTER_CARDS.map(bb => ({ x: bb.x + 54, y: bb.y + 10, w: 84, h: 40 }));   // sticky flag spot (your own players)
 function trBookmark(p) {
   if (TR_BM_SET.has(p.name)) TR_BM_SET.delete(p.name); else TR_BM_SET.add(p.name);
@@ -3041,7 +3208,7 @@ function trBookmark(p) {
 }
 const trDDItems = () => [...FA_POSITIONS.filter(pos => pos === 'ALL' || !TR.side || OFF_GROUPS.includes(pos) === (TR.side === 'off')), 'BM']
   .map((pos, i) => ({ label: pos === 'BM' ? 'BOOKMARKS' : pos, pos, b: { x: FA_TITLE_BTN.x, y: FA_TITLE_BTN.y + FA_TITLE_BTN.h + 4 + i * 38, w: FA_TITLE_BTN.w, h: 36 } }));
-function tradeOpen(ret) { TR.ret = ret; TR.sel = null; TR.page = 0; TR.dd = false; TR.v++; TCX = null; results.screen = 'trade'; }
+function tradeOpen(ret) { TR.ret = ret; TR.sel = null; TR.page = 0; TR.dd = false; TR.q = ''; if (TR.qFoc) trSearchFocus(false); TR.v++; TCX = null; results.screen = 'trade'; }
 function tradePartner(k) {   // a team was picked to trade with
   TR.partner = k; TR.give = TR.pendingGive || []; TR.get = []; TR.tab = TR.give.length ? [1, 0] : [0, 1]; TR.pg = [0, 0]; TR.grp = ['ALL', 'ALL']; TR.pendingGive = null;
   teamPick = null; results.screen = 'tradeb';
@@ -3072,8 +3239,8 @@ function drawTrade() {
   const hdrLogo = TR.team || me;   // (the team in focus flanks the title)
   menuBtn(FA_TITLE_BTN, `${TR.pos !== 'ALL' ? (TR.pos === 'BM' ? 'BOOKMARKS' : TR.pos) : 'TRADES'} ${TR.dd ? '▴' : '▾'}`, TR.dd ? SEL : RES.bright, TR.pos === 'BM' ? 22 : 30,
     b => { drawLogo(hdrLogo, b.x + 56, b.y + b.h / 2, 46); drawLogo(hdrLogo, b.x + b.w - 56, b.y + b.h / 2, 46); });
-  FA_SIDE_BTNS.forEach(s => menuBtn(s.b, s.label, TR.side === s.side ? SEL : RES.bright, 22));
-  menuBtn(TR_TEAM_BTN, TR.team || 'ALL TEAMS', TR.team ? SEL : RES.bright, 20);
+  menuBtn(FA_SIDE_BTNS[0].b, TR.side === 'off' ? 'OFFENSE' : TR.side === 'def' ? 'DEFENSE' : 'ALL', TR.side ? SEL : RES.bright, 22);   // (one button, as on free agents: ALL > OFFENSE > DEFENSE)
+  menuBtn(TR_TEAM_BTN, '', TR.team ? '#3d5a80' : '#2c3e57', 20, drawTrTeamBtn);
   stampBtn(TR_NEW_BTN, 'NEW TRADE', '#c81b1b', !closed);
   // the window: a taped countdown note while it is open (weeks left before the deadline), a CLOSED stamp over the cards when shut
   if (!closed) {
@@ -3110,13 +3277,28 @@ function drawTrade() {
   }
   if (TR.pruneV !== TR.v) { TR.pruneV = TR.v; trPrune(); }
   const nSaved = (LEAGUE.savedTrades || []).length;   // (the four folder tabs along the bottom edge; counts are badges)
+  folderTab(TR_SEARCH.tab, 'SEARCH', TR.qFoc || TR.q ? '#fff3a0' : '#e6e0f2');
   folderTab(TR_TABS[0], 'SAVED', '#f3e3a0', nSaved, '#2e8b57');
   folderTab(TR_TABS[1], 'SUGGESTIONS', '#cfe3f5');
   folderTab(TR_TABS[2], 'ROSTER', '#d4e8cc');
   folderTab(TR_TABS[3], 'OFFERS', '#f5d3d3', offersNew() || OFFER_INBOX.filter(offerLive).length, '#c81b1b');
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
+  trSearchDraw();
   tourQDraw();
-  if (TR.dd) trDDItems().forEach(it => menuBtn(it.b, it.label, TR.pos === it.pos ? SEL : RES.bright, 20));
+  if (TR.dd) { uiModal(); trDDItems().forEach(it => menuBtn(it.b, it.label, TR.pos === it.pos ? SEL : RES.bright, 20)); }   // (the open menu: its own buttons animate, everything drawn before it holds still)
+}
+// the trade list's team filter: a dark card with the team's logo (three small ones for ALL TEAMS), a pencil funnel = "filter by team", and the name
+function drawTrTeamBtn(b) {
+  const cx = b.x + 44, cy = b.y + b.h / 2;
+  if (TR.team) drawLogo(TR.team, cx, cy, 44);
+  else ['NE', 'KC', 'SF'].filter(k => NFL[k]).forEach((k, i) => drawLogo(k, cx - 14 + i * 14, cy - 6 + i * 6, 28));
+  const fx = b.x + b.w - 30, fy = b.y + 14;   // (the funnel)
+  ctx.save(); ctx.strokeStyle = '#ffd94a'; ctx.fillStyle = 'rgba(255,217,74,0.25)'; ctx.lineWidth = 2.5; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(fx - 12, fy); ctx.lineTo(fx + 12, fy); ctx.lineTo(fx + 3, fy + 12); ctx.lineTo(fx + 3, fy + 22); ctx.lineTo(fx - 3, fy + 26); ctx.lineTo(fx - 3, fy + 12); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#ffffff'; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(TR.team ? NFL[TR.team].nick.toUpperCase() : 'ALL TEAMS', b.x + 70 + (b.w - 110) / 2, cy, b.w - 110);
+  ctx.font = 'bold 10px monospace'; ctx.fillStyle = 'rgba(255,255,255,0.65)'; ctx.fillText('FILTER', fx, b.y + b.h - 9);
+  ctx.restore();
 }
 // one TV scale on the offer builder: every number is the PARTNER's view (your assets as they'd receive them, theirs as they'd give them up),
 // and the totals are exactly what the TV meter weighs (the best incoming asset in full, the rest x TRADE.depth)
@@ -3320,10 +3502,10 @@ function tradeClick(pt) {
     return;
   }
   if (TR.dd) { const it = trDDItems().find(i => inBtn(pt, i.b)); if (it) { TR.pos = it.pos; TR.page = 0; TR.v++; } TR.dd = false; return; }
+  if (trSearchClick(pt)) return;
   if (inBtn(pt, FA_TITLE_BTN)) { TR.dd = true; return; }
-  const sb = FA_SIDE_BTNS.find(s => inBtn(pt, s.b));
-  if (sb) {
-    TR.side = TR.side === sb.side ? null : sb.side; TR.page = 0; TR.v++;
+  if (inBtn(pt, FA_SIDE_BTNS[0].b)) {   // (one button: ALL > OFFENSE > DEFENSE)
+    TR.side = TR.side === 'off' ? 'def' : TR.side === 'def' ? null : 'off'; TR.page = 0; TR.v++;
     if (TR.pos !== 'ALL' && TR.pos !== 'BM' && TR.side && OFF_GROUPS.includes(TR.pos) !== (TR.side === 'off')) TR.pos = 'ALL';
     return;
   }

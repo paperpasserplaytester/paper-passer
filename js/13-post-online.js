@@ -1,4 +1,5 @@
 // --- the Paper Passer Post (franchise only; tables NEWS / ARCS / EVENTS / POST are in the top block before SETTINGS) ----------------------------------------------
+const postYear = yr => NFL_START + yr - 1;   // (the Post always prints the real year, 20xx, whatever the home screen's year box shows; VOL. n stays a volume number)
 // State lives in LEAGUE.post (saved with the franchise, so old saves get it from postS() with empty defaults): { issues, scrap, wire, hist, alumni, arcs, cool, ev, n, read, nextArc, lastEv, seen }.
 // postIssue(kind) builds a paper: 'wk' after each game week (seasonGameDone), 'pre' when a season starts (newSeason), 'off' when the offseason ends (offFinishFA). Everything random uses
 // postRng(salt) = seeded by season + week, so the same save always prints the same paper. Hooks that feed it: postWire (signings, cuts, draft, HOF, retirements), vacate -> postAlumni.
@@ -20,17 +21,19 @@ const PF = 'Georgia, "Times New Roman", serif';
 const POST_PAGES = ['FRONT PAGE', 'SPORTS', 'WIRE', 'CLASSIFIEDS', 'ARCHIVE', 'SCRAPBOOK'];
 const POST_BOT = 618;   // the page frame ends here; the section buttons below sit level with the BACK button
 const POST_TABS = [0, 1, 2, 3, 4, 5].map(i => ({ x: 130 + i * 188, y: 625, w: 178, h: 80 }));   // (the section buttons along the bottom; persistent so menuBtn's hover / press easing sticks)
-const postV = { pg: 0, ai: 0, ap: 0, sp: 0, turn: null, hits: [], note: null };
+const postV = { pg: 0, ai: 0, ap: 0, sp: 0, turn: null, hits: [], note: null, seen: {} };   // seen = first time a panel / portrait / headline / stripe was drawn this visit (ms), for the one-off animations
 // the Post's page turn: ms = length, strips = how finely the leaf bends, lead = how far round the spine edge is vs the free edge (0.5 = free edge swings twice as far),
 // swing = overall angle (1 = the leaf ends flat on the other side), lift = perspective (taller as it lifts), shade = darkening as it turns away, cast = shadow on the page below
 const PAGE_TURN = { ms: 760, strips: 110, lead: 0.5, swing: 1, lift: 0.05, shade: 0.5, cast: 0.45 };
 let POST_SNAP = null, POST_GRAIN = null, POST_DOTS = null, postEvShown = false, postMatchKey = '', postMatchLines = [];
 function postS() {
   const P = LEAGUE.post || (LEAGUE.post = {});
-  for (const k of ['issues', 'scrap', 'wire', 'hist', 'alumni', 'arcs']) if (!P[k]) P[k] = [];
+  for (const k of ['issues', 'scrap', 'wire', 'hist', 'alumni', 'arcs', 'pins']) if (!P[k]) P[k] = [];
   for (const k of ['cool', 'seen']) if (!P[k]) P[k] = {};
   for (const k of ['n', 'read', 'nextArc']) if (P[k] == null) P[k] = 0;
   if (P.lastEv == null) P.lastEv = -9;
+  for (const k of ['promise', 'quote', 'critic']) if (P[k] === undefined) P[k] = null;
+  if (P.arcs.some(a => !a || !ARCS[a.t] || !a.p || !a.hist)) P.arcs = P.arcs.filter(a => a && ARCS[a.t] && a.p && a.hist);   // (a saga whose type no longer exists, or a broken one, is dropped: the Post must never throw)   // (the headline you filled in, your press answer for the next pull quote, the critic's name)
   return P;
 }
 const strHash = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
@@ -184,10 +187,10 @@ function postCands(kind, r, ctxo) {   // every story the week could print: { w, 
     if (g && g.hs != null) {
       const mine = g.h === me, ms = mine ? g.hs : g.as, os = mine ? g.as : g.hs, opp = mine ? g.a : g.h, win = ms > os, margin = Math.abs(ms - os);
       const sl = { team: pTeam(me), opp: pTeam(opp), sc: `${Math.max(ms, os)}-${Math.min(ms, os)}`, rec: myRec };
-      const kk = ms === os ? 'win' : win ? (margin >= POST.bigMargin ? 'blowout' : margin <= 3 ? 'thriller' : 'win') : 'loss';
+      const kk = ms === os ? 'tie' : win ? (margin >= POST.bigMargin ? 'blowout' : margin <= 3 ? 'thriller' : 'win') : 'loss';
       add(8 + (NEWS[kk].big ? 3 : 0), withLogo(mkStory(kk, gram(kk, 'head', sl, r), gram(kk, 'body', sl, r), null, NEWS[kk].big), me));
       const F = season.facts; season.facts = null;   // (the game's winning score late, and your longest play)
-      if (F && F.gw && margin <= 8) { const gk = F.gw.mine ? 'gwin' : 'gloss', tm = `${Math.floor(F.gw.secs / 60)}:${String(F.gw.secs % 60).padStart(2, '0')}`; add(11, withLogo(mkStory(gk, gram(gk, 'head', { ...sl, what: F.gw.what.toLowerCase(), t: F.gw.ot ? 'overtime' : tm }, r), gram(gk, 'body', { ...sl, what: F.gw.what.toLowerCase(), t: F.gw.ot ? 'overtime' : tm }, r), null, true), me)); }
+      if (F && F.gw && ms !== os && margin <= 8) { const gk = F.gw.mine ? 'gwin' : 'gloss', tm = `${Math.floor(F.gw.secs / 60)}:${String(F.gw.secs % 60).padStart(2, '0')}`; add(11, withLogo(mkStory(gk, gram(gk, 'head', { ...sl, what: F.gw.what.toLowerCase(), t: F.gw.ot ? 'overtime' : tm }, r), gram(gk, 'body', { ...sl, what: F.gw.what.toLowerCase(), t: F.gw.ot ? 'overtime' : tm }, r), null, true), me)); }
       if (F && F.big && F.big.who) { const bs = { ...sl, who: F.big.who, yds: F.big.gain, kind: F.big.run ? 'run' : 'catch-and-run' }; add(6 + Math.min(4, (F.big.gain - POST.hugeYds) / 10) + (F.big.td ? 2 : 0), withLogo(mkStory('huge', gram('huge', 'head', bs, r), gram('huge', 'body', bs, r), null, false), me)); }
     }
     let best = null;
@@ -233,7 +236,7 @@ function postCands(kind, r, ctxo) {   // every story the week could print: { w, 
     }
   }
   if (kind === 'pre') {
-    const sl = { team: pTeam(me), yr: pstYear(yr) }; let back = false; try { const tn = career.tenure; back = !!(tn && tn.team === me && (tn.games > 0 || tn.seasons > 0)); } catch (e) {}   // (the same coach as last year: no "new head coach" story)
+    const sl = { team: pTeam(me), yr: postYear(yr) }; let back = false; try { const tn = career.tenure; back = !!(tn && tn.team === me && (tn.games > 0 || tn.seasons > 0)); } catch (e) {}   // (the same coach as last year: no "new head coach" story)
     add(10, withLogo(mkStory('pre', gram('pre', 'head', sl, r), gram('pre', back ? 'back' : 'body', sl, r)), me));
     const qb = (ROSTER[me] || []).find(p => p.group === 'QB'); if (qb) out[0].st.s = snapOf(qb, me, true);
   }
@@ -277,8 +280,37 @@ function arcSubjects(key, min) {   // [{ s: snap, o?: snap, w, mine }]
     for (const k of teams) for (const p of ROSTER[k]) if (p.group !== 'K' && p.stars >= min && ok(p.name)) (by[p.group] || (by[p.group] = [])).push([p, k]);
     for (const g of Object.keys(by)) { const L = by[g]; for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) if (L[i][1] !== L[j][1]) out.push({ s: snapOf(L[i][0], L[i][1], false), o: snapOf(L[j][0], L[j][1], false), w: starW(L[i][0].stars) * starW(L[j][0].stars) / 4 }); }
   }
+  // your team's pools (the interactive sagas): 'team' = a team-level saga (pseudo subject: your city, drawn with the logo, no cooldown), 'staff' = your OC / DC
+  const R = (ROSTER[me] || []).filter(p => !(p.inj && p.outGame)), pseudo = (n, x) => ({ n, g: '', ps: '', s: 3, a: 0, f: null, lk: null, t: me, real: false, mine: true, team: true, ...x });
+  if (key === 'team') out.push({ s: pseudo(pTeam(me)), mine: true, w: 1 });
+  if (key === 'staff') { const S = STAFF[me] || {}; for (const r of ['oc', 'dc']) if (S[r] && S[r].name && ok(S[r].name)) out.push({ s: pseudo(S[r].name, { coach: r }), mine: true, w: 1 }); }
+  if (key === 'qbpair') { const q = R.filter(p => p.group === 'QB'); if (q.length >= 2 && ok(q[0].name) && ok(q[1].name)) {
+    let bad = false; try { const g = pstGames(q[0].name).filter(x => !x.gp && x.yr === yr).pop(); bad = !!g && ((g.py || 0) < POST.qbBad.py || (g.ic || 0) >= POST.qbBad.ic); } catch (e) {}
+    if (q[1].stars >= q[0].stars - 1 || bad) out.push({ s: snapOf(q[0], me, true), o: snapOf(q[1], me, true), mine: true, w: 1 }); } }
+  if (key === 'mineK') { const k = R.find(p => p.group === 'K'); if (k && ok(k.name)) out.push({ s: snapOf(k, me, true), mine: true, w: 1 }); }
+  if (key === 'lastride') for (const p of R) { try { if (p.group !== 'K' && p.stars >= min && retireAge(p) >= POST.lastAge && ok(p.name)) out.push({ s: snapOf(p, me, true), mine: true, w: starW(p.stars) }); } catch (e) {} }
+  if (key === 'mentor') { const rk = R.filter(p => p.group !== 'K' && (p.rookie || (typeof yrsPro === 'function' && yrsPro(p) === 0)) && ok(p.name));
+    for (const a of rk) { const v = R.find(p => p.group === a.group && p !== a && p.age >= POST.vetAge && ok(p.name)); if (v) out.push({ s: snapOf(a, me, true), o: snapOf(v, me, true), mine: true, w: 1 }); } }
+  if (key === 'chase') { try { for (const c of rbk().chase || []) { if (!c.mine || !c.n) continue; const p = R.find(q => q.name === c.n); if (p && ok(p.name)) out.push({ s: snapOf(p, me, true), mine: true, w: 1 + c.k }); } } catch (e) {} }
+  if (key === 'gem' || key === 'kid') { try { const C = boardClass(); for (const p of (C && C.pool) || []) {
+    if (!ok(p.name) || (key === 'gem' ? !(scoutsOn() && p.flag === 'under') : strHash(p.name) % POST.kidOdds !== 0)) continue;
+    out.push({ s: { ...snapOf(p, '', true), real: false }, mine: true, w: 1 }); } } catch (e) {} }
   return out;
 }
+// team-level sagas run only when the situation is there (subject pools handle the rest)
+function arcGate(id) {
+  const off = season.offseason;
+  try {
+    if (id === 'board') return !off && !!MATCH.opp && !MATCH.playoff;
+    if (id === 'owner') return approvalTier() === 1 || (contractsOn() && !!hcDeal() && hcDeal().patience <= POST.ownerPat);
+    if (id === 'run' || id === 'tank') { if (off || season.week < POST.runWk) return false; const T = seasonTable()[season.team]; return id === 'run' ? T.w > T.l + 1 : T.l > T.w + 1; }
+    if (id === 'snow') { if (off || !MATCH.opp) return false; const f = wxForecast(); return f.roof !== 'dome' && POST.snowCodes.includes(f.code); }
+    if (['luck', 'critic', 'leak', 'staffer', 'chase', 'qbrace', 'mentor'].includes(id)) return !off;
+  } catch (e) { return false; }
+  return true;
+}
+// the saga is about your team: the only ones that ever ask you something
+const postArcMine = a => !!(a && a.p && (a.p.team || (arcDef(a) || {}).mine || ((findPlayer(a.p.n) || {}).team === season.team)));
 function arcFire(arc, stage, r) {
   const P = postS(), def = arcDef(arc), st = def.st[stage], yr = LEAGUE.year;
   arc.st = stage;
@@ -286,24 +318,37 @@ function arcFire(arc, stage, r) {
   try { arcFx(arc, stage); } catch (e) {}   // (the stage's real effects: ARC_FX)
   const sl = snapSlots(arc.p, { old: arc.old && NFL[arc.old] ? pTeam(arc.old) : (arc.p.t && NFL[arc.p.t] ? pTeam(arc.p.t) : 'his old team'), o: arc.o ? arc.o.n : '', ...arc.vars });
   const f = findPlayer(arc.p.n); if (f && f.team) sl.team = pTeam(f.team);
-  const head = postFill(rPick(r, st.h), sl), body = postFill(rPick(r, st.b), sl);
+  sl.coach = coachName(); if (arc.p.team) sl.team = pTeam(season.team); sl.opp = MATCH.opp && NFL[MATCH.opp] && MATCH.opp !== season.team ? pTeam(MATCH.opp) : 'the next opponent';
+  if (arc.p.coach) { sl.job = arc.p.coach === 'oc' ? 'offensive coordinator' : 'defensive coordinator'; sl.side = arc.p.coach === 'oc' ? 'offense' : 'defense'; }
+  if (arc.vars.crit == null && def.critic) arc.vars.crit = P.critic || (P.critic = rPick(r, POST_NAMES));
+  const prev = arc.hist[arc.hist.length - 1], head = postFill(rPick(r, st.h), sl), body = postFill(rPick(r, st.b), sl) + (arc.chose ? ' ' + arc.chose : '');   // (the follow-up names the coach's choice: rule 3)
+  arc.chose = null;
   arc.hist.push({ yr, wk: postWeek(), st: stage, h: head });
   if (arc.hist.length > 8) arc.hist.shift();
-  if (st.end) { arc.end = true; arc.endYr = yr; P.cool[arc.p.n] = yr; if (arc.o) P.cool[arc.o.n] = yr; }
+  const mine = postArcMine(arc);
+  if (st.end) { arc.end = true; arc.endYr = yr; if (!arc.p.team) { P.cool[arc.p.n] = yr; if (arc.o) P.cool[arc.o.n] = yr; } if (P.pins.includes(arc.id)) postKeepsake(arc, st); P.pins = P.pins.filter(x => x !== arc.id); }
   else arc.at = postClock() + rInt(r, ...(st.wait || [2, 4]));
+  let ask = false;
+  if (!st.end && st.ask && mine && !P.ev && postClock() - P.lastEv >= POST.eventGap) {   // the stage asks you: the week's one interactive item
+    P.ev = { id: 'arc:' + arc.id, arc: arc.id, stage, slots: { ...sl, star: arc.p.team ? '' : arc.p.n }, yr, wk: postWeek(), star: arc.p.team ? null : arc.p.n, o: arc.o ? arc.o.n : null, verb: st.ask.verb || 'tab', born: postBuilding };
+    P.lastEv = postClock(); ask = true;
+  }
   if (def.bridge && r() < POST.bridge && !P.ev) postEventMake(def.bridge, arc, r);
-  P.wire.push({ k: 'arc', t: head, s: arc.p, team: arc.p.t, stars: arc.p.s });
-  return mkStory('arc', head, body, arc.p, !!st.big || (st.end && r() < 0.3), { a: arc.id, nm: def.name });
+  if (st.ev && mine && !P.ev && postClock() - P.lastEv >= POST.eventGap) postEventMake(st.ev, null, r);   // (THE HOT SEAT: the existing poach event, never a second poach system)
+  P.wire.push({ k: 'arc', t: head, s: arc.p.team ? null : arc.p, team: arc.p.t, stars: arc.p.s });
+  const story = mkStory('arc', head, body, arc.p.team ? null : arc.p, !!st.big || (st.end && r() < 0.3), { a: arc.id, nm: def.name, ask, ring: !!(prev && prev.auto), gold: !!(st.end && st.good), bad: !!st.bad, stop: !!(st.end && mine) });
+  return arc.p.team ? withLogo(story, season.team) : story;
 }
 function arcNext(arc, r) {
   const st = arcDef(arc).st[arc.st]; if (st.end || !st.next) return null;
+  if (arc.pick) { const pk = arc.pick, to = arcDef(arc).st[pk]; arc.pick = null; if (to && !(to.bad && arc.p.real)) return pk; }   // (your answer to the stage's ask decides the next chapter, once)
   const opts = st.next.filter(n => !(arcDef(arc).st[n[1]].bad && arc.p.real));
   const pick = rWeighted(r, opts.length ? opts : st.next.slice(0, 1), n => n[0]);
   return pick && pick[1];
 }
 function postArcs(r, off) {   // advance due arcs, maybe start a new one; returns the stories
   const P = postS(), now = postClock(), out = [];
-  for (const a of P.arcs.filter(a => !a.end)) {
+  for (const a of P.arcs.filter(a => !a.end).sort((x, y) => P.pins.includes(y.id) - P.pins.includes(x.id))) {   // (pinned sagas first: they get the week's question slot)
     let steps = off ? rInt(r, ...POST.arcOff) : (now >= a.at ? 1 : 0);
     while (steps-- > 0) { const n = arcNext(a, r); if (!n) break; out.push(arcFire(a, n, r)); if (a.end) break; }
   }
@@ -311,15 +356,15 @@ function postArcs(r, off) {   // advance due arcs, maybe start a new one; return
   if (off || now >= P.nextArc) {
     const act = P.arcs.filter(a => !a.end);
     if (act.length < POST.arcMax + (r() < POST.arcExtra ? 1 : 0)) {   // (usually 1-4 going at once, now and then a 5th)
-      const mineN = act.filter(a => a.p.mine).length, cand = [];
+      const mineN = act.filter(a => a.p.mine || a.p.team).length, cand = [];
       for (const [id, def] of Object.entries(ARCS)) {
-        if ((def.offOnly && !season.offseason) || act.some(a => a.t === id)) continue;
+        if ((def.offOnly && !season.offseason) || act.some(a => a.t === id) || !arcGate(id)) continue;
         let subs = arcSubjects(def.who, def.min); if (def.safe) subs = subs.filter(x => !x.s.real);
         if (id === 'comeback') subs = subs.filter(x => (x.yrs || 0) >= 1 && x.s.a + (x.yrs || 0) <= 40);
         if (mineN >= POST.arcMine) subs = subs.filter(x => !x.s.mine);
-        if (subs.length) cand.push({ id, def, subs });
+        if (subs.length) cand.push({ id, def, subs, mine: subs.some(x => x.s.mine) });
       }
-      const typ = rWeighted(r, cand, c => c.def.w);
+      const typ = rWeighted(r, cand, c => c.def.w * (c.mine && mineN === 0 ? POST.mineBias : 1));
       if (typ) {
         const sub = rWeighted(r, typ.subs, x => x.w);
         const arc = { id: `${LEAGUE.year}${postWeek()}${typ.id}${P.n}`, t: typ.id, st: null, p: sub.s, o: sub.o || null, old: sub.old || (sub.s.mine ? sub.s.t : ''), vars: {}, hist: [], at: 0, end: false };
@@ -337,10 +382,18 @@ function postEventMake(id, arc, r) {
   if (pr && pr.tr) { slots.toff = pr.tr.off.name; slots.tdef = pr.tr.def.name; }
   const S = STAFF[me] || {}; if (S.oc) slots.oc = S.oc.name; if (S.dc) slots.dc = S.dc.name;
   let starP = null;
+  slots.coach = coachName(); slots.team = pTeam(me); slots.opp = MATCH.opp && NFL[MATCH.opp] ? pTeam(MATCH.opp) : 'next week\'s opponent'; slots.by = rPick(r, POST_NAMES);
+  const R = (ROSTER[me] || []).filter(p => !(p.inj && p.outGame));
   if (arc) { slots.star = arc.p.n; const f = findPlayer(arc.p.n); if (id === 'looking') { if (!f || f.team) return false; if (!faHasSpot(me, f.p) || f.p.salary > capRoom(me)) return false; } }
-  else if (e.need === 'star' || /\{star\}/.test(e.body)) { const L = (ROSTER[me] || []).filter(p => p.group !== 'K' && p.stars >= 3); if (!L.length) return false; starP = rPick(r, L); slots.star = starP.name; }
+  else if (e.need === 'k') { const k = R.find(p => p.group === 'K'); if (!k) return false; starP = k; slots.star = k.name; }
+  else if (e.need === 'hurt') { const L = (ROSTER[me] || []).filter(p => p.group !== 'K' && p.inj && (p.inj.weeks || 0) >= 1 && p.stars >= 2.5); if (!L.length) return false; starP = rPick(r, L); slots.star = starP.name; }
+  else if (e.need === 'rookie') { const L = R.filter(p => p.group !== 'K' && (p.rookie || (typeof yrsPro === 'function' && yrsPro(p) === 0))); if (!L.length) return false; starP = rPick(r, L); slots.star = starP.name; }
+  else if (e.need === 'star' || /\{star\}/.test(e.body)) { const L = R.filter(p => p.group !== 'K' && p.stars >= 3); if (!L.length) return false; starP = rPick(r, L); slots.star = starP.name; }
   if (e.need === 'fac' && !pr) return false; if (e.need === 'trainer' && !slots.toff) return false; if (e.need === 'oc' && !slots.oc) return false; if (e.need === 'dc' && !slots.dc) return false;
-  P.ev = { id, slots, yr: LEAGUE.year, wk: postWeek(), star: starP ? starP.name : arc && id === 'looking' ? arc.p.n : null };
+  if (e.need === 'trade' && !(postTradeWk && postTradeWk.length)) return false;   // (a boycott threat only the week after a real trade)
+  if (e.need === 'season' && season.offseason) return false;
+  if (e.need === 'xp' && !xpcOn()) return false;
+  P.ev = { id, slots, yr: LEAGUE.year, wk: postWeek(), star: starP ? starP.name : arc && id === 'looking' ? arc.p.n : null, verb: e.verb || 'tab', born: postBuilding };
   P.lastEv = postClock();
   return true;
 }
@@ -352,41 +405,511 @@ function postEventRoll(r) {
 function postFx(list, E, r, out) {   // the effects of a choice; returns true if a 'roll' came up good (out = plain-words list of what happened, for the result popup)
   let good = true;
   const cl = v => Math.max(0, Math.min(100, Math.round(v))), cl1 = v => Math.max(0, Math.min(1, v));
-  const star = E.star && findPlayer(E.star), say = t => { if (out) out.push(t); }, sg = v => (v >= 0 ? '+' : '') + v;
+  const star = E.star && findPlayer(E.star), oth = E.o && findPlayer(E.o), say = t => { if (out) out.push(t); }, sg = v => (v >= 0 ? '+' : '') + v;
   for (const f of list) {
+    if (f[0] === 'mood' && f[1] === 'o') { if (oth && oth.team === season.team) { moraleShift(oth.p, f[2]); say(`${oth.p.name}'s mood ${f[2] >= 0 ? 'improved' : 'got worse'} (${sg(f[2])}).`); } continue; }   // (a saga's second man)
+    if (f[0] === 'cond') { LEAGUE.condition = cl((LEAGUE.condition == null ? 100 : LEAGUE.condition) + f[1]); say(`Team condition ${f[1] >= 0 ? 'went up' : 'took a hit'} (${sg(f[1])}).`); continue; }
+    if (f[0] === 'xp') { if (xpcOn()) { const n = xpBankAdd(f[1] / (XPC.rate || 1)); if (n > 0) say(`${Math.round(n)} XP went into the bank.`); } continue; }
+    if (f[0] === 'promise') { postS().promise = { sz: f[1], yr: LEAGUE.year, wk: season.week, w: f[2] || '' }; say('The next game settles it.'); continue; }
+    if (f[0] === 'talks') { if (star && star.team === season.team && contractsOn() && conPlOpen()) { postTalks = star.p; say("Talks move to the front office."); } continue; }
+    if (f[0] === 'quote') { postS().quote = { t: f[1], by: coachName() }; continue; }
     if (f[0] === 'coins') { LEAGUE.coins = Math.max(0, LEAGUE.coins + f[1]); say(`${f[1] < 0 ? 'It cost you' : 'You gained'} ${Math.abs(f[1])} credits.`); }
     else if (f[0] === 'morale') { moraleShiftAll(f[1]); say(`Team morale ${f[1] >= 0 ? 'rose' : 'fell'} (${sg(f[1])}).`); }
     else if (f[0] === 'fans') { LEAGUE.fans = cl1(LEAGUE.fans + f[1]); say(`The fans ${f[1] >= 0 ? 'liked it' : 'were not happy'} (${sg(Math.round(f[1] * 100))}%).`); }
     else if (f[0] === 'appr') { LEAGUE.approval = cl1(LEAGUE.approval + f[1]); say(`The owner's approval ${f[1] >= 0 ? 'went up' : 'dropped'} (${sg(Math.round(f[1] * 100))}%).`); }
     else if (f[0] === 'mood') { if (star && star.team === season.team) { moraleShift(star.p, f[2]); say(`${star.p.name}'s mood ${f[2] >= 0 ? 'improved' : 'got worse'} (${sg(f[2])}).`); } }
     else if (f[0] === 'unit') { for (const s of ROSTER[season.team] || []) { if (s.group !== 'K' && OFF_GROUPS.includes(s.group) === (f[1] === 'off')) moraleShift(s, f[2]); } say(`The ${f[1] === 'off' ? 'offense' : 'defense'}'s mood ${f[2] >= 0 ? 'improved' : 'got worse'} (${sg(f[2])}).`); }
-    else if (f[0] === 'roll') { good = r() < f[1]; good = postFx(good ? f[2] : f[3], E, r, out) && good; }
+    else if (f[0] === 'roll') { good = r() < f[1] * postRollK; if (E.rolls) E.rolls.push(good); good = postFx(good ? f[2] : f[3], E, r, out) && good; }
     else if (f[0] === 'sign') { if (star && !star.team && LEAGUE.coins >= signCost(star.p) && faHasSpot(season.team, star.p)) { faSign(star.p); say(`${star.p.name} signed with you.`); } else { good = false; say(`${star ? star.p.name : 'He'} signed elsewhere: you could not fit the cap, roster spot or credits.`); } }
   }
   return good;
 }
-function postEventShow() {   // from homeNews: the midweek event waits for an answer
+// ---- the interactive item: P.ev is an event (EVENTS) or a saga stage's ask (ARCS st.ask); one card, one answer path ----
+let postBuilding = null, postRollK = 1, postTalks = null, postTradeWk = null;   // issue being built (items born in it wait one issue), roll odds x, a holdout's talks to open, this issue's trades
+function postItemDef(E) {   // { title, body, opts, verb, cat, arc } or null
+  if (!E) return null;
+  if (E.arc) {
+    const a = postS().arcs.find(x => x.id === E.arc), d = a && arcDef(a), st = d && d.st[E.stage]; if (!st || !st.ask || a.end) return null;
+    const h = a.hist.find(x => x.st === E.stage) || a.hist[a.hist.length - 1];
+    return { title: h ? h.h : d.name, body: st.ask.q, opts: st.ask.opts, verb: st.ask.verb || 'tab', cat: st.ask.cat || d.cat || 'news', arc: a, hl: st.ask.hl, who: st.ask.who, nm: d.name };
+  }
+  const d = EVENTS.find(x => x.id === E.id); if (!d) return null;
+  return { title: d.title, body: d.body, opts: d.opts, verb: d.verb || 'tab', cat: d.cat || 'news', hl: d.hl, who: d.who };
+}
+const postCost = o => (o.fx || []).filter(f => f[0] === 'coins' && f[1] < 0).reduce((t, f) => t - f[1], 0);
+const postOpts = D => D.opts.filter(o => postCost(o) <= LEAGUE.coins);   // (options you can't afford stay hidden)
+const postSay = (o, E) => postFill(o.say || o.l.replace(/\s*\(.*?\)/g, '').toLowerCase(), E.slots);
+// apply a choice: effects, the follow-up sentence, the log. opt.auto = it resolved itself (o = the default). Returns { txt, bars, good, spent, rolls }
+function postAnswer(E, o, opt = {}) {
+  const P = postS(), D = postItemDef(E);
+  if (!D || !o) { P.ev = null; return null; }
+  const coins0 = LEAGUE.coins, before = postBarSnap(E), r = postRng('ev' + E.id + (E.stage || '')), out = [];
+  E.rolls = []; postRollK = opt.k || 1;
+  let good = true; try { good = postFx(o.fx || [], E, r, out); } finally { postRollK = 1; }
+  moraleSync();
+  const bars = postBarDiff(before, postBarSnap(E)), title = postFill(D.title, E.slots), lab = postFill(o.l, E.slots);
+  const txt = o.t ? postFill(o.t, E.slots) : (good ? 'It worked out for you.' : 'It did not go your way.') + (out.length ? ' ' + out.join(' ') : '');
+  const coach = career.last ? 'Coach ' + career.last : coachName(), chose = opt.auto ? (opt.arc ? `${coach} never weighed in, so the story ran its own course.` : `${coach} never weighed in, so it was decided for the team.`) : `${coach} chose to ${postSay(o, E)}.`;
+  if (D.verb === 'press' && !opt.auto) P.quote = { t: postFill(o.q || o.l, E.slots), by: coach };   // (your answer is next issue's pull quote)
+  if (D.arc) {
+    const a = D.arc, h = a.hist.find(x => x.st === E.stage) || a.hist[a.hist.length - 1];
+    if (h) { h.c = opt.auto ? '' : lab; h.verb = D.verb; h.auto = !!opt.auto; h.mk = o.mark || null; }
+    let to = o.toGood ? (good ? o.toGood : o.toBad) : o.to;   // (a fixed stage, a roll's outcome, or a weighted list: rushing him back makes the setback likelier, not certain)
+    if (Array.isArray(to)) { const w = rWeighted(r, to, x => x[0]); to = w && w[1]; }
+    if (!opt.auto && to && arcDef(a).st[to]) a.pick = to;
+    a.chose = chose;
+  } else {
+    const ent = { k: 'event', t: title, b: `${postFill(D.body, E.slots)} ${chose} ${txt}`, s: null, big: false, cat: D.cat };
+    P.evLog = [ent, ...(P.evLog || [])].slice(0, 6);
+    postNote('evt', { t: title, b: `${postFill(D.body, E.slots)} ${chose} ${txt}`.trim() }, { w: 7, team: season.team });   // (a real story in the next issue)
+  }
+  P.ev = null; autosaveSoon();
+  return { txt, bars, good, spent: coins0 - LEAGUE.coins, rolls: E.rolls, auto: !!opt.auto };
+}
+// a new issue: an unanswered item resolves itself (sagas by their normal weighted next, events by the option marked def, or the last); ASK ME LATER buys one more issue
+function postAutoResolve() {
+  const P = postS(), E = P.ev; if (!E) return;
+  if (E.later === 1) { E.later = 2; return; }
+  const D = postItemDef(E); if (!D) { P.ev = null; return; }
+  if (D.arc) { postAnswer(E, { l: '', fx: [] }, { auto: true, arc: true }); return; }
+  const o = D.opts.find(x => x.def) || D.opts[D.opts.length - 1];
+  postAnswer(E, o, { auto: true, k: E.later ? POST_UI.laterK : 1 });
+}
+// dev (console): postArcTest('qbrace') starts a saga for your team now (or fires its first stage again), postArcTest('qbrace', 'letters') jumps to a stage (it asks if the stage has an ask); postEventShow(true) opens the card
+function postArcTest(id, stage) {
+  const def = ARCS[id]; if (!def || !postOn()) return 'no such saga, or the Post is off here';
+  const P = postS(), r = postRng('test' + id + Math.random());
+  let a = P.arcs.find(x => x.t === id && !x.end);
+  if (!a) { const subs = arcSubjects(def.who, def.min); if (!subs.length) return 'no subject in pool ' + def.who;
+    const sub = subs.find(x => x.s.mine || (findPlayer(x.s.n) || {}).team === season.team) || subs[0];
+    a = { id: `test${id}${Date.now() % 1e6}`, t: id, st: null, p: sub.s, o: sub.o || null, old: '', vars: {}, hist: [], at: 0, end: false }; P.arcs.push(a); }
+  P.ev = null; P.lastEv = -99;
+  const story = arcFire(a, stage || def.first, r);
+  return { story, ev: P.ev };
+}
+function postEventTest(id) { const P = postS(); P.ev = null; P.lastEv = -99; const ok = postEventMake(id, null, postRng('t' + Math.random())); return ok ? P.ev : 'its need is not met'; }
+// a prospect of a saga (HOMETOWN KID) was drafted: the saga's next chapter follows it (your pick = he comes home, anyone else = he goes elsewhere)
+function postDrafted(p, team) {
+  if (!postOn() || !p) return;
+  for (const a of postS().arcs) if (!a.end && a.t === 'kid' && a.p.n === p.name && a.st === 'visit') { a.pick = team === season.team ? 'home' : 'away'; a.at = Math.min(a.at, postClock()); }
+}
+// a pinned saga's ending is taped into the SCRAPBOOK as one keepsake (ended arcs are dropped after 3 years, so it keeps its own copy)
+function postKeepsake(a, st) {
+  const P = postS(), d = arcDef(a); if (!d) return;
+  P.scrap.unshift({ key: 'saga:' + a.id, keep: true, nm: d.name, cat: d.cat || 'news', yr: LEAGUE.year, wk: postWeek(), good: !!st.good, bad: !!st.bad, lg: a.p.team ? season.team : null, s: a.p.team ? null : a.p,
+    hist: a.hist.map(h => ({ h: h.h, c: h.c || '', verb: h.verb || '', auto: !!h.auto, mk: h.mk || null, st: h.st, wk: h.wk, yr: h.yr })) });
+  if (P.scrap.length > POST.scrap) P.scrap.length = POST.scrap;
+}
+// the critic's grade of your last game (THE CRITIC saga): red pen on the front page
+function postGrade(wk) {
+  const g = gameOf(wk); if (!g || g.hs == null) return null;
+  const me = season.team, m = (g.h === me ? g.hs - g.as : g.as - g.hs);
+  return (POST_UI.grade.find(x => m >= x[0]) || POST_UI.grade[POST_UI.grade.length - 1])[1];
+}
+// FILL THE HEADLINE: the word you picked is settled by your next game (stories + small fans / morale)
+function postPromise(wk, r, cands) {
+  const P = postS(), pr = P.promise; if (!pr) return;
+  const g = gameOf(wk); if (!g || g.hs == null) return;
+  const me = season.team, ms = g.h === me ? g.hs : g.as, os = g.h === me ? g.as : g.hs, sz = Math.max(1, Math.min(3, pr.sz || 1)), win = ms > os;
+  P.promise = null;
+  if (ms === os) return;
+  LEAGUE.fans = Math.max(0, Math.min(1, (LEAGUE.fans || 0) + (win ? 1 : -1) * POST_UI.promise[sz])); moraleShiftAll((win ? 1 : -1) * POST_UI.promiseMor[sz]);
+  const k = win ? 'promiseW' : 'promiseL', sl = { team: pTeam(me), coach: coachName(), w: pr.w || 'it', sc: `${Math.max(ms, os)}-${Math.min(ms, os)}` };
+  cands.push({ w: 9 + sz, st: withLogo(mkStory(k, gram(k, 'head', sl, r), gram(k, 'body', sl, r), null, sz >= 3), me), k });
+}
+// (the old plain popup is now the card: postEventShow opens it from homeNews)
+function postEventShow(force) {
   if (!postOn()) return;
-  const P = postS(), E = P.ev; if (!E || postEvShown) return;
-  const def = EVENTS.find(x => x.id === E.id); if (!def) { P.ev = null; return; }
-  postEvShown = true;
-  const title = postFill(def.title, E.slots), opts = def.opts.filter(o => { const cost = o.fx.filter(f => f[0] === 'coins' && f[1] < 0).reduce((t, f) => t - f[1], 0); return cost <= LEAGUE.coins; });
-  const pop = { title, lines: [...wrapLines(postFill(def.body, E.slots), 54), '', 'THE POST: MIDWEEK NEWS'] };
-  pop.btns = opts.map((o, i) => { const btn = { label: postFill(o.l, E.slots), green: i === 0, keep: true, on: () => {
-      if (pop.lock) return;
-      const coins0 = LEAGUE.coins;
-      const before = postBarSnap(E), r = postRng('ev' + E.id), out = [], good = postFx(o.fx, E, r, out);
-      moraleSync();
-      const bars = postBarDiff(before, postBarSnap(E));
-      const txt = o.t ? postFill(o.t, E.slots) : (good ? 'It worked out for you.' : 'It did not go your way.') + (out.length ? ' ' + out.join(' ') : '');
-      const ent = { k: 'event', t: title, b: `${postFill(def.body, E.slots)} You chose: ${postFill(o.l, E.slots)}. ${txt}`, s: null, big: false };
-      P.evLog = [ent, ...(P.evLog || [])].slice(0, 6); P.ev = null; postEvShown = false;
-      const res = { title: 'THE RESULT', lines: wrapLines(txt, 54), btns: [{ label: 'OK' }], bars }; autosaveSoon();
-      const spent = coins0 - LEAGUE.coins, show = () => { if (offPop === pop) offPop = null; offPopNow(res); };
-      if (spent > 0) { pop.lock = true; spendFx(btn, spent); setTimeout(show, SPEND.ms + Math.min(SPEND.max, 3 + spent * 2) * SPEND.gap + 150); }   // (the credits fly into the button first; the card waits for them)
-      else show();   // (the result card comes up right away, ahead of anything queued)
-    } }; return btn; });
-  offPopShow(pop);
+  const P = postS(), E = P.ev; if (!E) return;
+  const key = E.id + ':' + E.yr + ':' + E.wk + ':' + (E.later || 0);
+  if (!force && postEvShown === key) return;
+  if (!postItemDef(E)) { P.ev = null; return; }
+  postEvShown = key;
+  postCardOpen(E);
+}
+// ---- the question card: ONE component for events and saga asks. The verb (D.verb) only skins the options; every pick is one tap / click, a drag is only a flourish ----
+let PCARD = null;   // { E, D, opts, ph: 'ask' | 'anim' | 'res', po (picked option), t0, wait, res, step (phone), hits, rub (scratch 0-1), seed, pop, rang }
+const pcNow = () => performance.now();
+const sagaTitle = nm => `THE ${String(nm || '').replace(/^the\s+/i, '').toUpperCase()} SAGA`;   // (never "THE THE LEAK SAGA")
+const pcLite = () => { try { return liteOn(); } catch (e) { return false; } };
+const pcCat = D => POST_UI.cat[D && D.cat] || POST_UI.cat.news;
+const pcE = C => C.ph === 'anim' ? Math.min(1, (pcNow() - C.t0) / (pcLite() ? 120 : (POST_UI.anim[C.D.verb] || 450))) : 0;
+const pcShort = n => String(n || 'HIM').split(' ').pop().toUpperCase();
+function postCardOpen(E, pick, hb) {
+  const D = postItemDef(E); if (!D) return;
+  const opts = postOpts(D); if (!opts.length) return;
+  if (PCARD && PCARD.pop && offPop === PCARD.pop) offPopClose();
+  PCARD = { E, D, opts, ph: 'ask', po: null, t0: pcNow(), wait: 0, res: null, step: 0, hits: [], rub: 0, seed: strHash(String(E.id)) % 997 + 1, rang: false };
+  PCARD.pop = { card: { ...POST_UI.card }, custom: { draw: postCardPopDraw, click: postCardClick, wheel() {}, arrows() {} } };
+  if (pick) { offPopNow(PCARD.pop); postCardPick(pick, hb); } else if (hb === 'now') offPopNow(PCARD.pop); else offPopShow(PCARD.pop);
+}
+function postCardClose(quiet) {
+  const C = PCARD; PCARD = null;
+  if (C && C.pop && offPop === C.pop) { if (!quiet) { try { startCrumple(C.pop.card); } catch (e) {} crumpleSfx(0.8); } offPopClose(); }
+  if (postTalks) {   // (HOLDOUT, extend him: the real negotiation in the front office)
+    const p = postTalks; postTalks = null;
+    try { results.screen = 'staff'; staffView.sel = null; staffView.team = null; FOT.tab = 'pl'; FOT.pd.sel = p; conPlNegotiate(p); } catch (e) { console.warn('Post talks', e); }
+  }
+}
+function postCardPick(o, hb) {
+  const C = PCARD; if (!C || C.ph !== 'ask' || !o) return;
+  const v = C.D.verb;
+  C.po = o; C.ph = 'anim'; C.t0 = pcNow();
+  if (o.later) {   // ASK ME LATER (stamp): pending one more issue, then it decides itself with worse odds
+    C.E.later = 1; postEvShown = C.E.id + ':' + C.E.yr + ':' + C.E.wk + ':1'; C.wait = pcLite() ? 120 : POST_UI.anim.stamp + 350; C.res = null; sndRec('tap'); return;
+  }
+  if (v === 'tab') sndRec('tear', 0.8); else if (v === 'stamp') sndRec('tap'); else if (v === 'letter' && o.bin) crumpleSfx(); else if (v === 'circle' || v === 'marker' || v === 'headline') sndRec('pencil', 0.7, { ms: 600, at: SND_USE.penAt, tag: 'pc' }); else sndRec('click');
+  const res = postAnswer(C.E, o); C.res = res;
+  if (!res) { postCardClose(true); return; }
+  let wait = pcLite() ? 120 : (POST_UI.anim[v] || 450);
+  if (res.spent > 0) { try { spendFx(hb && hb.w ? hb : cpOK(), res.spent); } catch (e) {} wait = Math.max(wait, SPEND.ms + Math.min(SPEND.max, 3 + res.spent * 2) * SPEND.gap + 150); }   // (the credits fly first; the card waits for them)
+  C.wait = wait;
+}
+function postCardClick(pt) {
+  const C = PCARD; if (!C) { offPopClose(); return; }
+  if (C.ph === 'anim') return;
+  if (C.ph === 'res') {
+    if (C.scr && C.rub < 1) { if (inBtn(pt, C.scr)) { C.rub = 1; sndRec('click'); } return; }   // (click = scratched at once)
+    if (inBtn(pt, cpOK()) || C.done) postCardClose();
+    return;
+  }
+  if (inBtn(pt, cpOK())) { offPopClose(); PCARD = null; sndRec('flip', 0.5); return; }   // LATER: the card goes, the question stays on the paper until the next issue
+  const h = C.hits.find(x => inBtn(pt, x)); if (!h) return;
+  if (h.act === 'pickup') { C.step = 1; sndRec('click'); return; }
+  postCardPick(h.o, h);
+}
+function postCardPopDraw() {
+  const C = PCARD;
+  if (!C || !postOn() || (C.ph === 'ask' && postS().ev !== C.E)) { PCARD = null; offPopClose(); return; }   // (stale: the question was settled elsewhere)
+  if (!C.rang) { C.rang = true; if (C.D.verb === 'phone') sndRec('phone', 0.7, { ms: 2600, fade: 500 }); }
+  if (C.ph === 'anim' && pcNow() - C.t0 >= C.wait) {
+    if (C.po && C.po.later) { offPopClose(); PCARD = null; return; }
+    C.ph = 'res'; C.t0 = pcNow(); C.scr = C.D.verb === 'scratch' && C.res && C.res.rolls.length ? {} : null; C.wt0 = C.scr ? null : pcNow() + (C.res && C.res.rolls.length && !pcLite() ? 800 : 0);
+    if (!C.scr) sndRec('pencil', 0.6, { ms: POST_UI.writeMs, at: SND_USE.penAt, tag: 'pcw' });
+  }
+  ctx.save(); ctx.fillStyle = 'rgba(30,25,10,0.5)'; ctx.fillRect(-PAD, 0, W + 2 * PAD, H); uiModal();
+  try { postCardDraw(C, C.pop.card); } catch (e) { console.warn('Post card', e); ctx.restore(); PCARD = null; offPopClose(); return; }
+  ctx.restore();
+}
+// stake chips from an option's effects: credits (coin + number), up / down arrows with what moves, a dice for any roll
+function pcChipList(o, E) {
+  const L = [], lab = f => f[0] === 'morale' ? 'TEAM' : f[0] === 'fans' ? 'FANS' : f[0] === 'appr' ? 'OWNER' : f[0] === 'cond' ? 'LEGS' : f[0] === 'xp' ? 'XP' : f[0] === 'unit' ? (f[1] === 'off' ? 'OFFENSE' : 'DEFENSE') : pcShort(f[1] === 'o' ? E.o : E.star);
+  for (const f of o.fx || []) {
+    if (f[0] === 'roll') L.push({ d: true });
+    else if (f[0] === 'coins') L.push({ c: f[1] });
+    else if (['morale', 'fans', 'appr', 'cond', 'xp'].includes(f[0])) L.push({ a: Math.sign(f[1]), t: lab(f) });
+    else if (f[0] === 'unit' || f[0] === 'mood') L.push({ a: Math.sign(f[2]), t: lab(f) });
+    else if (f[0] === 'promise') L.push({ d: true, t: 'NEXT GAME' });
+    else if (f[0] === 'sign') L.push({ a: 1, t: 'SIGNS' });
+    else if (f[0] === 'talks') L.push({ a: 0, t: 'TALKS' });
+  }
+  return L;
+}
+function pcChips(o, x, y, maxW, E, center) {
+  const L = pcChipList(o, E), h = POST_UI.chip; if (!L.length) return;
+  ctx.font = `bold 12px ${PF}`;
+  const ws = L.map(c => (c.c != null ? ctx.measureText((c.c > 0 ? '+' : '') + c.c).width : c.t ? ctx.measureText(c.t).width : 0) + (c.t || c.c != null ? 28 : 22));
+  let tot = ws.reduce((a, b) => a + b + 4, -4), cx = center ? x + Math.max(0, (maxW - tot) / 2) : x;
+  L.forEach((c, i) => {
+    if (cx + ws[i] > x + maxW + 1) return;
+    ctx.fillStyle = PP.paper; ctx.fillRect(cx, y, ws[i], h); ctx.strokeStyle = PP.dim; ctx.lineWidth = 1; ctx.strokeRect(cx + 0.5, y + 0.5, ws[i] - 1, h - 1);
+    const ix = cx + 11, iy = y + h / 2;
+    if (c.c != null) { ctx.fillStyle = '#e3b23c'; ctx.beginPath(); ctx.arc(ix, iy, 6.5, 0, 7); ctx.fill(); ctx.strokeStyle = '#8a6a10'; ctx.stroke(); }
+    else if (c.d) { ctx.fillStyle = PP.paper; ctx.strokeStyle = PP.ink; ctx.lineWidth = 1.5; ctx.strokeRect(ix - 6, iy - 6, 12, 12); ctx.fillStyle = PP.ink; for (const [dx, dy] of [[-3, -3], [0, 0], [3, 3]]) { ctx.beginPath(); ctx.arc(ix + dx, iy + dy, 1.3, 0, 7); ctx.fill(); } }
+    else if (c.a) { ctx.fillStyle = c.a > 0 ? '#2e7d4f' : PP.red; ctx.beginPath(); if (c.a > 0) { ctx.moveTo(ix - 6, iy + 4); ctx.lineTo(ix + 6, iy + 4); ctx.lineTo(ix, iy - 6); } else { ctx.moveTo(ix - 6, iy - 4); ctx.lineTo(ix + 6, iy - 4); ctx.lineTo(ix, iy + 6); } ctx.fill(); }
+    else { ctx.fillStyle = PP.dim; ctx.beginPath(); ctx.arc(ix, iy, 4, 0, 7); ctx.fill(); }
+    ctx.fillStyle = c.c != null ? (c.c < 0 ? PP.red : '#2e7d4f') : PP.ink; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(c.c != null ? (c.c > 0 ? '+' : '') + c.c : c.t || '', cx + 21, iy + 1);
+    cx += ws[i] + 4;
+  });
+}
+// a paper button with the label and its stake chips (the default skin, and the parts other skins reuse)
+function pcBtn(C, o, x, y, w, h, opt = {}) {
+  const E = C.E, b = { x, y, w, h }, hov = C.ph === 'ask' && hoverPt && inBtn(hoverPt, b), picked = C.po === o;
+  ctx.save(); if (C.ph === 'anim' && !picked) ctx.globalAlpha = 0.3;
+  ctx.fillStyle = hov || picked ? PP.soft : PP.paper; ctx.fillRect(x, y, w, h); ctx.strokeStyle = PP.ink; ctx.lineWidth = hov || picked ? 3 : 2; ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+  const lb = opt.label || postFill(o.l, E.slots), ch = pcChipList(o, E).length ? POST_UI.chip + 8 : 0, lh = 21, n = pWrap(lb, `bold 18px ${PF}`, w - 20).length;
+  pFlow(lb, x + 10, y + Math.max(6, (h - ch - Math.min(2, n) * lh) / 2), w - 20, lh, `bold 18px ${PF}`, PP.ink, 2, 'center');
+  if (ch && !opt.noChips) pcChips(o, x + 8, y + h - POST_UI.chip - 7, w - 16, E, true);
+  ctx.restore();
+  if (C.ph === 'ask') C.hits.push({ ...b, o });
+}
+function pcStrip(x, y, w, h, jag) {   // a tear-off tab: perforated top, jagged sides when the outcome is a roll
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w, y);
+  if (jag) { for (let k = 1; k <= 10; k++) ctx.lineTo(x + w + (k % 2 ? 5 : 0), y + h * k / 10); } else ctx.lineTo(x + w, y + h);
+  ctx.lineTo(x, y + h);
+  if (jag) { for (let k = 9; k >= 0; k--) ctx.lineTo(x + (k % 2 ? -5 : 0), y + h * k / 10); }
+  ctx.closePath();
+}
+const pcRoll = o => (o.fx || []).some(f => f[0] === 'roll');
+function pcSnap(C, key) {   // CIRCLE IT: the card for an option (p = the saga's man / the event's star, o = the second man, anything else = an invented person)
+  const A = C.D.arc, nm = key === 'p' ? C.E.star : key === 'o' ? C.E.o : null;
+  if (nm) { const f = findPlayer(nm); if (f) return snapOf(f.p, f.team, f.team === season.team); if (A && A.p && A.p.n === nm) return A.p; if (A && A.o && A.o.n === nm) return A.o; }
+  return { n: key && key !== 'p' && key !== 'o' ? key : '?', g: '', ps: '', s: 0, t: '', f: null, real: false };
+}
+function pcMark(kind, cx, cy, rx, ry, e, seed) {   // pencil marks: a wobbly circle, an X, a star (e = how much is drawn)
+  ctx.save(); ctx.strokeStyle = PP.red; ctx.lineWidth = 4; ctx.lineCap = ctx.lineJoin = 'round'; ctx.beginPath();
+  const r = seeded(seed);
+  if (kind === 'x') { const a = Math.min(1, e * 2), b = Math.max(0, e * 2 - 1); ctx.moveTo(cx - rx, cy - ry); ctx.lineTo(cx - rx + 2 * rx * a, cy - ry + 2 * ry * a); if (b > 0) { ctx.moveTo(cx + rx, cy - ry); ctx.lineTo(cx + rx - 2 * rx * b, cy - ry + 2 * ry * b); } }
+  else if (kind === 'star') { const n = Math.max(1, Math.ceil(10 * e)); for (let i = 0; i <= n; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? 0.45 : 1; i ? ctx.lineTo(cx + Math.cos(a) * rx * rr, cy + Math.sin(a) * ry * rr) : ctx.moveTo(cx + Math.cos(a) * rx, cy + Math.sin(a) * ry); } }
+  else { const n = Math.max(2, Math.ceil(40 * e)); for (let i = 0; i <= n; i++) { const a = -2.2 + i / 40 * Math.PI * 2.15, w = 1 + (r() - 0.5) * 0.06; i ? ctx.lineTo(cx + Math.cos(a) * rx * w, cy + Math.sin(a) * ry * w) : ctx.moveTo(cx + Math.cos(a) * rx * w, cy + Math.sin(a) * ry * w); } }
+  ctx.stroke(); ctx.restore();
+}
+function pcDie(x, y, k, good, sz = 38) {   // the dice tumble for a roll (k 0-1 = tumbling, then it lands on 6 or 1)
+  const land = k >= 1, a = land ? 0.12 : k * 9, pip = land ? (good ? 6 : 1) : 1 + Math.floor((k * 23) % 6), yy = y - (land ? 0 : Math.abs(Math.sin(k * Math.PI * 3)) * 40 * (1 - k));
+  ctx.save(); ctx.translate(x, yy); ctx.rotate(a);
+  ctx.fillStyle = PP.paper; ctx.strokeStyle = PP.ink; ctx.lineWidth = 2.5; ctx.fillRect(-sz / 2, -sz / 2, sz, sz); ctx.strokeRect(-sz / 2, -sz / 2, sz, sz);
+  const P6 = { 1: [[0, 0]], 2: [[-1, -1], [1, 1]], 3: [[-1, -1], [0, 0], [1, 1]], 4: [[-1, -1], [1, -1], [-1, 1], [1, 1]], 5: [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]], 6: [[-1, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [1, 1]] };
+  ctx.fillStyle = pip === 1 ? PP.red : PP.ink; for (const [dx, dy] of P6[pip]) { ctx.beginPath(); ctx.arc(dx * sz * 0.27, dy * sz * 0.27, sz * 0.08, 0, 7); ctx.fill(); }
+  ctx.restore();
+}
+// the verbs: each draws the options in region R and pushes its hit boxes (C.hits); in the 'anim' phase it plays the picked one's flourish
+const PC_VERB = {
+  buttons(C, R) { const n = C.opts.length, g = 16, w = (R.w - g * (n - 1)) / n, h = Math.min(120, R.h); C.opts.forEach((o, i) => pcBtn(C, o, R.x + i * (w + g), R.y + R.h - h, w, h)); },
+  scratch(C, R) { PC_VERB.buttons(C, R); ctx.font = `italic 13px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillText('A dice chip = luck decides: scratch the silver box to see how it went.', R.x + R.w / 2, R.y); },
+  tab(C, R) {
+    const n = C.opts.length, g = 10, w = (R.w - g * (n - 1)) / n, h = Math.min(132, R.h - 8), y = R.y + R.h - h, e = pcE(C);
+    ctx.font = `italic 13px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText('✂  tear off your answer  ✂', R.x + R.w / 2, y - 6);
+    ctx.save(); ctx.strokeStyle = PP.dim; ctx.setLineDash([5, 5]); ctx.beginPath(); ctx.moveTo(R.x - 10, y); ctx.lineTo(R.x + R.w + 10, y); ctx.stroke(); ctx.restore();
+    C.opts.forEach((o, i) => {
+      const x = R.x + i * (w + g), picked = C.po === o, jag = pcRoll(o), hov = C.ph === 'ask' && hoverPt && inBtn(hoverPt, { x, y, w, h });
+      ctx.save();
+      if (picked && e > 0) { ctx.fillStyle = PP.soft; ctx.fillRect(x, y, w, 10); ctx.translate(x + w / 2, y + 10 + e * e * 300); ctx.rotate(e * 0.55 * (i % 2 ? 1 : -1)); ctx.translate(-x - w / 2, -y - 10); ctx.globalAlpha = 1 - e; }   // (the stub stays; the tab curls off and falls)
+      else if (C.ph === 'anim') ctx.globalAlpha = 0.35;
+      pcStrip(x, y + (picked ? 10 : 0), w, h - (picked ? 10 : 0), jag); ctx.fillStyle = hov ? PP.soft : PP.paper; ctx.fill(); ctx.strokeStyle = PP.ink; ctx.lineWidth = hov ? 3 : 2; ctx.stroke();
+      const lb = postFill(o.l, C.E.slots); pFlow(lb, x + 8, y + 18, w - 16, 21, `bold 18px ${PF}`, PP.ink, 3, 'center');
+      pcChips(o, x + 6, y + h - POST_UI.chip - 10, w - 12, C.E, true);
+      ctx.restore();
+      if (C.ph === 'ask') C.hits.push({ x, y, w, h, o });
+    });
+  },
+  stamp(C, R) {
+    const L = C.opts.slice(); if (!C.E.later) L.push({ l: 'ASK ME LATER', later: true, fx: [] });
+    const n = L.length, w = R.w / n, cy = R.y + R.h * 0.42, e = pcE(C), r = seeded(C.seed);
+    L.forEach((o, i) => {
+      const cx = R.x + w * (i + 0.5), lab = o.later ? 'ASK ME LATER' : o.stamp || (i === 0 ? 'APPROVED' : i === 1 ? 'DENIED' : o.l), col = o.later ? PP.dim : i === 0 ? '#2e7d4f' : i === 1 ? PP.red : '#2c4a6e', rot = (r() - 0.5) * 0.14;
+      const box = { x: cx - w / 2 + 6, y: R.y, w: w - 12, h: R.h }, hov = C.ph === 'ask' && hoverPt && inBtn(hoverPt, box), picked = C.po === o;
+      ctx.save(); if (C.ph === 'anim' && !picked) ctx.globalAlpha = 0.3;
+      qsStamp(cx, cy, lab, col, rot, hov ? 1.08 : 1, n > 3 ? 19 : 23);
+      ctx.restore();
+      if (!o.later) { pFlow(postFill(o.l, C.E.slots), box.x, cy + 34, box.w, 18, `italic 15px ${PF}`, PP.ink, 2, 'center'); pcChips(o, box.x, R.y + R.h - POST_UI.chip - 2, box.w, C.E, true); }
+      else pFlow('one more week, worse odds', box.x, cy + 34, box.w, 18, `italic 14px ${PF}`, PP.dim, 2, 'center');
+      if (C.ph === 'ask') C.hits.push({ ...box, o });
+      if (picked && e > 0) {   // (the thump: big, then down hard, with an ink splat)
+        const k = 1 + 1.6 * Math.pow(1 - Math.min(1, e * 1.6), 2), bx = R.x + R.w / 2, by = R.y - 70;
+        qsStamp(bx, by, lab, col, rot * 2, k, 40);
+        if (e > 0.55 && !pcLite()) { ctx.fillStyle = col; ctx.globalAlpha = 0.5; const q = seeded(C.seed + 3); for (let j = 0; j < 9; j++) { ctx.beginPath(); ctx.arc(bx + (q() - 0.5) * 260, by + (q() - 0.5) * 70, 1.5 + q() * 4, 0, 7); ctx.fill(); } ctx.globalAlpha = 1; }
+        C.stampRes = [lab, col, rot * 2];
+      }
+    });
+  },
+  press(C, R, body, t) {
+    const rx = R.x + 70, ry = R.y + R.h * 0.55;   // the reporter: hat, notepad, microphone
+    ctx.save(); ctx.lineWidth = 2.5; ctx.strokeStyle = PP.ink; ctx.fillStyle = PP.paper;
+    ctx.beginPath(); ctx.arc(rx, ry - 40, 26, 0, 7); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = PP.ink; ctx.fillRect(rx - 34, ry - 66, 68, 7); ctx.fillRect(rx - 22, ry - 88, 44, 24); ctx.fillStyle = PP.paper; ctx.fillRect(rx + 4, ry - 84, 14, 9); ctx.fillStyle = PP.ink; ctx.font = `bold 7px ${PF}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('PRESS', rx + 11, ry - 79);
+    ctx.beginPath(); ctx.arc(rx - 9, ry - 42, 2.5, 0, 7); ctx.arc(rx + 9, ry - 42, 2.5, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(rx - 40, ry + 70); ctx.quadraticCurveTo(rx, ry - 20, rx + 40, ry + 70); ctx.fillStyle = PP.soft; ctx.fill(); ctx.stroke();
+    ctx.restore();
+    drawDoodle('mic', rx + 46, ry - 6, 40, '#c0392b', pcLite() ? 0 : t, C.seed);
+    ctx.font = `italic 12px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillText(`${C.E.slots.by || POST_NAMES[0]}, THE POST`, rx, ry + 76);
+    const bx = R.x + 150, bw = R.w * 0.46 - 150, bh = Math.min(R.h - 20, 30 + pWrap(body, `italic 19px ${PF}`, bw - 30).length * 24);   // the question in his speech bubble
+    ctx.save(); ctx.fillStyle = PP.paper; ctx.strokeStyle = PP.ink; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(bx, R.y, bw, bh, 18) : ctx.rect(bx, R.y, bw, bh); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(bx + 4, R.y + bh * 0.55); ctx.lineTo(bx - 26, R.y + bh * 0.75); ctx.lineTo(bx + 4, R.y + bh * 0.75); ctx.fill(); ctx.stroke(); ctx.restore();
+    pFlow('"' + body + '"', bx + 15, R.y + 14, bw - 30, 24, `italic 19px ${PF}`, PP.ink, 9);
+    const ax = R.x + R.w * 0.5, aw = R.w * 0.5, n = C.opts.length, g = 10, ah = Math.min(104, (R.h - g * (n - 1)) / n);   // your answers: bubbles from the right
+    C.opts.forEach((o, i) => {
+      const y = R.y + i * (ah + g), picked = C.po === o, box = { x: ax, y, w: aw, h: ah }, hov = C.ph === 'ask' && hoverPt && inBtn(hoverPt, box), e = pcE(C), k = picked ? 1 + 0.06 * Math.sin(e * Math.PI) : 1;
+      ctx.save(); if (C.ph === 'anim' && !picked) ctx.globalAlpha = 0.3;
+      ctx.translate(ax + aw / 2, y + ah / 2); ctx.scale(k, k); ctx.translate(-ax - aw / 2, -y - ah / 2);
+      ctx.fillStyle = hov || picked ? PP.soft : PP.paper; ctx.strokeStyle = PP.ink; ctx.lineWidth = hov ? 3 : 2;
+      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(ax, y, aw - 18, ah, 16) : ctx.rect(ax, y, aw - 18, ah); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ax + aw - 22, y + ah * 0.6); ctx.lineTo(ax + aw, y + ah * 0.85); ctx.lineTo(ax + aw - 22, y + ah * 0.82); ctx.fill(); ctx.stroke();
+      ctx.font = `bold 11px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(o.tone || ['HUMBLE', 'CONFIDENT', 'NO COMMENT'][i] || '', ax + 14, y + 7);
+      pFlow('"' + postFill(o.q || o.l, C.E.slots) + '"', ax + 14, y + 21, aw - 50, 19, `italic 16px ${PF}`, PP.ink, Math.max(1, Math.floor((ah - 21 - POST_UI.chip - 8) / 19)));
+      pcChips(o, ax + 12, y + ah - POST_UI.chip - 6, aw - 44, C.E);
+      ctx.restore();
+      if (C.ph === 'ask') C.hits.push({ ...box, o });
+    });
+  },
+  circle(C, R) {
+    const n = C.opts.length, cw = Math.min(150, (R.w - 40 * (n - 1)) / n), chh = Math.min(190, R.h - 70), tot = n * cw + (n - 1) * 40, x0 = R.x + (R.w - tot) / 2, e = pcE(C);
+    C.opts.forEach((o, i) => {
+      const x = x0 + i * (cw + 40), y = R.y + 4, box = { x: x - 14, y: R.y - 4, w: cw + 28, h: R.h + 4 }, hov = C.ph === 'ask' && hoverPt && inBtn(hoverPt, box), picked = C.po === o;
+      ctx.save(); if (C.ph === 'anim' && !picked) ctx.globalAlpha = 0.35;
+      try { pCard(pcSnap(C, o.card || 'p'), x, y, cw, chh); } catch (e2) {}
+      pFlow(postFill(o.l, C.E.slots), x - 14, y + chh + 8, cw + 28, 18, `bold 15px ${PF}`, PP.ink, 2, 'center');
+      pcChips(o, x - 20, R.y + R.h - POST_UI.chip, cw + 40, C.E, true);
+      ctx.restore();
+      if (hov) { ctx.save(); ctx.globalAlpha = 0.35; pcMark(o.mark || 'circle', x + cw / 2, y + chh / 2, cw * 0.66, chh * 0.6, 1, C.seed + i); ctx.restore(); }
+      if (picked && e > 0) pcMark(o.mark || 'circle', x + cw / 2, y + chh / 2, cw * 0.66, chh * 0.6, e, C.seed + i);
+      if (C.ph === 'ask') C.hits.push({ ...box, o });
+    });
+  },
+  headline(C, R) {
+    const hl = postFill(C.D.hl || '{team} WILL ___ {opp}', C.E.slots).toUpperCase(), parts = hl.split('___'), f = `bold 34px ${PF}`, e = pcE(C);
+    ctx.font = f; const w0 = ctx.measureText(parts[0]).width, w1 = ctx.measureText(parts[1] || '').width, bw = 180, tot = w0 + bw + w1, hx = R.x + (R.w - tot) / 2, hy = R.y + 26;
+    ctx.fillStyle = PP.ink; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(parts[0], hx, hy); ctx.fillText(parts[1] || '', hx + w0 + bw, hy);
+    ctx.fillStyle = PP.soft; ctx.fillRect(hx + w0 + 6, hy - 22, bw - 12, 44); ctx.fillStyle = PP.ink; ctx.fillRect(hx + w0 + 6, hy + 20, bw - 12, 3);
+    const n = C.opts.length, cw = R.w / n, pal = ['#f4d35e', '#ee964b', '#e85d4a', '#2c4a6e', '#faf0ca', '#7fb069'];
+    C.opts.forEach((o, i) => {
+      const word = (o.word || o.l).toUpperCase(), sz = ((o.fx || []).find(x => x[0] === 'promise') || [0, 1])[1], fs = 18 + sz * 5, cx = R.x + cw * (i + 0.5), cy = R.y + R.h * 0.5;
+      const picked = C.po === o, box = { x: cx - cw / 2 + 8, y: R.y + 60, w: cw - 16, h: R.h - 60 }, hov = C.ph === 'ask' && hoverPt && inBtn(hoverPt, box);
+      const tx = picked ? cx + (hx + w0 + bw / 2 - cx) * e : cx, ty = picked ? cy + (hy - cy) * e : cy;
+      ctx.save(); if (C.ph === 'anim' && !picked) ctx.globalAlpha = 0.3;
+      ctx.font = `900 ${fs}px ${PF}`; const lw = [...word].map(ch => ctx.measureText(ch).width + 8), tw = lw.reduce((a, b) => a + b + 2, 0); let lx = tx - tw / 2;   // (cut-out letters, each on its own scrap)
+      const q = seeded(C.seed + i * 7);
+      [...word].forEach((ch, j) => { const c = pal[Math.floor(q() * pal.length)]; ctx.save(); ctx.translate(lx + lw[j] / 2, ty + (hov ? -3 : 0)); ctx.rotate((q() - 0.5) * 0.22); ctx.fillStyle = c; ctx.fillRect(-lw[j] / 2, -fs * 0.65, lw[j], fs * 1.3);
+        ctx.fillStyle = c === '#2c4a6e' || c === '#e85d4a' ? PP.paper : PP.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(ch, 0, 1); ctx.restore(); lx += lw[j] + 2; });
+      ctx.restore();
+      if (!picked || C.ph === 'ask') { pFlow(postFill(o.l, C.E.slots), box.x, cy + fs + 6, box.w, 17, `italic 14px ${PF}`, PP.ink, 2, 'center'); pcChips(o, box.x, R.y + R.h - POST_UI.chip, box.w, C.E, true); }
+      if (C.ph === 'ask') C.hits.push({ ...box, o });
+    });
+  },
+  phone(C, R, body, t) {
+    const ring = C.step === 0 && C.ph === 'ask';
+    drawDoodle('phone', R.x + 90, R.y + R.h * 0.42, 130, '#3a3a3a', ring && !pcLite() ? t : 0, C.seed);
+    if (ring && !pcLite() && Math.sin(t * 9) > 0) { ctx.strokeStyle = PP.red; ctx.lineWidth = 3; for (const s of [-1, 1]) { ctx.beginPath(); ctx.arc(R.x + 90, R.y + R.h * 0.42, 86, -0.5 + (s < 0 ? Math.PI : 0), 0.5 + (s < 0 ? Math.PI : 0)); ctx.stroke(); } }
+    ctx.font = `bold 14px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillText(ring ? 'RING RING' : 'ON THE LINE', R.x + 90, R.y + R.h * 0.42 + 76);
+    ctx.font = `italic 14px ${PF}`; ctx.fillStyle = PP.ink; ctx.fillText(postFill(C.D.who || 'A CALLER', C.E.slots), R.x + 90, R.y + R.h * 0.42 + 96);
+    const bx = R.x + 210, bw = R.w - 210;
+    let L;
+    if (C.step === 0) { const ringO = C.opts.find(o => o.ring) || C.opts.find(o => o.def) || C.opts[C.opts.length - 1], hang = C.opts.find(o => o.hang);
+      L = [{ act: 'pickup', l: 'PICK UP' }, ringO && { o: ringO, l: 'LET IT RING' }, hang && { o: hang, l: 'HANG UP' }].filter(Boolean); }
+    else L = C.opts.filter(o => !o.ring && !o.hang).map(o => ({ o, l: postFill(o.l, C.E.slots) }));
+    const g = 10, h = Math.min(96, (R.h - g * (L.length - 1)) / L.length);
+    L.forEach((it, i) => {
+      const y = R.y + i * (h + g);
+      if (it.act) { const box = { x: bx, y, w: bw, h }, hov = hoverPt && inBtn(hoverPt, box); ctx.fillStyle = hov ? PP.soft : PP.paper; ctx.fillRect(bx, y, bw, h); ctx.strokeStyle = '#2e7d4f'; ctx.lineWidth = 3; ctx.strokeRect(bx + 1, y + 1, bw - 2, h - 2);
+        pFlow('PICK UP', bx, y + h / 2 - 11, bw, 22, `bold 20px ${PF}`, '#2e7d4f', 1, 'center'); if (C.ph === 'ask') C.hits.push({ ...box, act: 'pickup' }); }
+      else pcBtn(C, it.o, bx, y, bw, h, { label: it.l });
+    });
+  },
+  letter(C, R, body) {
+    const lw = R.w * 0.58, e = pcE(C), bin = C.po && C.po.bin;
+    ctx.save(); ctx.translate(R.x + lw / 2, R.y + R.h / 2); ctx.rotate(-0.018); if (bin && e > 0) { ctx.globalAlpha = 1 - e; ctx.scale(1 - e * 0.6, 1 - e * 0.6); } ctx.translate(-R.x - lw / 2, -R.y - R.h / 2);
+    ctx.fillStyle = PP.paper; ctx.fillRect(R.x, R.y, lw, R.h); ctx.strokeStyle = PP.dim; ctx.lineWidth = 1; ctx.strokeRect(R.x + 0.5, R.y + 0.5, lw - 1, R.h - 1);
+    ctx.strokeStyle = 'rgba(70,110,170,0.35)'; for (let y = R.y + 44; y < R.y + R.h - 6; y += 24) { ctx.beginPath(); ctx.moveTo(R.x + 12, y); ctx.lineTo(R.x + lw - 12, y); ctx.stroke(); }
+    ctx.strokeStyle = 'rgba(190,60,60,0.35)'; ctx.beginPath(); ctx.moveTo(R.x + 40, R.y + 6); ctx.lineTo(R.x + 40, R.y + R.h - 6); ctx.stroke();
+    ctx.font = `italic 15px ${PF}`; ctx.fillStyle = PP.ink; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillText('Dear Coach,', R.x + 48, R.y + 41);
+    const L = pWrap(body, `italic 17px ${PF}`, lw - 64).slice(0, Math.floor((R.h - 70) / 24)); ctx.font = `italic 17px ${PF}`; L.forEach((l, i) => ctx.fillText(l, R.x + 48, R.y + 65 + i * 24));
+    ctx.textAlign = 'right'; ctx.fillText('— ' + postFill(C.D.who || 'a fan', C.E.slots), R.x + lw - 18, R.y + R.h - 12);
+    ctx.restore();
+    if (bin && e > 0) { try { paperBall(R.x + lw / 2 + e * 120, R.y + R.h / 2 + e * e * 160, 30 - e * 8, PP.paper, e * 6, C.seed); } catch (e2) {} }
+    const bx = R.x + lw + 20, bw = R.w - lw - 20, n = C.opts.length, g = 10, h = Math.min(100, (R.h - g * (n - 1)) / n);
+    C.opts.forEach((o, i) => pcBtn(C, o, bx, R.y + i * (h + g), bw, h));
+  },
+  marker(C, R, body) {
+    ctx.fillStyle = PP.paper; ctx.fillRect(R.x, R.y, R.w, R.h); ctx.strokeStyle = PP.dim; ctx.lineWidth = 1; ctx.strokeRect(R.x + 0.5, R.y + 0.5, R.w - 1, R.h - 1);
+    try { qsStamp(R.x + R.w - 120, R.y + 26, 'LEAKED', PP.red, 0.08, 1, 18); } catch (e) {}
+    pFlow(body, R.x + 20, R.y + 12, R.w - 260, 20, `italic 16px ${PF}`, PP.dim, 2);
+    ctx.font = `italic 13px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('Black out ONE line before it prints. The one you hide decides what runs next.', R.x + 20, R.y + 56);
+    const n = C.opts.length, top = R.y + 82, h = Math.min(66, (R.h - 92) / n), e = pcE(C);
+    C.opts.forEach((o, i) => {
+      const y = top + i * h, box = { x: R.x + 10, y, w: R.w - 20, h: h - 6 }, hov = C.ph === 'ask' && hoverPt && inBtn(hoverPt, box), picked = C.po === o;
+      ctx.font = `bold 13px monospace`; ctx.fillStyle = PP.dim; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(`${i + 1}.`, R.x + 20, y + 6);
+      pFlow(postFill(o.ln || o.l, C.E.slots), R.x + 46, y + 4, R.w - 300, 19, `17px ${PF}`, PP.ink, 2);
+      ctx.save(); if (C.ph === 'anim' && !picked) ctx.globalAlpha = 0.35; pcChips(o, R.x + R.w - 248, y + 4, 236, C.E); ctx.restore();
+      if (hov) { ctx.fillStyle = 'rgba(20,16,10,0.25)'; ctx.fillRect(R.x + 40, y + 2, R.w - 300, h - 10); }
+      if (picked && e > 0) { ctx.fillStyle = PP.ink; ctx.fillRect(R.x + 40, y + 2, (R.w - 300) * e, h - 10); }
+      if (C.ph === 'ask') C.hits.push({ ...box, o });
+    });
+  },
+  caption(C, R) {
+    const pw = Math.min(300, R.w * 0.4), ph = Math.min(R.h - 24, 220), e = pcE(C);
+    try { pPortrait(null, R.x, R.y, pw, ph, C.E.slots.lg || season.team); } catch (e2) {}
+    const ax = R.x + pw + 24, aw = R.w - pw - 24, n = C.opts.length, g = 10, h = Math.min(84, (R.h - g * (n - 1)) / n);
+    C.opts.forEach((o, i) => {
+      const picked = C.po === o, y0 = R.y + i * (h + g), y = picked ? y0 + (R.y + ph + 4 - y0) * e : y0, x = picked ? ax + (R.x - ax) * e : ax, box = { x: ax, y: y0, w: aw, h }, hov = C.ph === 'ask' && hoverPt && inBtn(hoverPt, box);
+      ctx.save(); if (C.ph === 'anim' && !picked) ctx.globalAlpha = 0.3;
+      ctx.fillStyle = hov || picked ? PP.soft : PP.paper; ctx.fillRect(x, y, aw, h); ctx.strokeStyle = PP.ink; ctx.lineWidth = hov ? 3 : 1.5; ctx.strokeRect(x + 0.5, y + 0.5, aw - 1, h - 1);
+      pFlow('"' + postFill(o.l, C.E.slots) + '"', x + 12, y + 8, aw - 24, 19, `italic 16px ${PF}`, PP.ink, 2);
+      pcChips(o, x + 10, y + h - POST_UI.chip - 6, aw - 20, C.E);
+      ctx.restore();
+      if (C.ph === 'ask') C.hits.push({ ...box, o });
+    });
+  },
+};
+function postCardDraw(C, b) {
+  const D = C.D, E = C.E, t = pcNow() / 1000, v = D.verb, lite = pcLite();
+  C.hits = [];
+  ctx.save(); ctx.translate(5, 7); tornPath(b); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill(); ctx.restore();
+  tornPath(b); ctx.fillStyle = PP.paper; ctx.fill(); ctx.save(); tornPath(b); ctx.clip(); ctx.fillStyle = pGrain(); ctx.fillRect(b.x, b.y, b.w, b.h); ctx.restore();
+  try { tapeStrip(b.x + 120, b.y + 2, 120, 26, -0.07); tapeStrip(b.x + b.w - 120, b.y + 2, 120, 26, 0.06); } catch (e) {}
+  const [dk, dc] = pcCat(D);
+  drawDoodle(dk, b.x + 56, b.y + 70, 58, dc, lite ? 0 : t, C.seed);
+  ctx.font = `bold 13px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.fillText(D.arc ? `${sagaTitle(D.nm)}  ·  YOUR CALL` : 'THE PAPER PASSER POST  ·  MIDWEEK NEWS  ·  YOUR CALL', b.x + 104, b.y + 30);
+  let y = pFlow(postFill(D.title, E.slots), b.x + 104, b.y + 48, b.w - 140, 32, `bold 28px ${PF}`, PP.ink, 2) + 8;
+  y = Math.max(y, b.y + 112); pRule(b.x + 30, y, b.x + b.w - 30, 2); y += 14;
+  const body = postFill(D.body, E.slots);
+  if (C.ph === 'res') { pcResult(C, b, y, body); return; }
+  if (v !== 'press' && v !== 'letter' && v !== 'marker') y = pFlow(body, b.x + 40, y, b.w - 80, 25, `19px ${PF}`, PP.ink, 4) + 14;
+  const R = { x: b.x + 34, y, w: b.w - 68, h: b.y + b.h - 92 - y };
+  (PC_VERB[v] || PC_VERB.buttons)(C, R, body, t);
+  if (C.ph === 'ask') {
+    popBtnDraw = true; menuBtn(cpOK(), 'LATER', PP.soft, 22); popBtnDraw = false;
+    ctx.font = `italic 12px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillText(E.later ? 'You asked for more time: it decides itself when the next issue prints.' : 'Not now? It stays on the paper and decides itself when the next issue prints.', W / 2, cpOK().y + 54);
+  }
+}
+// the result: the outcome is written on in pencil (a scratch-off box first for SCRATCH-OFF rolls), then the bars slide, then OK crumples the card away
+function pcResult(C, b, y, body) {
+  const res = C.res || { txt: '', bars: [], rolls: [] }, now = pcNow(), lite = pcLite(), o = C.po || {};
+  if (C.stampRes) qsStamp(b.x + b.w - 170, b.y + 150, C.stampRes[0], C.stampRes[1], C.stampRes[2], 1, 30);
+  ctx.font = `bold 15px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.fillText(`YOU CHOSE: ${postFill(o.l || '', C.E.slots).toUpperCase()}`, b.x + 40, y, b.w - 80); y += 28;
+  const tx = b.x + 40 + (res.rolls.length ? 70 : 0), tw = b.w - 80 - (res.rolls.length ? 70 : 0), lines = pWrap(res.txt, `italic 22px ${PF}`, tw).slice(0, 6), th = Math.max(1, lines.length) * 29;
+  if (res.rolls.length && C.wt0 != null) { const good = res.rolls[res.rolls.length - 1]; pcDie(b.x + 70, y + 30, lite ? 1 : Math.min(1, (now - C.wt0 + 800) / 800), good); }   // (tumbles before the writing starts; a scratch-off shows it only once scratched)
+  if (C.scr) {   // SCRATCH-OFF: a silver box over the outcome; rub it (move over it) or click it
+    Object.assign(C.scr, { x: tx - 6, y: y - 4, w: tw + 12, h: th + 10 });
+    if (C.rub < 1 && hoverPt && inBtn(hoverPt, C.scr)) { const lp = C.lastHover; if (lp && (lp.x !== hoverPt.x || lp.y !== hoverPt.y)) C.rub = Math.min(1, C.rub + Math.hypot(hoverPt.x - lp.x, hoverPt.y - lp.y) / 900); C.lastHover = { x: hoverPt.x, y: hoverPt.y }; }
+    if (C.rub >= 1 && C.wt0 == null) { C.wt0 = now; sndRec('pencil', 0.6, { ms: POST_UI.writeMs, at: SND_USE.penAt, tag: 'pcw' }); }
+  }
+  const wk = C.wt0 == null ? 0 : lite ? 1 : Math.max(0, Math.min(1, (now - C.wt0) / POST_UI.writeMs)), total = lines.reduce((a, l) => a + l.length, 0);
+  let left = Math.round(total * wk), ex = tx, ey = y;
+  ctx.font = `italic 22px ${PF}`; ctx.fillStyle = PP.ink; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  lines.forEach((l, i) => { if (left <= 0) return; const part = l.slice(0, left); left -= l.length; ctx.fillText(part, tx, y + i * 29); ex = tx + ctx.measureText(part).width; ey = y + i * 29; });
+  if (wk > 0 && wk < 1) { ctx.save(); ctx.translate(ex + 6, ey + 14); ctx.rotate(-0.7); ctx.fillStyle = '#e3b23c'; ctx.fillRect(0, -4, 34, 8); ctx.fillStyle = '#f2c9a0'; ctx.beginPath(); ctx.moveTo(0, -4); ctx.lineTo(-9, 0); ctx.lineTo(0, 4); ctx.fill(); ctx.fillStyle = PP.ink; ctx.fillRect(-9, -1, 3, 2); ctx.restore(); }   // (the pencil at the end of the line)
+  if (C.scr && C.rub < 1) {
+    ctx.save(); ctx.fillStyle = '#b8bcc4'; ctx.fillRect(C.scr.x, C.scr.y, C.scr.w, C.scr.h); ctx.globalCompositeOperation = 'destination-out';
+    const q = seeded(C.seed + 9); for (let i = 0; i < 70 * C.rub; i++) { ctx.beginPath(); ctx.arc(C.scr.x + q() * C.scr.w, C.scr.y + q() * C.scr.h, 10 + q() * 16, 0, 7); ctx.fill(); }
+    ctx.restore(); ctx.fillStyle = '#5c6068'; ctx.font = `bold 15px ${PF}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('SCRATCH HERE  (or tap)', C.scr.x + C.scr.w / 2, C.scr.y + C.scr.h / 2);
+  }
+  y += th + 18;
+  const bars = res.bars || [];
+  if (wk >= 1 && bars.length) {   // what moved, sliding from the old value to the new one
+    if (C.barT0 == null) C.barT0 = now;
+    const k = lite ? 1 : Math.max(0, Math.min(1, (now - C.barT0) / POP_BAR.ms)), e = 1 - Math.pow(1 - k, 3);
+    bars.slice(0, 5).forEach((bb, i) => {
+      const yy = y + i * POP_BAR.h, vv = bb.from + (bb.to - bb.from) * e, up = bb.to >= bb.from, d = Math.round(bb.to - bb.from);
+      ctx.fillStyle = PP.ink; ctx.font = `bold 15px ${PF}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(bb.label, b.x + 60, yy + 12, 230);
+      pencilBar(b.x + 300, yy, 300, 24, vv / 100, up ? 'green' : 'red', 10, 11 + i);
+      ctx.fillStyle = up ? MORALE.gain : MORALE.hit; ctx.font = `bold 17px ${PF}`; ctx.fillText(`${Math.round(vv)}%  ${d >= 0 ? '+' : ''}${d}`, b.x + 616, yy + 12, 130);
+    });
+    C.done = k >= 1;
+  } else C.done = wk >= 1;
+  ctx.font = `italic 12px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText('The Post will print what happens next.', W / 2, cpOK().y - 6);
+  if (!C.scr || C.rub >= 1) { popBtnDraw = true; menuBtn(cpOK(), 'OK', IN_GAME_PAPER.green, 24); popBtnDraw = false; }
+}
+// the pending question on the paper (CLASSIFIEDS box, under its saga story): tap an option to answer it right here (same answer as the card)
+function postAskBox(x, y, w, h) {
+  const P = postS(), E = P.ev, D = postItemDef(E); if (!D || postV.ai !== 0) return y;
+  const opts = postOpts(D).filter(o => !o.ring && !o.hang); if (!opts.length) return y;
+  ctx.fillStyle = PP.soft; ctx.fillRect(x, y, w, h); ctx.save(); ctx.strokeStyle = PP.red; ctx.lineWidth = 2; ctx.setLineDash([7, 4]); ctx.strokeRect(x + 1, y + 1, w - 2, h - 2); ctx.restore();
+  const [dk, dc] = pcCat(D); drawDoodle(dk, x + 22, y + 24, 30, dc, pcLite() ? 0 : pcNow() / 1000, 3);
+  ctx.font = `bold 11px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(`YOUR CALL${E.later ? ' (YOU ASKED FOR TIME)' : ''}  ·  tap to answer`, x + 44, y + 7, w - 52);
+  pFlow(postFill(D.title, E.slots), x + 44, y + 21, w - 52, 17, `bold 15px ${PF}`, PP.ink, D.verb === 'phone' ? 2 : 1);
+  pHit(x, y, w, h - 50, () => postCardOpen(E, null, 'now'));
+  if (D.verb === 'phone') { pTabBtn('☎ ANSWER THE PHONE', x + 8, y + h - 42, w - 16, () => postCardOpen(E, null, 'now')); return y + h; }
+  const n = opts.length, g = 6, cw = (w - 12 - g * (n - 1)) / n, by = y + h - 48, bh = 42;
+  opts.forEach((o, i) => {
+    const bx = x + 6 + i * (cw + g);
+    pcStrip(bx, by, cw, bh, pcRoll(o)); ctx.fillStyle = PP.paper; ctx.fill(); ctx.strokeStyle = PP.ink; ctx.lineWidth = 1.5; ctx.stroke();
+    pFlow(postFill(o.word || o.l, E.slots), bx + 3, by + 5, cw - 6, 15, `bold 12px ${PF}`, PP.ink, 2, 'center');
+    pHit(bx, by, cw, bh, () => postCardOpen(E, o, { x: bx, y: by, w: cw, h: bh }));
+  });
+  return y + h;
 }
 // an event's result shows what moved as bars sliding from the old value to the new one (drawOffPop draws P.bars)
 const POP_BAR = { h: 46, ms: 1400, delay: 350 };
@@ -399,7 +922,8 @@ function postBarSnap(E) {
 function postBarDiff(a, b) {
   const out = [], add = (k, label) => { if (a[k] != null && b[k] != null && Math.abs(b[k] - a[k]) >= 0.5) out.push({ label, from: a[k], to: b[k] }); };
   add('mor', 'TEAM MORALE');
-  const dm = b.mor - a.mor; for (const [k, l] of [['off', 'OFFENSE MOOD'], ['def', 'DEFENSE MOOD']]) if (Math.abs((b[k] - a[k]) - dm) >= 0.5) add(k, l);   // (a whole-team shift shows once, as team morale) add('star', `${String(b.starN).toUpperCase()} MOOD`);
+  const dm = b.mor - a.mor; for (const [k, l] of [['off', 'OFFENSE MOOD'], ['def', 'DEFENSE MOOD']]) if (Math.abs((b[k] - a[k]) - dm) >= 0.5) add(k, l);   // (a whole-team shift shows once, as team morale)
+  add('star', `${String(b.starN).toUpperCase()} MOOD`);
   add('cond', 'CONDITION'); add('fans', 'FANS'); add('appr', 'OWNER APPROVAL');
   return out;
 }
@@ -409,8 +933,11 @@ function postIssue(kind, g) {
   const P = postS(), yr = LEAGUE.year, me = season.team, wk = kind === 'wk' ? season.last : kind === 'po' ? 100 + (po ? po.round : 0) : 0, id = `${yr}:${kind}:${wk}`;
   if (P.issues.some(i => i.id === id)) return null;
   if (kind === 'wk' && !gameOf(wk)) return null;
-  const r = postRng('issue' + kind), wire = P.wire.slice(), trades = (LEAGUE.tradeNews || []).slice();
+  try { postAutoResolve(); } catch (e) { console.warn('Post auto', e); P.ev = null; }   // (last week's unanswered question decides itself first: never two stacked)
+  postBuilding = id;
+  const r = postRng('issue' + kind), wire = P.wire.slice(), trades = (LEAGUE.tradeNews || []).slice(); postTradeWk = trades;
   const cands = postCands(kind, r, { wk, wire, trades, g });
+  if (kind === 'wk') try { postPromise(wk, r, cands); } catch (e) {}
   const arcStories = kind === 'pre' ? [] : postArcs(r, kind === 'off');
   for (const s of arcStories) cands.push({ w: 7 + (s.big ? 4 : 0), st: s, k: 'arc' });
   const recent = P.issues.slice(0, 3).flatMap(i => [i.head.k, ...i.st.map(s => s.k)]);   // (the same kind of story in the last three papers counts less)
@@ -436,12 +963,16 @@ function postIssue(kind, g) {
   const fa = FA_POOL.slice().sort((a, b) => b.stars - a.stars).slice(0, 6).map(p => ({ n: p.name, ps: p.tag, s: p.stars, a: p.age, sal: p.salary, y: p.years }));
   const iss = { id, n: ++P.n, yr, wk, kind, by: rPick(r, POST_NAMES), head: stories[0], st: stories.slice(1),
     sc: kind === 'wk' ? (season.sched[wk - 1] || []).filter(x => x.hs != null).map(x => [x.h, x.a, x.hs, x.as]) : [], std: postStandings(), rec: recStr(T[me]), wire: wire.slice(-16).reverse(), rum: roll,
-    let: L.map(l => [postFill(l[0], { city, n: rInt(r, 4, 30) }), postFill(l[1], { city })]), ad: rPick(r, ADS), ed: { t: 'OUR VIEW', b: rPick(r, EDITS[edk]) }, cls: fa, morale: LEAGUE.morale };
+    let: L.map(l => [postFill(l[0], { city, n: rInt(r, 4, 30) }), postFill(l[1], { city })]), ad: rPick(r, ADS), ed: { t: 'OUR VIEW', b: rPick(r, EDITS[edk]) }, cls: fa, morale: LEAGUE.morale,
+    fans: Math.round((LEAGUE.fans || 0) * 100), appr: Math.round((LEAGUE.approval || 0) * 100), q: P.quote || null, stop: stories.some(s => s.stop) };
+  P.quote = null;
+  if (kind === 'wk' && P.arcs.some(a => !a.end && arcDef(a) && arcDef(a).critic)) { const gr = postGrade(wk); if (gr) iss.grade = { g: gr, by: P.critic || POST_NAMES[0] }; }
   P.issues.unshift(iss);
   P.issues.forEach((it, i) => { if (i >= POST.full) { it.st = it.st.slice(0, 3); delete it.sc; delete it.rum; delete it.let; delete it.ed; delete it.cls; delete it.std; if (it.wire) it.wire = it.wire.slice(0, 4).map(w => ({ k: w.k, t: w.t })); } });
   if (P.issues.length > POST.keep) P.issues.length = POST.keep;
   P.wire = [];
   if (kind === 'wk') postEventRoll(r);
+  postBuilding = null; postTradeWk = null;
   return iss;
 }
 // ---- drawing helpers ----
@@ -502,7 +1033,12 @@ function pCard(s, x, y, w, h, mini) {   // a player card like the roster's, prin
   const r = Math.max(4, Math.min(mini ? 5 : 8, (w - 14) / 11));
   starsRow(x + w / 2 - 4.4 * r, y + h - (mini ? 8 : 12), s.s || 0, r);
 }
-function pPortrait(s, x, y, w, h, lg) {   // a player card, or a team logo printed as a halftone newsprint photo
+function pPortrait(s, x, y, w, h, lg) {   // a player card, or a team logo printed as a halftone newsprint photo; the first time it is seen it develops like a polaroid
+  const dk = pSeen(`dev:${postV.ai}:${postV.pg}:${Math.round(x)}:${Math.round(y)}:${lg || (s && s.n) || ''}`), dv = Math.min(1, dk / POST_UI.devMs);
+  if (dv < 1 && results && results.screen === 'post') { try { pPortraitNow(s, x, y, w, h, lg); } finally { ctx.save(); ctx.globalAlpha = (1 - dv) * 0.92; ctx.fillStyle = '#3a3428'; ctx.fillRect(x, y, w, (!lg && s && s.n) ? h + 14 : h); ctx.globalAlpha = (1 - dv) * (1 - dv) * 0.6; ctx.fillStyle = PP.paper; ctx.fillRect(x, y, w, (!lg && s && s.n) ? h + 14 : h); ctx.restore(); } return; }
+  pPortraitNow(s, x, y, w, h, lg);
+}
+function pPortraitNow(s, x, y, w, h, lg) {
   if (!lg && s && s.n) { pCard(s, x, y, w, h + 14); return; }
   ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
   ctx.fillStyle = '#d4cab0'; ctx.fillRect(x, y, w, h);
@@ -528,6 +1064,61 @@ function pClip(it, s, x, y) {
     if (i >= 0) P.scrap.splice(i, 1); else { P.scrap.unshift({ key: postClipKey(it, s), n: it.n, yr: it.yr, wk: it.wk, k: s.k, t: s.t, b: s.b, s: s.s, big: s.big }); if (P.scrap.length > POST.scrap) P.scrap.length = POST.scrap; }
   });
 }
+// ---- the Post's looks: saga tracker strip, live / auto / good / bad marks, typewriter headlines, STOP THE PRESSES, polaroids, margin thermometers (time-based, off in performance mode) ----
+const pAnim = () => !pcLite();
+function pSeen(k) { const S = postV.seen; if (S[k] == null) S[k] = pcNow(); return pAnim() ? pcNow() - S[k] : 1e9; }   // ms since this thing was first drawn this visit
+function pStub(kind, cx, cy, sz) {   // the choice stub on a tracker panel: torn tab / stamp / circle / bubble / phone / X ...
+  ctx.save(); ctx.lineWidth = 1.5; ctx.strokeStyle = PP.red; ctx.fillStyle = PP.paper;
+  if (kind === 'stamp') { ctx.translate(cx, cy); ctx.rotate(-0.15); ctx.strokeRect(-sz * 0.7, -sz * 0.32, sz * 1.4, sz * 0.64); ctx.font = `bold ${Math.round(sz * 0.32)}px monospace`; ctx.fillStyle = PP.red; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('OK', 0, 1); }
+  else if (kind === 'tab') { pcStrip(cx - sz * 0.35, cy - sz * 0.4, sz * 0.7, sz * 0.8, true); ctx.fill(); ctx.stroke(); }
+  else if (kind === 'circle' || kind === 'headline') { ctx.beginPath(); ctx.ellipse(cx, cy, sz * 0.5, sz * 0.38, -0.2, 0.3, 6.6); ctx.stroke(); }
+  else if (kind === 'press') { ctx.beginPath(); ctx.ellipse(cx, cy - 2, sz * 0.55, sz * 0.32, 0, 0, 7); ctx.fill(); ctx.stroke(); ctx.beginPath(); ctx.moveTo(cx - 4, cy + sz * 0.2); ctx.lineTo(cx - 10, cy + sz * 0.45); ctx.lineTo(cx + 3, cy + sz * 0.25); ctx.stroke(); }
+  else if (kind === 'phone') drawDoodle('phone', cx, cy, sz, '#3a3a3a', 0, 5);
+  else if (kind === 'marker') { ctx.fillStyle = PP.ink; ctx.fillRect(cx - sz * 0.55, cy - 4, sz * 1.1, 8); }
+  else if (kind === 'letter') drawDoodle('envelope', cx, cy, sz, '#5b8fd1', 0, 5);
+  else { ctx.beginPath(); ctx.moveTo(cx - sz * 0.35, cy); ctx.lineTo(cx - sz * 0.08, cy + sz * 0.28); ctx.lineTo(cx + sz * 0.4, cy - sz * 0.3); ctx.stroke(); }
+  ctx.restore();
+}
+function pRing(cx, cy, r, seed) {   // a coffee ring: this chapter decided itself (nobody answered)
+  ctx.save(); const q = seeded(seed); ctx.strokeStyle = 'rgba(120,78,30,0.32)'; ctx.lineWidth = Math.max(2, r * 0.14);
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0.4 + q() * 0.5, 0.4 + Math.PI * 1.75); ctx.stroke(); ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(120,78,30,0.18)'; ctx.beginPath(); ctx.arc(cx + 1, cy - 1, r * 0.84, 0, 7); ctx.stroke(); ctx.restore();
+}
+function pGold(x, y, sz) { ctx.save(); const g = ctx.createLinearGradient(x, y, x + sz, y + sz); g.addColorStop(0, '#f6e27a'); g.addColorStop(0.5, '#c9a227'); g.addColorStop(1, '#f2d76b'); ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + sz, y); ctx.lineTo(x, y + sz); ctx.fill(); ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.beginPath(); ctx.moveTo(x + 4, y + sz * 0.55); ctx.lineTo(x + sz * 0.55, y + 4); ctx.stroke(); ctx.restore(); }   // a gold-foil corner: a happy ending
+function pBleed(x, y, w, h, seed) { ctx.save(); const q = seeded(seed); ctx.fillStyle = 'rgba(20,16,10,0.13)'; for (let i = 0; i < 7; i++) { ctx.beginPath(); ctx.ellipse(x + q() * w, y + q() * h, 4 + q() * 12, 3 + q() * 8, q() * 3, 0, 7); ctx.fill(); } ctx.restore(); }   // ink bleeding through: a bad turn
+function pDeveloping(x, y) {   // the boiling DEVELOPING tag on a live saga
+  const q = seeded(1 + Math.floor((pAnim() ? pcNow() : 0) / (1000 / POST_UI.boil)) % 50);
+  ctx.save(); ctx.translate(x + (q() - 0.5) * 1.5, y + (q() - 0.5) * 1.5); ctx.rotate((q() - 0.5) * 0.04);
+  ctx.font = `bold 10px ${PF}`; const tw = ctx.measureText('DEVELOPING').width + 10; ctx.strokeStyle = PP.red; ctx.lineWidth = 1.5; ctx.strokeRect(0, -1, tw, 14);
+  ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('DEVELOPING', 5, 1); ctx.restore();
+}
+// SAGA TRACKER: a comic strip of the saga so far (arc.hist, 8 kept), each panel sketched in the first time it is seen, the choice stub on its panel
+function pTracker(a, x, y, w, h) {
+  const H = (a.hist || []).slice(-8), n = Math.max(1, H.length + (a.end ? 0 : 1)), pw = Math.min(h * 1.5, (w - (n - 1) * 5) / n), d = arcDef(a) || {};
+  H.forEach((e, i) => {
+    const px = x + i * (pw + 5), k = Math.min(1, pSeen(`trk:${a.id}:${e.st}:${e.yr}:${e.wk}`) / 600), last = i === H.length - 1;
+    ctx.save(); ctx.globalAlpha = 0.25 + 0.75 * k;
+    ctx.fillStyle = PP.paper; ctx.fillRect(px, y, pw, h); ctx.strokeStyle = PP.ink; ctx.lineWidth = 1.5;
+    ctx.beginPath(); const L = 2 * (pw + h) * k; ctx.moveTo(px, y); ctx.lineTo(px + Math.min(pw, L), y); if (L > pw) ctx.lineTo(px + pw, y + Math.min(h, L - pw)); if (L > pw + h) ctx.lineTo(px + pw - Math.min(pw, L - pw - h), y + h); if (L > 2 * pw + h) ctx.lineTo(px, y + h - Math.min(h, L - 2 * pw - h)); ctx.stroke();   // (the border is pencilled in)
+    ctx.font = `bold 9px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(String(i + 1), px + 3, y + 2);
+    if (e.auto) pRing(px + pw / 2, y + h / 2, Math.min(pw, h) * 0.36, i + 7);
+    else if (e.verb) pStub(e.verb, px + pw / 2, y + h / 2 + 2, Math.min(pw, h) * 0.62);
+    else if (i === 0) drawDoodle((POST_UI.cat[d.cat] || POST_UI.cat.news)[0], px + pw / 2, y + h / 2 + 2, Math.min(pw, h) * 0.6, (POST_UI.cat[d.cat] || POST_UI.cat.news)[1], 0, i + 3);
+    else { ctx.strokeStyle = PP.dim; ctx.lineWidth = 1; ctx.beginPath(); for (let j = 0; j < 3; j++) { ctx.moveTo(px + 6, y + h * (0.4 + j * 0.18)); ctx.lineTo(px + pw - 6 - j * 5, y + h * (0.4 + j * 0.18)); } ctx.stroke(); }
+    const st = d.st && d.st[e.st];
+    if (last && a.end && st && st.good) pGold(px, y, Math.min(14, h * 0.5));
+    if (st && st.bad) pBleed(px, y, pw, h, i + 11);
+    ctx.restore();
+  });
+  if (!a.end) { const px = x + H.length * (pw + 5); ctx.save(); ctx.setLineDash([3, 3]); ctx.strokeStyle = PP.dim; ctx.strokeRect(px + 0.5, y + 0.5, pw - 1, h - 1); ctx.restore(); ctx.font = `bold 13px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('...', px + pw / 2, y + h / 2); }
+  return y + h;
+}
+function pPin(s, x, y) {   // PIN IT (beside CLIP on saga stories): a pinned saga asks you first, and its ending is taped into the SCRAPBOOK
+  const P = postS(), A = s.a && P.arcs.find(q => q.id === s.a); if (!A || A.end) return;
+  const on = P.pins.includes(A.id), full = !on && P.pins.length >= POST_UI.pinMax;
+  ctx.font = `bold 11px ${PF}`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillStyle = on ? PP.red : full ? PP.soft : PP.dim;
+  ctx.fillText(on ? '📌 PINNED' : '📌 PIN IT', x, y);
+  pHit(x - 72, y - 11, 74, 22, () => { if (on) P.pins = P.pins.filter(q => q !== A.id); else if (!full) { P.pins.push(A.id); sndRec('tap', 0.6); } autosaveSoon(); });
+}
 function pStory(it, s, x, y, w, bottom, o = {}) {   // headline, optional portrait floated left, body; clip button at the bottom
   let yy = y;
   const hs = o.hs || 22, lh = o.lh || 17, ex = s.big && !o.noExtra ? 21 : 0;
@@ -535,12 +1126,19 @@ function pStory(it, s, x, y, w, bottom, o = {}) {   // headline, optional portra
   const hl = Math.max(1, Math.min(o.hl || 3, Math.floor((bottom - y - ex - 4 - 2 * lh - 22) / (hs * 1.12))));
   if (s.big && !o.noExtra) { ctx.fillStyle = PP.red; ctx.fillRect(x, yy, 62, 17); ctx.fillStyle = '#fff'; ctx.font = `bold 12px ${PF}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('EXTRA!', x + 31, yy + 9); yy += 21; }
   yy = pFlow(s.t, x, yy, w, hs * 1.12, `bold ${hs}px ${PF}`, PP.ink, hl) + 4;
-  if (s.nm) { ctx.font = `italic 11px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(`THE ${s.nm.toUpperCase()} SAGA`, x, yy); yy += 15; }
-  const f = `${o.bs || 14}px ${PF}`, avail = Math.max(1, Math.floor((bottom - yy - 20) / lh));
+  const P = postS(), A = s.a ? P.arcs.find(q => q.id === s.a) : null, E = P.ev, askHere = !!(A && E && E.arc === A.id && postV.ai === 0 && postItemDef(E));
+  if (s.nm) { ctx.font = `italic 11px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; const nt = sagaTitle(s.nm); ctx.fillText(nt, x, yy); if (A && !A.end) pDeveloping(x + ctx.measureText(nt).width + 8, yy - 1); yy += 15; }
+  const extra = askHere && bottom - yy > 106 + 2 * lh + 20 ? 108 : A && !o.noTrk && bottom - yy > 40 + 3 * lh + 20 ? 36 : 0;
+  const f = `${o.bs || 14}px ${PF}`, avail = Math.max(1, Math.floor((bottom - yy - 20 - extra) / lh));
   let ye;
   if ((s.s || s.lg) && o.pw && yy + o.ph + 18 <= bottom - 20) { pPortrait(s.s || { n: '' }, x, yy, o.pw, o.ph, s.s ? null : s.lg); ye = Math.max(pFlowBeside(s.b, x, yy, w, lh, f, PP.ink, avail, o.pw + 10, o.ph + 16), yy + o.ph + 18); }   // (the picture only where it fits above the bottom)
   else ye = pFlow(s.b, x, yy, w, lh, f, PP.ink, avail);
-  pClip(it, s, x + w, ye + 10);
+  if (extra === 108) { postAskBox(x, ye + 4, w, 100); ye += 106; }
+  else if (extra === 36 && A) { pTracker(A, x, ye + 5, Math.min(w - 90, 300), 26); ye += 34; }
+  if (s.gold) pGold(x - 8, y - 6, 22);
+  if (s.ring) pRing(x + w - 30, y + 26, 22, strHash(String(s.t)) % 99 + 1);
+  if (s.bad) pBleed(x + w * 0.5, y + 10, w * 0.5, Math.max(20, ye - y - 20), strHash(String(s.t)) % 97 + 3);
+  pClip(it, s, x + w, ye + 10); if (s.a) pPin(s, x + w - 86, ye + 10);
   return ye + 22;
 }
 function pSection(t, x, y, w) {   // a boxed section label
@@ -569,7 +1167,7 @@ function pFrame(it, front) {   // paper, border, masthead
   }
   const yy = front ? 112 : 76;
   ctx.fillStyle = PP.ink; ctx.font = `bold 13px ${PF}`; ctx.textAlign = 'center';
-  ctx.fillText(`VOL. ${it.yr}  ·  NO. ${it.n}  ·  ${it.kind === 'wk' ? 'WEEK ' + it.wk : it.kind === 'pre' ? 'OPENING WEEK' : it.kind === 'po' ? 'PLAYOFF EDITION' : 'THE OFFSEASON'}  ·  ${pstYear(it.yr)} SEASON  ·  BY ${it.by.toUpperCase()}`, W / 2, yy);
+  ctx.fillText(`VOL. ${it.yr}  ·  NO. ${it.n}  ·  ${it.kind === 'wk' ? 'WEEK ' + it.wk : it.kind === 'pre' ? 'OPENING WEEK' : it.kind === 'po' ? 'PLAYOFF EDITION' : 'THE OFFSEASON'}  ·  ${postYear(it.yr)} SEASON  ·  BY ${it.by.toUpperCase()}`, W / 2, yy);
   if (front) pRule(26, 124, W - 26, 1);
 }
 // ---- the pages ----
@@ -579,11 +1177,19 @@ function pageFront(it) {
   let y = 134;
   if (big) { ctx.fillStyle = PP.red; ctx.fillRect(34, y + 2, 118, 34); ctx.fillStyle = '#fff'; ctx.font = `bold 22px ${PF}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('EXTRA!', 93, y + 20); }
   const hx = big ? 164 : 34, hw = big ? W - 164 - 34 : W - 68;
-  y = pFlow(h.t, hx, y, hw, 50, `bold 46px ${PF}`, PP.ink, 2, big ? 'left' : 'center');
+  let ht = h.t;
+  if (big) { const k = pSeen(`type:${it.id}`) / POST_UI.typeMs; if (k < 1) { const n = Math.max(1, Math.floor(ht.length * k)); ht = ht.slice(0, n); if (n - (postV.tyN || 0) >= 4) { postV.tyN = n; sndRec('tick', 0.35, { tag: 'ty' + (n % 3) }); } } else postV.tyN = 0; }   // (a big headline types itself the first time the issue is opened)
+  const hy0 = y; y = pFlow(ht, hx, y, hw, 50, `bold 46px ${PF}`, PP.ink, 2, big ? 'left' : 'center');
+  if (ht !== h.t) y = Math.max(y, hy0 + pWrap(h.t, `bold 46px ${PF}`, hw).slice(0, 2).length * 50);   // (the layout below never jumps while it types)
   pRule(26, y + 8, W - 26, 2); y += 18;
-  const more = it.st.slice(5), bot = more.length ? 580 : 606, cw = 392;   // (the ALSO INSIDE line takes the bottom strip)
+  const more = it.st.slice(5), bot = more.length || it.q ? 580 : 606, cw = 392;   // (the ALSO INSIDE line / your pull quote takes the bottom strip)
   pRule(437, y, 438, bot - y); pRule(842, y, 843, bot - y);
   let ly = h.s || h.lg ? Math.max(pFlowBeside(h.b, 34, y, cw, 24, `18px ${PF}`, PP.ink, 11, 182, 206), y + 190 + 18, (pPortrait(h.s || { n: '' }, 34, y, 170, 190, h.s ? null : h.lg), 0)) : pFlow(h.b, 34, y, cw, 24, `18px ${PF}`, PP.ink, 11);
+  { const P = postS(), A = h.a && P.arcs.find(q => q.id === h.a), E = P.ev;   // (the banner story's saga: its question, or its tracker strip)
+    if (A && E && E.arc === A.id && postV.ai === 0 && postItemDef(E) && bot - ly > 130) { postAskBox(34, ly + 4, cw, 100); ly += 106; }
+    else if (A && bot - ly > 90) { pTracker(A, 34, ly + 6, 300, 28); ly += 38; }
+    if (h.gold) pGold(26, 128, 30); if (h.ring) pRing(W - 70, 160, 30, 5); if (h.bad) pBleed(34, y, cw, 200, 9);
+    if (h.a) pPin(h, 34 + cw - 86, ly + 10); }
   pClip(it, h, 34 + cw, ly + 10); ly += 26;
   if (it.st[2]) { pRule(34, ly, 34 + cw, 1); pStory(it, it.st[2], 34, ly + 8, cw, bot, { hs: 20, bs: 15, lh: 19, hl: 2 }); }
   [[it.st[0], it.st[3], 456], [it.st[1], it.st[4], 862]].forEach(([s, s2, x]) => {
@@ -591,7 +1197,30 @@ function pageFront(it) {
     const e = pStory(it, s, x, y, 380, bot, { hs: 24, pw: 110, ph: 128, bs: 16, lh: 20 });
     if (s2) { pRule(x, e, x + 380, 1); pStory(it, s2, x, e + 8, 380, bot, { hs: 20, bs: 15, lh: 19, hl: 2 }); }
   });
-  if (more.length) { pRule(26, 584, W - 26, 1); ctx.font = `bold 13px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText('ALSO INSIDE:', 34, 598); ctx.fillStyle = PP.ink; ctx.font = `13px ${PF}`; ctx.fillText(more.map(s => s.t).join('   ·   '), 140, 598, W - 180); }
+  if (it.q) { pRule(26, 584, W - 26, 1); ctx.font = `bold 13px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText('QUOTE OF THE WEEK:', 34, 598); ctx.fillStyle = PP.ink; ctx.font = `italic 14px ${PF}`; ctx.fillText(`"${String(it.q.t).slice(0, POST_UI.quoteMax)}"  — ${it.q.by}`, 196, 598, W - 236); }
+  else if (more.length) { pRule(26, 584, W - 26, 1); ctx.font = `bold 13px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText('ALSO INSIDE:', 34, 598); ctx.fillStyle = PP.ink; ctx.font = `13px ${PF}`; ctx.fillText(more.map(s => s.t).join('   ·   '), 140, 598, W - 180); }
+  pThermos(it);
+  if (it.grade) {   // THE CRITIC: this week's grade in red pen, circled
+    const gx = W - 92, gy = 108, q = seeded(it.n + 3);
+    ctx.save(); ctx.translate(gx, gy); ctx.rotate(-0.12); ctx.font = `italic bold 26px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(it.grade.g, 0, 1);
+    ctx.strokeStyle = PP.red; ctx.lineWidth = 2.5; ctx.beginPath(); for (let i = 0; i <= 26; i++) { const a = -2 + i / 26 * 7, r = 1 + (q() - 0.5) * 0.08; i ? ctx.lineTo(Math.cos(a) * 30 * r, Math.sin(a) * 17 * r) : ctx.moveTo(Math.cos(a) * 30 * r, Math.sin(a) * 17 * r); } ctx.stroke(); ctx.restore();
+    ctx.font = `italic 11px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillText(`${it.grade.by}'s grade:`, gx - 36, gy + 2);
+  }
+  if (it.stop) {   // STOP THE PRESSES: a saga of yours just ended; a red stripe slides across the first time the issue is seen
+    const k = pSeen(`stop:${it.id}`) / POST_UI.stopMs;
+    if (k < 1) { const x = -W + k * 2.4 * W; ctx.save(); ctx.translate(x, 330); ctx.rotate(-0.06); ctx.fillStyle = PP.red; ctx.fillRect(0, -34, W, 68); ctx.fillStyle = PP.paper; ctx.font = `900 40px ${PF}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('STOP THE PRESSES!', W / 2, 2); ctx.restore(); }
+  }
+}
+// margin thermometers on the front page: fans, owner, team morale when the issue printed, shaded in pencil
+function pThermos(it) {
+  const L = [['FANS', it.fans], ['OWNER', it.appr], ['MOOD', it.morale]].filter(v => v[1] != null); if (!L.length) return;
+  const x = W - 22, top = 140, span = (POST_BOT - 70 - top) / 3;
+  L.forEach(([lab, v], i) => {
+    const y0 = top + i * span + 4, y1 = y0 + span - 26, f = Math.max(0, Math.min(1, v / 100)), lv = y1 - (y1 - y0) * f;
+    ctx.save(); ctx.strokeStyle = PP.ink; ctx.lineWidth = 1.2; ctx.strokeRect(x - 4, y0, 8, y1 - y0); ctx.beginPath(); ctx.arc(x, y1 + 7, 7, 0, 7); ctx.fillStyle = PP.red; ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.rect(x - 3, lv, 6, y1 - lv + 2); ctx.clip(); ctx.strokeStyle = 'rgba(168,40,31,0.85)'; ctx.lineWidth = 1.4; ctx.beginPath(); for (let yy = lv - 8; yy < y1 + 8; yy += 3) { ctx.moveTo(x - 4, yy + 4); ctx.lineTo(x + 4, yy - 2); } ctx.stroke(); ctx.restore();
+    ctx.save(); ctx.translate(x, y0 + 4); ctx.rotate(Math.PI / 2); ctx.font = `bold 8px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; if (lv - y0 > 34) ctx.fillText(lab, 0, 0); ctx.restore();
+  });
 }
 function pageSports(it) {
   pFrame(it, false);
@@ -647,7 +1276,7 @@ function pageWire(it) {
   arcs.forEach(a => {
     if (ry + 52 > POST_BOT - 12) return;   // (no room left on the page)
     const y0 = ry;
-    const cd = a.p && a.p.n ? 52 : 0; if (cd) pCard(a.p, 666, ry, 44, cd, true);
+    const cd = a.p && a.p.n ? 52 : 0; if (cd && a.p.team) { try { drawLogo(season.team, 688, ry + 26, 44); } catch (e) {} } else if (cd) pCard(a.p, 666, ry, 44, cd, true);
     const tx = 666 + (cd ? 54 : 0);
     ctx.font = `bold 11px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(arcDef(a).name.toUpperCase(), tx, ry);
     ry = Math.max(pFlow(a.hist[a.hist.length - 1].h, tx, ry + 13, 560 - (cd ? 54 : 0), 19, `16px ${PF}`, PP.ink, 2), ry + cd) + 6;
@@ -677,7 +1306,9 @@ function pageLife(it) {
     ctx.font = `bold 12px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('— The Editors', 850, eb + 6);
   }
   const P = postS(), evl = P.evLog || [];
-  if (evl.length && postV.ai === 0) { let ey = 360; ey = pSection('MIDWEEK NEWS', 890, ey, 350); evl.slice(0, 3).forEach(e => { ctx.font = `bold 12px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(e.t, 894, ey); ey = pFlow(e.b, 894, ey + 14, 340, 14, `12px ${PF}`, PP.ink, 3) + 6; }); }
+  let ey = 360;
+  if (postV.ai === 0 && postItemDef(P.ev)) { ey = pSection('A QUESTION FOR THE COACH', 890, ey, 350); ey = postAskBox(890, ey, 350, 124) + 10; }   // (the week's question lives on the paper until it is answered)
+  if (evl.length && postV.ai === 0 && ey < POST_BOT - 70) { ey = pSection('MIDWEEK NEWS', 890, ey, 350); evl.slice(0, ey > 450 ? 1 : 3).forEach(e => { if (ey > POST_BOT - 50) return; ctx.font = `bold 12px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(e.t, 894, ey, 340); ey = pFlow(e.b, 894, ey + 14, 340, 14, `12px ${PF}`, PP.ink, 3) + 6; }); }
 }
 function pageArchive() {
   const P = postS(); pFrame({ yr: LEAGUE.year, n: P.n, kind: 'wk', wk: season.last || 0, by: 'The Archive', rec: '' }, false);
@@ -686,7 +1317,7 @@ function pageArchive() {
   if (!P.issues.length) { ctx.fillStyle = PP.dim; ctx.font = `italic 15px ${PF}`; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('The presses have not rolled yet.', 40, y); }
   P.issues.slice(postV.ap * per, postV.ap * per + per).forEach((it, i) => {
     const idx = postV.ap * per + i; ctx.fillStyle = idx === postV.ai ? PP.soft : 'rgba(0,0,0,0)'; ctx.fillRect(34, y - 2, W - 68, 56);
-    ctx.font = `bold 14px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(`NO. ${it.n}  ·  ${it.kind === 'wk' ? 'WEEK ' + it.wk : it.kind === 'pre' ? 'OPENING' : 'OFFSEASON'}  ·  ${pstYear(it.yr)}  ·  ${it.rec || ''}`, 44, y + 2);
+    ctx.font = `bold 14px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(`NO. ${it.n}  ·  ${it.kind === 'wk' ? 'WEEK ' + it.wk : it.kind === 'pre' ? 'OPENING' : 'OFFSEASON'}  ·  ${postYear(it.yr)}  ·  ${it.rec || ''}`, 44, y + 2);
     pFlow(it.head.t, 44, y + 22, W - 100, 22, `bold 19px ${PF}`, PP.ink, 1);
     pHit(34, y - 2, W - 68, 56, () => { postGo(0); postV.ai = idx; });
     y += 58;
@@ -695,18 +1326,43 @@ function pageArchive() {
 }
 function pageScrap() {
   const P = postS(); pFrame({ yr: LEAGUE.year, n: P.n, kind: 'wk', wk: season.last || 0, by: 'The Scrapbook', rec: '' }, false);
-  const per = 4, pages = Math.max(1, Math.ceil(P.scrap.length / per)); postV.sp = Math.min(postV.sp, pages - 1);
-  pSection('YOUR SCRAPBOOK: clipped stories', 34, 90, W - 68);
-  if (!P.scrap.length) { ctx.fillStyle = PP.dim; ctx.font = `italic 15px ${PF}`; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('Nothing clipped yet. Press ✂ CLIP under any story to keep it here.', 40, 128); }
+  const pinned = P.pins.map(id => P.arcs.find(a => a.id === id && !a.end)).filter(Boolean);
+  const per = pinned.length ? 2 : 4, pages = Math.max(1, Math.ceil(P.scrap.length / per)); postV.sp = Math.min(postV.sp, pages - 1);
+  pSection('YOUR SCRAPBOOK: clipped stories' + (pinned.length ? ' and pinned sagas' : ''), 34, 90, W - 68);
+  if (pinned.length) {   // pinned sagas: their tracker strips, live
+    const cw = (W - 68 - (pinned.length - 1) * 16) / pinned.length;
+    pinned.forEach((a, i) => { const x = 34 + i * (cw + 16), d = arcDef(a); ctx.fillStyle = PP.soft; ctx.fillRect(x, 124, cw, 82); try { tapeStrip(x + 30, 126, 50, 14, -0.1); } catch (e) {}
+      ctx.font = `bold 12px ${PF}`; ctx.fillStyle = PP.red; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(`📌 ${sagaTitle(d.name)}`, x + 8, 130, cw - 100); pDeveloping(x + cw - 86, 129);
+      pTracker(a, x + 8, 150, cw - 16, 46); });
+  }
+  if (!P.scrap.length) { ctx.fillStyle = PP.dim; ctx.font = `italic 15px ${PF}`; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('Nothing clipped yet. Press ✂ CLIP under any story to keep it here, or 📌 PIN IT on a saga.', 40, pinned.length ? 220 : 128); }
   P.scrap.slice(postV.sp * per, postV.sp * per + per).forEach((c, i) => {
-    const x = 34 + (i % 2) * 620, y = 128 + Math.floor(i / 2) * 224, w = 590;   // (two rows that end above the page buttons)
+    const x = 34 + (i % 2) * 620, y = (pinned.length ? 218 : 128) + Math.floor(i / 2) * 224, w = 590;   // (two rows that end above the page buttons)
+    if (c.keep) { pKeepsake(c, x, y, w, 210); return; }
     ctx.fillStyle = '#f3ecd5'; ctx.fillRect(x, y, w, 210); ctx.strokeStyle = PP.dim; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, 209);
     ctx.fillStyle = PP.red; ctx.fillRect(x + w - 40, y - 4, 10, 36);
-    ctx.font = `italic 11px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(`No. ${c.n} · ${pstYear(c.yr)}${c.wk ? ' · week ' + c.wk : ''}`, x + 10, y + 8);
+    ctx.font = `italic 11px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(`No. ${c.n} · ${postYear(c.yr)}${c.wk ? ' · week ' + c.wk : ''}`, x + 10, y + 8);
     const it = { n: c.n };
     pStory(it, c, x + 10, y + 22, w - 20, y + 206, { hs: 19, bs: 13, lh: 16, hl: 2, pw: c.s ? 84 : 0, ph: 96, noExtra: false });
   });
   if (pages > 1) { pTabBtn('◂ PREV', 34, 584, 100, () => { postV.sp = (postV.sp - 1 + pages) % pages; }); pTabBtn('NEXT ▸', 1146, 584, 100, () => { postV.sp = (postV.sp + 1) % pages; }); }
+}
+function pKeepsake(c, x, y, w, h) {   // a finished pinned saga, taped in as one keepsake card: its panels, the stubs of your choices, a stamp for the ending
+  ctx.save(); ctx.translate(x + w / 2, y + h / 2); ctx.rotate(-0.012); ctx.translate(-x - w / 2, -y - h / 2);
+  ctx.fillStyle = PP.paper; ctx.fillRect(x, y, w, h); ctx.strokeStyle = PP.ink; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+  try { tapeStrip(x + 40, y + 2, 70, 18, -0.15); tapeStrip(x + w - 40, y + 2, 70, 18, 0.12); } catch (e) {}
+  const [dk, dc] = POST_UI.cat[c.cat] || POST_UI.cat.news; drawDoodle(dk, x + 30, y + 34, 34, dc, 0, 9);
+  ctx.font = `bold 18px ${PF}`; ctx.fillStyle = PP.ink; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(sagaTitle(c.nm), x + 56, y + 18, w - 200);
+  ctx.font = `italic 12px ${PF}`; ctx.fillStyle = PP.dim; ctx.fillText(`A keepsake · ended ${postYear(c.yr)}${c.wk && c.wk < 30 ? ', week ' + c.wk : ''}`, x + 56, y + 40);
+  const fake = { id: c.key, hist: c.hist || [], end: true, t: '' }, H = fake.hist, d = Object.values(ARCS).find(a => a.name === c.nm) || {};
+  const n = Math.max(1, H.length), pw = Math.min(64, (w - 40 - (n - 1) * 5) / n);
+  H.forEach((e, i) => { const px = x + 20 + i * (pw + 5), py = y + 64; ctx.fillStyle = PP.soft; ctx.fillRect(px, py, pw, 46); ctx.strokeStyle = PP.ink; ctx.lineWidth = 1.2; ctx.strokeRect(px, py, pw, 46);
+    if (e.auto) pRing(px + pw / 2, py + 23, 15, i + 2); else if (e.verb) pStub(e.verb, px + pw / 2, py + 25, 28); ctx.font = `bold 9px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(String(i + 1), px + 3, py + 2); });
+  const lastH = H[H.length - 1]; if (lastH) pFlow(lastH.h, x + 20, y + 122, w - 210, 19, `bold 16px ${PF}`, PP.ink, 2);
+  const picks = H.filter(e => e.c).map(e => e.c); if (picks.length) pFlow('Your calls: ' + picks.join(' · '), x + 20, y + 166, w - 210, 16, `italic 13px ${PF}`, PP.dim, 2);
+  try { qsStamp(x + w - 96, y + h - 52, c.good ? 'HAPPY ENDING' : c.bad ? 'ROUGH ENDING' : 'THE END', c.good ? '#b8901c' : c.bad ? PP.red : '#2c4a6e', -0.12, 1, 17); } catch (e) {}
+  if (c.good) pGold(x, y, 34);
+  ctx.restore();
 }
 function pTabBtn(label, x, y, w, fn) {
   ctx.fillStyle = PP.soft; ctx.fillRect(x, y, w, 24); ctx.strokeStyle = PP.ink; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, 23);
@@ -721,8 +1377,8 @@ function postGo(pg) {   // flip to another section with a page-turn (the old pag
 function postOpen() {
   const P = postS();
   if (!P.issues.length) postIssue('pre');
-  postV.pg = 0; postV.ai = 0; postV.ap = 0; postV.sp = 0; postV.turn = null;
-  if (P.n > P.read) sndRec('press', 1, { ms: SND_USE.pressMs, fade: 1000 });   // (a new issue: hot off the press)
+  postV.pg = 0; postV.ai = 0; postV.ap = 0; postV.sp = 0; postV.turn = null; postV.tyN = 0;
+  if (P.n > P.read) sndRec('press', SND_USE.pressVol, { ms: SND_USE.pressMs, fade: 1000 });   // (a new issue: hot off the press, very quietly)
   P.read = P.n; results.screen = 'post';
 }
 const postUnread = () => { if (!postOn()) return 0; const P = postS(); return Math.max(0, P.n - P.read); };
@@ -2201,18 +2857,19 @@ function drawOnlineOverlay() {
   const v = ONL.view || {}, me = onlMe();
   ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   if (v.pz) {
-    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - FIELD_BOT);
+    drawTrace(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';   // (the tracing paper, as the offline pause)
+    const ink = traceInk(), soft = traceInk(true);
     if (v.pz.by === me && !(ONL.guest && settingsOpen) && !settingsOpen) {
-      olText('PAUSED', W / 2, 190, 56, '#fff');
+      olText('PAUSED', W / 2, 190, 56, ink);
       if (v.pz.conf) {
-        olText(v.pz.conf === 'forfeit' ? 'FORFEIT THIS GAME?' : 'LEAVE THIS GAME?', W / 2, 330, 30, '#fff'); olText('THE OPPONENT WINS', W / 2, 362, 18, '#cfd8d2');
+        olText(v.pz.conf === 'forfeit' ? 'FORFEIT THIS GAME?' : 'LEAVE THIS GAME?', W / 2, 330, 30, ink); olText('THE OPPONENT WINS', W / 2, 362, 18, soft);
         menuBtn(OPM.yes, v.pz.conf === 'forfeit' ? 'YES, FORFEIT' : 'YES, LEAVE', IN_GAME_PAPER.red, 22); menuBtn(OPM.no, 'NO, KEEP PLAYING', IN_GAME_PAPER.green, 22);
       } else {
         menuBtn(OPM.resume, 'RESUME', IN_GAME_PAPER.green, 22); menuBtn(OPM.forfeit, 'FORFEIT', IN_GAME_PAPER.red, 22);
         menuBtn(OPM.settings, 'SETTINGS', IN_GAME_PAPER.yellow, 22);   // (no LEAVE online: only RESUME / FORFEIT)
-        olText(`AUTO-RESUME IN ${v.pz.left}s`, W / 2, 580, 16, '#cfd8d2');
+        olText(`AUTO-RESUME IN ${v.pz.left}s`, W / 2, 580, 16, soft);
       }
-    } else if (v.pz.by !== me) { olText('PAUSED BY OPPONENT', W / 2, 330, 46, '#fff'); olText(`RESUMES IN ${v.pz.left}s`, W / 2, 380, 22, '#cfd8d2'); }
+    } else if (v.pz.by !== me) { olText('PAUSED BY OPPONENT', W / 2, 330, 46, ink); olText(`RESUMES IN ${v.pz.left}s`, W / 2, 380, 22, soft); }
   }
   const al = ONL.guest && ONL.away ? { text: 'OPPONENT AWAY', sub: `${Math.max(0, Math.ceil((ONL.away.until - performance.now()) / 1000))}s TO COME BACK` } : v.al;   // (the host's own tab is hidden: no snapshots, so the guest counts it itself)
   if (al && !ONL.lost) {
@@ -2295,6 +2952,7 @@ function drawNetBadge() {   // the connection readout in a corner of an online g
   if (NET._fpsAt && now - NET._fpsAt < 500) NET.fms = NET.fms ? NET.fms * 0.95 + (now - NET._fpsAt) * 0.05 : now - NET._fpsAt;   // (this device's own frame time, smoothed)
   NET._fpsAt = now;
   if (!NET.conn || !NET.conn.open || results || !ONL.on) return;
+  if (SETTINGS.hideTools) return;   // (the ms / DIRECT / RELAY readout is a debug tool: only with the extra tools shown; the bookkeeping above keeps running)
   const pz = !!(ONL.pz || (ONL.view && ONL.view.pz)), bad = NET.ping > NET_CFG.unstableRtt;
   let t = (NET.ping ? Math.round(NET.ping) : '--') + ' ms' + (NET.link ? '  ' + NET.link : '');
   if (pz) t += `  ${Math.round(NET.kbps)} kB/s  ${NET.fms ? Math.round(1000 / NET.fms) : '--'} FPS${NET.fast && NET.fastOk ? '  FAST' : ''}${typeof liteOn === 'function' && liteOn() ? (liteSlow ? '  LITE+' : '  LITE') : ''}`;
