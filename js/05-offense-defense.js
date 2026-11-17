@@ -1258,6 +1258,7 @@ function runAction(code) {
     const ahead = [...back7, ...dl].filter(o => o.action !== 'down' && !o.hasBall && !(o.action === 'dive' && o.act && o.act.t >= o.act.dur))
       .map(o => ({ o, f: ((o.x - c.x) * dx + (o.y - c.y) * dy), side: Math.abs((o.x - c.x) * -dy + (o.y - c.y) * dx) }))
       .filter(q => q.f > 0 && q.f < HURDLE.maxGap * YD && q.side < 1.4 * YD).sort((a, b) => a.f - b.f)[0];
+    if (ahead && lagRew()) { const s = histSpot(ahead.o, lagRew()); if (s) ahead.f = Math.max(ahead.f, (s.x - c.x) * dx + (s.y - c.y) * dy); }   // (an online guest's hurdle: the gap he saw counts, if it was bigger)
     let space = !ahead || ahead.f >= HURDLE.minGap * YD;
     // each extra defender in the hurdle's path cuts the odds again (stacks)
     const extra = [...back7, ...dl].filter(o => o !== (ahead && ahead.o) && o.action !== 'down' && !o.hasBall &&

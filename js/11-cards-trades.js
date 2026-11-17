@@ -3615,6 +3615,7 @@ function drawMatchupEx() {
   });
   menuBtn(BALL_BTN, '', RES.bright, 22, b => { ctx.save(); ctx.translate(b.x + b.w / 2, b.y + b.h / 2); ctx.rotate(-0.12); drawFootball(30, 15, 1, -4); ctx.restore(); }, onlHostOnly());
   drawWxCard(true);
+  if (lobby) drawOnlLobbyExtras();   // (online lobby: CONTROL FEEL + the connection warning, 13-post-online)
   const badge = rivalBadge(shown[0], shown[1]);
   if (badge) {   // the one thing the screen doesn't already say
     ctx.save(); ctx.translate(640, 472); ctx.rotate(-0.03);

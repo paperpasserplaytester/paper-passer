@@ -1119,6 +1119,7 @@ function defKeyDown(e) {
   if (c === 'KeyO' || c === 'KeyQ' || c === 'KeyE') { switchDefender(c === 'KeyE', c === 'KeyO'); if (tut) tutEvent('dswitch'); return true; }
   if (state === 'pre') { if (c === 'Space' && ai) ai.t = 99; return true; }
   if (!ud || ud.action === 'down') return true;
+  if (c === 'KeyC' || c === 'KeyV' || c === 'KeyG') ud.reqLag = lagRew();   // (online guest: the range is also measured on the picture he saw, lagDist in userTackle. The window still counts from the press reaching the host: the rewound range already covers his delay)
   if (c === 'KeyC') ud.hitReq = clock;       // C: the hit stick
   else if (c === 'KeyV') ud.diveReq = clock; // V: a dive tackle
   else if (c === 'KeyF') { if (state === 'flight') defJump(true); } // F: in the air, a one-handed tip / pick
@@ -1208,15 +1209,16 @@ function defJump(one = false) {
   // where the ball passes closest to him, how high it is there, and how long until it gets there
   // (a ball too high where it passes him is taken lower on the way down: points inside his reach win over a nearer one he'd never touch)
   let nx = ball.tx, ny = ball.ty, nz = 0, np = 1, nd = Infinity, nsc = Infinity;
+  const lag = lagRew(), bp = lag && ball.T > 0 ? Math.max(0, ball.p - lag / 1000 / ball.T) : ball.p;   // (an online guest's press: planned from where the ball was on his screen)
   for (let i = 0; i <= 24; i++) {
-    const p = ball.p + (1 - ball.p) * i / 24, x = ball.fx + (ball.tx - ball.fx) * p, y = ball.fy + (ball.ty - ball.fy) * p;
+    const p = bp + (1 - bp) * i / 24, x = ball.fx + (ball.tx - ball.fx) * p, y = ball.fy + (ball.ty - ball.fy) * p;
     const dd = Math.hypot(x - ud.x, y - ud.y), z = Math.sin(Math.PI * p) * ball.h + (ball.z0 || 0) * (1 - p);
     const sc = dd + (z > JUMP_REACH ? 1000 + z : 0);
     if (sc < nsc) { nsc = sc; nd = dd; nx = x; ny = y; np = p; nz = z; }
   }
   if (nd > DEF.jump.range * (lineman ? 1.6 : 1) * YD) return;
   if (lineman) { ud.leapBat = true; ud.batRolled = false; }
-  const rem = Math.max(0, np - ball.p) * ball.T, low = nz < DB_DIVE.lowZ * 1.4;
+  const rem = Math.max(0, np - bp) * ball.T, low = nz < DB_DIVE.lowZ * 1.4;
   // (the same timing the receiver's W uses: the jump peaks as the ball gets there)
   const q = Math.max(0, 1 - Math.abs(rem - (low ? DB_DIVE.dur * 0.5 : JUMP_TIME / 2 + JUMP_TIMING.lead)) / ((low ? DEF.jump.window : JUMP_TIMING.window * (tut ? TUT_CATCH.timing : 1)) * DEF.pick.timing));
   if (Math.abs(nx - ud.x) > 0.15 * YD) ud.face = nx > ud.x ? 1 : -1;
@@ -1232,7 +1234,9 @@ function defJump(one = false) {
     ud.vx = ud.svx = ux * sp; ud.vy = ud.svy = uy * sp;
     if (one) ud.act.one = true;
     ud.userJump = { q, done: false, one };
+    if (lag) ud.act.t = Math.min(lag / 1000, JUMP_TIME * 0.3);   // (the leap began on his screen that long ago: it starts part way up here, so it still peaks with the ball)
   }
+  if (ud.userJump) ud.userJump.lag = lag;   // (userPickCheck also measures to the ball he saw)
   ud.eyes = 'ball';
   if (ud.userJump) ud.userJump.look = Math.random() < 0.85;   // (usually his head turns to track the ball through the leap)
   // your leap's timing: hand outlines at his hands, green for perfect, else yellow (a bit early / late) shading to red (way off)
@@ -1253,8 +1257,10 @@ function userPickCheck(dt = 0) {
     if (g > 0.05 * YD) { d.x += gx / g * m; d.y += gy / g * m; clampField(d); }
   }
   if (d.act.t < d.act.dur * (tut ? 0.1 : 0.35)) return;
-  const rk = reachK(d) * (tut ? TUT_PICK.reach : 1), dd = dist(d, ball) / rk;   // (tutorial: a much bigger window)
-  if (dd <= DEFLECT_RANGE * (1.3 + 0.8 * j.q) * DEF.pick.reach * (j.dive ? 0.7 : 1) && (j.dive || ball.z <= (d.reachZ || 44 * S) * rk + d.z + 12 * S + DEF.pick.high + (tut ? TUT_PICK.high : 0))) {
+  const rk = reachK(d) * (tut ? TUT_PICK.reach : 1);   // (tutorial: a much bigger window)
+  let dd = dist(d, ball) / rk, bz = ball.z;
+  if (j.lag) { const h = histAt(j.lag); if (h) { const dh = Math.hypot(d.x - h.ball[0], d.y - h.ball[1]) / rk; if (dh < dd) { dd = dh; bz = h.ball[2]; } } }   // (an online guest's leap: the ball where his screen had it, if that's closer)
+  if (dd <= DEFLECT_RANGE * (1.3 + 0.8 * j.q) * DEF.pick.reach * (j.dive ? 0.7 : 1) && (j.dive || bz <= (d.reachZ || 44 * S) * rk + d.z + 12 * S + DEF.pick.high + (tut ? TUT_PICK.high : 0))) {
     j.done = true;
     // catching ratings decide the pick; a one-hander is mostly a tip. Whatever he doesn't hold on to is a tip.
     const ctc = rm(d, 'ctc', 'ball'), base = j.q >= DEF.jump.perfect ? DEF.jump.pick : 0.1 + 0.7 * j.q;
@@ -1396,7 +1402,7 @@ function userLunge(d, c, reach, hit) {
 function userTackle(d, c) {
   if (d.action || grounded(d) ||clock < (d.recoverUntil || 0) || c.awaiting || c.action === 'down' || c.action === 'slide' || (c.action === 'dive' && c.runDive)) return;
   if (c === qb && ucShield()) return;   // (no hit stick at the snap exchange under center)
-  const dd = dist(d, c);
+  const dd = d.reqLag ? lagDist(d, c, d.reqLag) : dist(d, c);   // (online guest's press: the closer of now and what he saw)
   if (d.hitReq && clock - d.hitReq < DEF.hit.window && dd <= DEF.hit.range * YD) { d.hitReq = 0; d.userDive = false; return userLunge(d, c, 1, true); }   // T: the hit stick
   if (d.diveReq && (d.engaged || d.userBlockUntil > clock)) d.diveReq = 0;   // (locked up with a blocker: no dive until you shed him)
   if (d.diveReq && clock - d.diveReq < 0.25 && dd <= DEF.dive.range * YD) { d.diveReq = 0; userLunge(d, c, DEF.dive.reach, false); d.userDive = true; d.recoverUntil = clock + DEF.dive.recover; return; }   // F: dive from a distance

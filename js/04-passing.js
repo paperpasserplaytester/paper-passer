@@ -633,7 +633,7 @@ function tryCatch(text, kind) {
 function catchHit(kind) {
   // first: a DB right on him can smack it out of his hands as it arrives (likelier if he went up for it)
   // T pressed as it arrives, from close enough: your defender lays the hit stick on the receiver (a sure shot, the ball comes out)
-  const userHit = ud && defLive() && ud.hitReq && clock - ud.hitReq < DEF.hit.window && !ud.action && dist(ud, tgt) <= DEF.hit.range * YD ? ud : null;
+  const userHit = ud && defLive() && ud.hitReq && clock - ud.hitReq < DEF.hit.window && !ud.action && (ud.reqLag ? lagDist(ud, tgt, ud.reqLag) : dist(ud, tgt)) <= DEF.hit.range * YD ? ud : null;   // (lagDist: an online guest's press, judged on the picture he saw too)
   if (userHit) ud.hitReq = 0;
   const smacker = userHit ? null : back7.filter(x => (!x.action || x.action === 'jump') && dist(x, tgt) <= 1.3 * YD)
                        .sort((a, b) => dist(a, tgt) - dist(b, tgt))[0];

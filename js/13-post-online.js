@@ -930,7 +930,7 @@ function drawStart() {
   }
 }
 function titleStamp(cx, cy) { qsStamp(cx, cy - 12, 'PAPER PASSER', '#c0392b', -0.005, 1, 60, { distress: 7 }); }   // (centre of the title sheet, inside its own tilt)
-const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-16 SMOOTH-48';
+const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-16 LAGCOMP-48';
 let hlFlash = -1e9;   // when the main menu's HIGHLIGHT button was last clicked
 let quickMenu = false;   // QUICK PLAY (START_BTNS.ex) drop down: EXHIBITION / 1V1 / ONLINE take the place of FRANCHISE / CAREER / TUTORIAL (same buttons, same size)
 function startClick(p) {
@@ -1228,7 +1228,7 @@ NET.onmsg = d => {
     if (!onlLobbyActive()) onlEnterLobby();   // (connected: the exhibition screen, with the other player on the other side)
   } else if (d.t === 'sel') onlGotSel(d);
   else if (d.t === 'rej') { if (onlLobbyActive()) { MATCH[exhibition.myRole] = d.team; applyKits(); } }
-  else if (d.t === 'cfg') { if (onlLobbyActive() && exhibition.myRole !== 'you') { MATCH.ball = d.ball; exhibition.wx = d.wx; if (d.fc != null) exhibition.fcCode = d.fc; } }
+  else if (d.t === 'cfg') { if (onlLobbyActive() && exhibition.myRole !== 'you') { MATCH.ball = d.ball; exhibition.wx = d.wx; if (d.fc != null) exhibition.fcCode = d.fc; if (d.fl) exhibition.feel = d.fl; } }
   else if (d.t === 'bye') { NET.closeWhy = 'other side left'; if (ONL.on) { onlMsg2({ t: 'leave' }); return; } if (onlLobbyActive()) { onlLobbyLeave(d.why === 'ver' ? OL_ERR.VER : OL_ERR.DROP, true); return; } const why = d.why; NET.close(); ol.view = 'menu'; ol.err = why === 'ver' ? OL_ERR.VER : OL_ERR.DROP; ol.peerTeam = null; }
   else console.warn('net: unknown message', d);
 };
@@ -1248,7 +1248,7 @@ function onlEnterLobby() {
   if (!host) onlSendSel();   // (the guest's team may have changed to avoid the host's)
 }
 const onlSendSel = () => { ol.note = ''; NET.send({ t: 'sel', team: MATCH[exhibition.myRole], kit: MATCH[exhibition.myRole + 'Kit'] }); };
-const onlSendCfg = () => NET.send({ t: 'cfg', ball: MATCH.ball, wx: exhibition.wx, fc: wxForecast().code });
+const onlSendCfg = () => NET.send({ t: 'cfg', ball: MATCH.ball, wx: exhibition.wx, fc: wxForecast().code, fl: onlFeel() });
 setInterval(() => { if (onlLobbyActive() && exhibition.myRole === 'you' && NET.conn) onlSendCfg(); }, 700);   // (the host's ball / weather / forecast keep both lobby screens the same, whatever changed: teams too)
 function onlGotSel(d) {
   if (!onlLobbyActive() || !NFL[d.team]) return;
@@ -1274,13 +1274,14 @@ function onlLobbyClick(p) {   // matchupClick for the online lobby (true: the cl
   if (u >= 0) { if (mine(roles[u])) { const k = roles[u] + 'Kit'; MATCH[k] = KITS[(KITS.indexOf(MATCH[k]) + 1) % KITS.length]; applyKits(); onlSendSel(); } return true; }
   if (inBtn(p, BALL_BTN)) { if (host) { MATCH.ball = (MATCH.ball + 1) % BALLS.length; onlSendCfg(); } return true; }
   if (SETTINGS.weather !== false && inBtn(p, EX_WX_BTN)) { if (host) { wxPickNext(); onlSendCfg(); } return true; }
+  if (inBtn(p, ONL_FEEL_BTN)) { if (host) { exhibition.feel = onlFeel() === 'DELAY' ? 'PREDICT' : 'DELAY'; onlSendCfg(); } return true; }   // (CONTROL FEEL: the host's pick)
   if (inBtn(p, BACK_BTN)) { onlLobbyLeave(''); return true; }
   if (inBtn(p, EX_SET_BTN)) { settingsOpen = true; return true; }
   return false;
 }
 function onlPlayClick() {   // PLAY on the online lobby: only the host starts it
   if (!onlLobbyActive() || exhibition.myRole !== 'you') return;
-  const cfg = { you: MATCH.you, opp: MATCH.opp, yk: MATCH.youKit, ok: MATCH.oppKit, ball: MATCH.ball, wx: exhibition.wx };
+  const cfg = { you: MATCH.you, opp: MATCH.opp, yk: MATCH.youKit, ok: MATCH.oppKit, ball: MATCH.ball, wx: exhibition.wx, fl: onlFeel() };
   NET.send({ t: 'start', ...cfg }); onlBeginMatch(cfg, true);
 }
 function olJoin() {
@@ -1355,6 +1356,10 @@ const ONL_NET = {
   predMin: 4.5,         // yd/s he is assumed to reach before the host has answered
   predGrace: 0.12,      // s past the lead after which it follows the speed the host really gave him (blocked or wrapped up: no ghost running ahead)
   predBad: 0.8,         // s of the host moving him AGAINST the keys before the lead is switched off for the game (a key layout this guess doesn't know)
+  lagComp: true,        // the guest's defensive presses (hit stick, dive, secure, jump / pick) are judged against the picture he saw: the host rewinds the carrier / ball by his lag
+  lagMax: 250,          // ms: the most the host ever rewinds for him (his reported draw delay + half the ping)
+  histS: 0.4,           // s of player / ball spots the host keeps for that (ONL_HIST)
+  inDelayMs: 50,        // CONTROL FEEL: DELAY = the host's own keys for his player are held this long, so both players' presses land evenly (no prediction that game)
 };
 const SNAP_DELAY = 100;   // ms the guest is taken to draw behind before its playback clock starts (see ONL_NET.delayMin / delayMax)
 const SNAP_JUMP = 8 * YD; // a player / ball move bigger than this between two snapshots is a cut (a new play), not interpolated
@@ -1503,7 +1508,37 @@ function onlHostCast(ps, pm, key) {   // (always on the reliable channel: everyt
   if (NET_CFG.logCast) console.log('net: cast ' + len + ' chars' + (m.sl !== undefined ? ' (with the sideline pack: ' + JSON.stringify(m.sl).length + ')' : '') + ', ' + ps.length + ' players, src ' + full.reduce((t, f) => t + (f.src ? JSON.stringify(f.src).length : 0), 0));
 }
 const onlRunLive = () => state === 'run' || ((state === 'drop' || state === 'pocket') && isRunPlay);   // (a ball carrier steered by keys: the fast rate, like an aimed pass. At the slow rate a run play was drawn a snapshot later and felt sluggish next to a pass play)
+// --- lag compensation (host only): the guest sees the game ONL.gLag ms late, so his defensive presses are judged against that picture too.
+// ONL_HIST = the last ONL_NET.histS s of every player's x / y and the ball, one entry a frame (onlHostTick). The host still decides everything.
+const ONL_HIST = [];
+function histPush() {
+  if (!ONL.on || !ONL.host || !ONL_NET.lagComp) { if (ONL_HIST.length) ONL_HIST.length = 0; return; }
+  const last = ONL_HIST[ONL_HIST.length - 1];
+  if (last && clock < last.clock) ONL_HIST.length = 0;   // (the clock went back: a new play / game)
+  else if (last && clock === last.clock) return;          // (nothing stepped this frame: paused)
+  const ps = allPlayers(), xy = new Float32Array(ps.length * 2);
+  for (let i = 0; i < ps.length; i++) { xy[i * 2] = ps[i].x; xy[i * 2 + 1] = ps[i].y; }
+  ONL_HIST.push({ clock, ps, xy, ball: [ball.x, ball.y, ball.z || 0, ball.p || 0] });
+  while (ONL_HIST.length > 2 && ONL_HIST[0].clock < clock - ONL_NET.histS) ONL_HIST.shift();
+}
+function histAt(ms) {   // the entry closest to clock - ms (null: none kept)
+  const want = clock - Math.min(ms, ONL_NET.lagMax) / 1000; let best = null, bd = Infinity;
+  for (const h of ONL_HIST) { const e = Math.abs(h.clock - want); if (e < bd) { bd = e; best = h; } }
+  return best;
+}
+// ms to rewind for the press being handled right now: the guest's lag for HIS presses, 0 for the host's own and the computer's
+const lagRew = () => ONL.on && ONL.host && ONL.fromGuest && ONL_NET.lagComp ? Math.min(ONL.gLag || 0, ONL_NET.lagMax) : 0;
+function histSpot(p, ms) {   // where p stood ms ago (null: not kept)
+  const h = ms > 0 && histAt(ms); if (!h) return null;
+  const i = h.ps.indexOf(p); return i < 0 ? null : { x: h.xy[i * 2], y: h.xy[i * 2 + 1] };
+}
+// the distance a press is judged on: now, or (a guest's press, d.reqLag ms) d's spot now to c's spot in the picture he saw, whichever is closer
+function lagDist(d, c, ms) {
+  const dd = dist(d, c); if (!ms) return dd;
+  const s = histSpot(c, ms); return s ? Math.min(dd, Math.hypot(d.x - s.x, d.y - s.y)) : dd;
+}
 function onlHostTick() {
+  histPush();
   if (NET._simQ.length) NET.simPump();
   const now = performance.now();
   // the guest's finger has been "down" but silent: its release got lost (the guest keeps sending its spot while held), so let go for him
@@ -1610,6 +1645,7 @@ function onlApply(e, ps) {
 // snapshot: the usual travel time (ONL.tr) + a margin from the host's snapshot spacing and the jitter. The clock never jumps (except a stall / a new cast):
 // it runs a few % fast or slow (ONL_NET.stretch) to drift to that distance.
 const onlDrawLag = () => ONL.pt != null ? performance.now() - ONL.pt : SNAP_DELAY;   // ms the picture is behind (onlPredict, events)
+const onlMyLag = () => Math.round(onlDrawLag() + (NET.ping || 0) / 2);   // ms between the host's moment and this guest's press reaching it (sent as `l` on key / pointer downs, lag compensation)
 function onlDelayTarget() { return (ONL.tr || 0) + Math.max(ONL_NET.delayMin, Math.min(ONL_NET.delayMax, 1.6 * (ONL.gapAvg || 1000 / ONL_NET.hz) + 2.5 * (ONL.jit || 0))); }
 const onlHerm = (p0, m0, p1, m1, t) => { const t2 = t * t, t3 = t2 * t; return (2 * t3 - 3 * t2 + 1) * p0 + (t3 - 2 * t2 + t) * m0 + (-2 * t3 + 3 * t2) * p1 + (t3 - t2) * m1; };
 // guest, every frame: the state at the playback clock, positions on a curve between the two snapshots around it
@@ -1834,7 +1870,8 @@ function onlGuestKey(code, down) {
   if (down) {
     if ((code === 'Space' || code === 'Enter') && !onlMaySpace(true)) return;
     if (ONL.pendUp[code]) { clearTimeout(ONL.pendUp[code]); ONL.pendUp[code] = 0; release(); }   // (a new press before the held-back release ran: let go first)
-    const a = aliasKey(ev); ONL.hold[code] = a; ONL.downAt[code] = performance.now(); onKeyDown(a);
+    const a = aliasKey(ev); ONL.hold[code] = a; ONL.downAt[code] = performance.now();
+    ONL.fromGuest = true; try { onKeyDown(a); } finally { ONL.fromGuest = false; }   // (the defense code reads this: a guest press is judged against the picture he saw, see lagRew)
   } else {
     // a quick tap (a swipe's jump / dive / catch key) can arrive with its release in the same breath: the game reads held keys once a frame and never saw it. Every
     // press stays down at least ONL_MIN_HOLD ms on the host, as a tap on the host's own keyboard would.
@@ -1861,13 +1898,15 @@ function onlGuestPtr(m) {
   if (m.q != null) { if (m.k === 'pm' && m.q < (ONL.gQ || 0)) return; ONL.gQ = m.k === 'pm' ? m.q : Math.max(ONL.gQ || 0, m.q); }   // (a move that arrives after a later one: stale, the moves come unordered)
   const pt = { x: m.x, y: m.y };
   ONL.gAt = performance.now(); ONL.gLast = pt;
-  if (m.k === 'pd') { if (!onlMayPoint(true, pt)) { ONL.gDown = false; return; } ONL.gDown = true; sendMouse('pointerdown', pt, canvas); }
+  if (m.k === 'pd') { if (!onlMayPoint(true, pt)) { ONL.gDown = false; return; } ONL.gDown = true; ONL.fromGuest = true; try { sendMouse('pointerdown', pt, canvas); } finally { ONL.fromGuest = false; } }
   else if (m.k === 'pm') { if (ONL.gDown) sendMouse('pointermove', pt, canvas); }   // (canvas: the drag handlers sit on it; the event bubbles up to the window's)
   else if (m.k === 'pu') { if (ONL.gDown) { sendMouse('pointermove', pt, canvas); sendMouse('pointerup', pt, canvas); } ONL.gDown = false; }   // (the last move first: the release's own spot, which the throttled moves may have skipped, is the throw's end point)
 }
 function onlHandleInput(m) {
   if (!ONL.host || !ONL.on) return;
   if (m.k === 'kd' || m.k === 'pd') ONL.inputAt.guest = performance.now();   // (AFK: the guest is there)
+  if ((m.k === 'kd' || m.k === 'pd') && m.l != null) ONL.gLag = Math.max(0, Math.min(ONL_NET.lagMax, +m.l || 0));   // (how late the guest's picture was when he pressed: lag compensation)
+  if (m.k === 'st') { ONL.gStat = { ...m, at: performance.now() }; return; }   // (the guest's readout numbers, shown on the host's FRAME TIMES)
   if (m.k === 'kd' || m.k === 'ku') onlGuestKey(m.c, m.k === 'kd');
   else if (m.k === 'cm') { if (!results) { const r = layRect(canvas); touchLong = false; canvas.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 10, clientY: r.top + 10 })); } }
   else if (m.k === 'cl') { for (const c of Object.keys(ONL.hold)) onlGuestKey(c, false); }
@@ -1888,19 +1927,31 @@ function onlMsg(d) {   // NET.onmsg's game messages (true: handled)
 // capture-phase taps on the window: the guest's input goes to the host instead of the (never stepped) local game; the host ignores a keypress / click
 // that belongs to the other side (the snap is the ball-carrier's, a play call is the offense's)
 const onlKeyOk = e => !(e.ctrlKey || e.metaKey || e.altKey || /^F\d+$/.test(e.code));
+// CONTROL FEEL (host's choice in the lobby, rides 'cfg' / 'start'): PREDICT = the guest's own player leads the picture (onlPredict); DELAY = no prediction,
+// and the host's own key presses for his player are held ONL_NET.inDelayMs and replayed (untrusted, so they pass straight through here), so both land evenly
+const onlFeel = () => exhibition && exhibition.feel === 'DELAY' ? 'DELAY' : 'PREDICT';
+function onlDelayKey(e) {   // true: this host key was taken and will be replayed late
+  if (ONL.feel !== 'DELAY' || !e.isTrusted || !onlKeyOk(e) || e.code === 'Escape' || results || onlLocalUi() || settingsOpen) return false;
+  if (e.type === 'keydown' && e.repeat) return true;   // (auto-repeat: the replayed press is already held)
+  const o = { code: e.code, key: e.key, shiftKey: e.shiftKey, bubbles: true, cancelable: true };
+  setTimeout(() => window.dispatchEvent(new KeyboardEvent(e.type, o)), ONL_NET.inDelayMs);
+  return true;
+}
 window.addEventListener('keydown', e => {
   if (!ONL.on || results || onlLocalUi()) return;
   if (ONL.guest) {
     if (!onlKeyOk(e)) return;
     e.preventDefault(); e.stopImmediatePropagation();
-    if (!ONL.gHeld[e.code]) { const mc = onlKeyOut(e.code); ONL.gHeld[e.code] = mc; onlSendKm(); NET.send({ t: 'in', k: 'kd', c: mc }); }   // (mc: left / right as the host's screen has them)
+    if (!ONL.gHeld[e.code]) { const mc = onlKeyOut(e.code); ONL.gHeld[e.code] = mc; onlSendKm(); NET.send({ t: 'in', k: 'kd', c: mc, l: onlMyLag() }); }   // (mc: left / right as the host's screen has them)
   } else if (ONL.host) {
     if (e.isTrusted) ONL.inputAt.host = performance.now();
     if (e.code === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); if (!e.repeat) onlPauseToggle('host'); }   // (the pause key: the online pause menu, not the offline one)
     else if (ONL.pz || ONL.lost || ((e.code === 'Space' || e.code === 'Enter') && !onlMaySpace(false))) { e.preventDefault(); e.stopImmediatePropagation(); }
+    else if (onlDelayKey(e)) { e.preventDefault(); e.stopImmediatePropagation(); }
   }
 }, true);
 window.addEventListener('keyup', e => {
+  if (ONL.on && ONL.host && onlDelayKey(e)) { e.stopImmediatePropagation(); return; }   // (DELAY: the release waits as long as the press did, so the order holds)
   if (!ONL.on || !ONL.guest || results || onlLocalUi()) return;
   if (ONL.gHeld[e.code]) { const mc = ONL.gHeld[e.code]; delete ONL.gHeld[e.code]; NET.send({ t: 'in', k: 'ku', c: mc }); e.stopImmediatePropagation(); }
 }, true);
@@ -1921,6 +1972,8 @@ function onlBeginMatch(c, asHost) {   // c: what the lobby settled on (teams, un
   if (ONL.on || !onlLobbyActive()) return;
   ONL.host = !!asHost; ONL.guest = !asHost;
   ONL.on = true; ONL.buf = []; ONL.full = []; ONL.gPrev = null; ONL.st = onlStNew(); ONL.pt = null; ONL.evQ = []; ONL.tr = null; ONL.gapAvg = 0; ONL.jit = 0; ONL.lastArr = 0; ONL.lastH = null; ONL.pred = null; ONL.predOff = false; ONL.pq = 0; ONL.gQ = 0; ONL.castKey = ''; ONL.slRef = undefined; ONL.slGot = -1; ONL.hold = {}; ONL.gHeld = {}; ONL.gDown = false; ONL.seq = 0;
+  ONL.feel = c.fl === 'DELAY' ? 'DELAY' : 'PREDICT'; if (ONL.feel === 'DELAY') ONL.predOff = true;   // (CONTROL FEEL: DELAY = no prediction on the guest; the host's own keys wait ONL_NET.inDelayMs, onlDelayKey)
+  ONL.gLag = 0; ONL.gStat = null; ONL_HIST.length = 0;
   ONL.savedSimDef = SETTINGS.simDefense; SETTINGS.simDefense = false;   // (defense is always played: the saved setting is ignored, and never written back)
   teamPick = null;
   Object.assign(MATCH, { you: c.you, opp: c.opp, youKit: c.yk, oppKit: c.ok, ball: c.ball, home: 'you' }); applyKits();
@@ -2258,7 +2311,35 @@ function drawNetBadge() {   // the connection readout in a corner of an online g
     ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(x - w2, y2, w2, pz ? 22 : 18);
     ctx.fillStyle = '#cfe8ff'; ctx.fillText(t2, x - 8, y2 + (pz ? 11 : 9));
   }
+  const G = ONL.host && SETTINGS.perfHud && ONL.gStat;   // (host: the guest's numbers, sent every 2 s; grey once they're stale)
+  if (G) {
+    const t3 = `GUEST  LAG ${G.lag}  GAP ${G.gap}  JIT ${G.jit}  AHEAD ${G.ah}  EXT ${G.ex}/s  SNAP ${G.sn}/s  ${G.fps} FPS  COMP ${ONL_NET.lagComp ? Math.round(ONL.gLag || 0) : 'OFF'}${ONL.feel === 'DELAY' ? '  DELAY' : ''}`;
+    const w3 = ctx.measureText(t3).width + 16, y3 = pz ? y - 24 : y + 20;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(x - w3, y3, w3, pz ? 22 : 18);
+    ctx.fillStyle = now - G.at > 5000 ? '#8a8a8a' : '#cfe8ff'; ctx.fillText(t3, x - 8, y3 + (pz ? 11 : 9));
+  }
   ctx.restore();
 }
+// the online lobby's extras (drawn by drawMatchup): CONTROL FEEL (host picks, both see it) and a pencil note when the link is relayed or weak
+const ONL_FEEL_BTN = { x: 806, y: 646, w: 212, h: 44 };   // (between the GAME NOTES strip and KICKOFF)
+function drawOnlLobbyExtras() {
+  ctx.save(); ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 14px monospace';
+  ctx.fillText('CONTROL FEEL', ONL_FEEL_BTN.x + ONL_FEEL_BTN.w / 2, 630); ctx.restore();
+  menuBtn(ONL_FEEL_BTN, onlFeel(), RES.bright, 20, undefined, onlHostOnly());
+  const relay = NET.link === 'RELAY', weak = NET.ping > NET_CFG.unstableRtt;
+  if (!relay && !weak) return;
+  const t = weak ? 'WEAK CONNECTION: EXPECT SOME LAG' : 'RELAYED CONNECTION: EXPECT A LITTLE LAG';
+  ctx.save(); ctx.translate(455, 598); ctx.rotate(-0.012);
+  ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = weak ? '#c0392b' : '#a8741a'; ctx.fillText(t, 0, 0);
+  const w = ctx.measureText(t).width; ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1.5;   // (a pencil underline, a little wobbly)
+  ctx.beginPath(); ctx.moveTo(-w / 2, 11); ctx.quadraticCurveTo(0, 13.5, w / 2, 10); ctx.stroke();
+  ctx.restore();
+}
+// the guest's readout numbers go to the host every 2 s, so the host's FRAME TIMES shows both screens
+setInterval(() => {
+  const S = ONL.on && ONL.guest && ONL.st, sh = S && S.show; if (!sh || !NET.conn) return;
+  NET.send({ t: 'in', k: 'st', gap: Math.round(sh.gap), jit: Math.round(ONL.jit || 0), ah: Math.round(S.ahead || 0), ex: Math.round(sh.ex), sn: Math.round(sh.sn), lag: Math.round(onlDrawLag()), fps: NET.fms ? Math.round(1000 / NET.fms) : 0 });
+}, 2000);
 const NET_BADGE = { y: TOP_BAR + 6, alpha: 0.8 };   // the in-play readout: its top edge (just under the top bar, right) and how see-through it is
 
