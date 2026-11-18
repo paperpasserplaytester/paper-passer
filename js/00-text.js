@@ -590,6 +590,19 @@ const DRAFT_SCHOOLS = ['BAYOU STATE', 'GREAT LAKES TECH', 'NORTH PRAIRIE', 'COAS
   'CEDAR FALLS STATE', 'GULF SHORE', 'HIGH PLAINS', 'MILL CREEK', 'CANYON STATE', 'LAKESHORE', 'EAST TIMBER', 'COPPER MOUNTAIN', 'RIVERBEND', 'STONE HARBOR', 'BLUE MESA', 'WEST DELTA', 'GRANITE STATE TECH',
   'MAGNOLIA', 'SILVER LAKE', 'FORT ASH', 'PALMETTO BAY', 'BIG SKY NORTH', 'CAPITAL CITY', 'THREE RIVERS', 'SAGEBRUSH', 'MAPLE GROVE', 'SOUTH RIDGE', 'TIDEWATER', 'ELK RAPIDS', 'SUNCOAST', 'BLACK HILLS TECH', 'WINDWARD'];
 const CHANGELOG = [
+  { v: "v0.55", secs: [
+    ["FASTER MENUS", [
+      "Menus paint at most 60 times a second (30 when you leave the mouse alone), and not at all while nothing on them can move: a still menu costs next to nothing, and the first move of the mouse brings it straight back.",
+      "Menu buttons are drawn once and kept as pictures (dark mode included), and the start screen's title sheet is baked: settings draws about 5x faster, the roster and draft board about 2x in dark mode.",
+      "The page crumple uses a smaller snapshot and works its folds out once; the Post's page turn and the reel behind the result screen (half size, every other frame) are cheaper too. The screen hidden under settings isn't drawn any more.",
+      "DEBUG > FRAME TIMES shows paints a second, the two most expensive parts of the frame, button count, dark mode and resolution.",
+    ]],
+    ["BUTTONS WITH PERSONALITY", [
+      "The main buttons are paper objects with their own icon, hover / press move and sound: FRANCHISE is a ticket whose stub lifts and tears, QUICK PLAY a sticky note that curls, ONLINE a tin-can telephone, the settings gear an index card (the gear spins), CONTINUE a card with a paperclip, SAVE / LOAD, FRONT OFFICE and the save slots manila folders (SAVED stamp), ACCOUNT a luggage tag that swings, ROSTER a clipboard, STATS graph paper, TRADES a carbon form, the draft board a card pinned to cork, HALL OF FAME a gold-foil sticker, THE POST a newspaper, YES an APPROVED stamp, NO / delete a red pen that crumples, SIM a pair of dice.",
+      "Other navigation buttons get a coloured-pencil stripe by job (blue = go somewhere, gold = credits, red = danger, green = confirm) and an icon where one fits. ACCOUNT is no longer red.",
+      "The hovered button's pencil lines boil, and now and then one of the main buttons gives a little wiggle. Buttons behind a popup, greyed-out buttons and performance mode keep still. Click areas are unchanged.",
+    ]],
+  ] },
   { v: "v0.54", secs: [
     ["HAND-DRAWN SCREENS (PART 2)", [
       "The sim box is a board: a chalkboard in dark mode, a whiteboard in light mode, with a chalk / marker tray. The drive title is written across the top and underlined in the team's colour, the score sits in a DO NOT ERASE box, sacks / picks / fumbles / touchdowns get their doodle icon, and a new drive wipes the old lines off with an eraser. Chalk dust flies off a touchdown.",

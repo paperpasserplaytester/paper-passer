@@ -663,6 +663,9 @@ function menuBtn(b, label, bg, size = 24, face, on = true) {
   b.ink = paperInk(paper);
   // pressed: the scrap flattens onto the desk, so its own torn shadow tucks in under it (no square shadow)
   const d = on && !still ? pressDepth(b) : 0, up = (1 - d) * b.hov;
+  b._snd = null; b._bgPaper = paper;
+  const mat = on && BTN_MAT_ON ? btnMatOf(b, label) : null;   // (v0.55: a button with a material: its own paper object, icon, flourish and sound)
+  if (mat && btnMatDraw(b, label, size, face, mat, up, d, still)) return;
   if (up <= 0.01 && d <= 0.01 && BTN_SPR_ON && btnSprite(b, label, paper, size, face, on)) return;   // (v0.55: at rest = one cached image; hovered / pressed = drawn live below)
   {
     ctx.save();
@@ -693,7 +696,7 @@ function menuBtn(b, label, bg, size = 24, face, on = true) {
 // directly (the off-screen context isn't wrapped), and the paper is noted as a background so face text / icons drawn on it are still fixed.
 const BTN_SPR = new Map(), BTN_SPR_MAX = 360, BTN_SPR_PAD = 8;
 let BTN_SPR_ON = true;   // (false = every button drawn live, as before v0.55)
-function btnSprClear() { for (const c of BTN_SPR.values()) freeCanvas(c); BTN_SPR.clear(); }
+function btnSprClear() { for (const c of BTN_SPR.values()) freeCanvas(c); BTN_SPR.clear(); if (typeof btnMatClear === 'function') btnMatClear(); }
 function btnSprite(b, label, paper, size, face, on) {
   const T = tornPts(b), m = DM_P.getTransform.call(ctx), s = Math.round(Math.hypot(m.a, m.b) * 8) / 8;
   if (!s || s > 6) return false;
@@ -746,6 +749,332 @@ function ctxBake(x0, y0, w, h, draw) {
   c._x = x0; c._y = y0; c._w = w; c._h = h; c._s = s;
   return c;
 }
+// --- button materials (v0.55) -------------------------------------------------------------------
+// Opt-in looks on top of menuBtn: a button whose label (BTN_LABEL_MAT) or object (btnMatOf) has a material is drawn as its own paper object
+// (BTN_KIND: shape = silhouette for the shadow / hover wash, body + front = baked layers, label + icon baked with them, fx / xf / frontXf / faceXf =
+// the live flourish, snd = the press sound). Three tiers: hero (own object + flourish + sound + the idle wiggle), category ('card': the torn scrap
+// with a coloured-pencil stripe by job, BTN_JOB), utility (no material: menuBtn as before). Same shared motion for all: hover lifts (longer shadow),
+// press squashes toward the desk, release springs back (BTN_PRESS). Looks / sound only: click areas (inBtn) never change.
+// Sprites: per material + label + size + pixel scale + dark mode, BTN_FX.frames boil frames (different ddSeed wobble); only the hovered one cycles.
+const BTN_FX = { lift: 3, squash: 0.04, boilFps: 8, idleWiggle: [8, 10], wiggleS: 0.35, sndVol: 0.55, frames: 3, pad: 16, ico: 0.3, glow: 0.18, quietPage: 0.6 };
+const BTN_JOB = { go: '#2f5fa8', gold: '#c99a1b', danger: '#c0392b', ok: '#2f8a46' };   // category stripe: blue = go somewhere, gold = credits / XP, red = danger, green = confirm
+const BTN_JOB_LIGHT = { go: '#a9c6ff', gold: '#ffe08a', danger: '#ffb3a8', ok: '#b8f0c4' };   // (the same stripe on dark construction paper)
+let BTN_MAT_ON = true;   // (false = every button as before v0.55)
+const BM = (k, ico, job) => ({ k, ico: ico || null, job: job || null });
+const BTN_LABEL_MAT = {   // label (newlines read as spaces, ▸ and "(n)" dropped) -> material
+  'FRANCHISE': BM('ticket', 'btnFootball'), 'QUICK PLAY': BM('sticky', 'bolt'), 'ONLINE': BM('cans'),
+  'CONTINUE': BM('clip', 'btnArrow'), 'SAVE GAME': BM('folder', 'btnFolder'), 'LOAD GAME': BM('folder', 'btnFolder'), 'ACCOUNT': BM('tag', 'cloud'),
+  'ROSTER': BM('clipboard', 'btnJersey'), 'STATS': BM('graph', 'btnBars'), 'PLAYER STATS': BM('graph', 'btnBars'), 'TRADES': BM('carbon', 'btnSwap'),
+  'DRAFT BOARD': BM('cork'), 'PROSPECTS': BM('cork'), 'BOARD': BM('cork'), 'HALL OF FAME': BM('foil', 'star'), 'THE POST': BM('news'),
+  'YES': BM('stamp', 'check'), 'LEAVE': BM('stamp', 'check'), 'ACCEPT': BM('stamp', 'check'),
+  'NO': BM('redpen', 'btnX'), 'STAY': BM('redpen', 'btnX'), 'DELETE': BM('redpen', 'btnX'),
+  'SIM': BM('dice', 'dice'), 'SIM GAME': BM('dice', 'dice'), 'SIM OFFENSE': BM('dice', 'dice'), 'SIM DEFENSE': BM('dice', 'dice'),
+  // category tier: the torn scrap + a job stripe (+ an icon where an obvious one exists)
+  'SCRIMMAGE': BM('card', 'btnWhistle', 'go'), '1V1': BM('card', null, 'go'), 'CAREER': BM('card', null, 'go'), 'TUTORIAL': BM('card', null, 'go'),
+  'HIGHLIGHTS': BM('card', 'btnFilm', 'go'), 'IMPORT HIGHLIGHTS': BM('card', 'btnFilm', 'go'), 'PRACTICE': BM('card', 'btnWhistle', 'go'), 'FACILITIES': BM('card', null, 'go'),
+  'FREE AGENTS': BM('card', null, 'go'), 'HIRING BOARD': BM('card', null, 'go'), 'RECORDS': BM('card', null, 'go'), 'TROPHY ROOM': BM('card', 'trophy', 'go'),
+  'GOALS': BM('card', null, 'go'), 'ALL-PRO TEAM': BM('card', null, 'go'), 'DEPTH CHART': BM('card', null, 'go'),
+  'TEAM UPGRADES': BM('card', null, 'gold'), 'UPGRADE ALL': BM('card', null, 'gold'), 'MAKE OFFER': BM('card', null, 'gold'),
+  'RE-SIGN': BM('card', null, 'ok'), 'LET GO': BM('card', null, 'danger'), 'FIRE': BM('card', null, 'danger'), 'REJECT': BM('card', null, 'danger'), 'FORFEIT': BM('card', null, 'danger'),
+};
+const BTN_OBJ_MAT = { gear: BM('index'), next: BM('clip', 'btnArrow'), clip: BM('clip'), trash: BM('redpen'), slot: BM('folder'), fo: BM('folder', 'btnFolder') };
+const BTN_MAT_CACHE = new Map();
+function btnMatOf(b, label) {
+  if (b.mat !== undefined) return b.mat;
+  if (b === START_BTNS.diff || b === HOME_BTNS[0]) return BTN_OBJ_MAT.gear;   // (the settings gear: an index card, the gear spins)
+  if (b === HOME_BTNS[1]) return BTN_OBJ_MAT.fo;                              // (FRONT OFFICE: the folder family, like the filing drawer inside it)
+  if (b === MENU_NEXT) return label.startsWith('CONTINUE') && !/[▸►]/.test(label) ? BTN_OBJ_MAT.next : BTN_OBJ_MAT.clip;
+  if (SLOT_TRASH.includes(b)) return BTN_OBJ_MAT.trash;
+  if (SLOT_BTNS.includes(b)) return BTN_OBJ_MAT.slot;
+  if (!label) return null;
+  let m = BTN_MAT_CACHE.get(label);
+  if (m === undefined) { const n = label.replace(/[▸►]/g, '').replace(/\s*\(\d+\)/, '').trim(); m = BTN_LABEL_MAT[n.replace(/\s*\n\s*/g, ' ')] || BTN_LABEL_MAT[n.split('\n')[0].trim()] || null; if (m && m.ico === 'btnArrow' && /[▸►]/.test(label)) m = BM(m.k, null, m.job); BTN_MAT_CACHE.set(label, m); }   // (a label with its own ▸: no second arrow)
+  return m;
+}
+// shapes (p = the ctx or a Path2D: no beginPath here)
+const bmRR = (p, x, y, w, h, r) => { p.moveTo(x + r, y); p.arcTo(x + w, y, x + w, y + h, r); p.arcTo(x + w, y + h, x, y + h, r); p.arcTo(x, y + h, x, y, r); p.arcTo(x, y, x + w, y, r); p.closePath(); };
+const bmTorn = (p, b) => { tornPts(b).pts.forEach(([x, y], i) => i ? p.lineTo(x, y) : p.moveTo(x, y)); p.closePath(); };
+const bmFill = (shape, b, col, edge = 'rgba(120,100,70,0.45)') => { ctx.beginPath(); shape(ctx, b); ctx.fillStyle = col; ctx.fill(); if (edge) { ctx.strokeStyle = edge; ctx.lineWidth = 1.2; ctx.stroke(); } };
+const bmSheen = (shape, b) => { const g = ctx.createLinearGradient(0, b.y, 0, b.y + b.h); g.addColorStop(0, 'rgba(255,255,255,0.16)'); g.addColorStop(0.5, 'rgba(255,255,255,0)'); g.addColorStop(1, 'rgba(0,0,0,0.08)'); ctx.beginPath(); shape(ctx, b); ctx.fillStyle = g; ctx.fill(); };
+const bmTicketX = b => b.x + b.w * 0.8;
+function bmTicket(p, b, part) {   // part: 0 = whole, 1 = main (left of the perforation), 2 = stub
+  const x0 = b.x, y0 = b.y, x1 = b.x + b.w, y1 = b.y + b.h, px = bmTicketX(b), r = 7;
+  const L = part === 2 ? px : x0, R = part === 1 ? px : x1;
+  p.moveTo(L, y0);
+  if (L < px && px < R) { p.lineTo(px - r, y0); p.arc(px, y0, r, Math.PI, 0, true); }
+  p.lineTo(R, y0); p.lineTo(R, y1);
+  if (L < px && px < R) { p.lineTo(px + r, y1); p.arc(px, y1, r, 0, Math.PI, true); }
+  p.lineTo(L, y1); p.closePath();
+}
+const bmTag = (p, b) => { const x0 = b.x, y0 = b.y, x1 = b.x + b.w, y1 = b.y + b.h, n = Math.min(22, b.h * 0.42); p.moveTo(x0 + n, y0); p.lineTo(x1, y0); p.lineTo(x1, y1); p.lineTo(x0 + n, y1); p.lineTo(x0, (y0 + y1) / 2); p.closePath(); };
+const bmFolder = (p, b) => { const tw = Math.min(150, b.w * 0.34); p.moveTo(b.x, b.y + 4); p.lineTo(b.x + 10, b.y + 4); p.lineTo(b.x + 16, b.y - 8); p.lineTo(b.x + 10 + tw, b.y - 8); p.lineTo(b.x + 16 + tw, b.y + 4); p.lineTo(b.x + b.w, b.y + 4); p.lineTo(b.x + b.w, b.y + b.h); p.lineTo(b.x, b.y + b.h); p.closePath(); };
+const bmLines = (b, x0, x1, y0, gap, col) => { ctx.fillStyle = col; for (let y = y0; y < b.y + b.h - 4; y += gap) ctx.fillRect(x0, y, x1 - x0, 1); };
+const bmSec = st => st.t;   // (seconds on the UI clock)
+// a paperclip / pushpin / clipboard clip / dice: small live shapes
+function bmClip(x, y, rot) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.strokeStyle = '#7d848c'; ctx.lineWidth = 2.4; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(4, 26); ctx.lineTo(4, 5); ctx.arc(9, 5, 5, Math.PI, 0); ctx.lineTo(14, 30); ctx.arc(8, 30, 6, 0, Math.PI); ctx.lineTo(2, 9); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 0.9; ctx.beginPath(); ctx.moveTo(13, 8); ctx.lineTo(13, 26); ctx.stroke(); ctx.restore();
+}
+function bmPin(x, y, rot) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+  ctx.strokeStyle = '#8a8f96'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 8); ctx.stroke();
+  ctx.fillStyle = 'rgba(40,25,5,0.25)'; ctx.beginPath(); ctx.ellipse(3, 2, 6, 3, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#d63b30'; ctx.beginPath(); ctx.arc(0, -4, 7, 0, 7); ctx.fill(); ctx.strokeStyle = '#7d1d16'; ctx.lineWidth = 1.2; ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.beginPath(); ctx.arc(-2.5, -6.5, 2.2, 0, 7); ctx.fill(); ctx.restore();
+}
+function bmDie(x, y, s, rot, n) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+  ctx.beginPath(); bmRR(ctx, -s, -s, 2 * s, 2 * s, s * 0.3); ctx.fillStyle = '#fffdf4'; ctx.fill(); ctx.strokeStyle = '#3b3320'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = '#3b3320'; const q = s * 0.5, P = { 1: [[0, 0]], 2: [[-q, -q], [q, q]], 3: [[-q, -q], [0, 0], [q, q]], 4: [[-q, -q], [q, -q], [-q, q], [q, q]], 5: [[-q, -q], [q, -q], [0, 0], [-q, q], [q, q]] }[n];
+  for (const [a, c] of P) { ctx.beginPath(); ctx.arc(a, c, s * 0.16, 0, 7); ctx.fill(); }
+  ctx.restore();
+}
+function bmCan(x, y, r) {   // a tin can, open end up
+  ctx.save(); ctx.translate(x, y);
+  ctx.beginPath(); ctx.moveTo(-r * 0.55, -r * 0.6); ctx.lineTo(r * 0.55, -r * 0.6); ctx.lineTo(r * 0.5, r * 0.75); ctx.lineTo(-r * 0.5, r * 0.75); ctx.closePath();
+  ctx.fillStyle = '#b4bcc6'; ctx.fill(); ctx.strokeStyle = '#4c5560'; ctx.lineWidth = 1.4; ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(0, -r * 0.6, r * 0.55, r * 0.18, 0, 0, 7); ctx.fillStyle = '#7f8995'; ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = 'rgba(76,85,96,0.55)'; ctx.lineWidth = 1; for (const k of [-0.05, 0.3]) { ctx.beginPath(); ctx.moveTo(-r * 0.53, r * k); ctx.lineTo(r * 0.53, r * k); ctx.stroke(); }
+  ctx.restore();
+}
+function bmStampText(text, x, y, col, k, a, rot) {   // an inked stamp: boxed letters, slammed down (k = scale, a = alpha)
+  ctx.save(); ctx.globalAlpha *= a; ctx.translate(x, y); ctx.rotate(rot); ctx.scale(k, k);
+  ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; const w = ctx.measureText(text).width + 16;
+  ctx.strokeStyle = col; ctx.lineWidth = 2.5; ctx.strokeRect(-w / 2, -15, w, 30); ctx.fillStyle = col; ctx.fillText(text, 0, 1); ctx.restore();
+}
+const BTN_KIND = {
+  ticket: { hero: true, paper: '#f7d37c', lx: -0.1, shape: (p, b) => bmTicket(p, b, 0),
+    body(b) { bmFill((p, q) => bmTicket(p, q, 1), b, '#f7d37c'); ctx.strokeStyle = 'rgba(150,90,20,0.45)'; ctx.lineWidth = 1; ctx.strokeRect(b.x + 6, b.y + 6, bmTicketX(b) - b.x - 14, b.h - 12); },
+    fx(st, b) {   // the stub: lifts along its perforation on hover, tears a little on the press
+      const px = bmTicketX(b);
+      ctx.save(); ctx.translate(px, b.y + b.h); ctx.rotate(-0.07 * st.k * (1 - st.d) + 0.04 * st.d); ctx.translate(-px + 4 * st.d, -(b.y + b.h));
+      bmFill((p, q) => bmTicket(p, q, 2), b, '#f3c860');
+      ctx.setLineDash([3, 4]); ctx.strokeStyle = 'rgba(120,70,10,0.7)'; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(px, b.y + 8); ctx.lineTo(px, b.y + b.h - 8); ctx.stroke(); ctx.setLineDash([]);
+      drawStar((px + b.x + b.w) / 2, b.y + b.h / 2, 9, '#c0392b', '#7d1d16', 1.2); ctx.restore();
+    }, snd: v => sndRec('tear', v, { ms: 380, fade: 120 }) },
+  sticky: { hero: true, paper: '#ffe867', tilt: -0.02, rpad: 46, shape: (p, b) => p.rect(b.x, b.y, b.w, b.h),
+    body(b) { bmFill((p, q) => p.rect(q.x, q.y, q.w, q.h), b, '#ffe867', 'rgba(150,120,20,0.35)'); ctx.fillStyle = 'rgba(230,190,40,0.5)'; ctx.fillRect(b.x, b.y, b.w, Math.min(16, b.h * 0.2)); },
+    fx(st, b) {   // the corner curls up on hover, slaps flat on the press
+      const c = (5 + 14 * st.k) * (1 - st.d), x1 = b.x + b.w, y1 = b.y + b.h; if (c < 1) return;
+      ctx.fillStyle = 'rgba(40,25,5,0.28)'; ctx.beginPath(); ctx.moveTo(x1 - c, y1); ctx.lineTo(x1, y1); ctx.lineTo(x1, y1 - c); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#fff3a8'; ctx.beginPath(); ctx.moveTo(x1 - c, y1); ctx.lineTo(x1, y1 - c); ctx.lineTo(x1 - c * 1.08, y1 - c * 1.08); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(150,120,20,0.5)'; ctx.lineWidth = 1; ctx.stroke();
+    }, snd: v => sndRec('tap', v) },
+  cans: { hero: true, anim: true, paper: '#dde7f1', shape: bmTorn,
+    body(b) { bmFill(bmTorn, b, '#dde7f1'); const r = Math.min(13, b.h * 0.24); bmCan(b.x + 20, b.y + b.h - r - 6, r); bmCan(b.x + b.w - 20, b.y + b.h - r - 6, r); },
+    fx(st, b) {   // the string between the cans: wiggles on hover, pulls taut on the press
+      const r = Math.min(13, b.h * 0.24), y = b.y + b.h - r * 1.6 - 6, x0 = b.x + 20, x1 = b.x + b.w - 20, sag = 7 * (1 - st.d), t = bmSec(st);
+      ctx.strokeStyle = 'rgba(90,70,40,0.75)'; ctx.lineWidth = 1.3; ctx.beginPath(); ctx.moveTo(x0, y);
+      for (let i = 1; i <= 16; i++) { const u = i / 16, x = x0 + (x1 - x0) * u; ctx.lineTo(x, y + sag * Math.sin(Math.PI * u) + Math.sin(u * 18 - t * 14) * 2.2 * st.k * (1 - st.d)); }
+      ctx.stroke();
+    }, snd: v => toneSfx('sine', [[1320, 1, 1250], [1980, 0.35, 1900]], 0.4, 0.2 * v, 'btnPing') },
+  index: { hero: true, anim: true, paper: '#fbfaf3', shape: (p, b) => bmRR(p, b.x, b.y, b.w, b.h, 3), ink: '#5b6470',
+    body(b) { bmFill((p, q) => bmRR(p, q.x, q.y, q.w, q.h, 3), b, '#fbfaf3'); ctx.fillStyle = 'rgba(200,60,60,0.55)'; ctx.fillRect(b.x + 3, b.y + 12, b.w - 6, 1.4); bmLines(b, b.x + 3, b.x + b.w - 3, b.y + 24, 11, 'rgba(80,140,210,0.3)'); },
+    faceXf(st, b) { const cx = b.x + b.w / 2, cy = b.y + b.h / 2 + 1; ctx.translate(cx, cy); ctx.rotate(bmSec(st) * 2.4 * st.k + (b._gearA || 0)); ctx.translate(-cx, -cy); },
+    face(b) { gearIcon(b, '#6b7480'); },
+    fx(st, b) { if (st.d > 0.02) { ctx.fillStyle = `rgba(150,150,150,${(0.35 * st.d).toFixed(3)})`; ctx.beginPath(); ctx.ellipse(b.x + b.w / 2, b.y + b.h / 2 + 4, b.w * 0.36, b.h * 0.2, -0.3, 0, 7); ctx.fill(); } },
+    snd: v => sndRec('eraser', v, { ms: 260, fade: 120 }) },
+  clip: { hero: true, anim: true, paper: null, shape: bmTorn,
+    body(b, m, paper) { bmFill(bmTorn, b, paper); if (lum(paper) < 0.55) bmSheen(bmTorn, b); },
+    fx(st, b) { const t = bmSec(st); bmClip(b.x + 16 - 5 * st.d, b.y - 10 - 10 * st.d, -0.18 + Math.sin(t * 11) * 0.14 * st.k * (1 - st.d) - 0.6 * st.d); },
+    snd: v => sndRec('click', v) },
+  folder: { hero: true, paper: '#e6c47e', shape: bmFolder,
+    body(b) { bmFill(bmFolder, b, '#d4ac5e', 'rgba(110,80,30,0.5)'); },
+    front(b) { bmFill((p, q) => p.rect(q.x, q.y + 6, q.w, q.h - 6), b, '#ebcd8c', 'rgba(110,80,30,0.5)'); },
+    frontXf(st, b) { const y1 = b.y + b.h, cx = b.x + b.w / 2, k = st.k * (1 - st.d); ctx.translate(cx, y1); ctx.scale(1, 1 - 0.06 * k); ctx.translate(-cx, -y1); },   // (the flap tips open: the back shows above it)
+    fx(st, b) { if (st.save && st.d > 0.04) bmStampText('SAVED', b.x + b.w / 2, b.y + b.h / 2, '#c0392b', 1.3 - 0.3 * st.d, Math.min(1, st.d * 1.4), -0.12); },
+    snd: v => sndRec('flip', v, { ms: 420, fade: 120 }) },
+  tag: { hero: true, anim: true, paper: '#efe0b4', lpad: 30, shape: bmTag,
+    body(b) { bmFill(bmTag, b, '#efe0b4', 'rgba(120,90,40,0.55)'); const hx = b.x + 14, hy = b.y + b.h / 2;
+      ctx.fillStyle = 'rgba(60,40,10,0.55)'; ctx.beginPath(); ctx.arc(hx, hy, 4.5, 0, 7); ctx.fill(); ctx.strokeStyle = '#b9a06a'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(hx, hy, 6.5, 0, 7); ctx.stroke();
+      ctx.strokeStyle = 'rgba(70,50,20,0.8)'; ctx.lineWidth = 1.3; ctx.beginPath(); ctx.moveTo(hx, hy); ctx.quadraticCurveTo(b.x - 8, b.y + 4, b.x - 6, b.y - 12); ctx.stroke(); },
+    xf(st, b) { const px = b.x - 6, py = b.y - 12; ctx.translate(px, py); ctx.rotate(Math.sin(bmSec(st) * 4.5) * 0.06 * st.k + 0.03 * st.d); ctx.translate(-px, -py); },   // (it swings on its string)
+    snd: v => sndRec('swoosh', v, { ms: 300, fade: 120 }) },
+  clipboard: { hero: true, paper: '#fffdf4', ly: 4, shape: (p, b) => bmRR(p, b.x - 3, b.y - 2, b.w + 6, b.h + 4, 6),
+    body(b) { bmFill((p, q) => bmRR(p, q.x - 3, q.y - 2, q.w + 6, q.h + 4, 6), b, '#b07a46', 'rgba(70,40,10,0.6)'); ctx.fillStyle = '#fffdf4'; ctx.fillRect(b.x + 5, b.y + 11, b.w - 10, b.h - 15); bmLines(b, b.x + 9, b.x + b.w - 9, b.y + 24, 13, 'rgba(80,140,210,0.25)'); },
+    fx(st, b) {   // the clip: rises a touch on hover, snaps down on the press
+      const cx = b.x + b.w / 2, y = b.y - 5 - 2 * st.k * (1 - st.d); ctx.save(); ctx.translate(cx, y); ctx.scale(1, 1 - 0.25 * st.d);
+      ctx.beginPath(); bmRR(ctx, -24, 0, 48, 15, 4); ctx.fillStyle = '#a9afb6'; ctx.fill(); ctx.strokeStyle = '#5b6168'; ctx.lineWidth = 1.4; ctx.stroke();
+      ctx.beginPath(); bmRR(ctx, -12, -6, 24, 9, 4); ctx.strokeStyle = '#5b6168'; ctx.lineWidth = 2; ctx.stroke(); ctx.restore();
+    }, snd: v => sndRec('click', v) },
+  graph: { hero: true, paper: '#fbfdff', icoLive: true, shape: bmTorn,
+    body(b) { bmFill(bmTorn, b, '#fbfdff'); ctx.save(); ctx.beginPath(); bmTorn(ctx, b); ctx.clip(); ctx.fillStyle = 'rgba(80,140,210,0.2)';
+      for (let x = b.x + 4; x < b.x + b.w; x += 9) ctx.fillRect(x, b.y, 1, b.h); for (let y = b.y + 4; y < b.y + b.h; y += 9) ctx.fillRect(b.x, y, b.w, 1); ctx.restore(); },
+    fx(st, b, ic) { if (!ic) return; const h = [0.55, 1, 0.75], c = ['#2f8a46', '#2f5fa8', '#c99a1b'];   // (the bars grow on hover)
+      for (let i = 0; i < 3; i++) { const bw = ic.r * 0.42, x = ic.x - ic.r * 0.75 + i * ic.r * 0.6, hh = ic.r * 1.6 * h[i] * (0.65 + 0.35 * st.k + 0.12 * Math.sin(bmSec(st) * 6 + i) * st.k);
+        ctx.fillStyle = c[i]; ctx.fillRect(x, ic.y + ic.r * 0.85 - hh, bw, hh); ctx.strokeStyle = 'rgba(30,30,30,0.55)'; ctx.lineWidth = 1; ctx.strokeRect(x, ic.y + ic.r * 0.85 - hh, bw, hh); }
+      ctx.fillStyle = '#3b3320'; ctx.fillRect(ic.x - ic.r, ic.y + ic.r * 0.85, ic.r * 2, 1.4); if (st.k > 0.01) menuMoving = true; },
+    snd: v => sndRec('pencil', v, { ms: 300, at: 2, fade: 100 }) },
+  carbon: { hero: true, paper: '#fffdf9', icoLive: true, shape: (p, b) => p.rect(b.x, b.y, b.w + 4, b.h + 4),
+    body(b) { ctx.fillStyle = '#f2c4cf'; ctx.fillRect(b.x + 4, b.y + 4, b.w, b.h); bmFill((p, q) => p.rect(q.x, q.y, q.w, q.h), b, '#fffdf9');
+      ctx.fillStyle = 'rgba(200,60,60,0.45)'; ctx.fillRect(b.x + 14, b.y + 2, 1.2, b.h - 4); bmLines(b, b.x + 4, b.x + b.w - 4, b.y + 14, 12, 'rgba(80,140,210,0.25)'); },
+    fx(st, b, ic) { if (!ic) return; const r = ic.r, o = Math.sin(bmSec(st) * 5) * r * 0.35 * st.k, col = '#2f5fa8';   // (the two arrows slide past each other on hover)
+      ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+      for (const [dy, dir, oo] of [[-0.35, 1, o], [0.35, -1, -o]]) { const y = ic.y + dy * r, xa = ic.x - 0.8 * r * dir + oo, xb = ic.x + 0.7 * r * dir + oo;
+        ctx.beginPath(); ctx.moveTo(xa, y); ctx.lineTo(xb, y); ctx.stroke(); ctx.beginPath(); ctx.moveTo(xb + 0.15 * r * dir, y); ctx.lineTo(xb - 0.3 * r * dir, y - 0.3 * r); ctx.lineTo(xb - 0.3 * r * dir, y + 0.3 * r); ctx.closePath(); ctx.fill(); }
+      if (st.k > 0.01) menuMoving = true; },
+    snd: v => sndRec('flip', v, { ms: 380, fade: 120 }) },
+  cork: { hero: true, paper: '#fffdf4', ly: 3, shape: (p, b) => p.rect(b.x - 3, b.y - 3, b.w + 6, b.h + 6),
+    body(b) { ctx.fillStyle = '#c99a63'; ctx.fillRect(b.x - 3, b.y - 3, b.w + 6, b.h + 6); ctx.fillStyle = 'rgba(110,70,30,0.45)';
+      for (let i = 0; i < b.w * b.h / 90; i++) ctx.fillRect(b.x - 3 + (ddRand() + 0.5) * (b.w + 6), b.y - 3 + (ddRand() + 0.5) * (b.h + 6), 1.6, 1.6);
+      bmFill((p, q) => p.rect(q.x + 6, q.y + 7, q.w - 12, q.h - 11), b, '#fffdf4'); ctx.fillStyle = 'rgba(200,60,60,0.5)'; ctx.fillRect(b.x + 6, b.y + 15, b.w - 12, 1.2); },
+    fx(st, b) { bmPin(b.x + b.w / 2, b.y + 5, Math.sin(bmSec(st) * 14) * 0.22 * st.k * (1 - st.d)); if (st.k > 0.01) menuMoving = true; },   // (the pushpin wiggles)
+    snd: v => sndRec('tap', v) },
+  foil: { hero: true, anim: true, paper: '#e9c64e', ink: '#5a3d00', shape: (p, b) => bmRR(p, b.x, b.y, b.w, b.h, 12),
+    body(b) { const g = ctx.createLinearGradient(b.x, b.y, b.x + b.w, b.y + b.h); g.addColorStop(0, '#f8e38a'); g.addColorStop(0.5, '#d4a72c'); g.addColorStop(1, '#f3d36b');
+      ctx.beginPath(); bmRR(ctx, b.x, b.y, b.w, b.h, 12); ctx.fillStyle = g; ctx.fill(); ctx.strokeStyle = '#8a6400'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.beginPath(); bmRR(ctx, b.x + 5, b.y + 5, b.w - 10, b.h - 10, 8); ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1.2; ctx.stroke(); },
+    fx(st, b, ic, L) { if (st.k < 0.01) return; const u = ((bmSec(st) * 0.9) % 1.5) - 0.25, x = b.x + b.w * u;   // (a shine sweeps across)
+      ctx.save(); ctx.clip(L.p2); ctx.fillStyle = `rgba(255,255,255,${(0.5 * st.k).toFixed(3)})`; ctx.beginPath(); ctx.moveTo(x, b.y - 4); ctx.lineTo(x + 22, b.y - 4); ctx.lineTo(x + 2, b.y + b.h + 4); ctx.lineTo(x - 20, b.y + b.h + 4); ctx.closePath(); ctx.fill(); ctx.restore(); },
+    snd: v => toneSfx('triangle', [[1568, 0.7], [2349, 0.45], [3136, 0.25]], 0.45, 0.14 * v, 'btnFoil') },
+  news: { hero: true, paper: '#efede6', shape: (p, b) => p.rect(b.x, b.y, b.w, b.h),
+    body(b) { bmFill((p, q) => p.rect(q.x, q.y, q.w, q.h), b, '#efede6', 'rgba(60,60,60,0.45)'); ctx.fillStyle = 'rgba(30,30,30,0.6)'; ctx.fillRect(b.x + 5, b.y + 5, b.w - 10, 1.6); ctx.fillRect(b.x + 5, b.y + 8, b.w - 10, 0.8);
+      ctx.fillStyle = 'rgba(30,30,30,0.18)'; for (let x = b.x + 6; x < b.x + b.w - 8; x += (b.w - 12) / 4) ctx.fillRect(x, b.y + b.h - 10, (b.w - 12) / 4 - 4, 1); ctx.fillStyle = 'rgba(0,0,0,0.07)'; ctx.fillRect(b.x + b.w / 2 - 1, b.y + 2, 2, b.h - 4); },
+    xf(st, b) { const cx = b.x + b.w / 2, k = st.k * (1 - st.d); ctx.translate(cx, b.y); ctx.scale(1 + 0.05 * k, 1 + 0.08 * k); ctx.translate(-cx, -b.y); },   // (it unfolds a little)
+    snd: v => sndRec('flip', v, { ms: 420, fade: 120 }) },
+  stamp: { hero: true, paper: '#fffdf4', ink: '#2f6b3a', shape: bmTorn,
+    body(b) { bmFill(bmTorn, b, '#fffdf4'); ctx.strokeStyle = 'rgba(47,138,70,0.8)'; ctx.lineWidth = 2.2; ctx.strokeRect(b.x + 7, b.y + 7, b.w - 14, b.h - 14); ctx.lineWidth = 1; ctx.strokeRect(b.x + 10, b.y + 10, b.w - 20, b.h - 20); },
+    fx(st, b) { if (st.d > 0.04) bmStampText('APPROVED', b.x + b.w / 2, b.y + b.h / 2, '#2f8a46', 1.3 - 0.3 * st.d, Math.min(1, st.d * 1.4), -0.14); },   // (the stamp thunks down)
+    snd: v => { toneSfx('sine', [[150, 1, 70]], 0.16, 0.35 * v, 'btnThunk'); sndRec('tap', v); } },
+  redpen: { hero: true, paper: null, ink: '#a52a22', shape: bmTorn,
+    body(b, m, paper) { bmFill(bmTorn, b, paper); },
+    xf(st, b) { if (st.d < 0.01) return; const cx = b.x + b.w / 2, cy = b.y + b.h / 2; ctx.translate(cx, cy); ctx.rotate(0.08 * st.d); ctx.scale(1 - 0.1 * st.d, 1 - 0.12 * st.d); ctx.translate(-cx, -cy); },   // (it crumples)
+    fx(st, b) { if (st.k < 0.02) return; const x0 = b.x + 8, y0 = b.y + 7, x1 = b.x + b.w - 8, y1 = b.y + b.h - 7, k1 = Math.min(1, st.k * 2), k2 = Math.max(0, st.k * 2 - 1);   // (a red X slashes across)
+      ctx.strokeStyle = 'rgba(192,57,43,0.6)'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0 + (x1 - x0) * k1, y0 + (y1 - y0) * k1);
+      if (k2 > 0) { ctx.moveTo(x1, y0); ctx.lineTo(x1 - (x1 - x0) * k2, y0 + (y1 - y0) * k2); } ctx.stroke(); },
+    snd: v => crumpleSfx(0.8 * v) },
+  dice: { hero: true, anim: true, paper: '#fffdf4', icoLive: true, shape: bmTorn,
+    body(b) { bmFill(bmTorn, b, '#fffdf4'); },
+    fx(st, b, ic) { if (!ic) return; const t = bmSec(st), s = ic.r * 0.42;   // (they rattle on hover, roll on the press)
+      for (let i = 0; i < 2; i++) bmDie(ic.x + (i ? 0.5 : -0.5) * ic.r, ic.y + (i ? 0.3 : -0.25) * ic.r + Math.sin(t * 45 + i * 2) * 1.5 * st.k, s, (i ? 0.3 : -0.2) + Math.sin(t * 38 + i) * 0.25 * st.k + st.d * 1.2, i ? 5 : 3); },
+    snd: v => { sweepSfx(2600, 3400, 2000, 0.22, 0.12 * v, 3, 'btnDice1'); setTimeout(() => sweepSfx(2200, 3000, 1800, 0.18, 0.1 * v, 3, 'btnDice2'), 90); } },
+  card: { paper: null, shape: bmTorn,
+    body(b, m, paper) { bmFill(bmTorn, b, paper); if (paper !== '#fffdf4' && paper !== '#fff3a0') bmSheen(bmTorn, b); },
+    snd: v => sndRec('tap', 0.6 * v) },
+};
+// new doodle icons for the buttons (unit space, the in-game icons' pencil kit)
+Object.assign(DOODLE, {
+  btnFootball(ic) { ddShape(ddEll(0, 0, 0.95, 0.56, 16), ic.c || '#8b4a1f'); ddLine([[-0.36, 0], [0.36, 0]], '#ffffff', 0.09); for (const x of [-0.2, 0, 0.2]) ddLine([[x, -0.13], [x, 0.13]], '#ffffff', 0.07); for (const x of [-0.62, 0.62]) ddLine([[x, -0.4], [x, 0.4]], '#ffffff', 0.08); },
+  btnArrow(ic) { ddShape([[-0.8, -0.25], [0.15, -0.25], [0.15, -0.6], [0.85, 0], [0.15, 0.6], [0.15, 0.25], [-0.8, 0.25]], ic.c || '#2f5fa8'); },
+  btnFolder(ic) { ddShape([[-0.9, -0.6], [-0.35, -0.6], [-0.2, -0.42], [0.9, -0.42], [0.9, 0.7], [-0.9, 0.7]], ic.c || '#d9a944'); ddLine([[-0.9, -0.2], [0.9, -0.2]], ddInk(ic.c || '#d9a944'), 0.07); },
+  btnJersey(ic) { const c = ic.c || '#2a62b0'; ddShape([[-0.35, -0.85], [-0.15, -0.7], [0.15, -0.7], [0.35, -0.85], [0.95, -0.45], [0.75, -0.1], [0.55, -0.25], [0.55, 0.9], [-0.55, 0.9], [-0.55, -0.25], [-0.75, -0.1], [-0.95, -0.45]], c); ddLine([[-0.55, -0.05], [0.55, -0.05]], '#ffffff', 0.12); },
+  btnBars(ic) { const h = [0.55, 1, 0.75], c = ['#2f8a46', '#2f5fa8', '#c99a1b']; for (let i = 0; i < 3; i++) { const x = -0.75 + i * 0.6, y = 0.85 - 1.6 * h[i]; ddShape([[x, y], [x + 0.42, y], [x + 0.42, 0.85], [x, 0.85]], c[i]); } ddLine([[-0.95, 0.85], [0.95, 0.85]], '#3b3320', 0.08); },
+  btnSwap(ic) { const c = ic.c || '#2f5fa8'; ddLine([[-0.8, -0.35], [0.6, -0.35]], c, 0.14); ddShape([[0.45, -0.65], [0.9, -0.35], [0.45, -0.05]], c); ddLine([[0.8, 0.35], [-0.6, 0.35]], c, 0.14); ddShape([[-0.45, 0.05], [-0.9, 0.35], [-0.45, 0.65]], c); },
+  btnX(ic) { const c = ic.c || '#c0392b'; for (const s of [1, -1]) { ddLine([[-0.62 * s, -0.62], [0.62 * s, 0.62]], ddInk(c), 0.34); ddLine([[-0.62 * s, -0.62], [0.62 * s, 0.62]], c, 0.2); } },
+  btnWhistle(ic) { const c = ic.c || '#9aa0a6'; ddShape([[-0.45, -0.25], [-0.95, -0.45], [-0.95, -0.05], [-0.45, 0.1]], c); ddShape(ddEll(0.15, 0.15, 0.62, 0.52, 14), c); ddLine(ddEll(0.15, 0.15, 0.2, 0.18, 8), ddInk(c), 0.08); ddLine(ddEll(0.6, -0.5, 0.17, 0.17, 8), ddInk(c), 0.08); },
+  btnFilm(ic) { const c = ic.c || '#3a3f47'; ddShape([[-0.95, -0.6], [0.95, -0.6], [0.95, 0.6], [-0.95, 0.6]], c); for (let i = 0; i < 5; i++) { const x = -0.78 + i * 0.39; for (const y of [-0.48, 0.3]) ddShape([[x, y], [x + 0.18, y], [x + 0.18, y + 0.18], [x, y + 0.18]], '#ffffff'); } },
+});
+const BTN_ICO_COL = { bolt: '#f2b51c', cloud: '#7fb2e5', check: '#2f8a46', dice: '#fffdf4', trophy: '#e8b830' };
+function btnIco(k, x, y, r) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(r, r);
+  if (k === 'star') drawStar(0, 0, 1, '#ffd23f', '#8a5a00', 0.12);
+  else if (DOODLE[k]) DOODLE[k]({ c: BTN_ICO_COL[k] }, 0);
+  ctx.restore();
+}
+// the label (+ icon at the left, in the room left of the label; no room = no icon) and the job stripe, baked; returns the icon's spot for live icons
+function btnMatLabel(b, label, size, mat, K, paper) {
+  const lines = label ? label.split('\n') : [];
+  ctx.font = `bold ${size}px monospace`;
+  const tw = lines.length ? Math.max(...lines.map(l => ctx.measureText(l).width)) : 0, cy = b.y + b.h / 2 + (K.ly || 0);
+  const x0 = b.x + (K.lpad || 10), x1 = b.x + b.w * (1 + Math.min(0, K.lx || 0) * 2) - (K.rpad || 10);
+  let ir = mat.ico && lines.length ? Math.min(b.h * BTN_FX.ico, 15, (b.w - tw) / 2 - 12) : 0;
+  if (ir < 7) ir = 0;
+  const ix = x0 + ir + 2, roomL = ir ? ix + ir + 6 : x0;
+  let lx = b.x + b.w / 2 + (K.lx || 0) * b.w;
+  if (lx - tw / 2 < roomL) lx = Math.min(roomL + tw / 2, x1 - tw / 2);
+  if (ir && lx - tw / 2 < roomL - 2) { ir = 0; lx = b.x + b.w / 2 + (K.lx || 0) * b.w; }   // (still no room: no icon)
+  const ic = ir ? { x: ix, y: cy, r: ir } : null;
+  if (ic && !K.icoLive) btnIco(mat.ico, ic.x, ic.y, ic.r);
+  if (lines.length) {
+    ctx.fillStyle = K.ink || paperInk(paper); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    lines.forEach((l, i) => ctx.fillText(l, lx, cy + 2 + (i - (lines.length - 1) / 2) * (size + 6)));
+  }
+  if (mat.job && lines.length) {   // the job stripe: a coloured-pencil line under the label
+    const y = cy + 2 + (lines.length - 1) / 2 * (size + 6) + size * 0.62, xa = lx - tw / 2 - 4, xb = lx + tw / 2 + 4;
+    ctx.strokeStyle = (lum(paper) < 0.55 ? BTN_JOB_LIGHT : BTN_JOB)[mat.job]; ctx.lineCap = 'round';
+    for (let i = 0; i < 2; i++) { ctx.lineWidth = i ? 1.4 : 2.6; ctx.beginPath(); ctx.moveTo(xa, y + ddRand() * 1.5); ctx.quadraticCurveTo((xa + xb) / 2, y + 1.5 + ddRand() * 2, xb, y + ddRand() * 1.5); ctx.stroke(); }
+  }
+  return ic;
+}
+const BTN_MAT_SPR = new Map();
+function btnMatClear() { for (const L of BTN_MAT_SPR.values()) { freeCanvas(L.sh); for (const f of L.fr) if (f) { freeCanvas(f.base); freeCanvas(f.front); } } BTN_MAT_SPR.clear(); }
+function btnMatLayers(b, label, size, mat, K, paper, f) {
+  const s = Math.round(Math.hypot(DM_P.getTransform.call(ctx).a, DM_P.getTransform.call(ctx).b) * 8) / 8;
+  const key = `${mat.k}|${mat.ico || ''}|${mat.job || ''}|${b.x},${b.y},${b.w},${b.h}|${label}|${size}|${paper}|${s}|${dmOn ? 1 : 0}`;
+  let L = BTN_MAT_SPR.get(key);
+  const P = BTN_FX.pad, x0 = b.x - P, y0 = b.y - P - 6, w = b.w + 2 * P, h = b.h + 2 * P + 6;
+  if (!L) {
+    if (BTN_MAT_SPR.size > 140) btnMatClear();
+    const p2 = new Path2D(); K.shape(p2, b);
+    L = { sh: ctxBake(x0, y0, w, h, () => { ctx.fillStyle = 'rgba(40,25,5,0.28)'; ctx.fill(p2); }), p2, fr: [] };
+    BTN_MAT_SPR.set(key, L);
+  }
+  if (!L.fr[f]) {
+    const seed = (Math.round(b.x * 7 + b.y * 13 + b.w) + f * 7919) % 2147483646 + 1, F = {};
+    F.base = ctxBake(x0, y0, w, h, () => { ddSeed = seed; K.body(b, mat, paper); if (!K.front) F.ic = btnMatLabel(b, label, size, mat, K, paper); });
+    F.front = K.front ? ctxBake(x0, y0, w, h, () => { ddSeed = seed; K.front(b, mat, paper); F.ic = btnMatLabel(b, label, size, mat, K, paper); }) : null;
+    L.fr[f] = F;
+  }
+  return L;
+}
+// the idle wiggle: one hero button at a time, every BTN_FX.idleWiggle s (random in that range), for BTN_FX.wiggleS s
+const BTN_WIG = { next: 0, key: null, t0: 0, frame: -1, n: 0, seen: 0, pick: -1 };
+const btnWigNext = now => now + 1000 * (BTN_FX.idleWiggle[0] + Math.random() * (BTN_FX.idleWiggle[1] - BTN_FX.idleWiggle[0]));
+const btnWigDue = () => BTN_WIG.seen > 0 && !BTN_WIG.key && BTN_WIG.next > 0 && performance.now() >= BTN_WIG.next && !liteOn();   // (menuDirty: a wiggle is due, so the still menu paints again)
+function btnWiggle(b, now) {
+  const W = BTN_WIG, S = BTN_FX.wiggleS * 1000, key = `${b.x},${b.y},${b.w}`;
+  if (W.frame !== UI_LAST) { W.frame = UI_LAST; W.seen = W.n; W.n = 0; }
+  const i = W.n++;
+  if (!W.next) W.next = btnWigNext(now);
+  if (W.key && now - W.t0 > S * 1.5) { W.key = null; W.next = btnWigNext(now); }   // (its button went away mid-wiggle)
+  if (!W.key && now >= W.next && W.seen > 0) { if (W.pick < 0 || W.pick >= W.seen) W.pick = Math.floor(Math.random() * W.seen); if (i === W.pick) { W.key = key; W.t0 = now; W.pick = -1; } }
+  if (W.key !== key) return 0;
+  const p = (now - W.t0) / S;
+  if (p >= 1) { W.key = null; W.next = btnWigNext(now); return 0; }
+  menuMoving = true;
+  return Math.sin(p * Math.PI * 4) * 0.06 * (1 - p);
+}
+function btnMatDraw(b, label, size, face, mat, up, d, still) {
+  const K = BTN_KIND[mat.k]; if (!K) return false;
+  const m = DM_P.getTransform.call(ctx), sc = Math.hypot(m.a, m.b); if (!(sc > 0) || sc > 6) return false;
+  const T = tornPts(b), now = uiNow(), lite = liteOn(), k = still ? 0 : (b.hov || 0);
+  const paper = K.paper || (b._bgPaper || '#fffdf4');
+  b.ink = K.ink || paperInk(paper);
+  const f = !still && !lite && k > 0.5 ? Math.floor(now / 1000 * BTN_FX.boilFps) % BTN_FX.frames : 0;   // (the boil: only the hovered one cycles its frames)
+  if (!still && (f || (K.anim && k > 0.01) || (k > 0.01 && k < 0.99))) menuMoving = true;   // (an animated flourish / the boil keeps the menu painting while hovered)
+  const wig = K.hero && !still && !lite ? btnWiggle(b, now) : 0;
+  const L = btnMatLayers(b, label, size, mat, K, paper, f), F = L.fr[f];
+  const st = { k, up, d, t: now / 1000, b, mat, still, save: mat.k === 'folder' && slotUI && slotUI.mode === 'save' && SLOT_BTNS.includes(b) };
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  ctx.save();
+  ctx.translate(cx, cy); ctx.rotate(T.tilt + (K.tilt || 0) + wig); ctx.translate(-cx, -cy);
+  if (K.xf) K.xf(st, b);
+  const sh = L.sh; ctx.save(); ctx.globalAlpha *= (0.28 - 0.1 * d) / 0.28; ctx.drawImage(sh, sh._x + (3 + 2 * up) * (1 - d) + d, sh._y + (4 + 3 * up) * (1 - d) + d, sh._w, sh._h); ctx.restore();
+  ctx.translate(0, -BTN_FX.lift * up + 3 * d);
+  if (d > 0.01) { const y1 = b.y + b.h; ctx.translate(cx, y1); ctx.scale(1 + BTN_FX.squash * d * 0.5, 1 - BTN_FX.squash * d); ctx.translate(-cx, -y1); }   // (pressed: squashed toward the desk)
+  ctx.drawImage(F.base, F.base._x, F.base._y, F.base._w, F.base._h);
+  if (dmOn) { const o = dmRgb(paper), g = dmFillCol(paper); if (o) dmNote(dmBox(b.x, b.y, b.x + b.w, b.y + b.h), o, g ? dmRgb(g) : o); }   // (face text on it is fixed for its paper)
+  const drawFace = () => { const fn = K.face || face; if (fn) { ctx.save(); if (K.faceXf) K.faceXf(st, b); fn(b); ctx.restore(); } };   // (K.face replaces the caller's: the index card's grey gear)
+  if (F.front) { ctx.save(); if (K.frontXf) K.frontXf(st, b); ctx.drawImage(F.front, F.front._x, F.front._y, F.front._w, F.front._h); drawFace(); ctx.restore(); }
+  else drawFace();
+  if (up > 0.01) { ctx.fillStyle = `rgba(255,226,90,${(BTN_FX.glow * up).toFixed(3)})`; ctx.fill(L.p2); }
+  if (d > 0.01) { ctx.fillStyle = `rgba(90,70,30,${(0.12 * d).toFixed(3)})`; ctx.fill(L.p2); }
+  if (K.fx) K.fx(st, b, F.ic, L);
+  ctx.restore();
+  if (!still) b._snd = { k: mat.k };
+  return true;
+}
+// the press sound: on the release that clicks a button with a material (menus only, never in a play); a click that changes the page plays it first,
+// quieter (BTN_FX.quietPage), before the page's own crumple
+let btnSndQ = null;
+function btnSndPick(p, mouse) {
+  if (!BTN_MAT_ON || !(results || settingsOpen || slotUI) || !p) return;
+  let best = null;
+  for (const b of UI_BTNS) if (b && b._snd && b.w && inBtn(p, b) && (!best || b.w * b.h < best.w * best.h)) best = b;
+  if (best) btnSndQ = { k: best._snd.k, at: performance.now(), wait: mouse ? 0 : 200 };
+}
+function btnSndPlay(v) { const q = btnSndQ; btnSndQ = null; if (!q) return; try { const K = BTN_KIND[q.k]; if (K && K.snd) K.snd(v * BTN_FX.sndVol); } catch (e) {} }
 function drawStar(cx, cy, r, fill, stroke = '#0b1a3a', lw = 2) {
   ctx.beginPath();
   for (let i = 0; i < 10; i++) {
@@ -2128,9 +2457,9 @@ function drawHome() {
 let homeLeave = false;
 const LEAVE_YES = { x: 380, y: 405, w: 240, h: 70 }, LEAVE_NO = { x: 660, y: 405, w: 240, h: 70 };
 // the settings button's gear (8 teeth, a hole in the middle), centred in button gb
-function gearIcon(gb) {
+function gearIcon(gb, col = '#ffffff') {
   const cx = gb.x + gb.w / 2, cy = gb.y + gb.h / 2 + 1, n = 8;
-  ctx.fillStyle = '#ffffff'; ctx.beginPath();   // (white gear on a grey button)
+  ctx.fillStyle = col; ctx.beginPath();   // (white gear on a grey button)
   for (let i = 0; i < n * 4; i++) {
     const a = (i - 0.5) * Math.PI * 2 / (n * 4), r = i % 4 < 2 ? 25 : 18;
     ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);

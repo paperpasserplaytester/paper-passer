@@ -1038,7 +1038,7 @@ window.addEventListener('pointerup', e => {
   if (hoverPt) btnPress = { ...hoverPt, held: true, upAt: 0 };   // (the release is the click: pressed in for a moment, the bubbling handler below starts the spring back)
   setTimeout(() => { hoverPt = null; }, 220);   // (the lift eases back instead of sticking)
 }, true);
-window.addEventListener('pointerup', () => { if (btnPress && btnPress.held) { btnPress.held = false; btnPress.upAt = performance.now(); } });
+window.addEventListener('pointerup', e => { if (btnPress && btnPress.held) { try { btnSndPick(btnPress, e.pointerType === 'mouse'); } catch (err) {} btnPress.held = false; btnPress.upAt = performance.now(); } });   // (v0.55: a button with a material queues its press sound: btnSndQ, played in frame())
 // A finger on a menu / canvas button: holding it is the mouse's hover (the lift), and the tap is the click, which now happens on the RELEASE (the button
 // presses in for a moment, then the click goes through and it springs back). A finger that drags (a slider, a scrolling list) gets its press at once, at the spot it landed.
 const TAP_DEFER = { move: 12, press: 130 };   // px a tap may drift, ms the button stays pressed in before the click goes through
@@ -1840,6 +1840,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   const page = pageKey();   // (the canvas still holds the old page here: that's what crumples)
   if (lastPage !== null && page !== lastPage) {
     menuInputAt = PERF_NOW();   // (v0.55: a new page paints at full rate for a while)
+    if (btnSndQ) btnSndPlay(BTN_FX.quietPage);   // (the button's own sound first, quieter, then the page's crumple)
     // credits spent on the click that changed the page: the old page holds (coins flying into the button it was) until they land, then crumples
     let hold = 0;
     try { spendWatch(); const f = spendFxs[spendFxs.length - 1]; if (f) hold = Math.max(0, f.t0 + f.coins.length * SPEND.gap + SPEND.ms + 150 - performance.now()); } catch (e) {}   // (any spend still in the air, whoever started it: the button used to leave before the coins landed)
@@ -1847,6 +1848,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
     if (hold && crumple) { crumple.t0 += hold; crumple.full = true; }
   }
   lastPage = page;
+  if (btnSndQ && PERF_NOW() - btnSndQ.at >= btnSndQ.wait) btnSndPlay(1);   // (no page change: full level; a finger's click lands TAP_DEFER later, so it waits a little)
   { const lv = liteLevel(), hi = results && (results.screen === 'roster' || results.screen === 'tradeb') ? 2 : !results && !lv && (!TUI.on || gfxHi()) ? 1 : 0; if (hi !== RK_HI || lv !== liteLvl) { RK_HI = hi; liteLvl = lv; fitScreen(); } }   // (the roster / offer builder render at full screen resolution; after the page-change snapshot above: a resize clears the canvas, so doing it first crumpled a blank / wrong page)
   rafDt += (Math.min(100, Math.max(1, now - rafLast)) - rafDt) * 0.1; rafLast = now;
   if (TUI.on && now - lastPaint < paintMin) return;   // (phones: drawn at most ~60 times a second even on a 90 / 120 Hz screen, ~30 when a frame takes too long to paint; the game steps above are unaffected)
@@ -1869,7 +1871,7 @@ function menuProbe() { if (!menuProbeN++ && MENU_PACE.debug) menuWhy = new Error
 for (const t of ['pointermove', 'pointerdown', 'pointerup', 'keydown', 'keyup', 'wheel', 'resize', 'focus', 'visibilitychange']) window.addEventListener(t, () => { menuInputAt = PERF_NOW(); }, { capture: true, passive: true });
 const menuPaced = () => !!results && !(hl && !hl.bg) && !HT && !(rec && rec.replaying);
 function menuDirty() {
-  return menuClock || menuMoving || !!crumple || !!btnPress || spendFxs.length > 0 || coinFly.length > 0 || cardShows.length > 0 || !!tour || !!offPop || !!IO.toast || !!hl || !!HT || !!LGJ
+  return menuClock || menuMoving || btnWigDue() || !!crumple || !!btnPress || spendFxs.length > 0 || coinFly.length > 0 || cardShows.length > 0 || !!tour || !!offPop || !!IO.toast || !!hl || !!HT || !!LGJ
     || !!postV.turn || settingsPopUp() || !!slotUI || ONL.on || !!NET.conn || (typeof CO !== 'undefined' && !!CO) || teamPick != null && !!teamPick;
 }
 function menuSkip(now) {
@@ -1888,7 +1890,7 @@ function paintFrame(paintT0, pm, now) {
   ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0);
   if (pm) pt = perfMark('clear', pt);
   if (hl && hl.bg) { if (results.screen === 'result') { reelBgDraw(); if (pm) pt = perfMark('reel', pt); } drawMenus(); if (pm) pt = perfMark('menus', pt); }   // (the end-of-game reel: the plays, then the result screen over them)
-  else if (hl) { draw(); if (hl) drawHlBar(); hlDelStep(); if (hl) drawHlDel(); if (pm) pt = perfMark('hl', pt); } else if (HT) { drawHalfShow(); if (pm) pt = perfMark('half', pt); } else if (results) { if (!settingsOpen || MENU_PACE.underSettings) { drawMenus(); if (pm) pt = perfMark('menus', pt); } }   // (v0.55: settings starts with a full-screen desk: the menu under it isn't drawn) else { draw(); if (pm) pt = perfMark('draw', pt); }
+  else if (hl) { draw(); if (hl) drawHlBar(); hlDelStep(); if (hl) drawHlDel(); if (pm) pt = perfMark('hl', pt); } else if (HT) { drawHalfShow(); if (pm) pt = perfMark('half', pt); } else if (results) { if (!settingsOpen || MENU_PACE.underSettings) { drawMenus(); if (pm) pt = perfMark('menus', pt); } } else { draw(); if (pm) pt = perfMark('draw', pt); }   // (v0.55: settings starts with a full-screen desk: the menu under it isn't drawn)
   if (settingsOpen) { drawSettings(); if (pm) pt = perfMark('settings', pt); }
   if (slotUI) { drawSlots(); if (pm) pt = perfMark('slots', pt); }
   if (crumple) { drawCrumple(); if (pm) pt = perfMark('crumple', pt); }
