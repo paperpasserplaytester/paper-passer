@@ -730,24 +730,20 @@ const KPRO = {
   pairHold: 0.5, pairFree: [0.45, 0.4],   // PAIR: odds the wing takes the outside man (then the inside one slips him at pairFree[0] + random x [1] s), else he blocks the inside one and the outside man is clean
   sim: { fg: 0.022, pat: 0.011, punt: 0.007 },          // simulated kicks: the same block rates the live engine is tuned to
   // punts (kproSetPunt / kproPuntTick)
-  pt: { calls: { BLOCK: 0.25 }, backedUp: 0.3, returnRush: [5, 6],   // the return side's call: odds of BLOCK (+ backedUp when the punter is near his own goal line), else RETURN with this many rushing
+  pt: {   // v0.59: one rule for both teams' punts: all 8 front men rush from the spread set (the RETURN call with droppers / wall / vise / ride is gone)
         spread: 1.2,                                   // v0.40: the punt line's splits x this at the set
         ppDepth: 5,                                    // the personal protector: YL behind the line
         setBack: 1.1, setOut: 0.45, slide: 0.9, anchor: 4.2, hold: 1.2,   // the zone kick-slide: yd back, yd outward (half a man), most yd he slides, his speed (yd/s); s he holds before leaving for his lane
         pp: 0.8, ppK: 0.12, ppV: 6.5,                  // the protector on a free man: odds at even ratings, per point of rating edge; his speed (yd/s)
         point: 1.0, leapYd: 1.6, reach: 2.6, footZ: 8, rise: 17, keep: 0.9,   // the block point: yd in front of where it leaves his foot; a man this close goes up instead of out; hands this far in front can still meet it; the ball's height at the foot (S units) and how fast it climbs (S units per yd); nobody comes within keep yd of the punter
-        dropYd: 6, dropV: 5.5,                         // RETURN: the men who don't rush drop this far (YL) at this speed (yd/s) to block for the returner
-        ride: [0.35, 0.8],                             // RETURN: a ridden blocker leaves this many seconds late after the punt
         late: { p: 0.13, secs: [0.3, 0.6] },           // a slow operation (a low snap, a bobble): odds, seconds the punter needs to get it right. The only time an overload can get there
-        // v0.56 RETURN calls: the wall side (weights for middle / left / right); droppers set up wallY yd off the middle on it, the wall shifts wallShift yd that way after the kick,
-        // the computer's returner follows it for retFollow s; vise = odds a RETURN doubles one gunner (his jam hold x viseK)
-        wallW: { 0: 0.4, '-1': 0.3, 1: 0.3 }, wallY: 9, wallShift: 3.5, retFollow: 1.1, vise: 0.35, viseK: 1.6,
+        // kickoff returns (v0.56, KO_V56): the called wall side (weights for middle / left / right), the wall shifts wallShift yd that way, the computer's returner
+        // heads wallY (x 1.6) yd off the middle on it for retFollow s
+        wallW: { 0: 0.4, '-1': 0.3, 1: 0.3 }, wallY: 9, wallShift: 3.5, retFollow: 1.1,
         // gunner vs jammer: the jam hold x e^(-k x (the gunner's speed - the jammer's strength / coverage, z)); clean = odds at even ratings he beats it clean (hold x cleanK)
         jamFight: { k: 0.35, clean: 0.1, cleanK: 0.25 },
         // a hurried punt: a free rusher within yd of the block point as it is struck = dist x as far, hang x the hang time; ppShift = yd the protector sets toward the heavier rush side
         hurry: { yd: 2.4, dist: 0.8, hang: 0.85 }, ppShift: 0.6,
-        // the set's tells: lean = YL a BLOCK rusher sets closer, dropBack = YL a RETURN dropper sets deeper
-        lean: 0.25, dropBack: 0.35,
         // the returner: the computer's lets a punt landing inside letGo yd of his goal bounce (odds letP); a muff off the catch = muff (muffHot with a cover man within hotYd), x less by catching;
         // bat = a cover man reaching a ball rolling at the goal line (inside yd, toward it faster than minV yd/s) bats it back out (odds p)
         letGo: 9, letP: 0.7, muff: 0.006, muffHot: 0.03, hotYd: 2.5, bat: { yd: 2.5, p: 0.6, minV: 2 } },
@@ -1233,51 +1229,32 @@ function kproSetPunt(k) {
   const K = KPRO, T = K.pt, ps = k.punt, kicker = k.kicker, R = k.front.slice(0, 8);
   { const A = K.align, f = A.punt; for (const q of R) { const away = Math.sign(q.x - ps.los) || 1, nk = kproNeat(q); q.x += away * Math.random() * A.depth * f * YL * nk; q.y = MID + (q.y - MID) * (1 + (A.spread - 1) * f) + (Math.random() * 2 - 1) * A.wob * f * YD * nk; q.y = Math.max(Y_MIN, Math.min(Y_MAX, q.y)); } }   // (the punt rush: staggered and ragged too, by awareness / wear)
   const line = k.cover.filter(d => d !== kicker && d.lane >= 1 && d.lane <= 7), pp = k.cover.find(d => d !== kicker && d.lane === 8) || null;
-  const deep = Math.max(0, Math.min(1, (ps.los / YL - 75) / 20));   // (the punter backed up near his own goal line: more reason to come after it)
-  const call = Math.random() < T.calls.BLOCK + T.backedUp * deep ? 'BLOCK' : 'RETURN';
+  const call = 'BLOCK';   // (v0.59: every punt, either side: all 8 come)
   for (const b of line) { b.y = Math.max(Y_MIN, Math.min(Y_MAX, MID + (b.y - MID) * T.spread)); if (Math.abs(b.y - MID) > 0.3 * YD) b.x += (Math.random() * 2 - 1) * K.stag * YD; }   // (wider splits, a ragged depth; never the snapper)
   for (const b of [...line, pp]) if (b) { b.kpB = { x0: b.x, y0: b.y, out: Math.sign(b.y - MID), back: 0, pp: b === pp, rel: false }; b.vx = b.vy = 0; }
   // zones: every rusher belongs to the blocker nearest across from him; a blocker with two has to choose (the inside man), the other is free
   const own = new Map();
   for (const q of R) { const b = line.slice().sort((a, c) => Math.abs(a.y - q.y) - Math.abs(c.y - q.y))[0] || null; own.set(q, b); }
-  const rushN = call === 'BLOCK' ? 8 : T.returnRush[Math.random() < 0.5 ? 0 : 1], byIn = R.slice().sort((a, c) => Math.abs(a.y - MID) - Math.abs(c.y - MID));
+  const byIn = R.slice().sort((a, c) => Math.abs(a.y - MID) - Math.abs(c.y - MID));
   const side = Math.random() < 0.5 ? -1 : 1, taken = new Set();
   byIn.forEach((q, i) => {
     q.vx = q.vy = 0;
-    const b = own.get(q), o = { role: i < rushN ? 'rush' : 'drop', out: '', v: 0, at: 99, free: false, miss: false, blk: null };
+    const b = own.get(q), o = { role: 'rush', out: '', v: 0, at: 99, free: false, miss: false, blk: null };
     q.kp = o;
-    if (o.role === 'drop') return;
     if (b && !taken.has(b)) { taken.add(b); o.blk = b; }
-    else if (call === 'BLOCK') o.free = true;   // (the overload's extra man: nobody on the line has him, only the protector)
-    else { const spare = line.find(x => !taken.has(x)); if (spare) { taken.add(spare); o.blk = spare; } else o.free = true; }
+    else o.free = true;   // (the overload's extra man: nobody on the line has him, only the protector)
   });
-  if (call === 'BLOCK') {   // the overload: the man next to the free one on that side slants in to pull his blocker with him
+  {   // the overload: the man next to the free one on that side slants in to pull his blocker with him
     const fr = R.filter(q => q.kp.free); for (const q of fr) q.kp.over = true;
     if (!fr.length) { const q = R.filter(x => Math.sign(x.y - MID) === side).sort((a, c) => Math.abs(c.y - MID) - Math.abs(a.y - MID))[0]; if (q) { q.kp.free = true; q.kp.over = true; q.kp.blk = null; } }
   }
   for (const q of R) {
-    const o = q.kp; if (o.role !== 'rush' || !o.blk) continue;
-    if (call === 'RETURN') { o.out = 'ride'; continue; }   // (not coming: hands on, staying with him so he is late downfield)
+    const o = q.kp; if (!o.blk) continue;
     o.at = kproShed(q, o.blk, false); o.quick = o.at < K.fight.shedMin; if (!o.quick) o.at = Math.max(o.at, T.hold);   // (when he would beat his man: fought out after the snap, kproFight)
   }
-  // v0.56: a RETURN call has a wall side (and maybe a vise on one gunner); the set shows a little of it (BLOCK rushers lean in, droppers sit deeper); every man his stance
-  let wall = null, vise = null;
-  if (call === 'RETURN') {
-    let u = Math.random() * (T.wallW[0] + T.wallW[-1] + T.wallW[1]); wall = (u -= T.wallW[0]) < 0 ? 0 : (u -= T.wallW[-1]) < 0 ? -1 : 1;
-    if (Math.random() < T.vise) {
-      const guns = k.cover.filter(d => d.lane === 0 || d.lane === 9), g = guns.find(d => wall && Math.sign(d.y - MID) === wall) || guns[Math.random() < 0.5 ? 0 : 1] || null;
-      const q = g && R.filter(x => x.kp.role === 'drop').sort((a, c) => Math.abs(a.y - g.y) - Math.abs(c.y - g.y))[0];
-      if (q) { q.kp.role = 'vise'; q.kp.gun = g; vise = { g, q }; }
-    }
-  }
-  for (const q of R) {
-    const o = q.kp, away = Math.sign(q.x - ps.los) || 1;
-    if (call === 'BLOCK') q.x = ps.los + away * Math.max(0.55 * YL, Math.abs(q.x - ps.los) - T.lean * YL);   // (closer, never across the ball)
-    else if (o.role === 'drop') q.x += away * T.dropBack * YL;
-    o.st = call === 'BLOCK' ? (Math.random() < 0.5 ? 'three' : 'four') : o.role === 'rush' ? 'three' : 'two';
-  }
+  for (const q of R) q.kp.st = 'three';   // (every rusher in a 3-point stance, the spread set kept: no bunching tell)
   if (pp && pp.kpB) { const n = R.reduce((a, q) => a + (q.kp.role === 'rush' ? Math.sign(q.y - MID) : 0), 0); if (n) { pp.kpB.y0 += Math.sign(n) * T.ppShift * YD; pp.y = pp.kpB.y0; } }   // (the protector counts the rush: he cheats toward the heavier side)
-  k.kp = { call, wall, vise, line, pp, R, t: 0, ppMan: null, ppTried: new Set(), done: false, late: Math.random() < T.late.p ? T.late.secs[0] + Math.random() * (T.late.secs[1] - T.late.secs[0]) : 0 };
+  k.kp = { call, line, pp, R, t: 0, ppMan: null, ppTried: new Set(), done: false, late: Math.random() < T.late.p ? T.late.secs[0] + Math.random() * (T.late.secs[1] - T.late.secs[0]) : 0 };
 }
 function kproGo(p, tx, ty, top, acc, dt, thru) {   // the engine's mover (see kproTick): velocity eased toward the spot, real speed for the legs
   const x0 = p.x, y0 = p.y, dx = tx - p.x, dy = ty - p.y, d = Math.hypot(dx, dy), want = d < 1 ? 0 : thru ? top : Math.min(top, Math.sqrt(2 * acc * d) + 0.15 * top);
@@ -1299,16 +1276,14 @@ function kproPuntTick(k, dt, t0, runUp) {
     if (q.action) continue;   // (updateKickoff runs everyone's dives and leaps)
     const o = q.kp, b = o.blk, bk = kproBurst(o, P.t), top = Math.min(10.5 * YD, q.top || K.top * YD) * bk;
     q.face = 1;
-    if (o.role !== 'drop' && P.t < (o.rt || 0)) { q.vx = q.vy = 0; q.moving = false; continue; }   // (not off the ball yet)
-    if (o.role === 'vise' && o.gun && !o.gun.action) { const g = o.gun, s = Math.sign(g.y - MID) || 1; kproGo(q, g.x - 0.9 * YD, g.y + s * 0.7 * YD, 7.5 * YD, 16 * YD, dt); q.engaged = Math.hypot(q.x - g.x, q.y - g.y) < 1.6 * YD; q.face = 1; continue; }   // (the vise: the second man on that gunner, on his outside shoulder)
-    if (o.role === 'drop' || o.role === 'vise') { kproGo(q, ps.los - T.dropYd * YL, q.y + (MID + (P.wall || 0) * T.wallY * YD - q.y) * (P.wall ? 0.3 : 0.15), T.dropV * YD, 10 * YD, dt); q.engaged = false; continue; }   // (RETURN: back to set up the return, toward the called wall)
-    if (!o.free && b && o.out !== 'ride' && P.t >= o.at) {   // off his block: the next man on the line may pick him up once, else he is through
+    if (P.t < (o.rt || 0)) { q.vx = q.vy = 0; q.moving = false; continue; }   // (not off the ball yet)
+    if (!o.free && b && P.t >= o.at) {   // off his block: the next man on the line may pick him up once, else he is through
       const nb = !o.quick && !o.reTried ? kproReblock(q, b, bp, P.line, P.t) : null;
       o.reTried = true;
       if (nb) { b.kpB.stun = P.t + K.fight.stun; o.blk = nb; o.at = P.t + K.fight.reHold[0] + Math.random() * K.fight.reHold[1]; o.engAt = null; o.v = 0; }
       else { o.free = true; q.engaged = false; kproWon(q, b, bp, P.t); }
     }
-    if (!o.free && b && b.kpB.rel && o.out !== 'ride') o.free = true;   // (his man has left for his lane)
+    if (!o.free && b && b.kpB.rel) o.free = true;   // (his man has left for his lane)
     if (o.free) {
       if (o.held) { const h = o.held; kproGo(q, h.x - 0.85 * YD, h.y, 5 * YD, 20 * YD, dt); q.engaged = Math.hypot(q.x - h.x, q.y - h.y) < 1.4 * YD; continue; }   // (the protector has him)
       if (o.miss || q.x > bp.x + 0.2 * YD) { o.miss = true; kproGo(q, bp.x + 2.5 * YD, bp.y + (Math.sign(q.y - bp.y) || 1) * K.peel * YD, top * 0.8, 10 * YD, dt); }   // (too late: on past, wide of the punter)
@@ -1323,17 +1298,17 @@ function kproPuntTick(k, dt, t0, runUp) {
       q.engaged = false; continue;
     }
     if (!b) { o.free = true; continue; }
-    kproGo(q, b.x - 0.85 * YD, b.y + (o.gy != null ? o.gy : (q.y - b.y) * 0.3), (o.out === 'ride' ? 6.5 : K.fire * bk) * YD, K.fireAcc * YD, dt); kproShove(q, o, dt);   // into his blocker: locked up, driving or just riding him
+    kproGo(q, b.x - 0.85 * YD, b.y + (o.gy != null ? o.gy : (q.y - b.y) * 0.3), K.fire * bk * YD, K.fireAcc * YD, dt); kproShove(q, o, dt);   // into his blocker: locked up or driving
     q.engaged = Math.hypot(q.x - b.x, q.y - b.y) < 1.4 * YD;
-    if (q.engaged && o.out !== 'ride') { const add = kproFight(q, b, P.t, false) + kproRework(q, b, P.t); if (add && o.at < 90 && !o.quick) o.at = Math.max(T.hold, o.at + add); }   // (the line's block battle: his move, the counter, the drive)
+    if (q.engaged) { const add = kproFight(q, b, P.t, false) + kproRework(q, b, P.t); if (add && o.at < 90 && !o.quick) o.at = Math.max(T.hold, o.at + add); }   // (the line's block battle: his move, the counter, the drive)
   }
   // --- the protection (back = higher x; nobody crosses the line before the kick)
   for (const b of P.line) {
     const B = b.kpB; if (!B || b.action) continue;
     const stun = B.stun > P.t, man = stun ? null : P.R.find(q => q.kp.blk === b && !q.kp.free && !q.action) || null;   // (just beaten: out of it for a beat)
     if (!B.rel && (P.t >= T.hold || !man && P.t > 0.5)) B.rel = P.t >= T.hold;   // (his job is done after hold s: off to his lane)
-    if (B.rel && !(man && man.kp.out === 'ride')) { kproGo(b, Math.max(ps.los, B.x0 - 0.3 * YD), B.y0, 5 * YD, 14 * YD, dt); b.engaged = false; b.face = -1; continue; }
-    if (man && man.engaged && man.kp.out !== 'ride' && man.kp.v > 0) B.back = Math.min(K.driveMax, B.back + man.kp.v * dt);   // (bull-rushed: he gives ground)
+    if (B.rel) { kproGo(b, Math.max(ps.los, B.x0 - 0.3 * YD), B.y0, 5 * YD, 14 * YD, dt); b.engaged = false; b.face = -1; continue; }
+    if (man && man.engaged && man.kp.v > 0) B.back = Math.min(K.driveMax, B.back + man.kp.v * dt);   // (bull-rushed: he gives ground)
     const s1 = Math.min(1, P.t / K.ks.step), s2 = Math.max(0, Math.min(1, (P.t - K.ks.step) / K.ks.give)), yo = B.y0 + B.out * T.setOut * YD * s1;   // (the kick-slide: a step, then back as one wave)
     if (man) B.ry = B.ry == null ? man.y : B.ry + (man.y - B.ry) * Math.min(1, dt * K.dyn.follow);
     let ty = man ? yo + (B.ry - yo) * 0.55 : yo;
@@ -1343,7 +1318,6 @@ function kproPuntTick(k, dt, t0, runUp) {
     }
     kproGo(b, B.x0 + T.setBack * YD * s2 * (2 - s2) + B.back * YD, Math.max(B.y0 - T.slide * YD, Math.min(B.y0 + T.slide * YD, ty)), T.anchor * YD, 18 * YD, dt); kproShove(b, B, dt);
     b.face = -1; b.engaged = !!man && Math.hypot(man.x - b.x, man.y - b.y) < 1.4 * YD;
-    if (man && man.kp.out === 'ride' && b.engaged) b.kpRide = true;   // (ridden: he gets out late, see kproPuntAfter)
   }
   const pp = P.pp;
   if (pp && !pp.action) {   // the personal protector: the most dangerous free man, inside first; one at a time
@@ -1383,11 +1357,11 @@ function kproPuntBlocked(k, q, at) {   // off his hands: a live ball where he me
   kicker.kickSwing = false; kicker.followV = 0;
   state = 'fumble'; fumbleT = clock; runner = null; kickoff = null; msg = 'PUNT BLOCKED!  -  live ball'; kproLetGo();
 }
-// the punt is away: a blocker who was ridden gets out late (RETURN's whole point), everyone else is already heading for his lane
+// the punt is away: everyone heads for his lane
 function kproPuntAfter(k) {
   const P = k.kp; if (!P || P.done) return; P.done = true;
   const H = KPRO.pt.hurry; k.hurry = !!(P.bp && P.R.some(q => q.kp.free && !q.kp.held && !q.kp.miss && Math.hypot(q.x - P.bp.x, q.y - P.bp.y) < H.yd * YD));   // (a free man bearing down on him as he kicks: a hurried punt)
-  for (const b of P.line) { b.kpRideT = b.kpRide ? KPRO.pt.ride[0] + Math.random() * (KPRO.pt.ride[1] - KPRO.pt.ride[0]) : 0; b.kpRide = false; b.engaged = false; }   // (kpRideT: added to his release delay, d.go, when the coverage starts)
+  for (const b of P.line) b.engaged = false;
   if (P.pp) P.pp.engaged = false;
   for (const q of P.R) q.engaged = false;
 }
@@ -2035,9 +2009,9 @@ function gunnerRelease(gunners, jam, tx, dir, dt) {
     const tag = state === 'kick' ? kick : kickoff;   // (a new punt: this gunner is jammed afresh)
     if (g.jamTag !== tag) {   // a new punt: how long this jammer holds him (v0.56: by their ratings, a rare clean beat, longer in a vise)
       g.jamTag = tag; g.jamT = 0;
-      const F = KPRO.pt.jamFight, edge = j ? zc(rz(g, 'spd') - Math.max(rz(j, 'str'), rz(j, 'cov'))) : 0, V = tag && tag.kp && tag.kp.vise;
-      g.jamHold = (PUNT.jam[0] + Math.random() * (PUNT.jam[1] - PUNT.jam[0])) * Math.exp(-F.k * edge) * (V && V.g === g ? KPRO.pt.viseK : 1);
-      if (Math.random() < F.clean * Math.exp(0.5 * edge) && !(V && V.g === g)) g.jamHold *= F.cleanK;
+      const F = KPRO.pt.jamFight, edge = j ? zc(rz(g, 'spd') - Math.max(rz(j, 'str'), rz(j, 'cov'))) : 0;
+      g.jamHold = (PUNT.jam[0] + Math.random() * (PUNT.jam[1] - PUNT.jam[0])) * Math.exp(-F.k * edge);
+      if (Math.random() < F.clean * Math.exp(0.5 * edge)) g.jamHold *= F.cleanK;
     }
     g.jamT += dt;
     const held = j && !j.action && dist(j, g) < 2 * YD, px = g.x, py = g.y;
@@ -3716,7 +3690,7 @@ function kickBounce(k, dt) {
   if (!near && B.t < 6) return;
   const BT = KPRO.pt.bat;
   if (k.punt && near && k.cover.includes(near) && !B.batted && ball.x > 0 && ball.x < BT.yd * YL && B.vx < -BT.minV * YD && Math.random() < BT.p) {   // v0.56: rolling at the goal line: he bats it back out (from the field of play) for a teammate to down
-    B.batted = true; B.vx = Math.abs(B.vx) * 0.6 + 2 * YD; B.vy *= 0.5; B.vz = 70 * S; B.hold = B.t + 0.5; near.armsUp = true; popup(near, 'BATTED BACK', '#7dff8a'); return;
+    B.batted = true; B.vx = Math.abs(B.vx) * 0.6 + 2 * YD; B.vy *= 0.5; B.vz = 70 * S; B.hold = B.t + 0.5; near.armsUp = true; near.armsUpT = clock + 0.45; popup(near, 'BATTED BACK', '#7dff8a'); return;
   }
   if (!near || k.cover.includes(near)) {   // the kicking team downs it (or nobody gets it): the return team's ball where it lies
     done(); if (near) popup(near, ball.x < 0 ? 'TOUCHBACK' : 'DOWNED', ball.x < 0 ? '#7fe3ff' : '#7dff8a');
@@ -3967,7 +3941,7 @@ function updateKickoff(dt) {
       k.phase = 'flight'; kickoffOutNext = null;
       k.kicker.kickSwing = true;     // the leg swings through; he holds the finish while the ball is in the air
       if (k.punt) {
-        for (const d of k.cover) { d.go = d === k.kicker ? 0 : (d.lane === 0 || d.lane === 9 ? 0 : 0.35 + Math.random() * 0.4) + (d.kpRideT || 0); d.kpRideT = 0; d.engaged = false; }   // (the gunners left at the snap; the line blocked until the kick)
+        for (const d of k.cover) { d.go = d === k.kicker ? 0 : (d.lane === 0 || d.lane === 9 ? 0 : 0.35 + Math.random() * 0.4); d.engaged = false; }   // (the gunners left at the snap; the line blocked until the kick)
         // the return team, as on your punt (releasePunt / puntRed): each rusher notices the kick at his own time (planting first), and picks a cover man to block
         const freeMen = k.cover.filter(d => d !== k.kicker && d.lane !== 0 && d.lane !== 9);
         k.front.forEach((q, i) => {
@@ -4048,8 +4022,7 @@ function updateKickoff(dt) {
       }
       const m = q.puntMan && !q.puntMan.action ? q.puntMan : null;
       // blocking for the returner: meet his man on the returner's side of him; nobody left to take = set the wall in front of the returner
-      const wl = k.kp && k.kp.call === 'RETURN' ? (k.kp.wall || 0) * KPRO.pt.wallShift * YD : 0;   // (v0.56: the called wall: everyone without a man sets up toward its side)
-      const tx = m ? Math.max(m.x - 1.6 * YD, rb.x + 2 * YL) : rb.x + 4.5 * YL, ty = puntY(m ? m.y : rb.y + ((q.kickIdx ?? 5) - 4.5) * 2.7 * YD + wl);
+      const tx = m ? Math.max(m.x - 1.6 * YD, rb.x + 2 * YL) : rb.x + 4.5 * YL, ty = puntY(m ? m.y : rb.y + ((q.kickIdx ?? 5) - 4.5) * 2.7 * YD);
       steer(q, tx, ty, Math.max(q.top || 0, 7 * YD), (f.t - (q.puntGo || 0) < 0.5 ? 8 : 14) * YD, dt);   // (just after planting he gets going slowly the other way)
       clampField(q); setVelocity(q, px, py, dt); q.kv = Math.hypot(q.vx, q.vy);
       const near = k.cover.filter(c => !c.action && dist(c, q) < 3 * YD).sort((a, b) => dist(a, q) - dist(b, q))[0];
@@ -4112,7 +4085,7 @@ function updateKickoff(dt) {
     if (tut && k.user && !k.punt) { tutEvent('kickoff'); msg += '  -  click for the next play'; }   // (the kickoff lesson: once he has it, a click can move on)
     // each blocker takes the coverage man lined up across from him
     const fr = [...k.front].sort((a, b) => a.y - b.y), cv = [...k.cover].sort((a, b) => a.y - b.y);
-    const wall = k.punt ? (k.kp && k.kp.call === 'RETURN' ? k.kp.wall || 0 : 0) : k.koWall || 0;   // (v0.56: the return goes to the called side: the wall sets there, the computer's returner heads for it first)
+    const wall = k.punt ? 0 : k.koWall || 0;   // (v0.56: a kickoff return goes to the called side: the wall sets there, the computer's returner heads for it first; punts have no called wall since v0.59)
     rb.retWall = wall ? puntY(MID + wall * KPRO.pt.wallY * 1.6 * YD) : null;
     for (const b of k.front) b.wallSide = wall;
     if (k.punt) {   // a punt: each man keeps the cover man he picked at the kick (and the speed he's already moving at); the rest take whoever's free
@@ -4134,14 +4107,16 @@ function updateKickoff(dt) {
 
 
 // the pause / play icon: a square in the top bar's left corner (drawn by pauseIcon: two bars while the game runs, a play triangle while it's paused)
-const PAUSE_SIZE = 1.45;   // the pause button's side as a share of the top bar's inner height (it may hang below the bar); the gear beside it matches
+const PAUSE_SIZE = 1;   // the pause button's side as a share of the top bar's inner height (1 = fits inside the bar); the gear beside it matches
 const PAUSE_BTN = { x: 2 * TOP_PAD, y: TOP_PAD, w: Math.round((TOP_BAR - 2 * TOP_PAD) * PAUSE_SIZE), h: Math.round((TOP_BAR - 2 * TOP_PAD) * PAUSE_SIZE) };
 // the settings gear: right of the pause / play icon, only while the game is paused (it replaced the pause menu's SETTINGS button)
 const PAUSE_GEAR = { x: PAUSE_BTN.x + PAUSE_BTN.w + 3 * TOP_PAD, y: PAUSE_BTN.y, w: PAUSE_BTN.w, h: PAUSE_BTN.h };
 const PAUSE_GEAR_K = 0.72;   // the gear's height as a share of the button
 const pauseGearOn = () => paused && !ONL.on && !settingsOpen;
 function pauseGearIcon(b) { const cx = b.x + b.w / 2, cy = b.y + b.h / 2, k = b.h * PAUSE_GEAR_K / 52; ctx.save(); ctx.translate(cx, cy); ctx.scale(k, k); ctx.translate(-cx, -cy); gearIcon(b); ctx.restore(); }
-const PAUSE_ICON = { size: 0.56, bar: 0.3, touchPad: 26 };   // the glyph's height as a share of the button, a pause bar's width as a share of the glyph, px a finger may miss the button by (touch only)
+const PAUSE_ICON = { size: 0.56, bar: 0.3, touchPad: 26, oldSize: 1.45 };   // the glyph's height as a share of the button, a pause bar's width as a share of the glyph, px a finger may miss the button by (touch only); oldSize = the size the icons had when they hung below the bar
+// pause / gear: their own finger room, so the touch target stays as big as when they were PAUSE_ICON.oldSize (the other in-game buttons keep touchPad)
+const PAUSE_PAD = Math.round((TOP_BAR - 2 * TOP_PAD) * (PAUSE_ICON.oldSize - PAUSE_SIZE) / 2) + PAUSE_ICON.touchPad;
 function pauseIcon(b) {
   const cx = b.x + b.w / 2, cy = b.y + b.h / 2 + 1, r = b.h * PAUSE_ICON.size / 2, bw = 2 * r * PAUSE_ICON.bar;
   ctx.fillStyle = b.ink;
@@ -4162,11 +4137,16 @@ const PAUSE_MENU = { replay: { x: W / 2 - 130, y: H / 2 + 114, w: 260, h: 48 }, 
 PAUSE_MENU.sims.forEach(b => b.y -= 100); PAUSE_MENU.back.y -= 100;
 let pauseGoals = false;   // the pause menu's goals screen is up
 let goalToast = null;     // { text, t0 }: a finished goal's alert (a green plaque under the scoreboard, a few seconds)
-const pmItems = () => ['resume', ...(season && !exhibition && !tut ? ['goals'] : []), 'replay', ...(state !== 'sim' && !tut ? ['sim'] : []), ...(tut || !SETTINGS.hideTools ? ['reset'] : []), ...(!tut ? ['leave'] : [])];
+const pmItems = () => ['resume', ...(season && !exhibition && !tut ? ['goals'] : []), 'replay', ...(state !== 'sim' && !tut ? ['sim'] : []), ...(dcShown() ? ['dc'] : []), ...(tut ? ['reset'] : []), ...(!tut ? ['leave'] : [])];
+// RESET GAME (debug tools on, not the tutorial) is its own button bottom left of the sheet, not a binder tab; the tutorial keeps its SKIP / END tab
+const PM_RESET = { x: 34, y: 0, w: 210, h: 52, fs: 20 };
+const pmResetOn = () => !tut && !SETTINGS.hideTools;
+const pmResetRect = () => tut ? pmRect('reset') : (PM_RESET.y = H - FIELD_BOT - 34 - PM_RESET.h, PM_RESET);
 // --- tracing paper (pause: looks only) a translucent sheet with a baked fibre texture slides down over the frozen field in TRACE.slide real s;
 // the pause items are binder tabs down its right edge (pmRect), the sub-screens are drawn on it. Online pause (drawOnlineOverlay) uses the sheet too.
-const TRACE = { a: 0.8, col: '246,244,236', colD: '50,53,58', slide: 0.2, fibre: 0.55, ink: '#2b2f3a', inkSoft: '#5d6270', inkD: '#f1f1ec', inkSoftD: '#c5cbd0',
-  tabW: 220, tabX: 270, tabGap: 58, hole: 5 };
+const TRACE = { a: 0.8, col: '214,210,198', colD: '50,53,58', slide: 0.2, fibre: 0.4, ink: '#2b2f3a', inkSoft: '#5d6270', inkD: '#f1f1ec', inkSoftD: '#c5cbd0',
+  tabW: 220, tabX: 270, tabGap: 58, hole: 5,
+  tabTop: 14, tabBot: 40, tabFill: 0.8, tabMaxH: 96, tabMaxK: 1.4, tabFont: 20, tabFontMax: 25 };   // binder tabs fill the sheet from tabTop px under the top bar to tabBot px above its bottom (room for the Esc line): slot = that / items, h = slot x tabFill (<= tabMaxH); width / font grow with h / 48 (width up to tabMaxK x tabW)
 const TRS = { img: null, t0: 0, seen: 0, out: 0 };   // (out = when the slide back up started: the pause ends when it finishes)
 // resuming from the pause menu: the sheet slides back up the way it came down, then the game runs (input is ignored meanwhile).
 // Only the player's resume goes through here; leaving, reset, online, the cold open and a game ending still set paused = false at once.
@@ -4189,6 +4169,11 @@ function traceFibres() {   // (baked once: faint fibres and flecks, stretched ov
   }
   for (let i = 0; i < 900; i++) { g.fillStyle = `rgba(110,105,95,${r() * 0.08})`; g.fillRect(r() * w, r() * h, 1, 1); }
   return (TRS.img = c);
+}
+// the pause button + settings gear (top left corner of the top bar; game-changing settings are locked: SET_GAME_LOCK). gear = false: the pause icon only (online)
+function drawPauseIcons(gear = true) {
+  ctx.save(); menuBtn(PAUSE_BTN, '', IN_GAME_PAPER.green, 16, pauseIcon); ctx.restore();
+  if (gear && pauseGearOn()) { ctx.save(); menuBtn(PAUSE_GEAR, '', '#8b8e90', 16, pauseGearIcon); ctx.restore(); }
 }
 function drawTrace() {   // the sheet; returns the y of its bottom edge (slides down from the top bar each time a pause starts)
   const now = performance.now();
@@ -4220,8 +4205,10 @@ function pmTab(id, col) {   // a binder tab's tail out to the right edge with it
 }
 const PM_RECTS = new Map();   // kept between frames so each button keeps its hover / press / torn edge
 const pmRect = id => {   // (binder tabs down the right edge of the tracing paper: TRACE)
-  const L = pmItems(), y = 384 - L.length * (TRACE.tabGap / 2) + L.indexOf(id) * TRACE.tabGap, k = id + ':' + y;
-  if (!PM_RECTS.has(k)) PM_RECTS.set(k, { x: W - TRACE.tabX, y, w: TRACE.tabW, h: 48 });
+  const L = pmItems(), T = TRACE, top = TOP_BAR + T.tabTop, slot = (H - FIELD_BOT - T.tabBot - top) / Math.max(1, L.length);
+  const h = Math.round(Math.min(T.tabMaxH, slot * T.tabFill)), kk = h / 48, w = Math.round(T.tabW * Math.min(T.tabMaxK, Math.max(1, kk)));
+  const y = Math.round(top + L.indexOf(id) * slot + (slot - h) / 2), k = id + ':' + y + ':' + h;
+  if (!PM_RECTS.has(k)) PM_RECTS.set(k, { x: W - (T.tabX - T.tabW) - w, y, w, h, fs: Math.round(Math.min(T.tabFontMax, T.tabFont * kk)) });
   return PM_RECTS.get(k);
 };
 // a rect-making function that hands back the same object while the rect is unchanged (menuBtn keeps its hover / press easing on the rect)
@@ -4238,13 +4225,12 @@ function drawSimButton(b, on) {
   menuBtn(b, b.label, on ? IN_GAME_PAPER.blue : IN_GAME_PAPER.off, 18, null, on);
   ctx.restore();
 }
-// --- in-game depth chart (pause menu: DEPTH CHART, top right of the top bar) ---------------------------------------------------
+// --- in-game depth chart (pause menu: DEPTH CHART, under SIM) ---------------------------------------------------
 // Franchise games only. Usable before the snap (greyed mid play): offense presnap = the offense chart (simple view; FORMATION opens the
 // formation being run, tagged CURRENT), defense presnap = the defense list, a kick / punt / kickoff / kick return set-up = that special-teams
 // page alone (no other pages, no side / view switch). The roster screen opens over the paused game (results.dc); BACK / Esc closes it.
 // Changes that touch this play are made on the field at once: the man coming in jogs on from the sideline, the man going out jogs off
 // (like an audible's sub). Other formations pick the changes up the next time they're called. Simple view = who is on the field now.
-const DC_BTN = { x: W - 2 * TOP_PAD - Math.round(214 * HUD_K), y: TOP_PAD, w: Math.round(214 * HUD_K), h: TOP_BAR - 2 * TOP_PAD };   // (in the top bar, top right: sized with the bar, never past its edge)
 let dcg = null;   // open: { which, st, page, prevView, prevSide, snap, flip, field }
 const dcShown = () => !!season && !exhibition && !tut && !ONL.on && !(twoP && !twoP.ai) && !game.over && state !== 'sim' && !(rec && rec.replaying);
 function dcWhich() {   // what can be edited right now (null = mid play)
@@ -4301,11 +4287,6 @@ function rateStash(list, keys) {
     if (p._r0 && p._r0.pid === runPid) { for (const k of keys) p[k] = p._r0[k]; }
     else { p._r0 = { pid: runPid }; for (const k of keys) p._r0[k] = p[k]; }
   }
-}
-function drawDcBtn() {
-  if (!dcShown()) return;
-  const on = !!dcWhich();
-  ctx.save(); menuBtn(DC_BTN, 'DEPTH CHART', on ? IN_GAME_PAPER.yellow : IN_GAME_PAPER.off, Math.round(19 * HUD_K), null, on); ctx.restore();
 }
 const leaveOK = () => state === 'pre' || state === 'done' || game.over || !!exhibition;   // (a franchise game can't be left in the middle of a play; an exhibition can, any time)
 const leaveBtn = () => pmRect('leave');   // the pause menu's LEAVE GAME (last in the list)
@@ -4366,8 +4347,8 @@ function leaveGame() {
 // a decision screen (punt / FG / go for it, kick or go for two, the halftime card): no pausing until you pick (resuming is always allowed)
 const noPause = () => !paused && !(rec && rec.replaying) && (halfShown() || (state === 'pre' && fourthPending) || patMode === 'choose') || (!paused && !!(rec && (rec.rewind || rec.intro)));   // (no pausing during the rewind / lead-in into a replay)
 // the in-game buttons' hit test: on touch a finger may miss a button by PAUSE_ICON.touchPad px (pause, settings gear, depth chart, replay FINISH, FINISH GAME)
-const btnHit = (p, b) => { const m = TOUCH ? PAUSE_ICON.touchPad : 0; return !!b && b.x !== undefined && p.x >= b.x - m && p.x <= b.x + b.w + m && p.y >= b.y - m && p.y <= b.y + b.h + m; };
-const overPauseButton = p => btnHit(p, PAUSE_BTN) && !(TOUCH && pauseGearOn() && p.x > PAUSE_BTN.x + PAUSE_BTN.w + 1.5 * TOP_PAD);   // (the gear next to it takes its own side of the gap)   // (a finger gets a little room around the small icon)
+const btnHit = (p, b, pad = PAUSE_ICON.touchPad) => { const m = TOUCH ? pad : 0; return !!b && b.x !== undefined && p.x >= b.x - m && p.x <= b.x + b.w + m && p.y >= b.y - m && p.y <= b.y + b.h + m; };
+const overPauseButton = p => btnHit(p, PAUSE_BTN, PAUSE_PAD) && !(TOUCH && pauseGearOn() && p.x > PAUSE_BTN.x + PAUSE_BTN.w + 1.5 * TOP_PAD);   // (the gear next to it takes its own side of the gap)   // (a finger gets a little room around the small icon)
 // the touch version (phones / tablets: TUI.on) of the list below
 const KEYBINDS_MOBILE = [
   ['BEFORE THE SNAP', ''],
@@ -4759,7 +4740,9 @@ function draw() {
     for (const b of UI_BTNS_PREV) if (b && b.w) ctx.rect(b.x - 4, b.y - 4, b.w + 8, b.h + 8);
     ctx.clip('evenodd'); drawDefOverlay(true); ctx.restore();
   }
+  let pt = SETTINGS.perfHud ? PERF_NOW() : 0;   // (FRAME TIMES: d.* parts)
   if (SL.on) slDrawSide(0);   // (sideline people on the far (top) touchline: behind every player, bar the few slExUpTo puts in order)
+  if (pt) pt = perfMark('d.sideline', pt);
   DRAW_ORDER.length = 0; if (!tossing()) { const ap = allPlayers(); for (let i = 0; i < ap.length; i++) DRAW_ORDER.push(ap[i]); }   // (its own list: allPlayers' array is shared, never sorted in place)
   DRAW_ORDER.sort(byDrawY);
   plLod = plLodNow(); plGame = true;   // (small on screen: the tiniest details are skipped, see PLAYER_LOD; off again right after the loop. plGame: see DOODLE_PL)
@@ -4778,8 +4761,10 @@ function draw() {
   }
   plLod = false; plGame = false;
   if (!ballDrawn) drawBall();
+  if (pt) pt = perfMark('d.players', pt);
   if (SL.exN) slExUpTo(1e9);
   if (SL.on) slDrawSide(1);   // (the near (bottom) touchline's people: in front of the players)
+  if (pt) pt = perfMark('d.sideline', pt);
   if (Math.abs(POST_X - camX) < cullX) drawGoalPostTop(POST_X, 1);   // (the posts' poles over the players: running under one passes behind it)
   if (Math.abs(-ENDZONE - camX) < cullX) drawGoalPostTop(-ENDZONE, -1);
   if (COLLIDE.show) drawHitboxes();
@@ -4791,8 +4776,11 @@ function draw() {
   if (kickAim) drawKickReticle('arc');   // (the kick's arc: over the players and everything else on the field)
   drawHsFreeze();   // (the halftime reel's freeze frame: the man of the play of the half, circled)
   ctx.restore();
+  if (pt) pt = perfMark('d.overlay', pt);
   wxDraw();
+  if (pt) pt = perfMark('d.wx', pt);
   dmHold = Math.max(0, dmHold - 1);
+  if (CAM.debug) camDebugDraw();   // (dev only: the camera's safe zone / must-fit box / centres / zooms)
   if (coldHud()) return;   // (the cold open's dream: the field and nothing else)
   if (reelOn()) { ctx.fillStyle = '#16211a'; ctx.fillRect(0, 0, W, TOP_BAR); return; }   // (a reel: the play and nothing else. No scoreboard, buttons, down and distance or text)
   if (rec && rec.replaying && !rec.intro && !rec.rewind && !(hl && hl.mode === 'half') && !cine) {   // (the badge waits for the rewind to finish; none on the halftime reel): a torn red paper scrap, and SAVE beside it
@@ -4810,6 +4798,8 @@ function draw() {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
   drawScoreboard();
+  drawContHint();
+  if (pt) pt = perfMark('d.hud', pt);
   if (rec && rec.replaying && !(hl && hl.mode === 'half') && !cine) {   // replay controls, just under the scoreboard (not on the halftime reel, nor in CINEMATIC)
     const tip = rec.hl ? 'SPACE pause  |  A/D scrub  |  arrows pan  |  hold click slow-mo  |  wheel zoom  |  right-drag pan' : 'SPACE pause  |  A/D scrub  |  arrows pan  |  hold click slow-mo  |  click skip  |  wheel zoom  |  right-drag pan';
     ctx.save();
@@ -4875,8 +4865,7 @@ function draw() {
   ctx.font = 'bold 18px monospace';
   ctx.textAlign = 'center';
   ctx.textAlign = 'center';
-  ctx.save(); menuBtn(PAUSE_BTN, '', IN_GAME_PAPER.green, 16, pauseIcon); ctx.restore();
-  if (pauseGearOn()) { ctx.save(); menuBtn(PAUSE_GEAR, '', '#8b8e90', 16, pauseGearIcon); ctx.restore(); }   // (the settings page; game-changing ones are locked: SET_GAME_LOCK)   // (top left corner of the top bar)
+  if (!(paused && !ONL.on)) drawPauseIcons();   // (v0.58: paused = drawn after the tracing paper instead, on top of it)   // (the settings page; game-changing ones are locked: SET_GAME_LOCK)   // (top left corner of the top bar)
   // the difficulty: bottom left, level with the down and distance (text over the field, no bar behind it)
   ctx.save(); ctx.font = `bold ${Math.round(14 * BB)}px monospace`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   ctx.fillStyle = '#fff'; ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 3;
@@ -4888,7 +4877,6 @@ function draw() {
   const ddTxt = tut ? (state !== 'pre' && tutStep() ? 'TUTORIAL  -  BACKSPACE to reset the play' : 'TUTORIAL') : (puntRetPlay || (state === 'kick' && kick && kick.punt) || (state === 'kickoff' && kickoff && kickoff.punt) || state === 'punt' || (puntRet && puntPlay && !puntPlay.ko)) ? 'PUNT' : kickoffPlay || (state === 'kick' && kick && kick.kickoff) || (puntRet && puntPlay && puntPlay.ko) ? 'KICKOFF' : patMode !== null || patNext ? 'PAT' : `${downAndDistance()}  |  ${spot(los)}`;
   ctx.strokeText(ddTxt, W / 2, H - BOT_BAR * 0.33); ctx.fillText(ddTxt, W / 2, H - BOT_BAR * 0.33);
   if (!cine && !inRp && celebPromptHere()) { const t = `${TOUCH ? 'DOUBLE TAP' : 'RIGHT CLICK'}  -  CELEBRATE`; ctx.save(); ctx.fillStyle = '#ffffff'; ctx.strokeText(t, W / 2, H - BOT_BAR - 14); ctx.fillText(t, W / 2, H - BOT_BAR - 14); ctx.restore(); }   // (one of your players has a celebration ready)
-  if (finishShowing()) { ctx.save(); menuBtn(finishBtn(), 'FINISH', IN_GAME_PAPER.red, 16); ctx.restore(); }
   if (!tut && state !== 'sim' && state !== 'kick' && !lightGfx() && !cine) { drawStarHud(); drawNamesTip(); }
   if (!inRp && (state === 'kick' || (state === 'kickoff' && kick && kick.userKo))) drawKickMeters();
   if (state === 'sim' && !halfHold) drawSim();   // (the halftime banner shows over the plain field, the sim panel hides)
@@ -4966,7 +4954,7 @@ function draw() {
   if (paused && !ONL.on) {   // (online: drawOnlineOverlay's pause menu)
     if (turnoverBanner || topCallout || pendingBanner) { turnoverBanner = null; topCallout = null; pendingBanner = null; annFade = null; }   // (pausing clears whatever banner was up)
     const yb = drawTrace();   // (tracing paper over the frozen field; everything below is drawn on it)
-    drawDcBtn();
+    drawPauseIcons();   // (v0.58: after the sheet and its uiModal, so they sit on top of it and stay clickable)
     ctx.save(); ctx.beginPath(); ctx.rect(-PAD, TOP_BAR, W + 2 * PAD, yb - TOP_BAR); ctx.clip();
     ctx.fillStyle = traceInk();
     ctx.textAlign = 'center';
@@ -5008,15 +4996,17 @@ function draw() {
       ctx.save(); menuBtn(P.back, 'BACK', IN_GAME_PAPER.red, 20); ctx.restore();
     } else {
       pauseSim = false; pauseGoals = false;
-      const tab = (id, label, col, on = true) => { pmTab(id, col); ctx.save(); menuBtn(pmRect(id), label, col, 20, null, on); ctx.restore(); };   // (binder tabs: same items, colours and greyed rules)
+      const tab = (id, label, col, on = true) => { const r = pmRect(id); pmTab(id, col); ctx.save(); menuBtn(r, label, col, r.fs, null, on); ctx.restore(); };   // (binder tabs: same items, colours and greyed rules)
       tab('resume', 'RESUME', IN_GAME_PAPER.green);
       if (pmItems().includes('goals')) tab('goals', 'GOALS', IN_GAME_PAPER.yellow);
       tab('replay', 'INSTANT REPLAY', rpl ? IN_GAME_PAPER.blue : IN_GAME_PAPER.off, rpl);
       if (simBtns) { const sa = simAnyOK(); tab('sim', 'SIM', sa ? IN_GAME_PAPER.blue : IN_GAME_PAPER.off, sa); }   // (nothing to sim right now: grey, no animation)
-      if (pmItems().includes('reset')) tab('reset', tut ? (tut.saved && tut.saved.screen === 'start' ? 'END TUTORIAL' : 'SKIP TUTORIAL') : 'RESET GAME', IN_GAME_PAPER.red);
+      if (pmItems().includes('dc')) { const on = !!dcWhich(); tab('dc', 'SUBS', on ? IN_GAME_PAPER.yellow : IN_GAME_PAPER.off, on); }   // (before the snap only)
+      if (pmItems().includes('reset')) tab('reset', tut.saved && tut.saved.screen === 'start' ? 'END TUTORIAL' : 'SKIP TUTORIAL', IN_GAME_PAPER.red);
+      if (pmResetOn()) { ctx.save(); menuBtn(pmResetRect(), 'RESET GAME', IN_GAME_PAPER.red, PM_RESET.fs); ctx.restore(); }
       if (!tut) tab('leave', 'LEAVE GAME', leaveOK() ? IN_GAME_PAPER.red : IN_GAME_PAPER.off, leaveOK());
       const lr = pmRect(pmItems().slice(-1)[0]);
-      ctx.font = '14px monospace'; ctx.fillStyle = traceInk(true); ctx.fillText('press Esc to resume', lr.x + lr.w / 2, lr.y + 72);
+      ctx.font = '14px monospace'; ctx.fillStyle = traceInk(true); ctx.fillText(TOUCH ? '' : 'press Esc to resume', lr.x + lr.w / 2, lr.y + lr.h + 22);
     }
     ctx.restore();
   }
@@ -5058,6 +5048,18 @@ for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, () 
 const tipScale = () => TOUCH ? 1.5 : 1;   // (the tips are bigger on a phone)
 const TIP_HINT = { desk: 1.5, touch: 2.3 };   // size of the two click-to-show / hide lines (names, star tips): x the old 11 px line
 const hintScale = () => TOUCH ? TIP_HINT.touch : TIP_HINT.desk;
+// after the whistle with no input for CONT_HINT.wait s (and the runoff off the clock), a pulsing TAP / CLICK TO CONTINUE: the dead ball looked frozen
+const CONT_HINT = { wait: 4, font: 24, fontTouch: 34, y: 118, rate: 260 };   // s idle, px, px from the bottom, ms per pulse step
+function drawContHint() {
+  if (state !== 'done' || paused || results || tut || game.over || (rec && rec.replaying) || reelOn() || hl || HT || ONL.guest || (typeof CO !== 'undefined' && CO)) return;
+  if (game.runoff > 0 || celebWaiting() || injuryShowing() || fourthPending || patMode === 'choose' || bannerUp() || !playSettled()) return;
+  const now = performance.now(); if (now - Math.max(playEndedAt, menuInputAt) < CONT_HINT.wait * 1000) return;
+  const fs = TOUCH ? CONT_HINT.fontTouch : CONT_HINT.font, a = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(now / CONT_HINT.rate));
+  ctx.save(); ctx.globalAlpha = a; ctx.font = `bold ${fs}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.lineWidth = Math.max(3, fs / 6); ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineJoin = 'round';
+  const t = TOUCH ? 'TAP TO CONTINUE' : 'CLICK TO CONTINUE', y = H - FIELD_BOT - CONT_HINT.y;
+  ctx.strokeText(t, W / 2, y); ctx.fillStyle = '#fff6c8'; ctx.fillText(t, W / 2, y); ctx.restore();
+}
 function drawNamesTip() {   // a small tip: click it to hide / show the player names before the snap (and in a replay)
   NAMES_RECT = null;
   if ((results && !hl) || (state !== 'pre' && !(rec && rec.replaying) && !hl)) return;   // (also over the post-game highlights)
@@ -5136,7 +5138,23 @@ function drawScoreboard() {
 }
 // px at the full-height bar (TOP_BAR_FULL; the whole board is drawn x HUD_K to fit the bar): team box / center box widths, gap between, the score panel's width, the quarter and down-and-distance columns, font sizes
 const SCOREBOARD = { team: 270, mid: 400, gap: 8, scoreW: 78, qW: 96, ddW: 150, name: 21, score: 42, quarter: 22, clock: 42, down: 20, spot: 15 };
+const sbDownText = () => puntRetPlay || state === 'punt' || (state === 'kick' && kick && kick.punt) || (state === 'kickoff' && kickoff && kickoff.punt) ? 'PUNT' : kickoffPlay || state === 'kickoff' || kickoffNext || (state === 'kick' && kick && kick.kickoff) || (puntRet && puntPlay && puntPlay.ko) ? 'KICKOFF' : patMode !== null || patNext ? 'EXTRA POINT' : downAndDistance();
+// v0.60: the scoreboard is a sprite: drawn once into its own canvas (ctxBake: same code, the main ctx's hooks) and blitted every frame; re-drawn only when
+// something on it changes (sbKey: every value it shows, dark mode, the canvas scale). SB_SPRITE.on = false: drawn live every frame as before.
+const SB_SPRITE = { on: true, pad: 4 };
+let sbImg = null, sbImgKey = '';
+function sbKey() {
+  const m = DM_P.getTransform.call(ctx), cs = Math.ceil(game.secs - 1e-6);
+  return [cs, game.secs < 20, game.blue, game.red, game.timeouts, twoP ? twoP.to + ':' + !!twoP.flipped : '-', tut ? 't' + (tutFr() ? 1 : 0) : '', MATCH.you, MATCH.opp, teamColor('BLUE'), teamColor('RED'),
+    game.over ? 1 : 0, game.quarter, game.pendingQuarter ? 1 : 0, sbDownText(), Number.isFinite(los) ? spot(los) : '', dmOn ? 1 : 0, Math.round(Math.hypot(m.a, m.b) * 8)].join('|');
+}
 function drawScoreboardNow() {
+  if (!SB_SPRITE.on) return drawScoreboardLive();
+  const k = sbKey(), B = SCOREBOARD, hw = (B.mid / 2 + B.gap + B.team) * HUD_K + SB_SPRITE.pad;
+  if (!sbImg || k !== sbImgKey) { if (sbImg) freeCanvas(sbImg); perfNote('scoreboard'); sbImg = ctxBake(W / 2 - hw, 0, 2 * hw, TOP_BAR, drawScoreboardLive); sbImgKey = k; }
+  ctx.drawImage(sbImg, sbImg._x, sbImg._y, sbImg._w, sbImg._h);
+}
+function drawScoreboardLive() {
   // centered in the top bar
   const cx = W / 2, top = TOP_PAD / HUD_K, h = (TOP_BAR - 2 * TOP_PAD) / HUD_K, o = (h - 36) / 2;   // (fills the top bar; o centres the text in the taller boxes)
   ctx.save(); ctx.translate(cx, 0); ctx.scale(HUD_K, HUD_K); ctx.translate(-cx, 0);   // (everything below is in full-size px)
@@ -5194,7 +5212,7 @@ function drawScoreboardNow() {
   ctx.fillText(game.over ? '0:00' : clockTxt, clx, top + h / 2 + B.clock * 0.36);
   ctx.font = `bold ${B.down}px monospace`;
   ctx.fillStyle = '#fff';
-  ctx.fillText(puntRetPlay || state === 'punt' || (state === 'kick' && kick && kick.punt) || (state === 'kickoff' && kickoff && kickoff.punt) ? 'PUNT' : kickoffPlay || state === 'kickoff' || kickoffNext || (state === 'kick' && kick && kick.kickoff) || (puntRet && puntPlay && puntPlay.ko) ? 'KICKOFF' : patMode !== null || patNext ? 'EXTRA POINT' : downAndDistance(), dx, top + 25, B.ddW - 12);
+  ctx.fillText(sbDownText(), dx, top + 25, B.ddW - 12);
   ctx.font = `${B.spot}px monospace`;
   ctx.fillStyle = '#9fb3a6';
   if (Number.isFinite(los)) ctx.fillText(`ball on ${spot(los)}`, dx, top + 46, B.ddW - 12);

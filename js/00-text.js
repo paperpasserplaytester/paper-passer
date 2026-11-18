@@ -590,6 +590,93 @@ const DRAFT_SCHOOLS = ['BAYOU STATE', 'GREAT LAKES TECH', 'NORTH PRAIRIE', 'COAS
   'CEDAR FALLS STATE', 'GULF SHORE', 'HIGH PLAINS', 'MILL CREEK', 'CANYON STATE', 'LAKESHORE', 'EAST TIMBER', 'COPPER MOUNTAIN', 'RIVERBEND', 'STONE HARBOR', 'BLUE MESA', 'WEST DELTA', 'GRANITE STATE TECH',
   'MAGNOLIA', 'SILVER LAKE', 'FORT ASH', 'PALMETTO BAY', 'BIG SKY NORTH', 'CAPITAL CITY', 'THREE RIVERS', 'SAGEBRUSH', 'MAPLE GROVE', 'SOUTH RIDGE', 'TIDEWATER', 'ELK RAPIDS', 'SUNCOAST', 'BLACK HILLS TECH', 'WINDWARD'];
 const CHANGELOG = [
+  { v: "v0.60", secs: [
+    ["MOBILE PERFORMANCE", [
+      "Phones never redraw the whole field live on a close-up (touchdowns, celebrations, replays): the pre-drawn field is stretched instead. Same in performance mode everywhere.",
+      "A graphics change mid-play no longer rebuilds the field or the stands on the spot: it waits for the dead ball.",
+      "On a phone in AUTO graphics the picture's sharpness follows the phone: it starts at the screen's own resolution and steps down (or back up) between plays when frames run long.",
+      "The scoreboard is drawn once and only re-drawn when something on it changes. Phones skip the full-screen brightening pass (QUALITY graphics keeps it) and draw with less input lag.",
+      "Page changes: the crumple starts smoothly (its clock starts on the first frame shown) and phones skip the full-size copy of the old page.",
+      "FRAME TIMES (settings > DEBUG) now keeps the last slow frames with what happened on them (touchdown, replay, field / stand rebuilds...) and which part of the drawing took the time. Tap the readout to copy them.",
+    ]],
+    ["MOBILE SOUND", [
+      "iPhones and iPads: sounds fade in and out and follow the volume like on a laptop (they used to play at full level and stop dead).",
+      "A cheer or other clip played again while it still sounds fades the old one out instead of cutting it off.",
+      "Sound wakes back up after a call or an app switch. The cold open's classroom is quieter (the room, the laughs, the taps and the clock).",
+    ]],
+    ["ON THE FIELD", [
+      "Punts work the same on both sides: the same spread line-up and stances, and all eight front men rush every time.",
+      "After the whistle, players who aren't celebrating drift apart and give the celebration room; a celebrating player walks to open space the way the play went (downfield on a first down, into the backfield on a sack, toward the end zone on a turnover).",
+      "Tacklers get up from the pose they were in (no one-frame arm pops), kick blockers' hands come down once the kick is over, and edge rushers no longer stutter between aim points.",
+      "The QB and the back keep a little space from each other.",
+    ]],
+    ["FIXES", [
+      "No more stiff arm held up at nobody after a throw, a pick or a fumble.",
+      "Pause and settings icons fit inside the top bar (same size to tap). The pause menu's buttons are much bigger and fill the sheet; SUBS (the depth chart) moved into it, under SIM. RESET GAME is its own button bottom left.",
+      "Instant replay from the pause menu puts everyone back exactly where they were, whenever you open it: nothing from the tape carries into the next play.",
+      "An injury exit still going at the snap is over at once: no trainers or cart in the next play. Halftime no longer lists the best plays after the reel.",
+      "Every popup's OK pops in a moment after the popup and wiggles now and then while it waits.",
+      "After a play, if nothing is pressed for a few seconds, TAP / CLICK TO CONTINUE flashes so the game doesn't look frozen.",
+      "The joystick flashes where it will be on every special-teams or turnover play you steer a man in (covering a return, rushing their punt).",
+      "Performance mode: sideline people who were moving when it kicked in no longer stay frozen on the field, and the end zones keep their normal look.",
+      "Cold open on a phone: the BULLET and SPIN tips sit on the other side of the QB.",
+      "The joystick is drawn in pencil, like the cold open's (light and dark).",
+    ]],
+  ] },
+  { v: "v0.59", secs: [
+    ["BETTER POPUPS", [
+      "The ability \"?\" popup is titled with the ability's name, with its tier (FIT / ABILITY / STAR FACTOR) under it; the small \"?\" beside the tier says what the tier means.",
+      "A small looping pencil demo shows what it does: first without it (grey), then with it, short labels appearing as they come true. The sentence sits under it, and a strip at the bottom circles his tier and names the next one.",
+      "Every ability, fit and star factor has its own demo (throws, catches, runs, blocks, rushes, coverage, tackles, kicks, returns). Star factors play their whole life: the trigger tallied up, the gold star scribbled in, the effect and the rating boost, then the star rubbed out.",
+      "The same demo shows on the player page's tips, the RED STAR popup and BUY AN ABILITY / BUY A STAR FACTOR (with the new one).",
+      "Other help popups got demos too: a small loop beside each attribute and a pentagon that sketches itself, the player page tips (bench, drop, contract, kick returner, scout & draft, sign), condition and morale, the staff cards, the formation guide (its first play, then a bad fit crossed out), the head coach's milestones, facilities and practice, XP bank, franchise tag, injury report and the tutorial tips. Red star and buys grey out the old ability first. Sagas get a pencil timeline; weekly goal bars are coloured in as the popup opens.",
+      "Short confirm and news popups get a little pencil doodle beside the title, played once as they open (a pen signing, a paper ball into the bin, the cap bar overflowing, two cards swapping, an envelope opening, and about 35 more). Coach Hall of Fame cards drop a ring in per title.",
+      "The card is sized to what it holds (no more big empty sheet). Performance mode shows one still frame.",
+    ]],
+    ["SIDE VIEW", [
+      "Players are drawn from the side in play: a narrower jersey and pads, legs closer together under it, and the number turns away with him.",
+      "Celebrations have a side-view version: shoulders front and back, the far arm behind the jersey (a touch darker). It plays half the time on 30 of the most common moves; the rest stay front-on.",
+      "Seven moves got their own side-view hands so the far arm keeps a job (flex, fist pump, catch signal, point to the chains, step over, the hop, the top spin's finish).",
+      "Test mode's celebration panel has a VIEW row: AUTO / FRONT / SIDE.",
+    ]],
+    ["HONEST PICKS", [
+      "Your defender's interceptions are caught in his hands: once the pick is his, he is carried to the ball (a leap drifts under it, a dive stretches out to it) and only then catches it. No more ball sliding in from yards away. Just as many picks as before.",
+      "Same in the tutorial. A diving pick from anyone (a tipped ball too) now has to reach his fingertips first.",
+    ]],
+  ] },
+  { v: "v0.58", secs: [
+    ["SOUND", [
+      "No more hand slaps in play: stiff arms are a soft pad thump, the showboat helmet tap is a tap, and the slap-like tackle recordings are gone (high fives and celebrations keep theirs).",
+      "Tackles sound different every time: no clip twice running, a pitch and level spread, sometimes a pad crack or a deep thud on top. Broken tackles get a light pad scuff; blocks a quiet low thump.",
+      "No more swoosh going into replay slow motion.",
+      "Boos are rare: only big road-team plays, once, never looped or stretched, at most two a drive and fewer on a run of plays.",
+    ]],
+    ["CELEBRATIONS", [
+      "Celebration props (the box, fishing line, lunch bag, key, rope, snow angel, team frame, bricks, dice) show in two-player and online games too.",
+      "Showboating plays back in replays, is no longer announced, and every look eases in and out (no popping); a backpedal only with nobody behind him, never two alike in a row.",
+      "Push-ups are real push-ups: a straight plank from the toes, hands on the turf, arms locked at the top.",
+      "The fin: a flat hand upright on his helmet, and a pencil shark fin swims round him on the turf.",
+    ]],
+    ["SCREENS", [
+      "Pause: the pause and settings icons sit on top of the sheet, and the sheet is a softer warm grey.",
+      "No FINISH button after an instant replay (tap to continue, as before).",
+      "A defender with his hands up to tip a pass reaches for the ball's real height instead of straight up.",
+      "The Star Factor star lies flat on the turf under his feet, a little smaller.",
+      "Ctrl / Cmd / Alt shortcuts (switching tabs...) are left to the browser in a game.",
+      "Front office: STAFF & HIRING (the staff screen) replaces HIRING BOARD; BACK returns to the front office.",
+      "Credits fly into the button you really clicked; a page held for flying credits stays sharp until it crumples.",
+      "Roster full in free agency or the draft: a one-time offer of a roster spot at half price.",
+    ]],
+    ["CAMERA", [
+      "The live-play camera follows one player at a time and only pans once he leaves the middle of the screen, so it no longer drifts whenever someone at the edge moves, and a juke never swings it.",
+      "Runs are framed tighter on the ball carrier, with room ahead of him. Nearby defenders widen the view a little, smoothly. His real speed pulls it back a touch, not the sprint key.",
+      "Passing plays start tight on the formation and open up only as routes get deeper or you aim deeper. The view never zooms back in during a dropback, every receiver stays on screen, and it is never wider than before.",
+      "A pass in the air glides the camera to the landing spot instead of fitting a 50-yard box. Changes from snap to throw to catch to turnover blend over a fraction of a second instead of lurching.",
+      "On defense your player always stays well inside the screen.",
+      "Fixed: the zoom jittered near the sidelines and end zones, and the passing view could pull back far too wide.",
+      "Subs leaving after a change of possession always jog to their own bench (never off by the other team's sideline), also after a kick or back-to-back turnovers.",
+    ]],
+  ] },
   { v: "v0.57", secs: [
     ["MENUS AND SHOWS", [
       "ARE YOU SURE?: LEAVE is the red pen and X now, STAY the green stamp.",
@@ -1771,7 +1858,7 @@ const CHANGELOG = [
     ["PLAYER CARD", [
       "Every player page is now the trading card, including draft, free agent, re-sign, trade and Paper Bowl players. Bigger pentagon and text; stars sit under the STATUS note, AT PEAK under the BIO note. BENCH turns into BENCHED when clicked.",
       "Hover or tap an attribute to see its potential. The ? popups scroll and now explain the pentagon's lines. Click the nameplate to edit it; COMPARE and the nickname box are gone; the card buttons are as tall as BACK.",
-      "Rename a coordinator by clicking his nameplate. The front office drops the cap bar; TRADES, FREE AGENTS, HIRING BOARD and +25M CAP share the bottom row. Max cap is 450M. Switching teams on the scrimmage screen keeps the weather.",
+      "Rename a coordinator by clicking his nameplate. The front office drops the cap bar; TRADES, FREE AGENTS, STAFF & HIRING and +25M CAP share the bottom row. Max cap is 450M. Switching teams on the scrimmage screen keeps the weather.",
       "The football is 15% bigger everywhere. A wrap-up tackler now lets go and gets up when the runner does, instead of being dragged along. Halftime clips of a touchdown start at the crazy moment (a moss, tip, pick) and run through the score.",
       "The injury report lists only injuries. MENTORED is now MENTOREE, and players in poor mood can't mentor or be mentored.",
     ]],
@@ -1785,7 +1872,7 @@ const CHANGELOG = [
       "The upgrade arrow never shows next to the PRACTICE button any more.",
     ]],
     ["FRONT OFFICE AND SCREENS", [
-      "Front office: the HIRING BOARD button sits beside TRADES and FREE AGENTS. The roster no longer has a position filter.",
+      "Front office: the STAFF & HIRING button sits beside TRADES and FREE AGENTS. The roster no longer has a position filter.",
       "The payroll bar on the coaching and training staff screen no longer runs under the +5M BUDGET button.",
       "The Paper Passer Post section buttons are bigger, level with BACK, and use the paper colour and grain. The Post line on the matchup screen uses the newspaper font.",
       "Matchup sticky notes have bigger text and scroll (wheel or drag). EXHIBITION is SCRIMMAGE everywhere, and a scrimmage starts on PRO difficulty.",

@@ -26,6 +26,9 @@ function tapePack(list, ps) {   // list = this frame's full copies (one per play
 }
 const tapeFlat = q => { const b = Object.getPrototypeOf(q); return b && b !== Object.prototype ? Object.assign({}, b, q) : q; };   // a taped player as one plain object
 function tapeApply(p, q) { const b = Object.getPrototypeOf(q); if (b && b !== Object.prototype) Object.assign(p, b); Object.assign(p, q); }   // (onto the live player)
+// a showboat (p.show, 05) on the tape: its look clocks (k0 / pvK = when the look / the one before it began, ptA / stA = a finish's moments) moved onto the tape clock
+const showTape = s => { if (!s) return null; const sh = v => v != null ? rec.t - (clock - v) : null;
+  return { id: s.id, fin: s.fin, pv: s.pv, k0: sh(s.k0 ?? s.t0), pvK: sh(s.pvK), pt: s.pt != null ? 1 : null, st: s.st != null ? 1 : null, ptA: sh(s.ptA ?? s.pt), stA: sh(s.stA ?? s.st), rp: 1 }; };
 function captureFrame() {
   const ps = allPlayers();
   return {
@@ -33,7 +36,7 @@ function captureFrame() {
     players: tapePack(ps.map(p => ({ stB: p.stB, stKey: p.stKey, xfg: xfGlowLive(p), x: p.x, y: p.y, z: p.z, face: p.face, vx: p.vx, vy: p.vy, action: p.action, act: p.act ? { ...p.act } : null,
       isUd: p === ud && aiOff(), moving: p.moving, run: p.run, stride: p.stride, reach: p.reach, engaged: p.engaged, churn: !!p.stiffBy, hasBall: p.hasBall, catchMode: p.catchMode,
       hand: p.hand, lefty: p.lefty, ballSide: p.ballSide, stiffSide: p.stiffSide, stiff: !!p.stiff, truck: p.truck, overShoulder: p.overShoulder, cradle: p.cradle, snapK: p.snapK, snapIn: p.snapIn, snapArm: p.snapArm, exK: p.exK, exE: p.exE, paK: p.paK, pk: p.pk, exSet: p.exSet, pitchK: p.pitchK, twoArm: p.twoArm, fakeArms: p.fakeArms, exLean: p.exLean, cock: p.cock, ready: p.ready, guard: p.guard, swimLeft: p.swimLeft || 0,
-      catchStyle: p.catchStyle, catchSide: p.catchSide, tipArms: p.tipArms, tipK: p.tipK, watch: watchingBall(p), handAim: p.action === 'jump' || p.action === 'toetap' ? jumpAim(p) : null, yawRec: p.yaw || 0,
+      catchStyle: p.catchStyle, catchSide: p.catchSide, tipArms: p.tipArms, tipK: p.tipK, watch: watchingBall(p), handAim: p.action === 'jump' || p.action === 'toetap' || (!p.action && p.tipArms) ? jumpAim(p) : null, yawRec: p.yaw || 0,
       kickSwing: p.kickSwing, kickK: p.kickK, kickWind: p.kickWind, fightOn: p.fightOn || null,
       // (what drawPlayer also reads: without them a replay showed the end-of-play values, a highlight the first frame's)
       hitStick: p.hitStick, spinFx: p.spinFx, bullFx: p.bullFx, jumpCaught: p.jumpCaught, diveCaught: p.diveCaught, holding: p.holding, tackling: p.tackling,
@@ -46,7 +49,7 @@ function captureFrame() {
       mvFx: p.mvFx ? { ...p.mvFx, t: rec.t - (clock - p.mvFx.t) } : null, mlTight: p.mlTight,
       saLook: p.saLook || null, saT1: p.saT1 != null ? rec.t - (clock - p.saT1) : null, saHeld: p.saHeld || null, saTx: p.saTx, saTy: p.saTy, saTz: p.saTz,   // (stiff-arm looks: the look, its lock clock, the held man's look, the target's spot)
       saLoss: p.saLoss ? { k: p.saLoss.k, t: rec.t - (clock - p.saLoss.t) } : null, lid: p.lid ? { ...p.lid, t: rec.t - (clock - p.lid.t) } : null,   // (move looks: a look's tail after the move)
-      cel: p.cel ? { ...p.cel, t0: rec.t - (clock - p.cel.t0) } : null, oneHanded: p.oneHanded, oneAt: p.oneAt,
+      cel: p.cel ? { ...p.cel, t0: rec.t - (clock - p.cel.t0) } : null, show: showTape(p.show), showLast: p.showLast || null, showEnd: p.showEnd != null ? rec.t - (clock - p.showEnd) : null,   // (v0.58: showboat looks, on the tape clock) oneHanded: p.oneHanded, oneAt: p.oneAt,
       falterUntil: rec.t + ((p.falterUntil || 0) - clock), stumbleRec: p.stumbleRec != null ? rec.t - (clock - p.stumbleRec) : null })), ps),
     ball: { x: ball.x, y: ball.y, z: ball.z, lift: ballLift(), rot: ball.rot, nose: ball.nose, snapNose: ball.snapNose, spiral: ball.spiral, wob: ball.wob, tucked: ball.tucked, inAir: ball.inAir, tx: ball.tx, ty: ball.ty, live: ball.live, dk: ball.dk,
       hitP: ball.hitP ? [rec.t - (clock - ball.hitP[0]), ball.hitP[1], ball.hitP[2]] : null },   // (a doink: the post's ring on the replay clock)
@@ -102,9 +105,12 @@ function endReplay() {
   const cam = [camX, camY, zoom], live = rec.liveRestore;
   if (live) {   // (a replay from before the snap: everyone back exactly where they were set up for this play, never where the old play ended)
     if (live.groups) ({ qb, rb, ols, recs, dl, back7, fgExit } = live.groups);
-    for (const [p, d] of live.ps) Object.assign(p, d);
+    for (const [p, d] of live.ps) { for (const k in p) if (!(k in d)) delete p[k]; Object.assign(p, d); }   // (props the tape added during the replay (action, act, cel, fmTo...) are removed, not left on the live man)
+    for (const k in ball) if (!(k in live.ball)) delete ball[k];
     Object.assign(ball, live.ball);
-  } else applyFrame(rec.frames[rec.frames.length - 1]);
+    if (live.popups) { runner = live.runner; popups = live.popups; impacts = live.impacts; live.pylons.forEach((q, i) => pylons[i] && Object.assign(pylons[i], q)); shake = 0; }
+    if (live.rec) live.rec.sbNow = live.sb;
+  } else { applyFrame(rec.frames[rec.frames.length - 1]); for (const p of allPlayers()) { p.show = null; p.showEnd = null; p.showLast = null; } }   // (v0.58: a taped showboat never stays on a live man: showTick would end it and feed the hype)
   [camX, camY, zoom] = cam;
   rec.replaying = false; pressAt = 0; rec.liveRestore = null;
   wxTapeOff(rec.kits);
@@ -116,7 +122,7 @@ function endReplay() {
 // ...and straight to the next play: whatever's left of the runoff comes off the clock at once (no spin-down,
 // nothing more of the last play), unless that ends the quarter (then that shows first)
 function skipReplay() {
-  const fromLive = !!(rec && rec.liveRestore);
+  const fromLive = !!(rec && rec.liveRestore && rec.liveRestore.pre);
   endReplay();
   if (fromLive || state === 'pre' || state === 'kick' || state === 'kickoff') return;   // (the last play's tape, watched before this snap / kick (a PAT or field goal): back to this play's set-up, nothing moves on)
   if (state === 'done' && game.runoff > 0) {
@@ -175,10 +181,12 @@ const replayAvail = () => !tut && !results && !game.over && (state === 'pre' || 
 function pauseReplay() {
   if (!replayAvail()) return;
   // before the snap (the last play's tape): the replay plays on the live players, so everyone's set-up for this play is kept and put back after
-  const live = state === 'pre' || kickBefore() ? { ps: allPlayers().map(p => [p, { ...p }]), ball: { ...ball }, rec, msg } : null;
+  // (v0.59: a replay opened from the pause menu keeps the live picture in ANY state and endReplay puts it back exactly; pre = before the snap / kick, where skipReplay also stops)
+  const pre = state === 'pre' || kickBefore();
+  const live = { pre, ps: allPlayers().map(p => [p, { ...p }]), ball: { ...ball }, rec, msg, runner, popups: popups.slice(), impacts: impacts.slice(), pylons: pylons.map(p => ({ ...p })), sb: rec ? rec.sbNow : null };
   if (!(rec && rec.frames.length > 5) || kickBefore()) rec = lastRec;   // (before a kick, never the kick's own lineup)
-  if (live) rec.liveRestore = live;
-  if (live && rec.castLive && rec.castShape) {   // (the tape's own players: a field goal / PAT unit has extras (fgExit) and a different line-up; put back in endReplay)
+  rec.liveRestore = live;
+  if (pre && rec.castLive && rec.castShape) {   // (the tape's own players: a field goal / PAT unit has extras (fgExit) and a different line-up; put back in endReplay)
     live.groups = { qb, rb, ols, recs, dl, back7, fgExit };
     const a = rec.castLive, S = rec.castShape; let k = 2;
     const take = n => a.slice(k, k += n);
@@ -199,6 +207,7 @@ function wxTapeOff(k) {
   game.wx = k.wxLive.wx; Object.assign(WXI, k.wxLive.I); k.wxLive = null;
 }
 function startReplay() {
+  perfNote('startReplay');   // (FRAME TIMES spike tag)
   if (rec && !rec.hl && !rec.replaying && rec.hsClip) rec.hsClip.shows = Math.max(rec.hsClip.shows || 0, 1);   // (v0.52: this play's instant replay = one showing for the halftime reel)
   rec.replaying = true; rec.played = true;
   wxTapeOn(rec.kits);
@@ -216,7 +225,6 @@ function startReplay() {
 }
 function stepReplay(dt, scrub = 0) {
   const fr = rec.frames, slow = pressAt && performance.now() - pressAt > 200;
-  if (slow && !rec.slow) sndRec('swoosh', 1, { ms: SND_USE.slowMs, fade: 800, at: SND_USE.slowAt });   // (into slow motion)
   rec.slow = slow;
   // the lead-in: the play holds where it ended while the camera eases out from the live shot to the replay's
   // sideline-to-sideline view of that spot (zoom eased in log space so it doesn't lurch), then the replay rolls
@@ -369,6 +377,7 @@ function sbApply(s) {
 }
 // force = saved by hand (SAVE during a replay): kept whether or not it was a big play, and never dropped for room. true = it's in.
 function keepHighlight(r, force) {
+  perfNote('keepHighlight');   // (FRAME TIMES spike tag)
   hsCollect(r);   // (the play is being replaced: the halftime reel takes its window now if it hasn't)
   if (!r || r.hlKept || r.hl || !(r.big || force) || !r.cast || !r.castLive || tut || !r.frames || r.frames.length < 10) return !!(r && r.hlKept);
   const n = r.cast.length;
@@ -725,6 +734,7 @@ const hsClock = () => `Q${Math.min(game.quarter, 4)} ${Math.floor(game.secs / 60
 const hsOn = () => !tut && !ONL.on && !(twoP && !twoP.ai);
 // a live play ended (endPlay): its highlight score and what kind of clip it makes
 function hsScoreRec(text, next, kind) {
+  perfNote('hsScoreRec');   // (FRAME TIMES spike tag)
   const blk = /BLOCK/i.test(String(text));   // (a blocked punt / PAT / field goal always makes a highlight)
   if (!rec || rec.replaying || rec.hl || !hsOn() || (patMode !== null && !blk) || !htOn('highlights')) return;   // (every quarter: the first half feeds the halftime reel, the whole game the one behind the result screen)
   const W = HLREEL, ev = rec.ev || [], has = k => ev.find(e => e.k === k);
@@ -867,9 +877,8 @@ function hsBuild() {
   if (htOn('highlights')) {
     // the reel: the best plays by score until it's HLREEL.budget s long, with some variety (kinds, players), shown in the order they happened.
     // Fewer plays that qualify = a shorter reel, never padded. The best one is the PLAY OF THE HALF, the 3 best get slow motion at their moment.
-    const tapes = hsPick(HTS.clips.filter(c => c.frames), HLREEL.budget, HLREEL.maxClips), texts =[...HTS.clips.filter(c => !c.frames), ...HTS.cards].sort((a, b) => b.score - a.score).slice(0, HLREEL.cards);
-    if (tapes.length) segs.push({ k: 'clips', list: tapes });
-    if (texts.length) segs.push({ k: 'cards', list: texts });
+    const tapes = hsPick(HTS.clips.filter(c => c.frames), HLREEL.budget, HLREEL.maxClips);
+    if (tapes.length) segs.push({ k: 'clips', list: tapes });   // (no BEST PLAYS list after the reel any more: drawHsCards stays for old shows only)
   }
   const add = (key, k, fn) => { if (!htOn(key)) return; let d = null; try { d = fn(); } catch (e) { console.warn('halftime ' + k, e); } if (d) segs.push({ k, data: d }); };
   // around the league: the cards are built once (their SO FAR scores are rolled): the same ones feed the ticker; staged clips of last week's best lines go first
@@ -2327,11 +2336,11 @@ function arcFx(arc, stage) {
 }
 // SAGA WATCH: a click on a saga = its story so far and what it changed
 function sagaPop(a) {
-  const def = arcDef(a), lines = [];
-  for (const h of a.hist) { lines.push(...wrapLines(`${h.wk >= 30 ? 'OFFSEASON' : 'WEEK ' + h.wk}, ${pstYear(h.yr)}: ${h.h}`, 54)); if (h.c) lines.push(...wrapLines(`   YOUR CALL: ${h.c}`, 54)); else if (h.auto) lines.push('   (it decided itself: nobody answered)'); }
+  const def = arcDef(a), lines = [], dots = [];
+  for (const h of a.hist) { dots.push(lines.length); lines.push(...wrapLines(`${h.wk >= 30 ? 'OFFSEASON' : 'WEEK ' + h.wk}, ${pstYear(h.yr)}: ${h.h}`, 54)); if (h.c) lines.push(...wrapLines(`   YOUR CALL: ${h.c}`, 54)); else if (h.auto) lines.push('   (it decided itself: nobody answered)'); }
   lines.push('', a.end ? 'THIS SAGA IS OVER.' : 'STILL DEVELOPING: more to come.');
   if (a.fx && a.fx.length) { lines.push('', 'WHAT IT CHANGED:'); for (const t of a.fx) lines.push(...wrapLines('- ' + t, 54)); }
-  return scrollPop({ title: sagaTitle(def.name), lines, btns: [{ label: 'OK' }] });
+  return scrollPop({ title: sagaTitle(def.name), lines, saga: { dots, end: !!a.end }, btns: [{ label: 'OK' }] });   // (saga = the pencil timeline down the left: a dot per entry)
 }
 // (EVENTS = the midweek decisions: a text table in js/00-text.js)
 
@@ -2430,11 +2439,28 @@ const DIFF_SLIDERS = [
   { key: 'info',     group: 'INFORMATION', label: 'HINTS SHOWN',  side: 'you', e: 1, n: 1, h: 0.5, lo: 0, hi: 1, step: 0.1, w: 1, fmt: 'x', note: 'share of coverage / blitz / OPEN hints shown' },
 ];
 for (const s of DIFF_SLIDERS) if (s.legacy) { s.pts = DIFF_NAMES.map(k => DIFFICULTY[k][s.key] ?? DIFFICULTY.NORMAL[s.key]); s.e = s.pts[0]; s.n = DIFFICULTY.NORMAL[s.key]; s.h = s.pts[s.pts.length - 1]; }
-for (const s of DIFF_SLIDERS) { if (s.fixed) continue; if (s.n > 0) { s.lo = s.n * 0.5; s.hi = s.n * 1.5; } else { s.lo = s.n - 2; s.hi = s.n + 2; } }   // (every custom slider runs 0.5x - 1.5x of NORMAL, so both halves of the bar slide; a NORMAL of 0 or less gets +-2)
+// bar range per slider: [lo, hi] as multiples of NORMAL (`sim`: offsets from it); anything not listed runs 0.5x - 1.5x. Wide enough for every preset.
+const DIFF_BAR = { hit: [0.2, 7], pick: [0.1, 5], punch: [0.1, 4.5], fum: [0.2, 3.5], pbu: [0.25, 3.5], cover: [0.5, 3], drop: [0, 2.5], shed: [0.2, 2], brk: [0.1, 2],
+  runBlk: [0.5, 1.5], cpuPass: [0.5, 1.5], cpuRun: [0.5, 1.5], qbIQ: [0.5, 1.75], cpuCov: [0.5, 1.5], catchTol: [0.75, 1.25], tackTol: [0.75, 1.25],
+  astDef: [0, 2], astThrow: [0, 2], audibles: [0.25, 2], info: [0, 1], xfDur: [0.5, 1.5], xfEase: [0.5, 1.5], xfMax: [0.5, 2], injK: [0.25, 2], wxK: [0.25, 2], sim: [-4, 9] };
+// overdrive: the value at D = DYN.hi (adaptive only; presets stop at D = 1). A slider not listed holds its D = 1 value past 1.
+const DIFF_OD = { hit: 3.3, fum: 2.0, punch: 2.6, pick: 2.9, pbu: 2.3, cover: 2.15, drop: 0.10, shed: 0.30, brk: 0.24, sim: 7.5, runBlk: 0.6, cpuPass: 1.45, cpuRun: 1.45,
+  qbIQ: 1.55, cpuCov: 1.45, catchTol: 0.80, tackTol: 0.84, astDef: 0.25, astThrow: 0.25, info: 0.3, audibles: 0.5 };
+for (const s of DIFF_SLIDERS) {
+  if (DIFF_OD[s.key] != null) s.o = DIFF_OD[s.key];
+  if (s.fixed) continue;
+  const b = DIFF_BAR[s.key] || [0.5, 1.5];
+  if (s.key === 'sim') { s.lo = s.n + b[0]; s.hi = s.n + b[1]; } else { s.lo = s.n * b[0]; s.hi = s.n * b[1]; }
+}
 const DIFF_X = DIFF_SLIDERS.filter(s => !s.legacy);   // (the sliders diffLvl adds on top of the old fields)
 Object.assign(DIFF_ONE, Object.fromEntries(DIFF_X.map(s => [s.key, s.n])));
 const lerpPts = (xs, ys, x) => { if (x <= xs[0]) return ys[0]; for (let i = 1; i < xs.length; i++) if (x <= xs[i]) return ys[i - 1] + (ys[i] - ys[i - 1]) * (x - xs[i - 1]) / (xs[i] - xs[i - 1]); return ys[ys.length - 1]; };
-const diffSliderAt = (s, D) => { const d = Math.max(0, Math.min(1, 0.5 + (D - 0.5) * s.w)); return s.pts ? lerpPts(DIFF_XS, s.pts, d) : lerpPts([0, 0.5, 1], [s.e, s.n, s.h], d); };
+const diffSliderAt = (s, D) => {
+  const d = Math.max(0, Math.min(DYN.hi, 0.5 + (D - 0.5) * s.w));
+  const at1 = s.pts ? s.pts[s.pts.length - 1] : s.h;
+  if (d > 1) return s.o == null ? at1 : at1 + (s.o - at1) * (d - 1) / (DYN.hi - 1);   // (overdrive: D = 1 .. DYN.hi lerps to the slider's `o`)
+  return s.pts ? lerpPts(DIFF_XS, s.pts, d) : lerpPts([0, 0.5, 1], [s.e, s.n, s.h], d);
+};
 const diffClampV = (s, v) => Math.max(s.lo, Math.min(s.hi, Math.round(v / s.step) * s.step));
 // per-franchise difficulty state (saved in the save's `diff`): mode 'dynamic' | 'preset' (SETTINGS.difficulty) | 'custom' (sliders)
 const diffNew = () => ({ v: 1, mode: ['dynamic', 'custom'].includes(SETTINGS.diffMode) ? SETTINGS.diffMode : 'preset', preset: 'NORMAL', sliders: { ...(SETTINGS.diffSliders || {}) }, dyn: { D: DYN_START, S: 0.5, games: 0, years: 0, lossRun: 0, sD: DYN_START, history: [] } });
@@ -2454,11 +2480,11 @@ function diffLoad(x) {   // (a save's `diff`: an old one is just the level's nam
   if (DIFF_D[x.preset] != null) DIFFV.preset = x.preset;
   for (const s of DIFF_SLIDERS) if (x.sliders && isFinite(x.sliders[s.key])) DIFFV.sliders[s.key] = diffLim(s, +x.sliders[s.key]);
   const y = x.dyn || {}, dy = DIFFV.dyn;
-  if (isFinite(y.D)) dy.D = Math.max(0.05, Math.min(0.95, +y.D));
+  if (isFinite(y.D)) dy.D = Math.max(0.05, Math.min(DYN.hi, +y.D));
   if (isFinite(y.S)) dy.S = Math.max(0, Math.min(1, +y.S));
   if (isFinite(y.games)) dy.games = Math.max(0, y.games | 0);
   if (isFinite(y.years)) dy.years = Math.max(0, y.years | 0);
-  if (isFinite(y.sD)) dy.sD = Math.max(0.05, Math.min(0.95, +y.sD));
+  if (isFinite(y.sD)) dy.sD = Math.max(0.05, Math.min(DYN.hi, +y.sD));
   if (isFinite(y.lossRun)) dy.lossRun = Math.max(0, y.lossRun | 0);
   if (Array.isArray(y.history)) dy.history = y.history.slice(-20).filter(h => h && isFinite(h.D)).map(h => ({ g: h.g | 0, D: +h.D, S: +h.S || 0, p: isFinite(h.p) ? +h.p : 0.5, x: isFinite(h.x) ? +h.x : 0.5 }));
 }
@@ -2497,7 +2523,7 @@ function diffRow(k) {
 // --- dynamic difficulty engine (mode 'dynamic'): D eases after each game YOU played (never a simulated one, never mid-game) and at the season rollover.
 // Target D = base(years played) + skillK x (skill score - 0.5) + team.k x (your team's side rating - team.mid): a better roster = a harder league.
 // The opponent's rating gap is the game's expectation. First `lock` games: D stays at `start`. A loss never raises D; a long losing run eases it further.
-const DYN = { start: 0.1, lock: 3, baseMin: 0.1, baseSpan: 0.3, tau: 3, skillK: 0.5, lo: 0.05, hi: 0.95,   // (years played count for less than they did, how you play for more: it is no longer a ramp that only climbs)
+const DYN = { start: 0.1, lock: 3, baseMin: 0.1, baseSpan: 0.3, tau: 3, skillK: 0.5, lo: 0.05, hi: 1.25,   // (years played count for less than they did, how you play for more: it is no longer a ramp that only climbs)
   rate: 0.25, perGame: 0.05, perSeason: 1, rollCap: 0.05,   // (perSeason: how far D may move from where a season started; it was 0.2 and pinned a winning player at that ceiling all season: now no real cap)
   lossRun: 3, lossEase: 0.02, recent: 8,
   week: 0.14, expK: 0.12, expLo: 0.25, expHi: 0.75,   // week to week: D moves by week x (how you played - how you were expected to play); expected = 0.5 + expK per star you are better than the opponent (clamped): a big day against a good team raises it, a poor one against a weak team eases it
@@ -2660,7 +2686,7 @@ const COLD_SND = {
   tear:     ['audio/tear.mp3', 0.6],      crumple: ['audio/crumple.mp3', 0.55],  flip: ['audio/flip.mp3', 0.55],
   swoosh:   ['audio/swoosh.mp3', 0.5],    riser:   ['audio/riser.mp3', 0.5],     splash: ['audio/splash.mp3', 0.5],
   cheer:    ['audio/cheer3.mp3', 0.9],    press:   ['audio/press.mp3', 0.45],    phone: ['audio/phone.mp3', 0.6],
-  bell:     ['audio/bell.mp3', 0.55],     classroom: ['audio/classroom.mp3', 0.35],   // (classroom: a 10.9 s seamless loop)
+  bell:     ['audio/bell.mp3', 0.55],     classroom: ['audio/classroom.mp3', 0.18],   // (classroom: a 10.9 s seamless loop)
   laugh2:   ['audio/laugh2.mp3', 0.5],    laugh3:  ['audio/laugh3.mp3', 0.5],    // (a bigger room laughing: two more takes)
   laugh:    ['audio/laugh.mp3', 0.5],     tap:     ['audio/tap.mp3', 0.6],       tick: ['audio/tick.mp3', 0.5],   // (tap / tick: ONE hit each)
   dream:    ['audio/dream.mp3', 0.5],     click:   ['audio/click.mp3', 0.4],
@@ -2677,17 +2703,17 @@ const COLD_SND = {
   boo2:     ['audio/boo2.mp3', 1],        // (real boos, 5.1 s: crowd clip played by crowdCheer through BOOS, not sndRec)
   wind:     ['audio/wind.mp3', 1],        // (a 16 s seamless loop: wxAudio, 12, plays it like the rain)
 };
-const SND_USE = { penAt: 8, pencilMs: 420, signMs: 700, tickMs: 220, crumpleMs: 480, crumpleFade: 170, crumpleAt: [0, 0.4, 0.85, 1.3, 1.65], pressMs: 1500, pressVol: 0.12, slowMs: 2200, slowAt: 0.5,   // stretches the game's own uses play (ms; at = s into the clip)
+const SND_USE = { penAt: 8, pencilMs: 420, signMs: 700, tickMs: 220, crumpleMs: 480, crumpleFade: 170, crumpleAt: [0, 0.4, 0.85, 1.3, 1.65], pressMs: 1500, pressVol: 0.12,   // stretches the game's own uses play (ms; at = s into the clip)
   wetFrom: 0.55, wetGap: 2500, wetBig: 0.33, wetHit: 0.2, wetDive: 0.25, wetTap: 0.15,   // wet impacts: from this rain (WXI, 0-1: light rain never squelches), ms between two, levels (big hit / tackle / dive landing / toe tap)
   wetOdds: { hit: 0.25, big: 0.45, dive: 0.4, tap: 0.25 },   // (the chance one plays at all, by kind)
   // v0.55: throw = whoosh levels (lob / bullet); clang = ms of ring for the smallest / biggest post hit; hand = the high five / slap level jitter (+-);
-  // stiff = the stiff arm's slap level (under the celebration slap's 1); shushBig = a hush beat this strong gets the long shush; chantIn = ms after the pop the chant
+  // stiff = the stiff arm's soft pad thump level (the thud recording, v0.58); shushBig = a hush beat this strong gets the long shush; chantIn = ms after the pop the chant
   // starts, chantK = its level x CELEB.crowd.chantVol, chantLen = s of the chant recording; koCrack / koThud = the knockout's crack / thud levels
   // whoosh = celebration whooshes: rate (playback speed, pitch follows) and level ranges, odds of the softer whoosh1, never the same pick twice running;
   // throwRate = +- playback-rate jitter on a throw's whoosh
   whoosh: { rate: [0.82, 1.22], vol: [0.6, 1], soft: 0.35, steps: 5 }, throwRate: 0.06,
-  throw: { lob: 0.6, bullet: 0.95 }, clang: [700, 2700], hand: 0.12, stiff: 0.7, shushBig: 1.6, chantIn: 600, chantK: 1.6, chantLen: 26, koCrack: 0.9, koThud: 0.9,
-  warm: [['whoosh1', 'th'], ['whoosh2', 'th'], ['smack', 'sa'], ['hitcrack', 'ko'], ['boulder', 'ko']] };   // (fast cues loaded when audio starts, so the first one isn't late)
+  throw: { lob: 0.6, bullet: 0.95 }, clang: [700, 2700], hand: 0.12, stiff: 0.4, shushBig: 1.6, chantIn: 600, chantK: 1.6, chantLen: 26, koCrack: 0.9, koThud: 0.9,
+  warm: [['whoosh1', 'th'], ['whoosh2', 'th'], ['thud', 'sa'], ['hitcrack', 'ko'], ['boulder', 'ko']] };   // (fast cues loaded when audio starts, so the first one isn't late)
 // plays cue k at level v (x its table gain). o: ms (stop after), fade (out, ms), in (fade in, ms), at (s into the clip), tag (its own copy, so it can overlap itself),
 // rate (playback speed, pitch not preserved)
 function sndRec(k, v = 1, o = {}) {
@@ -2735,6 +2761,11 @@ const CROWD_SFX = { tense: 0.14, red: 0.12, redZone: 20, base: 0.27, peak: 0.8, 
 // (fading in over handoffFade s) so a long moment keeps roaring
 // fadeOut = ms a cheer / boo takes to die away into the ambience
 // hugeLong = x the length of a touchdown / pick reaction, hugeLayer = its second clip's volume (x the first's)
+// v0.58 boos (the home crowd at a road team's play, crowdCheer): minLevel = a boo only at this level or more (after gameImpact; a huge play, touchdown / pick, always
+// qualifies); gapMs = no new boo for this long after one ends; perDrive = most boos a drive (drive = whose ball + the score); decay = each boo in a run (boos less than
+// runMs apart) multiplies the odds of the next by this. A boo plays ONCE and fades: never extended or handed off (a huge play may still layer the second copy once).
+const BOO = { minLevel: 0.85, gapMs: 9000, perDrive: 2, decay: 0.45, runMs: 45000 };
+let booEnd = 0, booLast = 0, booRun = 0, booDrive = 0, booKey = '';
 const CROWD_IMPACT = { stackCap: 0.85, hugeLong: 1.4, hugeLayer: 1, fadeOut: 1800, min: 0.7, max: 1.25, stack: 0.15, stackLevel: 0.15, handoff: 1.3, handoffFade: 900, hype: 0.4, road: 0.75 };
 const SACK_CROWD = 0.8;   // crowd level of a sack (a big play for the defense: see sackCall)
 const CHEER_POPUPS = { 'HURDLE': 0.6, 'BROKEN TACKLE': 0.45, 'JUKED': 0.5, 'SPIN MOVE': 0.55, 'TRUCKED': 0.7, 'BOOM!': 0.8,
@@ -2751,37 +2782,51 @@ const sfxCtl = {};
 const SFX_SLEW = { up: 0.45, down: 0.8 };   // how fast (volume per second) a playing clip's loudness glides to a new level
 function playSfx(src, vol, maxMs, fadeMs, fadeInMs = 0, startAt = 0, rate = 1) {   // startAt: seconds into the clip to begin (a different stretch of it each time); rate: playback speed (pitch follows it)
   try {
-    // one audio element per clip, reused (a new Audio every play left hundreds of media players waiting on GC in Chrome)
+    // one audio element per clip, reused (a new Audio every play left hundreds of media players waiting on GC in Chrome); a re-trigger while it still plays
+    // takes the clip's second element and fades the old one out over SFX_FIX.retrig ms (a pause() cut it dead: the cheers)
     let a = sfxPlaying[src];
-    if (a) a.pause(); else a = sfxPlaying[src] = new Audio(src);
+    if (!a) a = sfxPlaying[src] = new Audio(src);
+    else if (!a.paused && !a.ended) {
+      const old = a._ctl; if (old && !old.fadeAt) { old.fadeAt = performance.now(); old.fadeMs2 = SFX_FIX.retrig; }
+      const b = a._twin || (a._twin = Object.assign(new Audio(src), { _twin: a }));
+      if (!b.paused) b.pause();
+      a = sfxPlaying[src] = b;
+    }
+    else a.pause();
     try { a.currentTime = startAt > 0 ? startAt : 0; } catch (e) {}
     try { a.preservesPitch = a.mozPreservesPitch = a.webkitPreservesPitch = false; a.playbackRate = rate; } catch (e) {}   // (always set: the element is reused)
     a.volume = fadeInMs ? 0 : Math.min(1, vol * VOL());
     const p = a.play();
     if (p && p.catch) p.catch(() => {});
-    const ctl = sfxCtl[src] = { a, vol, maxMs, t0: performance.now() };
-    const step = () => {
-      if (sfxCtl[src] !== ctl) return;   // (the element was reused for a newer play of this clip: that one's loop runs it now)
-      if (a.ended || a.paused && performance.now() - ctl.t0 > 400) return;
-      const end = Math.min(ctl.maxMs, isFinite(a.duration) && a.duration > 0 ? (a.duration - startAt) * 1000 / rate : ctl.maxMs);
-      const e = performance.now() - ctl.t0;
-      if (e >= end) { a.pause(); return; }
-      const fin = fadeInMs ? Math.min(1, e / fadeInMs) : 1;          // fade in...
-      const fo = Math.min(fadeMs, end * 0.6);   // (a short clip's fade is never longer than most of it)
-      const fout = e > end - fo ? Math.max(0, (end - e) / fo) : 1;   // ...and out
-      // (fadeSfx: told to bow out early, it fades from wherever it is)
-      const early = ctl.fadeAt ? Math.max(0, 1 - (performance.now() - ctl.fadeAt) / ctl.fadeMs) : 1;
-      if (!early) { a.pause(); return; }
-      // (a louder target is glided up to, never jumped to)
-      const nowT = performance.now(), dtS = Math.min(0.1, (nowT - (ctl.lastT || nowT)) / 1000);
-      ctl.lastT = nowT;
-      ctl.cur = ctl.cur == null ? ctl.vol : ctl.cur + Math.max(-SFX_SLEW.down * dtS, Math.min(SFX_SLEW.up * dtS, ctl.vol - ctl.cur));
-      a.volume = Math.max(0, Math.min(1, ctl.cur * fin * fout * early * VOL() * duck));
-      requestAnimationFrame(step);
-    };
-    requestAnimationFrame(step);
+    const ctl = sfxCtl[src] = a._ctl = { a, vol, maxMs, t0: performance.now(), fadeMs: fadeMs, fadeIn: fadeInMs, startAt, rate };
+    sfxLive.add(ctl);
     return ctl;
   } catch (e) { /* no audio available */ }
+}
+// v0.60: every playing clip's fades / slew in ONE pass a frame (frame() calls sfxTick; it used to be a requestAnimationFrame loop per clip)
+const sfxLive = new Set();
+function sfxTick() {
+  if (!sfxLive.size) return;
+  const nowT = performance.now();
+  for (const ctl of sfxLive) {
+    const a = ctl.a;
+    if (a._ctl !== ctl) { sfxLive.delete(ctl); continue; }   // (the element was reused for a newer play of this clip)
+    if (a.ended || a.paused && nowT - ctl.t0 > 400) { sfxLive.delete(ctl); continue; }
+    const end = Math.min(ctl.maxMs, isFinite(a.duration) && a.duration > 0 ? (a.duration - ctl.startAt) * 1000 / ctl.rate : ctl.maxMs);
+    const e = nowT - ctl.t0;
+    if (e >= end) { a.pause(); sfxLive.delete(ctl); continue; }
+    const fin = ctl.fadeIn ? Math.min(1, e / ctl.fadeIn) : 1;          // fade in...
+    const fo = Math.min(ctl.fadeMs, end * 0.6);   // (a short clip's fade is never longer than most of it)
+    const fout = e > end - fo ? Math.max(0, (end - e) / fo) : 1;   // ...and out
+    // (fadeSfx / a re-trigger: told to bow out early, it fades from wherever it is)
+    const early = ctl.fadeAt ? Math.max(0, 1 - (nowT - ctl.fadeAt) / ctl.fadeMs2) : 1;
+    if (!early) { a.pause(); sfxLive.delete(ctl); continue; }
+    // (a louder target is glided up to, never jumped to)
+    const dtS = Math.min(0.1, (nowT - (ctl.lastT || nowT)) / 1000);
+    ctl.lastT = nowT;
+    ctl.cur = ctl.cur == null ? ctl.vol : ctl.cur + Math.max(-SFX_SLEW.down * dtS, Math.min(SFX_SLEW.up * dtS, ctl.vol - ctl.cur));
+    a.volume = Math.max(0, Math.min(1, ctl.cur * fin * fout * early * VOL() * duck));
+  }
 }
 
 // one blast at the end of a play; a play that ends the half or the game gets the long end whistle instead
@@ -2791,7 +2836,7 @@ function whistle() { if (performance.now() - endWhistleAt > 5000) playSfx(SFX.wh
 // fade a clip that's still playing out over ms (instead of cutting it off)
 function fadeSfx(src, ms = 600) {
   const c = sfxCtl[src];
-  if (c && !c.a.paused && !c.a.ended && !c.fadeAt) { c.fadeAt = performance.now(); c.fadeMs = ms; }
+  if (c && !c.a.paused && !c.a.ended && !c.fadeAt) { c.fadeAt = performance.now(); c.fadeMs2 = ms; }
 }
 
 // Small synthesized impact sounds (no asset files): the thwap of a catch and the thud of a tackle.
@@ -2806,7 +2851,7 @@ function ac() {
       for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
       loadClips(actx); sndWarm();
     }
-    if (actx.state === 'suspended') actx.resume();
+    if (actx.state !== 'running' && actx.state !== 'closed') { const r = actx.resume(); if (r && r.catch) r.catch(() => {}); }   // (iOS also leaves it 'interrupted' after a call / app switch)
     return actx.state === 'running' ? actx : null;
   } catch (e) { return null; }
 }
@@ -2817,6 +2862,33 @@ window.addEventListener('keydown', ac, { once: true });
 const audioWake = () => { try { if (actx && actx.state !== 'running' && !document.hidden) actx.resume().catch(() => {}); } catch (e) {} };
 for (const ev of ['pointerdown', 'touchend', 'keydown']) window.addEventListener(ev, audioWake, { passive: true });
 document.addEventListener('visibilitychange', audioWake);
+window.addEventListener('pageshow', audioWake);
+// --- sound volume on phones (v0.60). iOS Safari ignores HTMLMediaElement.volume (it always reads 1): no fades, no ducking, every clip at full level, each one
+// stopping dead at pause(). Checked once at load (set 0.5, read it back); where it can't be set, the volume property of every media element is replaced by one
+// that routes the element (once, the first time its volume is set) through the audio context: element -> its own GainNode -> destination, and sets gain.value.
+// Every existing `el.volume = v` / read of el.volume keeps working unchanged. Not from file:// (a media element source is silent there). SFX_FIX.force = test it
+// on a laptop; retrig = ms a re-triggered clip's old play fades out over.
+const SFX_FIX = { force: false, retrig: 60 };
+let sfxVolRO = null;
+function sfxVolCheck() {
+  if (sfxVolRO !== null) return sfxVolRO;
+  try { const t = new Audio(); t.volume = 0.5; sfxVolRO = SFX_FIX.force || Math.abs(t.volume - 0.5) > 0.01; } catch (e) { sfxVolRO = false; }
+  if (sfxVolRO && /^https?:$/.test(location.protocol)) sfxVolShim();
+  return sfxVolRO;
+}
+function sfxVolShim() {
+  const D = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'volume'); if (!D || !D.set || D.get._pp) return;
+  const route = el => {
+    if (el._g !== undefined) return el._g;
+    const c = ac() || actx; if (!c) return null;   // (no context yet: plain volume for now, routed on a later set)
+    try { D.set.call(el, 1); const src = c.createMediaElementSource(el), g = c.createGain(); src.connect(g); g.connect(c.destination); el._g = g; } catch (e) { el._g = null; }
+    return el._g;
+  };
+  const get = function () { return this._sv != null ? this._sv : D.get.call(this); }; get._pp = true;
+  Object.defineProperty(HTMLMediaElement.prototype, 'volume', { configurable: true, enumerable: D.enumerable, get,
+    set(v) { v = Math.max(0, Math.min(1, +v || 0)); this._sv = v; const g = route(this); if (g) g.gain.value = v; else D.set.call(this, v); } });
+}
+sfxVolCheck();
 
 const sfxLast = {};   // the same synthesized sound won't stack on itself: skipped until the last one has rung out
 function impactSfx({ noiseDur, noiseFreq, noiseQ, noiseVol, thumpHz, thumpDur, thumpVol }) {
@@ -2850,6 +2922,14 @@ const CATCH_CLIPS = withKind('catch', CLIP_TABLE.catch);
 const TACKLE_CLIPS = { big: withKind('tackle', CLIP_TABLE.big), reg: withKind('tackle', CLIP_TABLE.reg) };
 const HIT_CLIPS = withKind('hit', CLIP_TABLE.hit);
 const CLIP_VOL = { catch: 0.6, big: 0.9, reg: 0.6 };
+// v0.58 tackle variety: rate / vol = +- spread (playback rate, pitch follows / level); layerReg / layerBig = odds of a second hit from the recordings at layerVol*;
+// regLayers / bigLayers = which COLD_SND cues layer (picked like the clips: never twice running); layerRate = their rate spread; regAlone = the level a recording entry
+// of the regular pool plays at; noRepeat = never the same clip twice running; glance = broken-tackle scuff (level, ms, rate); block = a block's thump level;
+// slapReg / slapBig = indexes into TACKLE_CLIPS.reg / .big that sound like a hand slap (left out of the pools; clips.js is never edited; measured v0.58: reg 1-4 are
+// bright with under 5% low energy = slaps); regRec = recordings that join the regular pool as entries of their own (so it has several sounds to rotate)
+const TACKLE_SND = { rate: 0.09, vol: 0.15, layerReg: 0.35, layerBig: 0.6, layerVolReg: 0.35, layerVolBig: 0.55, regLayers: ['thud', 'ground'], bigLayers: ['boulder', 'hitcrack'],
+  layerRate: 0.08, regAlone: 0.6, noRepeat: true, glance: { vol: 0.3, ms: 240, rate: 1.15 }, block: 0.22, slapReg: [1, 2, 3, 4], slapBig: [], regRec: ['thud', 'ground'] };
+const TACKLE_POOL = { reg: [...TACKLE_CLIPS.reg.filter((c, i) => !TACKLE_SND.slapReg.includes(i)), ...TACKLE_SND.regRec], big: TACKLE_CLIPS.big.filter((c, i) => !TACKLE_SND.slapBig.includes(i)) };
 const CLIP_FADE = { catch: 0.06, hit: 0.06, tackle: 0.22 };   // seconds faded off the end of each kind of clip (a tackle rings out)
 // the strip is turned into an audio buffer once (when audio starts), so a clip plays the instant it's asked for and stops exactly on time
 let clipBuf = null;
@@ -2861,18 +2941,19 @@ function loadClips(a) {
   } catch (e) { /* no clips: the synthesized sounds stand in */ }
 }
 const clipLast = {};
-function clipSfx([kind, s, e], vol) {
+function clipSfx([kind, s, e], vol, rate = 1) {   // rate = playback speed (pitch follows): one clip gives several sounds
   const a = ac(), buf = clipBuf;
   if (!a || !buf || !kind) return false;   // (not loaded, or no audio: the synthesized sound stands in)
   const t = a.currentTime;
   if (t - (clipLast[kind] || -1) < 0.05) return true;   // (one sound per event, even if two hooks fire together)
   clipLast[kind] = t;
   const src_ = a.createBufferSource(), g = a.createGain();
-  src_.buffer = buf;
+  src_.buffer = buf; src_.playbackRate.value = rate;
+  const len = (e - s) / rate;   // (real seconds it plays)
   g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + 0.006);   // (a clip cut from a longer strip starts mid-wave: a short fade-in stops the click)
-  const fade = Math.min(CLIP_FADE[kind] || 0.06, (e - s) * 0.6);
-  g.gain.setValueAtTime(vol, t + (e - s) - fade);
-  g.gain.linearRampToValueAtTime(0, t + (e - s));
+  const fade = Math.min(CLIP_FADE[kind] || 0.06, len * 0.6);
+  g.gain.setValueAtTime(vol, t + len - fade);
+  g.gain.linearRampToValueAtTime(0, t + len);
   src_.connect(g); g.connect(sfxOut(a));
   src_.start(t, s, e - s);
   return true;
@@ -2888,9 +2969,39 @@ function oohSfx(vol = 0.6) {
   oohAt = performance.now();
   playSfx('audio/ooh.mp3', vol, 2600, 700, 120);
 }
-const tackleSfx = big => { if (big) oohSfx(0.5); wetSfx(big ? SND_USE.wetBig : SND_USE.wetHit, big ? 'big' : 'hit'); if (!clipSfx(pickOf(big ? TACKLE_CLIPS.big : TACKLE_CLIPS.reg), big ? CLIP_VOL.big : CLIP_VOL.reg))
-  impactSfx({ noiseDur: big ? 0.3 : 0.14, noiseFreq: big ? 480 : 750, noiseQ: 0.8, noiseVol: big ? 1.5 : 0.45,
-              thumpHz: big ? 105 : 95, thumpDur: big ? 0.38 : 0.18, thumpVol: big ? 1.6 : 0.5 }); };
+// v0.58 tackle variety: a clip that isn't the last one, at a random rate / level inside TACKLE_SND's spread, sometimes a second layer from the recordings
+// (big hits lean on boulder / hitcrack, regular ones on thud / ground)
+const tackLast = {};
+function tackPick(pool, key) {   // an entry of this pool that isn't the last one picked from it
+  if (!pool.length) return null;
+  let i = Math.floor(Math.random() * pool.length);
+  if (TACKLE_SND.noRepeat && pool.length > 1 && i === tackLast[key]) i = (i + 1 + Math.floor(Math.random() * (pool.length - 1))) % pool.length;
+  tackLast[key] = i; return pool[i];
+}
+const tackSpread = r => 1 - r + 2 * r * Math.random();
+const tackLayer = (list, v, key) => sndRec(tackPick(list, key), v * tackSpread(TACKLE_SND.vol), { fade: 140, tag: key, rate: tackSpread(TACKLE_SND.layerRate) });
+const tackleSfx = big => {
+  if (big) oohSfx(0.5);
+  wetSfx(big ? SND_USE.wetBig : SND_USE.wetHit, big ? 'big' : 'hit');
+  const T = TACKLE_SND, pool = big ? TACKLE_POOL.big : TACKLE_POOL.reg, c = tackPick(pool, big ? 'big' : 'reg');
+  const rec = typeof c === 'string';   // (a recording entry of the regular pool: TACKLE_SND.regRec)
+  const ok = c && (rec ? sndRec(c, T.regAlone * tackSpread(T.vol), { fade: 140, tag: 'tr', rate: tackSpread(T.rate) }) : clipSfx(c, (big ? CLIP_VOL.big : CLIP_VOL.reg) * tackSpread(T.vol), tackSpread(T.rate)));
+  if (ok) { if (!rec && Math.random() < (big ? T.layerBig : T.layerReg)) tackLayer(big ? T.bigLayers : T.regLayers, big ? T.layerVolBig : T.layerVolReg, 'tl'); return; }
+  impactSfx({ noiseDur: big ? 0.3 : 0.14, noiseFreq: big ? 480 : 520, noiseQ: 0.8, noiseVol: big ? 1.5 : 0.45,
+              thumpHz: (big ? 105 : 95) * tackSpread(T.rate), thumpDur: big ? 0.38 : 0.18, thumpVol: big ? 1.6 : 0.5 });
+};
+// a broken tackle: a short pad scuff + a small thump (lighter than a tackle), same variety rules; one per event (the 0.05 s guard)
+let glanceAt = -1;
+function glanceSfx() {
+  const a = ac(); if (!a || a.currentTime - glanceAt < 0.05) return;
+  glanceAt = a.currentTime;
+  const G = TACKLE_SND.glance;
+  sndRec(tackPick(TACKLE_SND.regLayers, 'gl'), G.vol * tackSpread(TACKLE_SND.vol), { fade: 90, ms: G.ms, tag: 'gl', rate: G.rate * tackSpread(TACKLE_SND.rate) })
+    || impactSfx({ noiseDur: 0.06, noiseFreq: 420 * tackSpread(TACKLE_SND.rate), noiseQ: 0.9, noiseVol: 0.3, thumpHz: 120 * tackSpread(TACKLE_SND.rate), thumpDur: 0.1, thumpVol: 0.35 });
+}
+// a block's quiet low thump (never a tackle clip)
+const blockSfx = (v = 1) => sndRec('thud', TACKLE_SND.block * v * tackSpread(TACKLE_SND.vol), { fade: 80, ms: 220, tag: 'bk', rate: 0.8 * tackSpread(TACKLE_SND.rate) })
+  || impactSfx({ noiseDur: 0.06, noiseFreq: 300, noiseQ: 0.7, noiseVol: 0.25 * v, thumpHz: 80, thumpDur: 0.12, thumpVol: 0.4 * v });
 // a knockout (the big hit that jars the ball out as he catches it, KNOCKOUT / KNOCKED OUT OF BOUNDS): the hit stick's own clip, a sharp crack right on top of
 // it (pads and the ball popping out: the hitcrack recording) and a deep thud just behind (the boulder recording); the synthesized ones if they can't play
 const KO_SFX = { crack: { noiseDur: 0.06, noiseFreq: 2600, noiseQ: 1.4, noiseVol: 1.1, thumpHz: 190, thumpDur: 0.08, thumpVol: 0.9 },
@@ -2899,14 +3010,14 @@ const knockoutSfx = () => { tackleSfx(true); sndRec('hitcrack', SND_USE.koCrack,
 // contact sounds: a truck is a heavy hit (the big tackle clips + a low thump), a stiff arm a sharp pad slap
 const truckSfx = () => { if (!clipSfx(pickOf(TACKLE_CLIPS.big), CLIP_VOL.big * 0.85)) impactSfx({ noiseDur: 0.25, noiseFreq: 520, noiseQ: 0.8, noiseVol: 1.2, thumpHz: 110, thumpDur: 0.3, thumpVol: 1.3 }); };
 const handK = () => 1 - SND_USE.hand + 2 * SND_USE.hand * Math.random();   // (a hand hit's level, a little different each time)
-const stiffSfx = () => sndRec('smack', SND_USE.stiff * handK(), { fade: 60, tag: 'sa' }) || impactSfx({ noiseDur: 0.1, noiseFreq: 1300, noiseQ: 1, noiseVol: 0.8, thumpHz: 150, thumpDur: 0.11, thumpVol: 0.7 });
+const stiffSfx = () => sndRec('thud', SND_USE.stiff * handK(), { fade: 60, ms: 200, tag: 'sa' }) || impactSfx({ noiseDur: 0.07, noiseFreq: 380, noiseQ: 0.8, noiseVol: 0.35, thumpHz: 120, thumpDur: 0.1, thumpVol: 0.45 });   // (v0.58: a soft pad thump, never the slap)
 // the end of the game: one of the three referee whistles in audio/endwhistle.mp3 ([start, end] seconds)
 const END_WHISTLES = [[0.2, 4.0], [6.75, 10.9], [15.0, 19.45]];
 // (the end of a quarter has no whistle of its own, just the normal one after the play; the half and the end of the game always get the triple whistle: endWhistle(true))
 function endWhistle(triple) {
   if (!triple || performance.now() - endWhistleAt < 4000) return;
   endWhistleAt = performance.now();
-  sfxPlaying[SFX.whistle]?.pause();   // (never on top of the end-of-play blast)
+  fadeSfx(SFX.whistle, SFX_FIX.retrig);   // (never on top of the end-of-play blast)
   try {
     const [s, e] = END_WHISTLES[2];
     const a = new Audio(SFX.endWhistle);
@@ -2976,6 +3087,25 @@ function pickCheer() {
   return live || pickOf(CHEERS);
 }
 const CHEER_GATE ={ floor: 0.2, span: 0.55 };   // a reaction at this level or lower never plays; at floor + span or more it always does, between: the odds
+// the boo gate: true = this road-team play gets ONE boo (it is booked here: gap, drive count, run decay); a huge play while a boo is still going only layers the second
+// copy once and is never a new boo
+function booGate(level, huge) {
+  const B = BOO, now = performance.now(), live = c => !!c && !c.a.paused && !c.a.ended;
+  if (BOOS.some(c => live(sfxCtl[c]))) {
+    if (huge && !BOOS.some(c => live(sfxCtl[c + '#big']))) { const c = BOOS.find(c => !live(sfxCtl[c])) || BOOS[1]; playSfx(c + '#big', CROWD_IMPACT.hugeLayer, 2500, CROWD_IMPACT.fadeOut, 400, crowdStart(c, 4000)); }
+    return false;
+  }
+  if (!huge && level < B.minLevel) return false;
+  if (now < booEnd + B.gapMs) return false;
+  const key = (typeof aiOff === 'function' && aiOff() ? 'd' : 'o') + (game ? game.blue + ':' + game.red : '');
+  if (key !== booKey) { booKey = key; booDrive = 0; }
+  if (booDrive >= B.perDrive) return false;
+  if (now - booLast > B.runMs) booRun = 0;
+  if (Math.random() > Math.pow(B.decay, booRun)) return false;
+  booDrive++; booRun++; booLast = now;
+  booEnd = now + (1500 + level * 3500) * (huge ? CROWD_IMPACT.hugeLong : 1);
+  return true;
+}
 function crowdCheer(level, fav = 'you', bad = false, sure = false, huge = false) {   // sure = skip the gate (a moment the crowd is already building to); huge = a touchdown / pick: two clips layered, longer
   const home = fav === MATCH.home;
   if ((!home && bad) || (results && !reelLoud())) return;   // (no crowd in the menus, but for the reel behind the result screen)
@@ -2987,11 +3117,12 @@ function crowdCheer(level, fav = 'you', bad = false, sure = false, huge = false)
     crowdFx.until = Math.max(crowdFx.until, animNow() + 1400 + level * 3000);
     crowdFx.level = Math.max(crowdFx.level * (crowdFx.until > animNow() ? 1 : 0), level);
   }
+  if (!home && !booGate(level, huge)) { playCheered = false; return; }   // (v0.58: boos are rare, once, never looped: BOO)
   if (!home) crowdFx.boo = Math.max(crowdFx.boo, animNow() + 1200 + level * 1800);   // (the home strips tilt while they boo)
   const ms = (1500 + level * 3500) * (huge ? CROWD_IMPACT.hugeLong : 1), src = home ? pickCheer() : pickBoo(), vol = huge ? 1 : home ? 0.45 + 0.4 * level : 0.42 + 0.4 * level;   // (ordinary reactions top out under full so a touchdown / pick, at full with a second clip on top, stands clearly above them)
   // one already going (back-to-back big plays): it just gets louder and runs longer instead of starting over
   const live = c => !!c && !c.a.paused && !c.a.ended, ctl = sfxCtl[src];
-  if (now < cheerUntil && live(ctl)) {
+  if (home && now < cheerUntil && live(ctl)) {   // (boos never get here: booGate)
     ctl.vol = Math.min(huge ? 1 : CROWD_IMPACT.stackCap, Math.max(ctl.vol, vol) + CROWD_IMPACT.stack + CROWD_IMPACT.stackLevel * level);   // (louder every time)
     if (huge && !live(sfxCtl[(home ? CHEERS : BOOS).find(c => c !== src) + '#big'])) {   // a touchdown / pick in the middle of a roar: the second clip joins it
       const second = (home ? CHEERS : BOOS).find(c => c !== src);
@@ -3099,6 +3230,7 @@ function toneSfx(type, parts, dur, vol, key) {   // parts: [Hz, level, Hz at the
 const CELEB_SFX = {
   clap:    v => sndRec('highfive', v * handK(), { fade: 60, tag: 'hf' }) || impactSfx({ noiseDur: 0.07, noiseFreq: 1700, noiseQ: 0.8, noiseVol: 0.75 * v, thumpHz: 320, thumpDur: 0.04, thumpVol: 0.25 * v }),
   snap:    v => impactSfx({ noiseDur: 0.03, noiseFreq: 3400, noiseQ: 2.2, noiseVol: 0.6 * v, thumpHz: 1100, thumpDur: 0.025, thumpVol: 0.2 * v }),
+  tap:     v => sndRec('tap', v, { fade: 60, tag: 'tp' }) || impactSfx({ noiseDur: 0.04, noiseFreq: 900, noiseQ: 1, noiseVol: 0.3 * v, thumpHz: 200, thumpDur: 0.05, thumpVol: 0.2 * v }),   // (v0.58: the showboat helmet tap)
   slap:    v => sndRec('smack', v * handK(), { fade: 60, tag: 'sl' }) || impactSfx({ noiseDur: 0.09, noiseFreq: 1250, noiseQ: 1, noiseVol: 0.7 * v, thumpHz: 165, thumpDur: 0.09, thumpVol: 0.5 * v }),
   thud:    v => bounceSfx(Math.min(1, 0.7 * v) * 260 * S),
   stomp:   v => sndRec('ground', 0.8 * v, { fade: 150, tag: 'gr' }) || impactSfx({ noiseDur: 0.12, noiseFreq: 260, noiseQ: 0.6, noiseVol: 0.5 * v, thumpHz: 72, thumpDur: 0.2, thumpVol: 1.1 * v }),
@@ -3119,7 +3251,7 @@ const CELEB_SFX = {
   stamp:   v => sndRec('stamp', v, { fade: 80, tag: 'st' }),
   register: v => sndRec('register', v, { fade: 120 }),
   scream:  v => sndRec('yell', v, { ms: 1250, fade: 300, tag: 'y' }),   // (the scream move's beat had no sound until now)
-  jeer:    (v, fav) => { if (crowdQuiet()) return; if (fav && fav !== MATCH.home) sndRec('jeer', v, { ms: 4800, fade: 900, in: 150 }); else crowdCheer(Math.min(1, 0.6 * v), fav, false, true); },   // (a taunt at the stand: the home crowd boos a road player; a home player's own fans cheer it)
+  jeer:    (v, fav) => { if (crowdQuiet()) return; if (fav && fav !== MATCH.home) { if (booGate(Math.min(1, v * gameImpact()), false)) sndRec('jeer', v, { ms: 4800, fade: 900, in: 150 }); } else crowdCheer(Math.min(1, 0.6 * v), fav, false, true); },   // (a taunt at the stand: the home crowd boos a road player; a home player's own fans cheer it)
   gasp:    v => { if (!crowdQuiet()) sndRec('gasp', v, { fade: 500 }); },
   swell:   (v, fav) => { crowdCheer(Math.min(1, v), fav, false, true); if (v >= 1) crowdChant(2); },   // (v0.51: the home crowd turned up, louder each time)
   pop:     (v, fav) => crowdPop(v, fav),

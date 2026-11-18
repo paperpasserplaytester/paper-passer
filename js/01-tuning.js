@@ -1,5 +1,8 @@
 const canvas = document.getElementById('game');
-let ctx = canvas.getContext('2d', { alpha: false });   // (let: fieldCacheDraw points it at its own canvas while the static field is pre-drawn, nothing else ever changes it)   // (an opaque canvas: cheaper to composite on phones; not desynchronized, which tore / flickered on PC)
+// FRAME TIMES spike tags (14's perfSpike): perfNote('tag') marks this frame as having done something heavy; a no-op unless SETTINGS.perfHud. Here so every file can call it
+const PERF_TAGS = [];
+function perfNote(tag) { if (typeof SETTINGS === 'undefined' || !SETTINGS.perfHud) return; if (PERF_TAGS.length < 12 && !PERF_TAGS.includes(tag)) PERF_TAGS.push(tag); }
+let ctx = canvas.getContext('2d', { alpha: false, desynchronized: /Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent) });   // (let:fieldCacheDraw points it at its own canvas while the static field is pre-drawn, nothing else ever changes it)   // (an opaque canvas: cheaper to composite on phones; not desynchronized, which tore / flickered on PC)
 // a rating written in words ("3.5 stars", "4*") is drawn with the star icon instead
 {
   const fillText0 = (t, x, y, w) => w === undefined ? CanvasRenderingContext2D.prototype.fillText.call(ctx, t, x, y) : CanvasRenderingContext2D.prototype.fillText.call(ctx, t, x, y, w), STAR_TXT = /(\d(?:\.\d)?)(?:\s*\*|\s+stars?\b)/gi;
@@ -25,6 +28,10 @@ let RK_HI = 0;   // 2 = the roster formation view: the canvas renders at the scr
 const GAME_RES = { max: 1.5, name: 3, touchMax: 2 };   // touchMax = phones / tablets in GRAPHICS: QUALITY: most canvas px per game px (also capped by the screen's own density; memory x touchMax^2)     // name = name tags' cached image px per world px (they are zoomed with the camera)
 let RK = 1;   // touch mode: the canvas has this share of the pixels (RENDER_K), drawn through a scale of RK: fewer pixels to fill each frame
 const RENDER_K = 1.1;   // (phones: was 0.75; the crowd has its own canvases and keeps its resolution)
+// v0.60 phones in GRAPHICS: AUTO (in a game, not in performance mode): the render scale follows the phone instead of a fixed RENDER_K. Starts at the screen's own
+// density (up to max), steps down `step` when the smoothed paint time stays over budget ms for down s, back up after up s under upMs; only changed at a dead ball
+// (pre / done: a resize clears the canvas and rebuilds the field cache). min = the floor. (14: dynResTick / dynResOn, used by fitScreen)
+const DYN_RES = { on: true, min: 0.75, max: 2, step: 0.15, budget: 13, upMs: 8, down: 2, up: 6 };
 // v0.55 menu pacing (frame() in 14): menus paint at most fps, idleFps after idleMs with no input, and not at all while nothing on them can change
 // (a slow beatMs repaint covers anything that changes without a clock or input: a late image, a cloud sync note)
 const MENU_PACE = { fps: 60, idleFps: 30, idleMs: 400, beatMs: 2000, on: true, underSettings: false };   // underSettings = still draw the menu hidden under the settings page
@@ -132,6 +139,8 @@ const FOOT = 14 * S;           // a player's feet are drawn this far below his y
 // (the body is stretched up from the feet in drawPlayer; the helmet is drawn round again), torso / pads / trim = jersey half-width,
 // shoulder-pad half-width and where the pad trim starts (sprite units: slimmer than the old 7 / 11 / 8)
 const FIGURE = { grow: 1.2, tall: 1.1, torso: 6, pads: 9.5, trim: 6.5 };
+// side view of the torso in play (looks only): half-widths when he's seen from the side (tv = 1), lerped from the front ones; the number squashes away by tv = numAt. on: false = the old front-on figure
+FIGURE.side = { on: true, torso: 4.2, pads: 6.8, trim: 4.6, numAt: 0.55, legs: 0.4 };   // legs = hip spread side-on (x the front one)
 const figK = p => ((p && p.size) || 1) * FIGURE.grow;                 // his sprite scale against the old figure
 // sideline people (07-drawing, `// --- sideline people`): chain crew + down judge, both benches (roster players, coaches, trainers, staff), cameramen, cheerleaders,
 // props (`// --- sideline props`) and injury exits (INJURY_EXIT below). Looks only, never part of a play. d* = yd past the sideline
@@ -393,7 +402,8 @@ const PRESSURE_THROW = { range: 0.55, err: 0.32, power: 0.08, hitErr: 0.55, hitP
 // a QB scrambling faster than speed x his top: free rushers aim k of the way to where he'll be (up to max s ahead)
 const SCRAMBLE_ANGLE = { speed: 0.35, k: 0.85, max: 0.9 };
 const ENGAGED_SIDE = 0.2;   // pass pro: x the sideways part of an engaged rusher's push toward the QB (1 = the pair shadows the QB's every sideways move)
-const DE_CONTAIN = { width: 4.8, after: 0.8, slow: 0.7, edgeSpeed: 1.5, lead: 0.45, keep: 1.4 };   // edgeSpeed/lead/keep: a QB running at an end's side (yd/s) is cut off from the sideline: the end aims lead s ahead of him and keep yd outside
+const QB_RB_GAP = { on: true, gap: 1.6, speed: 1.1 };   // v0.59: the QB and the back step apart sideways when closer than gap yd (speed = yd/s of that nudge, shared): qbRbGap in separatePlayers
+const DE_CONTAIN = { width: 4.8, after: 0.8, slow: 0.7, edgeSpeed: 1.5, lead: 0.45, keep: 1.4, hyst: 0.6, ease: 7 };   // hyst = the cut-off lets go under edgeSpeed x hyst; ease = /s an end's aim point follows its target (v0.59: no one-frame target snaps)   // edgeSpeed/lead/keep: a QB running at an end's side (yd/s) is cut off from the sideline: the end aims lead s ahead of him and keep yd outside
 // a free lineman diving at a QB who is getting away behind the line: range yd to try it, rate per second, hit = reach of the dive (yd), lunge yd, dur s, cool s before another
 const DL_DIVE = { range: 3.0, rate: 2.2, hit: 1.2, lunge: 3.2, dur: 0.3, cool: 1.4 };
 const DUCK_DROP = 0.4;       // x of his catch odds lost on a full wobbler (a throw by a QB who got hit)
@@ -840,7 +850,9 @@ const RUN_CATCH = { prob: 0.9, keep: 1 };   // Shift with the ball in the air: c
 // v0.51 showboating (05, showTick): ms between the two clicks that start it / s a further click keeps it going / s a look runs before the next / his top speed x /
 // fumbles: the odds x fumK, at least fumBase as a move, x hitK more from behind / hype added to a score's celebration / fine odds x (celebFineRoll) / the finishes:
 // slowed to this share of his speed, the ball set down this many yd short of the line (shGoalPlace) / hurdleYd: kept for the phone's 2-tap option (not used yet)
-const SHOW = { gap: 350, keep: 0.9, cycle: 1.1, speed: 0.9, fumK: 4, fumBase: 0.25, hitK: 1.5, hype: 0.15, fineK: 3, slowTo: 0.35, placeYd: 1.2, hurdleYd: 6 };
+// v0.58: blend = s each showboat look eases in from the run / the look before it, and back out to the run when it ends (looks only); behindYd = no backpedal /
+// back-in finish with a defender this close behind him
+const SHOW = { blend: 0.22, behindYd: 8, gap: 350, keep: 0.9, cycle: 1.1, speed: 0.9, fumK: 4, fumBase: 0.25, hitK: 1.5, hype: 0.15, fineK: 3, slowTo: 0.35, placeYd: 1.2, hurdleYd: 6 };
 const HURDLE = { stack: 0.6, userClear: 0.24, tall: 0.12, chance: 0.14,   // userClear = odds a hurdle clears a defender in front (minus tall x his height above average)
  dur: 0.38, h: 16 * S, shrug: 0.5, userDur: 0.5, userH: 22 * S, minGap: 1.5, maxGap: 4.5, cooldown: 1.5, airFumble: 0.3,
  hitStickK: 1.5, heavy: 0.12, maxClear: 2, overChance: 0.45, backFumble: 1.6, tallMe: 0.1, fumbleK: 0.576 };   // tallMe = per height step of the hurdler, more clears; fumbleK = scale on fumbles when tackled mid-hurdle   // maxClear = most defenders one hurdle can clear; overChance = odds each close defender is actually cleared (else he tackles); backFumble = fumble multiplier on a spin-hurdle   // plain broken tackle vs a diving tackler: hurdle out of it (chance); otherwise shrug-step sideways (shrug chance)
@@ -913,7 +925,7 @@ const LOOSE_REACH = 1.5 * YD;
 const LOOSE_HEIGHT = 40 * S;
 // defenders on a tipped/bobbled ball: chase at x speed/accel, reach x reach (range and height),
 // pick it pick of the time, else bobble it again bobble of the time
-const LOOSE_D = { speed: 1.05, accel: 1.6, reach: 1.25, pick: 0.28, bobble: 0.25 };
+const LOOSE_D = { speed: 1.05, accel: 1.6, reach: 1.25, pick: 0.28, bobble: 0.25, hands: 1.0, catchAt: 0.3, pull: 4 };   // (a won diving pick of a tipped ball: caught once his drawn hands are within hands yd, from catchAt of the dive, eased toward it at pull yd/s)
 const PRESS_LEV = { inside: 0.55, outside: 0.25 };   // a press corner's shade: inside / outside leverage odds (the rest square)
 const JAM_ZONE = 5 * YL;
 const JAM_RANGE = 1.3 * YD;
@@ -3357,7 +3369,7 @@ function kickerFor(team, role = 'fg') {   // role 'ko' / 'punt' / 'fg' (default:
 const rz = (p, a) => (p && p.at && p.at[a] != null && p.grp ? (p.at[a] - RATING_AVG[p.grp][a]) / RATING.spread : 0) - (tut && p && p.team === 'def' ? TUT_DEF : 0) - (tut && tut.defOn && p && p.team === 'off' ? TUT_BAD_OFF : 0)
   + (p && p.team === 'def' && p.grp ? diffFor(p).rz : 0) + (p && p.src ? abilRz(p) + xfAttrK(p, a) : 0);   // (any-position Abilities; a lit Star Factor's attribute boost)
 const TUT_DEF = 3;
-const TUT_PICK = { reach: 2.2, high: 30 * S };   // tutorial defense: your jump's pick window x reach, + extra height it still gets (any hand on it = a pick)
+const TUT_PICK = { reach: 1.5, high: 30 * S, pull: 1.6 };   // tutorial defense: your jump's pick window x reach, + extra height it still gets (any hand on it = a pick), x the won pick's carry speed (DEF.pick.pull: the catch is still at his hands)
 const TUT_BAD_OFF = 6, TUT_BAD_AIM = 3, TUT_PROTECT = 1.4;   // (TUT_PROTECT: seconds a block's hold runs down per second in the defense lessons: the pass protection is awful)
 // (and see the defense lessons' offense: terrible ratings)   // the defense lessons' offense: terrible ratings, and (unless the step wants the throw) a very wild arm
 // absolute top speed from the SPEED rating (SPEED_ABS), or null for positions not on that scale / unrated players

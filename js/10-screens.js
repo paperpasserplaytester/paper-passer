@@ -632,9 +632,15 @@ function dmFrame() {   // once a frame, before anything is drawn
 }
 // any popup: uiModal() is called right after a popup dims the screen (every full-screen dim does). A button drawn BEFORE this
 // frame's dim while a popup was up last frame is behind it and holds still (uiBehind); the ones drawn after the dim are the popup's own.
-const UI_MODAL = { was: false, now: false };
-function uiModal() { UI_MODAL.now = true; }
-function uiModalFrame() { UI_MODAL.was = UI_MODAL.now; UI_MODAL.now = false; }   // (once a frame, where UI_BTNS turns over)
+const UI_MODAL = { was: false, now: false, idx: 0, idxWas: 0 };   // (idx = the first UI_BTNS entry drawn above this frame's dim: v0.58, uiTopAt)
+function uiModal() { UI_MODAL.now = true; UI_MODAL.idx = UI_BTNS.length; }
+function uiModalFrame() { UI_MODAL.was = UI_MODAL.now; UI_MODAL.now = false; UI_MODAL.idxWas = UI_MODAL.idx; UI_MODAL.idx = 0; }   // (once a frame, where UI_BTNS turns over)
+// v0.58: the button really under pt on the frame that is on screen (UI_BTNS between frames = the last painted one): topmost = drawn last, never one behind a popup's dim
+function uiTopAt(pt) {
+  const L = UI_BTNS, lo = UI_MODAL.now ? UI_MODAL.idx : 0;
+  for (let i = L.length - 1; i >= lo; i--) { const r = L[i]; if (r && r.w && inBtn(pt, r)) return { x: r.x, y: r.y, w: r.w, h: r.h }; }
+  return null;
+}
 const uiBehind = () => UI_MODAL.was && !UI_MODAL.now;
 // (the field and everything on it keeps its own colours, even where a menu draws it)
 const dmHeld = f => function () { dmHold++; try { return f.apply(this, arguments); } finally { dmHold--; } };
@@ -650,7 +656,41 @@ let backDrawn = 0;   // when a menu screen last drew its BACK button (Esc presse
 let tourBtnDraw = false;   // true while a tutorial tip draws its own buttons (everything else behind it holds still)
 let UI_BTNS = [], UI_BTNS_PREV = [];   // every menuBtn drawn this frame / last frame: a touch on one is the button's, never the joystick's (overUiBtn)
 const MENU_LOCK_GREY = '#a9a9a9';   // a button that can't be pressed here (settings locked during a game)
+// v0.59: every popup's OK (any menuBtn labelled OK) pops in a beat after it first shows, then wiggles now and then while it waits; looks only (the click
+// works from the first frame, nothing is delayed). gapMs = not drawn this long = a new popup; delay / pop = ms; over = overshoot; every = s between wiggles; wig = s; amp = rad
+const OK_POP = { on: true, gapMs: 200, delay: 220, pop: 280, over: 1.7, every: [3, 5], wig: 0.55, amp: 0.08, lift: 4 };
+let OK_WAKE = 0, OK_SEEN = 0;   // (when the next wiggle is due / when an OK was last drawn: menuDirty wakes a still menu for it via okWigDue)
+const okWigDue = () => { if (!OK_WAKE || performance.now() < OK_WAKE) return false; if (UI_LAST - OK_SEEN > 250) { OK_WAKE = 0; return false; } return true; };
+const OK_ST = new Map();   // (state by the button's spot, not its object: some popups rebuild their button rects every frame)
+function okAnim(btn, now) {   // -> { s scale, a alpha, r rotation, y lift } for this frame
+  const P = OK_POP, nextW = () => now + 1000 * (P.every[0] + Math.random() * (P.every[1] - P.every[0])), key = `${Math.round(btn.x)},${Math.round(btn.y)},${Math.round(btn.w)}`;
+  if (OK_ST.size > 40) for (const [k, v] of OK_ST) if (now - v._okLast > 5000) OK_ST.delete(k);
+  let b = OK_ST.get(key); if (!b) OK_ST.set(key, b = {});
+  if (!b._okLast || now - b._okLast > P.gapMs) { b._ok0 = now; b._okW = now + P.delay + P.pop + 1000 * P.every[0]; }
+  b._okLast = OK_SEEN = now;
+  const t = now - b._ok0 - P.delay;
+  if (t < 0) { menuMoving = true; return { s: 0.6, a: 0, r: 0, y: 0 }; }
+  if (t < P.pop) {   // (back-out ease: grows past full size and settles)
+    const u = t / P.pop, c = P.over, e = 1 + (c + 1) * Math.pow(u - 1, 3) + c * Math.pow(u - 1, 2);
+    menuMoving = true; OK_WAKE = b._okW;
+    return { s: 0.6 + 0.4 * e, a: Math.min(1, u * 2.5), r: 0, y: P.lift * (1 - u) };
+  }
+  if (now >= b._okW) {
+    const p = (now - b._okW) / (1000 * P.wig);
+    if (p >= 1) { b._okW = nextW(); OK_WAKE = b._okW; return { s: 1, a: 1, r: 0, y: 0 }; }
+    menuMoving = true;
+    return { s: 1 + 0.04 * Math.sin(p * Math.PI) * (1 - p), a: 1, r: Math.sin(p * Math.PI * 4) * P.amp * (1 - p), y: -P.lift * Math.sin(p * Math.PI) * (1 - p) };
+  }
+  OK_WAKE = b._okW;
+  return { s: 1, a: 1, r: 0, y: 0 };
+}
 function menuBtn(b, label, bg, size = 24, face, on = true) {
+  if (label === 'OK' && OK_POP.on && on && !b._okIn && !uiBehind() && !liteOn()) {   // (the popup OK: drawn through the same button, scaled / turned about its centre)
+    const A = okAnim(b, uiNow()), cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    b._okIn = true; ctx.save(); ctx.globalAlpha *= A.a; ctx.translate(cx, cy + A.y); ctx.rotate(A.r); ctx.scale(A.s, A.s); ctx.translate(-cx, -cy);
+    try { menuBtn(b, label, bg, size, face, on); } finally { ctx.restore(); b._okIn = false; }
+    return;
+  }
   if (b.lockGrey) { bg = MENU_LOCK_GREY; on = false; }   // (a locked setting: flat grey, no hover or press)
   UI_BTNS.push(b);
   const now = uiNow(), dt = uiDt(b.at, now);
@@ -711,7 +751,7 @@ function btnSprite(b, label, paper, size, face, on) {
   const key = `${b.x},${b.y},${b.w},${b.h}|${label}|${paper}|${size}|${on ? 1 : 0}|${s}|${grey || ''}|${stroke}|${ink}`;
   let c = BTN_SPR.get(key);
   if (!c) {
-    if (BTN_SPR.size >= BTN_SPR_MAX) btnSprClear();
+    perfNote('btnSprite'); if (BTN_SPR.size >= BTN_SPR_MAX) btnSprClear();
     const P = BTN_SPR_PAD, x0 = b.x - P, y0 = b.y - P;
     c = document.createElement('canvas'); c.width = Math.ceil((b.w + 2 * P) * s); c.height = Math.ceil((b.h + 2 * P) * s);
     const g = c.getContext('2d'), path = () => { g.beginPath(); T.pts.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath(); };
@@ -772,7 +812,7 @@ const BTN_LABEL_MAT = {   // label (newlines read as spaces, ▸ and "(n)" dropp
   // category tier: the torn scrap + a job stripe (+ an icon where an obvious one exists)
   'SCRIMMAGE': BM('card', 'btnWhistle', 'go'), '1V1': BM('card', null, 'go'), 'CAREER': BM('card', null, 'go'), 'TUTORIAL': BM('card', null, 'go'),
   'HIGHLIGHTS': BM('card', 'btnFilm', 'go'), 'IMPORT HIGHLIGHTS': BM('card', 'btnFilm', 'go'), 'PRACTICE': BM('card', 'btnWhistle', 'go'), 'FACILITIES': BM('card', null, 'go'),
-  'FREE AGENTS': BM('card', null, 'go'), 'HIRING BOARD': BM('card', null, 'go'), 'RECORDS': BM('card', null, 'go'), 'TROPHY ROOM': BM('card', 'trophy', 'go'),
+  'FREE AGENTS': BM('card', null, 'go'), 'HIRING BOARD': BM('card', null, 'go'), 'STAFF & HIRING': BM('card', null, 'go'), 'RECORDS': BM('card', null, 'go'), 'TROPHY ROOM': BM('card', 'trophy', 'go'),
   'GOALS': BM('card', null, 'go'), 'ALL-PRO TEAM': BM('card', null, 'go'), 'DEPTH CHART': BM('card', null, 'go'),
   'TEAM UPGRADES': BM('card', null, 'gold'), 'UPGRADE ALL': BM('card', null, 'gold'), 'MAKE OFFER': BM('card', null, 'gold'),
   'RE-SIGN': BM('card', null, 'ok'), 'LET GO': BM('card', null, 'danger'), 'FIRE': BM('card', null, 'danger'), 'REJECT': BM('card', null, 'danger'), 'FORFEIT': BM('card', null, 'danger'),
@@ -1156,12 +1196,12 @@ function xpBankAdd(xp) {   // spare XP -> the bank (x XPC.rate); returns what we
   LEAGUE[k] = (LEAGUE[k] || 0) + add;
   return add;
 }
-const spendRect = () => { const pt = spendClick; if (!pt) return null; const all = [...UI_BTNS, ...UI_BTNS_PREV].filter(r => r && r.w && inBtn(pt, r)).sort((a, b) => a.w * a.h - b.w * b.h); return all[0] ? { x: all[0].x, y: all[0].y, w: all[0].w, h: all[0].h } : null; };   // (the smallest button under the last click, copied)
+const spendRect = () => { const pt = spendClick; return pt ? pt.r || null : null; };   // (v0.58: the button that was really clicked, uiTopAt at the pointerdown)   // (the smallest button under the last click, copied)
 function xpSpend(n, rect) {   // pay from the bank: false if it can't; rect = the button the buy came from (xpcBuy keeps it across its confirm popup)
   if (!xpcOn() || !(n > 0) || xpBank() < n) return false;
   career.xpBank = xpBank() - n; xpcFlip(true); xpcBox.back = null;   // (the box turns to XP so you see it go)
   if (xpcBoxSeen() && (rect || spendClick)) {   // (the tokens fly out of the XP box into the button that was clicked, like credits do)
-    const pt = spendClick || { x: rect.x, y: rect.y }, all = rect ? [rect] : [...UI_BTNS, ...UI_BTNS_PREV].filter(r => r && r.w && inBtn(pt, r)).sort((a, b) => a.w * a.h - b.w * b.h);
+    const pt = spendClick || { x: rect.x, y: rect.y }, all = rect ? [rect] : [pt.r].filter(Boolean);
     spendFx(all[0] || { x: pt.x - 40, y: pt.y - 20, w: 80, h: 40 }, Math.max(1, Math.round(n / XPC.perToken)), true);
   }
   return true;
@@ -2099,7 +2139,7 @@ function weekIcon(kind, x, y) {   // tired: a blue sweat drop; hurt: a red cross
 // the post-game box score (end of week / exhibition stats): this game's line for each of your players, OFFENSE or DEFENSE tab
 // the result screen's franchise buttons (the end-of-week screen is gone): this game's player stats, and the injury report again
 const RES_STATS_BTN = { x: 355, y: 605, w: 160, h: 75 }, RES_INJ_BTN = { x: 525, y: 605, w: 160, h: 75 };
-function resInjReport() { if (SETTINGS.injuries && LEAGUE.injNotes && LEAGUE.injNotes.length) results.injAlert = [...LEAGUE.injNotes]; else offPopShow({ title: 'INJURY REPORT', lines: [SETTINGS.injuries ? 'NO NEW INJURIES' : 'INJURIES ARE OFF'] }); }
+function resInjReport() { if (SETTINGS.injuries && LEAGUE.injNotes && LEAGUE.injNotes.length) results.injAlert = [...LEAGUE.injNotes]; else offPopShow({ title: 'INJURY REPORT', demo: { k: 'injury' }, lines: [SETTINGS.injuries ? 'NO NEW INJURIES' : 'INJURIES ARE OFF'] }); }
 const BOX_COLS = {
   off: [['C/ATT', g => g.pa ? `${g.pc}/${g.pa}` : '-'], ['PASS', g => g.pa ? g.py : '-'], ['P TD', g => g.pa ? g.pt : '-'], ['INT', g => g.pa ? g.pi : '-'],
         ['CAR', g => g.ca || '-'], ['RUSH', g => g.ca ? g.cy : '-'], ['REC', g => g.tg ? `${g.rc}/${g.tg}` : '-'], ['REC YD', g => g.tg ? g.ry : '-'],
@@ -2519,15 +2559,28 @@ const upgArrow = (ux, uy) => {   // the green arrow badge (ux, uy = its top left
 };
 const rosterPages = (ps, side, team = viewTeam()) => side !== 'upg' && rosterView.pos ? Math.max(1, Math.ceil(ps.length / ROSTER_CARDS.length)) : side === 'upg' ? Math.max(1, Math.ceil(ps.length / ROSTER_CARDS.length)) : Math.ceil(spotsOf(team, side) / ROSTER_CARDS.length);
 const BUY_SPOT_BTN = { x: 826, y: 620, w: 200, h: 80 };   // roster, beside HALL OF FAME: buy one more spot on the side shown (UPGRADES moves up beside it)
-function buySpot() {
-  const side = rosterView.side, n = spotsOf(MATCH.you, side);
-  if (side === 'upg' || n >= SPOT.max || LEAGUE.coins < SPOT.cost) return;
-  LEAGUE.coins -= SPOT.cost; LEAGUE.spots = LEAGUE.spots || { off: ROSTER_SPOTS, def: ROSTER_SPOTS }; LEAGUE.spots[side] = n + 1; leagueSpots();
+const spotCost = () => Math.round(SPOT.cost * (LEAGUE.spotSale ? SPOT.firstOff : 1));   // (v0.58: LEAGUE.spotSale = the one-time ROSTER FULL offer, gone once used)
+// side / anim: the ROSTER FULL offer buys on the player's side without the roster's paper animation (it isn't on screen); true = bought
+function buySpot(side = rosterView.side, anim = true) {
+  const n = spotsOf(MATCH.you, side), cost = spotCost();
+  if (side === 'upg' || n >= SPOT.max || LEAGUE.coins < cost) return false;
+  LEAGUE.coins -= cost; delete LEAGUE.spotSale; LEAGUE.spots = LEAGUE.spots || { off: ROSTER_SPOTS, def: ROSTER_SPOTS }; LEAGUE.spots[side] = n + 1; leagueSpots();
   upgradeSfx(); autosaveSoon();
+  if (!anim) return true;
   const pg = Math.floor(n / ROSTER_CARDS.length), cur = rosterView.page || 0;
-  const hold = (Math.min(SPEND.max, 3 + SPOT.cost * 2) - 1) * SPEND.gap + SPEND.ms;   // (the credits' flight (spendFx) lands first, then the paper moves)
+  const hold = (Math.min(SPEND.max, 3 + cost * 2) - 1) * SPEND.gap + SPEND.ms;   // (the credits' flight (spendFx) lands first, then the paper moves)
   rosterView.buy = { side, idx: n, t0: performance.now() + hold, slide: pg !== cur ? { from: cur, to: pg } : null };   // (scroll to its page first if it isn't on screen, then the paper uncrumples)
   rosterView.page = pg;
+  return true;
+}
+// v0.58: the ROSTER FULL popup (free agency / the draft) for p. The first time a franchise hits it with credits for the sale price = the one-time offer: 50% off a spot
+// on his side (BUY SPOT pays through spendWatch, which flies the credits into the button clicked; he stays selected, so the sign / draft click works next). LATER ends it.
+function spotFullPop(p, text) {
+  const side = OFF_GROUPS.includes(p.group) ? 'off' : 'def', room = xpcOn() && spotsOf(MATCH.you, side) < SPOT.max;
+  if (room && !LEAGUE.spotOffer && LEAGUE.coins >= Math.round(SPOT.cost * SPOT.firstOff)) { LEAGUE.spotOffer = 1; LEAGUE.spotSale = 1; autosaveSoon(); }
+  if (!room || !LEAGUE.spotSale || LEAGUE.coins < spotCost()) { offPopShow({ title: 'ROSTER FULL', lines: wrapLines(text, 54) }); return; }
+  offPopShow({ title: 'ROSTER FULL', lines: [...wrapLines(text, 54), '', `ONE-TIME OFFER: ${Math.round((1 - SPOT.firstOff) * 100)}% OFF`], price: { was: SPOT.cost, now: spotCost() },
+    btns: [{ label: 'LATER', on: () => { delete LEAGUE.spotSale; autosaveSoon(); } }, { label: 'BUY SPOT', green: true, on: () => buySpot(side, false) }] });
 }
 const rosterSide = (team, side) => {
   const st = dcg && dcg.field && team === MATCH.you ? dcg.field : startersOf(team), rank = p => (isOut(p) ? 2 : st.has(p) ? 0 : 1);
@@ -3007,16 +3060,17 @@ function drawTeamUpg(team, spots) {
   ctx.font = 'bold 15px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(`${LEAGUE.coins} ¤ TO SPEND`, B.x + B.w / 2, B.y + 76);
   { const nb = LEAGUE.spotBuys || 0, to = SPOT.leagueEvery - nb % SPOT.leagueEvery; ctx.font = 'bold 12px monospace'; ctx.fillText(`EVERY ${SPOT.leagueEvery} SPOTS YOU BUY, EVERY OTHER TEAM GAINS ONE (NEXT: ${to} MORE)`, B.x + B.w / 2, B.y + B.h - 16); }
   const capNow = LEAGUE.cap || CAP.start, capMax = capNow >= CAP.max, capCan = !capMax && LEAGUE.coins >= capCost();
-  const spMax = spots >= SPOT.max, spCan = !spMax && LEAGUE.coins >= SPOT.cost;
+  const spMax = spots >= SPOT.max, spCan = !spMax && LEAGUE.coins >= spotCost();
   const card = (b, can, l1, l2, l3, cost) => menuBtn(b, '', RES.bright, 18, bb => {
     ctx.fillStyle = can ? bb.ink : 'rgba(70,55,30,0.55)'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.font = 'bold 22px monospace'; ctx.fillText(l1, bb.x + bb.w / 2, bb.y + 40);
     ctx.font = 'bold 15px monospace'; ctx.fillText(l2, bb.x + bb.w / 2, bb.y + 74); ctx.fillText(l3, bb.x + bb.w / 2, bb.y + 98);
     if (cost != null && b === TU.cap && LEAGUE.capSale && cost < CAP.cost) priceTag(bb.x + bb.w / 2, bb.y + 145, CAP.cost, cost, 24);   // (the first-time sale: full price struck through)
+    else if (cost != null && b === TU.spot && LEAGUE.spotSale && cost < SPOT.cost) priceTag(bb.x + bb.w / 2, bb.y + 145, SPOT.cost, cost, 24);   // (v0.58: the ROSTER FULL offer, still live)
     else if (cost != null) { ctx.font = 'bold 24px monospace'; ctx.fillText(`${cost} ¤`, bb.x + bb.w / 2, bb.y + 145); }
   }, can);
   card(TU.cap, capCan, 'SALARY CAP', capMax ? 'MAXED OUT' : `+${fmtM(CAP.step)}`, `NOW ${fmtM(capNow)}`, capMax ? null : capCost());
-  card(TU.spot, spCan, 'ROSTER SPOT', spMax ? 'MAXED OUT' : `+1 ON ${side}`, `${spots} / ${SPOT.max} SPOTS`, spMax ? null : SPOT.cost);
+  card(TU.spot, spCan, 'ROSTER SPOT', spMax ? 'MAXED OUT' : `+1 ON ${side}`, `${spots} / ${SPOT.max} SPOTS`, spMax ? null : spotCost());
   menuBtn(TU.close, 'CLOSE', RES.bright, 22);
 }
 function teamUpgClick(pt) {   // true = the popup took the click
@@ -3409,7 +3463,7 @@ function fvNotes(f) {   // the formation guide (what the old FORMATION page show
   const lines = [`${f.pers} PERSONNEL · QB ${f.qb} · ${f.backs.toUpperCase()}`, '', 'STRENGTHS', ...W2(f.strengths), '', 'WEAKNESSES', ...W2(f.weaknesses), '', 'MOST COMMON PLAYS',
     ...f.plays.flatMap(p => W2(`${p.n.toUpperCase()} (${p.t.toUpperCase()}): ${p.how}`)), '', "DOESN'T FIT", ...f.bad.flatMap(b => W2(`${b.n.toUpperCase()}: ${b.why}`)),
     '', 'VARIATIONS', ...W2(f.variants), '', 'GOOD TO KNOW', ...W2(f.notes), '', ...FORM_RULES.flatMap(W2)];
-  offPopShow(scrollPop({ title: f.name, lines }));
+  offPopShow(scrollPop({ title: f.name, lines, demo: { k: 'form', f } }));   // (v0.60: its dots line up, run its first play, then a bad fit is crossed out)
 }
 // clicks (from rosterClick on pointerdown). True = taken. Presses inside the view wait for pointerup (tap) or become a pan.
 function fvClick(pt, team, ps) {

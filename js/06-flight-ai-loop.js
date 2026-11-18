@@ -58,6 +58,7 @@ function updateFlight(dt) {
   const gap = dist(tgt, ball);
   userPickCheck(dt);   // (your leap for it)
   if (state !== 'flight') return;
+  if (ud && ud.userJump && ud.userJump.won && !ud.userJump.done) return;   // (your won pick is on its way into his hands: nobody else plays the ball meanwhile)
 
   // linemen at the line can get a paw on a low, flat throw: mostly bullets, rarely a lob,
   // and much less often while still tied up with a blocker. Once in a while it's tipped and caught.
@@ -96,7 +97,7 @@ function updateFlight(dt) {
       const hx = d.x + Math.cos(d.act.angle) * 30 * S, hy = d.y + Math.sin(d.act.angle) * 30 * S;   // his fingertips
       if (Math.hypot(hx - ball.x, hy - ball.y) <= DIVE_PICK.hands * YD && ball.z <= DIVE_PICK.z) {
         d.divePick = false;
-        if (Math.random() < DIVE_PICK.catch * rm(d, 'ctc', 'ball') * pickK()) { popup(d, 'DIVING PICK', '#ff6b6b'); return intercept(d, true); }
+        if (Math.random() < DIVE_PICK.catch * rm(d, 'ctc', 'ball') * pickK()) { const res = intercept(d, true); if (d.hasBall) popup(d, 'DIVING PICK', '#ff6b6b'); return res; }
         if (Math.random() < BAT_SPIKE.fingertip) return batDown(d);
         return popLoose(d, 'Got a fingertip on it!', 60 * S, 2 * YD);
       }
@@ -402,7 +403,15 @@ function flightAction(code) {
   }
 }
 
-function updateLoose() {
+function updateLoose(dt = 0) {
+  // a tipped ball he won the roll for and laid out at: caught only once his outstretched hands get to it (eased a little toward it), no second roll
+  for (const p of back7) if (p.loosePick === runPid) {
+    if (p.action !== 'dive' || !p.act) { p.loosePick = null; continue; }
+    let h = pickHands(p);
+    pickShift(p, p.x + ball.x - h.x, p.y + ball.y - h.y, LOOSE_D.pull * YD * dt); h = pickHands(p);
+    if (p.act.t >= p.act.dur * LOOSE_D.catchAt && Math.hypot(ball.x - h.x, ball.y - h.y) <= LOOSE_D.hands * YD && ball.z <= LOOSE_HEIGHT) { p.loosePick = null; return intercept(p, true); }
+    if (p.act.t >= p.act.dur) p.loosePick = null;
+  }
   for (const p of [tgt, ...back7]) {
     if (state !== 'loose' || ball.tried.has(p) || p.action === 'down') continue;
     const def = p !== tgt;
@@ -417,6 +426,7 @@ function updateLoose() {
       if (r < LOOSE_D.pick * rm(p, 'ctc', 'ball') * (facesBall(p) ? 1 : PICK_BLIND) && facingPlay(p)) {
         const low = ball.z < LOOSE_HEIGHT * 0.6 || ball.vz < 0;
         if (low && !p.action) startDive(p, ball.x, ball.y, 0.25, Math.min(DIVE_LUNGE, dist(p, ball)));
+        if (low && p.action === 'dive') { p.loosePick = runPid; return; }   // (the catch waits for his hands: see the top of updateLoose)
         return intercept(p, low);
       }
       if (r < LOOSE_D.pick + LOOSE_D.bobble) popLoose(p, 'Bobbled!', 120 * S, 2.5 * YD);
@@ -895,7 +905,7 @@ function scoop(p, risen = false) {
   p.hasBall = true; p.action = null; p.act = null; p.tackling = false;
   popup(p, risen ? 'UP WITH IT' : 'SCOOPED', p.team === 'def' ? '#ff6b6b' : '#7dff8a');
   if (p.team === 'def') {
-    state = 'picked';
+    state = 'picked'; stiffClearOff();
     ball.scoopReturn = true;
     if (aiOff() && !tut) pickUd(p);   // (on defense: you take over the man who scooped it, like a pick, and return it)
     else if (!tut) kcuPick(p);   // (your fumble: steer a man to chase the scooper)
@@ -1037,7 +1047,8 @@ const DEF = {
   assist: 1.8,          // x how hard your own tackle dive steers toward the ball carrier (aim assist; 1 = same as the computer's)
   idle: 0.6,            // s with no defensive keys before the computer steers your defender (any key hands him straight back; 0 = never)
   ballPath: { cone: 0.2, k: 0.7, look: 24 },   // ball in the air, you steering: keys within acos(cone) of his best catch point bend k of the way onto it (the earliest / highest spot he can get to in time); look = samples along the flight
-  pick: { reach: 1.35, high: 10 * S, timing: 1.3, magnet: 2.5, magnetQ: 0.3, hands: 1.25, twoHand: 0.95 },   // your R leap: x catch distance, + height he still gets, x the timing window, yd/s he drifts toward the ball in the air (x timing q, from q >= magnetQ)
+  pick: { reach: 1.35, high: 10 * S, timing: 1.3, magnet: 2.5, magnetQ: 0.3, hands: 1.25, twoHand: 0.95,
+          pull: 14, pull0: 0.5, pullAcc: 70, grab: 0.7, look: 0.6 },   // your R leap: x catch distance, + height he still gets, x the timing window, yd/s he drifts toward the ball in the air (x timing q, from q >= magnetQ). A won pick: he is carried (pull yd/s, starting at pull0 of it, reached at pullAcc yd/s/s) so his HANDS meet the ball's path (looking look s ahead), and it is only caught once hands-to-ball <= grab yd
 };
 const dkeys = {};
 const DEF_INPUT = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyC', 'KeyV', 'KeyF', 'KeyG', 'KeyR', 'KeyT', 'Tab'];   // (held: you're steering your defender)
@@ -1254,8 +1265,9 @@ function defJump(one = false) {
 function userPickCheck(dt = 0) {
   const d = ud, j = d && d.userJump;
   if (!j || j.done || !aiOff()) return;
-  if (d.action !== 'jump' && !(j.dive && d.action === 'dive')) { j.done = true; return; }
+  if (d.action !== 'jump' && !(j.dive && d.action === 'dive')) { if (j.won) return pickLost(d, j); j.done = true; return; }
   if (j.look && Math.abs(ball.x - d.x) > 0.15 * YD) { d.face = ball.x > d.x ? 1 : -1; if (d.act) d.act.face = d.face; }   // (eyes on the ball all the way up)
+  if (j.won) return pickCarry(d, j, dt);   // (the pick is already his: carry his hands to the ball, caught only when they get there)
   if (!j.dive && j.q >= DEF.pick.magnetQ && dt > 0) {   // a well-timed leap drifts in under the ball (the better the timing, the more)
     const gx = ball.x - d.x, gy = ball.y - d.y, g = Math.hypot(gx, gy), m = Math.min(g, DEF.pick.magnet * diffX('astDef') * YD * j.q * dt);
     if (g > 0.05 * YD) { d.x += gx / g * m; d.y += gy / g * m; clampField(d); }
@@ -1265,7 +1277,6 @@ function userPickCheck(dt = 0) {
   let dd = dist(d, ball) / rk, bz = ball.z;
   if (j.lag) { const h = histAt(j.lag); if (h) { const dh = Math.hypot(d.x - h.ball[0], d.y - h.ball[1]) / rk; if (dh < dd) { dd = dh; bz = h.ball[2]; } } }   // (an online guest's leap: the ball where his screen had it, if that's closer)
   if (dd <= DEFLECT_RANGE * (1.3 + 0.8 * j.q) * DEF.pick.reach * (j.dive ? 0.7 : 1) && (j.dive || bz <= (d.reachZ || 44 * S) * rk + d.z + 12 * S + DEF.pick.high + (tut ? TUT_PICK.high : 0))) {
-    j.done = true;
     // catching ratings decide the pick; a one-hander is mostly a tip. Whatever he doesn't hold on to is a tip.
     const ctc = rm(d, 'ctc', 'ball'), base = j.q >= DEF.jump.perfect ? DEF.jump.pick : 0.1 + 0.7 * j.q;
     // (his own jump: fewer tips and more picks by the same amount, the better his ball skills the more of it)
@@ -1273,13 +1284,62 @@ function userPickCheck(dt = 0) {
     const twoHands = !j.one && dd <= DEFLECT_RANGE * DEF.pick.hands;   // (the ball's right in his hands: that's a pick, tips are for a ball just out of reach)
     const perfect = j.q >= DEF.jump.perfect && !j.dive;   // (perfect timing: whenever the ball is in reach it is a pick, one hand or two, whatever his hands)
     if (tut || perfect ? (tut || Math.random() < 0.99) : ((twoHands && Math.random() < DEF.pick.twoHand) || Math.random() < pickP)) {
-      const res = intercept(d, !!j.dive);
-      if (j.q >= DEF.jump.perfect && dd <= DEFLECT_RANGE * DEF.pick.hands && d.hasBall) popup(d, 'PERFECT PICK', '#7dff8a');   // (a perfectly timed leap that comes down with it: only called once he really has it, intercept can still refuse on height / a contested ball)
-      return res;
+      // (rolled once: the pick is his, but it is only caught where his hands really are: pickCarry takes them to the ball first)
+      j.won = { perf: j.q >= DEF.jump.perfect && dd <= DEFLECT_RANGE * DEF.pick.hands, v: 0 };
+      d.diveTip = false;
+      return pickCarry(d, j, 0);
     }   // (a perfectly timed leap with both hands on it is all but a sure pick; the tutorial's lesson: a jump near the ball is always a pick)
+    j.done = true;
     if (j.dive) { if (dbTouch(d, true, HAND.reach * 1.5)) applyTip(d); return; }
     if (dbTouch(d, true, HAND.reach * 1.3)) applyTip(d);
   } else if (d.act.t >= d.act.dur * 0.95) j.done = true;
+}
+// where a picking defender's hands are (the spot a pick is drawn in them: see updateBall's air-catch hold): out at the fingertips on a dive, up ahead of him on a leap
+function pickHands(d) {
+  return d.action === 'dive' && d.act ? diveHands(d, figReach(d, 22 * S)) : { x: d.x + figX(d, 10 * S) * (d.face || 1), y: d.y };
+}
+// move a man (and a dive's own path, so it never pops) by up to v px toward (x, y)
+function pickShift(d, x, y, step) {
+  const gx = x - d.x, gy = y - d.y, g = Math.hypot(gx, gy);
+  if (g < 1e-3 || step <= 0) return;
+  const m = Math.min(g, step), ox = d.x, oy = d.y;
+  d.x += gx / g * m; d.y += gy / g * m; clampField(d);
+  if (d.action === 'dive' && d.act && d.act.fx != null) { const sx = d.x - ox, sy = d.y - oy; d.act.fx += sx; d.act.tx += sx; d.act.fy += sy; d.act.ty += sy; }
+}
+// a won user pick: his hands are carried (eased, speed-capped) to the earliest point still to come on the ball's path they can get to; caught there
+function pickCarry(d, j, dt) {
+  const P = DEF.pick, grab = P.grab * YD;
+  let h = pickHands(d);
+  if (Math.hypot(ball.x - h.x, ball.y - h.y) <= grab) return pickGrab(d, j);
+  if (ball.p >= 1 || (d.act && d.act.t >= d.act.dur)) return pickLost(d, j);
+  if (dt <= 0) return;
+  const vMax = P.pull * (tut ? TUT_PICK.pull : 1) * diffX('astDef') * YD;
+  j.won.v = Math.min(vMax, Math.max(j.won.v, vMax * P.pull0) + P.pullAcc * YD * dt);
+  const rem = (1 - ball.p) * ball.T, look = Math.max(dt, Math.min(rem, P.look, d.act ? d.act.dur - d.act.t : rem));   // (only a point he gets to before his leap / dive is over)
+  let ax = ball.x, ay = ball.y, best = Infinity;
+  for (let i = 1; i <= 12; i++) {   // (the hands go to meet it, never chase it from behind)
+    const t = look * i / 12, p = Math.min(1, ball.p + t / ball.T);
+    const x = ball.fx + (ball.tx - ball.fx) * p, y = ball.fy + (ball.ty - ball.fy) * p;
+    const short = Math.hypot(x - h.x, y - h.y) - grab * 0.5 - vMax * t;
+    if (short <= 0) { ax = x; ay = y; break; }
+    if (short < best) { best = short; ax = x; ay = y; }
+  }
+  pickShift(d, d.x + ax - h.x, d.y + ay - h.y, j.won.v * dt);
+  if (Math.abs(ball.x - d.x) > 0.15 * YD) d.face = ball.x > d.x ? 1 : -1;
+  h = pickHands(d);
+  if (Math.hypot(ball.x - h.x, ball.y - h.y) <= grab) return pickGrab(d, j);
+}
+function pickGrab(d, j) {
+  j.done = true;
+  const res = intercept(d, !!j.dive);
+  if (j.won.perf && d.hasBall) popup(d, 'PERFECT PICK', '#7dff8a');   // (a perfectly timed leap that comes down with it: only called once he really has it, intercept can still refuse on height / a contested ball)
+  return res;
+}
+// his hands never got there (the ball landed / went by, or his leap / dive ended): no pick; a tip if a hand still reaches it
+function pickLost(d, j) {
+  j.done = true; j.lost = true;
+  if (grounded(d) || (d.action !== 'jump' && d.action !== 'dive')) return;
+  if (dbTouch(d, true, HAND.reach * (j.dive ? 1.5 : 1.3))) applyTip(d);
 }
 
 let tryFlip = null;   // after a pick six / scoop and score: 'back' (yours, flip to your offense) or 'to' (theirs, flip so they are the offense) for the played try
@@ -2642,7 +2702,23 @@ function separatePlayers(dt) {
       b.x -= tx * sa * side * ma / (ma + mb); b.y -= ty * sa * side * ma / (ma + mb);
     }
   }
+  qbRbGap(dt);
   for (const p of all) { clampField(p); p.cx = p.x; p.cy = p.y; }
+}
+// v0.59: the QB and the back keep a small gap (they clip through each other in the backfield, see colSkip): a soft sideways step apart, each a little,
+// never during the mesh / pitch, never the QB while YOUR movement keys steer him, never the back off the man he is blocking or while he carries it
+function qbRbGap(dt) {
+  const G = QB_RB_GAP;
+  if (!G.on || !qb || !rb || tut || (rec && rec.replaying) || !(state === 'drop' || state === 'pocket' || state === 'run' || state === 'flight')) return;
+  if ((typeof meshOn === 'function' && meshOn()) || (ball && ball.pitch) || qb.action || rb.action || kickoffPlay) return;
+  const dx = rb.x - qb.x, dy = rb.y - qb.y, d = Math.hypot(dx, dy);
+  if (d >= G.gap * YD) return;
+  const userKeys = !aiOff() && ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].some(k => keys[k]);
+  const qbMay = !userKeys, rbMay = !rb.engaged && !rb.lockedTo && rb !== runner && !rb.hasBall;
+  const n = (qbMay ? 1 : 0) + (rbMay ? 1 : 0); if (!n) return;
+  const sy = Math.abs(dy) > 0.05 * YD ? Math.sign(dy) : (rb.num || 1) % 2 ? 1 : -1, step = Math.min(G.gap * YD - d, G.speed * YD * dt) / n;
+  if (qbMay) qb.y -= sy * step;
+  if (rbMay) rb.y += sy * step;
 }
 function drawHitboxes() {
   ctx.save();
@@ -2708,6 +2784,7 @@ function update(dt) {
   tensionTick(dt);   // (v0.55: the riser / big-kick heartbeat, 08)
   // each defender's real movement over the last frame, whatever code moved him (pursue picks its speed up from it)
   for (const d of [...(back7 || []), ...(dl || [])]) { if (d.mpx != null) { d.mvx = (d.x - d.mpx) / dt; d.mvy = (d.y - d.mpy) / dt; } d.mpx = d.x; d.mpy = d.y; }
+  if (state !== 'kick' && !(typeof CO !== 'undefined' && CO)) for (const p of allPlayers()) if (p.armsUp && !(p.armsUpT > clock)) p.armsUp = false;   // (v0.59: kick-block hands come down once the kick is over (blocked, scooped...): never taped up on a runner; armsUpT = a short hold, BATTED BACK)
   hipHands(dt);
   if (aiOff()) { aiOffense(dt); defTick(dt); }
   else if (pvpDef()) defTick(dt);
@@ -2838,7 +2915,7 @@ function update(dt) {
   if (SL.on) slCollide(dt);   // (sideline people are solid too: after celebrations / coasts have moved everyone; slides out, never back in bounds)
   updateBall(dt);
   if (state !== 'flight') ball.nose = null;  // the spiral look is only for a pass in the air
-  if (state === 'loose') updateLoose();
+  if (state === 'loose') updateLoose(dt);
 
   const holder = allPlayers().find(p => p.hasBall) ||
     (!ball.inAir && !ball.loose && !ball.pitch && (state !== 'done' || runner === qb || (sackPlay && qb.action === 'down')) ? qb : null);   // (sacked: he keeps it, tucked)
@@ -3059,7 +3136,7 @@ function update(dt) {
   if (yardsTag && (yardsTag.t += dt) > YARDS_TAG_LIFE) yardsTag = null;
   if (tut) tutFrame();
   if (oo) ooPark();
-  updateCamera(dt);
+  { const pt = SETTINGS.perfHud ? PERF_NOW() : 0; updateCamera(dt); if (pt) perfMark('cam', pt); }   // (FRAME TIMES: the camera's own cost)
   recordFrame(dt);
 }
 
@@ -3081,7 +3158,14 @@ const CAM = { touch: 0.55,   // phone / tablet: camera pan and zoom speed x this
               looseZoom: 0.92,
               tdZoom: 0.1, tdHold: 2.5, tdEase: 1.5,   // touchdown: extra zoom-in on the scorer, seconds held before pulling back, slow ease (1/s)
               fgEase: 2.5, maxPan: 40 * YD,
-              preEase: 1.5, preTime: 0.9, zoomMax: 0.9 };   // after a play: the pre-snap pan / zoom ease (1/s) for the first preTime s of 'pre' (the tight whistle shot used to snap out wide); zoom speed cap (x zoom per s)   // field goal: steady, slow pan / zoom (1/s)   // loose ball / fumble / pick: x zoom (< 1 = out to show the chase)
+              preEase: 1.5, preTime: 0.9, zoomMax: 0.9,
+  // v0.58 planned shot (camPlan): the spring goes to a committed point, re-aimed at once on an event (state, carrier, target, ball released / caught, whistle) and
+  // otherwise only by how far the framing point has left a dead zone (dead yd; zDead = share of zoom); the lead reads velocity smoothed over leadT s and ignores
+  // changes under leadDead yd (a juke doesn't swing the shot). on false = the old per-frame target
+  plan: { on: true, dead: 1.2, zDead: 0.05, leadT: 0.25, leadDead: 1.2 },   // (with CAM.v2 the committed-point dead zone is skipped: v2's blend + dead band replace it; the smoothed lead stays)
+              v2: true,   // the camera rework (CAM2 below): subject + safe zone, out-only passing view, tight runs, timed blends; false = the old framing / smoothing (with CAM.plan)
+              debug: false,   // dev overlay (camDebugDraw): safe zone, must-fit box, target vs real centre, wanted vs real zoom. No setting / button
+              bowlMax: 2.2 };   // the stadium-edge limit never zooms in more than x this past the shot's own zoom (the old 20 x 1.04 steps)   // after a play: the pre-snap pan / zoom ease (1/s) for the first preTime s of 'pre' (the tight whistle shot used to snap out wide); zoom speed cap (x zoom per s)   // field goal: steady, slow pan / zoom (1/s)   // loose ball / fumble / pick: x zoom (< 1 = out to show the chase)
 let camPre = { pid: -1 };   // the computer offense's pre-snap shot, set once a play (its audibles / shifts never move the camera)
 const camS = { vx: 0, vy: 0, vz: 0, x: null, y: null, z: null, st: null, pre: 99 };   // (st / pre: last state seen, seconds into this 'pre')   // the camera spring's velocity, and where it last put the camera
 // one step of a critically damped spring toward `to` (w = stiffness, 1/s); exact for any frame time, speed capped at `cap`
@@ -3098,6 +3182,7 @@ function camCoast(dt) {
   camX += camS.vx * dt; camY += camS.vy * dt; zoom += camS.vz * dt; camS.vx *= k; camS.vy *= k; camS.vz *= k;
   camS.x = camX; camS.y = camY; camS.z = zoom;
 }
+let camPlan = null, camVX = 0, camVY = 0, camLeadTX = 0, camLeadTY = 0;   // (v0.58: the committed shot and the smoothed lead: CAM.plan)
 let camLeadX = 0, camLeadY = 0;   // eased look-ahead on whoever the camera follows (CAM.lead*)   // koPan / koZoom = how quickly the camera follows a kickoff or punt (1/s; the rest is 4 / 3), koSettle = seconds into the return it stays that slow, puntPunter = seconds the punter stays in the shot, puntKeep = ball distance from the punter
 function updateCamera(dt) {
   // the pre-snap zoom eases back to the default once the ball's snapped
@@ -3107,21 +3192,28 @@ function updateCamera(dt) {
   }
   if (state === 'sim') { camS.vx = camS.vy = camS.vz = 0; return; }
   const dn = state === 'done', nowMs = performance.now();
-  const celHero = dn ? allPlayers().find(p => p.cel && p.cel.i === 0 && !p.cel.rx) || null : null;   // (a celebration: its lead man, with everyone in it, is the shot)
-  const scorer = celHero || (dn && allPlayers().find(p => p.coast && p.coast.v != null && (p.hasBall || p === runner || p === tgt)));   // (only the man the play ended with: a stale coast on anyone else is never followed)   // (the scorer's end-zone coast, { v }: NOT the release drift a QB / blocker keeps after a throw, { vx, vy }; that one sent the touchdown zoom to the QB after a pick or an incompletion)
+  camScan(dn);   // (one pass over allPlayers(): celebration lead, scorer, ball holder, the defender carrying it)
+  const celHero = CSC.cel;   // (a celebration: its lead man, with everyone in it, is the shot)
+  const scorer = celHero || CSC.scorer;   // (only the man the play ended with: a stale coast on anyone else is never followed)   // (the scorer's end-zone coast, { v }: NOT the release drift a QB / blocker keeps after a throw, { vx, vy }; that one sent the touchdown zoom to the QB after a pick or an incompletion)
   // at the whistle the camera stays with the BALL: the man holding it (a pick's returner, a tackled carrier), or the ball itself after an incompletion; never
   // back to `runner` when he no longer has it (still the QB if he scrambled before he threw)
-  const held = dn ? allPlayers().find(p => p.hasBall) || null : null, passDead = dn && ball.incDone === doneAt;
+  const held = dn ? CSC.held : null, passDead = dn && ball.incDone === doneAt;
   const rn = !dn ? runner : held || (passDead ? null : runner);
   const pickCam = state === 'picked' || (dn && !!held && held.team === 'def');
   const lostBall = dn && !scorer && passDead && !held && nowMs - doneAt < CAM.deadBall * 1000;   // (an incompletion: the camera stays on the ball while it bounces)
   if (dn && !scorer && !lostBall && !(rn && nowMs - doneAt < CAM.catchUp * 1000)) return camCoast(dt);   // hold the final frame (a beat after the whistle the camera still catches up to the carrier: a long scramble used to leave him, and his yardage tag, off screen)
   // look-ahead: the follow point leads the carrier / QB in his direction of travel, easing round on a cut instead of snapping
-  const leadWho = state === 'run' && runner && !kickoffPlay ? runner : (state === 'drop' || state === 'pocket') ? qb : null;
+  const leadWho = state === 'run' && runner && !kickoffPlay ? runner : (state === 'drop' || state === 'pocket') ? qb : (CAM.v2 && pickCam && !dn && CSC.defHold) || null;   // (v2: a pick / scoop return leads its carrier too)
   let ltx = 0, lty = 0;
-  if (leadWho) { ltx = leadWho.vx * CAM.leadT; lty = leadWho.vy * CAM.leadT; const m = Math.hypot(ltx, lty); if (m > CAM.leadMax) { ltx *= CAM.leadMax / m; lty *= CAM.leadMax / m; } }
+  const PL = CAM.plan.on && !(rec && rec.replaying) ? CAM.plan : null;
+  if (PL && leadWho) { const k = 1 - Math.exp(-dt / PL.leadT); camVX += (leadWho.vx - camVX) * k; camVY += (leadWho.vy - camVY) * k; }   // (v0.58: velocity smoothed over leadT)
+  if (leadWho) { ltx = (PL ? camVX : leadWho.vx) * CAM.leadT; lty = (PL ? camVY : leadWho.vy) * CAM.leadT; const m = Math.hypot(ltx, lty); if (m > CAM.leadMax) { ltx *= CAM.leadMax / m; lty *= CAM.leadMax / m; } }
+  else camVX = camVY = 0;
+  if (PL) { if (Math.hypot(ltx - camLeadTX, lty - camLeadTY) > PL.leadDead * YD || !leadWho) { camLeadTX = ltx; camLeadTY = lty; } ltx = camLeadTX; lty = camLeadTY; }   // (small changes ignored)
   const lk = 1 - Math.exp(-dt * CAM.leadEase);
   camLeadX += (ltx - camLeadX) * lk; camLeadY += (lty - camLeadY) * lk;
+  const ro = rollingOut();   // (once a frame)
+  if (CAM.v2 && cam2Shot(dt, dn, rn, pickCam)) return;   // (v2: the pocket / pass in the air / run / return shots have their own framing; everything else below, through the v2 smoothing)
   let pts, wide = false;
   if (lostBall) pts = [ball];
   else if (state === 'kickoff') pts = [rb, ball, ...(kickoff && kickoff.kicker && dist(ball, kickoff.kicker) < (kickoff.punt ? CAM.puntKeep : 16 * YD) ? [kickoff.kicker] : [])];   // (the kicker stays in the shot until the ball is well on its way)
@@ -3136,7 +3228,7 @@ function updateCamera(dt) {
   else if (state === 'kick') pts = [rb, { x: POST_X + 2 * YL, y: MID }];   // from the kicker all the way to the posts
   else if (celHero) pts = allPlayers().filter(p => p.cel && p.cel.id === celHero.cel.id);
   else if (scorer) pts = [scorer, { x: scorer.x + 4 * YD, y: scorer.y }];
-  else if (rollingOut()) {
+  else if (ro) {
     // rolling out: pan with him, keeping the (at least) three receivers nearest him clearly in the shot
     // (the whole field stays in the shot: no zooming in on the QB mid-play)
     const near = catchers().filter(r => r !== qb).sort((a, b) => dist(a, qb) - dist(b, qb)).slice(0, CAM.rollRecs);
@@ -3150,11 +3242,11 @@ function updateCamera(dt) {
   else if (state === 'loose') pts = [ball, tgt];
   else if (state === 'fumble') pts = [ball, ...allPlayers().filter(p => dist(p, ball) < 10 * YD)];
   else if (pickCam && ball.scoopReturn) {   // a fumble scooped and run back: follow the carrier like a run (the old target is long gone)
-    const c = [...back7, ...dl].find(d => d.hasBall) || ball;
+    const c = CSC.defHold || ball;
     pts = [c, { x: c.x - 6 * YD, y: c.y }, ...allPlayers().filter(p => p.team === 'off' && dist(p, c) < CAM.carrierRange)];
   }
   else if (pickCam) {   // an interception return (and its whistle): followed like a ball carrier (him, room ahead, the men near him)
-    const c = [...back7, ...dl].find(d => d.hasBall) || ball;
+    const c = CSC.defHold || ball;
     pts = [c, { x: c.x - 6 * YD, y: c.y }, ...allPlayers().filter(p => p !== c && dist(p, c) < CAM.carrierRange)];
   }
   else pts = rn ? [rn, { x: rn.x + 6 * YD + camLeadX, y: rn.y + camLeadY }, ...[...back7, ...dl].filter(d => dist(d, rn) < CAM.carrierRange)] : [ball];
@@ -3190,10 +3282,10 @@ function updateCamera(dt) {
     if (camPre.pid !== runPid) { const deep = catchers().reduce((a, b) => (b.x > a.x ? b : a), qb); camPre = { pid: runPid, pts: pts.map(q => ({ x: q.x, y: q.y })), deep: { x: deep.x, y: deep.y }, qb: { x: qb.x, y: qb.y } }; }
     pts = mine ? [...camPre.pts, ud] : camPre.pts;
   }
-  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
-  const x0 = Math.min(...xs), x1 = Math.max(...xs);
-  const preTight = wide && state === 'pre' && !kickoffPlay && !rollingOut();   // (a scrimmage snap: in a little closer, just a sliver of sideline)
-  const y0 = wide ? -(preTight ? CAM.preSide : 13) * YD : Math.min(...ys), y1 = wide ? FW + (preTight ? CAM.preSideB : 1.5) * YD : Math.max(...ys);
+  let x0 = Infinity, x1 = -Infinity, py0 = Infinity, py1 = -Infinity;   // (min / max as numbers: no point arrays)
+  for (let i = 0; i < pts.length; i++) { const q = pts[i]; if (q.x < x0) x0 = q.x; if (q.x > x1) x1 = q.x; if (q.y < py0) py0 = q.y; if (q.y > py1) py1 = q.y; }
+  const preTight = wide && state === 'pre' && !kickoffPlay && !ro;   // (a scrimmage snap: in a little closer, just a sliver of sideline)
+  const y0 = wide ? -(preTight ? CAM.preSide : 13) * YD : py0, y1 = wide ? FW + (preTight ? CAM.preSideB : 1.5) * YD : py1;
   const VH = H - TOP_BAR - FIELD_BOT;
   let wantZ = Math.max(0.15, Math.min(1, W / (x1 - x0 + 10 * YD), VH / (y1 - y0 + (wide ? 0 : 8 * YD))));
   // in tight on whoever has the ball (a kickoff in the air too, once it's coming down to the returner)
@@ -3201,7 +3293,7 @@ function updateCamera(dt) {
   if (carrying && !mine) wantZ = Math.max(wantZ, kickoffPlay || state === 'kickoff' ? CAM.koMin : CAM.carrierMin);   // (an interception return keeps the ball in frame instead of zooming in on the carrier)
   if (runner && runner.sprint && state === 'run') wantZ *= CAM.sprintZoom;   // pull back a touch to sell the burst
   if ((goalZoom || scorer) && !mine) wantZ = Math.min(1.35, wantZ * GOAL_ZOOM);
-  const tdHeld = !!scorer && (performance.now() - doneAt) / 1000 < CAM.tdHold;   // (hold on the scorer, then pull back)
+  const tdHeld = !!scorer && (nowMs - doneAt) / 1000 < CAM.tdHold;   // (hold on the scorer, then pull back)
   if (tdHeld && !mine) wantZ = Math.min(1.4, wantZ * (1 + CAM.tdZoom));
   // per-state zoom nudges (CAM): tighter in the pocket, out a touch for a pass in the air, in on a run, out for a loose ball / pick
   if (state === 'drop' || state === 'pocket') wantZ *= CAM.pocketZoom;
@@ -3224,13 +3316,33 @@ function updateCamera(dt) {
   const tutWide = !!(tut && tut.defOn && !kickoffPlay);   // (the defense lessons: always sideline to sideline)
   if (tutWide) wantZ = Math.min(wantZ, VH / (FW + 2 * YD));
   if (SETTINGS.camZoom === false && !tutWide) wantZ = tutZoomFloor();   // (settings: camera zoom OFF = one fixed zoom, the whole field's width, the camera only pans)
-  { const ez = userZoom * passPull * (TOUCH ? TOUCH_ZOOM : 1); for (let i = 0; i < 20 && !viewInBowl(camX, camY, wantZ * ez); i++) wantZ *= 1.04; }   // (never zoom out so far that the dark void outside the stadium's oval shows)
+  {   // (never zoom out so far that the dark void outside the stadium's oval shows: one continuous limit for the target centre, and for where the camera is now while it pans there.
+      // It used to step x1.04 at the CURRENT centre, so the wanted zoom flipped between steps frame to frame near a sideline / end zone)
+    const ez = userZoom * passPull * (TOUCH ? TOUCH_ZOOM : 1), tcx = (x0 + x1) / 2, tcy = tutWide || (state === 'pre' && wide && !(rec && rec.replaying)) ? MID : (y0 + y1) / 2;
+    wantZ = Math.max(wantZ, Math.min(wantZ * CAM.bowlMax, Math.max(camBowlZ(tcx, tcy), camBowlZ(camX, camY)) / ez));
+  }
   const halfW = W / 2 / wantZ, halfH = VH / 2 / wantZ;
   const clampTo = (v, lo, hi) => lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, v));
   const cx = clampTo((x0 + x1) / 2, -ENDZONE - 4 * YD + halfW, FIELD + ENDZONE + 4 * YD - halfW);
   // (before the snap the view is panned down to the middle of the field, so both sidelines show the same amount; the zoom is the same as before)
   const cy = clampTo(tutWide || (state === 'pre' && wide && !(rec && rec.replaying)) ? MID : (y0 + y1) / 2, -CROWD.depth * 0.9 + halfH, FW + CROWD.depth * 0.9 - halfH);
   // a kickoff: a slow, smooth pan from the kicker, down with the ball, to the returner (and on into the return's first moments)
+  // v0.58: plan first, then pan: a new event re-aims the shot at once; between events the committed point only moves by what the framing point left the dead zone by
+  let pcx = cx, pcy = cy;
+  if (PL && !CAM.v2) {
+    const ev = [state, rn && rn.num, rn && rn.team, tgt && tgt.num, ball.inAir ? 1 : 0, ball.loose ? 1 : 0, !!scorer, !!celHero, lostBall, !!held, pickCam, kickoffPlay ? 1 : 0, lockPre ? camPre.pid : 0].join('|');
+    if (!camPlan || camS.x !== camX || camS.y !== camY || camS.z !== zoom) camPlan = { ev, x: cx, y: cy, z: wantZ };
+    else if (camPlan.ev !== ev) {   // (an event: the zoom is planned afresh; the pan re-aims only if the new framing point is outside the dead zone: no jump for nothing)
+      const D = PL.dead * YD; camPlan.ev = ev; camPlan.z = wantZ;
+      if (Math.abs(cx - camPlan.x) > D || Math.abs(cy - camPlan.y) > D) { camPlan.x = cx; camPlan.y = cy; }
+    } else {
+      const D = PL.dead * YD, band = (v, c) => Math.abs(v - c) > D ? v - Math.sign(v - c) * D : c;
+      camPlan.x = band(cx, camPlan.x); camPlan.y = band(cy, camPlan.y);
+      const r = wantZ / camPlan.z; if (r > 1 + PL.zDead) camPlan.z = wantZ / (1 + PL.zDead); else if (r < 1 / (1 + PL.zDead)) camPlan.z = wantZ * (1 + PL.zDead);
+    }
+    if (camPlan.z < wantZ && !viewInBowl(camPlan.x, camPlan.y, camPlan.z * userZoom * passPull * (TOUCH ? TOUCH_ZOOM : 1))) camPlan.z = wantZ;   // (never out so far the void past the stands shows)
+    pcx = camPlan.x; pcy = camPlan.y; wantZ = camPlan.z;
+  }
   const slowKO = state === 'kickoff' || (state === 'kick' && kick && kick.kickoff) || (kickoffPlay && state === 'run' && clock - runStart < CAM.koSettle);
   const puntCam = state === 'punt' || (state === 'kick' && kick && kick.punt);
   const tc = TOUCH ? CAM.touch : 1;   // (phones: slower, smoother follow; frame-rate independent)
@@ -3242,13 +3354,14 @@ function updateCamera(dt) {
   const wp = CAM.smooth * tc * (slowKO ? CAM.koPan : puntCam ? CAM.puntPan : slowOther || CAM.pan), wz = CAM.smooth * tc * (slowKO ? CAM.koZoom : puntCam ? CAM.puntZoom : slowOther || CAM.zoomEase);
   if (camS.x !== camX || camS.y !== camY || camS.z !== zoom) camS.vx = camS.vy = camS.vz = 0;   // (a replay / a new game placed the camera itself: from rest)
   const capV = CAM.maxPan * tc;   // (a long trip, e.g. from the extra point out to midfield, pans at a steady speed instead of one lunge)
-  [camX, camS.vx] = camSpring(camX, cx, camS.vx, wp, dt, capV);
-  [camY, camS.vy] = camSpring(camY, cy, camS.vy, wp, dt, capV);
+  if (CAM.v2) { passPull = 1; return cam2Apply(dt, cx, cy, wantZ, wp, wz, capV, dn ? 'dead' : scorer ? 'td' : state, null); }   // (v2: these shots keep today's framing, only the smoothing is new)
+  [camX, camS.vx] = camSpring(camX, pcx, camS.vx, wp, dt, capV);
+  [camY, camS.vy] = camSpring(camY, pcy, camS.vy, wp, dt, capV);
   [zoom, camS.vz] = camSpring(zoom, wantZ, camS.vz, wz, dt, zoom > 0.2 && isFinite(zoom) ? CAM.zoomMax * zoom * tc : Infinity);   // (no cap from an unset / zero zoom: it could never grow)
   camS.x = camX; camS.y = camY; camS.z = zoom;
   // passing: pull back (past any wheel zoom-in) so the deepest receiver and the QB stay on screen
   let pull = 1;
-  if (SETTINGS.camZoom !== false && (state === 'pre' || state === 'drop' || state === 'pocket') && !rollingOut() && !kickoffPlay) {   // (also pre-snap, near the end zone)
+  if (SETTINGS.camZoom !== false && (state === 'pre' || state === 'drop' || state === 'pocket') && !ro && !kickoffPlay) {   // (also pre-snap, near the end zone)
     const deep = lockPre ? camPre.deep : catchers().reduce((a, b) => (b.x > a.x ? b : a), qb), q0 = lockPre ? camPre.qb : qb, m = CAM.passMargin;
     const dx = Math.max(Math.abs(deep.x + m - camX), Math.abs(q0.x - m - camX)), dy = Math.abs(deep.y - camY) + m;
     pull = Math.min(1, W / 2 / dx / (zoom * userZoom), VH / 2 / dy / (zoom * userZoom));
@@ -3260,6 +3373,223 @@ let passPull = 1;   // < 1 while passing: the extra pull-back on top of the came
 function viewInBowl(cxp, cyp, zc) {
   const vc = viewCenterY(), vTop = cyp - (vc - TOP_BAR) / zc - 24, vBot = cyp + (H - FIELD_BOT - vc) / zc + 24, vL = cxp - (W / 2 + PAD) / zc - 48, vR = cxp + (W / 2 + PAD) / zc + 48;
   return inBowlOut(vL, vTop, 10) && inBowlOut(vR, vTop, 10) && inBowlOut(vL, vBot, 10) && inBowlOut(vR, vBot, 10);   // (the stands' rim: bowlGeo, the same curve drawCrowd draws)
+}
+// the widest TOTAL zoom whose view (viewInBowl's rectangle) stays inside the stands' rim at this centre: closed form, so it moves smoothly with the centre
+function camBowlZ(cxp, cyp) {
+  const G = bowlGeo(), m = 10, xl = G.X0 - G.D + m, xr = G.X1 + G.D - m, yt = G.Y0 - G.D + m, yb = G.Y1 + G.D - m, r = Math.max(1, G.R - m);
+  const A = W / 2 + PAD, B = (H - TOP_BAR - FIELD_BOT) / 2;   // (view half-size = A / z + 48 by B / z + 24)
+  const a = 48 - (Math.min(cxp - xl, xr - cxp) - r), b = 24 - (Math.min(cyp - yt, yb - cyp) - r);   // (u = A s + a, v = B s + b with s = 1 / z: the corner's overhang past the corner circle's centre)
+  const s1 = (r - a) / A, s2 = (r - b) / B;   // largest s with max(0, u)^2 + max(0, v)^2 <= r^2
+  let s;
+  if (B * s1 + b <= 0) s = s1; else if (A * s2 + a <= 0) s = s2;
+  else { const qa = A * A + B * B, qb = 2 * (A * a + B * b), qc = a * a + b * b - r * r, d = qb * qb - 4 * qa * qc; s = d < 0 ? 0 : (-qb + Math.sqrt(d)) / (2 * qa); }
+  return s > 1e-4 ? 1 / s : 1e4;
+}
+// one pass over allPlayers() a frame for what the camera needs (allPlayers() is a shared array: never sorted / spliced here)
+const CSC = { cel: null, scorer: null, held: null, defHold: null };
+function camScan(dn) {
+  CSC.cel = CSC.scorer = CSC.held = CSC.defHold = null;
+  if (dn) { const L = allPlayers(); for (let i = 0; i < L.length; i++) { const p = L[i];
+    if (!CSC.cel && p.cel && p.cel.i === 0 && !p.cel.rx) CSC.cel = p;
+    if (!CSC.scorer && p.coast && p.coast.v != null && (p.hasBall || p === runner || p === tgt)) CSC.scorer = p;
+    if (!CSC.held && p.hasBall) CSC.held = p; } }
+  for (let i = 0; i < back7.length && !CSC.defHold; i++) if (back7[i].hasBall) CSC.defHold = back7[i];
+  for (let i = 0; i < dl.length && !CSC.defHold; i++) if (dl[i].hasBall) CSC.defHold = dl[i];
+}
+
+// --- camera v2 (CAM.v2): one subject per shot + a safe zone, out-only passing view, tight runs, timed blends, one zoom rule
+// Along-field distances in YL, movement / screen distances in YD; zooms here are TOTAL (zoom x userZoom x TOUCH_ZOOM) unless named otherwise
+const CAM2 = {
+  safe: { pass: [0.25, 0.25], run: [0.1, 0.14] },   // safe zone half-size, share of the half-view (x along the field, y across): the centre only moves once the subject leaves it
+  soft: 0.1, softRate: 12,   // soft band past the safe zone (share of the half-view; the pull grows from 0 to softRate 1/s across it, a hard edge past it)
+  passAhead: 0.3,   // pocket: the QB's anchor sits this share of the half-view behind centre (more of the screen downfield of him)
+  passMaxZ: 1.15,   // pocket: never tighter than this
+  passCeilK: 1,   // pocket: never wider than tutZoomFloor() x this (x TOUCH_ZOOM on phones). Measured: today's pocket view is tutZoomFloor() x 1.06 (CAM.pocketZoom) and passPull only widened it for receivers ~40 yd out
+  qbKeep: 3 * YD,   // a receiver brought in at the ceiling never pushes the QB closer than this to the screen edge
+  edge: 0.12,   // your defender / kick-return cover man stays this share of the screen inside each edge
+  tieEdge: 0.04,   // after the spring: the subject (and your defender) are pulled back inside this share of the screen if the pan lags
+  run: { yd: 17, min: 13, max: 30, ahead: 4 * YD,   // run: field yards visible (along the field, 1 YL = 56.5 px: today's run view is ~21.6 yd), its floor / ceiling, room kept ahead of the carrier
+         defFar: 12 * YD, defNear: 6 * YD, defPad: 2 * YD, defMax: 3,   // defenders ask for room: weight 0 at defFar, full at defNear; padding round each; all together widen by at most defMax yd
+         spdYd: 1.5, spdRef: 9 * YD, spdEase: 2,   // + up to spdYd yd at spdRef speed (his real speed, eased at spdEase 1/s)
+         goalYd: 3, hitYd: 1.5, sackZoom: 0.1,   // goal line: yd tighter; a hit: yd tighter (fades over CAM.hitTime); a sack in the pocket: x zoom in
+         pickYd: 3, koYd: 26, koDefMax: 9 },   // pick / scoop return: + yd; kick returns: base yd (koRange / koAhead / koMin kept), defender cap
+  touchYd: 1,   // phones: yards visible x this (the yards targets are for the TOTAL zoom, TOUCH_ZOOM included; < 1 = tighter)
+  flight: { early: 0.25, margin: 3 * YD },   // pass in the air: the centre reaches the landing spot this many s before the ball; margin round ball / target
+  blend: { drop: 0.3, flight: 0.2, run: 0.6, turn: 0.5, other: 0.35 },   // target cross-fade (s) between shots: snap -> pocket, throw, catch -> run, turnover, anything else
+  band: 0.04,   // zoom dead band: the zoom target moves only once the wanted zoom is this share away (never lags a fit shot zooming OUT)
+  dragPan: 0.5,   // pan speed x this while you drag a throw
+};
+const C2 = { sk: null, kind: null, cx: null, cy: null, tx: null, ty: null, zt: null, rat: Infinity, pid: -1, spd: 0, fb: null, fx0: 0, fy0: 0, fz0: 1, bx: 0, by: 0, bz: 1, bt: 0, bT: 0, dbg: null };
+const CB = { x0: 0, x1: 0, y0: 0, y1: 0 };   // must-fit bounds (numbers, no point lists)
+const sstep = u => u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u);
+const cbReset = () => { CB.x0 = CB.y0 = Infinity; CB.x1 = CB.y1 = -Infinity; };
+const cbAdd = (x, y) => { if (x < CB.x0) CB.x0 = x; if (x > CB.x1) CB.x1 = x; if (y < CB.y0) CB.y0 = y; if (y > CB.y1) CB.y1 = y; };
+const cbFitZ = (cx, cy, m, VH) => Math.min(W / 2 / (Math.max(cx - CB.x0, CB.x1 - cx, 0) + m), VH / 2 / (Math.max(cy - CB.y0, CB.y1 - cy, 0) + m));
+// the safe-zone follow: c only moves once anchor a is more than s away; across the soft band the pull grows smoothly, past it c is dragged along
+function cam2Follow(c, a, s, soft, dt) {
+  const off = a - c, e = Math.abs(off) - s;
+  if (e <= 0) return c;
+  let n = c + Math.sign(off) * e * (1 - Math.exp(-dt * CAM2.softRate * Math.min(1, e / soft)));
+  if (Math.abs(a - n) > s + soft) n = a - Math.sign(off) * (s + soft);
+  return n;
+}
+// shift that keeps p within lim of centre c (0 if it already is)
+const cam2Keep = (c, p, lim) => { const o = p - c; return o > lim ? o - lim : o < -lim ? o + lim : 0; };
+// shift that brings the bounds [lo, hi] (+ margin m) inside centre c +- half, while `k` stays at least q inside the edge
+function cam2BringIn(c, lo, hi, half, m, k, q) {
+  let s = 0;
+  if (hi + m > c + half && lo - m >= c - half) s = hi + m - (c + half);
+  else if (lo - m < c - half && hi + m <= c + half) s = lo - m - (c - half);
+  return Math.min(k - c + half - q, Math.max(k - c - half + q, s));
+}
+const cam2Ceil = () => tutZoomFloor() * CAM2.passCeilK * (TOUCH ? TOUCH_ZOOM : 1);   // (the widest passing view, total zoom)
+const cam2YdZ = yd => W / (yd * YL * (TOUCH ? CAM2.touchYd : 1));   // (yards of field visible -> total zoom)
+function cam2BlendT(a, b) {
+  const B = CAM2.blend;
+  if (!a || b === 'pre' || b === 'dead' || a === b) return 0;   // (the whistle / the next snap keep their own easing: CAM.catchUp, CAM.preEase)
+  if (b === 'pick' || b === 'fumble' || b === 'loose') return B.turn;
+  if (b === 'pass' && a === 'pre') return B.drop;
+  if (b === 'flight') return B.flight;
+  if (b === 'run' && a === 'flight') return B.run;
+  return B.other;
+}
+// v2 framing for the live pocket, the pass in the air, runs and returns; false = not one of these (the old framing runs, then cam2Apply)
+function cam2Shot(dt, dn, rn, pickCam) {
+  if (dn || (tut && tut.defOn && !kickoffPlay) || (rec && rec.replaying)) return false;
+  let kind = null, c = null;
+  if (!kickoffPlay && (state === 'drop' || state === 'pocket' || (state === 'run' && screenPasserView()))) kind = 'pass';
+  else if (!kickoffPlay && state === 'flight') kind = 'flight';
+  else if (pickCam) { c = CSC.defHold; kind = c ? 'pick' : null; }
+  else if (state === 'run' && rn) { c = rn; kind = kickoffPlay ? 'ko' : 'run'; }
+  if (!kind) return false;
+  const C = C2, VH = H - TOP_BAR - FIELD_BOT, ek = userZoom * (TOUCH ? TOUCH_ZOOM : 1), R = CAM2.run;
+  const mine = defLive() && ud && !kickoffPlay, kcuIn = (kickoffPlay || state === 'picked') && typeof kcuOn === 'function' && kcuOn() && kcu;
+  const keeper = mine ? ud : kcuIn ? kcu : null;   // (your defender / cover man: always comfortably in frame)
+  if (C.pid !== runPid) { C.pid = runPid; C.rat = Infinity; }   // (a new play: the out-only passing ratchet starts again)
+  const fresh = C.zt == null || camS.x !== camX || camS.y !== camY || camS.z !== zoom;
+  if (C.sk !== kind || fresh) { C.sk = kind; C.cx = fresh || C.tx == null ? camX : C.tx; C.cy = fresh || C.ty == null ? camY : C.ty; }   // (a new shot follows on from where the last one aimed)
+  const Zp = (fresh ? zoom : C.zt) * ek, hw0 = W / 2 / Zp, hh0 = VH / 2 / Zp;
+  let Z, sx = 0, sy = 0, keepA = null, keepB = null, fit = null, safe = null;
+  if (kind === 'pass') {
+    const P = thrower(), sf = CAM2.safe.pass, m = CAM.passMargin;
+    C.cx = cam2Follow(C.cx, P.x + CAM2.passAhead * hw0, sf[0] * hw0, CAM2.soft * hw0, dt);
+    C.cy = cam2Follow(C.cy, P.y, sf[1] * hh0, CAM2.soft * hh0, dt);
+    safe = [C.cx - CAM2.passAhead * hw0, C.cy, sf[0] * hw0, sf[1] * hh0];
+    // must fit: the passer, every eligible receiver, and the reticle while you aim
+    cbReset(); cbAdd(P.x, P.y);
+    const cs = catchers();
+    for (let i = 0; i < cs.length; i++) { const r = cs[i]; if ((tut && tut.bench.includes(r)) || (oo && oo.bench.includes(r))) continue; cbAdd(r.x, r.y); }
+    if (aim && !aiOff()) { const t = throwTarget(); cbAdd(t.x, t.y); }
+    if (mine) { if (ud.man) cbAdd(ud.man.x, ud.man.y); else if (ud.zone) cbAdd(los + (ud.zone.d || 0) * YL, ud.zone.y); }
+    Z = Math.min(CAM2.passMaxZ, cbFitZ(C.cx, C.cy, m, VH));
+    if (keeper) { const lim = 1 - 2 * CAM2.edge; Z = Math.min(Z, W / 2 * lim / Math.max(1, Math.abs(keeper.x - C.cx)), VH / 2 * lim / Math.max(1, Math.abs(keeper.y - C.cy))); }
+    Z = Math.min(Z, C.rat); C.rat = Z;   // (out only during the dropback: nothing shifts under a throw drag)
+    Z = Math.max(Z, cam2Ceil(), camBowlZ(C.cx, C.cy));
+    if (SETTINGS.camZoom === false) Z = tutZoomFloor() * ek;
+    // a receiver still off screen at the ceiling: shift just enough to bring him in, the QB staying inside (he wins)
+    const hw = W / 2 / Z, hh = VH / 2 / Z;
+    sx = cam2BringIn(C.cx, CB.x0, CB.x1, hw, m, P.x, CAM2.qbKeep); sy = cam2BringIn(C.cy, CB.y0, CB.y1, hh, m, P.y, CAM2.qbKeep);
+    // the sack punch (a short zoom-in, never stored in the ratchet)
+    if (impacts.length && !mine) { const im = impacts[impacts.length - 1], f = Math.max(0, 1 - im.t / CAM.hitTime); if (dist(im, qb) < 4 * YD) Z *= 1 + R.sackZoom * f; }
+    keepA = P; fit = [CB.x0, CB.y0, CB.x1, CB.y1];
+  } else if (kind === 'flight') {
+    if (C.fb !== ball) { C.fb = ball; C.fx0 = C.cx; C.fy0 = C.cy; C.fz0 = Zp; }   // (each throw: glide from where the pocket shot aimed)
+    const T = ball.T > 0 ? ball.T : 0.5, p = Math.max(0, Math.min(1, ball.p || 0)), e = sstep(p * T / Math.max(0.05, T - CAM2.flight.early));
+    C.cx = C.fx0 + (ball.tx - C.fx0) * e; C.cy = C.fy0 + (ball.ty - C.fy0) * e;
+    const Zr = cam2YdZ(R.yd);
+    Z = C.fz0 * Math.pow(Zr / C.fz0, sstep(p));   // (pocket zoom -> run zoom as the ball comes down)
+    cbReset(); cbAdd(ball.x, ball.y - (ball.z || 0)); cbAdd(ball.x, ball.y); if (tgt) cbAdd(tgt.x, tgt.y);
+    Z = Math.min(Z, cbFitZ(C.cx, C.cy, CAM2.flight.margin, VH));   // (out only if the ball or the target would leave the screen)
+    if (keeper) { const lim = 1 - 2 * CAM2.edge; Z = Math.min(Z, Math.max(cam2Ceil(), Math.min(W / 2 * lim / Math.max(1, Math.abs(keeper.x - C.cx)), VH / 2 * lim / Math.max(1, Math.abs(keeper.y - C.cy))))); }
+    Z = Math.max(Z, cam2Ceil(), camBowlZ(C.cx, C.cy));
+    if (SETTINGS.camZoom === false) Z = tutZoomFloor() * ek;
+    const hw = W / 2 / Z, hh = VH / 2 / Z;
+    sx = cam2BringIn(C.cx, CB.x0, CB.x1, hw, CAM2.flight.margin, ball.x, CAM2.qbKeep); sy = cam2BringIn(C.cy, CB.y0, CB.y1, hh, CAM2.flight.margin, ball.y - (ball.z || 0), CAM2.qbKeep);
+    keepA = ball; keepB = tgt; fit = [CB.x0, CB.y0, CB.x1, CB.y1];
+  } else {   // run / pick or scoop return / kick return: tight on the carrier, room ahead
+    const dir = kind === 'pick' ? -1 : 1, ko = kind === 'ko', sf = CAM2.safe.run;
+    const ax = c.x + dir * (ko ? CAM.koAhead / 2 : R.ahead) + (ko ? 0 : camLeadX), ay = c.y + (ko ? 0 : camLeadY);
+    C.cx = cam2Follow(C.cx, ax, sf[0] * hw0, CAM2.soft * hw0, dt);
+    C.cy = cam2Follow(C.cy, ay, sf[1] * hh0, CAM2.soft * hh0, dt);
+    safe = [C.cx, C.cy, sf[0] * hw0, sf[1] * hh0];
+    const base = ko ? R.koYd : kind === 'pick' ? R.yd + R.pickYd : R.yd, far = ko ? CAM.koRange : R.defFar, near = ko ? CAM.koRange / 2 : R.defNear;
+    let extra = 0;
+    const L = allPlayers();
+    for (let i = 0; i < L.length; i++) {   // (defenders fade in: no hard in / out range, so nobody pops the zoom)
+      const p = L[i]; if (p === c || p.team === c.team) continue;
+      const d = Math.hypot(p.x - c.x, p.y - c.y); if (d >= far) continue;
+      let w = sstep((far - d) / (far - near)); if (ko) w *= sstep((p.x - (c.x - 3 * YD)) / (2 * YD));
+      if (w <= 0) continue;
+      const need = Math.max(2 * (Math.abs(p.x - C.cx) + R.defPad), 2 * (Math.abs(p.y - C.cy) + R.defPad) * W / VH) / YL;
+      extra = Math.max(extra, w * Math.max(0, need - base));
+    }
+    extra = Math.min(extra, ko ? R.koDefMax : R.defMax);
+    C.spd += (Math.hypot(c.vx || 0, c.vy || 0) - C.spd) * (1 - Math.exp(-dt * R.spdEase));
+    extra += R.spdYd * Math.min(1, C.spd / R.spdRef);   // (his real speed: no more pumping with the sprint key)
+    if (kind === 'run' && !mine && (patMode === 'two' || los > FIELD - 12 * YL || c.x > FIELD - 6 * YL)) extra -= R.goalYd;
+    if (!ko && !mine && impacts.length) { const im = impacts[impacts.length - 1]; extra -= R.hitYd * Math.max(0, 1 - im.t / CAM.hitTime); }
+    const maxYd = ko ? W / (CAM.koMin * YL) : R.max;
+    Z = cam2YdZ(Math.max(R.min, Math.min(maxYd, base + extra)));
+    if (keeper) { const lim = 1 - 2 * CAM2.edge; Z = Math.min(Z, Math.max(cam2YdZ(maxYd), Math.min(W / 2 * lim / Math.max(1, Math.abs(keeper.x - C.cx)), VH / 2 * lim / Math.max(1, Math.abs(keeper.y - C.cy))))); }
+    if (SETTINGS.camZoom === false) Z = tutZoomFloor() * ek;
+    Z = Math.max(Z, camBowlZ(C.cx, C.cy));
+    keepA = c;
+  }
+  // your defender / cover man: zoomed out for above (up to the ceiling), the rest is a shift
+  if (keeper) { const lim = 1 - 2 * CAM2.edge; sx += cam2Keep(C.cx + sx, keeper.x, W / 2 / Z * lim); sy += cam2Keep(C.cy + sy, keeper.y, VH / 2 / Z * lim); }
+  camS.pre = 99; camS.st = state;
+  const tc = TOUCH ? CAM.touch : 1, slowKO = kickoffPlay && state === 'run' && clock - runStart < CAM.koSettle;
+  cam2Apply(dt, C.cx + sx, C.cy + sy, Z / ek, CAM.smooth * tc * (slowKO ? CAM.koPan : CAM.pan), CAM.smooth * tc * (slowKO ? CAM.koZoom : CAM.zoomEase), CAM.maxPan * tc, kind,
+    { a: keepA, b: keepB, k: keeper, fit, safe, fitShot: kind === 'pass' || kind === 'flight' });
+  return true;
+}
+// the v2 smoothing for every live shot: timed target blend between shots, zoom dead band, the spring, then pan tied to zoom (the subject never leaves the frame)
+function cam2Apply(dt, cx, cy, want, wp, wz, capV, kind, info) {
+  if (!(zoom > 0 && isFinite(zoom))) { zoom = want > 0 && isFinite(want) ? want : 0.5; camS.z = null; }   // (never stuck on a broken zoom)
+  if (!isFinite(camX) || !isFinite(camY)) { camX = isFinite(cx) ? cx : 0; camY = isFinite(cy) ? cy : MID; camS.x = null; }
+  const C = C2, fresh = C.zt == null || camS.x !== camX || camS.y !== camY || camS.z !== zoom;
+  passPull = 1;
+  if (!info) C.sk = null;
+  if (fresh) { C.kind = kind; C.bT = 0; C.zt = want; C.tx = cx; C.ty = cy; camS.vx = camS.vy = camS.vz = 0; }   // (a replay / a new game placed the camera itself: from rest)
+  if (kind !== C.kind) { const T = cam2BlendT(C.kind, kind); C.kind = kind; if (T > 0) { C.bx = C.tx; C.by = C.ty; C.bz = C.zt; C.bt = 0; C.bT = T; } else C.bT = 0; }
+  let tx = cx, ty = cy, tz = want;
+  if (C.bT > 0) {   // cross-fade the TARGET from the old shot to the new one (the spring then follows it)
+    C.bt += dt; const e = sstep(C.bt / C.bT);
+    tx = C.bx + (cx - C.bx) * e; ty = C.by + (cy - C.by) * e; tz = C.bz > 0 && want > 0 ? C.bz * Math.pow(want / C.bz, e) : want;
+    if (C.bt >= C.bT) C.bT = 0;
+  }
+  if (kind === 'dead' || SETTINGS.camZoom === false || C.bT > 0) C.zt = tz;
+  else { const b = 1 + CAM2.band; if (tz > C.zt * b) C.zt = tz / b; else if (tz < C.zt / b) C.zt = tz * b; if (info && info.fitShot && C.zt > tz) C.zt = tz; }   // (dead band: a small change in the must-fit set never makes the view breathe)
+  C.tx = tx; C.ty = ty;
+  const wpE = aim && !aiOff() && kind === 'pass' ? wp * CAM2.dragPan : wp;   // (a throw drag: the pan slows, the zoom is out-only)
+  [camX, camS.vx] = camSpring(camX, tx, camS.vx, wpE, dt, capV);
+  [camY, camS.vy] = camSpring(camY, ty, camS.vy, wpE, dt, capV);
+  [zoom, camS.vz] = camSpring(zoom, C.zt, camS.vz, wz, dt, zoom > 0.2 && isFinite(zoom) ? CAM.zoomMax * zoom * (TOUCH ? CAM.touch : 1) : Infinity);
+  if (info) {   // pan tied to zoom: the subject (and your defender) can never leave the frame while the zoom is still easing
+    const Zn = camZ(), lx = W / 2 / Zn * (1 - 2 * CAM2.tieEdge), ly = (H - TOP_BAR - FIELD_BOT) / 2 / Zn * (1 - 2 * CAM2.tieEdge);
+    if (info.k) { camX += cam2Keep(camX, info.k.x, lx); camY += cam2Keep(camY, info.k.y, ly); }
+    if (info.b) { camX += cam2Keep(camX, info.b.x, lx); camY += cam2Keep(camY, info.b.y, ly); }
+    if (info.a) { camX += cam2Keep(camX, info.a.x, lx); camY += cam2Keep(camY, info.a.y, ly); }   // (the subject last: he wins)
+  }
+  camS.x = camX; camS.y = camY; camS.z = zoom;
+  if (CAM.debug) C.dbg = { kind, tx, ty, want: tz, zt: C.zt, fit: info && info.fit, safe: info && info.safe, k: info && info.k };
+}
+// CAM.debug: screen-space overlay (drawn at the end of draw())
+function camDebugDraw() {
+  const D = C2.dbg; if (!D) return;
+  const z = camZ(), vc = viewCenterY(), ek = userZoom * (TOUCH ? TOUCH_ZOOM : 1), X = x => W / 2 + MIRROR * (x - camX) * z, Y = y => vc + (y - camY) * z;
+  const box = (x0, y0, x1, y1, col, dash) => { ctx.strokeStyle = col; ctx.setLineDash(dash || []); const a = X(x0), b = X(x1); ctx.strokeRect(Math.min(a, b), Y(y0), Math.abs(b - a), Y(y1) - Y(y0)); };
+  ctx.save(); ctx.lineWidth = 2;
+  if (D.safe) box(D.safe[0] - D.safe[2], D.safe[1] - D.safe[3], D.safe[0] + D.safe[2], D.safe[1] + D.safe[3], '#3cff6a', [8, 6]);
+  if (D.fit) box(D.fit[0], D.fit[1], D.fit[2], D.fit[3], '#ffa53c');
+  if (D.k) { const e = CAM2.edge, VH = H - TOP_BAR - FIELD_BOT; ctx.strokeStyle = '#ff5ad2'; ctx.setLineDash([4, 4]); ctx.strokeRect(W * e, TOP_BAR + VH * e, W * (1 - 2 * e), VH * (1 - 2 * e)); }
+  ctx.setLineDash([]);
+  const cross = (x, y, col) => { ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(x - 10, y); ctx.lineTo(x + 10, y); ctx.moveTo(x, y - 10); ctx.lineTo(x, y + 10); ctx.stroke(); };
+  cross(X(D.tx), Y(D.ty), '#3cd2ff'); cross(W / 2, vc, '#ffffff');
+  ctx.fillStyle = '#000a'; ctx.fillRect(10, TOP_BAR + 8, 330, 24);
+  ctx.fillStyle = '#fff'; ctx.font = '16px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(`${D.kind}  want ${(D.want * ek).toFixed(3)}  real ${z.toFixed(3)}`, 16, TOP_BAR + 20);
+  ctx.restore();
 }
 // the QB is up near the line and heading for it, a runner by his rating: the defense reads run before he crosses
 function qbLooksRun() {

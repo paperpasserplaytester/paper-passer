@@ -80,12 +80,20 @@ function throwFaceFor(p, tx) {
 }
 let throwQueuedAim = null;
 let throwQueued = false;   // a throw released before the snap reached the QB: it goes the moment he has the ball (the snap always takes SNAP_FLY)
+// a man who stops carrying (throws, is picked off, fumbles) drops his stiff arm: drawPlayer drew one as long as p.stiff stayed set
+function stiffClear(p) {
+  if (!p) return;
+  if (p.stiffLock) { const d = p.stiffLock.d; if (d) { d.stiffBy = null; d.engaged = false; d.reach = false; } p.stiffLock = null; }
+  p.stiff = p.stiffTgt = null; p.stiffSet = false;
+}
+function stiffClearOff() { for (const p of allPlayers()) if (p.team === 'off' && (p.stiff || p.stiffLock)) stiffClear(p); }
 function throwBall() {
   if (oo && oo.cfg && oo.cfg.kind === 'rb') return;   // (1v1 RB vs LB: no passing)
   if (state === 'drop' && snapFly && clock < snapFly.dur && thrower() === qb && aim) { throwQueued = true; throwQueuedAim = aim; return; }   // (never an instant snap: the ball isn't in his hands yet)
   throwQueued = false;
   const t = throwTarget(), bullet = bulletMode, P = thrower(), trick = P !== qb;
   aim = null; ball.forced = false;   // (the computer's QB sets this after a forced throw)
+  stiffClear(P);
   if (t.dist < 3 * YD || P.action) return;
   hsEv('throw', P);   // (the release: a long completion's highlight starts here)
   if (tut) tut.bullet = bulletMode;
@@ -279,6 +287,7 @@ let snapFly = null;      // { dur } while the ball is on its way from the center
 let playWho = '';        //"Caught by X (from Y)" / "X ran the ball" for the line under the scoreboard
 let stopClock = false;   // set by incomplete(): no runoff after this play
 function endPlay(text, next, kind) {
+  perfNote('endPlay');   // (FRAME TIMES spike tag)
   playEndedAt = performance.now();
   const clutch = kind === 'fg' && bigKick();   // (a late kick that ties or wins it: asked before the points go up; the kicker's celebration)
   const wasKickoff = kickoffPlay || puntRet || puntRetPlay;   // (kick and punt returns aren't rushes)
@@ -436,6 +445,7 @@ function endPlay(text, next, kind) {
     tutAfterPlay(); }
 }
 function touchdown() {
+  perfNote('touchdown');   // (FRAME TIMES spike tag)
   try { showTd(); } catch (e) {}   // (v0.51: showing off into the end zone: a bigger celebration)
   const twoPt = patMode === 'two';   // (endPlay clears patMode)
   const tdYds = Math.max(1, Math.round((FIELD - los) / YL));   // how long the touchdown was
@@ -529,7 +539,8 @@ function settle(p, dt) {
   p.vx *= f; p.vy *= f;
   if (p.svx) { p.svx *= f; p.svy *= f; }
   p.x += p.vx * dt; p.y += p.vy * dt;
-  p.moving = Math.hypot(p.vx, p.vy) > 0.8 * YD;
+  const spr = celebSpread(p, dt);   // (v0.59: men not celebrating drift apart, out of the cast's space: 07-drawing)
+  p.moving = Math.hypot(p.vx, p.vy) > 0.8 * YD || spr > CELEB_SPREAD.moveAt;
   p.reach = p.engaged = false;
 }
 
@@ -884,7 +895,11 @@ function airTuckK(p, c = clock) {
 }
 const oneBringK = p => p.act ? smooth01((p.act.t - (p.oneAt || 0) - ONE_BRING_WAIT) / ONE_BRING) : 1;
 function popLoose(by, text, up, spread) {
-  if (tut && by && by === ud && aiOff() && /Tipped|Batted|pick/.test(text) && state === 'flight') return intercept(by, by.action === 'dive');   // (tutorial: your defender's hands on it = a pick, never a tip)
+  if (tut && by && by === ud && aiOff() && /Tipped|Batted|pick/.test(text) && state === 'flight') {   // (tutorial: your defender's hands on it = a pick, never a tip; carried into his hands like any won pick)
+    const j = by.userJump;
+    if (j && !j.lost && ball.p < 1 && (by.action === 'jump' || by.action === 'dive')) { if (!j.won) j.won = { perf: false, v: 0 }; j.done = false; by.diveTip = false; return; }
+    return intercept(by, by.action === 'dive');
+  }
   const a =Math.random() * Math.PI * 2, s = spread * (0.4 + Math.random() * 0.6);
   ball.inAir = false;
   ball.loose = ball.live = true;
@@ -1044,7 +1059,8 @@ function contestPick(d) {
 // your players are within openRange of him, and then only returnChance of the time (he thinks he can beat 25 yards)
 const INT_TB = { yard: 25, openRange: 9 * YD, maxNear: 1, returnChance: 0.5 };
 const BLIND_PICK = { near: 0.55, chance: 0.7 };   // a leaping defender who never saw it: a ball within near x PICK_HANDS.reach of him (both hands) is still picked this often
-const PICK_HANDS = { stand: 36 * S, air: 22 * S, reach: 1.6 };   // the highest a defender's hands get: standing (arms up) / above his feet at the top of a leap; a ball above that can't be picked; reach = yd (along the ground) his hands get to: further off it isn't a pick
+const PICK_HANDS = { stand: 36 * S, air: 22 * S, reach: 1.6, dive: 1.3 };   // (dive = yd from a diver's drawn hands (pickHands) to the ball: further off, a diving pick is refused)
+// the highest a defender's hands get: standing (arms up) / above his feet at the top of a leap; a ball above that can't be picked; reach = yd (along the ground) his hands get to: further off it isn't a pick
 const RET_DIR_KEYS = ['KeyW', 'ArrowUp', 'KeyS', 'ArrowDown', 'KeyA', 'ArrowLeft', 'KeyD', 'ArrowRight'];
 function intercept(d, diving = false) {
   if (ball.pitch || state === 'run' || state === 'fumble') return;   // (a pitch, handoff or run is never picked off)
@@ -1060,6 +1076,7 @@ function intercept(d, diving = false) {
   if (!(udCtl(d) && d.userJump && (d.userJump.q >= DEF.jump.perfect || tut)) && contestPick(d)) return;   // the receiver made a play on it: no pick (unless you timed the jump perfectly)
   // a pick only counts once the ball is in his hands: out past his reach it isn't his; already being hit by the offense before it gets there = broken up
   if (!diving && (ball.inAir || state === 'flight') && Math.hypot(ball.x - d.x, ball.y - d.y) > PICK_HANDS.reach * YD) return;
+  if (diving) { const h = pickHands(d); if (Math.hypot(ball.x - h.x, ball.y - h.y) > PICK_HANDS.dive * YD) return; }   // (a diving pick too: only where his outstretched hands are)
   if ((ball.inAir || state === 'flight') && [qb, rb, ...recs].some(o => o && o.tackling && !o.resolved && dist(o, d) <= CONTACT)) return breakUp(d);
   if (clock - (d.highTipT ?? -9) < 0.4) return;   // (just tipped it at the top of his leap: it's gone off his fingertips)
   // a ball at the very top of his leap: often only his fingertips get there (a tip), or he snags it with one hand
@@ -1086,7 +1103,7 @@ function intercept(d, diving = false) {
   popup(d, one ? 'ONE-HANDED PICK' : CATCH_TEXT[pst] ? PICK_LOOK.spec : diving ? 'DIVING PICK' : 'PICKED', '#ff6b6b', undefined, !one && !CATCH_TEXT[pst] && !diving, false,
         { k: 'shield', c: 'side', rank: one || diving || CATCH_TEXT[pst] ? ICON.rank.iconic : 0 });   // (always the side's color; the spectacular ones add the sparkle)
   ball.inAir = ball.loose = ball.live = false;
-  state = 'picked';
+  state = 'picked'; stiffClearOff();   // (no offense man keeps a stiff arm up into the return)
   d.laneA = 0; d.retKeys0 = RET_DIR_KEYS.map(k => dkeys[k] ? 1 : 0).join('');   // (a pick return starts upfield toward the goal; the direction keys already held when he caught it (chasing the ball) don't steer him until you press something new)
   for (const p of allPlayers()) if (!p.hasBall) { p.reach = false; p.tipArms = false; p.tipK = 0; p.overShoulder = false; p.catchMode = null; p.noReachUntil = clock + HANDS_DOWN; }   // (the pass is dead: the beaten receiver's hands come down, not frozen up through the return)
   if (defLive() && !tut && d.team === 'def') { pickUd(d); if (udFlight) udFlight.manual = true; }
@@ -1236,7 +1253,7 @@ function wrapTackle(c, d) {
     c.act = { t: 0, fall: true, back: false, side: 0, fallTime: 0.42, twist: 0, gator: true,   // (he rolls over with the tackler: same roll, same clock)
               vx: nx * 0.5, vy: ny * 0.4 + dir * GATOR.roll * 0.8, slide: GATOR.time, angle: Math.atan2(ny, nx || c.face) };
     const ol = Math.hypot(ox, oy) || 1;
-    d.action = 'wrap';
+    d.action = 'wrap'; d.engaged = false; d.reach = false; d.lockedTo = null;
     // (clamped onto his legs and rolling with him, on the side he really hit him from, chest to the runner: no turning round or jumping
     //  to the other side of him; rx / ry = where he is now, eased onto ox / oy in updateAction)
     const side = Math.sign(d.x - c.x) || -c.face;
@@ -1260,7 +1277,7 @@ function wrapTackle(c, d) {
     d.tackling = false;
   } else if (d) {
     const ol = Math.hypot(ox, oy) || 1;
-    d.action = 'wrap';
+    d.action = 'wrap'; d.engaged = false; d.reach = false; d.lockedTo = null;
     d.face = launchFace || (c.x >= d.x ? 1 : -1);
     // they go down together the same way, so both helmets end up on the same side: the tackler falls the
     // way the runner's head goes (forward if he faces that way, over backwards underneath him if not),
@@ -1437,7 +1454,7 @@ function bigHitLaunch(c, d) {
 }
 
 function fumble(c, big, called) {   // called = already announced (STRIPPED / STRIP SACK): no FUMBLE callout on top
-  c.hasBall = false;
+  c.hasBall = false; stiffClear(c);
   pstFumble(c);
   { const fd = allPlayers().filter(o => o.team !== c.team && dist(o, c) < 2.5 * YD).sort((a, b) => dist(a, c) - dist(b, c))[0];
     celebNote('fum', fd); xfEvent(c.src, 'fumT'); if (fd) xfEvent(fd.src, 'forcedFum'); }   // (who knocked it out: the nearest opponent on him; star factor counts)   // (who knocked it out: the nearest opponent on him)

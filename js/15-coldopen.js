@@ -10,6 +10,8 @@
 // --- cold open: tunables
 const COLD = {
   key: 'pocketPasser.coldDone',          // set when the cold open ends or is skipped
+  room: { laugh: 0.55, tap: 0.55, tick: 0.55 },   // the classroom's cues, x their game level (the cold open only; the bed itself = COLD_SND.classroom's gain)
+  tipTouch: { spin: -190, bullet: -200 }, // phones: the SPIN / BULLET tips' x from the QB (negative = the other side from the laptop tips, away from the throwing thumb)
   under: { you: 'BUF', opp: 'MIA' },     // the real rosters underneath (bodies only: no names, logos or colours of theirs are ever shown)
   gate: { size: 64, up: 70, hand: 40, handK: 1.6, beat: 1.1 },   // the gate's text size / lift, the hand's drop below the middle, its scale, s per tap
   skip: { ms: 1000, w: 150, h: 86, r: 15, touchK: 2, still: 10 },   // hold-to-skip: hold time, the zone (bottom right), the ring's radius; on touch the tip + ring x touchK and a finger held still (moved under still px) anywhere skips too
@@ -168,7 +170,7 @@ function coldNext() {   // on to the next scene
 function coldSnd(k, v = 1, o = {}) {   // a cue, remembered so the skip can fade it
   const c = COLD_SND[k]; if (!c) return;
   CO.snd.add(c[0] + (o.tag ? '#' + o.tag : ''));
-  return sndRec(k, v, o);
+  return sndRec(k, v * (COLD.room[k.replace(/\d$/, '')] ?? 1), o);
 }
 // the classroom's own bed (one element, played once, eased in / out; null = none)
 function coldAmb(k, vol = 1) {
@@ -1209,8 +1211,8 @@ function coldPlayDraw() {
       if (Q.auto == null) coldLabel(!far ? 'PULL BACK FARTHER' : ready ? (TOUCH ? 'LIFT TO THROW' : 'LET GO TO THROW') : P.throw.windows.length > 1 ? 'AIM AT A RECEIVER' : 'AIM AT THE RECEIVER', qs.x, cClamp(qs.y + 130, 60, H - 130), 1, TOUCH ? null : true);
       return;
     }
-  } else if (Q.name === 'spin') { tg = TOUCH ? { x: cClamp(qs.x + 190, 150, W - 150), y: cClamp(qs.y - 10, 170, H - 240) } : { x: cClamp(qs.x + 230, 150, W - 150), y: cClamp(qs.y + 10, 150, H - 240) }; }
-  else if (Q.name === 'bullet') { tg = { x: cClamp(qs.x + (TOUCH ? 200 : 250), 170, W - 170), y: cClamp(qs.y - 10, 150, H - 240) }; }
+  } else if (Q.name === 'spin') { tg = TOUCH ? { x: cClamp(qs.x + COLD.tipTouch.spin, 150, W - 150), y: cClamp(qs.y - 10, 170, H - 240) } : { x: cClamp(qs.x + 230, 150, W - 150), y: cClamp(qs.y + 10, 150, H - 240) }; }
+  else if (Q.name === 'bullet') { tg = { x: cClamp(qs.x + (TOUCH ? COLD.tipTouch.bullet : 250), 170, W - 170), y: cClamp(qs.y - 10, 150, H - 240) }; }
   else if (Q.name === 'roll') { tg = TOUCH ? { x: 170, y: H - 190 } : { x: cClamp(qs.x + 250, 150, W - 150), y: cClamp(qs.y + 30, 150, H - 240) }; o.dir = [1, -1]; }
   else if (Q.name === 'catch') { const rs = coldScreen(L.rec.x, L.rec.y, 20 * S); tg = TOUCH ? { x: cClamp(rs.x + 150, 90, W - 90), y: cClamp(rs.y, 150, H - 180) } : { x: cClamp(rs.x + 210, 150, W - 150), y: cClamp(rs.y + 30, 150, H - 240) }; }
   if (Q.auto != null) {   // R3: a pencil tip draws the action itself
@@ -2126,7 +2128,7 @@ function coldPeel(R, u) {
       if (s >= T.st) coldStampDraw(s - T.st);
       ctx.restore();
       if (s < T.peel) coldPeel(I.rip, s / C.peel);
-      else { if (I.rip.c) { freeCanvas(I.rip.c); I.rip.c = null; } if (!I.tick) { I.tick = true; try { sndRec('tick', 0.7); } catch (e) {} } }
+      else { if (I.rip.c) { freeCanvas(I.rip.c); I.rip.c = null; } if (!I.tick) { I.tick = true; try { sndRec('tick', 0.7 * COLD.room.tick); } catch (e) {} } }
       return;
     }
     d();

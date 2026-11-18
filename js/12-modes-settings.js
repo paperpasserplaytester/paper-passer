@@ -235,7 +235,7 @@ function animEntries(cat) {
     B.x = 1e6; A.hasBall = true; ball.tucked = true;   // (B: off the stage)
     if (mv.dx) A.x = -mv.dx(mv.secs, { dist: 1 }) * YD / 2;
     const mates = far.slice(0, n - 1).map(([x, y]) => Object.assign({}, A, { x: x * YD, y: y * YD, face: x > 0 ? -1 : 1, hasBall: false, big: mv.mate === 'ol', cel: null }));   // (his teammates start a few yards off)
-    const c = celebMake(id, A, mates, { t0: clock + 0.5, keep: true, env: { away: 1, goalX: A.x + 1.5 * YD, postX: A.x + 2.2 * YD, mid: A.y, yLo: -1e9, yHi: 1e9 } });
+    const c = celebMake(id, A, mates, { t0: clock + 0.5, keep: true, sv: CELEB.forceView === 'side' ? 1 : 0, env: { away: 1, goalX: A.x + 1.5 * YD, postX: A.x + 2.2 * YD, mid: A.y, yLo: -1e9, yHi: 1e9 } });
     Object.assign(c.cels[0], { aim: 0.2, dist: 1 }); c.cast.forEach((p, k) => { p.cel = c.cels[k]; });
     const mvv = c.mv;   // (the move as played: a seeded move's own version)
     anim.more = mates; anim.zoomK = mv.gen && n > 2 ? 0.42 : n > 2 ? 0.6 : n > 1 || mv.marks ? 0.82 : 1; anim.len = mvv.secs + 1.6;
@@ -637,7 +637,7 @@ function startTest(id) {
   if (id === 'kr') { game.kickPending = 'BLUE'; reset(); }
   else if (id === 'ko') { game.kickPending = 'RED'; reset(); }
   else if (id === 'onside') { game.kickPending = 'RED'; reset(); if (kick && kick.userKo) { kick = null; kickoff = null; flipSides(); if (twoP && twoP.koOnly) twoP = null; reset(); startKickoffKick([]); kick.onside = true; kickoffLineup(kick); } else if (kick && kick.kickoff && kick.cover) { kick.onside = true; kickoffLineup(kick); } }   // (the mirrored kickoff: same switch as the ONSIDE KICK button)
-  else if (id === 'punt') { spot(35, 4, 8); reset(); startPunt(); }
+  else if (id === 'punt') { spot(35, 4, 8); reset(); startMyPunt(); }   // (v0.59: the real punt (mirrored onto the computer's code), not the old startPunt)
   else if (id === 'pr') {   // their punt from their own 35 comes down at their 20 (a live return)
     nextLos = 25 * YL; nextDown = 1; nextLtg = 35 * YL; reset();
     showBanner('PUNT RETURN', '#ffffff', '#1b2a3a', teamName('BLUE'));
@@ -760,11 +760,12 @@ const CELT_B = (() => {
   return { tag: b(X, CELT.y, 250), rows: Array.from({ length: CELT.rows }, (_, i) => ({ x: X, y: CELT.y + 30 + i * CELT.rowH, w: 250, h: CELT.rowH - 2 })),
     prev: b(X, y1, 122), next: b(X + 128, y1, 122), force: b(X, y1 + 30, 122), play: b(X + 128, y1 + 30, 122),
     spd: b(X, y1 + 60, 80), loop: b(X + 85, y1 + 60, 80), mir: b(X + 170, y1 + 60, 80),
-    lock: b(X, y1 + 90, 122), zoom: b(X + 128, y1 + 90, 122), big: b(X, y1 + 120, 122), cast: b(X + 128, y1 + 120, 122), hype: b(X, y1 + 150, 250), ev: b(X, y1 + 180, 250) };
+    lock: b(X, y1 + 90, 122), zoom: b(X + 128, y1 + 90, 122), big: b(X, y1 + 120, 122), cast: b(X + 128, y1 + 120, 122), hype: b(X, y1 + 150, 250), ev: b(X, y1 + 180, 250), view: b(X, y1 + 210, 250) };
 })();
-const CELT_BOT = CELT_B.ev.y + 26 + 92;   // (the readout's four lines end here)
-const celTNew = () => ({ ev: 0, tag: 0, page: 0, id: 'spike', spd: 0, loop: false, mir: false, lock: true, zoom: 0, big: false, cast: 0, hy: 0.5, force: false, wait: null, played: false, uz0: userZoom });
-function celTOff() { if (!celT) return; userZoom = celT.uz0; celT = null; CELEB.force = CELEB.forceHype = CELEB.forceHome = null; }
+const CELT_VIEWS = [null, 'front', 'side'];   // VIEW: AUTO (rolled) / FRONT / SIDE -> CELEB.forceView
+const CELT_BOT = CELT_B.view.y + 26 + 92;   // (the readout's four lines end here)
+const celTNew = () => ({ ev: 0, tag: 0, page: 0, id: 'spike', spd: 0, loop: false, mir: false, lock: true, zoom: 0, big: false, cast: 0, hy: 0.5, view: 0, force: false, wait: null, played: false, uz0: userZoom });
+function celTOff() { if (!celT) return; userZoom = celT.uz0; celT = null; CELEB.force = CELEB.forceHype = CELEB.forceHome = CELEB.forceView = null; }
 // v0.51: a move that needs a place is staged there (the wall, a cameraman, the mascot, his bench) and HOME / AWAY is forced to what it needs (CELEB.forceHome)
 function celTStage(mv, h) {
   const nd = [].concat(mv.needs || []);
@@ -778,7 +779,7 @@ function celTStage(mv, h) {
   else if (nd.includes('bench')) { const b = celebBenchAt(h); if (b) { h.x = b.x + 4 * YD; h.y = b.s ? Y_MAX - 3 * YD : Y_MIN + 3 * YD; } }
 }
 const celTSpeed = () => celT && state === 'done' && !(rec && rec.replaying) ? CELT.speeds[celT.spd] : 1;
-const celTSync = () => { CELEB.force = celT.force ? celT.id : null; CELEB.forceHype = celT.force ? celT.hy : null; };
+const celTSync = () => { CELEB.force = celT.force ? celT.id : null; CELEB.forceHype = celT.force ? celT.hy : null; CELEB.forceView = CELT_VIEWS[celT.view || 0]; };
 function celTIs(id, f) {
   const m = CELEB_MOVES[id], tg = [].concat(m.tag), n = celebCastN(m).pop(), rx = tg.includes('R');
   return f === 'ALL' || (f === 'SOLO' && n === 1 && !rx) || (f === 'DUO' && n === 2) || (f === 'GROUP' && n > 2) || (f === 'DUNK' && m.needs === 'post') || (f === 'DANCE' && tg.includes('dance')) ||
@@ -855,6 +856,7 @@ function drawCelT() {
   menuBtn(B.lock, `CAM LOCK: ${T.lock ? 'ON' : 'OFF'}`, T.lock ? G : N, 11); menuBtn(B.zoom, `ZOOM: ${CELT.zooms[T.zoom]}x`, N, 12);
   menuBtn(B.big, `S-TIER: ${T.big ? 'ON' : 'AUTO'}`, T.big ? G : N, 11); menuBtn(B.cast, `CAST: ${celTCast(mv)}`, N, 12);
   menuBtn(B.ev, `< EVENT: ${CELT_EVS[T.ev] === 'test' ? 'THIS MOVE' : CELT_EVS[T.ev].toUpperCase() + ' (ITS POOL)'} >`, T.ev ? G : N, 12);
+  menuBtn(B.view, `< VIEW: ${['AUTO', 'FRONT', 'SIDE'][T.view || 0]} >`, T.view ? G : N, 12);
   menuBtn(B.hype, '', N, 12, q => {   // the hype slider
     ctx.fillStyle = q.ink; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillText(`HYPE ${T.hy.toFixed(2)}`, q.x + 8, q.y + q.h / 2 + 1);
@@ -863,7 +865,7 @@ function drawCelT() {
     ctx.beginPath(); ctx.arc(bx + bw * T.hy, cy, 7, 0, Math.PI * 2); ctx.fillStyle = G; ctx.fill(); ctx.strokeStyle = q.ink; ctx.lineWidth = 2; ctx.stroke();
   });
   // the readout: the move, the phase it is in, the sound firing, and what it needs that PLAY NOW will fill in (red)
-  const cn = celebCastN(mv), unmet = celTUnmet(mv), y0 = B.ev.y + 26 + 16, sfxOn = performance.now() - celebDbg.at < 600;
+  const cn = celebCastN(mv), unmet = celTUnmet(mv), y0 = B.view.y + 26 + 16, sfxOn = performance.now() - celebDbg.at < 600;
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = 'bold 12px monospace'; ctx.shadowColor = '#000'; ctx.shadowBlur = 3;
   ctx.fillStyle = '#fff';
   ctx.fillText(`${T.id}  [${[].concat(mv.tag).join(' ')}]  cast ${cn.join('-')}  ${mv.secs}s`, CELT.x, y0, CELT.w);
@@ -890,6 +892,7 @@ function celTClick(p) {
   else if (inBtn(p, B.big)) T.big = !T.big;
   else if (inBtn(p, B.cast)) { const cn = celebCastN(mv), n = celTCast(mv); T.cast = n >= cn[cn.length - 1] ? cn[0] : n + 1; }
   else if (inBtn(p, B.ev)) T.ev = cyc(T.ev, CELT_EVS.length, dir(B.ev));
+  else if (inBtn(p, B.view)) T.view = cyc(T.view || 0, CELT_VIEWS.length, dir(B.view));
   else if (inBtn(p, B.hype)) T.hy = Math.round(Math.max(0, Math.min(1, (p.x - (B.hype.x + 92)) / (B.hype.w - 104))) * 20) / 20;
   else return p.x < CELT.x + CELT.w + 6 && p.y > CELT.y - 6 && p.y < CELT_BOT + 6;   // (a click on the panel itself never reaches the field)
   celTSync();
@@ -2259,7 +2262,7 @@ function pracOffseason() {
       lines.push(`${s.name}: potential up ${s.potential} stars (${tr.name})`);
     }
   }
-  if (lines.length) offPopShow({ title: 'TRAINING CAMP', lines: lines.slice(0, 8).flatMap(t => wrapLines(t, 54)) });
+  if (lines.length) offPopShow({ title: 'TRAINING CAMP', lines: lines.slice(0, 8).flatMap(t => wrapLines(t, 54)), demo: { k: 'tip', label: 'PRACTICE' } });
 }
 // offseason growth multiplier for one of your players (offTick): the practice dev multiplier at your load, part of it
 function pracGrow(p) {
@@ -2581,7 +2584,7 @@ function drawHire() {
 function hireClick(pt) {
   if (offPop) return;
   if (tourQClick(pt)) return;
-  if (inBtn(pt, BACK_BTN)) { results.screen = 'practice'; return; }
+  if (inBtn(pt, BACK_BTN)) { results.screen = HB.hireBack || 'practice'; return; }   // (v0.58: back to where STAFF & HIRING was opened: practice or the front office)
   if (inBtn(pt, HIRE_BOARD_BTN)) { HB.sel = null; HB.back = 'hire'; results.screen = 'board'; return; }
   if (inBtn(pt, BUDGET_UP_BTN)) { budgetBuy(BUDGET_UP_BTN); return; }
   if (scoutsOn() && inBtn(pt, HIRE_PG_BTN)) { HB.pg = HB.pg ? 0 : 1; return; }
@@ -2623,12 +2626,12 @@ function spendWatch() {   // once a frame (before the menus draw): credits went 
   if (!L || exhibition || !season || L !== spendLg) { spendLg = L; spendSeen = L ? L.coins : null; return; }
   const c = L.coins, now = performance.now();
   if (spendSeen != null && c < spendSeen && now - spendSkip > 300 && spendClick && now - spendClick.t < SPEND.click) {
-    const pt = spendClick, all = [...UI_BTNS, ...UI_BTNS_PREV].filter(r => r && r.w && inBtn(pt, r)).sort((a, b) => a.w * a.h - b.w * b.h);
+    const pt = spendClick, all = [pt.r].filter(Boolean);   // (v0.58: what was really clicked: uiTopAt at the pointerdown, topmost on the frame on screen, never behind a popup)
     spendFx(all[0] || { x: pt.x - 40, y: pt.y - 20, w: 80, h: 40 }, spendSeen - c);
   }
   spendSeen = c;
 }
-canvas.addEventListener('pointerdown', e => { const p = pointerPos(e); spendClick = { x: p.x, y: p.y, t: performance.now() }; }, true);
+canvas.addEventListener('pointerdown', e => { const p = pointerPos(e); spendClick = { x: p.x, y: p.y, t: performance.now(), r: uiTopAt(p) }; }, true);
 function drawSpendFx() {
   if (spendDrawn === spendFrame) return; spendDrawn = spendFrame;   // (drawn once a frame, whichever screen calls it first)
   if (!spendFxs.length) return;   // (v0.55: nothing spent: no clock read)
@@ -2902,13 +2905,13 @@ function facUnlockWatch() {
   if (!facOn() || results.screen !== 'home' || (career.tut || {}).facSeen) return;
   if (!career.tut) career.tut = {};
   career.tut.facSeen = true; autosaveSoon();
-  offPopShow({ title: 'NEW: FACILITIES', lines: wrapLines('Your first offseason is done, so your staff has opened the FACILITIES button on the home screen. Upgrade your buildings there. Your first visit comes with a quick tutorial.', 52), btns: [{ label: 'OK', green: true, on: () => { facFlashAt = performance.now(); } }] });
+  offPopShow({ title: 'NEW: FACILITIES', demo: { k: 'fac' }, lines: wrapLines('Your first offseason is done, so your staff has opened the FACILITIES button on the home screen. Upgrade your buildings there. Your first visit comes with a quick tutorial.', 52), btns: [{ label: 'OK', green: true, on: () => { facFlashAt = performance.now(); } }] });
 }
 function pracUnlockWatch() {   // PRACTICE opens a little later than FACILITIES (PRAC_FROM): said once
   const t = career.tut || (career.tut = {});
   if (t.pracSeen || results.screen !== 'home' || !pracShown()) return;
   t.pracSeen = true; autosaveSoon();
-  if (!t.pracAll) offPopShow({ title: 'NEW: PRACTICE', lines: wrapLines('Your staff has opened the PRACTICE button on the home screen: set how hard each unit trains during the week. Your first visit comes with a quick tutorial.', 52), btns: [{ label: 'OK', green: true }] });
+  if (!t.pracAll) offPopShow({ title: 'NEW: PRACTICE', demo: { k: 'prac' }, lines: wrapLines('Your staff has opened the PRACTICE button on the home screen: set how hard each unit trains during the week. Your first visit comes with a quick tutorial.', 52), btns: [{ label: 'OK', green: true }] });
 }
 function tourWatch() {   // the first time a tutorial's screen is open in this franchise
   if (tour || !results || !season || exhibition || teamPick || offPop || tutPrompt) return;
@@ -3041,7 +3044,7 @@ function pracClick(pt) {
     return;
   }
   if (PR.tab !== 'plan') return;
-  if (inBtn(pt, PR_STAFF)) { HB.pg = 0; results.screen = 'hire'; return; }
+  if (inBtn(pt, PR_STAFF)) { HB.pg = 0; HB.hireBack = 'practice'; results.screen = 'hire'; return; }
   for (const side of ['off', 'def']) if (inBtn(pt, PR_REP[side])) { HB.role = side === 'off' ? 'to' : 'td'; HB.sel = null; HB.cand = null; HB.back = 'hire'; results.screen = 'board'; return; }
   if (inBtn(pt, PR_OK) && (PR.draft.off !== prac().load.off || PR.draft.def !== prac().load.def)) { prac().load = { ...PR.draft }; autosaveSoon(); PR.msg = { t: performance.now(), text: 'TRAINING PLAN SET' }; }
 }
@@ -3798,7 +3801,8 @@ const diffUiD = () => { const m = diffUiMode(); return m === 'dynamic' ? (inSave
 const diffLabel = () => { const m = diffUiMode(); return m === 'dynamic' ? 'ADAPTIVE' : m === 'custom' ? 'CUSTOM' : dn(diffUiPreset()); };
 const diffCanCustom = () => diffCanEdit() && !exhibition;
 // (display only: NORMAL always reads 1.00x and sits in the middle of the bar, whatever the real number is; sliders whose NORMAL is 0 or negative show the change from NORMAL)
-const diffPos = (s, v) => v <= s.n ? (s.n > s.lo ? 0.5 * (v - s.lo) / (s.n - s.lo) : 0.5) : (s.hi > s.n ? 0.5 + 0.5 * (v - s.n) / (s.hi - s.n) : 0.5);
+const diffPos = (s, v) => Math.max(0, Math.min(1, diffPos0(s, v)));   // (clamped: a knob never leaves its bar)
+const diffPos0 = (s, v) => v <= s.n ? (s.n > s.lo ? 0.5 * (v - s.lo) / (s.n - s.lo) : 0.5) : (s.hi > s.n ? 0.5 + 0.5 * (v - s.n) / (s.hi - s.n) : 0.5);
 const diffFromPos = (s, t) => t <= 0.5 ? s.lo + (s.n - s.lo) * t / 0.5 : s.n + (s.hi - s.n) * (t - 0.5) / 0.5;
 const diffFmt = (s, v) => s.n > 0 ? `${(v / s.n).toFixed(2)}x` : `${v - s.n >= 0 ? '+' : ''}${s.step < 1 ? (v - s.n).toFixed(1) : Math.round(v - s.n)}${s.fmt === 'yd' ? ' yd' : ''}`;
 const diffFmtReal = (s, v) => s.fmt === 'yd' ? `${v > 0 ? '+' : ''}${Math.round(v)} yd` : s.fmt === 'x' ? `${v.toFixed(2)}x` : s.step < 1 ? v.toFixed(1) : String(Math.round(v));
@@ -3878,6 +3882,7 @@ function drawDiffUI() {
     const custom = m === 'custom' && diffSt().sliders[s.key] != null;
     ctx.fillStyle = custom ? RES.gold : RES.strip; ctx.fillRect(Math.min(f(s.n), f(v)), cy - 3, Math.abs(f(v) - f(s.n)), 6);
     ctx.fillStyle = RES.line; ctx.fillRect(f(s.n) - 1, cy - 9, 3, 18);   // the NORMAL tick
+    if (!s.fixed) { ctx.fillStyle = RES.dim; ctx.fillRect(f(diffSliderAt(s, 1)) - 1, cy - 6, 2, 12); }   // the PLAYBOOK LEGEND notch (D = 1)
     ctx.beginPath(); ctx.arc(f(v), cy, 8, 0, Math.PI * 2); ctx.fillStyle = RES.gold; ctx.fill(); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.stroke();
     ctx.font = 'bold 10px monospace'; ctx.fillStyle = RES.dim; const eL = s.e < s.h;
     ctx.textAlign = 'left'; ctx.fillText(eL ? 'EASY' : 'HARD', bx, y + 38); ctx.textAlign = 'right'; ctx.fillText(eL ? 'HARD' : 'EASY', bx + bw, y + 38);
@@ -5212,3 +5217,929 @@ function qsLockerClick(p) {
   const h = QS_HIRE.findIndex((_, j) => inBtn(p, QS_HNOTE(j)));
   if (h >= 0) { career.hire = QS_HIRE[h].id; career.fav = career.hire === 'fav'; qsSfx('tick'); }
 }
+
+// --- popup demos (looks only: a "?" popup gets a small looping hand-drawn demo of what it explains; the words become pencil labels in the loop)
+// A popup carries demo: { k (ABIL_DEMO id), p (the player or null), o (options: tier = the FIT > ABILITY > STAR FACTOR strip) }; scrollPop sizes its card
+// with popDemoLayout, drawChangelog draws it with popDemoDraw. Every loop = two beats: WITHOUT (grey ghost, falls short) then WITH (colour, works; labels on).
+// Draw-time only (called from 09 / 11 / 13). Clock = uiNow() (menu pacing); performance mode = one still frame at POP_DEMO.still.
+const POP_DEMO = { w: 680, h: 230, top: 122, loop: 5.6, man: 1.5, font: 18, fade: 0.05, ghost: 0.4, still: 5.1, lh: 22, wrap: 70, strip: 54,
+  hs: 170, swap: 1.6, goalMs: 900, maxLines: 9, ico: { w: 52, h: 38, loop: 2.2, gap: 62 } };   // (hs = a plain popup's demo box; swap = s the old ability shows on red star / buys; goalMs = goal bars filling; maxLines = caption lines before it scrolls; ico = attribute row icons)
+const PDM = { f: 0, beat: 0, u: 0, still: false, pts: {} };   // (this frame: f = share of the loop, beat 0 WITHOUT / 1 WITH, u = share of the beat, pts = named spots for labels)
+const PD_COL = { off: '#3a6fb0', def: '#c0453a', ball: '#8a4b1f', ghost: '#8d8a80', label: '#2a62b0', gold: '#ffd23f', goldInk: '#8a5a00', good: '#2f8f3a' };
+const pdC = col => PDM.beat ? col : PD_COL.ghost;   // (a colour on the WITH beat, pencil grey on the ghost one)
+const pdE = (u, a, b) => Math.max(0, Math.min(1, (u - a) / (b - a)));   // (0-1 between beat shares a and b)
+function pdMan(x, y, col, ph, down) { ctx.save(); ctx.translate(x, y); ctx.scale(POP_DEMO.man, POP_DEMO.man); qsMan(0, 0, pdC(col), ph, down); ctx.restore(); }
+// a 2-3 word pencil note, fading in at t0 and out at t1 (shares of the loop), with a short arrow to arrowTo [x, y]
+function pdLabel(text, x, y, t0, t1, arrowTo) {
+  const F = POP_DEMO.fade, a = PDM.still ? (t0 >= 0.5 ? 1 : 0) : Math.min(1, (PDM.f - t0) / F, (t1 - PDM.f) / F);
+  if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha *= a; ctx.fillStyle = ctx.strokeStyle = PD_COL.label; ctx.lineWidth = 1.8; ctx.lineCap = 'round';
+  ctx.font = `bold ${POP_DEMO.font}px ${CAR_HAND}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, x, y);
+  if (arrowTo) {
+    const tw = ctx.measureText(text).width / 2 + 6, dx = arrowTo[0] - x, dy = arrowTo[1] - y, L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L;
+    const s = Math.min(Math.abs(ux) > 0.01 ? tw / Math.abs(ux) : 99, Math.abs(uy) > 0.01 ? 13 / Math.abs(uy) : 99), sx = x + ux * s, sy = y + uy * s, ex = arrowTo[0] - ux * 5, ey = arrowTo[1] - uy * 5;
+    const mx = (sx + ex) / 2 - uy * 10, my = (sy + ey) / 2 + ux * 10, ha = Math.atan2(ey - my, ex - mx);
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.quadraticCurveTo(mx, my, ex, ey); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ex - Math.cos(ha - 0.5) * 8, ey - Math.sin(ha - 0.5) * 8); ctx.lineTo(ex, ey); ctx.lineTo(ex - Math.cos(ha + 0.5) * 8, ey - Math.sin(ha + 0.5) * 8); ctx.stroke();
+  }
+  ctx.restore();
+}
+function pdLabels(d) { for (const [text, t0, t1, at, ox = 0, oy = -40, arrow = true] of d.labels || []) { const q = PDM.pts[at]; if (q) pdLabel(typeof text === 'function' ? text() : text, q[0] + ox, q[1] + oy, t0, t1, arrow ? q : null); } }
+// a ruler that draws itself (p 0-1) and ticks up to its number ('40+ yd')
+function pdRuler(x0, x1, y, text, p = 1) {
+  if (p <= 0) return;
+  const xe = x0 + (x1 - x0) * p, m = /^(\d+)(.*)$/.exec(text);
+  ctx.save(); ctx.strokeStyle = ctx.fillStyle = PD_COL.label; ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(xe, y); ctx.moveTo(x0, y - 7); ctx.lineTo(x0, y + 7);
+  for (let i = 1, n = Math.floor((xe - x0) / 14); i <= n; i++) { const tx = x0 + i * 14, k = i % 5 ? 3 : 6; ctx.moveTo(tx, y - k); ctx.lineTo(tx, y); }
+  if (p >= 1) { ctx.moveTo(x1, y - 7); ctx.lineTo(x1, y + 7); }
+  ctx.stroke();
+  ctx.font = `bold ${POP_DEMO.font}px ${CAR_HAND}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(p >= 1 || !m ? text : `${Math.round(+m[1] * p)}${m[2].replace('+', '')}`, (x0 + xe) / 2, y + 17);
+  ctx.restore();
+}
+// a catch / defend / range circle on the turf: k = how much it has swollen; was = draw the old size dashed inside
+function pdRing(x, y, r, k = 1, col = '#f2c94c', was) {
+  ctx.save(); ctx.strokeStyle = pdC(col); ctx.lineWidth = 2.5;
+  if (was) { ctx.save(); ctx.setLineDash([4, 5]); ctx.globalAlpha *= 0.6; ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.38, 0, 0, 7); ctx.stroke(); ctx.restore(); }
+  ctx.beginPath(); ctx.ellipse(x, y, r * k, r * k * 0.38, 0, 0, 7); ctx.stroke(); ctx.restore();
+}
+// an attribute bar (1-15 scale) that jumps from -> to (p 0-1); the change beside it
+function pdBar(x, y, name, from, to, p = 1) {
+  const v = from + (to - from) * p, w = 150;
+  ctx.save(); ctx.fillStyle = RES.line; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillText(name, x - 8, y + 6);
+  ctx.fillStyle = 'rgba(120,100,70,0.15)'; ctx.fillRect(x, y, w, 12); ctx.fillStyle = PD_COL.good; ctx.fillRect(x, y, w * Math.min(1, v / 15), 12);
+  ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, w, 12);
+  if (p > 0 && to !== from) { ctx.fillStyle = PD_COL.good; ctx.textAlign = 'left'; ctx.font = `bold 15px ${CAR_HAND}`; ctx.fillText(`+${to - from}`, x + w + 8, y + 6); }
+  ctx.restore();
+}
+// the ball: path { x0, y0, x1, y1 (ground spots), z0, z1 (heights), h (extra peak) } at u 0-1; returns where it is drawn
+function pdBall(path, u) {
+  const q = path, gx = q.x0 + (q.x1 - q.x0) * u, gy = q.y0 + (q.y1 - q.y0) * u, z0 = q.z0 || 0, z1 = q.z1 || 0, hh = q.h || 0, z = z0 + (z1 - z0) * u + 4 * hh * u * (1 - u);
+  const a = Math.atan2(-((z1 - z0) + 4 * hh * (1 - 2 * u)), (q.x1 - q.x0) || 1);
+  ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.ellipse(gx, gy, 5, 2, 0, 0, 7); ctx.fill();
+  ctx.translate(gx, gy - z); ctx.rotate(a); ctx.fillStyle = pdC(PD_COL.ball); ctx.beginPath(); ctx.ellipse(0, 0, 6, 3.6, 0, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#f4efe0'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(-2, 0); ctx.lineTo(2, 0); ctx.stroke(); ctx.restore();
+  return { x: gx, y: gy - z, gx, gy };
+}
+function pdTag(x, y, text, fill, ink, font = 'bold 14px monospace') {   // (a small boxed sign: clocks, downs, markers)
+  ctx.save(); ctx.font = font; const w = ctx.measureText(text).width + 12;
+  ctx.fillStyle = fill; ctx.fillRect(x - w / 2, y - 11, w, 22); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.strokeRect(x - w / 2, y - 11, w, 22);
+  ctx.fillStyle = ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, x, y + 1); ctx.restore();
+}
+const pdClock = (x, y, text) => pdTag(x, y, text, '#22252b', '#ff6a4a');   // (2:00, Q4)
+const pdDown = (x, y, text) => pdTag(x, y, text, '#ffd94a', '#3b3320');    // (3RD, 4TH)
+function pdMarker(x, y, yd, h = 40) {   // a yard-line stick with its number
+  ctx.save(); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - h); ctx.stroke(); ctx.restore();
+  pdTag(x, y - h - 8, String(yd), '#f4efe0', RES.line);
+}
+function pdMeter(x, y, u, speed = 1) {   // a kick meter (u = the needle's share across), speed = the needle's pace (a trail shows it)
+  ctx.save(); ctx.fillStyle = 'rgba(120,100,70,0.15)'; ctx.fillRect(x - 70, y - 8, 140, 16); ctx.fillStyle = 'rgba(47,143,58,0.45)'; ctx.fillRect(x - 10, y - 8, 20, 16);
+  ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.strokeRect(x - 70, y - 8, 140, 16);
+  const nx = x - 70 + 140 * u; ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(nx, y - 12); ctx.lineTo(nx, y + 12); ctx.stroke();
+  ctx.globalAlpha *= 0.3; ctx.beginPath(); ctx.moveTo(nx - 10 * speed, y); ctx.lineTo(nx, y); ctx.stroke(); ctx.restore();
+}
+function pdWx(x, y, w, h, kind, t) {   // rain streaks / wind arrows over a box (t = seconds)
+  ctx.save(); ctx.strokeStyle = kind === 'rain' ? 'rgba(70,110,170,0.55)' : 'rgba(34,48,90,0.45)'; ctx.lineWidth = 1.4; ctx.lineCap = 'round';
+  if (kind === 'rain') for (let i = 0; i < 26; i++) { const rx = x + ((i * 53 + t * 40) % w), ry = y + ((i * 37 + t * 220) % h); ctx.beginPath(); ctx.moveTo(rx, ry); ctx.lineTo(rx - 3, ry + 9); ctx.stroke(); }
+  else for (let i = 0; i < 4; i++) { const wx = x + ((i * w / 4 + t * 90) % w), wy = y + 20 + i * (h - 40) / 4; ctx.beginPath(); ctx.moveTo(wx, wy); ctx.quadraticCurveTo(wx + 15, wy - 6, wx + 30, wy); ctx.lineTo(wx + 24, wy - 4); ctx.moveTo(wx + 30, wy); ctx.lineTo(wx + 24, wy + 4); ctx.stroke(); }
+  ctx.restore();
+}
+function pdStar(x, y, r, k) {   // the gold star: k 0-1 = scribbled in, negative = being rubbed out (-1 = gone)
+  const a = k >= 0 ? k : 1 + k; if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha *= 0.35 + 0.65 * a; drawStar(x, y, r * (k >= 0 ? 0.6 + 0.4 * a : 1), PD_COL.gold, PD_COL.goldInk, 2); ctx.restore();
+}
+// ---- scenes (x, y, w, h = the demo box; d = the ABIL_DEMO entry). Each sets PDM.pts for its labels.
+const PD_SCENES = {};   // (filled below: throw, catch, run, line, rush, cover, tackle, kick, ret, any, board)
+// one entry per ability: scene + its options; labels = [text, t0, t1 (shares of the loop; 0.5+ = the WITH beat), spot in PDM.pts, dx, dy, arrow]. Numbers come from ABIL_FX etc.
+const ABIL_DEMO = {
+  moonball: { scene: 'throw', lob: true, ruler: () => `${ABIL_FX.moonball.yd}+ yd`, ring: () => ABIL_FX.moonball.r,
+    labels: [['lob', 0.57, 0.82, 'apex', 70, 6], ['bigger catch radius', 0.8, 0.995, 'ring', -190, -60]] },
+};
+// ---- the popup: layout + draw
+const abilCap = id => { const d = ABIL_DEFS[id]; return d ? wrapLines(abilTip(id).replace(`${d.name}: `, ''), POP_DEMO.wrap) : []; };   // (the one caption line(s) under a demo)
+function abilPop(p, id = p && p.ability, o = {}) {   // the ability "?" popup: name, tier tag, demo, the sentence, the tier strip (o: title, lines added under the caption, btns)
+  const d = ABIL_DEFS[id]; if (!d) return null;
+  return scrollPop({ title: o.title || d.name.toUpperCase(), lines: [...abilCap(id), ...(o.lines || [])], demo: { k: id, p, o: { tier: true, from: o.from } }, ...(o.btns ? { btns: o.btns } : {}) });   // (o.from = the ability he had: shown greyed first)
+}
+function popDemoLayout(P) {   // a card fitted to title + tag + demo box + caption + tier strip + buttons
+  const D = POP_DEMO, n = Math.min(D.maxLines, P.lines.length), strip = P.demo.o && P.demo.o.tier ? D.strip : 0, top = ABIL_DEFS[P.demo.k] ? D.top : D.top - 30;
+  const h = top + D.h + 14 + n * D.lh + 12 + strip + 96, y = Math.max(16, Math.round((H - h) / 2));
+  P.card = { x: W / 2 - 380, y, w: 760, h }; P.box = { x: W / 2 - D.w / 2, y: y + top, w: D.w, h: D.h };
+  P.view = { x: W / 2 - D.w / 2, y: P.box.y + D.h + 14, w: D.w, h: n * D.lh }; P.stripY = P.view.y + P.view.h + 12 + strip / 2; P.lh = D.lh;
+}
+function popDemoDraw(P) {
+  const D = POP_DEMO, c = P.card, b = P.box, id = P.demo.k, ad = ABIL_DEFS[id], t = ad ? ad.tier : null;
+  if (t) {   // the tier tag under the title (STAR FACTOR with the gold star), "?" = what the tier means
+    ctx.save(); ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const tg = TIER_NAME[t], tw = ctx.measureText(tg).width, ty = c.y + 96, sx = t === 'X' ? 12 : 0;
+    if (t === 'X') drawStar(W / 2 - tw / 2 - 6, ty, 9, '#ffd23f', '#8a5a00', 1.5);
+    ctx.fillStyle = t === 'X' ? PD_COL.goldInk : RES.dim; ctx.fillText(tg, W / 2 + sx, ty);
+    P.saysBtn = { x: W / 2 + tw / 2 + sx + 14, y: ty - 12, w: 24, h: 24 }; popBtnDraw = true; drawHelpIcon(P.saysBtn); popBtnDraw = false;
+    ctx.restore();
+  }
+  pdRun(P, b);
+  if (t && P.demo.o && P.demo.o.tier) pdTierStrip(P, id, t);
+  if (t && P.saysBtn && (P.saysOn || (hoverPt && inBtn(hoverPt, P.saysBtn)))) {   // the tier's meaning, in a little paper tip
+    const ls = wrapLines(TIER_SAYS[t], 40), tw = 380, th = 16 + ls.length * 19, tx = Math.min(c.x + c.w - tw - 16, P.saysBtn.x - tw / 2 + 12), ty = P.saysBtn.y + 30;
+    ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.fillRect(tx + 3, ty + 4, tw, th); ctx.fillStyle = '#fffdf4'; ctx.fillRect(tx, ty, tw, th);
+    ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.strokeRect(tx, ty, tw, th);
+    ctx.fillStyle = RES.line; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ls.forEach((l, i) => ctx.fillText(l, tx + 10, ty + 17 + i * 19));
+    ctx.restore();
+  }
+}
+const pdAge = P => (uiNow() - (P.dt0 || (P.dt0 = uiNow()))) / 1000;   // (seconds since the popup's demo started)
+// one demo in box b: an ability (ABIL_DEMO scene, ghost then real; star factors their whole life) or a popup scene (POP_SCENE[k])
+function pdRun(P, b) {
+  const D = POP_DEMO, id = P.demo.k, ad = ABIL_DEFS[id], t = ad ? ad.tier : null, lite = liteOn(), xf = t === 'X', age = pdAge(P);
+  const L = D.loop * (xf ? XF_DEMO.loop : 1), tt = lite ? (xf ? XF_DEMO.still * L : D.still) : age % L;
+  const lf = tt / L; PDM.f = lf; PDM.beat = lf < 0.5 ? 0 : 1; PDM.u = PDM.beat ? lf * 2 - 1 : lf * 2; PDM.still = lite; PDM.pts = {}; PDM.n = Math.floor(age / L);
+  if (xf) Object.assign(PDM, pdXfTime(lf));   // (a star factor: no ghost beat; the effect plays between ON and OFF)
+  ctx.save(); ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); ctx.clip();
+  const from = P.demo.o && P.demo.o.from, swap = from && ABIL_DEFS[from] && !lite && age < D.swap;
+  if (swap) {   // (red star / a buy: the old one greys out first, crossed through; then the new one plays)
+    const od = ABIL_DEMO[from] || { scene: 'any' }; Object.assign(PDM, { f: 0.9, beat: 1, u: 0.8, still: true, pts: {} });
+    ctx.globalAlpha = 0.35 * Math.min(1, (D.swap - age) / 0.4); PD_SCENES[od.scene](b.x, b.y, b.w, b.h, od); ctx.globalAlpha = 1;
+    pdText(`was: ${ABIL_DEFS[from].name}`, b.x + b.w / 2, b.y + 30, RES.dim, 18); if (age > 0.4) pdX(b.x + b.w / 2, b.y + b.h / 2, '#c0392b', 40 * Math.min(1, (age - 0.4) / 0.3));
+  } else if (ad || !POP_SCENE[id]) {
+    const dd = ABIL_DEMO[id] || { scene: 'any', stamp: t ? TIER_NAME[t] : 'ON' };
+    if (!PDM.beat) ctx.globalAlpha = D.ghost;
+    PD_SCENES[dd.scene](b.x, b.y, b.w, b.h, dd);
+    ctx.globalAlpha = 1; if (xf) pdXfDraw(b, ad, lite ? XF_DEMO.still : lf); pdLabels(dd);
+    ctx.fillStyle = RES.dim; ctx.font = `bold 14px ${CAR_HAND}`; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    if (!xf) ctx.fillText(PDM.beat ? `with ${ad ? ad.name : ''}` : 'without', b.x + 10, b.y + 8);
+  } else POP_SCENE[id](b.x, b.y, b.w, b.h, P.demo);
+  ctx.restore();
+  ctx.strokeStyle = 'rgba(34,48,90,0.3)'; ctx.lineWidth = 1; ctx.strokeRect(b.x, b.y, b.w, b.h);
+  if (!lite) menuMoving = true;   // (v0.55 pacing: keep painting while the loop runs)
+}
+function pdTierStrip(P, id, t) {   // FIT > ABILITY > STAR FACTOR: his tier circled, the next one named in grey (read-only)
+  const y = P.stripY, xs = [W / 2 - 220, W / 2, W / 2 + 220], p = P.demo.p, up = p ? abilUp(id, p.group) : null, upT = up && ABIL_DEFS[up] ? ABIL_DEFS[up].tier : null;
+  const next = upT && TIER_IX[upT] > TIER_IX[t] ? upT : null, fr = P.demo.o && P.demo.o.from && ABIL_DEFS[P.demo.o.from], mv = fr && !liteOn() ? pdS((pdAge(P) - POP_DEMO.swap * 0.6) / 0.5) : 1;
+  ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineCap = 'round';
+  ['F', 'S', 'X'].forEach((k, i) => {
+    const on = k === t, nx = k === next, ty = y - (nx ? 8 : 0);
+    ctx.font = 'bold 17px monospace'; const tw = ctx.measureText(TIER_NAME[k]).width;
+    ctx.fillStyle = on ? RES.line : 'rgba(110,100,85,0.55)'; ctx.fillText(TIER_NAME[k], xs[i] + (k === 'X' ? 9 : 0), ty);
+    if (k === 'X') { ctx.save(); if (!on) ctx.globalAlpha = 0.5; drawStar(xs[i] - tw / 2 - 4, ty, 8, '#ffd23f', '#8a5a00', 1.4); ctx.restore(); }
+    if (on) { ctx.strokeStyle = PD_COL.label; ctx.lineWidth = 2.2; for (const o of [0, 1]) { ctx.beginPath(); ctx.ellipse((fr ? pdL(xs[TIER_IX[fr.tier]], xs[i], mv) : xs[i]) + (k === 'X' ? 2 : 0) + o, ty + o * 1.5, tw / 2 + 22, 17 - o, -0.04 + o * 0.06, 0, Math.PI * (o ? 1.9 : 2)); ctx.stroke(); } }
+    if (nx) { ctx.fillStyle = 'rgba(110,100,85,0.7)'; ctx.font = `bold 13px ${CAR_HAND}`; ctx.fillText(`next: ${abilName(up)}`, xs[i], ty + 19); }
+    if (i < 2) { ctx.fillStyle = 'rgba(110,100,85,0.55)'; ctx.font = 'bold 17px monospace'; ctx.fillText('>', xs[i] + 110, y); }
+  });
+  ctx.restore();
+}
+// ---- popup demos, part 2: the shared bits every scene uses
+const pdL = (a, b, k) => a + (b - a) * k;
+const pdS = k => { k = Math.max(0, Math.min(1, k)); return k * k * (3 - 2 * k); };
+const pdT = () => PDM.still ? POP_DEMO.still : uiNow() / 1000;   // (seconds for boiling / weather; frozen in a still)
+const pdPc = v => `${Math.round(Math.abs(1 - v) * 100)}%`;        // (x0.9 / x1.1 -> "10%")
+const pdAdd = v => `+${Math.round(v * 100)}%`;                    // (0.03 -> "+3%")
+const pdHd = (x, y) => [x, y - 44];                               // (a figure's head top: where a label points)
+function pdText(t, x, y, col = RES.dim, size = 14, maxW) { ctx.save(); ctx.fillStyle = col; ctx.font = `bold ${size}px ${CAR_HAND}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; maxW ? ctx.fillText(t, x, y, maxW) : ctx.fillText(t, x, y); ctx.restore(); }
+function pdLn(pts, col = RES.line, lw = 2, dash) { ctx.save(); ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.lineCap = ctx.lineJoin = 'round'; if (dash) ctx.setLineDash(dash); ctx.beginPath(); pts.forEach(([a, b], i) => i ? ctx.lineTo(a, b) : ctx.moveTo(a, b)); ctx.stroke(); ctx.restore(); }
+function pdArrow(x0, y0, x1, y1, col = PD_COL.label, lw = 2, dash) { pdLn([[x0, y0], [x1, y1]], col, lw, dash); const a = Math.atan2(y1 - y0, x1 - x0); pdLn([[x1 - Math.cos(a - 0.5) * 9, y1 - Math.sin(a - 0.5) * 9], [x1, y1], [x1 - Math.cos(a + 0.5) * 9, y1 - Math.sin(a + 0.5) * 9]], col, lw); }
+function pdX(x, y, col = '#c0392b', s = 7) { pdLn([[x - s, y - s], [x + s, y + s]], col, 2.6); pdLn([[x + s, y - s], [x - s, y + s]], col, 2.6); }
+function pdBurst(x, y, r = 14, col = '#e8a020') { for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4 + 0.2; pdLn([[x + Math.cos(a) * r * 0.45, y + Math.sin(a) * r * 0.45], [x + Math.cos(a) * r, y + Math.sin(a) * r]], pdC(col), 2.2); } }
+function pdSpeedL(x, y, dir = 1, col = PD_COL.label) { for (let i = 0; i < 3; i++) pdLn([[x - dir * 14, y - 32 + i * 10], [x - dir * (32 + i * 5), y - 32 + i * 10]], pdC(col), 1.8); }
+function pdBallAt(x, y, a = 0) { ctx.save(); ctx.translate(x, y); ctx.rotate(a); ctx.fillStyle = pdC(PD_COL.ball); ctx.beginPath(); ctx.ellipse(0, 0, 6, 3.6, 0, 0, 7); ctx.fill(); ctx.restore(); }
+const pdHeld = (x, y) => pdBallAt(x + 7, y - 15 * POP_DEMO.man);
+function pdLoose(x, y, b) { pdBallAt(x + b * 60, y - Math.abs(Math.sin(b * Math.PI * 2.5)) * 18 * (1 - b), b * 9); }   // (a loose ball bouncing away: b 0-1)
+function pdMe(x, y) { ctx.save(); ctx.strokeStyle = pdC('#f2c94c'); ctx.lineWidth = 2.5; ctx.beginPath(); ctx.ellipse(x, y + 13, 16, 5.5, 0, 0, 7); ctx.stroke(); ctx.restore(); }   // (him: the yellow ring)
+const pdIco = (k, x, y, size = 26, col = '#9aa3ad') => drawDoodle(k, x, y, size, col, pdT());
+function pdBattery(x, y, v) { ctx.save(); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.strokeRect(x - 13, y - 7, 24, 14); ctx.fillStyle = RES.line; ctx.fillRect(x + 11, y - 3, 3, 6); ctx.fillStyle = v > 0.4 ? pdC(PD_COL.good) : '#c0392b'; ctx.fillRect(x - 11, y - 5, 20 * Math.max(0, v), 10); ctx.restore(); }
+function pdWatch(x, y, v, txt) { ctx.save(); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.8; ctx.fillStyle = '#fffdf4'; ctx.beginPath(); ctx.arc(x, y, 12, 0, 7); ctx.fill(); ctx.stroke(); ctx.fillRect(x - 3, y - 17, 6, 4); ctx.strokeRect(x - 3, y - 17, 6, 4);
+  const a = -Math.PI / 2 + v * Math.PI * 2; ctx.strokeStyle = '#c0392b'; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * 9, y + Math.sin(a) * 9); ctx.stroke(); ctx.restore(); if (txt) pdText(txt, x, y + 22, RES.line, 13); }
+function pdShade(x, y, w, h, col = 'rgba(42,98,176,0.13)') { ctx.save(); ctx.fillStyle = col; ctx.fillRect(x, y, w, h); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip(); ctx.strokeStyle = col; ctx.lineWidth = 1.5; for (let i = -h; i < w; i += 12) { ctx.beginPath(); ctx.moveTo(x + i, y + h); ctx.lineTo(x + i + h, y); ctx.stroke(); } ctx.restore(); }
+function pdBubble(x, y, r, col = 'rgba(34,48,90,0.45)') { ctx.save(); ctx.strokeStyle = col; ctx.lineWidth = 1.8; ctx.setLineDash([5, 5]); ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.45, 0, 0, 7); ctx.stroke(); ctx.restore(); }
+function pdTally(x, y, n, col = RES.line) { for (let i = 0; i < n; i++) { const g = Math.floor(i / 5), j = i % 5, gx = x + g * 40; if (j < 4) pdLn([[gx + j * 7, y - 8], [gx + j * 7 + 1, y + 8]], col, 2); else pdLn([[gx - 3, y + 6], [gx + 25, y - 6]], col, 2); } }
+function pdArm(x, y, ax, ay, col) { pdLn([[x, y - 14 * POP_DEMO.man], [ax, ay]], pdC(col || RES.line), 2.4); }   // (an arm reaching from his shoulder to ax, ay)
+function pdGlow(x, y, col = 'rgba(255,214,74,0.35)') { ctx.save(); ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(x, y - 14, 22, 32, 0, 0, 7); ctx.fill(); ctx.restore(); }
+function pdPost(x, gy) { pdLn([[x, gy + 6], [x, gy - 50]], '#c9a227', 3); pdLn([[x - 4, gy - 50], [x + 4, gy - 50]], '#c9a227', 3); pdLn([[x, gy - 50], [x - 3, gy - 110]], '#c9a227', 3); }   // (a goal post seen from the side)
+function pdTop(x, y, kind, text) { (kind === 'clock' ? pdClock : kind === 'down' ? pdDown : pdTag)(x, y, text, '#f4efe0', RES.line); }   // (a situation sign at the top of the box)
+// small pencil icons for the demos (DOODLE drawers: unit space, -1..1)
+Object.assign(DOODLE, {
+  pdIce() { ddShape([[-0.62, -0.5], [0.48, -0.72], [0.7, 0.48], [-0.48, 0.7]], '#d4eefa'); ddLine([[-0.3, -0.3], [0.1, -0.4]], '#ffffff', 0.12); },
+  pdAnchor(ic) { const k = ddInk(ic.c); ddLine(ddEll(0, -0.72, 0.17, 0.17, 10), k, 0.12); ddLine([[0, -0.55], [0, 0.82]], k, 0.13); ddLine([[-0.42, -0.32], [0.42, -0.32]], k, 0.12); ddLine(ddEll(0, 0.22, 0.66, 0.6, 12, 0.15, Math.PI - 0.15), k, 0.13); },
+  pdLock() { ddLine(ddEll(0, -0.1, 0.38, 0.62, 12, Math.PI, Math.PI * 2), '#5a5f66', 0.16); ddShape([[-0.6, -0.1], [0.6, -0.1], [0.6, 0.85], [-0.6, 0.85]], '#e0b13a'); ddLine([[0, 0.25], [0, 0.5]], '#5a3c00', 0.12); },
+  pdMagnet() { ddLine(ddEll(0, -0.1, 0.55, 0.7, 14, 0, Math.PI), '#d0342c', 0.34); ddLine([[0.55, -0.1], [0.55, -0.62]], '#9aa3ad', 0.34); ddLine([[-0.55, -0.1], [-0.55, -0.62]], '#9aa3ad', 0.34); },
+  pdVise() { ddShape([[-0.95, -0.5], [-0.3, -0.5], [-0.3, 0.5], [-0.95, 0.5]], '#8a9099'); ddShape([[0.3, -0.5], [0.95, -0.5], [0.95, 0.5], [0.3, 0.5]], '#8a9099'); ddLine([[0.95, 0], [1.25, 0]], '#5a5f66', 0.12); ddLine([[1.25, -0.4], [1.25, 0.4]], '#5a5f66', 0.12); },
+  pdFlame() { ddShape([[0, -0.95], [0.5, -0.2], [0.55, 0.45], [0, 0.9], [-0.55, 0.45], [-0.4, -0.15], [-0.15, 0.05]], '#f08a24'); ddShape([[0, -0.2], [0.25, 0.25], [0, 0.65], [-0.25, 0.3]], '#ffd23f'); },
+  pdEraser() { ddShape([[-0.85, -0.25], [0.85, -0.45], [0.9, 0.3], [-0.8, 0.5]], '#f2a7b6'); ddShape([[0.35, -0.38], [0.85, -0.45], [0.9, 0.3], [0.4, 0.37]], '#4f7fc0'); },
+  pdFist() { ddShape(ddEll(0, 0, 0.62, 0.5, 12), '#f2c9a0'); for (const fx of [-0.3, 0, 0.3]) ddLine([[fx, -0.45], [fx, 0.05]], '#8a5a3a', 0.08); },
+  pdNoBall() { ddLine([[-0.7, -0.7], [0.7, 0.7]], '#c0392b', 0.16); ddLine([[0.7, -0.7], [-0.7, 0.7]], '#c0392b', 0.16); },
+});
+// ---- the scenes. Each: (x, y, w, h, d) in the demo box; PDM.u = share of the beat, PDM.beat 1 = it works. Sets PDM.pts for its labels.
+Object.assign(PD_SCENES, {
+  throw(x, y, w, h, d) {   // QB left, a receiver deep right with his man. lob / fast / race / spiral / rel / rush+shake / frost / roll+dot / straight / glow / arc / tip / dbShort / link / ring+ruler / tag
+    qsTurf(x, y, w, h); const u = PDM.u, ok = !!PDM.beat, k = POP_DEMO.man, gy = y + h * 0.76, P = PDM.pts, R = ok && d.ring ? d.ring() : 1;
+    if (d.tag) { pdTop(x + w / 2, y + 22, d.tag[0], d.tag[1]); P.tag = [x + w / 2 + 30, y + 22]; }
+    const roll = d.roll ? pdS(u / 0.3) : 0, qbX = x + 80 - pdE(u, 0, 0.15) * 14 + roll * 30, qbY = gy - roll * 42;
+    const recX = x + w - 150, r0 = 40, rel = d.rel && !ok ? 0.34 : 0.18, land = d.fast && ok ? 0.56 : 0.72;
+    const run = pdE(u, 0, 0.55), rx = recX - 190 + 190 * run + (ok && u > land ? (u - land) * 120 : 0);
+    const late = d.glow && ok ? 0.14 : 0, dbx = recX - 224 + 190 * pdE(u, late, 0.55 + late) - (u > land ? (u - land) * 30 : 0);
+    const tipX = x + 250, rangeX = qbX + 300, rangeW = rangeX + 150;
+    const ex = ok ? (d.ring ? recX + r0 * 1.12 : recX + 6) : d.arc ? rangeX - 10 : d.ring ? recX + r0 * 1.12 : recX + (d.roll || d.rush ? 50 : 34);
+    const path = { x0: qbX + 6 * k, y0: qbY, x1: ex, y1: gy, z0: 16 * k, z1: !ok && d.arc ? 0 : 14 * k, h: d.lob ? h * 0.5 : d.straight || d.fast || d.tip ? h * 0.05 : h * 0.18 };
+    if (d.arc) { pdLn([[ok ? rangeW : rangeX, gy - 70], [ok ? rangeW : rangeX, gy + 22]], pdC(PD_COL.label), 2, [6, 5]); if (ok) pdLn([[rangeX, gy - 70], [rangeX, gy + 22]], 'rgba(34,48,90,0.3)', 1.5, [3, 6]); P.range = [ok ? rangeW : rangeX, gy - 72]; }
+    if (d.link && ok) { pdLn([[qbX, qbY - 20], [rx, gy - 20]], PD_COL.label, 2, [3, 6]); pdGlow(qbX, qbY); pdGlow(rx, gy); P.link = [(qbX + rx) / 2, gy - 22]; }
+    if (d.glow && ok && u > 0.1) pdGlow(rx, gy);
+    if (d.dot) { const dx = ok ? recX + 6 : recX + 50; ctx.save(); ctx.strokeStyle = pdC('#c0392b'); ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(recX + 6, gy + 4, 10, 4, 0, 0, 7); ctx.stroke(); ctx.restore(); P.dot = [recX + 6, gy]; if (u > land && !ok) pdX(dx, gy + 2, PD_COL.ghost); }
+    pdMe(qbX, qbY); pdMan(qbX, qbY, PD_COL.off, roll > 0 && roll < 1 ? u * 60 : 0, 0); P.qb = pdHd(qbX, qbY);
+    if (d.frost && ok) pdIco('pdIce', qbX + 16, qbY - 26, 18);
+    if (d.rel) pdWatch(qbX - 30, qbY - 66, Math.min(u, rel) / 0.4);
+    pdMan(dbx, gy + 10, PD_COL.def, run < 1 ? u * 70 : 0, 0); P.db = pdHd(dbx, gy + 10);
+    if (d.glow && ok && u > 0.1 && u < 0.6) pdText('?', dbx, gy - 50, '#c0392b', 20);
+    pdMan(rx, gy, PD_COL.off, run < 1 || (ok && u > land) ? u * 75 : 0, 0); P.rec = pdHd(rx, gy);
+    if (d.link) pdMe(rx, gy);
+    if (d.rush) { const px = pdL(x + 260, qbX + 30, pdS(u / 0.45)); pdMan(px, qbY + 4, PD_COL.def, u < 0.45 ? u * 60 : 0, 0); P.rush = pdHd(px, qbY + 4);
+      if (u > 0.04 && u < rel + 0.06) { const amp = (ok ? d.shake[1] : d.shake[0]) * pdE(u, 0.04, 0.16), t = pdT() * 40; pdRing(recX + 6 + Math.sin(t) * amp, gy + 4 + Math.cos(t * 1.3) * amp * 0.4, 16, 1, '#c0392b'); }
+      P.ring = [recX + 6, gy - 6]; }
+    if (d.ring && u > 0.3) {   // the catch ring under him (moonball / big target)
+      const sw = ok ? (PDM.still ? 1 : pdE(u, 0.48, 0.6)) : 0, kk = 1 + (R - 1) * sw + (ok && !PDM.still ? Math.sin(sw * Math.PI) * 0.12 : 0);
+      pdRing(rx, gy + 6, r0, kk, '#f2c94c', ok && sw > 0); P.ring = [rx + r0 * kk * 0.7, gy + 6 - r0 * kk * 0.3]; }
+    if (ok && d.ruler) pdRuler(path.x0, path.x1, gy + 32, d.ruler(), PDM.still ? 1 : pdE(u, 0.24, 0.56));
+    let hand = null;
+    if (d.tip) { const ft = (tipX - path.x0) / (path.x1 - path.x0), z = path.z0 + (path.z1 - path.z0) * ft + 4 * path.h * ft * (1 - ft); hand = [tipX + 6, gy - z]; pdMan(tipX, gy - 4, PD_COL.def, 0, 0); pdArm(tipX, gy - 4, hand[0], hand[1] - 4, PD_COL.def); P.hand = hand; }
+    P.apex = [(path.x0 + path.x1) / 2, gy - path.h - (path.z0 + path.z1) / 2];
+    if (d.straight && ok && u >= rel) pdLn([[path.x0, qbY - path.z0], [recX + 6, gy - path.z1]], PD_COL.label, 1.6, [8, 4]);
+    const fl = (u - rel) / (land - rel);
+    if (d.race && ok && u >= rel) { const g = (u - rel) / (0.72 - rel); if (g < 1) { ctx.save(); ctx.globalAlpha *= 0.35; ctx.fillStyle = PD_COL.ghost; const q = { ...path, x1: recX + 6 }, bx = pdL(q.x0, q.x1, g); ctx.beginPath(); ctx.ellipse(bx, gy - pdL(q.z0, q.z1, g) - 4 * q.h * g * (1 - g), 6, 3.6, 0, 0, 7); ctx.fill(); ctx.restore(); } }
+    if (u < rel) pdHeld(qbX, qbY);
+    else if (u < land) {
+      if (!ok && hand && pdL(path.x0, path.x1, fl) >= hand[0]) { const ft = (hand[0] - path.x0) / (path.x1 - path.x0), g = (fl - ft) / (1 - ft); pdBallAt(hand[0] + g * 50, hand[1] - Math.sin(Math.min(1, g) * Math.PI) * 30 + g * (gy - hand[1]), g * 9); pdBurst(hand[0], hand[1], 12); P.ball = hand; }
+      else { const b = pdBall(path, fl); P.ball = [b.x, b.y]; if (d.spiral && ok) for (let i = 1; i < 4; i++) pdLn([[b.x - i * 9, b.y - 3], [b.x - i * 9 - 4, b.y + 3]], PD_COL.label, 1.4); }
+      if (d.dbShort && u > land - 0.12) pdArm(dbx, gy + 10, ok ? dbx + 26 : rx + 4, gy - 22, PD_COL.def);
+    } else if (ok) { pdHeld(rx, gy); if (u > land + 0.04) qsStamp(rx, y + 34, 'CATCH', PD_COL.good, -0.1, PDM.still ? 1 : Math.max(1, 1.7 - (u - land - 0.04) * 8), 14); if (d.dbShort) pdArm(dbx, gy + 10, dbx + 24, gy - 18, PD_COL.def); }
+    else if (!hand) { const b = (u - land) / (1 - land); pdLoose(ex, gy, b); if (b > 0.25) pdX(ex, gy, PD_COL.ghost); if (d.dbShort) pdBurst(rx + 6, gy - 22, 12); }
+  },
+  catch(x, y, w, h, d) {   // a receiver runs his route, the ball comes over his shoulder. ring / side+toes / jump / marker+ez / seam / cut / deep / yac / vise / step / burn / two / under / qbLook / drop:false
+    qsTurf(x, y, w, h); const u = PDM.u, ok = !!PDM.beat, k = POP_DEMO.man, P = PDM.pts, gy = d.side ? y + h * 0.6 : y + h * 0.74, cx = x + w * (d.under ? 0.5 : 0.58), land = 0.55;
+    const fail = !ok && d.drop !== false, R = ok && d.ring ? d.ring() : 1;
+    if (d.tag) { pdTop(x + w / 2, y + 22, d.tag[0], d.tag[1]); P.tag = [x + w / 2 + 34, y + 22]; }
+    if (d.side) { ctx.save(); ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.fillRect(x, gy + 22, w, 4); ctx.restore(); pdShade(x, gy + 26, w, h, 'rgba(120,100,70,0.12)'); }
+    if (d.ez) pdShade(x + w * 0.78, y, w * 0.22, h, 'rgba(192,69,58,0.12)');
+    if (d.marker) { pdMarker(x + w * d.marker[1], gy + 24, d.marker[0], 34); P.mark = [x + w * d.marker[1], gy - 26]; }
+    if (d.seam) { pdShade(cx - 45, y, 90, h); P.seam = [cx, y + 40]; }
+    if (d.under) { pdBubble(cx - 120, gy + 4, 60); pdBubble(cx + 120, gy + 4, 60); pdRuler(x + w * 0.22, cx, gy + 34, ok ? `under ${ABIL_FX.blanket.yd} yd` : `${ABIL_FX.blanket.yd} yd`, 1); }
+    const rr = pdE(u, 0, land), x0 = d.under ? x + w * 0.22 : x + w * 0.2;
+    let rt = d.cut && !ok ? (rr < 0.5 ? rr : 0.5 + (rr - 0.5) * 0.6) : rr, rx, ry;
+    if (d.cut) { const a = Math.min(rt, 0.5) / 0.5, b = Math.max(0, rt - 0.5) / 0.5; rx = pdL(x0, cx - 60, a) + 60 * b; ry = gy + 34 * (1 - b); if (rt > 0.5 && ok) pdSpeedL(rx, ry, 1); }
+    else { rx = pdL(x0, cx, rt); ry = gy; }
+    const after = u > land && ok && (d.yac || d.burn || d.deep || d.step), go = after ? (u - land) * w * 0.55 : 0; rx += go;
+    if (d.deep) { pdMarker(x + w * 0.42, gy + 24, d.deepYd || 20, 30); if (ok && rx > x + w * 0.42) pdSpeedL(rx, ry, 1); }
+    const gap = d.step && ok ? 70 : d.deep && ok ? 40 + rr * 30 : 34, jump = d.jump && u > land - 0.12 && u < land + 0.12 ? Math.sin((u - land + 0.12) / 0.24 * Math.PI) * 26 : 0;
+    const dbx = rx - gap - (after ? go * 0.15 : 0), dby = ry + 10;
+    if (d.qbLook) { pdMan(x + 50, gy, PD_COL.off, 0, 0); if (u > 0.08) pdArrow(x + 62, gy - 40, pdL(x + 62, rx - 14, pdE(u, 0.08, 0.3)), pdL(gy - 40, ry - 40, pdE(u, 0.08, 0.3)), ok ? PD_COL.label : PD_COL.ghost, 2, [6, 4]); P.look = [x + 110, gy - 50]; }
+    if (d.under) { const cl = !ok ? pdE(u, 0.2, land) : 0; pdMan(cx + 120 - cl * 96, gy + 8, PD_COL.def, cl > 0 && cl < 1 ? u * 60 : 0, 0); pdMan(cx - 120, gy + 8, PD_COL.def, 0, 0); }
+    else if (d.two) { pdMan(dbx, dby, PD_COL.def, u * 60, 0); pdMan(rx + 26, ry - 20, PD_COL.def, u * 60, 0); P.db = pdHd(rx + 26, ry - 20); if (u > land - 0.1) { pdArm(dbx, dby, rx - 6, ry - 34 - jump, PD_COL.def); pdArm(rx + 26, ry - 20, rx + 8, ry - 40 - jump, PD_COL.def); } }
+    else { pdMan(dbx, dby - (d.jump ? jump * 0.75 : 0), PD_COL.def, rr < 1 ? u * 70 : 0, 0); P.db = pdHd(dbx, dby); if (d.jump === 'tall') { const hx = (dbx + rx) / 2; pdLn([[hx, ry - 54 - jump], [hx, ry + 10]], PD_COL.label, 1.5); pdLn([[hx - 6, ry - 54 - jump], [hx + 6, ry - 54 - jump]], PD_COL.label, 1.5); pdLn([[hx - 6, dby - 44 - jump * 0.75], [hx + 6, dby - 44 - jump * 0.75]], PD_COL.label, 1.5); P.ruler = [hx, ry - 56 - jump]; } }
+    if (d.step && ok && u > 0.25) { pdLn([[dbx + 12, ry - 52], [dbx + 12, ry - 58], [rx - 12, ry - 58], [rx - 12, ry - 52]], PD_COL.label, 1.6); P.step = [(dbx + rx) / 2, ry - 58]; }
+    if (d.burn && after) { pdIco('pdFlame', rx - 24, ry - 10, 26, '#f08a24'); pdTop(rx, y + 22, 'clock', `${Math.max(0, XFX.afterburner.t - Math.floor((u - land) / (1 - land) * XFX.afterburner.t * 1.2))} s`); P.flame = [rx - 24, ry - 24]; }
+    let down = 0;
+    if (d.yac && u > land) { const tx = cx + w * 0.3 - (u - land) * 140, met = u > 0.76; const fall = met ? Math.min(1, (u - 0.76) * 8) : 0;
+      if (ok) pdMan(met ? tx + 10 : tx, gy + 4, PD_COL.def, met ? 0 : u * 70, fall * 0.9); else { pdMan(Math.max(tx, rx + 14), gy + 4, PD_COL.def, met ? 0 : u * 70, 0); if (met) down = fall; }
+      if (met && u < 0.85) pdBurst(rx + 8, gy - 20); P.tk = pdHd(tx, gy + 4); }
+    pdMe(rx, ry); pdMan(rx, ry - jump, PD_COL.off, rr < 1 || after ? u * 75 : 0, down); P.me = pdHd(rx, ry - jump);
+    if (d.vise && u > land - 0.04) { pdMan(rx + 24, ry + 6, PD_COL.def, 0, 0); if (u < land + 0.12) pdBurst(rx + 8, ry - 22); if (ok) pdIco('pdVise', rx + 6, ry - 50, 26, '#8a9099'); P.vise = [rx + 6, ry - 60]; }
+    if (d.ring && u > 0.25) { const sw = ok ? (PDM.still ? 1 : pdE(u, 0.3, 0.42)) : 0; pdRing(cx, gy + 6, 36, 1 + (R - 1) * sw, '#f2c94c', ok && sw > 0); P.ring = [cx + 30, gy - 2]; }
+    if (d.side && u >= land - 0.02) { const t1 = [cx - 5, gy + 16], t2 = ok ? [cx + 6, gy + 18] : [cx + 8, gy + 30]; for (const [tx2, ty2] of [t1, t2]) { ctx.fillStyle = pdC(RES.line); ctx.beginPath(); ctx.ellipse(tx2, ty2, 4, 2.2, 0, 0, 7); ctx.fill(); } if (!ok) pdX(t2[0] + 10, t2[1], '#c0392b', 5); P.toe = [cx, gy + 16]; }
+    // the ball
+    const path = { x0: x + 30, y0: gy - 10, x1: cx, y1: gy, z0: 60, z1: 15 * k + jump, h: 30 }, fl = pdE(u, 0.15, land);
+    if (u < 0.15) return;
+    if (u < land) { const b = pdBall(path, fl); P.ball = [b.x, b.y]; return; }
+    if (fail) { const b = (u - land) / (1 - land); if (d.vise || d.jump || d.two || d.under) pdBurst(cx + 4, gy - 26 - jump, 12); pdLoose(cx, gy, b); }
+    else { pdHeld(rx, ry - jump); if (d.yac && down) {} else if (u > land + 0.05 && !after) qsStamp(rx, y + 34, 'CATCH', PD_COL.good, -0.1, PDM.still ? 1 : Math.max(1, 1.7 - (u - land - 0.05) * 8), 14); }
+  },
+  run(x, y, w, h, d) {   // a back runs left to right. hit / hole / holdHole / burst / tally / juke / moves / truck / hurdle / battery / blockers / whiff / stiff / marker / glue / tag / lead
+    qsTurf(x, y, w, h); const u = PDM.u, ok = !!PDM.beat, k = POP_DEMO.man, P = PDM.pts, gy = y + h * 0.72, x0 = x + 50, x1 = x + w - 50, cu = 0.5, cx = x + w * 0.52;
+    if (d.tag) { pdTop(x + w / 2 - (d.lead ? 40 : 0), y + 22, d.tag[0], d.tag[1]); P.tag = [x + w / 2, y + 22]; if (d.lead) pdTag(x + w / 2 + 40, y + 22, '21-14', '#f4efe0', RES.line); }
+    if (d.marker) { pdShade(x + w * d.marker[1], y, w, h, 'rgba(192,69,58,0.1)'); pdLn([[x + w * d.marker[1], y], [x + w * d.marker[1], y + h]], 'rgba(255,255,255,0.9)', 3); pdMarker(x + w * d.marker[1] - 40, gy + 26, d.marker[0], 30); P.mark = [x + w * d.marker[1] - 40, gy - 16]; }
+    // where he gets to and whether he is stopped
+    const stopped = !ok && !d.tally && !d.glue;   // (ghost: brought down at the contact)
+    let f = d.burst ? (ok ? 1 - Math.pow(1 - u, 1.8) : Math.pow(u, 1.25)) : u;
+    if ((d.hole || d.holdHole) && !ok) f = u < 0.3 ? u : 0.3 + (u - 0.3) * 0.55;
+    if (d.battery && !ok) f = u < 0.5 ? u : 0.5 + (u - 0.5) * 0.5;
+    let rx = pdL(x0, x1, f), down = 0; const hitAt = d.battery ? 0.78 : cu;
+    if (stopped && u > hitAt) { rx = Math.min(rx, pdL(x0, x1, d.burst ? Math.pow(hitAt, 1.25) : hitAt)); down = Math.min(1, (u - hitAt) * 6); }
+    let ry = gy; if ((d.juke || d.moves) && ok) ry += Math.sin(u * Math.PI * (d.moves ? 6 : 4)) * 14;
+    // blockers / the hole
+    if (d.hole || d.holdHole) { const hx = x + w * 0.42, shut = d.holdHole && !ok ? pdE(u, 0.25, 0.4) * 30 : 0;
+      for (const s of [-1, 1]) { pdMan(hx - 8, gy + s * (40 - shut), PD_COL.off, 0, 0); pdMan(hx + 10, gy + s * (40 - shut), PD_COL.def, 0, 0); }
+      const seen = ok ? 0.06 : 0.38; if (u > seen) { ctx.save(); ctx.strokeStyle = pdC(PD_COL.label); ctx.lineWidth = 2; ctx.setLineDash([5, 4]); ctx.strokeRect(hx - 14, gy - 22 + shut * 0.3, 32, 40 - shut * 0.6); ctx.restore(); }
+      if (d.holdHole && ok) pdWatch(hx + 2, gy - 82, u, ''); P.hole = [hx, gy - 26]; }
+    if (d.blockers) for (const [i, bx] of [[0, x + w * 0.5], [1, x + w * 0.66]]) { const shed = !ok && u > 0.35 + i * 0.05; const dx = shed ? pdL(bx + 14, rx + 18, pdE(u, 0.35, 0.5)) : bx + 14; pdMan(bx, gy + (i ? 30 : -30), PD_COL.off, 0, shed ? 0.6 : 0); pdMan(dx, gy + (shed ? 0 : (i ? 30 : -30)), PD_COL.def, 0, 0); if (i === 0) P.blk = pdHd(bx, gy - 30); }
+    // the tackler(s)
+    const tk = (tx, at, fall, dive) => { const met = u > at, fx = met ? tx : pdL(x1 + 40, tx, pdE(u, 0, at)); pdMan(fx, gy + 6, PD_COL.def, met ? 0 : u * 70, met && fall ? Math.min(1, (u - at) * 7) * fall : dive && u > at - 0.08 ? 0.5 : 0); return fx; };
+    if (d.moves) { [0.3, 0.5, 0.7].forEach((a, i) => tk(x + w * (0.3 + i * 0.2) + 20, a, ok ? 0.8 : i === 1 ? 0 : 0.8, true)); P.tk = [x + w * 0.5, gy - 40]; }
+    else if (d.juke) { tk(x + w * 0.34, 0.32, 0.8, true); tk(x + w * 0.62, 0.62, ok ? 0.8 : 0, true); const cool = u < 0.32 ? 1 : pdE(u, 0.32, ok ? 0.5 : 0.8); ctx.save(); ctx.strokeStyle = pdC(PD_COL.label); ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(rx, gy - 66, 9, -Math.PI / 2, -Math.PI / 2 + cool * Math.PI * 2); ctx.stroke(); ctx.restore(); P.cool = [rx, gy - 76]; }
+    else if (d.hurdle) { const dvx = cx + 14, lay = u > cu - 0.1; pdMan(dvx, gy + 8, PD_COL.def, 0, lay ? 1 : 0.4); P.tk = [dvx, gy - 10]; }
+    else if (!d.hole && !d.holdHole && !d.blockers && !d.tally && !d.glue) { const fall = ok ? (d.truck || d.stiff ? 1 : d.whiff ? 0.9 : 0.8) : 0; const fx = tk(cx + 22, d.battery ? 0.78 : cu, fall, d.whiff); P.tk = pdHd(fx, gy + 6); if (d.stiff && u > cu - 0.06 && u < cu + 0.15) pdArm(rx, ry, rx + 18, gy - 20, PD_COL.off); }
+    else if (d.glue || d.tally) { const fx = tk(cx + 22, cu, ok ? 0.7 : 0.7, false); P.tk = pdHd(fx, gy + 6); }
+    if (u > cu - 0.02 && u < cu + 0.12 && !d.moves && !d.juke && !d.hole && !d.holdHole && !d.blockers && !d.hurdle) pdBurst(cx + 10, gy - 22);
+    // him
+    let jz = 0; if (d.hurdle && ok && u > cu - 0.12 && u < cu + 0.12) { jz = Math.sin((u - cu + 0.12) / 0.24 * Math.PI) * 40; pdIco('wings', rx - 6, ry - 30 - jz, 30, '#ffffff'); }
+    if (d.hurdle && !ok && u > cu) down = Math.min(1, (u - cu) * 6);
+    pdMe(rx, ry); pdMan(rx, ry - jz, PD_COL.off, down ? 0 : u * 80, down); P.me = pdHd(rx, ry - jz);
+    const popped = !ok && (d.hit || d.glue) && u > cu;
+    if (popped) pdLoose(rx + 10, gy, (u - cu) / (1 - cu)); else if (!down) pdHeld(rx, ry - jz); else pdBallAt(rx + 10, gy + 4);
+    if (ok && (d.burst || d.whiff || d.moves) && u > 0.1) pdSpeedL(rx, ry, 1);
+    if (d.battery) { pdBattery(rx, ry - 70 - jz, ok ? 1 : 1 - pdE(u, 0.1, 0.8) * 0.9); P.bat = [rx, ry - 80]; }
+    if (d.tally) { const n = ok ? 1 + Math.floor(u * 5.99) : 1, per = ABIL_FX.bellCow; pdTally(x + w / 2 - 70, y + 26, n); pdBar(x + w / 2 + 60, y + 20, 'BREAK', 6, ok ? 6 + Math.round(Math.min(per.max, per.per * n) * 30) : 6, 1); P.tally = [x + w / 2 - 50, y + 36]; }
+  },
+  line(x, y, w, h, d) {   // a blocker (blue) vs a rusher (red), QB / back behind. rush bull|speed|quick / anchor / pancake+x2 / pull / two / stunt / seal / chip / brick / stuck / dbl / runStuff / me
+    qsTurf(x, y, w, h); const u = PDM.u, ok = !!PDM.beat, P = PDM.pts, gy = y + h * 0.68, lx = x + w * 0.48, meDL = d.me === 'dl';
+    const qx = x + 70; pdMan(qx, gy, PD_COL.off, 0, 0);
+    let ox = lx - 12, oy = gy, dx = lx + 12, dy = gy, dDown = 0, oDown = 0, beat = false, ox2 = null;
+    const rush = d.rush || 'bull';
+    if (d.pull) { const sp = ok ? 1 : 0.65, t = pdE(u, 0.05, 0.85); ox = pdL(lx - 30, x + w - 120, Math.min(1, t * sp)); oy = gy + 34 - Math.min(1, t * sp) * 10; dx = x + w - 90; dy = gy + 24; if (d.two && ok && u > 0.6) { ox2 = true; } pdMan(lx - 4, gy - 30, PD_COL.off, 0, 0); pdMan(lx + 18, gy - 30, PD_COL.def, 0, 0); if (ox >= dx - 30) { dDown = ok ? Math.min(1, (u - 0.7) * 6) : 0; } }
+    else if (rush === 'speed') { const a = pdE(u, 0.1, 0.7); dx = lx + 12 + Math.sin(a * Math.PI) * 10 - a * 140; dy = gy - Math.sin(a * Math.PI * 0.9) * 60; if (ok) { oy = gy - Math.min(1, a * 1.3) * 52; ox = lx - 12 - a * 70; if (a > 0.5) dx = Math.max(dx, ox + 22); } beat = !ok && a > 0.6; }
+    else if (rush === 'quick') { const a = pdE(u, 0.12, 0.35); if (ok) { dx = lx + 12 + Math.sin(a * Math.PI) * 6 + (u > 0.35 ? 18 * pdE(u, 0.35, 0.45) : 0); if (u > 0.35 && u < 0.45) pdBurst(lx, gy - 24); } else { dy = gy - a * 36; dx = lx + 12 - a * 70 - pdE(u, 0.35, 0.8) * 90; beat = u > 0.35; } }
+    else if (d.dbl) { dx = lx + 12; ox = lx - 12; ox2 = true; }
+    else if (d.runStuff) { const a = pdE(u, 0.15, 0.5); if (ok) { dy = gy - a * 34; dx = lx + 12 - pdE(u, 0.35, 0.7) * 120; } }
+    else { const give = d.stuck || d.brick ? (ok ? 0 : 1) : (d.anchor ? (ok ? 0 : 1) : ok ? 0.35 : 1), push = pdE(u, 0.1, 0.8) * 90 * give; if (d.seal || d.chip || d.runWin) { ox = lx - 12 + (ok ? pdE(u, 0.1, 0.8) * 50 : -push * 0.4); dx = ox + 24; } else { ox = lx - 12 - push; dx = ox + 24; } beat = !ok && (d.stuck || d.brick || d.anchor) && u > 0.75; }
+    if (d.pancake && ok && u > 0.55) dDown = Math.min(1, (u - 0.55) * 6);
+    if (d.brick && ok) for (let i = 0; i < 4; i++) { const bx = dx - 22 - (i % 2) * 6; pdLn([[bx, gy - 40 + i * 12], [bx + 18, gy - 40 + i * 12]], '#b4553a', 2); pdLn([[bx + 9, gy - 40 + i * 12], [bx + 9, gy - 28 + i * 12]], '#b4553a', 1.5); }
+    if (d.stunt) { pdArrow(lx + 20, gy - 40, lx + 4, gy + 30, ok ? '#c0392b' : PD_COL.ghost, 2, [5, 4]); pdArrow(lx + 20, gy + 40, lx + 4, gy - 30, ok ? '#c0392b' : PD_COL.ghost, 2, [5, 4]); pdMan(lx + 14, gy + 44, PD_COL.def, 0, 0); if (!ok && u > 0.5) pdMan(pdL(lx, qx + 26, pdE(u, 0.5, 0.85)), gy - 12, PD_COL.def, u * 70, 0); if (ok && u > 0.2) pdArm(ox, oy, ox + 14, gy - 58, PD_COL.off); P.point = [ox + 14, gy - 60]; }
+    if (d.chip) { const go = pdE(u, ok ? 0.25 : 0.55, ok ? 0.9 : 1); const tx = lx - 30 + go * 260; pdMan(tx, gy + 40, PD_COL.off, go > 0 && go < 1 ? u * 70 : 0, 0); if (!ok && u > 0.25 && u < 0.55) pdText('...', tx, gy - 10, PD_COL.ghost, 18); pdMe(tx, gy + 40); P.me = pdHd(tx, gy + 40); }
+    if (d.seal) { const ra = pdE(u, 0.2, 0.95), rbx = pdL(qx + 20, x + w - 40, ra), rby = gy + 50 - ra * 20; const tackled = !ok && ra > 0.55; pdMan(tackled ? pdL(qx + 20, x + w - 40, 0.55) : rbx, rby, PD_COL.off, tackled ? 0 : u * 80, tackled ? Math.min(1, (ra - 0.55) * 6) : 0); if (!ok) { dx = pdL(dx, pdL(qx + 20, x + w - 40, 0.55) + 16, pdE(ra, 0.3, 0.55)); dy = pdL(gy, rby, pdE(ra, 0.3, 0.55)); } P.run = pdHd(rbx, rby); }
+    if (d.runStuff) { const ra = pdE(u, 0.1, 0.6), rbx = pdL(qx + 10, lx - 30, ra), stop = ok && u > 0.6; pdMan(stop ? lx - 50 : rbx, gy - 30, PD_COL.off, stop ? 0 : u * 70, stop ? Math.min(1, (u - 0.6) * 6) : 0); if (ok && u > 0.6) { ctx.save(); ctx.strokeStyle = PD_COL.label; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(lx + 30, gy - 70); ctx.quadraticCurveTo(lx + 60, gy - 100, lx - 30, gy - 92); ctx.stroke(); ctx.restore(); pdArrow(lx - 10, gy - 94, lx - 32, gy - 92); } P.tfl = [lx - 50, gy - 80]; }
+    if (beat && !d.seal) { const fx = pdL(dx, qx + 26, pdE(u, 0.6, 0.95)); dx = fx; dy = pdL(dy, gy, pdE(u, 0.6, 0.95)); }
+    if (d.anchor && ok && u > 0.3) pdIco('pdAnchor', ox - 6, oy + 16 + Math.min(1, (u - 0.3) * 5) * 4, 22, '#5a5f66');
+    if (ox2) { pdMan(ox - 8, oy + 28, PD_COL.off, 0, 0); if (d.dbl && ok) { const fr = pdE(u, 0.25, 0.8); pdMan(pdL(lx + 10, qx + 26, fr), gy + 50 - fr * 40, PD_COL.def, u * 70, 0); P.free = pdHd(pdL(lx + 10, qx + 26, fr), gy + 50 - fr * 40); } if (d.two) { pdMan(dx + 4, dy + 30, PD_COL.def, 0, ok ? 0.8 : 0); } }
+    if (!d.chip) { if (!meDL) pdMe(ox, oy); pdMan(ox, oy, PD_COL.off, 0, oDown); }
+    else pdMan(ox, oy, PD_COL.off, 0, 0);
+    if (meDL) pdMe(dx, dy); pdMan(dx, dy, PD_COL.def, beat || d.pull || rush === 'speed' ? u * 60 : 0, dDown);
+    if (d.x2 && dDown) pdText('x2', dx + 26, dy - 34, '#c0392b', 18);
+    P.ol = pdHd(ox, oy); P.dl = pdHd(dx, dy); if (!P.me) P.me = meDL ? P.dl : P.ol;
+    if (beat && u > 0.92 && !d.seal) pdBurst(qx + 10, gy - 22);
+  },
+  rush(x, y, w, h, d) {   // him (red) rushing the QB past a blocker. getOff / shed / strip / bat / lane / watch / drive / blitz+free / motor / esc (him = the QB) / tag+tag2
+    qsTurf(x, y, w, h); const u = PDM.u, ok = !!PDM.beat, P = PDM.pts, gy = y + h * 0.7, qx = x + 90, lx = x + w * 0.5;
+    if (d.tag) { pdTop(x + w / 2 - (d.tag2 ? 70 : 0), y + 22, d.tag[0], d.tag[1]); P.tag = [x + w / 2 - 70, y + 22]; }
+    if (d.tag2 && ok && u > 0.4) { pdTop(x + w / 2 + 70, y + 22, d.tag2[0], d.tag2[1]); P.tag2 = [x + w / 2 + 70, y + 22]; }
+    if (d.drive) { pdTag(x + w / 2, y + 22, '1ST RUSH', '#f4efe0', RES.line); P.tag = [x + w / 2, y + 22]; }
+    if (d.motor) { pdTop(x + w / 2, y + 22, 'clock', 'Q4'); P.tag = [x + w / 2, y + 22]; }
+    if (d.lane) { pdShade(x + w * 0.3, gy - 50, w * 0.4, 30); P.lane = [x + w * 0.5, gy - 54]; }
+    const esc = d.esc, start = d.getOff ? (ok ? 0 : 0.12) : 0.05, free = d.free ? 0 : d.blitz ? (ok ? 0.15 : 0.9) : d.watch ? (ok ? 0.3 : 0.9) : d.shed ? (ok ? 0.35 : 0.65) : d.getOff ? (ok ? 0.3 : 0.9) : d.bat || d.lane || d.esc ? 0.4 : (ok ? 0.4 : 0.9);
+    const obx = lx - 14, sackAt = Math.min(0.85, free + 0.3);
+    // the blocker
+    const by = d.blitz ? gy + 34 : gy; pdMan(obx, by, PD_COL.off, 0, 0); P.ol = pdHd(obx, by);
+    if (d.blitz && u > 0.2 && u < 0.5) { pdArm(obx, by, obx + 18, by - 40, PD_COL.off); if (ok) { ctx.save(); ctx.strokeStyle = 'rgba(192,69,58,0.55)'; ctx.setLineDash([3, 3]); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.ellipse(obx + 18, by - 20, 9, 22, 0, 0, 7); ctx.stroke(); ctx.restore(); } }
+    // him
+    let rx = lx + 16, ry = d.blitz ? gy - 30 : gy;
+    if (u > start) { if (u < free) rx = lx + 16 - (d.blitz ? (u - start) * 60 : 0); else { const g = pdE(u, free, sackAt); rx = pdL(lx + 16, qx + 24, g); ry = pdL(ry, gy, g); } }
+    const sack = ok && !esc && !d.bat && !d.lane && u >= sackAt, qbDown = sack ? Math.min(1, (u - sackAt) * 6) : esc && !ok && u >= sackAt ? Math.min(1, (u - sackAt) * 6) : 0;
+    // the QB
+    let qbx = qx, qby = gy; if (esc && ok && u > sackAt - 0.05) { qby = gy - pdE(u, sackAt - 0.05, sackAt + 0.15) * 60; qbx = qx + pdE(u, sackAt, 1) * 60; }
+    if (esc) pdMe(qbx, qby); pdMan(qbx, qby, PD_COL.off, qbx !== qx ? u * 70 : 0, qbDown); P.qb = pdHd(qbx, qby);
+    if (esc && u > sackAt - 0.08 && u < sackAt + 0.08) { pdArm(rx, ry, qx + 4, gy - 30, PD_COL.def); }
+    if (!esc) pdMe(rx, ry); pdMan(rx, ry, PD_COL.def, u > free ? u * 70 : 0, 0); P.me = esc ? P.qb : pdHd(rx, ry);
+    if (d.getOff && u < 0.2) pdText(ok ? 'GO' : '', lx + 30, gy - 56, PD_COL.label, 14);
+    if (d.watch) pdWatch(lx + 60, gy - 80, pdE(u, 0, ok ? free : 0.9), ok ? `${XFX.unblockable} s` : '');
+    if (d.motor) pdBattery(rx, ry - 70, ok ? 1 : 1 - pdE(u, 0.1, 0.7) * 0.85);
+    // the ball
+    if (d.bat || d.lane) { const rel = 0.45, land = 0.85; pdArm(rx, ry, rx - 4, gy - 72, PD_COL.def); P.hand = [rx - 4, gy - 72];
+      if (u < rel) pdHeld(qx, gy); else { const path = { x0: qx + 9, y0: gy, x1: x + w - 40, y1: gy, z0: 24, z1: 20, h: 30 }, g = pdE(u, rel, land), bx = pdL(path.x0, path.x1, g);
+        if (ok && bx >= rx - 4) { const gg = pdE(bx, rx - 4, rx + 60); pdBallAt(rx + gg * 40, gy - 72 - Math.sin(gg * Math.PI) * 26 + gg * 60, gg * 9); pdBurst(rx - 4, gy - 72, 12); } else pdBall(path, g); } }
+    else if (sack && d.strip) { pdLoose(qx + 10, gy, (u - sackAt) / (1 - sackAt)); pdBurst(qx + 16, gy - 20); P.ball = [qx + 16, gy - 20]; }
+    else if (!esc || ok) pdHeld(qbx, qby);
+    if (sack) { pdBurst(qx + 14, gy - 24); if (u > sackAt + 0.06) qsStamp(qx + 20, y + 40, 'SACK', PD_COL.def, -0.1, PDM.still ? 1 : Math.max(1, 1.7 - (u - sackAt - 0.06) * 8), 14); }
+    if (esc && ok && u > sackAt + 0.05) pdSpeedL(qbx, qby, 1);
+  },
+  cover(x, y, w, h, d) {   // him (red) covering a receiver, the QB throws. mirror / brk / jam+watch / pick / lock / magnet / zone / short / deep+ring / eraser / slip / tall / eyes
+    qsTurf(x, y, w, h); const u = PDM.u, ok = !!PDM.beat, k = POP_DEMO.man, P = PDM.pts, gy = y + h * 0.72, qx = x + 50, land = 0.6, rel = 0.25;
+    const deep = d.deep || d.eraser, cx = deep ? x + w - 110 : d.short ? x + w * 0.4 : x + w * 0.6;
+    pdMan(qx, gy, PD_COL.off, 0, 0); P.qb = pdHd(qx, gy);
+    if (d.eyes && u < 0.4) pdLn([[qx + 6, gy - 36], [pdL(qx + 6, cx, pdE(u, 0, 0.3)), gy - 36]], PD_COL.label, 1.6, [2, 5]);
+    // the receiver's route (with a press stall)
+    const stall = d.jam ? (ok ? 0.3 : 0.06) : 0, rr = pdE(u, stall, land);
+    const rx0 = x + w * 0.22; let rx = pdL(rx0, cx, rr), ry = gy + (d.short ? -Math.sin(rr * Math.PI / 2) * 30 : 0);
+    if (d.mirror) ry += Math.sin(rr * Math.PI * 3) * 16;
+    const tall = d.tall ? 1.25 : 1;
+    // him
+    let react = d.brk || d.eyes ? (ok ? rel : rel + 0.2) : d.zone || d.short ? (ok ? rel : rel + 0.25) : 0;
+    let mx, my;
+    if (deep) { const sx = x + w * 0.62, g = pdE(u, react || rel, land); mx = pdL(sx, cx - 30, g); my = gy - 30 + g * 22; }
+    else if (d.zone || d.short) { const zx = cx + 40, g = pdE(u, react, land); mx = pdL(zx, cx + 10, g); my = pdL(gy - 40, ry - 4, g); pdBubble(zx, gy - 30, 54); }
+    else { const lag = d.mirror ? (ok ? 10 : 46) : 30, g = d.brk ? pdE(u, react, land) : 1; mx = rx - lag + (d.brk ? (1 - g) * -30 : 0); my = d.mirror && ok ? ry + 12 : gy + 12; if (d.jam && u < 0.32) { mx = rx + 18; my = gy + 2; } }
+    if (d.jam && u > 0.04 && u < 0.14) pdBurst(rx + 10, gy - 22);
+    if (d.watch && d.jam) pdWatch(rx0, gy - 82, pdE(u, 0, 0.3), '');
+    if (deep && d.ring) { const R = ok ? d.ring() : 1, sw = ok ? (PDM.still ? 1 : pdE(u, 0.3, 0.45)) : 0; pdRing(mx, my + 8, 54, 1 + (R - 1) * sw, '#f2c94c', sw > 0); P.ring = [mx + 40, my - 4]; }
+    if (d.eraser) { const arcX = x + w * 0.2; ctx.save(); ctx.strokeStyle = 'rgba(34,48,90,0.35)'; ctx.setLineDash([6, 5]); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(qx, gy - 40); ctx.quadraticCurveTo((qx + cx) / 2, y + 10, cx, gy - 20); ctx.stroke(); ctx.restore(); if (ok && u > 0.15 && u < 0.6) { const ex = pdL(cx - 120, cx - 10, pdE(u, 0.15, 0.55)); pdIco('pdEraser', ex, y + 40 + (ex - cx + 120) * 0.25, 30, '#f2a7b6'); } P.er = [cx - 60, y + 40]; }
+    if (d.lock && ok && u > 0.3) { pdIco('pdLock', rx, ry - 64, 22, '#e0b13a'); P.lock = [rx, ry - 74]; }
+    if (d.magnet && ok) { pdIco('pdMagnet', mx + 18, my - 66, 22, '#d0342c'); P.mag = [mx + 18, my - 78]; }
+    pdMan(rx, ry, PD_COL.off, rr > 0 && rr < 1 ? u * 75 : 0, 0); if (tall > 1) { pdLn([[rx - 14, ry - 66], [rx + 14, ry - 66]], PD_COL.label, 1.4); }
+    P.rec = pdHd(rx, ry);
+    pdMe(mx, my); pdMan(mx, my, PD_COL.def, u * 70, 0); P.me = pdHd(mx, my);
+    if (d.tall) { const hx = (rx + mx) / 2; pdLn([[hx, ry - 64], [hx, ry + 10]], PD_COL.label, 1.5); if (ok) pdX(hx, ry - 30, '#c0392b', 9); P.ruler = [hx, ry - 66]; }
+    // the ball
+    const path = { x0: qx + 9, y0: gy, x1: cx, y1: deep ? gy - 10 : ry, z0: 24, z1: 22, h: deep ? 70 : 24 };
+    const brk = ok && !d.slip, pick = ok && (d.pick || d.magnet || d.short && d.pick);
+    if (u < rel) pdHeld(qx, gy);
+    else if (u < land) { const b = pdBall(path, pdE(u, rel, land)); P.ball = [b.x, b.y]; }
+    else { const g = (u - land) / (1 - land);
+      if (pick) { pdHeld(mx, my); pdArm(mx, my, mx + 8, my - 44, PD_COL.def); if (u > land + 0.05) qsStamp(mx, y + 34, 'PICK', PD_COL.def, -0.1, PDM.still ? 1 : Math.max(1, 1.7 - (u - land - 0.05) * 8), 14); }
+      else if (brk || (d.slip && ok)) { if (u < land + 0.1) pdBurst(cx, ry - 26, 12); pdLoose(cx, ry, g); if (d.slip) pdText('slip!', rx, ry - 62, '#c0392b', 15); }
+      else pdHeld(rx, ry); }
+  },
+  tackle(x, y, w, h, d) {   // him (red) bringing down a runner. fill / arm / stick / angle / punch / big / alley / dot / marker
+    qsTurf(x, y, w, h); const u = PDM.u, ok = !!PDM.beat, P = PDM.pts, gy = y + h * 0.72, cu = 0.55, cx = x + w * 0.56;
+    if (d.marker) { const mx2 = x + w * d.marker[1]; pdShade(mx2, y, w, h, 'rgba(192,69,58,0.1)'); pdLn([[mx2, y], [mx2, y + h]], 'rgba(255,255,255,0.9)', 3); pdMarker(mx2 - 30, gy + 26, d.marker[0], 30); P.mark = [mx2 - 30, gy - 16]; }
+    if (d.fill) { for (const s of [-1, 1]) { pdMan(cx - 10, gy + s * 40, PD_COL.off, 0, 0); pdMan(cx + 10, gy + s * 40, PD_COL.def, 0, 0); } }
+    const wins = ok, rf = d.big ? pdE(u, 0, 0.45) : u;
+    let rx = pdL(x + 40, x + w - 40, rf), ry = gy, rdown = 0;
+    if (d.big) { if (u < 0.45) rx = pdL(x + w * 0.3, cx, pdE(u, 0, 0.45)); else rx = cx + (wins ? 0 : (u - 0.45) * 200); }
+    if (wins && u > cu) { rx = pdL(x + 40, x + w - 40, d.big ? 0.5 : cu); if (d.big) rx = cx; rdown = Math.min(1, (u - cu) * 6); }
+    // him
+    let start = d.dot ? (ok ? 0.08 : 0.32) : d.fill ? (ok ? 0.1 : 0.32) : 0.1, mx, my;
+    if (d.angle || d.alley) { const sx = x + w - 120, sy = y + 30; if (ok) { const g = pdE(u, start, cu); mx = pdL(sx, cx + 10, g); my = pdL(sy, gy + 4, g); if (u < cu) pdLn([[sx, sy], [cx + 10, gy + 4]], PD_COL.label, 1.6, [6, 5]); } else { const g = pdE(u, start, 1); mx = pdL(sx, rx - 40, g); my = pdL(sy, gy + 4, g); } }
+    else if (d.fill) { const g = pdE(u, start, cu); mx = cx + 10; my = pdL(gy - 90, gy, g); if (!ok && u > cu) my = gy - 10; }
+    else { const g = pdE(u, start, cu); mx = pdL(x + w - 60, cx + 16, g); my = gy + 4; if (!ok && u > cu) { mx = cx + 16; } }
+    const hit = u > cu - 0.03 && u < cu + 0.12;
+    if (!ok && u > cu && (d.arm || !d.fill && !d.angle && !d.alley)) { pdMan(mx, my, PD_COL.def, 0, Math.min(1, (u - cu) * 6) * 0.8); }
+    else { pdMe(mx, my); pdMan(mx, my, PD_COL.def, u < cu ? u * 70 : 0, ok && u > cu && !d.arm ? Math.min(0.7, (u - cu) * 5) : 0); }
+    if (!ok && u > cu && (d.arm || !d.fill && !d.angle && !d.alley)) pdMe(mx, my);
+    P.me = pdHd(mx, my);
+    if (d.dot) { ctx.fillStyle = pdC('#2f8f3a'); ctx.beginPath(); ctx.arc(mx, my - 36, 4, 0, 7); ctx.fill(); const at = ok ? 0.04 : 0.28; if (u > at && u < at + 0.3) { pdTag(mx + 30, my - 66, 'RUN!', '#fffdf4', '#2f8f3a'); } P.dot = [mx, my - 40]; }
+    if (d.arm && hit) pdArm(mx, my, rx + 4, gy - 18, PD_COL.def);
+    if (d.punch && ok && hit) pdIco('pdFist', rx + 12, gy - 24, 18, '#f2c9a0');
+    if (ok && u > cu - 0.02 && u < cu + 0.14) pdBurst(rx + 6, gy - 24, d.stick || d.big ? 20 : 13);
+    // the runner
+    pdMan(rx, ry, PD_COL.off, rdown ? 0 : u * 80, rdown);
+    const loose = ok && (d.stick || d.punch || d.big) && u > cu;
+    if (d.big && u < 0.45) { const b = pdBall({ x0: x + 20, y0: gy, x1: cx, y1: gy, z0: 50, z1: 22, h: 24 }, pdE(u, 0.05, 0.45)); P.ball = [b.x, b.y]; }
+    else if (loose) { pdLoose(rx + 8, gy, (u - cu) / (1 - cu)); P.ball = [rx + 20, gy - 20]; }
+    else if (!rdown) pdHeld(rx, ry); else pdBallAt(rx + 10, gy + 4);
+    if (d.stick && ok && u > cu) for (let i = 0; i < 3; i++) { const a = pdT() * 4 + i * 2.1; drawStar(rx + Math.cos(a) * 14, gy - 34 + Math.sin(a) * 5, 4, '#ffd23f', '#8a5a00', 1); }
+    P.run = pdHd(rx, ry); P.hit = [rx + 6, gy - 30];
+  },
+  kick(x, y, w, h, d) {   // the kicker, the meter, the post. meter / wind / rain / range / ice / lock / punt / coffin / tb / pin / wall (him = a TE) / swat (him = a DL)
+    qsTurf(x, y, w, h); const u = PDM.u, ok = !!PDM.beat, P = PDM.pts, gy = y + h * 0.78, kx = x + 70, kickAt = 0.35, punt = d.punt || d.coffin || d.pin, kickoff = d.tb;
+    if (d.wind || d.rain) pdWx(x, y, w, h, d.rain ? 'rain' : 'wind', pdT());
+    if (d.rain && d.wind) pdWx(x, y, w, h, 'wind', pdT());
+    if (d.wind && d.lock && ok) { pdX(x + w * 0.5, y + 70, '#c0392b', 12); }
+    const postX = x + w - 90, gl = x + w - 150;
+    if (!punt && !kickoff) pdPost(postX, gy);
+    if (punt || kickoff) { pdLn([[gl, y], [gl, y + h]], 'rgba(255,255,255,0.9)', 3); pdShade(gl, y, w, h, 'rgba(192,69,58,0.1)'); }
+    if (d.coffin || d.pin) { pdMarker(gl - 70, gy + 20, d.coffin ? 10 : 'AIM', 30); P.mark = [gl - 70, gy - 20]; }
+    // meter
+    const spd = d.lock && ok ? 0 : d.meter ? (ok ? 1.2 : 2.1) : 1.6, needle = d.lock && ok ? 0.5 : 0.5 + 0.5 * Math.sin(Math.min(u, kickAt) * Math.PI * 2 * spd * 3 + (ok ? 0.0 : 0.9));
+    const stop = Math.abs(needle - 0.5) < 0.12 || ok;   // (a good click)
+    if (!punt && !kickoff && !d.swat && !d.wall) { pdMeter(x + w / 2, y + 30, needle, spd); P.meter = [x + w / 2 + 40, y + 30]; if (d.ice) { const off = ok ? pdE(u, 0.05, 0.25) : 0; for (const ix of [-40, 0, 40]) pdIco('pdIce', x + w / 2 + ix, y + 30 + off * 60, 16, '#d4eefa'); P.ice = [x + w / 2 + 40, y + 36]; } }
+    // the kicker (and the snap)
+    const kmov = u < kickAt ? pdE(u, 0.15, kickAt) * 20 : 20; pdMan(kx + kmov, gy, PD_COL.off, u < kickAt ? u * 40 : 0, 0); if (!d.swat && !d.wall) pdMe(kx + kmov, gy); P.k = pdHd(kx + kmov, gy);
+    let blockAt = null;
+    if (d.wall || d.swat) { const ex = x + w * 0.3, a = pdE(u, 0.05, kickAt + 0.05);
+      if (d.wall) { pdMe(ex, gy - 30); pdMan(ex, gy - 30, PD_COL.off, 0, 0); const rx = pdL(x + w * 0.5, ex + (ok ? 22 : -40), a), ry = pdL(gy - 60, ok ? gy - 34 : gy - 6, a); pdMan(ok && u > kickAt ? rx + 12 : rx, ry, PD_COL.def, u * 60, ok && u > kickAt ? 0.8 : 0); if (!ok) { blockAt = [rx - 4, gy - 50]; pdArm(rx, ry, rx - 8, gy - 56, PD_COL.def); } P.me = pdHd(ex, gy - 30); }
+      else { const rx = pdL(x + w * 0.55, kx + 60, a); pdMe(rx, gy); pdMan(rx, gy, PD_COL.def, u * 60, 0); pdArm(rx, gy, rx - 6, gy - 62, PD_COL.def); if (ok) blockAt = [rx - 6, gy - 62]; P.me = pdHd(rx, gy); P.hand = [rx - 6, gy - 62]; } }
+    // the flight
+    const far = d.range ? (ok ? postX : postX - 140) : postX, miss = !ok && !d.range && !d.swat && !d.wall;
+    let ex = punt ? (d.coffin ? (ok ? gl - 50 : gl + 40) : d.pin ? (ok ? gl - 70 : gl - 20) : gl - 120) : kickoff ? (ok ? x + w + 40 : gl - 40) : far + 10;
+    const path = { x0: kx + 28, y0: gy, x1: ex, y1: gy, z0: punt ? 20 : 4, z1: punt || kickoff || (d.range && !ok) ? 0 : 70, h: punt ? (d.punt && ok ? h * 0.65 : h * 0.4) : kickoff ? h * 0.55 : h * 0.35 };
+    const land = punt && d.punt && ok ? 0.92 : 0.8, g = pdE(u, kickAt, land);
+    if (d.range) { pdLn([[ok ? postX - 20 : postX - 150, y + 40], [ok ? postX - 20 : postX - 150, gy + 20]], pdC(PD_COL.label), 2, [6, 5]); P.range = [ok ? postX - 20 : postX - 150, y + 40]; }
+    if (d.punt) { pdWatch(x + w / 2, y + 34, pdE(u, kickAt, land) * (ok ? 0.75 : 0.5), ''); P.watch = [x + w / 2 + 14, y + 34]; }
+    if (u < kickAt) pdBallAt(kx + 28, gy + 4);
+    else if (u < land) {
+      const b = pdBall(path, g), bx = b.x;
+      if (blockAt && bx >= blockAt[0]) { const gg = pdE(bx, blockAt[0], blockAt[0] + 80); pdBallAt(blockAt[0] - gg * 30, blockAt[1] - Math.sin(gg * Math.PI) * 30 + gg * 60, gg * 9); pdBurst(blockAt[0], blockAt[1], 13); }
+      const drift = d.wind ? Math.sin(g * Math.PI / 2) * (ok ? (d.lock ? 0 : 10) : 30) : 0;
+      if (drift) pdLn([[b.x, b.y], [b.x, b.y - drift]], 'rgba(34,48,90,0.25)', 1, [2, 3]);
+      P.ball = [b.x, b.y];
+    } else {
+      const done = (u - land) / (1 - land);
+      if (punt || kickoff || (d.range && !ok)) { if (blockAt) {} else pdLoose(ex, gy, done * 0.3); if (!ok && (d.coffin || kickoff)) pdText(kickoff ? 'returned' : 'touchback', ex, gy - 30, PD_COL.ghost, 14); if (ok && kickoff) pdText('touchback', gl + 50, gy - 40, PD_COL.good, 15); }
+      if (!punt && !kickoff && !blockAt && !(d.range && !ok)) { if (miss || (!ok && d.wind)) pdX(postX, y + 40, PD_COL.ghost, 10); else if (ok) qsStamp(postX - 30, y + 46, 'GOOD', PD_COL.good, -0.1, PDM.still ? 1 : Math.max(1, 1.7 - done * 6), 14); }
+      if (d.range && !ok) pdX(far + 10, gy - 10, PD_COL.ghost, 8);
+    }
+    if (d.wall && !ok && u > kickAt + 0.05 && u < kickAt + 0.2) pdText('BLOCKED', x + w * 0.3, y + 30, PD_COL.ghost, 15);
+  },
+  ret(x, y, w, h, d) {   // a return: the ball comes to him (a kick, or d.pick = a throw he picks), he runs, the first cover man misses (whiff) or he is just faster
+    qsTurf(x, y, w, h); const u = PDM.u, ok = !!PDM.beat, P = PDM.pts, gy = y + h * 0.72, rx0 = x + 80, catchAt = 0.28, col = d.pick ? PD_COL.def : PD_COL.off, foe = d.pick ? PD_COL.off : PD_COL.def;
+    const spd = (ok ? 1 : 0.8), run = u < catchAt ? 0 : (u - catchAt) * spd, cu = 0.62, cx = rx0 + (cu - catchAt) * spd * w * 0.9;
+    let rx = rx0 + run * w * 0.9, down = 0;
+    const stopped = !ok; if (stopped && u > cu) { rx = rx0 + (cu - catchAt) * 0.8 * w * 0.9; down = Math.min(1, (u - cu) * 6); }
+    const meet = rx0 + (cu - catchAt) * 0.8 * w * 0.9 + 26, tx = u < cu ? pdL(x + w - 30, meet, pdE(u, 0.1, cu)) : meet;
+    pdMan(tx + (ok && u > cu && d.whiff ? -30 : 0), gy + 4, foe, u < cu ? u * 70 : 0, u > cu ? (ok && d.whiff ? Math.min(0.9, (u - cu) * 6) : ok ? 0 : 0) : (ok && d.whiff && u > cu - 0.06 ? 0.4 : 0)); P.tk = pdHd(tx, gy + 4);
+    pdMe(rx, gy); pdMan(rx, gy, col, run > 0 && !down ? u * 80 : 0, down); P.me = pdHd(rx, gy);
+    if (u < catchAt) { const b = pdBall(d.pick ? { x0: x + w - 30, y0: gy, x1: rx0 + 7, y1: gy, z0: 24, z1: 22, h: 14 } : { x0: x + w + 40, y0: gy, x1: rx0 + 7, y1: gy, z0: 80, z1: 22, h: 50 }, pdE(u, 0, catchAt)); P.ball = [b.x, b.y]; }
+    else if (!down) pdHeld(rx, gy); else pdBallAt(rx + 10, gy + 4);
+    if (ok && run > 0) pdSpeedL(rx, gy, 1, d.pick ? PD_COL.def : PD_COL.label);
+    if (u > cu - 0.03 && u < cu + 0.1) pdBurst(meet - 10, gy - 22);
+  },
+  any(x, y, w, h, d) {   // an any-position ability: his rating bar climbs with the thing that turns it on. prop crowd / revenge / prime / rain; none = he jogs, his tier stamped on
+    qsTurf(x, y, w, h); const u = PDM.u, ok = !!PDM.beat, P = PDM.pts, gy = y + h * 0.72, mx = x + w * 0.42;
+    if (!d.prop) { pdMan(x + 60 + u * (w - 120), gy, PD_COL.off, PDM.f * 40, 0); if (ok) qsStamp(x + w / 2, y + 50, d.stamp || 'ON', PD_COL.good, -0.1, PDM.still ? 1 : Math.max(1, 1.7 - u * 6), 16); return; }
+    const on = ok ? pdE(u, 0.1, 0.5) : 0;
+    if (d.prop === 'crowd') { const cx = x + w * 0.16, cy = gy - 20; ctx.save(); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, cy, 40, Math.PI, 0); ctx.stroke(); const a = Math.PI + (0.15 + 0.8 * (ok ? on : 0.15)) * Math.PI; ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * 34, cy + Math.sin(a) * 34); ctx.stroke(); ctx.restore(); for (let i = 0; i < 9; i++) { ctx.fillStyle = pdC(i % 2 ? PD_COL.off : '#d9a35b'); ctx.beginPath(); ctx.arc(x + 20 + i * 18, y + 26 - (ok ? Math.abs(Math.sin(pdT() * 8 + i)) * 6 * on : 0), 6, 0, 7); ctx.fill(); } P.prop = [cx, cy - 44]; }
+    if (d.prop === 'revenge') { const ox = x + w * 0.16; pdMan(ox, gy, '#d8d2c2', 0, 0); if (ok && on > 0.2) pdX(ox, gy - 16, '#c0392b', 18); pdText('old team', ox, gy + 30, RES.dim, 13); P.prop = pdHd(ox, gy); }
+    if (d.prop === 'prime') { const bx = x + 40; pdLn([[bx, y + 30], [bx + 40, y + 30], [bx + 40, y + 60], [bx + 80, y + 60]], RES.line, 1.6); pdLn([[bx, y + 90], [bx + 40, y + 90], [bx + 40, y + 60]], RES.line, 1.6); if (ok) { ctx.save(); ctx.fillStyle = 'rgba(255,230,120,0.35)'; ctx.beginPath(); ctx.moveTo(mx - 10, y); ctx.lineTo(mx + 10, y); ctx.lineTo(mx + 40, gy + 14); ctx.lineTo(mx - 40, gy + 14); ctx.closePath(); ctx.fill(); ctx.restore(); } P.prop = [bx + 60, y + 50]; }
+    if (d.prop === 'rain') { pdWx(x, y, w * 0.5, h, 'rain', pdT()); P.prop = [x + w * 0.2, y + 40]; }
+    pdMe(mx, gy); pdMan(mx, gy, PD_COL.off, 0, 0); if (ok && on > 0.5) pdGlow(mx, gy, 'rgba(47,143,58,0.18)'); P.me = pdHd(mx, gy);
+    if (d.prop === 'prime') pdStar(mx, gy - 60, 9, 1);
+    pdBar(x + w * 0.66, gy - 30, 'RATING', 9, ok ? 9 + (d.steps || 1) : 9, on); P.bar = [x + w * 0.66 + 75, gy - 34];
+  },
+  board(x, y, w, h, d) {   // Audible Wizard: a whiteboard play; a route rubbed out and redrawn, tallies for the extra calls
+    const u = PDM.u, ok = !!PDM.beat, P = PDM.pts, bx = x + 60, by = y + 20, bw = w * 0.55, bh = h - 40;
+    ctx.save(); ctx.fillStyle = '#fbfbf6'; ctx.fillRect(bx, by, bw, bh); ctx.strokeStyle = '#8a9099'; ctx.lineWidth = 4; ctx.strokeRect(bx, by, bw, bh); ctx.restore();
+    const lx = bx + 50; for (let i = 0; i < 5; i++) { ctx.strokeStyle = RES.line; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.arc(lx, by + 40 + i * 30, 7, 0, 7); ctx.stroke(); }
+    pdArrow(lx + 10, by + 40, bx + bw - 40, by + 30, pdC(PD_COL.def));
+    const ers = ok ? pdE(u, 0.15, 0.4) : 0, redraw = ok ? pdE(u, 0.4, 0.65) : 0;
+    if (ers < 1) { ctx.save(); ctx.globalAlpha *= 1 - ers; pdArrow(lx + 10, by + 160, bx + bw - 30, by + 160, pdC(PD_COL.def)); ctx.restore(); }
+    if (ok && u > 0.15 && u < 0.42) pdIco('pdEraser', pdL(lx + 20, bx + bw - 40, ers), by + 160, 30, '#f2a7b6');
+    if (redraw > 0) pdLn([[lx + 10, by + 160], [pdL(lx + 10, lx + 90, Math.min(1, redraw * 2)), by + 160], ...(redraw > 0.5 ? [[pdL(lx + 90, bx + bw - 50, (redraw - 0.5) * 2), pdL(by + 160, by + 90, (redraw - 0.5) * 2)]] : [])], '#2a62b0', 2.4);
+    if (!ok && u > 0.4) pdText('no calls left', bx + bw / 2, by + bh - 14, PD_COL.ghost, 15);
+    const tx = bx + bw + 60, au = ok ? ABIL_FX.audibleWizard.aud : 0, ho = ok ? ABIL_FX.audibleWizard.hot : 0;
+    pdText('audibles', tx + 40, by + 30, RES.line, 15); pdTally(tx, by + 60, 2 + Math.round(au * pdE(u, 0.5, 0.75)));
+    pdText('hot routes', tx + 40, by + 110, RES.line, 15); pdTally(tx, by + 140, 1 + Math.round(ho * pdE(u, 0.7, 0.85)));
+    P.aud = [tx + 40, by + 60]; P.hot = [tx + 40, by + 140]; P.me = [bx + bw / 2, by + 10];
+  },
+});
+// labels: L1 = first beat of the WITH half, L2 = later, LA = the whole WITH half
+const L1 = (t, at, dx = 0, dy = -40) => [t, 0.56, 0.8, at, dx, dy];
+const L2 = (t, at, dx = 0, dy = -40) => [t, 0.78, 0.995, at, dx, dy];
+const LA = (t, at, dx = 0, dy = -40) => [t, 0.56, 0.995, at, dx, dy];
+Object.assign(ABIL_DEMO, {
+  // QB
+  quickRelease: { scene: 'throw', rel: true, labels: [LA(() => `${pdPc(ABIL_FX.quickRelease)} faster`, 'qb', 60, -30)] },
+  tightSpiral: { scene: 'throw', fast: true, race: true, spiral: true, labels: [LA(() => `${pdPc(ABIL_FX.tightSpiral)} faster`, 'ball', 0, -50)] },
+  pocketFeel: { scene: 'throw', rush: true, shake: [22, 10], labels: [LA(() => `pressure: ${pdPc(ABIL_FX.pocketFeel)} less`, 'ring', -60, -70)] },
+  iceVeins: { scene: 'throw', rush: true, shake: [22, 0], frost: true, tag: ['clock', '2:00'], labels: [L1('last 2 min', 'tag', 70, 0), L2('no pressure', 'ring', -60, -70)] },
+  offPlatform: { scene: 'throw', roll: true, dot: true, labels: [L1('on the run', 'qb', 60, -10), L2('no accuracy lost', 'dot', -80, -70)] },
+  audibleWizard: { scene: 'board', labels: [L1(() => `+${ABIL_FX.audibleWizard.aud} audibles`, 'aud', 80, 0, false), L2(() => `+${ABIL_FX.audibleWizard.hot} hot route`, 'hot', 80, 0, false)] },
+  clutchGene: { scene: 'throw', dbShort: true, tag: ['down', '4TH'], labels: [L1('4th down', 'tag', 70, 0), L2(() => `${pdAdd(ABIL_FX.clutchGene.add)} catch`, 'rec', -80, -20)] },
+  laserMode: { scene: 'throw', straight: true, fast: true, labels: [LA('every throw on target', 'apex', 0, -30)] },
+  untouchable: { scene: 'rush', esc: true, labels: [LA('first sack = escape', 'qb', 70, -20)] },
+  tunnelVision: { scene: 'throw', glow: true, labels: [L1('open man glows', 'rec', -50, -30), L2('a beat late', 'db', -60, -30)] },
+  armCannon: { scene: 'throw', arc: true, tip: true, labels: [L1(() => `+${XFX.armCannon} yd`, 'range', 50, -6), L2("can't be tipped", 'hand', 40, -40)] },
+  // WR
+  cleanBreaks: { scene: 'catch', cut: true, labels: [LA(() => `${pdPc(ABIL_FX.cleanBreaks)} less speed lost`, 'me', -60, -30)] },
+  softHands: { scene: 'catch', labels: [LA(() => `${pdAdd(ABIL_FX.softHands)} catch`, 'me', -70, -20)] },
+  sidelineSense: { scene: 'catch', side: true, labels: [LA(() => `${pdAdd(ABIL_FX.sidelineSense)} feet in`, 'toe', -90, -50)] },
+  mosser: { scene: 'catch', jump: 'tall', labels: [L1('taller / higher', 'ruler', -90, -10), L2(() => pdAdd(ABIL_FX.mosser), 'me', 60, -20)] },
+  toeTapper: { scene: 'catch', side: true, toes: true, labels: [LA('always in', 'toe', -80, -50)] },
+  redZoneThreat: { scene: 'catch', marker: [20, 0.32], ez: true, jump: true, labels: [L1('inside the 20', 'mark', 0, -30), L2(() => pdAdd(ABIL_FX.redZone), 'me', 60, -20)] },
+  deepThreat: { scene: 'catch', deep: true, deepYd: ABIL_FX.deepThreat.yd, drop: false, labels: [L1(() => `${ABIL_FX.deepThreat.yd}+ yd downfield`, 'me', -40, -30), L2(() => `${pdAdd(ABIL_FX.deepThreat.spd - 1)} speed`, 'me', -40, -30)] },
+  yacMonster: { scene: 'catch', yac: true, drop: false, labels: [L1('first tackle', 'tk', 0, -30), L2(() => `${pdAdd(ABIL_FX.yacMonster)} to break`, 'me', -60, -30)] },
+  mossMode: { scene: 'catch', jump: 'tall', labels: [LA('every jump ball', 'me', 60, -30)] },
+  viseGrip: { scene: 'catch', vise: true, labels: [LA('no drops', 'vise', -60, -10)] },
+  stepAhead: { scene: 'catch', step: true, drop: false, labels: [LA('free step', 'step', 0, -24)] },
+  afterburner: { scene: 'catch', burn: true, drop: false, labels: [LA(() => `${XFX.afterburner.t} s burst`, 'flame', -70, -30)] },
+  // TE
+  sealBlock: { scene: 'line', seal: true, labels: [LA(() => `run blocks ${pdPc(ABIL_FX.sealBlock)} better`, 'ol', -40, -40)] },
+  bigTarget: { scene: 'catch', ring: () => ABIL_FX.bigTarget, labels: [LA(() => `${pdAdd(ABIL_FX.bigTarget - 1)} radius`, 'ring', 70, -40)] },
+  chipAndGo: { scene: 'line', chip: true, labels: [LA('no delay', 'me', 60, -20)] },
+  securityBlanket: { scene: 'catch', under: true, tag: ['down', '3RD'], labels: [L1(() => `under ${ABIL_FX.blanket.yd} yd`, 'tag', 90, 0), L2('always open', 'me', 0, -30)] },
+  seamBuster: { scene: 'catch', seam: true, jump: true, labels: [L1('over the middle', 'seam', 0, 0, false), L2(() => pdAdd(ABIL_FX.seamBuster.k), 'me', 70, -20)] },
+  kickWall: { scene: 'kick', wall: true, labels: [LA('holds the edge', 'me', -40, -30)] },
+  rumbler: { scene: 'run', stiff: true, labels: [LA(() => `${pdAdd(ABIL_FX.rumbler - 1)} stiff arm`, 'me', -60, -30)] },
+  matchupNightmare: { scene: 'catch', two: true, labels: [LA("LBs and safeties can't win", 'me', -80, -30)] },
+  goalLineMagnet: { scene: 'catch', qbLook: true, marker: [10, 0.4], ez: true, drop: false, labels: [LA('inside the 10', 'mark', 0, -30)] },
+  humanWall: { scene: 'line', stuck: true, labels: [LA('his man never gets there', 'dl', 40, -40)] },
+  // RB
+  ballSecurity: { scene: 'run', hit: true, labels: [LA(() => `${pdPc(ABIL_FX.ballSecurity)} fewer fumbles`, 'me', -40, -30)] },
+  vision: { scene: 'run', hole: true, labels: [LA('sees it earlier', 'hole', 0, -30)] },
+  burst: { scene: 'run', burst: true, labels: [LA(() => `${pdAdd(ABIL_FX.burst - 1)} acceleration`, 'me', 0, -30)] },
+  bellCow: { scene: 'run', tally: true, labels: [L1('every carry', 'tally', 0, 30, false), L2(() => `up to ${pdAdd(ABIL_FX.bellCow.max)}`, 'me', 0, -30)] },
+  jukeBox: { scene: 'run', juke: true, labels: [LA(() => 'half cooldown', 'cool', 60, -10)] },
+  goalLineBack: { scene: 'run', truck: true, marker: [3, 0.62], labels: [L1('inside the 3', 'mark', 0, -30), L2('always wins one', 'tk', 0, -40)] },
+  closer: { scene: 'run', battery: true, hit: true, tag: ['clock', 'Q4'], lead: true, labels: [LA('Q4 with the lead', 'tag', 0, 34, false)] },
+  hurdler: { scene: 'run', hurdle: true, labels: [LA('always clears', 'me', 0, -30)] },
+  patientEyes: { scene: 'run', holdHole: true, labels: [LA('holes stay open', 'hole', 60, -50)] },
+  screenSpecialist: { scene: 'run', blockers: true, labels: [LA('blocks hold longer', 'blk', 0, -30)] },
+  unstoppable: { scene: 'run', whiff: true, labels: [LA('first tackle misses', 'tk', 0, -40)] },
+  jukeMachine: { scene: 'run', moves: true, labels: [LA('no cooldowns', 'me', 0, -30)] },
+  freightTrain: { scene: 'run', truck: true, stiff: true, labels: [LA('every truck vs DBs', 'tk', 0, -40)] },
+  secondWind: { scene: 'run', battery: true, glue: true, labels: [L1('no fatigue', 'bat', 60, -10), L2("can't fumble", 'me', -60, -30)] },
+  // OL
+  strongBase: { scene: 'line', rush: 'bull', labels: [LA(() => `bull rush: ${pdPc(ABIL_FX.strongBase)} less`, 'ol', -60, -40)] },
+  quickFeet: { scene: 'line', rush: 'speed', labels: [LA(() => `speed rush: ${pdPc(ABIL_FX.quickFeet)} less`, 'ol', -40, -40)] },
+  roadGrader: { scene: 'line', pancake: true, labels: [LA(() => `${pdAdd(ABIL_FX.roadGrader - 1)} pancakes`, 'dl', 40, -30)] },
+  brickWall: { scene: 'line', rush: 'quick', labels: [LA('never a quick win', 'ol', -60, -40)] },
+  anchor: { scene: 'line', anchor: true, labels: [LA('never driven back', 'ol', -60, -40)] },
+  puller: { scene: 'line', pull: true, labels: [LA('faster pulls', 'ol', 0, -30)] },
+  captain: { scene: 'line', stunt: true, labels: [LA('always picked up', 'point', -60, -20)] },
+  pancakeMachine: { scene: 'line', pancake: true, x2: true, labels: [LA('double pancake odds', 'dl', 40, -40)] },
+  fortress: { scene: 'line', brick: true, labels: [LA('his man never pressures', 'dl', 40, -40)] },
+  bulldozer: { scene: 'line', pancake: true, labels: [LA('every win = pancake', 'dl', 40, -40)] },
+  leadWall: { scene: 'line', pull: true, two: true, labels: [LA('blocks two', 'ol', -40, -30)] },
+  // DL
+  getOff: { scene: 'rush', getOff: true, labels: [LA('faster off the ball', 'me', 40, -30)] },
+  longArms: { scene: 'rush', shed: true, labels: [LA(() => `sheds ${pdPc(ABIL_FX.longArms)} sooner`, 'me', 40, -30)] },
+  motor: { scene: 'rush', motor: true, labels: [LA('never fades', 'me', 60, -40)] },
+  speedRusher: { scene: 'rush', drive: true, labels: [LA('first rush each drive', 'tag', 0, 34, false)] },
+  stripSack: { scene: 'rush', strip: true, labels: [LA(() => `${ABIL_FX.stripSack}x fumble odds`, 'qb', 60, -30)] },
+  battedBall: { scene: 'rush', bat: true, labels: [LA('tips more', 'hand', 50, -14)] },
+  runStuffer: { scene: 'line', runStuff: true, me: 'dl', labels: [LA('tackles for loss', 'tfl', 60, -10)] },
+  finisher: { scene: 'rush', tag: ['down', '3RD & LONG'], tag2: ['clock', '2:00'], labels: [L1('3rd and long', 'tag', 0, 34, false), L2('last 2 min', 'tag2', 0, 34, false)] },
+  kickSwatter: { scene: 'kick', swat: true, labels: [LA('blocks kicks', 'hand', 50, -20)] },
+  unblockable: { scene: 'rush', watch: true, labels: [LA(() => `inside ${XFX.unblockable} s`, 'me', 60, -30)] },
+  ballPunch: { scene: 'tackle', punch: true, labels: [LA('every hit can punch it out', 'hit', -40, -40)] },
+  wallSwatter: { scene: 'rush', lane: true, labels: [LA('his lane', 'lane', 0, -20)] },
+  doubleTeamMagnet: { scene: 'line', dbl: true, me: 'dl', labels: [LA('frees a rusher', 'free', 0, -30)] },
+  // LB
+  downhill: { scene: 'tackle', fill: true, labels: [LA('fills faster', 'me', 60, -20)] },
+  sureTackler: { scene: 'tackle', arm: true, labels: [LA(() => `${pdPc(ABIL_FX.sureTackler)} fewer misses`, 'me', 40, -30)] },
+  zoneEyes: { scene: 'cover', zone: true, labels: [LA('reacts faster', 'me', 50, -30)] },
+  thumper: { scene: 'tackle', stick: true, labels: [LA('stun + fumble odds', 'hit', -40, -50)] },
+  greenDot: { scene: 'tackle', dot: true, labels: [LA('a beat early', 'dot', -70, -30)] },
+  blitzGhost: { scene: 'rush', blitz: true, labels: [LA('first try never picks him up', 'ol', 0, -40)] },
+  goalLineStand: { scene: 'tackle', marker: [5, 0.66], arm: true, labels: [LA('inside the 5', 'mark', 0, -30)] },
+  sidelineToSideline: { scene: 'tackle', angle: true, labels: [LA('better angles', 'me', 60, -20)] },
+  heatSeeker: { scene: 'tackle', dot: true, angle: true, labels: [L1('reads at once', 'dot', -70, -20), L2('perfect angle', 'me', 60, -20)] },
+  boneCrusher: { scene: 'tackle', stick: true, labels: [LA('every tackle', 'hit', -40, -50)] },
+  freeBlitz: { scene: 'rush', blitz: true, free: true, labels: [LA('never picked up', 'me', 40, -30)] },
+  // CB
+  mirror: { scene: 'cover', mirror: true, labels: [LA(() => `man coverage ${pdAdd(ABIL_FX.mirror - 1)}`, 'me', -40, -40)] },
+  clickAndClose: { scene: 'cover', brk: true, labels: [LA('breaks faster', 'me', -30, -40)] },
+  strongJam: { scene: 'cover', jam: true, labels: [LA(() => `${pdAdd(ABIL_FX.strongJam - 1)} jams`, 'me', 30, -40)] },
+  shutdown: { scene: 'cover', slip: true, labels: [LA(() => `in man: ${Math.round(ABIL_FX.shutdown * 100)}% less`, 'rec', -60, -40)] },
+  ballhawk: { scene: 'cover', pick: true, labels: [LA('breakups become pick tries', 'me', -60, -40)] },
+  jammer: { scene: 'cover', jam: true, watch: true, labels: [LA('always delays', 'rec', 40, -50)] },
+  antiMoss: { scene: 'cover', tall: true, labels: [LA('no height penalty', 'ruler', -70, -20)] },
+  pickSix: { scene: 'ret', pick: true, labels: [LA('return speed boost', 'me', -40, -30)] },
+  lockdown: { scene: 'cover', lock: true, labels: [LA("his man can't catch", 'lock', -70, -10)] },
+  magnetHands: { scene: 'cover', magnet: true, labels: [LA('every touch = pick try', 'mag', 80, 0)] },
+  houseCall: { scene: 'ret', pick: true, whiff: true, labels: [LA('every return', 'me', -40, -30)] },
+  // S
+  range: { scene: 'cover', deep: true, ring: () => ABIL_FX.range, labels: [LA('more ground', 'ring', 40, -40)] },
+  alleyFill: { scene: 'tackle', alley: true, labels: [LA(() => `${pdAdd(ABIL_FX.alleyFill - 1)} run support`, 'me', -60, -20)] },
+  ballEyes: { scene: 'cover', eyes: true, brk: true, labels: [LA('reads the eyes', 'qb', 60, -20)] },
+  robber: { scene: 'cover', short: true, pick: true, labels: [LA('jumps short middle', 'me', 40, -40)] },
+  centerFielder: { scene: 'cover', deep: true, ring: () => ABIL_FX.centerFielder, labels: [LA('bigger defend radius', 'ring', 0, -50)] },
+  enforcer: { scene: 'tackle', big: true, labels: [LA(() => `${pdAdd(ABIL_FX.enforcer - 1)} hit loose`, 'hit', -50, -50)] },
+  eraser: { scene: 'cover', eraser: true, labels: [LA('every deep ball', 'er', 0, -10, false)] },
+  bigHitter: { scene: 'tackle', big: true, labels: [LA('hit loose', 'hit', -40, -50)] },
+  jumpTheRoute: { scene: 'cover', short: true, brk: true, labels: [LA('every short route', 'me', 40, -40)] },
+  // K
+  smoothSwing: { scene: 'kick', meter: true, labels: [LA(() => `meter ${pdPc(ABIL_FX.smoothSwing)} slower`, 'meter', 80, 10)] },
+  hangTime: { scene: 'kick', punt: true, labels: [LA('punts hang longer', 'watch', 80, 0)] },
+  windRead: { scene: 'kick', wind: true, labels: [LA(() => `wind: ${pdPc(ABIL_FX.windRead)} less`, 'ball', 0, -40)] },
+  bigLeg: { scene: 'kick', range: true, labels: [LA(() => `+${ABIL_FX.bigLeg} yd range`, 'range', -70, 0)] },
+  iceProof: { scene: 'kick', ice: true, labels: [LA('icing does nothing', 'ice', 90, 20)] },
+  weatherman: { scene: 'kick', wind: true, rain: true, labels: [LA(() => `weather: ${ABIL_FX.weatherman === 0.5 ? 'half' : pdPc(ABIL_FX.weatherman) + ' less'}`, 'ball', 0, -40)] },
+  coffinCorner: { scene: 'kick', coffin: true, labels: [LA('inside the 10', 'mark', 0, -30)] },
+  returnMan: { scene: 'ret', whiff: true, labels: [LA('first cover man misses', 'tk', 0, -40)] },
+  automatic: { scene: 'kick', lock: true, wind: true, labels: [LA('perfect meter', 'meter', 80, 10)] },
+  moonShot: { scene: 'kick', tb: true, labels: [L1(() => `+${XFX.moonShot} yd`, 'ball', 0, -30), L2('touchback', 'ball', -60, -30)] },
+  pinPoint: { scene: 'kick', pin: true, labels: [LA('lands where he aims', 'mark', 0, -30)] },
+  // any position
+  homeCooking: { scene: 'any', prop: 'crowd', labels: [LA('louder = better', 'prop', 80, 0)] },
+  revengeGame: { scene: 'any', prop: 'revenge', labels: [LA('vs his old team', 'prop', 70, -10)] },
+  primeTime: { scene: 'any', prop: 'prime', labels: [LA('playoffs', 'prop', 50, -10)] },
+  rainMan: { scene: 'any', prop: 'rain', labels: [LA('rain and snow', 'me', 70, -20)] },
+  chemistry: { scene: 'throw', link: true, labels: [LA('both have it', 'link', 0, -40)] },
+});
+// the Star Factor frame (tier X): tally to the trigger -> the star scribbles in + ON -> the effect (the WITH beat) + his attribute bar jumps -> the OFF event -> the star is rubbed out
+const XF_DEMO = { loop: 1.5, tally: 0.18, on: 0.28, eff: 0.8, off: 0.9, still: 0.62 };   // (loop x POP_DEMO.loop; the rest = shares of the loop)
+function pdXfTime(f) {   // a share of the X loop -> the scene's beat / u / label clock
+  const X = XF_DEMO;
+  if (f >= X.on && f < X.eff) { const u = (f - X.on) / (X.eff - X.on); return { beat: 1, u, f: 0.5 + u * 0.5 }; }
+  return { beat: 1, u: f < X.on ? 0 : 1, f: -1 };
+}
+function pdXfDraw(b, ad, f) {
+  const X = XF_DEMO, sx = b.x + b.w - 26, sy = b.y + 26, on = (ad.on || [])[0] || {}, n = Math.max(1, Math.min(10, on.n || 1));
+  const sk = f < X.tally ? 0 : f < X.on ? (f - X.tally) / (X.on - X.tally) : f < X.off ? 1 : -(f - X.off) / (1 - X.off);
+  if (f < X.on + 0.04) { pdTally(b.x + b.w - 230, b.y + 26, Math.ceil(n * Math.min(1, f / X.tally))); pdText(ad.onT, b.x + b.w - 150, b.y + 48, RES.dim, 12, 220); }
+  pdStar(sx, sy, 15, PDM.still ? 1 : sk);
+  if (f > X.tally && f < X.on + 0.08 && !PDM.still) qsStamp(sx - 46, sy + 4, 'ON', PD_COL.good, -0.12, Math.max(1, 1.6 - (f - X.tally) * 12), 14);
+  if (f >= X.on && f < X.off) pdBar(b.x + b.w - 200, b.y + 58, ABIL_ATTR_NAME[ad.attr] || ad.attr, 10, 10 + XF_BOOST.amt, PDM.still ? 1 : pdE(f, X.on + 0.2, X.on + 0.3));
+  if (f >= X.eff && !PDM.still) { pdText(`OFF: ${ad.offT}`, b.x + b.w / 2, b.y + 26, '#c0392b', 14, b.w - 120); if (f > X.off) pdIco('pdEraser', sx - 10 + Math.sin(f * 90) * 8, sy + 4, 26, '#f2a7b6'); }
+}
+
+// ---- popup demos, part 3: the other "?" popups (POP_SCENE = a popup's own scene: (x, y, w, h, demo); the loop clock is PDM like the abilities')
+const pmMan = (x, y, col, ph, down) => { ctx.save(); ctx.translate(x, y); ctx.scale(0.7, 0.7); qsMan(0, 0, col, ph, down); ctx.restore(); };   // (a small pencil man for the row icons)
+let PD_FACE = null;   // (one made-up face for the morale demos)
+const pdFace = () => PD_FACE || (PD_FACE = makeFace(seeded(7)));
+function pdCard(x, y, w, h, rot = 0) {   // a little player card
+  ctx.save(); ctx.translate(x + w / 2, y + h / 2); ctx.rotate(rot); ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(-w / 2 + 3, -h / 2 + 4, w, h);
+  ctx.fillStyle = '#fffdf4'; ctx.fillRect(-w / 2, -h / 2, w, h); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.6; ctx.strokeRect(-w / 2, -h / 2, w, h);
+  ctx.fillStyle = PD_COL.off; ctx.beginPath(); ctx.arc(0, -h * 0.16, w * 0.2, 0, 7); ctx.fill(); ctx.fillStyle = 'rgba(34,48,90,0.4)'; ctx.fillRect(-w * 0.3, h * 0.14, w * 0.6, 3); ctx.fillRect(-w * 0.22, h * 0.26, w * 0.44, 3); ctx.restore();
+}
+function pdBench(x, y, w) { pdLn([[x, y], [x + w, y]], '#8a5a3a', 5); pdLn([[x + 6, y], [x + 6, y + 16]], '#8a5a3a', 3); pdLn([[x + w - 6, y], [x + w - 6, y + 16]], '#8a5a3a', 3); }
+function pdCursor(x, y, down) {   // a mouse pointer (presses in when down)
+  const s = down ? 0.9 : 1; ctx.save(); ctx.translate(x, y); ctx.scale(s, s); ctx.fillStyle = '#ffffff'; ctx.strokeStyle = RES.line; ctx.lineWidth = 1.6; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 22); ctx.lineTo(6, 17); ctx.lineTo(10, 26); ctx.lineTo(14, 24); ctx.lineTo(10, 15); ctx.lineTo(17, 15); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+}
+function pdCal(x, y, n, crossed, col = '#c0392b') {   // a row of week boxes, the first `crossed` crossed off
+  for (let i = 0; i < n; i++) { const bx = x + i * 30; ctx.save(); ctx.fillStyle = '#fffdf4'; ctx.fillRect(bx, y, 26, 26); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.4; ctx.strokeRect(bx, y, 26, 26); ctx.fillStyle = '#c0392b'; ctx.fillRect(bx, y, 26, 5); ctx.restore(); if (i < crossed) pdX(bx + 13, y + 15, col, 8); }
+}
+function pdBars(x, y, vals, cols) { vals.forEach((v, i) => { ctx.fillStyle = 'rgba(120,100,70,0.15)'; ctx.fillRect(x, y + i * 18, 140, 11); ctx.fillStyle = cols ? cols[i] : PD_COL.off; ctx.fillRect(x, y + i * 18, 140 * Math.max(0, Math.min(1, v)), 11); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.2; ctx.strokeRect(x, y + i * 18, 140, 11); }); }
+function pdStarRow(x, y, n, fill, r = 13) { for (let i = 0; i < n; i++) { drawStar(x + i * r * 2.3, y, r, 'rgba(255,255,255,0.6)', RES.line, 1.4); const f = Math.max(0, Math.min(1, fill - i)); if (f > 0) { ctx.save(); ctx.beginPath(); ctx.rect(x + i * r * 2.3 - r, y - r, r * 2 * f, r * 2); ctx.clip(); drawStar(x + i * r * 2.3, y, r, '#ffd23f', '#8a5a00', 1.4); ctx.restore(); } } }
+const pdBeatTxt = (x, y) => pdText(PDM.beat ? 'after' : 'before', x, y, RES.dim, 14);
+const POP_SCENE = {
+  // player page tips
+  bench(x, y, w, h) { qsTurf(x + w * 0.5, y, w * 0.5, h); const f = PDM.f, gy = y + h * 0.7; pdBench(x + 50, gy - 6, 120); pmMan(x + 110, gy - 10, PD_COL.off, 0, 0); pdBattery(x + 110, gy - 50, 0.3 + 0.7 * pdS(f / 0.6)); const j = pdE(f, 0.3, 0.8); pmMan(pdL(x + 180, x + w - 90, j), gy, PD_COL.off, j > 0 && j < 1 ? f * 60 : 0, 0);
+    pdLabel('back to 100%', x + 110, y + 26, 0.45, 0.98, [x + 110, gy - 58]); pdLabel('next man starts', x + w - 120, y + 30, 0.6, 0.98, [x + w - 90, gy - 34]); },
+  drop(x, y, w, h) { const f = PDM.f, c = pdE(f, 0.3, 0.5), a = pdE(f, 0.5, 0.9), cx = pdL(x + w * 0.35, x + w + 30, a), cy = y + h * 0.5 - Math.sin(a * Math.PI) * 60 + a * 40;
+    if (c < 1) { ctx.save(); ctx.translate(cx, cy); ctx.scale(1 - c * 0.7, 1 - c * 0.7); ctx.rotate(c * 2); pdCard(-40, -55, 80, 110); ctx.restore(); }
+    else { ctx.save(); ctx.translate(cx, cy); ctx.rotate(a * 9); ctx.fillStyle = '#f4efe0'; ctx.strokeStyle = RES.line; ctx.lineWidth = 1.4; ctx.beginPath(); for (let i = 0; i < 9; i++) { const r = 20 + (i % 3) * 5; ctx.lineTo(Math.cos(i * 0.7) * r, Math.sin(i * 0.7) * r); } ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); }
+    pdLabel('to free agency', x + w * 0.62, y + 36, 0.45, 0.95); pdLabel('off your cap', x + w * 0.62, y + h - 30, 0.6, 0.98); },
+  contract(x, y, w, h, o) { const f = PDM.f, n = Math.max(1, Math.min(5, o.years || 3)), pay = o.pay ? fmtM(o.pay) : '$', cw = 90, x0 = x + w / 2 - n * (cw + 10) / 2;
+    for (let i = 0; i < n; i++) { const on = f > 0.1 + i * 0.12; ctx.save(); ctx.globalAlpha *= on ? 1 : 0.3; ctx.strokeStyle = RES.line; ctx.lineWidth = 1.6; ctx.strokeRect(x0 + i * (cw + 10), y + 30, cw, 54); ctx.restore(); pdText(`YEAR ${i + 1}`, x0 + i * (cw + 10) + cw / 2, y + 44, RES.dim, 13); if (on) pdText(pay, x0 + i * (cw + 10) + cw / 2, y + 68, RES.line, 15); }
+    const cap = 0.45 + 0.25 * pdS(f / 0.5); ctx.fillStyle = 'rgba(120,100,70,0.15)'; ctx.fillRect(x + 80, y + h - 60, w - 160, 18); ctx.fillStyle = PD_COL.off; ctx.fillRect(x + 80, y + h - 60, (w - 160) * 0.45, 18); ctx.fillStyle = '#e0b13a'; ctx.fillRect(x + 80 + (w - 160) * 0.45, y + h - 60, (w - 160) * (cap - 0.45), 18); ctx.strokeStyle = RES.line; ctx.strokeRect(x + 80, y + h - 60, w - 160, 18);
+    pdText('SALARY CAP', x + 80 + 50, y + h - 30, RES.dim, 13); pdLabel('every season', x + 80 + (w - 160) * 0.58, y + h - 82, 0.5, 0.98, [x + 80 + (w - 160) * 0.58, y + h - 62]); },
+  kr(x, y, w, h) { const f = PDM.f, gy = y + h * 0.75; pdCard(x + 60, y + 30, 110, 150); const bm = pdE(f, 0.05, 0.3); ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.moveTo(x + 70, y + 30 - 40 * (1 - bm)); ctx.lineTo(x + 90, y + 30 - 40 * (1 - bm)); ctx.lineTo(x + 90, y + 74 - 40 * (1 - bm)); ctx.lineTo(x + 80, y + 66 - 40 * (1 - bm)); ctx.lineTo(x + 70, y + 74 - 40 * (1 - bm)); ctx.closePath(); ctx.fill();
+    qsTurf(x + 220, y, w - 220, h); const c = pdE(f, 0.35, 0.75); pmMan(x + w - 120, gy, PD_COL.off, 0, 0); if (c < 1) pdBall({ x0: x + 240, y0: gy, x1: x + w - 114, y1: gy, z0: 10, z1: 14, h: 90 }, c); else pdHeld(x + w - 120, gy + 4);
+    pdLabel('your returner', x + 115, y + h - 20, 0.3, 0.95, [x + 80, y + 50]); },
+  scoutDraft(x, y, w, h) { const f = PDM.f, gx = pdL(x + 80, x + w * 0.5, pdE(f, 0, 0.45)); pdCard(x + 50, y + 30, 110, 150); pdStarRow(x + 210, y + 70, 5, 0);
+    ctx.save(); ctx.beginPath(); ctx.arc(gx + 120, y + 70, 32, 0, 7); ctx.clip(); pdStarRow(x + 210, y + 70, 5, 3.5); ctx.restore(); ctx.strokeStyle = RES.line; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(gx + 120, y + 70, 32, 0, 7); ctx.stroke(); pdLn([[gx + 143, y + 93], [gx + 165, y + 118]], '#8a5a3a', 6);
+    const s = pdE(f, 0.55, 0.9); pdLn([[x + 220, y + h - 40], [x + w - 80, y + h - 40]], RES.line, 1.2); const pts = []; for (let i = 0; i <= 30 * s; i++) pts.push([x + 230 + i * 10, y + h - 50 + Math.sin(i * 1.3) * 8 - (i % 4) * 2]); if (pts.length > 1) pdLn(pts, '#2a62b0', 2);
+    pdLabel('scout: a guess', x + w * 0.5, y + 20, 0.15, 0.5); pdLabel('draft: he signs', x + w * 0.7, y + h - 74, 0.62, 0.98); },
+  sign(x, y, w, h) { const f = PDM.f, items = [['ROSTER SPOT', 0.15], ['CAP ROOM', 0.4], ['CREDITS', 0.65]];
+    items.forEach(([n, at], i) => { const cx = x + w * (0.2 + i * 0.3), cy = y + h * 0.45;
+      if (i === 0) { ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.setLineDash([5, 4]); ctx.strokeRect(cx - 30, cy - 30, 60, 60); ctx.setLineDash([]); }
+      if (i === 1) { ctx.fillStyle = 'rgba(120,100,70,0.15)'; ctx.fillRect(cx - 50, cy - 8, 100, 16); ctx.fillStyle = PD_COL.off; ctx.fillRect(cx - 50, cy - 8, 70, 16); ctx.strokeStyle = RES.line; ctx.strokeRect(cx - 50, cy - 8, 100, 16); }
+      if (i === 2) for (let k = 0; k < 4; k++) { ctx.fillStyle = '#e0b13a'; ctx.beginPath(); ctx.ellipse(cx, cy + 16 - k * 8, 22, 7, 0, 0, 7); ctx.fill(); ctx.strokeStyle = '#8a5a00'; ctx.stroke(); }
+      pdText(n, cx, cy + 50, RES.line, 14); if (f > at || PDM.still) { const k2 = PDM.still ? 1 : pdE(f, at, at + 0.08); pdLn([[cx - 14, cy - 40], [cx - 14 + 8 * k2, cy - 30 * 1], [cx - 6 + 16 * k2, cy - 52 + 0]].slice(0, k2 < 0.5 ? 2 : 3), PD_COL.good, 4); } }); },
+  // condition / morale (three or four pages each)
+  cond1(x, y, w, h) { qsTurf(x, y, w, h); const f = PDM.f, gy = y + h * 0.72, hits = (f > 0.3) + (f > 0.65); pmMan(x + w / 2, gy, PD_COL.off, 0, 0); pdBattery(x + w / 2, gy - 44, 1 - hits * 0.25 - (f > 0.9 ? 0.15 : 0));
+    for (const at of [0.3, 0.65]) { const k = pdE(f, at - 0.15, at); if (f < at + 0.1) pmMan(pdL(x + w - 40, x + w / 2 + 16, k), gy, PD_COL.def, f * 50, 0); if (f > at && f < at + 0.08) pdBurst(x + w / 2 + 8, gy - 14); }
+    pdLabel(`tackle -${INJURY.cond.tackle}`, x + w / 2 + 110, gy - 40, 0.32, 0.6); pdLabel(`sack -${INJURY.cond.sack}`, x + w / 2 + 110, gy - 40, 0.66, 0.88); pdLabel('every game costs some', x + w / 2, y + 22, 0.88, 0.995); },
+  cond2(x, y, w, h) { const f = PDM.f, v = 1 - f, k = 1 - INJURY.play * (1 - v); pdBattery(x + 90, y + h / 2, v); pdText(`${Math.round(v * 100)}%`, x + 90, y + h / 2 + 24, RES.line, 15);
+    pdBars(x + 200, y + 60, [0.8 * k, 0.65 * k, 0.9 * k, 0.55 * k], [PD_COL.off, PD_COL.off, PD_COL.off, PD_COL.off]); const pc = v * 100;
+    if (pc >= COND_EDGE.hi) pdText('+1 every attribute', x + 470, y + 80, PD_COL.good, 16); else if (pc < COND_EDGE.lo) pdText('-1 every attribute', x + 470, y + 80, '#c0392b', 16);
+    pdLabel('ratings shrink', x + 270, y + 30, 0.3, 0.7); pdLabel('more injuries', x + 470, y + h - 40, 0.6, 0.995); },
+  cond3(x, y, w, h) { const f = PDM.f; pdBench(x + 50, y + h * 0.7, 130); pmMan(x + 115, y + h * 0.7 - 4, PD_COL.off, 0, 0); pdBattery(x + 115, y + h * 0.7 - 50, 0.3 + 0.7 * pdS(f / 0.7));
+    const cx = x + w * 0.62; ctx.fillStyle = '#c9a26b'; ctx.fillRect(cx, y + 30, 150, 170); ctx.fillStyle = '#fffdf4'; ctx.fillRect(cx + 10, y + 46, 130, 146); ctx.fillStyle = '#9aa3ad'; ctx.fillRect(cx + 55, y + 24, 40, 12);
+    pdText('PRACTICE', cx + 75, y + 66, RES.line, 15); pdLn([[cx + 22, y + 110], [cx + 128, y + 110]], RES.line, 2); const sx = pdL(cx + 110, cx + 34, pdE(f, 0.2, 0.5)); ctx.fillStyle = PD_COL.label; ctx.beginPath(); ctx.arc(sx, y + 110, 7, 0, 7); ctx.fill(); pdText('LIGHT', cx + 34, y + 134, RES.dim, 12); pdText('HEAVY', cx + 116, y + 134, RES.dim, 12);
+    pdLabel('sit him a game', x + 115, y + 24, 0.1, 0.6); pdLabel('lighter load', cx + 75, y + h - 16, 0.5, 0.995); },
+  mor1(x, y, w, h) { const win = PDM.beat === 1; drawAvatar(pdFace(), x + w / 2, y + h / 2, 60, { expr: win ? 2 : 4 }); pdText(win ? 'W' : 'L', x + w / 2 + 120, y + h / 2, win ? PD_COL.good : '#c0392b', 40); pdText(win ? 'FIRED UP' : 'SHAKEN', x + w / 2 - 150, y + h / 2, win ? PD_COL.good : '#c0392b', 20); },
+  mor2(x, y, w, h) { const win = PDM.beat === 1, k = pdS(PDM.u / 0.4) * MORALE.max * 3 * (win ? 1 : -1); drawAvatar(pdFace(), x + 110, y + h / 2, 52, { expr: win ? 2 : 4 }); pdBars(x + 240, y + 60, [0.6 + k, 0.5 + k, 0.7 + k, 0.45 + k], [win ? PD_COL.good : '#c0392b', win ? PD_COL.good : '#c0392b', win ? PD_COL.good : '#c0392b', win ? PD_COL.good : '#c0392b']);
+    pdText(win ? `up to +${Math.round(MORALE.max * 100)}%` : `down to -${Math.round(MORALE.max * 100)}%`, x + 480, y + h / 2, win ? PD_COL.good : '#c0392b', 18); },
+  mor3(x, y, w, h) { const win = PDM.beat === 1, ev = win ? [`TOUCHDOWN +${MORALE.ev.td}`, `WIN +${MORALE.ev.win}`] : [`FUMBLE ${MORALE.ev.fumble}`, `INTERCEPTION ${MORALE.ev.pick}`]; drawAvatar(pdFace(), x + 120, y + h / 2, 52, { expr: win ? 2 : 4 });
+    ev.forEach((t, i) => { if (PDM.u > 0.15 + i * 0.3 || PDM.still) pdText(t, x + 420, y + 80 + i * 50, win ? PD_COL.good : '#c0392b', 20); }); },
+  mor4(x, y, w, h) { const f = PDM.f; pdTally(x + 70, y + 60, 1 + Math.floor(f * 6)); pdText('WINS', x + 110, y + 92, RES.line, 14);
+    const sx = x + w * 0.55; ctx.fillStyle = '#9b5c4a'; ctx.fillRect(sx, y + h - 90, 180, 40); ctx.fillRect(sx - 10, y + h - 120, 30, 70); ctx.fillRect(sx + 160, y + h - 120, 30, 70); ctx.fillRect(sx, y + h - 130, 180, 40); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.4; ctx.strokeRect(sx, y + h - 130, 180, 80);
+    drawAvatar(pdFace(), sx + 90, y + h - 150, 30, { expr: f > 0.3 ? 2 : 0 }); pdLabel('win games', x + 110, y + 26, 0.1, 0.6); pdLabel('player lounge', sx + 90, y + h - 24, 0.4, 0.995); },
+  // the staff "?"
+  hc(x, y, w, h) { const f = PDM.f, cx = x + w / 2 - 110; ctx.fillStyle = '#c9a26b'; ctx.fillRect(cx, y + 14, 220, h - 28); ctx.fillStyle = '#fffdf4'; ctx.fillRect(cx + 12, y + 30, 196, h - 54);
+    for (let i = 0; i < 5; i++) { ctx.strokeStyle = RES.line; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(cx + 50 + i * 30, y + h - 60, 7, 0, 7); ctx.stroke(); }
+    [[cx + 50, cx + 30], [cx + 110, cx + 130], [cx + 170, cx + 200]].forEach(([a, b], i) => { const k = pdE(f, 0.1 + i * 0.2, 0.3 + i * 0.2); if (k > 0) pdArrow(a, y + h - 70, pdL(a, b, k), pdL(y + h - 70, y + 50, k), PD_COL.def); });
+    pdLabel('you call the plays', x + w - 120, y + 40, 0.2, 0.98); },
+  oc(x, y, w, h) { const f = PDM.f; ctx.fillStyle = '#fbfbf6'; ctx.fillRect(x + 40, y + 14, w * 0.6, h - 28); ctx.strokeStyle = '#8a9099'; ctx.lineWidth = 4; ctx.strokeRect(x + 40, y + 14, w * 0.6, h - 28);
+    const lx = x + 70, ly = y + h - 50; for (let i = 0; i < 5; i++) { ctx.strokeStyle = RES.line; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(lx + 40 + i * 26, ly, 7, 0, 7); ctx.stroke(); }
+    [[lx, ly - 4, lx, y + 40], [lx + 230, ly - 4, lx + 260, y + 50], [lx + 170, ly + 10, lx + 300, ly - 60]].forEach(([a, b, c2, d], i) => { const k = pdE(f, 0.1 + i * 0.2, 0.3 + i * 0.2); if (k > 0) pdArrow(a, b, pdL(a, c2, k), pdL(b, d, k), '#2a62b0'); });
+    pdLabel('his routes', x + w * 0.82, y + 50, 0.2, 0.6); pdLabel('favorite formation', x + w * 0.82, y + h - 50, 0.55, 0.98); },
+  dc(x, y, w, h) { const f = PDM.f; ctx.fillStyle = '#fbfbf6'; ctx.fillRect(x + 40, y + 14, w * 0.6, h - 28); ctx.strokeStyle = '#8a9099'; ctx.lineWidth = 4; ctx.strokeRect(x + 40, y + 14, w * 0.6, h - 28);
+    const lx = x + 110, ly = y + h - 46; for (let i = 0; i < 5; i++) { pdX(lx + i * 26, ly, RES.line, 6); }
+    const k = pdE(f, 0.1, 0.4); if (k > 0) { pdBubble(x + 130, y + 60, 60 * k); pdBubble(x + 290, y + 60, 60 * k); }
+    const b = pdE(f, 0.5, 0.75); if (b > 0) pdArrow(x + 210, y + 110, x + 210, pdL(y + 110, ly - 10, b), '#c0392b', 2.6);
+    pdLabel('coverage shell', x + w * 0.82, y + 50, 0.2, 0.6); pdLabel('blitz', x + w * 0.82, y + h - 50, 0.55, 0.98); },
+  // the formation guide: his dots line up, run the first good play, then the first bad fit gets the red X
+  form(x, y, w, h, o) { const f = o.f; if (!f) return; const fw = 300, fx = x + 30, fy = y + 10, fh = h - 20, rv = PDM.still ? 1 : pdE(PDM.f, 0, 0.15);
+    ctx.save(); ctx.beginPath(); ctx.rect(fx - 2, fy + fh * (1 - rv) - 2, fw + 4, fh * rv + 4); ctx.clip(); drawFormation(f, fx, fy, fw, fh); ctx.restore();
+    const good = PDM.beat === 0, pl = good ? (f.plays || [])[0] : (f.bad || [])[0]; if (!pl) return;
+    const run = good ? pl.t === 'run' : /run|dive|sweep|power|iso|zone|draw/i.test(pl.n), k = pdE(PDM.u, 0.2, 0.7), cx = fx + fw / 2, los = fy + fh * 0.22;
+    if (run) pdArrow(cx, fy + fh * 0.75, pdL(cx, cx + 50, k), pdL(fy + fh * 0.75, fy + 14, k), good ? '#2a62b0' : PD_COL.ghost, 2.6);
+    else for (const s of [-1, 1]) pdArrow(cx + s * 120, los + 10, pdL(cx + s * 120, cx + s * 80, k), pdL(los + 10, fy + 14, k), good ? '#2a62b0' : PD_COL.ghost, 2.4);
+    pdText(pl.n.toUpperCase(), x + w * 0.72, y + 60, good ? '#2a62b0' : RES.dim, 22, 300); pdText(good ? 'a good fit' : "doesn't fit", x + w * 0.72, y + 96, good ? PD_COL.good : '#c0392b', 16);
+    if (!good && PDM.u > 0.6) pdX(cx, fy + fh / 2, '#c0392b', 60 * Math.min(1, (PDM.u - 0.6) * 5)); },
+  // head coach first-time tip: a star per milestone fills, its perk stamps in
+  hcTip(x, y, w, h) { const f = PDM.still ? 1 : PDM.f; HC_ABIL.forEach((a, i) => { const cx = x + w * (0.2 + i * 0.3), k = pdE(f, 0.1 + i * 0.25, 0.3 + i * 0.25);
+    drawStar(cx, y + 50, 28, 'rgba(255,255,255,0.6)', RES.line, 2); if (k > 0) { ctx.save(); ctx.beginPath(); ctx.rect(cx - 30, y + 78 - 56 * k, 60, 56 * k); ctx.clip(); drawStar(cx, y + 50, 28, '#ffd23f', '#8a5a00', 2); ctx.restore(); }
+    pdText(`${a.at} STARS`, cx, y + 92, RES.dim, 13); if (k >= 1) qsStamp(cx, y + 128, a.name, '#c0392b', -0.08, PDM.still ? 1 : Math.max(1, 1.7 - (f - 0.3 - i * 0.25) * 8), 15); }); },
+  // facilities: each building before / after (one a loop, in turn)
+  fac(x, y, w, h, o) { const keys = Object.keys(PRAC_FAC), k = o.b || keys[PDM.n % keys.length], F = PRAC_FAC[k], u = PDM.u, ok = PDM.beat === 1; pdText(F.name, x + w / 2, y + 22, RES.line, 18); pdBeatTxt(x + 60, y + 22);
+    if (F.dev) { pdBars(x + w / 2 - 70, y + 90, [u * (ok ? 1 : 0.7)], [ok ? PD_COL.good : PD_COL.ghost]); pdText('DEVELOPMENT', x + w / 2, y + 80, RES.dim, 13); if (ok) pdText(`+${Math.round(F.dev * 100)}% a level`, x + w / 2, y + 130, PD_COL.good, 16); }
+    else if (k === 'med') { const n = ok ? 4 : 5; pdCal(x + w / 2 - n * 15, y + 80, n, Math.floor(u * (n + 0.99))); pdText('WEEKS OUT', x + w / 2, y + 66, RES.dim, 13); }
+    else if (k === 'rec') { pdBattery(x + w / 2, y + 100, 0.3 + 0.7 * Math.min(1, u * (ok ? 1.4 : 0.8))); pdText('CONDITION', x + w / 2, y + 76, RES.dim, 13); }
+    else { drawAvatar(pdFace(), x + w / 2, y + 110, 40, { expr: u > (ok ? 0.3 : 0.75) ? 2 : 4 }); pdText('MORALE', x + w / 2, y + 60, RES.dim, 13); } },
+  prac(x, y, w, h) { const f = PDM.f, s = 0.5 + 0.5 * Math.sin(f * Math.PI * 2); pdText('PRACTICE LOAD', x + w / 2, y + 26, RES.line, 16); pdLn([[x + 200, y + 70], [x + w - 200, y + 70]], RES.line, 2); ctx.fillStyle = PD_COL.label; ctx.beginPath(); ctx.arc(pdL(x + 200, x + w - 200, s), y + 70, 8, 0, 7); ctx.fill();
+    pdText('LIGHT', x + 200, y + 92, RES.dim, 13); pdText('HEAVY', x + w - 200, y + 92, RES.dim, 13); pdBattery(x + w / 2 - 120, y + 150, 1 - s * 0.6); pdText('CONDITION', x + w / 2 - 120, y + 176, RES.dim, 12); pdBars(x + w / 2 + 40, y + 144, [0.3 + s * 0.6], [PD_COL.good]); pdText('DEVELOPMENT', x + w / 2 + 110, y + 176, RES.dim, 12); },
+  // xp bank: half a star coloured in on his potential row
+  xpHalf(x, y, w, h, o) { const base = Math.floor((o.stars || 3) * 2) / 2, k = PDM.still ? 1 : pdE(PDM.f, 0.2, 0.6); pdText('POTENTIAL', x + w / 2, y + 20, RES.dim, 13); pdStarRow(x + w / 2 - 92, y + h / 2 + 6, 5, base + 0.5 * k, 16); if (k >= 1) pdText('+½', x + w / 2 + 110, y + h / 2 + 6, PD_COL.good, 22); },
+  ftag(x, y, w, h) { const f = PDM.f, sw = PDM.still ? 0 : Math.sin(f * Math.PI * 4) * 0.3 * (1 - pdE(f, 0.2, 0.7)), drop = pdE(f, 0, 0.2); pdCard(x + w / 2 - 110, y + 20, 110, 150);
+    ctx.save(); ctx.translate(x + w / 2, y + 40); ctx.rotate(sw); pdLn([[0, 0], [30, 40 * drop]], RES.line, 1.5); ctx.translate(30, 40 * drop); ctx.fillStyle = '#e8c98a'; ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(20, -14); ctx.lineTo(90, -14); ctx.lineTo(90, 30); ctx.lineTo(20, 30); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+    pdText('1 YEAR', x + w / 2 + 85, y + 44 + 40 * drop + 8, RES.line, 15); pdLabel('one tag a year', x + w * 0.78, y + h - 30, 0.4, 0.98); },
+  injury(x, y, w, h) { const f = PDM.f, bx = x + 120, by = y + 30; ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(bx, by + 14, 14, 0, 7); ctx.stroke();
+    pdLn([[bx, by + 28], [bx, by + 100]]); pdLn([[bx - 34, by + 50], [bx, by + 40], [bx + 34, by + 50]]); pdLn([[bx - 20, by + 170], [bx - 10, by + 135], [bx, by + 100], [bx + 10, by + 135], [bx + 20, by + 170]]);
+    ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(bx + 10, by + 135, 12 + Math.sin(pdT() * 6) * (PDM.still ? 0 : 2), 0, 7); ctx.stroke();
+    pdCal(x + 280, y + 90, 4, Math.floor(f * 4.99), PD_COL.good); pdText('WEEKS OUT', x + 340, y + 70, RES.dim, 14); },
+  tip(x, y, w, h, o) { const f = PDM.f, bx = x + w / 2 - 110, by = y + h / 2 - 28, cx = pdL(x + w - 40, bx + 150, pdE(f, 0, 0.4)), cy = pdL(y + h - 20, by + 34, pdE(f, 0, 0.4)), down = f > 0.45 && f < 0.6;
+    ctx.save(); ctx.translate(down ? 2 : 0, down ? 3 : 0); ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(bx + 4, by + 5, 220, 56); ctx.fillStyle = '#fff3b0'; ctx.fillRect(bx, by, 220, 56); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(bx, by, 220, 56); ctx.restore();
+    pdText(String(o.label || '').slice(0, 18), bx + 110, by + 28, RES.line, 18, 200); if (f > 0.45 && f < 0.8) { ctx.save(); ctx.strokeStyle = 'rgba(42,98,176,0.5)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, cy, 10 + (f - 0.45) * 80, 0, 7); ctx.stroke(); ctx.restore(); }
+    pdCursor(cx, cy, down); },
+};
+// ---- the attributes popup: a small loop beside each attribute, a pentagon that sketches itself
+const ATTR_ICO = {
+  str(x, y, w, h, t) { const gy = y + h - 8, p = pdS(t / 0.5); pmMan(x + 14, gy, PD_COL.off, 0, 0); pdLn([[x + 14, gy - 10], [x + 22 + p * 6, gy - 12]], RES.line, 2); pmMan(x + 32 + p * 10, gy, PD_COL.def, 0, p > 0.8 ? (p - 0.8) * 3 : 0); },
+  spd(x, y, w, h, t) { pmMan(x + 6 + t * (w - 12) * 0.7, y + h - 14, PD_COL.def, t * 40, 0); pmMan(x + 6 + t * (w - 12), y + h - 6, PD_COL.off, t * 44, 0); },
+  acc(x, y, w, h, t) { pdRing(x + w - 12, y + h - 8, 9, 1, '#c0392b'); const b = pdE(t, 0, 0.7); pdBallAt(pdL(x + 6, x + w - 12, b), y + h - 8 - Math.sin(b * Math.PI) * 18); },
+  pow(x, y, w, h, t) { const bx = x + ((t * 2) % 1) * w; pdBallAt(bx, y + h / 2); for (let i = 1; i < 4; i++) pdLn([[bx - 6 - i * 6, y + h / 2 - 4 + i * 2], [bx - 12 - i * 6, y + h / 2 - 4 + i * 2]], PD_COL.label, 1.4); },
+  awr(x, y, w, h, t) { pmMan(x + 10, y + h - 6, PD_COL.off, 0, 0); const a = -1.2 + pdS(t / 0.4) * 1.0; pdArrow(x + 14, y + 14, x + 14 + Math.cos(a) * 30, y + 14 + Math.sin(a) * 30 + 10, PD_COL.label, 1.6); ctx.fillStyle = t > 0.4 ? '#ffd23f' : '#ccc'; ctx.beginPath(); ctx.arc(x + w - 6, y + 18, 5, 0, 7); ctx.fill(); },
+  vis(x, y, w, h, t) { if (t > 0.2) pdLn([[x + 20, y + h - 6], [x + w - 4, y + 6]], 'rgba(42,98,176,0.6)', 6, [3, 3]); const k = pdE(t, 0.3, 0.9); pmMan(pdL(x + 10, x + w - 8, k), pdL(y + h - 6, y + 14, k * k), PD_COL.off, t * 40, 0); },
+  ctc(x, y, w, h, t) { const b = pdE(t, 0, 0.6); drawDoodle('glove', x + w - 12, y + h / 2, 22, '#c98b4a', pdT()); if (b < 1) pdBallAt(pdL(x + 4, x + w - 14, b), y + h / 2 - Math.sin(b * Math.PI) * 10); else pdBallAt(x + w - 12, y + h / 2); },
+  agi(x, y, w, h, t) { const k = pdE(t, 0, 0.8), pts = k < 0.5 ? [[x + 4, y + h - 6], [pdL(x + 4, x + w * 0.6, k * 2), y + h - 6]] : [[x + 4, y + h - 6], [x + w * 0.6, y + h - 6], [pdL(x + w * 0.6, x + w - 4, (k - 0.5) * 2), pdL(y + h - 6, y + 4, (k - 0.5) * 2)]]; pdLn(pts, '#2a62b0', 2); },
+  bal(x, y, w, h, t) { const r = Math.sin(pdE(t, 0.2, 0.7) * Math.PI) * 0.5; if (t > 0.15 && t < 0.3) pdBurst(x + w / 2 + 10, y + 14, 8); ctx.save(); ctx.translate(x + w / 2, y + h - 2); ctx.rotate(r); pmMan(0, -4, PD_COL.off, 0, 0); ctx.restore(); },
+  blk(x, y, w, h, t) { const p = Math.sin(t * Math.PI * 4) * 2; pmMan(x + w / 2 - 8, y + h - 6, PD_COL.off, 0, 0); pmMan(x + w / 2 + 8 + p, y + h - 6, PD_COL.def, 0, 0); pdLn([[x + w / 2 - 4, y + h - 16], [x + w / 2 + 5 + p, y + h - 16]], RES.line, 2); },
+  rbk(x, y, w, h, t) { const o = pdS(t / 0.5) * 10; pmMan(x + w / 2, y + 10 - o * 0.4, PD_COL.def, 0, 0); pmMan(x + w / 2, y + h + 6 + o * 0.2, PD_COL.def, 0, 0); if (t > 0.5) pdArrow(x + 4, y + h / 2 + 4, x + w - 4, y + h / 2 + 4, '#2a62b0', 1.6, [3, 3]); },
+  sta(x, y, w, h, t) { pmMan(x + 12 + Math.sin(t * Math.PI * 2) * 4, y + h - 6, PD_COL.off, t * 40, 0); pdBattery(x + w - 14, y + h / 2, 1); },
+  tck(x, y, w, h, t) { const k = pdE(t, 0, 0.45), d = t > 0.45 ? Math.min(1, (t - 0.45) * 5) : 0; pmMan(pdL(x + 8, x + w / 2 - 4, k), y + h - 6, PD_COL.off, t * 40, d); pmMan(pdL(x + w - 6, x + w / 2 + 6, k), y + h - 6, PD_COL.def, t * 40, d * 0.8); },
+  rst(x, y, w, h, t) { pmMan(x + w / 2, y + 8, PD_COL.off, 0, 0); pmMan(x + w / 2, y + h + 10, PD_COL.off, 0, 0); const k = pdE(t, 0, 0.4); pmMan(pdL(x + w - 4, x + w / 2 + 2, k), y + h / 2 + 8, PD_COL.def, t * 40, 0); },
+  prs(x, y, w, h, t) { pmMan(x + w / 2 - 4, y + h - 6, PD_COL.off, 0, 0); const k = pdE(t, 0.1, 0.8); pmMan(pdL(x + w - 6, x + 6, k), y + h - 6 - Math.sin(k * Math.PI) * 14, PD_COL.def, t * 40, 0); },
+  cov(x, y, w, h, t) { const z = Math.sin(t * Math.PI * 4) * 6; pmMan(x + 6 + t * (w - 20), y + h - 10 + z, PD_COL.off, t * 40, 0); pmMan(x + 14 + t * (w - 20), y + h - 4 + z, PD_COL.def, t * 40, 0); },
+  kpw(x, y, w, h, t) { const b = pdE(t, 0, 0.8); pdLn([[x + w - 4, y + h], [x + w - 4, y + 6]], '#c9a227', 2); pdBallAt(pdL(x + 4, x + w - 8, b), y + h - 4 - Math.sin(b * Math.PI) * (h - 10)); },
+  kac(x, y, w, h, t) { const n = 0.5 + 0.45 * Math.sin(Math.min(t, 0.6) * 18); ctx.fillStyle = 'rgba(120,100,70,0.15)'; ctx.fillRect(x + 2, y + h / 2 - 5, w - 4, 10); ctx.fillStyle = 'rgba(47,143,58,0.5)'; ctx.fillRect(x + w / 2 - 3, y + h / 2 - 5, 6, 10); pdLn([[x + 2 + (w - 4) * (t > 0.6 ? 0.5 : n), y + h / 2 - 9], [x + 2 + (w - 4) * (t > 0.6 ? 0.5 : n), y + h / 2 + 9]], '#c0392b', 2); },
+  poi(x, y, w, h, t) { ATTR_ICO.kac(x, y, w, h, 0.9); for (let i = 0; i < 3; i++) { const a = t * 20 + i * 2; pdLn([[x + 4 + i * 18, y + 4 + Math.sin(a) * 2], [x + 10 + i * 18, y + 2 + Math.cos(a) * 2]], '#c0392b', 1.2); } },
+};
+const attrIcoKey = (a, g) => a === 'awr' ? (g === 'RB' ? 'vis' : g === 'K' ? 'poi' : 'awr') : a === 'cut' ? 'agi' : ATTR_ICO[a] ? a : null;
+function pdPent(cx, cy, r, t) {   // the card's pentagon sketching itself: pencil shape, dotted average, gold potential dashes, a green and a red number
+  const pt = (i, k) => [cx + Math.cos(-Math.PI / 2 + i * Math.PI * 2 / 5) * r * k, cy + Math.sin(-Math.PI / 2 + i * Math.PI * 2 / 5) * r * k];
+  const me = [0.9, 0.6, 0.8, 0.45, 0.7], avg = 0.62, pot = [1, 0.8, 0.95, 0.7, 0.85];
+  pdLn([0, 1, 2, 3, 4, 0].map(i => pt(i, 1)), 'rgba(34,48,90,0.2)', 1);
+  const s1 = pdE(t, 0, 0.25), n1 = Math.ceil(s1 * 5); if (n1) pdLn([...Array(n1 + 1).keys()].map(i => pt(i % 5, me[i % 5])), RES.line, 2);
+  if (t > 0.25) pdLn([0, 1, 2, 3, 4, 0].map(i => pt(i, avg)), RES.line, 1.2, [2, 4]);
+  if (t > 0.45) pdLn([0, 1, 2, 3, 4, 0].map(i => pt(i, pot[i])), '#d9a520', 2, [6, 4]);
+  if (t > 0.7) { const a = pt(0, 1.18), b = pt(3, 1.18); pdText('+3', a[0], a[1], PD_COL.good, 13); pdText('-2', b[0], b[1], '#c0392b', 13); }
+}
+function attrPop(p) {   // the ATTRIBUTES "?": the old lines, and which line gets which icon (lineIco: index -> { k } or { pent })
+  const lines = attrHelp(p), ico = {}; let i = 0;
+  for (const a of ATTRS[p.group]) { const k = attrIcoKey(a, p.group); if (k) ico[i] = { k }; i += wrapLines(`${attrName(p, a)}: ${(ATTR_HELP[p.group] || {})[a] || ''}`, 54).length; }
+  ico[lines.indexOf('THE PENTAGON')] = { pent: true };
+  return { lines, lineIco: ico };
+}
+// drawChangelog's extras for a line list: the row icons and the saga's timeline (y = the line's centre)
+function pdLineExtra(P, k, x, y, v) {
+  const I = P.lineIco && P.lineIco[k], t = PDM.still ? 0.8 : (pdAge(P) % POP_DEMO.ico.loop) / POP_DEMO.ico.loop;
+  if (I && I.k) { const S = POP_DEMO.ico; ctx.save(); ctx.beginPath(); ctx.rect(x, y - S.h / 2 - 2, S.w, S.h + 4); ctx.clip(); ATTR_ICO[I.k](x, y - S.h / 2, S.w, S.h, t); ctx.restore(); }
+  if (I && I.pent) pdPent(v.x + v.w - 70, y + 50, 40, PDM.still ? 1 : (pdAge(P) % 5) / 5);
+  if (P.saga) { const i = P.saga.dots.indexOf(k); if (i >= 0) {
+    const nx = P.saga.dots[i + 1], last = i === P.saga.dots.length - 1, live = last && !P.saga.end, pulse = live && !PDM.still ? 2 * Math.sin(pdAge(P) * 5) : 0;
+    if (nx != null) pdLn([[x - 18, y + 7], [x - 18, y + (nx - k) * (P.lh || CL_LH) - 7]], RES.line, 1.6);
+    ctx.save(); ctx.fillStyle = live ? '#c0392b' : RES.line; ctx.beginPath(); ctx.arc(x - 18, y, 5 + pulse, 0, 7); ctx.fill(); ctx.restore(); } }
+}
+function popDemoPlain(P, card, x, w) {   // a plain popup's demo slot (drawOffPop): the box under the title; returns the height it took
+  const D = POP_DEMO, b = P.dbox || (P.dbox = { x: x - w / 2, y: card.y + 88, w, h: D.hs }); b.x = x - w / 2; b.y = card.y + 88; b.w = w;
+  pdRun(P, b); return D.hs + 16;
+}
+
+// ---- popup demos, part 4: a header doodle beside the title of the short confirm / news popups (drawOffPop + plain scrollPops), played once as the popup opens
+// POP_ICO = [title or title prefix, DOODLE key] (first match wins; a popup's own P.ico overrides). The drawers read ic.p = 0-1 (how far the one-time animation is).
+const POP_ICO = [
+  ['SIGN HIM?', 'pdPen'], ['DRAFT HIM?', 'pdPen'], ['DRAFT OVER', 'pdBoard'], ['DROP HIM?', 'pdBin'], ['FIRE ', 'pdBin'], ['RETIRE?', 'pdCleats'], ['YOU WERE FIRED', 'pdBox'],
+  ['NOT ENOUGH CAP', 'pdCapOver'], ['OVER THE SALARY CAP', 'pdCapOver'], ['NOT ENOUGH', 'pdPiggy'], ['ROSTER FULL', 'pdBenchFull'], ["CAN'", 'pdTeacherX'],
+  ['TRADE DONE', 'pdSwap'], ['TRADE OFFER', 'pdEnvelope'], ['NO OFFERS', 'pdMailbox'], ['TRADE SAVED', 'pdClip'], ['SAVED TRADE', 'pdClip'], ['TRADE DEADLINE', 'pdTear'],
+  ['TRADES CLOSED', 'pdDoorSign'], ['CAP-FREE TRADES', 'pdScales'], ['THEY AGREE', 'pdShake'], ['THEY HARDEN', 'pdArms'], ['ACCEPT?', 'pdDotted'],
+  ['CONTRACT', 'pdHourglass'], ['POACH ATTEMPT', 'pdReach'], ['RIVAL WANTS', 'pdReach'], ['NEW SEASON', 'pdPage'], ['NEW TEAM', 'pdHelmetSwap'], ['WEEK ', 'pdWeek'],
+  ['LEAGUE OFFICE', 'pdLetter'], ['A LETTER', 'pdLetter'], ['MAXED-OUT PLAYERS', 'pdArrowUp'], ['UPGRADES READY', 'pdArrowUp'], ['COACH UPGRADE READY', 'pdArrowUp'],
+  ['AROUND THE LEAGUE', 'pdNews'], ['SCOUTING REPORT', 'pdBinoc'], ['RECORD BOOK', 'pdTrophy'], ['PRACTICE BATTLES', 'pdHelmets'], ['FACILITIES', 'pdCrane'], ['COACHING STAFF', 'pdWhistle'],
+];
+const POP_ICO_FX = { ms: 900, size: 46, gap: 18 };   // (the one-time animation's length, the doodle's size, room between it and the title)
+const popIcoOf = P => P.ico || ((POP_ICO.find(([t]) => String(P.title || P.head || '').toUpperCase().startsWith(t)) || [])[1]) || null;
+function popHeadIco(P, cx, cy, titleW) {   // the doodle left of a centred title; one-time animation from when the popup was first drawn
+  const k = popIcoOf(P); if (!k || !DOODLE[k]) return;
+  if (P.it0 == null) P.it0 = uiNow();
+  const p = liteOn() ? 1 : Math.min(1, (uiNow() - P.it0) / POP_ICO_FX.ms), S = POP_ICO_FX.size, x = cx - titleW / 2 - POP_ICO_FX.gap - S / 2;
+  if (p < 1) menuMoving = true;
+  ctx.save(); ctx.translate(x, cy); ctx.scale(S / 2, S / 2); ctx.lineJoin = ctx.lineCap = 'round';
+  ddSeed = 7919 * (p < 1 ? Math.floor(p * 8) + 1 : 9) % 2147483646 + 1;   // (boils while it moves, then holds still)
+  try { DOODLE[k]({ k, c: '#3b3320', p, seed: 7 }, p, 1); } catch (e) {}
+  ctx.restore();
+}
+const PDI = '#3b3320', pdE1 = (p, a, b) => Math.max(0, Math.min(1, (p - a) / (b - a)));
+Object.assign(DOODLE, {
+  pdPen(ic) { const p = ic.p, n = Math.max(1, Math.round(p * 14)), pts = []; for (let i = 0; i <= n; i++) pts.push([-0.9 + i * 0.13, 0.55 + Math.sin(i * 1.4) * 0.18 - (i % 3) * 0.05]); ddLine([[-0.95, 0.8], [0.95, 0.8]], PDI, 0.05); if (pts.length > 1) ddLine(pts, '#2a62b0', 0.08);
+    const e = pts[pts.length - 1]; ctx.save(); ctx.translate(e[0], e[1]); ctx.rotate(-0.7); ddShape([[-0.08, 0], [0.08, 0], [0.08, -0.9], [-0.08, -0.9]], '#2a62b0'); ddShape([[-0.08, 0], [0.08, 0], [0, 0.15]], '#f4efe0'); ctx.restore(); },
+  pdBoard(ic) { ddShape([[-0.95, -0.75], [0.95, -0.75], [0.95, 0.8], [-0.95, 0.8]], '#c9a26b'); for (let i = 0; i < 6; i++) { if (ic.p < i / 6) continue; const x = -0.7 + (i % 3) * 0.6, y = -0.4 + Math.floor(i / 3) * 0.7; ddShape([[x - 0.2, y - 0.25], [x + 0.2, y - 0.25], [x + 0.2, y + 0.25], [x - 0.2, y + 0.25]], '#fffdf4'); ddShape(ddEll(x, y - 0.25, 0.06, 0.06, 8), '#d0342c'); } },
+  pdBin(ic) { const p = ic.p; ddShape([[-0.45, 0.1], [0.45, 0.1], [0.35, 0.95], [-0.35, 0.95]], '#9aa3ad'); ddLine([[-0.2, 0.25], [-0.15, 0.85]], PDI, 0.05); ddLine([[0.2, 0.25], [0.15, 0.85]], PDI, 0.05);
+    if (p < 1) { const bx = -0.9 + p * 0.9, by = -0.2 - Math.sin(p * Math.PI) * 0.7 + p * 0.4; ddShape(ddEll(bx, by, 0.2, 0.18, 9), '#f4efe0'); } },
+  pdCleats(ic) { const s = Math.sin(ic.p * Math.PI * 4) * 0.35 * (1 - ic.p); ddShape(ddEll(0, -0.85, 0.08, 0.08, 8), '#9aa3ad'); ctx.save(); ctx.translate(0, -0.85); ctx.rotate(s); ddLine([[0, 0], [-0.3, 0.6]], PDI, 0.05); ddLine([[0, 0], [0.3, 0.6]], PDI, 0.05);
+    for (const sx of [-0.3, 0.3]) { ddShape([[sx - 0.25, 0.6], [sx + 0.15, 0.6], [sx + 0.35, 0.95], [sx - 0.25, 0.95]], '#2b2b2b'); for (const st of [-0.15, 0.05, 0.25]) ddLine([[sx + st, 0.95], [sx + st, 1.05]], PDI, 0.05); } ctx.restore(); },
+  pdBox(ic) { ddShape([[-0.85, -0.1], [0.85, -0.1], [0.75, 0.9], [-0.75, 0.9]], '#c9a26b'); const u = pdE1(ic.p, 0, 0.6); ddShape([[-0.5, -0.1 - 0.5 * u], [-0.3, -0.1 - 0.5 * u], [-0.3, -0.1], [-0.5, -0.1]], '#e0b13a'); ddShape(ddEll(0.1, -0.15 - 0.35 * u, 0.2, 0.2, 10), '#7fae5a'); ddLine([[0.4, -0.1], [0.55, -0.1 - 0.7 * u]], '#2a62b0', 0.08); },
+  pdCapOver(ic) { const v = 0.4 + 0.9 * ic.p; ddShape([[-0.9, -0.3], [0.7, -0.3], [0.7, 0.3], [-0.9, 0.3]], '#fffdf4'); ddShape([[-0.9, -0.3], [-0.9 + 1.6 * Math.min(v, 1.2), -0.3], [-0.9 + 1.6 * Math.min(v, 1.2), 0.3], [-0.9, 0.3]], v > 1 ? '#d0342c' : '#4f7fc0'); ddLine([[0.7, -0.6], [0.7, 0.6]], PDI, 0.1); },
+  pdPiggy(ic) { const s = Math.sin(ic.p * Math.PI * 8) * 0.25 * (1 - ic.p); ctx.save(); ctx.rotate(Math.PI + s); ddShape(ddEll(0, 0, 0.75, 0.5, 14), '#f2a7b6'); ddShape(ddEll(0.75, -0.05, 0.15, 0.15, 8), '#f2a7b6'); ddLine([[-0.2, -0.5], [0.2, -0.5]], PDI, 0.08); ddLine([[-0.4, 0.45], [-0.4, 0.7]], PDI, 0.1); ddLine([[0.4, 0.45], [0.4, 0.7]], PDI, 0.1); ctx.restore(); },
+  pdBenchFull() { ddLine([[-0.95, 0.4], [0.95, 0.4]], '#8a5a3a', 0.14); for (let i = 0; i < 5; i++) { const x = -0.76 + i * 0.38; ddShape(ddEll(x, -0.35, 0.13, 0.13, 8), '#4f7fc0'); ddShape([[x - 0.12, -0.2], [x + 0.12, -0.2], [x + 0.12, 0.35], [x - 0.12, 0.35]], '#4f7fc0'); } },
+  pdTeacherX(ic) { const p = ic.p; ddLine([[-0.7, -0.7], [pdE1(p, 0, 0.5) * 1.4 - 0.7, pdE1(p, 0, 0.5) * 1.4 - 0.7]], '#d0342c', 0.22); if (p > 0.5) ddLine([[0.7, -0.7], [0.7 - pdE1(p, 0.5, 1) * 1.4, -0.7 + pdE1(p, 0.5, 1) * 1.4]], '#d0342c', 0.22); },
+  pdSwap(ic) { const u = ic.p; for (const [s, c] of [[-1, '#4f7fc0'], [1, '#d0342c']]) { const x = s * (0.45 - u * 0.9); ddShape([[x - 0.3, s * 0.25 - 0.45], [x + 0.3, s * 0.25 - 0.45], [x + 0.3, s * 0.25 + 0.45], [x - 0.3, s * 0.25 + 0.45]], '#fffdf4'); ddShape(ddEll(x, s * 0.25 - 0.15, 0.13, 0.13, 8), c); } },
+  pdEnvelope(ic) { const o = pdE1(ic.p, 0.2, 0.8); ddShape([[-0.85, -0.45], [0.85, -0.45], [0.85, 0.6], [-0.85, 0.6]], '#f4efe0'); if (o > 0.3) ddShape([[-0.6, -0.45 - o * 0.5], [0.6, -0.45 - o * 0.5], [0.6, 0.2], [-0.6, 0.2]], '#fffdf4'); ddLine([[-0.85, -0.45], [0, -0.45 + 0.6 * (1 - 2 * o)], [0.85, -0.45]], PDI, 0.07); ddLine([[-0.85, 0.6], [0, 0.05], [0.85, 0.6]], PDI, 0.05); },
+  pdMailbox(ic) { ddShape([[-0.7, -0.3], [0.5, -0.3], [0.5, 0.3], [-0.7, 0.3]], '#9aa3ad'); ddShape(ddEll(-0.1, -0.3, 0.6, 0.3, 10, Math.PI, Math.PI * 2), '#9aa3ad'); ddLine([[-0.1, 0.3], [-0.1, 0.95]], '#8a5a3a', 0.12); const f = pdE1(ic.p, 0.3, 0.7); ddLine([[0.5, -0.1], [0.5 + 0.35 * Math.cos(f * 1.5), -0.1 - 0.35 * Math.sin(f * 1.5)]], '#d0342c', 0.1); ddShape(ddEll(0.52, -0.02, 0.2, 0.22, 10), '#3b3320'); },
+  pdClip(ic) { ddShape([[-0.7, -0.8], [0.7, -0.8], [0.7, 0.85], [-0.7, 0.85]], '#fffdf4'); const y = -1.1 + 0.6 * ic.p; ddLine([[0.2, y + 0.8], [0.2, y], [0.45, y], [0.45, y + 0.9], [0.05, y + 0.9], [0.05, y + 0.15]], '#7a8088', 0.09); },
+  pdTear(ic) { ddShape([[-0.7, -0.75], [0.7, -0.75], [0.7, 0.85], [-0.7, 0.85]], '#fffdf4'); ddShape([[-0.7, -0.75], [0.7, -0.75], [0.7, -0.45], [-0.7, -0.45]], '#d0342c'); const t = ic.p; ctx.save(); ctx.translate(0.7 * t, 0.2 * t); ctx.rotate(t * 0.8); ctx.globalAlpha *= 1 - t * 0.7; ddShape([[-0.6, -0.4], [0.6, -0.4], [0.6, 0.75], [-0.6, 0.75]], '#f4efe0'); ddLine([[-0.25, 0.1], [0.25, 0.1]], PDI, 0.1); ctx.restore(); },
+  pdDoorSign(ic) { ddLine([[0, -0.95], [-0.5, -0.45]], PDI, 0.05); ddLine([[0, -0.95], [0.5, -0.45]], PDI, 0.05); const s = Math.cos(ic.p * Math.PI); ctx.save(); ctx.scale(Math.abs(s) || 0.05, 1); ddShape([[-0.8, -0.45], [0.8, -0.45], [0.8, 0.5], [-0.8, 0.5]], s < 0 ? '#d0342c' : '#7fae5a'); ctx.restore(); },
+  pdScales(ic) { const a = 0.35 * (1 - ic.p); ddLine([[0, -0.8], [0, 0.8]], PDI, 0.08); ddLine([[-0.5, 0.85], [0.5, 0.85]], PDI, 0.1); ctx.save(); ctx.translate(0, -0.6); ctx.rotate(a); ddLine([[-0.8, 0], [0.8, 0]], PDI, 0.08); ctx.restore();
+    for (const s of [-1, 1]) { const y = -0.6 + s * Math.sin(a) * 0.8 * -1 + 0.3; ddShape(ddEll(s * 0.8 * Math.cos(a), y, 0.3, 0.1, 10), '#e0b13a'); } },
+  pdShake(ic) { const b = Math.sin(ic.p * Math.PI * 4) * 0.12; ddShape([[-0.95, -0.15 + b], [-0.1, -0.2 + b], [0.15, 0.1 + b], [-0.95, 0.2 + b]], '#f2c9a0'); ddShape([[0.95, -0.1 + b], [0.1, -0.15 + b], [-0.15, 0.15 + b], [0.95, 0.25 + b]], '#c98b5a'); },
+  pdArms(ic) { ddShape(ddEll(0, -0.55, 0.3, 0.3, 10), '#f2c9a0'); ddShape([[-0.55, -0.15], [0.55, -0.15], [0.6, 0.9], [-0.6, 0.9]], '#4f7fc0'); const u = pdE1(ic.p, 0.1, 0.6); ddShape([[-0.6, 0.25], [-0.6 + 1.1 * u, 0.25], [-0.6 + 1.1 * u, 0.45], [-0.6, 0.45]], '#f2c9a0'); ddShape([[0.6, 0.35], [0.6 - 1.1 * u, 0.35], [0.6 - 1.1 * u, 0.55], [0.6, 0.55]], '#e8b98f'); },
+  pdDotted(ic) { ddLine([[-0.95, 0.5], [0.6, 0.5]], PDI, 0.04); for (let i = 0; i < 8; i++) ddLine([[-0.9 + i * 0.2, 0.42], [-0.82 + i * 0.2, 0.42]], PDI, 0.05); ddLine([[-0.95, 0.2], [-0.75, 0.4]], PDI, 0.06); ddLine([[-0.75, 0.2], [-0.95, 0.4]], PDI, 0.06);
+    const h = Math.sin(ic.p * Math.PI * 3) * 0.08; ctx.save(); ctx.translate(0.7, 0.2 + h); ctx.rotate(-0.6); ddShape([[-0.07, 0], [0.07, 0], [0.07, -0.9], [-0.07, -0.9]], '#2a62b0'); ctx.restore(); },
+  pdHourglass(ic) { ddShape([[-0.95, -0.1], [-0.35, -0.1], [-0.3, -0.25], [0.95, -0.25], [0.95, 0.85], [-0.95, 0.85]], '#e8c98a'); ctx.save(); ctx.translate(0.25, -0.35); ctx.rotate(ic.p < 0.5 ? 0 : (ic.p - 0.5) * 2 * Math.PI); ddLine([[-0.3, -0.5], [0.3, -0.5], [-0.3, 0.5], [0.3, 0.5], [-0.3, -0.5]], PDI, 0.07); ddShape([[-0.12, 0.35], [0.12, 0.35], [0.22, 0.48], [-0.22, 0.48]], '#e0b13a'); ctx.restore(); },
+  pdReach(ic) { ddShape([[-0.95, -0.4], [0.1, -0.4], [0.1, 0.8], [-0.95, 0.8]], '#e8c98a'); const x = 0.95 - 0.55 * ic.p; ddShape([[x, -0.05], [x + 0.6, -0.15], [x + 0.6, 0.25], [x, 0.2]], '#f2c9a0'); for (let i = 0; i < 3; i++) ddLine([[x, -0.05 + i * 0.1], [x - 0.2, -0.08 + i * 0.12]], PDI, 0.05); },
+  pdPage(ic) { ddShape([[-0.85, -0.8], [0.85, -0.8], [0.85, 0.85], [-0.85, 0.85]], '#fffdf4'); const t = ic.p, w = Math.cos(t * Math.PI) * 0.85; ddShape([[0, -0.8], [w, -0.75], [w, 0.8], [0, 0.85]], t < 0.5 ? '#f4efe0' : '#efe7d0'); ddLine([[0, -0.8], [0, 0.85]], PDI, 0.04); },
+  pdHelmetSwap(ic) { const c = ic.p < 0.5 ? '#9aa3ad' : '#d0342c', s = Math.abs(Math.cos(ic.p * Math.PI)); ctx.save(); ctx.scale(s || 0.05, 1); ddShape([[-0.75, 0.4], [-0.8, -0.1], [-0.45, -0.7], [0.3, -0.75], [0.75, -0.3], [0.7, 0.3], [0.2, 0.45], [0.05, 0.75], [-0.5, 0.7]], c); ddLine([[0.25, 0.05], [0.95, 0.05], [0.95, 0.5]], PDI, 0.07); ctx.restore(); },
+  pdWeek(ic) { for (let i = 0; i < 4; i++) ddShape([[-0.95 + i * 0.48, -0.25], [-0.55 + i * 0.48, -0.25], [-0.55 + i * 0.48, 0.25], [-0.95 + i * 0.48, 0.25]], '#fffdf4'); const n = Math.max(2, Math.round(ic.p * 16)); ddLine(ddEll(0.27, 0, 0.32, 0.4, n, -1, -1 + Math.PI * 2.1 * ic.p), '#d0342c', 0.08); },
+  pdLetter(ic) { ddShape([[-0.85, -0.5], [0.85, -0.5], [0.85, 0.6], [-0.85, 0.6]], '#f4efe0'); ddLine([[-0.85, -0.5], [0, 0.1], [0.85, -0.5]], PDI, 0.05); const k = Math.max(1, 1.8 - ic.p * 1.6); ctx.save(); ctx.translate(0.5, -0.25); ctx.scale(k, k); ddShape([[-0.2, -0.2], [0.2, -0.2], [0.2, 0.2], [-0.2, 0.2]], '#d0342c'); ctx.restore(); },
+  pdArrowUp(ic) { ddLine([[0, 0.9], [0, -0.85], [-0.55, -0.3]], PDI, 0.08); ddLine([[0, -0.85], [0.55, -0.3]], PDI, 0.08); const f = ic.p; ctx.save(); ctx.beginPath(); ctx.rect(-1, 0.9 - 1.8 * f, 2, 1.8 * f); ctx.clip(); ddShape([[-0.2, 0.9], [0.2, 0.9], [0.2, -0.35], [0.5, -0.35], [0, -0.85], [-0.5, -0.35], [-0.2, -0.35]], '#7fae5a'); ctx.restore(); },
+  pdNews(ic) { const s = 0.3 + 0.7 * pdE1(ic.p, 0, 0.6); ctx.save(); ctx.scale(s, 1); ddShape([[-0.9, -0.7], [0.9, -0.7], [0.9, 0.75], [-0.9, 0.75]], '#f4efe0'); ddShape([[-0.75, -0.55], [0.75, -0.55], [0.75, -0.3], [-0.75, -0.3]], '#3b3320'); for (let i = 0; i < 4; i++) ddLine([[-0.75, -0.1 + i * 0.2], [i % 2 ? 0.2 : 0.75, -0.1 + i * 0.2]], PDI, 0.04); ctx.restore(); },
+  pdBinoc(ic) { const y = -0.1 + Math.sin(ic.p * Math.PI * 2) * 0.08; for (const s of [-1, 1]) { ddShape([[s * 0.15, y - 0.5], [s * 0.7, y - 0.5], [s * 0.75, y + 0.45], [s * 0.1, y + 0.45]], '#5a5f66'); ddShape(ddEll(s * 0.42, y + 0.45, 0.3, 0.14, 10), '#9ec9e8'); } ddShape([[-0.15, y - 0.2], [0.15, y - 0.2], [0.15, y + 0.1], [-0.15, y + 0.1]], '#5a5f66'); },
+  pdTrophy(ic) { ddShape([[-0.5, -0.8], [0.5, -0.8], [0.35, -0.1], [0.12, 0.05], [0.12, 0.5], [-0.12, 0.5], [-0.12, 0.05], [-0.35, -0.1]], '#e0b13a'); ddShape([[-0.45, 0.5], [0.45, 0.5], [0.45, 0.85], [-0.45, 0.85]], '#8a5a3a'); const n = Math.round(ic.p * 6); for (let i = 0; i < n; i++) ddLine([[-0.3 + i * 0.1, 0.62], [-0.25 + i * 0.1, 0.72]], '#f4efe0', 0.04); },
+  pdHelmets(ic) { const k = Math.sin(pdE1(ic.p, 0, 0.6) * Math.PI) * 0.25; for (const [s, c] of [[-1, '#4f7fc0'], [1, '#d0342c']]) { ctx.save(); ctx.translate(s * (0.5 - k), 0); ctx.scale(-s, 1); ddShape([[-0.4, 0.3], [-0.45, -0.1], [-0.2, -0.45], [0.25, -0.45], [0.45, -0.15], [0.42, 0.25], [0.1, 0.35]], c); ddLine([[0.15, 0], [0.55, 0], [0.55, 0.3]], PDI, 0.06); ctx.restore(); } if (ic.p > 0.25 && ic.p < 0.7) ddLine([[0, -0.75], [0, -0.55]], '#e8a020', 0.08); },
+  pdCrane(ic) { ddLine([[-0.7, 0.9], [-0.7, -0.8], [0.9, -0.8]], '#e0b13a', 0.12); ddLine([[-0.7, -0.4], [-0.3, -0.8]], '#e0b13a', 0.06); const y = 0.7 - 1.0 * ic.p; ddLine([[0.6, -0.8], [0.6, y - 0.2]], PDI, 0.04); ddShape([[0.4, y - 0.2], [0.8, y - 0.2], [0.8, y + 0.15], [0.4, y + 0.15]], '#b4553a'); },
+  pdWhistle(ic) { const s = Math.sin(ic.p * Math.PI * 6) * 0.06 * (1 - ic.p); ctx.save(); ctx.translate(s, 0); ddShape([[-0.8, -0.15], [0.1, -0.15], [0.1, 0.1], [-0.8, 0.1]], '#9aa3ad'); ddShape(ddEll(0.35, 0.05, 0.38, 0.32, 12), '#9aa3ad'); ddLine(ddEll(-0.85, -0.5, 0.25, 0.35, 10, 0, Math.PI), PDI, 0.05); ctx.restore(); if (ic.p > 0.3 && ic.p < 0.9) for (const a of [-0.6, -0.9, -1.2]) ddLine([[0.75 + Math.cos(a) * 0.1, -0.3 + Math.sin(a) * 0.1], [0.75 + Math.cos(a) * 0.3, -0.3 + Math.sin(a) * 0.3]], PDI, 0.05); },
+});
+// the Coach Hall of Fame card: a ring per Paper Bowl title drops into a row (POP_SCENE, one time through)
+POP_SCENE.rings = (x, y, w, h, o) => { const n = Math.max(0, Math.min(12, o.n || 0)), age = PDM.still ? 99 : pdAge({ dt0: o.t0 || (o.t0 = uiNow()) }), gap = Math.min(54, (w - 80) / Math.max(1, n));
+  if (!n) { pdText('no titles yet', x + w / 2, y + h / 2, RES.dim, 18); return; }
+  for (let i = 0; i < n; i++) { const k = Math.min(1, Math.max(0, (age - i * 0.18) / 0.4)), cx = x + w / 2 - (n - 1) * gap / 2 + i * gap, cy = pdL(y - 30, y + h / 2, 1 - (1 - k) * (1 - k)) + (k >= 1 ? 0 : 0);
+    if (k <= 0) continue; ctx.save(); ctx.strokeStyle = '#d9a520'; ctx.lineWidth = 6; ctx.beginPath(); ctx.ellipse(cx, cy, 16, 13, 0, 0, 7); ctx.stroke(); ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.arc(cx, cy - 13, 5, 0, 7); ctx.fill(); ctx.restore(); }
+  pdText(`${n} PAPER BOWL TITLE${n > 1 ? 'S' : ''}`, x + w / 2, y + h - 18, RES.line, 15); };

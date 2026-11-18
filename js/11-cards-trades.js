@@ -627,7 +627,7 @@ function chofClick(pt) {
   const i = HOF_CARDS.findIndex((b, k) => chofView.page * HOF_CARDS.length + k < CHOF.length && inBtn(pt, b));
   if (i >= 0) {
     const h = CHOF[chofView.page * HOF_CARDS.length + i], rg = h.rings.filter(k => k !== 'gold');
-    offPopShow({ title: h.p.name.toUpperCase(), lines: [`RECORD ${h.wins}-${h.games - h.wins}, ${h.po} PLAYOFF TRIPS`, `${h.titles} PAPER BOWL TITLES${rg.length ? ` (${rg.join(', ').toUpperCase()} RINGS)` : ''}`, `TEAMS: ${h.teams.map(k => NFL[k] ? NFL[k].nick : k).join(', ')}`, `RETIRED ${h.year}`] });
+    offPopShow({ title: h.p.name.toUpperCase(), demo: { k: 'rings', n: h.titles }, lines: [`RECORD ${h.wins}-${h.games - h.wins}, ${h.po} PLAYOFF TRIPS`, `${h.titles} PAPER BOWL TITLES${rg.length ? ` (${rg.join(', ').toUpperCase()} RINGS)` : ''}`, `TEAMS: ${h.teams.map(k => NFL[k] ? NFL[k].nick : k).join(', ')}`, `RETIRED ${h.year}`] });
     return;
   }
   if (inBtn(pt, BACK_BTN)) results.screen = 'home';
@@ -668,12 +668,12 @@ const ABILITY_ATTR = { acc: 'accuracy', pow: 'arm power', str: 'strength', spd: 
                        rbk: 'run blocking', rst: 'run stopping', tck: 'tackling', sta: 'stamina' };
 function abilityHelp(p) {   // (all from ABIL_DEFS: abilTip)
   const t = ABIL_DEFS[p.ability] ? ABIL_DEFS[p.ability].tier : p.tier;
-  return { title: TIER_NAME[t] || 'FIT', text: `${abilTip(p.ability)} (${TIER_NAME[t] || 'FIT'}: ${TIER_SAYS[t] || TIER_SAYS.F})` };
+  return { title: (abilName(p.ability) || TIER_NAME[t] || 'FIT').toUpperCase(), text: `${abilTip(p.ability)} (${TIER_NAME[t] || 'FIT'}: ${TIER_SAYS[t] || TIER_SAYS.F})` };
 }
 // a click on a ? button: true if it opened a popup
 function helpClick(pt, p) {
-  if (HELP_BTNS.ability && p && p.ability && inBtn(pt, HELP_BTNS.ability)) { const h = abilityHelp(p); offPopShow(scrollPop({ title: h.title, lines: wrapLines(h.text, 54) })); return true; }
-  if (p && inBtn(pt, HELP_BTNS.attrs)) { offPopShow(scrollPop({ title: 'ATTRIBUTES', lines: attrHelp(p) })); return true; }
+  if (HELP_BTNS.ability && p && p.ability && inBtn(pt, HELP_BTNS.ability)) { offPopShow(abilPop(p)); return true; }   // (v0.60: name, tier tag, looping demo, tier strip)
+  if (p && inBtn(pt, HELP_BTNS.attrs)) { offPopShow(scrollPop({ title: 'ATTRIBUTES', ...attrPop(p) })); return true; }
   if (HELP_BTNS.bench && tipCtx && inBtn(pt, HELP_BTNS.bench)) { offPopShow(tipsPage(0)); return true; }
   return false;
 }
@@ -681,39 +681,39 @@ function helpClick(pt, p) {
 let tipCtx = null;
 function tipsList() {
   const { p, own, bench, drop } = tipCtx, L = [];
-  if (p.ability) { const h = abilityHelp(p); L.push({ t: h.title, lines: wrapLines(h.text, 54) }); }
-  L.push({ t: 'ATTRIBUTES', lines: attrHelp(p) });
-  if (bench) L.push({ t: 'BENCH', lines: wrapLines('Sits him out the next game only (offense or defense). He takes the week off, so his condition goes back to 100%, and the next player at his position starts in his place. Press BENCHED again to put him back.', 54) });
-  if (drop) L.push({ t: 'DROP', lines: wrapLines('Releases him to free agency for good. His salary comes off your cap and his roster spot opens up. You can drop anybody: if that leaves a position short of its starters, an unnamed backup plays it. Other teams will sign the good ones fast; to get him back you have to pay ¤ in FRONT OFFICE > FREE AGENTS (3 to 25 by stars). Dropping a good player also hurts mood and the fans.', 54) });
-  if (p.salary != null) L.push({ t: 'CONTRACT', lines: wrapLines(`${p.name} is paid ${fmtM(p.salary)} a year for ${p.years} year${p.years === 1 ? '' : 's'} (${fmtM(p.salary * p.years)} in all). The yearly amount counts against your salary cap every season until the deal runs out.`, 54) });
-  if (own) L.push({ t: 'KICK RETURNER', lines: wrapLines('Click the bookmark at the top left to make him your kick returner. Click it again to untag him; with nobody tagged it is your fastest back, receiver or defensive back.', 54) });
-  if (results.screen === 'draft') L.push({ t: 'SCOUT & DRAFT', lines: wrapLines('SCOUT shows a guess at his potential and value (a few scouts a round). DRAFT signs him to his rookie deal and needs an open roster spot on his side of the ball. His true potential shows once he is yours.', 54) });
-  if (results.screen === 'fa' && OFF && OFF.fa.sel === p) L.push({ t: 'SIGN', lines: wrapLines('Needs an open roster spot on his side of the ball, cap room for his salary, and ¤: 3 for a 1-star up to 25 for a 5-star.', 54) });
+  if (p.ability && ABIL_DEFS[p.ability]) L.push({ t: abilName(p.ability).toUpperCase(), lines: abilCap(p.ability), demo: { k: p.ability, p, o: { tier: true } } });   // (v0.60: with its demo)
+  L.push({ t: 'ATTRIBUTES', ...attrPop(p) });
+  if (bench) L.push({ t: 'BENCH', demo: { k: 'bench' }, lines: wrapLines('Sits him out the next game only (offense or defense). He takes the week off, so his condition goes back to 100%, and the next player at his position starts in his place. Press BENCHED again to put him back.', 54) });
+  if (drop) L.push({ t: 'DROP', demo: { k: 'drop' }, lines: wrapLines('Releases him to free agency for good. His salary comes off your cap and his roster spot opens up. You can drop anybody: if that leaves a position short of its starters, an unnamed backup plays it. Other teams will sign the good ones fast; to get him back you have to pay ¤ in FRONT OFFICE > FREE AGENTS (3 to 25 by stars). Dropping a good player also hurts mood and the fans.', 54) });
+  if (p.salary != null) L.push({ t: 'CONTRACT', demo: { k: 'contract', years: p.years, pay: p.salary }, lines: wrapLines(`${p.name} is paid ${fmtM(p.salary)} a year for ${p.years} year${p.years === 1 ? '' : 's'} (${fmtM(p.salary * p.years)} in all). The yearly amount counts against your salary cap every season until the deal runs out.`, 54) });
+  if (own) L.push({ t: 'KICK RETURNER', demo: { k: 'kr' }, lines: wrapLines('Click the bookmark at the top left to make him your kick returner. Click it again to untag him; with nobody tagged it is your fastest back, receiver or defensive back.', 54) });
+  if (results.screen === 'draft') L.push({ t: 'SCOUT & DRAFT', demo: { k: 'scoutDraft' }, lines: wrapLines('SCOUT shows a guess at his potential and value (a few scouts a round). DRAFT signs him to his rookie deal and needs an open roster spot on his side of the ball. His true potential shows once he is yours.', 54) });
+  if (results.screen === 'fa' && OFF && OFF.fa.sel === p) L.push({ t: 'SIGN', demo: { k: 'sign' }, lines: wrapLines('Needs an open roster spot on his side of the ball, cap room for his salary, and ¤: 3 for a 1-star up to 25 for a 5-star.', 54) });
   return L;
 }
 // the ? beside CONDITION / MORALE on the home screen: what it is, exactly what it does, how to raise it (numbers from INJURY / COND_EDGE / MORALE / RECOVERY)
 function teamTips(kind) {
   const W2 = t => wrapLines(t, 54);
   if (kind === 'cond') return [
-    { t: 'CONDITION', lines: W2(`How fresh and healthy your players are, 0-100%. Each player has his own; the TEAM number is their average. Hits wear it down during a game (tackle -${INJURY.cond.tackle}, sack -${INJURY.cond.sack}, hit stick -${INJURY.cond.stick}) and every game played costs about ${INJURY.weekly}-${INJURY.weekly + INJURY.weeklyRnd} more.`) },
-    { t: 'WHAT IT DOES', lines: W2(`Ratings: a player loses up to ${Math.round(INJURY.play * 100)}% of his ratings as his condition falls toward 0. ${COND_EDGE.hi}%+ gives every attribute +1; under ${COND_EDGE.lo}% gives every attribute -1. Injuries: the odds of getting hurt rise sharply as condition drops (up to ${1 + INJURY.condK}x at 0%), and hurt players get worse injuries. Only matters with injuries on.`) },
-    { t: 'HOW TO RAISE IT', lines: W2('Players who sit out a game come back fully rested. During the week, PRACTICE sets the load: a lighter load lets condition recover, a heavy one wears players down (older players more). Better trainers, a CONDITIONING specialist, the Physio trait and a higher medical facility level all bring condition back faster. Timeouts in a game shake off some in-game fatigue.') },
+    { t: 'CONDITION', demo: { k: 'cond1' }, lines: W2(`How fresh and healthy your players are, 0-100%. Each player has his own; the TEAM number is their average. Hits wear it down during a game (tackle -${INJURY.cond.tackle}, sack -${INJURY.cond.sack}, hit stick -${INJURY.cond.stick}) and every game played costs about ${INJURY.weekly}-${INJURY.weekly + INJURY.weeklyRnd} more.`) },
+    { t: 'WHAT IT DOES', demo: { k: 'cond2' }, lines: W2(`Ratings: a player loses up to ${Math.round(INJURY.play * 100)}% of his ratings as his condition falls toward 0. ${COND_EDGE.hi}%+ gives every attribute +1; under ${COND_EDGE.lo}% gives every attribute -1. Injuries: the odds of getting hurt rise sharply as condition drops (up to ${1 + INJURY.condK}x at 0%), and hurt players get worse injuries. Only matters with injuries on.`) },
+    { t: 'HOW TO RAISE IT', demo: { k: 'cond3' }, lines: W2('Players who sit out a game come back fully rested. During the week, PRACTICE sets the load: a lighter load lets condition recover, a heavy one wears players down (older players more). Better trainers, a CONDITIONING specialist, the Physio trait and a higher medical facility level all bring condition back faster. Timeouts in a game shake off some in-game fatigue.') },
   ];
   return [
-    { t: 'MORALE', lines: W2(`How confident your players feel, 0-100%. Each player has his own mood; TEAM morale is the average. 50% is neutral. ${MORALE.tiers.fired}%+ = FIRED UP, ${MORALE.tiers.steady}%+ = STEADY, ${MORALE.tiers.rattled}%+ = SHAKEN, lower = RATTLED.`) },
-    { t: 'WHAT IT DOES', lines: W2(`Every rating is multiplied by up to +${Math.round(MORALE.max * 100)}% at 100% morale and down to -${Math.round(MORALE.max * 100)}% at 0%, so a rattled team plays worse and a fired-up team plays better. Mood also helps players shake off fatigue between drives and affects how easily they drop a wide-open catch.`) },
-    { t: 'HOW IT CHANGES', lines: W2(`In games: touchdown +${MORALE.ev.td} (team +${MORALE.ev.tdTeam}), deep catch +${MORALE.ev.deep}, win +${MORALE.ev.win}; drop ${MORALE.ev.drop}, fumble ${MORALE.ev.fumble}, interception ${MORALE.ev.pick}, sack ${MORALE.ev.sack}, big hit ${MORALE.ev.bigHit}, loss ${MORALE.ev.loss}, benched ${MORALE.ev.bench}. It drifts back toward 50% over time.`) },
-    { t: 'HOW TO RAISE IT', lines: W2('Win games and make big plays. Answer midweek news well (thank a mentor, visit the hospital, buy the gear the trainers ask for). Timeouts calm a shaky team toward neutral. Players coming back from injury get a boost; weeks on the injury list, being benched and trades away hurt.') },
+    { t: 'MORALE', demo: { k: 'mor1' }, lines: W2(`How confident your players feel, 0-100%. Each player has his own mood; TEAM morale is the average. 50% is neutral. ${MORALE.tiers.fired}%+ = FIRED UP, ${MORALE.tiers.steady}%+ = STEADY, ${MORALE.tiers.rattled}%+ = SHAKEN, lower = RATTLED.`) },
+    { t: 'WHAT IT DOES', demo: { k: 'mor2' }, lines: W2(`Every rating is multiplied by up to +${Math.round(MORALE.max * 100)}% at 100% morale and down to -${Math.round(MORALE.max * 100)}% at 0%, so a rattled team plays worse and a fired-up team plays better. Mood also helps players shake off fatigue between drives and affects how easily they drop a wide-open catch.`) },
+    { t: 'HOW IT CHANGES', demo: { k: 'mor3' }, lines: W2(`In games: touchdown +${MORALE.ev.td} (team +${MORALE.ev.tdTeam}), deep catch +${MORALE.ev.deep}, win +${MORALE.ev.win}; drop ${MORALE.ev.drop}, fumble ${MORALE.ev.fumble}, interception ${MORALE.ev.pick}, sack ${MORALE.ev.sack}, big hit ${MORALE.ev.bigHit}, loss ${MORALE.ev.loss}, benched ${MORALE.ev.bench}. It drifts back toward 50% over time.`) },
+    { t: 'HOW TO RAISE IT', demo: { k: 'mor4' }, lines: W2('Win games and make big plays. Answer midweek news well (thank a mentor, visit the hospital, buy the gear the trainers ask for). Timeouts calm a shaky team toward neutral. Players coming back from injury get a boost; weeks on the injury list, being benched and trades away hurt.') },
   ];
 }
 function teamTipPage(kind, i) {
   const L = teamTips(kind), n = L.length, k = (i % n + n) % n, t = L[k];
-  return scrollPop({ title: `${t.t}  ${k + 1}/${n}`, lines: t.lines,
+  return scrollPop({ title: `${t.t}  ${k + 1}/${n}`, lines: t.lines, ...(t.demo ? { demo: t.demo } : {}), ...(t.lineIco ? { lineIco: t.lineIco } : {}),
     btns: [{ label: '◂', keep: true, on: () => { offPop = teamTipPage(kind, k - 1); } }, { label: 'OK' }, { label: '▸', keep: true, on: () => { offPop = teamTipPage(kind, k + 1); } }] });
 }
 function tipsPage(i) {
   const L = tipsList(), n = L.length, k = (i % n + n) % n, most = Math.max(...L.map(t => t.lines.length)), t = L[k];
-  return scrollPop({ title: `${t.t}  ${k + 1}/${n}`, lines: t.lines,
+  return scrollPop({ title: `${t.t}  ${k + 1}/${n}`, lines: t.lines, ...(t.demo ? { demo: t.demo } : {}), ...(t.lineIco ? { lineIco: t.lineIco } : {}),
     btns: [{ label: '◂', keep: true, on: () => { offPop = tipsPage(k - 1); } }, { label: 'OK' }, { label: '▸', keep: true, on: () => { offPop = tipsPage(k + 1); } }] });
 }
 // DROP: release him to free agency (his salary comes off the cap). A team keeps at least a full starting lineup at each position.
@@ -916,7 +916,7 @@ function staffTip(c) {
   const text = c.hc ? 'You are the head coach: you call the plays, make the picks and run the roster. The coordinators work for you.'
     : c.role[0] === 'O' ? 'Your offensive coordinator helps set how good your offense is in simulated drives and games, and how well your routes are called. More stars and a better trait help. His tendencies show how he likes to attack, and his favorite formation is the one he lines up in most. A sharper coordinator picks the formation that fits the down and distance and calls plays that fit it; a weak one calls poor fits (a run with no lead blocker, four verticals with two receivers).'
     : 'Your defensive coordinator helps set how good your defense is in simulated drives and games, and how well coverages and blitzes are called against the other team. More stars and a better trait help. His tendencies show his favorite schemes.';
-  offPopShow({ title: c.role, lines: wrapLines(text, 54) });
+  offPopShow({ title: c.role, lines: wrapLines(text, 54), demo: { k: c.hc ? 'hc' : c.role[0] === 'O' ? 'oc' : 'dc' } });
 }
 function teamEdge(team) {   // the page edge in the team colour (Front Office and Roster)
   // (border removed on purpose: the edge is no longer drawn)
@@ -1210,7 +1210,7 @@ function drawStaff() {
     Object.assign(FO_HIRE_BTN, { x: 702, y: 636, w: 270, h: 64 }); Object.assign(CAP_UP_BTN, { x: 988, y: 636, w: 262, h: 64 });
     if (FOT.tab === 'staff') drawConSmall();
     for (const b of [FO_TR_BTN, FO_FA_BTN, CAP_UP_BTN, BACK_BTN, ...(season && !exhibition && team === MATCH.you ? [FO_HIRE_BTN] : [])]) foDivider(b);   // (index-card dividers standing at the drawer's front edge)
-    if (season && !exhibition && team === MATCH.you) menuBtn(FO_HIRE_BTN, 'HIRING BOARD', RES.bright, 20);
+    if (season && !exhibition && team === MATCH.you) menuBtn(FO_HIRE_BTN, 'STAFF & HIRING', RES.bright, 20);   // (v0.58: the staff screen, which has its own HIRING BOARD)
     menuBtn(CAP_UP_BTN, 'DRAFT BOARD', xpcOn() ? RES.bright : CARD_GRAY, 20, null, xpcOn());   // (where TEAM UPGRADES was: the midseason draft board, your franchise only)
     menuBtn(FO_FA_BTN, 'FREE AGENTS', RES.bright, 20);
     menuBtn(FO_TR_BTN, 'TRADES', RES.bright, 20);
@@ -1253,10 +1253,10 @@ function redClick(pt) {
   if (inBtn(pt, RED_NEXT)) { redUI.page++; return; }
   const i = Array.from({ length: RED_PER }, (_, j) => j).find(j => inBtn(pt, RED_ROW(j)));
   const p = i != null ? L[redUI.page * RED_PER + i] : null;
-  if (p) offPopShow({ title: 'RED STAR', lines: [...wrapLines(`Give ${p.name} a star factor? ${abilName(p.ability)} becomes ${abilName(abilAfter(p, 'X'))}. ${abilTip(abilAfter(p, 'X'))}`, 54), 'One use per season.'], btns: [{ label: 'CANCEL' }, { label: 'OK', green: true, on: () => { redGive(p); redUI.on = false; upgradeSfx(); autosaveSoon(); } }] });
+  if (p) offPopShow(abilPop(p, abilAfter(p, 'X'), { from: p.ability, title: 'RED STAR', lines: [...wrapLines(`Give ${p.name} a star factor? ${abilName(p.ability)} becomes ${abilName(abilAfter(p, 'X'))}.`, POP_DEMO.wrap), 'One use per season.'], btns: [{ label: 'CANCEL' }, { label: 'OK', green: true, on: () => { redGive(p); redUI.on = false; upgradeSfx(); autosaveSoon(); } }] }));
 }
 const STAFF_HIRE_BTN = { x: 930, y: 628, w: 290, h: 56 };
-const FO_HIRE_BTN = { x: 20, y: 636, w: 270, h: 64 };   // front office main page: opens the hiring board
+const FO_HIRE_BTN = { x: 20, y: 636, w: 270, h: 64 };   // front office main page: STAFF & HIRING (the staff screen, 'hire'; BACK returns here)
 const FA_BTN = { x: 1030, y: 14, w: 230, h: 62 }, FO_FA_BTN = {}, FO_TR_BTN = {};   // (FO_* = the front office's bottom-row copies)
 const MOVE_BTN = FA_BTN;   // (head coach page: leave for another team, offseason only)
 const HC_MAIN_BTN = { x: 990, y: 624, w: 260, h: 56 };   // (head coach page, bottom right, mirrors RETIRE: cycles the main ability)
@@ -1587,7 +1587,7 @@ function conTag(p) {   // the franchise tag: one a year, a pricey 1-year deal, n
   if ((p.years || 1) > 1) { conSay('ONLY A PLAYER IN HIS LAST YEAR CAN BE TAGGED'); return; }
   if (room < 0) { conSay(`THE TAG (${fmtM(pay)}) PUTS YOU OVER THE CAP BY ${fmtM(-room)}`); return; }
   if (LEAGUE.coins < P.tagCred) { conSay(`THE TAG COSTS ${P.tagCred} CREDITS`); return; }
-  offPopShow({ title: 'FRANCHISE TAG', lines: wrapLines(`Tag ${p.name}? He plays next season for ${fmtM(pay)} (one year), and it costs ${P.tagCred} credits. One tag a year.`, 54), btns: [{ label: 'CANCEL' }, { label: 'TAG HIM', green: true, on: () => {
+  offPopShow({ title: 'FRANCHISE TAG', demo: { k: 'ftag' }, lines: wrapLines(`Tag ${p.name}? He plays next season for ${fmtM(pay)} (one year), and it costs ${P.tagCred} credits. One tag a year.`, 54), btns: [{ label: 'CANCEL' }, { label: 'TAG HIM', green: true, on: () => {
     LEAGUE.coins -= P.tagCred; LEAGUE.tagYr = LEAGUE.year; p.salary = pay; p.years = 2; p.tagged = LEAGUE.year; delete p.walk; delete p.xAsk; delete p.capCut;
     conNote(`${p.name} (${p.group}) got the franchise tag: ${fmtM(pay)} for one more year.`); conSay(`${p.name} IS TAGGED`); upgradeSfx(); autosaveSoon(); } }] });
 }
@@ -1890,7 +1890,7 @@ function staffClick(pt) {
   if (staffView.sel === 0 && MATCH.you && redStar() && career.redUsed !== LEAGUE.year && inBtn(pt, RED_BTN)) { redUI.on = true; redUI.page = 0; return; }
   if (staffView.sel == null && inBtn(pt, FO_FA_BTN)) { offOpenFA(); return; }
   if (staffView.sel == null && inBtn(pt, FO_TR_BTN)) { tradeOpen('staff'); return; }
-  if (staffView.sel == null && season && !exhibition && MATCH.you && inBtn(pt, FO_HIRE_BTN)) { HB.sel = null; HB.cand = null; HB.back = 'staff'; results.screen = 'board'; return; }
+  if (staffView.sel == null && season && !exhibition && MATCH.you && inBtn(pt, FO_HIRE_BTN)) { HB.pg = 0; HB.hireBack = 'staff'; results.screen = 'hire'; return; }
   if (inBtn(pt, BACK_BTN)) { if (staffView.sel == null) results.screen = 'home'; else staffView.sel = null; return; }
   if (staffView.sel === 0 && season && season.offseason && !exhibition && inBtn(pt, MOVE_BTN)) { moveMode = true; results.screen = 'offers'; return; }
   if (staffView.sel === 0 && season && !exhibition && inBtn(pt, HC_MAIN_BTN)) {   // your head coach's page: the main ability button cycles NONE -> each ability -> NONE
@@ -1909,7 +1909,7 @@ function staffClick(pt) {
     if (t >= 0) { staffTip(staffOf(MATCH.you)[t]); return; }
     const i = STAFF_CARDS.findIndex(b => inBtn(pt, b)); if (i >= 0) {
       staffView.sel = i;
-      if (i === 0 && !SETTINGS.hcTipSeen && season && !exhibition) { SETTINGS.hcTipSeen = true; saveSettings(); offPopShow({ title: 'HEAD COACH', lines: [...wrapLines('You are the head coach. Your stars grow from the weekly coaching goals you finish, and each star milestone unlocks a perk:', 54), '', ...HC_ABIL.flatMap(a => wrapLines(`${a.at} STARS - ${a.name}: ${a.desc}`, 54)), '', ...wrapLines('MAIN ABILITY: pick one of six at the bottom (3 offense, 3 defense). It nudges the game in your favor, like fewer fumbles or more picks. Click it again to take it off. The green arrow on your card shows when you have no main ability equipped.', 54), '', ...wrapLines('Coordinators: at 3 stars upgrade their trait, at 5 equip a second one.', 54)] }); }
+      if (i === 0 && !SETTINGS.hcTipSeen && season && !exhibition) { SETTINGS.hcTipSeen = true; saveSettings(); offPopShow({ title: 'HEAD COACH', demo: { k: 'hcTip' }, lines: [...wrapLines('You are the head coach. Your stars grow from the weekly coaching goals you finish, and each star milestone unlocks a perk:', 54), '', ...HC_ABIL.flatMap(a => wrapLines(`${a.at} STARS - ${a.name}: ${a.desc}`, 54)), '', ...wrapLines('MAIN ABILITY: pick one of six at the bottom (3 offense, 3 defense). It nudges the game in your favor, like fewer fumbles or more picks. Click it again to take it off. The green arrow on your card shows when you have no main ability equipped.', 54), '', ...wrapLines('Coordinators: at 3 stars upgrade their trait, at 5 equip a second one.', 54)] }); }
     }
   }
 }
@@ -2176,7 +2176,7 @@ function xpNudge() {
   career.xpNudged = 1; autosaveSoon();
   const go = () => { coinGo(false); rosterView.tu = false; const sd = OFF_GROUPS.includes(c.group) ? 'off' : 'def'; rosterView.side = sd; rosterUI.side = sd; rosterUI.view = 'simple';
     const i = rosterPs(me).indexOf(c); if (i >= 0) { rosterView.page = Math.floor(i / ROSTER_CARDS.length); rosterView.sel = i; } xpNudgeAt = performance.now(); };
-  offPopShow({ title: 'XP BANK', xpBig: bank, player: { p: c, k: me, open: go }, lines: [`POTENTIAL +½★  ${xpcPotPrice(c)} XP`], btns: [{ label: 'LATER' }, { label: 'UPGRADE', green: true, on: go }] });
+  offPopShow({ title: 'XP BANK', demo: { k: 'xpHalf', stars: c.potential }, xpBig: bank, player: { p: c, k: me, open: go }, lines: [`POTENTIAL +½★  ${xpcPotPrice(c)} XP`], btns: [{ label: 'LATER' }, { label: 'UPGRADE', green: true, on: go }] });
 }
 const xpcPotOpen = p => starsOfScore(ptsOf(p)) < XPC.pot.max && ptsOf(p) < ATTR_TOTAL;
 const xpcPotPrice = p => Math.ceil(XPC.pot.base * Math.pow(XPC.pot.grow, (starsOfScore(ptsOf(p)) - 1) * 2) * (1 + XPC.pot.again * (p.potBuys || 0)));
@@ -2186,10 +2186,11 @@ const xpcUpgPrice = p => Math.ceil(XPC.quick * upgCost(p));
 const xpcCoachStars = (c, role) => role === 'hc' ? hcStars(MATCH.you) : c.stars;
 const xpcCoachMax = (c, role) => xpcCoachStars(c, role) >= (role === 'hc' ? career.hcCeil || 5 : 5);
 const xpcCoachPrice = (c, role) => Math.ceil((role === 'hc' ? XPC.coach.hc : XPC.coach.co) * (1 + XPC.coach.grow * xpcCoachStars(c, role)));
-function xpcBuy(price, title, lines, go) {   // pay `price` from the bank, then `go`; a large buy asks first
+function xpcBuy(price, title, lines, go, demo) {   // pay `price` from the bank, then `go`; a large buy asks first (demo = { p, id }: shown as the ability popup with the new one's demo)
   if (!xpcCanBuy() || xpBank() < price) return;
   const from = spendRect(), run = () => { if (!xpSpend(price, from)) return; go(); upgradeSfx(); autosaveSoon(); };
-  if (price >= XPC.confirm) offPopShow({ title, lines: [...lines, `Costs ${price} XP from the bank (you have ${Math.floor(xpBank())}).`], btns: [{ label: 'CANCEL' }, { label: 'BUY', green: true, on: run }] });
+  const cost = `Costs ${price} XP from the bank (you have ${Math.floor(xpBank())}).`, bb = [{ label: 'CANCEL' }, { label: 'BUY', green: true, on: run }];
+  if (price >= XPC.confirm) offPopShow(demo ? abilPop(demo.p, demo.id, { title, lines: [...lines, cost], btns: bb, from: demo.from }) : { title, lines: [...lines, cost], btns: bb });
   else run();
 }
 function xpcBoostPot(p) {
@@ -2227,7 +2228,7 @@ function xpcTierUp(p) {
   const to = xpcTierTo(p);
   if (!to || xpcTierWhy(p)) return;
   const nx = abilAfter(p, to);
-  xpcBuy(xpcTierPrice(p), to === 'X' ? 'BUY A STAR FACTOR?' : 'BUY AN ABILITY?', wrapLines(`${p.name}: ${abilName(p.ability)} becomes ${abilName(nx)}, ${to === 'X' ? 'a STAR FACTOR' : 'an ABILITY'}. ${abilTip(nx)}`, 50), () => {
+  xpcBuy(xpcTierPrice(p), to === 'X' ? 'BUY A STAR FACTOR?' : 'BUY AN ABILITY?', wrapLines(`${p.name}: ${abilName(p.ability)} becomes ${abilName(nx)}, ${to === 'X' ? 'a STAR FACTOR' : 'an ABILITY'}.`, POP_DEMO.wrap), () => {
     tierGive(p, to);
     if (to === 'X') {
       p.xfBought = LEAGUE.year; career.xfBuys = (career.xfBuys || 0) + 1;
@@ -2236,7 +2237,7 @@ function xpcTierUp(p) {
     }
     if (p.ask != null) p.ask = askOf(p);
     recalcTeamStars();
-  });
+  }, { p, id: nx, from: p.ability });
 }
 function xpcBtn(b, title, price, ok, star) {   // a bank button: what it buys, then the price with the XP token (greyed when it's closed or you can't afford it); star = the gold star factor star before the title
   const can = ok && xpBank() >= price, big = b.h > 40, fs = big ? 15 : 12;

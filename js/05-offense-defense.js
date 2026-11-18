@@ -1251,15 +1251,19 @@ function showStart(c) {
   c.show = { id: pool[Math.floor(Math.random() * pool.length)] || 'shPeace', t0: clock, n: 0, k: clock };
   c.guard = false;
 }
-const showLookOK = (c, id) => id !== 'shBackpedal' || (showToGoal(c) < 12 && !showFoes(c, 8));
+// v0.58: a defender within yd BEHIND him (the way he came from)
+const showBehind = (c, yd) => { const dir = Math.sign(c.vx || 0) || (c.team === 'off' ? 1 : -1); return allPlayers().some(d => d.team !== c.team && !lyingDown(d) && !d.slOut && (d.x - c.x) * dir < 0 && dist(d, c) < yd * YD); };
+// v0.58: looks that read alike (two signs, two waves...) never follow each other
+const SHOW_KIN = { shPeace: 'sign', shDeuces: 'sign', shLookBackWave: 'look', shBallOut: 'ball', shBackpedal: 'back', shHighStep: 'legs', shHelmetTap: 'head', shPointGoal: 'point', shFlexRun: 'flex' };
+const showLookOK = (c, id) => id !== 'shBackpedal' || (showToGoal(c) < 12 && !showFoes(c, 5) && !showBehind(c, SHOW.behindYd));
 function showKeep(c) {
   const s = c.show; s.k = clock;
   if (!s.fin && showToGoal(c) < 5 && !showFoes(c, 5)) {   // inside the 5, nobody near: this click picks a finish
-    const fins = SHOW_FIN.filter(id => id !== 'shDiveIn' || showToGoal(c) > 1.5);
-    c.show = { id: fins[Math.floor(Math.random() * fins.length)], t0: clock, n: s.n + 1, k: clock, fin: 1 };
+    const fins = SHOW_FIN.filter(id => (id !== 'shDiveIn' || showToGoal(c) > 1.5) && (id !== 'shBackIn' || !showBehind(c, SHOW.behindYd)));
+    c.show = { id: fins[Math.floor(Math.random() * fins.length)], t0: clock, n: s.n + 1, k: clock, fin: 1, pv: s.id, pvK: s.k0 ?? s.t0 };   // (pv / pvK: the look it blends from, 07 mvPose)
   }
 }
-function showEnd(c) { c.show = null; c.showEnd = clock; }
+function showEnd(c) { c.showLast = c.show && c.show.id; c.show = null; c.showEnd = clock; }   // (showLast + showEnd: the look blends back out to the run, 07 mvPose)
 // his top speed x this while he shows off (effTop)
 function showSpeedK(p) {
   const s = p.show; if (!s) return 1;
@@ -1273,7 +1277,9 @@ function showSpeedK(p) {
   return Z.speed;
 }
 // where the held ball is along the field while he sets it down (ballX, 04: the touchdown is called when IT crosses)
-const showPlaceX = c => { const s = c.show; if (!s || s.id !== 'shGoalPlace' || s.pt == null) return null; return c.x + c.face * (6 * S + ((SHOW.placeYd + 0.4) * YL - 6 * S) * smooth01((clock - s.pt) / 0.5)); };
+// (ac = the clock to read it on: a replay passes its own, with the taped ptA; v0.58)
+const showPlaceX = (c, ac) => { const s = c.show; if (!s || s.id !== 'shGoalPlace' || s.pt == null) return null; const t0 = ac != null && s.ptA != null ? s.ptA : s.pt, now = ac != null && s.ptA != null ? ac : clock;
+  return c.x + c.face * (6 * S + ((SHOW.placeYd + 0.4) * YL - 6 * S) * smooth01((now - t0) / 0.5)); };
 // every frame (update): ends it, cycles the looks, runs the finishes; the placed ball is left on the grass after the score
 function showTick() {
   if (showPend && (clock > showPend.till || !showPend.c.hasBall)) showPend = null;
@@ -1297,15 +1303,14 @@ function showTick() {
       if (s.id === 'shDiveIn' && !s.dv && d <= 3 && !c.action && c === runner) { s.dv = 1; runAction('Tab'); }
       if (s.id === 'shDiveIn' && s.dv && !c.action && clock - s.t0 > 0.5) showEnd(c);
     } else if (clock - s.t0 > SHOW.cycle && s.k > s.t0 + 0.2) {   // still clicking: the next look, never the same twice running
-      const pool = SHOW_ALL.filter(id => id !== s.id && showLookOK(c, id));
-      c.show = { id: pool[Math.floor(Math.random() * pool.length)] || s.id, t0: clock, n: s.n + 1, k: s.k };
+      const pool = SHOW_ALL.filter(id => id !== s.id && SHOW_KIN[id] !== SHOW_KIN[s.id] && showLookOK(c, id));
+      c.show = { id: pool[Math.floor(Math.random() * pool.length)] || s.id, t0: clock, n: s.n + 1, k: s.k, pv: s.id, pvK: s.k0 ?? s.t0 };
     }
-    if (c.show && c.show.id === 'shHelmetTap') { const ph = Math.floor((clock - c.show.t0) * 2); if (ph !== c.show.ph) { c.show.ph = ph; celebSfx('slap:0.3', celebFav(c)); } }   // (two slaps a second)
+    if (c.show && c.show.id === 'shHelmetTap') { const ph = Math.floor((clock - c.show.t0) * 2); if (ph !== c.show.ph) { c.show.ph = ph; celebSfx('tap', celebFav(c)); } }   // (two taps a second)
   }
 }
-// tackled / stripped while showing off: the crowd groans, a callout, the Post hears about it (showFail: no credits)
+// tackled / stripped while showing off: the crowd groans, the Post hears about it (showFail: no credits; v0.58: no callout on the field)
 function showFail(c) {
-  popup(c, 'SHOWBOATING!', '#ffd94a');
   try { if (celebHome(c)) crowdGroan(0.6); } catch (e) {}
   const name = c.src && c.src.name;
   if (name && xpcOn()) (LEAGUE.celFines || (LEAGUE.celFines = [])).push({ name, move: c.show.id, fail: 1, yr: LEAGUE.year || 1, wk: season ? season.week : 0, team: MATCH[celebFav(c)] });
@@ -2366,7 +2371,10 @@ function updateLine(dt) {
       else {
         if (contain) ty += r.side * contain * 0.5;
         // keeps his outside shoulder on a QB who is running his way: the lane to the sideline stays shut
-        if (Math.sign(qb.vy) === r.side && Math.abs(qb.vy) > DE_CONTAIN.edgeSpeed * YD) ty = qb.y + qb.vy * DE_CONTAIN.lead + r.side * DE_CONTAIN.keep * YD;
+        // (v0.59: hysteresis: on above edgeSpeed, off only under edgeSpeed x hyst, so a QB drifting near the threshold doesn't flip the target every frame)
+        const ru = Math.sign(qb.vy) === r.side ? Math.abs(qb.vy) / YD : 0;
+        r.cutOff = ru > DE_CONTAIN.edgeSpeed || (r.cutOff && r.cutPid === runPid && ru > DE_CONTAIN.edgeSpeed * DE_CONTAIN.hyst); r.cutPid = runPid;
+        if (r.cutOff) ty =qb.y + qb.vy * DE_CONTAIN.lead + r.side * DE_CONTAIN.keep * YD;
       }
     }
 
@@ -2385,6 +2393,12 @@ function updateLine(dt) {
     }
     // a QB who has stopped moving: a free rusher near him drops the contain / angle and goes straight for the sack (he used to pull up beside him)
     if (!r.engaged && (state === 'drop' || state === 'pocket') && Math.hypot(qb.vx, qb.vy) < RUSH_STILL.qbSpeed * QB_SPEED && dist(r, qb) < RUSH_STILL.range * YD) { tx = qb.x; ty = qb.y; }
+    // (v0.59: an edge rusher's aim point eases between contain / turned / cut-off / angle instead of snapping between them in one frame (the stutter); not yours)
+    if ((r.role === 'DE' || r.edge) && !udCtl(r)) {
+      if (r.etPid !== runPid || r.etx == null) { r.etPid = runPid; r.etx = tx; r.ety = ty; }
+      const k = 1 - Math.exp(-DE_CONTAIN.ease * dt); r.etx += (tx - r.etx) * k; r.ety += (ty - r.ety) * k;
+      tx = r.etx; ty = r.ety;
+    }
 
     if (r.engaged) {
       // pass-rush move, picked when he first gets hands on: a swim beats the block sooner,
@@ -2498,6 +2512,7 @@ function updateLine(dt) {
           // an arm tackle from a blocked man: easy to slip with any break-tackle move
           const moving = runner.truck || runner.stiff || clock - (runner.jukeT ?? -9) < 0.5 || clock - (runner.spinT ?? -9) < 0.5;
           if (Math.random() < ARM_TACKLE * (moving ? 0.35 : 1)) return tackleCarrier(runner);
+          if (moving) glanceSfx();
           if (moving && !moveCalled(runner)) popup(runner, 'BROKEN TACKLE', '#ffd94a');
         }
         continue;
@@ -3253,7 +3268,7 @@ function pickGetUp(p) {
 // getUp splits it into turn / scale / shear / offset (getUpFrom) and the getup draw eases those to standing, so nothing snaps.
 // Phases by eased progress: legs tuck to a kneel by `kneel`, a lunge by `lunge`, then stand; hands planted on the turf (handDrop
 // sprite units under each shoulder) until `plantOff`, lifting over `plantEase`; hips sink `sink` while on a knee; facing swaps after `turn`.
-const GETUP_LOOK = { kneel: 0.35, lunge: 0.7, plantIn: 0.12, plantOff: 0.5, plantEase: 0.25, handDrop: 8.5, sink: 5, turn: 0.7, fresh: 0.3 };
+const GETUP_LOOK = { kneel: 0.35, lunge: 0.7, plantIn: 0.12, plantOff: 0.5, plantEase: 0.25, handDrop: 8.5, sink: 5, turn: 0.7, fresh: 0.3, armsFrom: 0.2 };   // armsFrom = share of the rise over which the hands ease from where they were last drawn (v0.59)
 const GU_KNEEL = [[-3, 0.1, 1.5], [3, -1.5, 0.9]], GU_LUNGE = [[-3, 0.45, 0.9], [3, -0.8, 0.85]], GU_STAND = [[-3.5, 0, 0.05], [3.5, 0, 0.05]];
 const guEase = p => { const u = Math.max(0, Math.min(1, p.act.t / p.act.dur)); return u * u * u * (u * (6 * u - 15) + 10); };
 function getUpFrom(p) {
@@ -3264,7 +3279,7 @@ function getUpFrom(p) {
   const dec = g => { const A = a * g, B = b * g, sx = Math.hypot(A, B) || 1; return { R: Math.atan2(B, A), sx, sy: (A * d - B * c) / sx, k: (A * c + B * d) / sx, g }; };
   let q = dec(p.face || 1);
   if (q.sy < 0) q = dec(-(p.face || 1));   // (lying mirrored the other way: he rises that way, then turns)
-  return { ...q, e: m.e, f: m.f, z: p.z || 0, legs: p.gLegs ? p.gLegs.map(l => l.slice(0, 3)) : null };
+  return { ...q, e: m.e, f: m.f, z: p.z || 0, legs: p.gLegs ? p.gLegs.map(l => l.slice(0, 3)) : null, hands: p.gHands ? p.gHands.map(h => h.slice()) : null };
 }
 function getUpLegs(p) {
   const e = guEase(p), K = GETUP_LOOK, L0 = p.act.g0.legs || [[-3.5, 0, 0], [3.5, 0, 0]];
@@ -3334,7 +3349,7 @@ function lowContact(b, L) {   // the contact frame of a cut block / momentum pan
 // pancakes / cut blocks: a plain thud, never the hit-stick sound or shake, and one per BLOCK_THUD s when several land together
 const BLOCK_THUD = 0.35;
 let blockThudAt = -9;
-function blockThud() { if (clock - blockThudAt < BLOCK_THUD && clock >= blockThudAt) return; blockThudAt = clock; tackleSfx(false); }
+function blockThud() { if (clock - blockThudAt < BLOCK_THUD && clock >= blockThudAt) return; blockThudAt = clock; blockSfx(); }   // (v0.58: its own quiet thump, never a tackle clip)
 // Pancake: a run blocker drives his man flat on his back (one roll per blocker/defender pair).
 const PANCAKE_DRIVE = [0.5, 0.7];   // a pancake isn't instant: the blocker drives his feet for [min, + random] s on the man, and only then puts him down
 function tryPancake(b, d, odds) {

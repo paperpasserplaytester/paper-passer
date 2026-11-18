@@ -795,6 +795,7 @@ const offPopClose = () => { offPop = popQ.shift() || null; };
 const offPopNow = p => { if (offPop) popQ.unshift(offPop); offPop = p; };   // (jumps the queue: shown at once)
 function offPopClick(pt) {
   if (offPop.lock) return;   // (waiting on an animation)
+  if (offPop.saysBtn && inBtn(pt, offPop.saysBtn)) { offPop.saysOn = !offPop.saysOn; return; }   // (a demo popup's tier "?": tap shows / hides what the tier means)
   if (offPop.custom) { offPop.custom.click(pt); return; }   // (a category popup: its own tabs, arrows, cards)
   if (offPop.hide && offPop.hideBtn && inBtn(pt, offPop.hideBtn)) { SETTINGS[typeof offPop.hide === 'string' ? offPop.hide : 'hideGoalsTip'] = true; saveSettings(); offPopClose(); return; }   // (HIDE THIS TIP / DON'T SHOW AGAIN: hide = the SETTINGS key it sets (true = the new-goals tip); settings can turn it back on)
   const b = (offPop.btns || []).find(x => inBtn(pt, x));
@@ -827,11 +828,14 @@ function drawOffPop() {
         if (q.done) checkBox(x + 14, y + 22, 20, true, ink);
         ctx.fillText(goalLabel(q), x + (q.done ? 42 : 14), y + 22, q.done ? 544 : 572);
         ctx.fillStyle = q.done ? 'rgba(255,255,255,0.25)' : 'rgba(120,100,70,0.12)'; ctx.fillRect(x + 14, y + 42, 440, 22);
-        ctx.fillStyle = q.done ? '#ffe680' : '#2a62b0'; ctx.fillRect(x + 14, y + 42, 440 * prog, 22);
+        const gk = liteOn() ? 1 : pdS((uiNow() - (P.gt0 || (P.gt0 = uiNow()))) / POP_DEMO.goalMs); if (gk < 1) menuMoving = true;   // (v0.60: the bars are coloured in when it opens)
+        ctx.fillStyle = q.done ? '#ffe680' : '#2a62b0'; ctx.fillRect(x + 14, y + 42, 440 * prog * gk, 22);
+        if (gk < 1 && prog > 0) { const px = x + 14 + 440 * prog * gk; ctx.save(); ctx.translate(px, y + 50); ctx.rotate(0.6); ctx.fillStyle = '#ffd94a'; ctx.fillRect(-3, -26, 6, 20); ctx.fillStyle = '#f2c9a0'; ctx.beginPath(); ctx.moveTo(-3, -6); ctx.lineTo(3, -6); ctx.lineTo(0, 2); ctx.closePath(); ctx.fill(); ctx.restore(); }
         ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.strokeRect(x + 14, y + 42, 440, 22);
         ctx.fillStyle = ink; ctx.font = 'bold 18px monospace'; ctx.fillText(`${gp.txt}   ${q.lv} ¤`, x + 468, y + 54, 125);
         ctx.textAlign = 'center';
       });
+      if (q.done && P.gt0) { const ag = uiNow() - P.gt0 - POP_DEMO.goalMs; if (ag > 0 || liteOn()) qsStamp(x + 560, y + 20, 'DONE', '#2f8f3a', -0.12, liteOn() ? 1 : Math.max(1, 1.8 - ag / 150), 14); if (ag < 200) menuMoving = true; }   // (a finished goal gets its stamp)
     });
     ctx.fillStyle = '#cfd8d2'; ctx.font = '14px monospace'; ctx.textAlign = 'center';
     ctx.fillText(P.note || '', W / 2, y0 + n * 92 + 6, 740);
@@ -848,24 +852,26 @@ function drawOffPop() {
   }
   // (P.player = { p, k }: his roster card on the left of the popup, the text beside it)
   const nb = P.bars ? P.bars.length : 0;
-  const pc = P.player, w = pc ? 1000 : 760, h = Math.max(150 + P.lines.length * 28 + 70 + nb * POP_BAR.h + (nb ? 14 : 0) + (P.price ? 44 : 0), pc ? 430 : 0), card = P.card || (P.card = { x: W / 2 - w / 2, y: Math.max(20, Math.round((H - h) / 2)), w, h });
+  const dh0 = P.demo ? POP_DEMO.hs + 16 : 0;   // (v0.60: a popup's demo box under the title)
+  const pc = P.player, w = pc ? 1000 : 760, h = Math.max(150 + dh0 + P.lines.length * 28 + 70 + nb * POP_BAR.h + (nb ? 14 : 0) + (P.price ? 44 : 0), pc ? 430 : 0), card = P.card || (P.card = { x: W / 2 - w / 2, y: Math.max(20, Math.round((H - h) / 2)), w, h });
   ctx.save(); ctx.translate(4, 6); tornPath(card); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill(); ctx.restore();
   tornPath(card); ctx.fillStyle = '#fffdf4'; ctx.fill();
   ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.arc(W / 2, card.y + 10, 7, 0, Math.PI * 2); ctx.fill();   // the pin
   const tx = pc ? card.x + 300 + (w - 300) / 2 : W / 2, tw = pc ? w - 340 : w - 50;
   if (pc) { ctx.save(); rosterCard(pc.p, { x: card.x + 30, y: card.y + 70, w: 270, h: 248 }, pc.k, null, `${fmtM(payOf(pc.p))} ${pc.p.years}Y`); ctx.restore(); }
   ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.font = 'bold 34px monospace'; ctx.fillText(P.title, W / 2, card.y + 56, w - 60);
+  ctx.font = 'bold 34px monospace'; ctx.fillText(P.title, W / 2, card.y + 56, w - 60); popHeadIco(P, W / 2, card.y + 56, Math.min(ctx.measureText(P.title).width, w - 60));   // (v0.60: the header doodle, POP_ICO)
+  const dh = P.demo ? popDemoPlain(P, card, tx, Math.min(tw, POP_DEMO.w)) : 0; ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.font = 'bold 18px monospace';
   if (P.left) ctx.textAlign = 'left';   // (changelog: bullets run from the left edge)
-  if (P.xpBig != null) { ctx.save(); ctx.font = 'bold 54px monospace'; const s = String(P.xpBig), sw = ctx.measureText(s).width, x0 = tx - (sw + 60) / 2; xpIcon(x0 + 22, card.y + 150, 22); ctx.fillStyle = XPC.col; ctx.textAlign = 'left'; ctx.fillText(s, x0 + 56, card.y + 152); ctx.restore(); }   // (v0.52: the XP bank, big, with its token)
-  P.lines.forEach((l, i) => ctx.fillText(l, P.left ? card.x + 40 : tx, card.y + 112 + (P.xpBig != null ? 110 : 0) + i * 28, tw));
-  if (P.price) priceTag(tx, card.y + 112 + P.lines.length * 28 + 10, P.price.was, P.price.now, 26);   // (optional sale price: { was, now })
+  if (P.xpBig != null) { ctx.save(); ctx.font = 'bold 54px monospace'; const s = String(P.xpBig), sw = ctx.measureText(s).width, x0 = tx - (sw + 60) / 2; xpIcon(x0 + 22, card.y + 150 + dh, 22); ctx.fillStyle = XPC.col; ctx.textAlign = 'left'; ctx.fillText(s, x0 + 56, card.y + 152 + dh); ctx.restore(); }   // (v0.52: the XP bank, big, with its token)
+  P.lines.forEach((l, i) => ctx.fillText(l, P.left ? card.x + 40 : tx, card.y + 112 + dh + (P.xpBig != null ? 110 : 0) + i * 28, tw));
+  if (P.price) priceTag(tx, card.y + 112 + dh + P.lines.length * 28 + 10, P.price.was, P.price.now, 26);   // (optional sale price: { was, now })
   if (nb) {   // what moved: each bar slides from the old value to the new one, with the change beside it
     if (P.barT0 == null) P.barT0 = performance.now();
     const k = Math.max(0, Math.min(1, (performance.now() - P.barT0 - POP_BAR.delay) / POP_BAR.ms)), e = 1 - Math.pow(1 - k, 3);
     P.bars.forEach((b, i) => {
-      const y = card.y + 112 + P.lines.length * 28 + 14 + i * POP_BAR.h, v = b.from + (b.to - b.from) * e, up = b.to >= b.from, d = Math.round(b.to - b.from);
+      const y = card.y + 112 + dh + P.lines.length * 28 + 14 + i * POP_BAR.h, v = b.from + (b.to - b.from) * e, up = b.to >= b.from, d = Math.round(b.to - b.from);
       ctx.fillStyle = RES.line; ctx.font = 'bold 17px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       ctx.fillText(b.label, card.x + 40, y + 12, 230);
       pencilBar(card.x + 280, y, 300, 24, v / 100, up ? 'green' : 'red', 10, 11 + i);
@@ -898,7 +904,7 @@ const OFF_TIPS = {
 function offTip(step) {
   if (!OFF || !OFF.tut || OFF.shown[step]) return;
   OFF.shown[step] = 1;
-  offPopShow({ title: OFF_TIPS[step][0], lines: wrapLines(OFF_TIPS[step][1], 54) });
+  offPopShow({ title: OFF_TIPS[step][0], lines: wrapLines(OFF_TIPS[step][1], 54), demo: { k: 'tip', label: OFF_TIPS[step][0] } });
 }
 
 // --- honors: a medal for each award, a ring for each Paper Bowl win
@@ -1879,7 +1885,7 @@ function faClick(pt) {
     if (inBtn(pt, BACK_BTN)) { F.sel = null; return; }
     if (!inBtn(pt, SIGN_BTN)) return;
     const p = F.sel;
-    if (!faHasSpot(me, p)) { offPopShow({ title: 'ROSTER FULL', lines: wrapLines(`There is no open ${OFF_GROUPS.includes(p.group) ? 'offensive' : 'defensive'} roster spot for ${p.name}. Open the ROSTER and DROP a player first.`, 54) }); return; }
+    if (!faHasSpot(me, p)) { spotFullPop(p, `There is no open ${OFF_GROUPS.includes(p.group) ? 'offensive' : 'defensive'} roster spot for ${p.name}. Open the ROSTER and DROP a player first.`); return; }   // (v0.58: may carry the one-time spot offer)
     if (p.salary > capRoom(me)) { offPopShow({ title: 'NOT ENOUGH CAP', lines: wrapLines(`You need ${fmtM(p.salary - capRoom(me))} more cap room to sign ${p.name}. Drop a player to free up salary.`, 54) }); return; }
     if (LEAGUE.coins < signCost(p)) { offPopShow({ title: 'NOT ENOUGH ¤', lines: wrapLines(`Signing ${p.name} costs ${signCost(p)} ¤ and you have ${LEAGUE.coins}.`, 54) }); return; }
     offPopShow({ title: 'SIGN HIM?', lines: [`${p.name} (${p.tag}, ${p.stars} stars)`, `${fmtM(p.salary)} a year for ${p.years} year${p.years > 1 ? 's' : ''}`, `Costs ${signCost(p)} ¤.`],
@@ -1946,7 +1952,7 @@ function dTip(step) {
   const D = OFF && OFF.draft;
   if (!D || !D.tut || D.shown[step]) return;
   D.shown[step] = 1;
-  offPopShow({ title: DRAFT_TIPS[step][0], lines: wrapLines(DRAFT_TIPS[step][1], 54) });
+  offPopShow({ title: DRAFT_TIPS[step][0], lines: wrapLines(DRAFT_TIPS[step][1], 54), demo: { k: 'tip', label: DRAFT_TIPS[step][0] } });
 }
 const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) * 2;   // about -3..3, mostly near 0
 const draftValue = (rating, pts) => { const m = 0.5 * rating + 0.5 * pts, i = DRAFT.value.findIndex(v => m >= v); return i < 0 ? 7 : i + 1; };
@@ -2306,7 +2312,7 @@ function draftClick(pt) {
       return;
     }
     if (inBtn(pt, DRAFT_PICK_BTN) && D.turn) {
-      if (!faHasSpot(me, p)) { dTip('full'); offPopShow({ title: 'ROSTER FULL', lines: wrapLines(`There is no open ${OFF_GROUPS.includes(p.group) ? 'offensive' : 'defensive'} roster spot for ${p.name}. Go back, open the ROSTER and DROP a player first.`, 54) }); return; }
+      if (!faHasSpot(me, p)) { dTip('full'); spotFullPop(p, `There is no open ${OFF_GROUPS.includes(p.group) ? 'offensive' : 'defensive'} roster spot for ${p.name}. Go back, open the ROSTER and DROP a player first.`); return; }
       if (p.salary > capRoom(me)) { offPopShow({ title: 'NOT ENOUGH CAP', lines: wrapLines(`You need ${fmtM(p.salary - capRoom(me))} more cap room to draft ${p.name}. Drop a player to free up salary.`, 54) }); return; }
       offPopShow({ title: 'DRAFT HIM?', lines: [`${p.name} (${p.tag}, ${p.stars} stars)`, `${fmtM(p.salary)} a year for ${p.years} years`, `Round ${D.round}, pick ${D.pi + 1} (#${D.n + 1} overall).`],
         btns: [{ label: 'CANCEL' }, { label: 'OK', green: true, on: () => draftTake(p) }] });

@@ -1513,10 +1513,10 @@ function changelogPage(i) {   // i = index in CHANGELOG (0 = newest)
   return P;
 }
 // a plain popup ({ title, lines, btns }) turned into a scrollable card (the changelog's), so long text always fits
-const scrollPop = o => { const lines = o.lines.map(t => ({ t, head: false })); return { ...o, log: true, head: o.title, lines, scroll: 0, card: CL_CARD, max: Math.max(0, lines.length * CL_LH - CL_VIEW.h) }; };
+const scrollPop = o => { const lines = o.lines.map(t => ({ t, head: false })), P = { ...o, log: true, head: o.title, lines, scroll: 0, card: CL_CARD }; if (P.demo) popDemoLayout(P); P.max = Math.max(0, lines.length * (P.lh || CL_LH) - (P.view || CL_VIEW).h); return P; };   // (a popup with a demo gets its own fitted card / view: popDemoLayout)
 const clScroll = d => { if (offPop && offPop.log) offPop.scroll = Math.max(0, Math.min(offPop.max, offPop.scroll + d)); };
 function drawChangelog(P) {
-  const c = CL_CARD, v = CL_VIEW;
+  const c = P.card || CL_CARD, v = P.view || CL_VIEW, lh = P.lh || CL_LH, dm = !!P.demo;
   ctx.save();
   ctx.fillStyle = 'rgba(30,25,10,0.5)'; ctx.fillRect(0, 0, W, H); uiModal();
   ctx.save(); ctx.translate(4, 6); tornPath(c); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill(); ctx.restore();
@@ -1524,14 +1524,18 @@ function drawChangelog(P) {
   ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.arc(W / 2, c.y + 10, 7, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.font = 'bold 36px monospace'; ctx.fillText(P.head || `CHANGELOG ${P.title}`, W / 2, c.y + 58, c.w - 60);
-  ctx.font = 'bold 15px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(P.max ? 'SCROLL FOR MORE  -  ESC CLOSES' : 'ESC CLOSES', W / 2, c.y + 100);
+  if (P.head && !dm) popHeadIco(P, W / 2, c.y + 58, Math.min(ctx.measureText(P.head).width, c.w - 60));   // (a scrolling popup's header doodle; never the changelog)
+  if (dm) popDemoDraw(P);   // (the tier tag, the looping demo, the tier strip: 12's popup demos)
+  else { ctx.font = 'bold 15px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(P.max ? 'SCROLL FOR MORE  -  ESC CLOSES' : 'ESC CLOSES', W / 2, c.y + 100); }
   ctx.save(); ctx.beginPath(); ctx.rect(v.x, v.y, v.w, v.h); ctx.clip();
-  ctx.textAlign = 'left';
+  ctx.textAlign = dm ? 'center' : 'left';
   P.lines.forEach((l, k) => {
-    const y = v.y + k * CL_LH - P.scroll + CL_LH / 2;
-    if (y < v.y - CL_LH || y > v.y + v.h + CL_LH) return;
-    ctx.font = l.head ? 'bold 21px monospace' : 'bold 17px monospace'; ctx.fillStyle = l.head ? '#c0392b' : RES.line;
-    ctx.fillText(l.t, v.x + (l.head ? 0 : 6), y);
+    const y = v.y + k * lh - P.scroll + lh / 2;
+    if (y < v.y - lh || y > v.y + v.h + lh) return;
+    ctx.font = dm ? 'bold 15px monospace' : l.head ? 'bold 21px monospace' : 'bold 17px monospace'; ctx.fillStyle = l.head ? '#c0392b' : dm ? RES.dim : RES.line;
+    const ix = P.saga ? 28 : P.lineIco ? POP_DEMO.ico.gap : 0;   // (room for the row icons / the saga's timeline)
+    ctx.fillText(l.t, dm ? v.x + v.w / 2 : v.x + ix + (l.head ? 0 : 6), y);
+    if (P.saga || P.lineIco) { ctx.save(); pdLineExtra(P, k, v.x + (P.saga ? 26 : 0), y, v); ctx.restore(); }
   });
   ctx.restore();
   if (P.max) {   // the scroll bar
@@ -1548,7 +1552,7 @@ function drawChangelog(P) {
 }
 (() => {   // drag to scroll (touch / mouse)
   let from = null;
-  window.addEventListener('pointerdown', e => { if (offPop && offPop.log) { const p = pointerPos(e); from = inBtn(p, CL_VIEW) ? { y: p.y, s: offPop.scroll } : null; } });
+  window.addEventListener('pointerdown', e => { if (offPop && offPop.log) { const p = pointerPos(e); from = inBtn(p, offPop.view || CL_VIEW) ? { y: p.y, s: offPop.scroll } : null; } });
   window.addEventListener('pointermove', e => { if (from && offPop && offPop.log && e.buttons & 1) offPop.scroll = Math.max(0, Math.min(offPop.max, from.s - (pointerPos(e).y - from.y))); });
   window.addEventListener('pointerup', () => { from = null; });
 })();
@@ -1597,7 +1601,7 @@ function drawStartBtns() {
   }
 }
 function titleStamp(cx, cy) { qsStamp(cx, cy - 12, 'PAPER PASSER', '#c0392b', -0.005, 1, 60, { distress: 7 }); }   // (centre of the title sheet, inside its own tilt)
-const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-16 LAGCOMP-48';
+const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-17 SIDEVIEW-49';
 let hlFlash = -1e9;   // when the main menu's HIGHLIGHT button was last clicked
 let quickMenu = false;   // QUICK PLAY (START_BTNS.ex) drop down: EXHIBITION / 1V1 / ONLINE take the place of FRANCHISE / CAREER / TUTORIAL (same buttons, same size)
 function startClick(p) {
@@ -2054,7 +2058,7 @@ function unslim(v, ps) {
 // what changed on a player since the last send: { set: {prop: value}, del: [props that went away] }
 // properties only the host's own simulation reads (measured: drawing a whole game never touches them), so they are never sent: steering targets, last-frame
 // movement, run yardage, shed / break timers...
-const ONL_HOST_ONLY = new Set(['koSafe', 'koBust', 'koBusted', 'koLead', 'koHit', 'osRole', 'osSlow', 'osHitDone', 'plantT', 'retWall', 'wallSide', 'saN', 'saPid', 'saAng', 'chopAt', 'bt', 'celWalk', 'slDgP', 'slDgOk', 'slU', 'slArr','kp', 'kpB', 'kpRide', 'kpRideT', 'cx', 'cy', 'sx', 'sy', 'mpx', 'mpy', 'mvx', 'mvy', 'ranYd', 'gs', 'rel', 'hipT', 'brkT', 'shedAt', 'sealK', 'rushV', 'wk',   // (rvx / rvy stay: the guest's own aim line reads them in maxThrow)
+const ONL_HOST_ONLY = new Set(['koSafe', 'koBust', 'koBusted', 'koLead', 'koHit', 'osRole', 'osSlow', 'osHitDone', 'plantT', 'retWall', 'wallSide', 'saN', 'saPid', 'saAng', 'chopAt', 'bt', 'celWalk', 'slDgP', 'slDgOk', 'slU', 'slArr','kp', 'kpB', 'cx', 'cy', 'sx', 'sy', 'mpx', 'mpy', 'mvx', 'mvy', 'ranYd', 'gs', 'rel', 'hipT', 'brkT', 'shedAt', 'sealK', 'rushV', 'wk',   // (rvx / rvy stay: the guest's own aim line reads them in maxThrow)
   // what drawPlayer itself eases and stamps every drawn frame (neck, eyes, stance, turn, kick arms, the tackle pose): the guest's own drawing keeps its own. They were
   // over half of every snapshot, and the host's clock stamps kept resetting the guest's easing
   'yawAt', 'yaw', 'headAt', 'headW', 'stAt', 'stKey', 'stB', 'ezT', 'hkE', 'kaE', 'knE', 'faceAt', 'faceShow', 'gPose', 'gPoseT', 'gLegs',
@@ -2868,7 +2872,7 @@ function drawOnlineOverlay() {
   const v = ONL.view || {}, me = onlMe();
   ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   if (v.pz) {
-    drawTrace(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';   // (the tracing paper, as the offline pause)
+    drawTrace(); drawPauseIcons(false); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';   // (the tracing paper, as the offline pause; v0.58: the pause icon on top of it)
     const ink = traceInk(), soft = traceInk(true);
     if (v.pz.by === me && !(ONL.guest && settingsOpen) && !settingsOpen) {
       olText('PAUSED', W / 2, 190, 56, ink);

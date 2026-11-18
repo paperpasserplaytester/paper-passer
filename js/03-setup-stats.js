@@ -73,7 +73,8 @@ const ROSTER_SPOTS = 16;   // roster spots per side of the ball (8 per page)
 // bought spots (YOUR franchise team only, kept in LEAGUE.spots): SPOT.cost credits each, one side at a time, up to SPOT.max a side; animation seconds
 // leagueEvery: for every that many spots you buy (either side), every other team gains one on a random side (LEAGUE.aiSpots[team] = { off, def } extra spots;
 // LEAGUE.spotBuys = how many you have bought)
-const SPOT = { cost: 10, max: 24, slide: 0.45, crumple: 0.95, leagueEvery: 2 };
+// v0.58 firstOff = the one-time ROSTER FULL offer's price share (LEAGUE.spotOffer = offered once a franchise, LEAGUE.spotSale = live until bought / LATER: spotCost)
+const SPOT = { cost: 10, max: 24, slide: 0.45, crumple: 0.95, leagueEvery: 2, firstOff: 0.5 };
 const spotsOf = (team, side) => {
   if (typeof season === 'undefined' || !season || exhibition || !LEAGUE) return ROSTER_SPOTS;
   if (team === season.team) return LEAGUE.spots ? (LEAGUE.spots[side] || ROSTER_SPOTS) : ROSTER_SPOTS;
@@ -892,6 +893,7 @@ function rbGameLine(name, pos, team, g, yr, wk, rd, live) {
 const recOn = () => rbOn() && !!pstGame && !!pstGame.yr;
 const RB_CALLED = new Set();   // marks already called on the field this game
 function recLive() {   // after every play of a game you play: a game mark falling right now gets its call (trophy over him, the old holder named, the crowd)
+  perfNote('recLive');   // (FRAME TIMES spike tag)
   if (!recOn()) return;
   try {
     if (RB_CALLED.gid !== pstGame.id) { RB_CALLED.clear(); RB_CALLED.gid = pstGame.id; }
