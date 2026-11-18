@@ -3792,7 +3792,7 @@ const DBTN = { mDyn: { x: 70, y: 100, w: 170, h: 54 }, mPre: { x: 250, y: 100, w
   reset: { x: 70, y: 560, w: 250, h: 50 }, back: { x: 350, y: 560, w: 250, h: 50 } };
 const DLIST = { top: 96, bottom: 652, bx: 935, bw: 175 };
 // (in a franchise the page edits DIFFV; in the menus it edits the defaults a new career starts with: SETTINGS.diffMode / diffSliders)
-const MENU_DIFF = { get mode() { return SETTINGS.diffMode; }, set mode(v) { SETTINGS.diffMode = v; }, get sliders() { return SETTINGS.diffSliders || (SETTINGS.diffSliders = {}); }, set sliders(v) { SETTINGS.diffSliders = v; } };
+const MENU_DIFF = { get mode() { return SETTINGS.diffMode; }, set mode(v) { SETTINGS.diffMode = v; }, get sliders() { return SETTINGS.diffSliders || (SETTINGS.diffSliders = {}); }, set sliders(v) { SETTINGS.diffSliders = v; }, get masters() { return SETTINGS.diffMasters || (SETTINGS.diffMasters = diffMastersAt(0.5)); }, set masters(v) { SETTINGS.diffMasters = v; } };
 const diffSt = () => inSave() ? DIFFV : MENU_DIFF;
 const diffUiMode = () => exhibition ? 'preset' : ['dynamic', 'custom'].includes(diffSt().mode) ? diffSt().mode : 'preset';
 const diffCanEdit = () => !tut && (diffSettable() || inSave());   // (a franchise can change it anywhere, the pause menu too)
@@ -3810,7 +3810,7 @@ const diffPersist = () => { if (inSave()) { try { autosaveSoon(); } catch (e) {}
 function diffSetMode(m) {
   if (!diffCanEdit() || (m === 'custom' && !diffCanCustom()) || (exhibition && m !== 'preset')) return;
   const st = diffSt();
-  if (m === 'custom' && st.mode !== 'custom') st.sliders = diffVals(diffUiMode(), diffUiD(), st.sliders);   // (starts where you were)
+  if (m === 'custom' && st.mode !== 'custom') diffSeedCustom(st);   // (starts where you were)
   st.mode = m;
   diffPersist();
 }
@@ -3822,19 +3822,33 @@ function diffSetPreset(k) {
 function diffSetSlider(s, v) {
   if (!diffCanCustom()) return;
   const st = diffSt();
-  if (st.mode !== 'custom') { st.sliders = diffVals(diffUiMode(), diffUiD(), st.sliders); st.mode = 'custom'; }
+  if (st.mode !== 'custom') { diffSeedCustom(st); st.mode = 'custom'; }
   st.sliders[s.key] = diffLim(s, +(Math.round(v / s.step) * s.step).toFixed(4));
   diffPersist();
 }
-function diffResetAll() { if (!diffCanEdit()) return; diffSt().sliders = {}; SETTINGS.difficulty = 'NORMAL'; diffSt().mode = 'preset'; if (exhibition) exhibition.diff = 'NORMAL'; diffPersist(); }
-function diffDragTo(x) { if (diffDrag) diffSetSlider(diffDrag, diffFromPos(diffDrag, Math.max(0, Math.min(1, (x - DLIST.bx) / DLIST.bw)))); }
+// going CUSTOM: every master starts at the mode's D, nothing is hand-set; a GAME RULES slider (no master) keeps the mode's value as its own
+function diffSeedCustom(st) {
+  const m = diffUiMode(), D = diffUiD(), ms = {}, sl = {};
+  for (const id of DIFF_MIDS) ms[id] = +diffMasterD(id, m, D, st.masters).toFixed(4);
+  for (const s of DIFF_SLIDERS) if (!s.m) { const v = diffValOf(s, m, D, st.sliders, st.masters); if (Math.abs(v - s.n) > 1e-9) sl[s.key] = +v.toFixed(4); }
+  st.masters = ms; st.sliders = sl;
+}
+function diffSetMaster(id, D) {
+  if (!diffCanCustom()) return;
+  const st = diffSt();
+  if (st.mode !== 'custom') { diffSeedCustom(st); st.mode = 'custom'; }
+  st.masters[id] = diffMLim(Math.round(D * 100) / 100);
+  diffPersist();
+}
+const diffUiMasterD = id => diffMasterD(id, diffUiMode(), diffUiD(), diffSt().masters);
+const diffUiVals = () => diffVals(diffUiMode(), diffUiD(), diffSt().sliders, diffSt().masters);
+const DIFF_RULES = { id: 'gr', label: 'GAME RULES', rules: true };
+const diffMSliders = M => DIFF_SLIDERS.filter(s => M.rules ? !s.m : s.m === M.id);
+function diffResetAll() { if (!diffCanEdit()) return; diffSt().sliders = {}; diffSt().masters = diffMastersAt(0.5); SETTINGS.difficulty = 'NORMAL'; diffSt().mode = 'preset'; if (exhibition) exhibition.diff = 'NORMAL'; diffPersist(); }
+function diffDragTo(x) { if (!diffDrag) return; const t = Math.max(0, Math.min(1, (x - DLIST.bx) / DLIST.bw)); if (diffDrag.M) diffSetMaster(diffDrag.M.id, t * DYN.hi); else diffSetSlider(diffDrag, diffFromPos(diffDrag, t)); }
 function diffItems() {
-  const items = [];   // two main groups, CPU and PLAYER (sliders for both teams last), each with its sub groups
-  for (const [main, side] of [['CPU', 'them'], ['PLAYER', 'you'], ['BOTH TEAMS', 'both']]) {
-    const list = DIFF_SLIDERS.filter(s => s.side === side); if (!list.length) continue;
-    items.push({ main, h: 40 });
-    for (const g of [...new Set(list.map(s => s.group))]) { items.push({ head: g, h: 28 }); for (const s of list) if (s.group === g) items.push({ s, h: 50 }); }
-  }
+  const items = [], open = diffUI.open || (diffUI.open = {});   // one row per master (GAME RULES last); an open master lists its sliders under it
+  for (const M of [...DIFF_MASTERS, DIFF_RULES]) { items.push({ M, h: 52 }); if (open[M.id]) for (const s of diffMSliders(M)) items.push({ s, h: 50 }); }
   return items;
 }
 function drawDiffUI() {
@@ -3864,19 +3878,20 @@ function drawDiffUI() {
   menuBtn(DBTN.reset, 'RESET TO PRO', Y, 17, null, edit);
   menuBtn(DBTN.back, 'BACK', Y, 22);
   // the slider list (scrolls)
-  const vals = diffVals(m, D, diffSt().sliders), items = diffItems(), view = DLIST.bottom - DLIST.top, total = items.reduce((a, i) => a + i.h, 0);
+  const vals = diffUiVals(), items = diffItems(), view = DLIST.bottom - DLIST.top, total = items.reduce((a, i) => a + i.h, 0);
   U.scroll = Math.max(0, Math.min(Math.max(0, total - view), U.scroll));
   ctx.save(); ctx.beginPath(); ctx.rect(650, DLIST.top, 580, view); ctx.clip();
   diffRows = []; let y = DLIST.top - U.scroll;
   for (const it of items) {
-    if (it.main) { ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'left'; ctx.fillText(it.main, 655, y + 22); ctx.fillStyle = RES.gold; ctx.fillRect(655, y + 33, 540, 3); y += it.h; continue; }
-    if (it.head) { ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.fillText(it.head, 655, y + 18); y += it.h; continue; }
+    if (it.M) { diffMasterRow(it.M, y, it.h, m); y += it.h; continue; }
     const s = it.s, v = vals[s.key], off = s.when && SETTINGS[s.when] === false, sel = diffUI.sel === diffRows.length;
     diffRows.push({ s, y, h: it.h });
     if (sel) { ctx.fillStyle = 'rgba(255,226,90,0.35)'; ctx.fillRect(650, y, 580, it.h - 2); }
     ctx.globalAlpha = off ? 0.4 : 1; ctx.textAlign = 'left';
-    ctx.fillStyle = RES.line; ctx.font = 'bold 15px monospace'; ctx.fillText(s.label, 655, y + 15);
-    ctx.fillStyle = RES.dim; ctx.font = '11px monospace'; ctx.fillText(`${s.side === 'you' ? 'PLAYER' : s.side === 'them' ? 'CPU' : 'BOTH'}${s.note ? ' - ' + s.note : ''}`.slice(0, 40), 655, y + 34);
+    const own = m === 'custom' && diffSt().sliders[s.key] != null;
+    if (own && s.m) { ctx.beginPath(); ctx.arc(668, y + 10, 4, 0, Math.PI * 2); ctx.fillStyle = RES.gold; ctx.fill(); ctx.strokeStyle = RES.line; ctx.lineWidth = 1; ctx.stroke(); }   // (edited: a hand-set value over its master)
+    ctx.fillStyle = RES.line; ctx.font = 'bold 15px monospace'; ctx.fillText(s.label, 678, y + 15);
+    ctx.fillStyle = RES.dim; ctx.font = '11px monospace'; ctx.fillText(`${s.side === 'you' ? 'PLAYER' : s.side === 'them' ? 'CPU' : 'BOTH'}${s.note ? ' - ' + s.note : ''}`.slice(0, 37), 678, y + 34);
     const bx = DLIST.bx, bw = DLIST.bw, cy = y + 20, f = q => bx + bw * diffPos(s, q);
     ctx.fillStyle = '#c9c3b0'; ctx.fillRect(bx, cy - 3, bw, 6);
     const custom = m === 'custom' && diffSt().sliders[s.key] != null;
@@ -3892,6 +3907,28 @@ function drawDiffUI() {
   }
   ctx.restore();
 }
+function diffMasterRow(M, y, h, m) {   // a master: arrow (opens its sliders), label, an EASY-HARD bar 0-125% with the presets ticked, the percentage, RST
+  const sel = diffUI.sel === diffRows.length, list = diffMSliders(M), open = diffUI.open[M.id];
+  diffRows.push({ M, y, h });
+  ctx.fillStyle = RES.strip; ctx.globalAlpha = 0.35; ctx.fillRect(650, y + 2, 580, h - 6); ctx.globalAlpha = 1;
+  if (sel) { ctx.fillStyle = 'rgba(255,226,90,0.45)'; ctx.fillRect(650, y + 2, 580, h - 6); }
+  if (list.length) { ctx.beginPath(); const ax = 662, ay = y + 20; if (open) { ctx.moveTo(ax - 6, ay - 4); ctx.lineTo(ax + 6, ay - 4); ctx.lineTo(ax, ay + 5); } else { ctx.moveTo(ax - 4, ay - 6); ctx.lineTo(ax + 5, ay); ctx.lineTo(ax - 4, ay + 6); } ctx.closePath(); ctx.fillStyle = RES.line; ctx.fill(); }
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.line; ctx.font = 'bold 17px monospace'; ctx.fillText(M.label, 678, y + 20);
+  ctx.fillStyle = RES.dim; ctx.font = '11px monospace';
+  if (M.rules) { ctx.fillText(m === 'custom' ? 'each slider set on its own' : 'set by the mode', 678, y + 38); return; }
+  ctx.fillText(list.length ? `${list.length} slider${list.length > 1 ? 's' : ''}` : 'no sliders yet', 678, y + 38);
+  const D = diffUiMasterD(M.id), bx = DLIST.bx, bw = DLIST.bw, cy = y + 20, f = d => bx + bw * Math.max(0, Math.min(1, d / DYN.hi));
+  ctx.fillStyle = '#c9c3b0'; ctx.fillRect(bx, cy - 4, bw, 8);
+  const own = m === 'custom' && Math.abs(D - 0.5) > 1e-9;
+  ctx.fillStyle = own ? RES.gold : RES.strip; ctx.fillRect(Math.min(f(0.5), f(D)), cy - 4, Math.abs(f(D) - f(0.5)), 8);
+  ctx.fillStyle = RES.dim; for (const k of DIFF_NAMES) ctx.fillRect(f(DIFF_D[k]) - 1, cy - 7, 2, 14);   // (the six presets)
+  ctx.fillStyle = RES.line; ctx.fillRect(f(0.5) - 1, cy - 10, 3, 20);   // (PRO)
+  ctx.beginPath(); ctx.arc(f(D), cy, 9, 0, Math.PI * 2); ctx.fillStyle = RES.gold; ctx.fill(); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.stroke();
+  ctx.font = 'bold 10px monospace'; ctx.fillStyle = RES.dim; ctx.fillText('EASY', bx, y + 39); ctx.textAlign = 'right'; ctx.fillText('HARD', bx + bw, y + 39);
+  ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = 'bold 15px monospace'; ctx.fillText(`${Math.round(D * 100)}%`, bx + bw + 14, cy);
+  { const rb = { x: 1196, y: cy - 10, w: 30, h: 20 }; ctx.fillStyle = own ? RES.gold : '#c9c3b0'; ctx.fillRect(rb.x, rb.y, rb.w, rb.h); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.strokeRect(rb.x, rb.y, rb.w, rb.h); ctx.fillStyle = RES.line; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'; ctx.fillText('RST', rb.x + rb.w / 2, cy + 1); }
+}
+function diffToggle(M) { if (diffMSliders(M).length) diffUI.open[M.id] = !diffUI.open[M.id]; }
 function diffClick(p) {
   const D = DBTN, B = SET_BTNS;
   if (inBtn(p, D.back)) { if (diffUI.car) settingsOpen = false; diffUI = null; return; }   // (car = opened from the new career screen: straight back to it)
@@ -3904,7 +3941,13 @@ function diffClick(p) {
   const i = diffRows.findIndex(r => p.y >= r.y && p.y < r.y + r.h);
   if (i < 0) return;
   const r = diffRows[i], s = r.s; diffUI.sel = i;
-  if (p.x >= 1196 && p.x <= 1228) { if (!diffCanCustom()) return; if (diffSt().mode === 'custom') { delete diffSt().sliders[s.key]; diffPersist(); } else if (diffVals(diffUiMode(), diffUiD(), diffSt().sliders)[s.key] !== s.n) diffSetSlider(s, s.n); return; }
+  if (r.M) {
+    if (r.M.rules) return diffToggle(r.M);
+    if (p.x >= 1196 && p.x <= 1228) { if (diffCanCustom() && Math.abs(diffUiMasterD(r.M.id) - 0.5) > 1e-9) diffSetMaster(r.M.id, 0.5); return; }
+    if (p.x >= DLIST.bx - 10 && p.x <= DLIST.bx + DLIST.bw + 10) { if (diffCanCustom()) { diffDrag = { M: r.M }; diffDragTo(p.x); } return; }
+    return diffToggle(r.M);
+  }
+  if (p.x >= 1196 && p.x <= 1228) { if (!diffCanCustom()) return; if (diffSt().mode === 'custom') { delete diffSt().sliders[s.key]; diffPersist(); } else if (!s.m && diffUiVals()[s.key] !== s.n) diffSetSlider(s, s.n); return; }   // (RST: back to its master, or to PRO with no master)
   if (p.x >= DLIST.bx - 10 && p.x <= DLIST.bx + DLIST.bw + 10) { diffDrag = s; diffDragTo(p.x); }
 }
 function diffKey(e) {
@@ -3914,9 +3957,12 @@ function diffKey(e) {
   else if (e.code === 'ArrowUp') { e.preventDefault(); U.sel = Math.max(0, U.sel - 1); }
   else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
     e.preventDefault(); const r = diffRows[U.sel]; if (!r) return;
-    diffSetSlider(r.s, diffVals(diffUiMode(), diffUiD(), diffSt().sliders)[r.s.key] + (e.code === 'ArrowRight' ? 1 : -1) * r.s.step);
+    if (r.M) { if (r.M.rules || (e.code === 'ArrowRight' && !U.open[r.M.id] && diffMSliders(r.M).length)) diffToggle(r.M); else diffSetMaster(r.M.id, diffUiMasterD(r.M.id) + (e.code === 'ArrowRight' ? 0.05 : -0.05)); return; }   // (Right on a closed master opens it)
+    diffSetSlider(r.s, diffUiVals()[r.s.key] + (e.code === 'ArrowRight' ? 1 : -1) * r.s.step);
+  } else if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+    e.preventDefault(); const r = diffRows[U.sel]; if (r && r.M) diffToggle(r.M);
   } else if (e.code === 'Backspace' || e.code === 'Delete') {
-    e.preventDefault(); const r = diffRows[U.sel]; if (r && diffSt().mode === 'custom' && diffCanCustom()) { delete diffSt().sliders[r.s.key]; diffPersist(); }
+    e.preventDefault(); const r = diffRows[U.sel]; if (r && diffSt().mode === 'custom' && diffCanCustom()) { if (r.M) { if (!r.M.rules) diffSetMaster(r.M.id, 0.5); } else { delete diffSt().sliders[r.s.key]; diffPersist(); } }
   }
   const r = diffRows[U.sel]; if (r) { if (r.y < DLIST.top) U.scroll -= DLIST.top - r.y; else if (r.y + r.h > DLIST.bottom) U.scroll += r.y + r.h - DLIST.bottom; }
 }

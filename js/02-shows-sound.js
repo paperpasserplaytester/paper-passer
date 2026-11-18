@@ -2403,15 +2403,15 @@ const DIFF_NAMES = Object.keys(DIFF_D);
 const DIFF_SLIDERS = [
   // pace and rules
   { key: 'speed',    group: 'PACE AND RULES', label: 'GAME SPEED',        side: 'both', e: 1, n: 1,   h: 1, lo: 0.5, hi: 1.5, step: 0.05, w: 1, fmt: 'x' },
-  { key: 'audibles', group: 'PACE AND RULES', label: 'AUDIBLES',          side: 'you',  e: 1.5, n: 1,   h: 0.6,  lo: 0.4, hi: 2,   step: 0.1,  w: 1, fmt: 'x', note: 'x the player QB awareness limit' },
+  { key: 'audibles', group: 'PACE AND RULES', label: 'AUDIBLES',          side: 'you',  e: 1.5, n: 1,   h: 0.6,  lo: 0.4, hi: 2,   step: 0.1,  w: 1, fmt: 'x', note: 'x the PLAYER QB awareness limit' },
   // (the old SPEED popup in settings: how fast each side's players run, on top of their ratings; was SETTINGS.cpuSpeed / userSpeed)
-  { key: 'youSpd',   group: 'PACE AND RULES', label: 'PLAYER SPEED',      side: 'you',  e: 1, n: 1, h: 1, lo: 0.8, hi: 1.2, step: 0.05, w: 1, fmt: 'x', fixed: 1, note: 'your players run faster / slower' },
+  { key: 'youSpd',   group: 'PACE AND RULES', label: 'PLAYER SPEED',      side: 'you',  e: 1, n: 1, h: 1, lo: 0.8, hi: 1.2, step: 0.05, w: 1, fmt: 'x', fixed: 1, note: 'PLAYER team runs faster / slower' },
   { key: 'cpuSpd',   group: 'PACE AND RULES', label: 'CPU SPEED',         side: 'them', e: 1, n: 1, h: 1, lo: 0.8, hi: 1.2, step: 0.05, w: 1, fmt: 'x', fixed: 1, note: 'CPU players run faster / slower' },
   // blocking (the OL): your line's pass / run blocking, and the CPU's when you play their drives
-  { key: 'shed',     group: 'BLOCKING', label: 'PASS BLOCK',        legacy: 1, side: 'you', lo: 0.5, hi: 1.6, step: 0.05, w: 1, fmt: 'x', note: 'your OL holds rushers longer (was POCKET TIME)' },
-  { key: 'runBlk',   group: 'BLOCKING', label: 'RUN BLOCK',         side: 'you',  e: 1.3, n: 1, h: 0.7, lo: 0.5, hi: 1.5, step: 0.05, w: 1, fmt: 'x', note: 'your OL opens bigger run holes' },
-  { key: 'cpuPass',  group: 'BLOCKING', label: 'PASS BLOCK',        side: 'them', e: 0.7, n: 1, h: 1.3, lo: 0.5, hi: 1.5, step: 0.05, w: 1, fmt: 'x', note: 'their OL when you play defense' },
-  { key: 'cpuRun',   group: 'BLOCKING', label: 'RUN BLOCK',         side: 'them', e: 0.7, n: 1, h: 1.3, lo: 0.5, hi: 1.5, step: 0.05, w: 1, fmt: 'x', note: 'their OL when you play defense' },
+  { key: 'shed',     group: 'BLOCKING', label: 'PLAYER PASS BLOCK', legacy: 1, side: 'you', lo: 0.5, hi: 1.6, step: 0.05, w: 1, fmt: 'x', note: 'OL holds rushers longer' },
+  { key: 'runBlk',   group: 'BLOCKING', label: 'PLAYER RUN BLOCK',  side: 'you',  e: 1.3, n: 1, h: 0.7, lo: 0.5, hi: 1.5, step: 0.05, w: 1, fmt: 'x', note: 'OL opens bigger run holes' },
+  { key: 'cpuPass',  group: 'BLOCKING', label: 'CPU PASS BLOCK',    side: 'them', e: 0.7, n: 1, h: 1.3, lo: 0.5, hi: 1.5, step: 0.05, w: 1, fmt: 'x', note: 'CPU OL when the PLAYER is on defense' },
+  { key: 'cpuRun',   group: 'BLOCKING', label: 'CPU RUN BLOCK',     side: 'them', e: 0.7, n: 1, h: 1.3, lo: 0.5, hi: 1.5, step: 0.05, w: 1, fmt: 'x', note: 'CPU OL when the PLAYER is on defense' },
   // margin for error (both teams unless noted)
   { key: 'catchTol', group: 'MARGIN FOR ERROR', label: 'CATCH TOLERANCE',   side: 'both', e: 1.2,  n: 1, h: 0.85, lo: 0.7, hi: 1.4, step: 0.05, w: 1, fmt: 'x', note: 'catch odds / radius, both teams' },
   { key: 'tackTol',  group: 'MARGIN FOR ERROR', label: 'TACKLE TOLERANCE',  side: 'both', e: 1.15, n: 1, h: 0.88, lo: 0.7, hi: 1.4, step: 0.05, w: 1, fmt: 'x', note: 'how often a move beats a tackle, both teams' },
@@ -2425,7 +2425,7 @@ const DIFF_SLIDERS = [
   { key: 'cpuCov',   group: 'MARGIN FOR ERROR', label: 'CPU COVERAGE',      side: 'them', e: 0.7, n: 1, h: 1.3, lo: 0.5, hi: 1.5, step: 0.05, w: 1, fmt: 'x', note: 'CPU DBs vs speed: cushion, early hip turn, reaction' },
   { key: 'drop',     group: 'MARGIN FOR ERROR', label: 'DB DROPPED PICKS',  legacy: 1, side: 'them', lo: 0.2, hi: 2.1, step: 0.05, w: 1, fmt: 'x' },
   { key: 'brk',      group: 'MARGIN FOR ERROR', label: 'PLAYER BROKEN TACKLES', legacy: 1, side: 'you', lo: 0.4, hi: 1.7, step: 0.05, w: 1, fmt: 'x', note: 'juke / spin / truck / stiff arm' },
-  { key: 'sim',      group: 'MARGIN FOR ERROR', label: 'SIMULATED DRIVES',  legacy: 1, side: 'them', lo: -3, hi: 4.2, step: 0.1, w: 1, fmt: 'n', note: 'edge for their simmed drives' },
+  { key: 'sim',      group: 'MARGIN FOR ERROR', label: 'SIMULATED DRIVES',  legacy: 1, side: 'them', lo: -3, hi: 4.2, step: 0.1, w: 1, fmt: 'n', note: 'edge for CPU simmed drives' },
   { key: 'injK',     group: 'MARGIN FOR ERROR', label: 'INJURY FREQUENCY',  side: 'both', e: 0.6, n: 1, h: 1.5, lo: 0.3, hi: 2, step: 0.1, w: 1, fmt: 'x', when: 'injuries', note: 'only with INJURIES on' },
   { key: 'wxK',      group: 'MARGIN FOR ERROR', label: 'WEATHER SEVERITY',  side: 'both', e: 0.6, n: 1, h: 1.4, lo: 0.3, hi: 1.8, step: 0.1, w: 1, fmt: 'x', when: 'weather', note: 'only with WEATHER on' },
   // X-Factors (both teams)
@@ -2452,6 +2452,21 @@ for (const s of DIFF_SLIDERS) {
   const b = DIFF_BAR[s.key] || [0.5, 1.5];
   if (s.key === 'sim') { s.lo = s.n + b[0]; s.hi = s.n + b[1]; } else { s.lo = s.n * b[0]; s.hi = s.n * b[1]; }
 }
+// master sliders: one D (0 .. DYN.hi, 0.5 = PRO) per area moves every slider with that `m`; sliders with no master = GAME RULES
+const DIFF_MASTERS = [
+  { id: 'pp', label: 'PLAYER PASSING', keys: ['shed', 'cover', 'cpuCov', 'pick', 'pbu', 'drop'] },
+  { id: 'pr', label: 'PLAYER RUNNING', keys: ['runBlk', 'brk', 'hit', 'fum', 'punch'] },
+  { id: 'cp', label: 'CPU PASSING', keys: ['qbIQ', 'cpuPass'] },
+  { id: 'cr', label: 'CPU RUNNING', keys: ['cpuRun'] },
+  { id: 'pk', label: 'PLAYER KICKING', keys: [] },
+  { id: 'ck', label: 'CPU KICKING', keys: [] },
+  { id: 'rc', label: 'RETURNS AND COVERAGE', keys: [] },
+  { id: 'hi', label: 'HELP AND INFORMATION', keys: ['astThrow', 'astDef', 'info', 'audibles'] },
+];
+const DIFF_MIDS = DIFF_MASTERS.map(M => M.id);
+for (const M of DIFF_MASTERS) for (const k of M.keys) { const s = DIFF_SLIDERS.find(q => q.key === k); if (s) s.m = M.id; }
+const diffMastersAt = D => Object.fromEntries(DIFF_MIDS.map(id => [id, D]));
+const diffMLim = v => Math.max(0, Math.min(DYN.hi, +v));
 const DIFF_X = DIFF_SLIDERS.filter(s => !s.legacy);   // (the sliders diffLvl adds on top of the old fields)
 Object.assign(DIFF_ONE, Object.fromEntries(DIFF_X.map(s => [s.key, s.n])));
 const lerpPts = (xs, ys, x) => { if (x <= xs[0]) return ys[0]; for (let i = 1; i < xs.length; i++) if (x <= xs[i]) return ys[i - 1] + (ys[i] - ys[i - 1]) * (x - xs[i - 1]) / (xs[i] - xs[i - 1]); return ys[ys.length - 1]; };
@@ -2463,7 +2478,7 @@ const diffSliderAt = (s, D) => {
 };
 const diffClampV = (s, v) => Math.max(s.lo, Math.min(s.hi, Math.round(v / s.step) * s.step));
 // per-franchise difficulty state (saved in the save's `diff`): mode 'dynamic' | 'preset' (SETTINGS.difficulty) | 'custom' (sliders)
-const diffNew = () => ({ v: 1, mode: ['dynamic', 'custom'].includes(SETTINGS.diffMode) ? SETTINGS.diffMode : 'preset', preset: 'NORMAL', sliders: { ...(SETTINGS.diffSliders || {}) }, dyn: { D: DYN_START, S: 0.5, games: 0, years: 0, lossRun: 0, sD: DYN_START, history: [] } });
+const diffNew = () => ({ v: 1, mode: ['dynamic', 'custom'].includes(SETTINGS.diffMode) ? SETTINGS.diffMode : 'preset', preset: 'NORMAL', sliders: { ...(SETTINGS.diffSliders || {}) }, masters: { ...diffMastersAt(0.5), ...(SETTINGS.diffMasters || {}) }, dyn: { D: DYN_START, S: 0.5, games: 0, years: 0, lossRun: 0, sD: DYN_START, history: [] } });
 var DYN_START = 0.1;   // (a new franchise's dynamic difficulty starts this low: lenient)
 let DIFFV = diffNew();
 const diffMode = () => tut || exhibition || !season ? 'preset' : DIFFV.mode;   // (the tutorial, exhibitions and the menus are always a preset: NORMAL)
@@ -2471,14 +2486,22 @@ const diffD = () => diffMode() === 'dynamic' ? dynNow() : diffMode() === 'custom
 const diffNearest = D => DIFF_NAMES.reduce((a, k) => Math.abs(DIFF_D[k] - D) < Math.abs(DIFF_D[a] - D) ? k : a, 'NORMAL');
 // the resolved value of every slider right now (custom: the chosen one, else neutral)
 const diffLim = (s, v) => Math.max(s.lo, Math.min(s.hi, v));   // (clamped to the slider's range, never rounded: a neutral stays exactly neutral)
-const diffVals = (m = diffMode(), D = diffD(), sl = DIFFV.sliders) => { const o = {}; for (const s of DIFF_SLIDERS) o[s.key] = m === 'custom' ? (sl[s.key] != null ? diffLim(s, sl[s.key]) : s.n) : diffSliderAt(s, D); return o; };   // (an untouched custom slider is exactly neutral: no step rounding)
-const diffSave = () => ({ v: 1, mode: DIFFV.mode, preset: SETTINGS.difficulty, sliders: { ...DIFFV.sliders }, dyn: JSON.parse(JSON.stringify(DIFFV.dyn)) });
+// a master's D: preset / dynamic = the mode's one D (phase 4 splits dynamic), custom = DIFFV.masters (0.5 if unset)
+const diffMasterD = (id, m = diffMode(), D = diffD(), ms = DIFFV.masters) => m === 'custom' ? (ms && ms[id] != null ? diffMLim(ms[id]) : 0.5) : D;
+// one slider's value: custom = a hand-set value, else its master's D (GAME RULES: n); preset / dynamic = at the mode's D
+const diffValOf = (s, m = diffMode(), D = diffD(), sl = DIFFV.sliders, ms = DIFFV.masters) => m === 'custom'
+  ? (sl[s.key] != null ? diffLim(s, sl[s.key]) : s.m ? diffSliderAt(s, diffMasterD(s.m, m, D, ms)) : s.n) : diffSliderAt(s, D);
+const diffVals = (m = diffMode(), D = diffD(), sl = DIFFV.sliders, ms = DIFFV.masters) => { const o = {}; for (const s of DIFF_SLIDERS) o[s.key] = diffValOf(s, m, D, sl, ms); return o; };   // (an untouched custom slider at a 0.5 master is exactly neutral)
+const diffSave = () => ({ v: 1, mode: DIFFV.mode, preset: SETTINGS.difficulty, sliders: { ...DIFFV.sliders }, masters: { ...DIFFV.masters }, dyn: JSON.parse(JSON.stringify(DIFFV.dyn)) });
 function diffLoad(x) {   // (a save's `diff`: an old one is just the level's name = preset mode)
   DIFFV = diffNew(); DIFFV.mode = 'preset';
   if (!x || typeof x !== 'object') return;
   if (['dynamic', 'preset', 'custom'].includes(x.mode)) DIFFV.mode = x.mode;
   if (DIFF_D[x.preset] != null) DIFFV.preset = x.preset;
+  DIFFV.sliders = {}; DIFFV.masters = diffMastersAt(0.5);
+  if (x.masters) for (const id of DIFF_MIDS) if (isFinite(x.masters[id])) DIFFV.masters[id] = diffMLim(x.masters[id]);
   for (const s of DIFF_SLIDERS) if (x.sliders && isFinite(x.sliders[s.key])) DIFFV.sliders[s.key] = diffLim(s, +x.sliders[s.key]);
+  if (!x.masters) for (const k in DIFFV.sliders) { const s = DIFF_SLIDERS.find(q => q.key === k); if (s && Math.abs(DIFFV.sliders[k] - s.n) < 1e-9) delete DIFFV.sliders[k]; }   // (an old save: a value equal to its 0.5 master's is not a hand-set one)
   const y = x.dyn || {}, dy = DIFFV.dyn;
   if (isFinite(y.D)) dy.D = Math.max(0.05, Math.min(DYN.hi, +y.D));
   if (isFinite(y.S)) dy.S = Math.max(0, Math.min(1, +y.S));
@@ -2614,7 +2637,7 @@ function diffSig(a) {   // every piece of state diffLvlRaw's answer depends on (
   let i = 0;
   a[i++] = tut; a[i++] = tut && tut.defOn; a[i++] = twoP; a[i++] = twoP && twoP.ai; a[i++] = twoP && twoP.flipped;
   a[i++] = exhibition; a[i++] = exhibition && exhibition.diff; a[i++] = season; a[i++] = season && season.offseason;
-  a[i++] = SETTINGS.difficulty; a[i++] = DIFFV; a[i++] = DIFFV.mode; a[i++] = DIFFV.dyn.D; a[i++] = DIFFV.dyn.games;
+  a[i++] = SETTINGS.difficulty; a[i++] = DIFFV; a[i++] = DIFFV.mode; a[i++] = DIFFV.masters; for (const id of DIFF_MIDS) a[i++] = DIFFV.masters && DIFFV.masters[id]; a[i++] = DIFFV.dyn.D; a[i++] = DIFFV.dyn.games;
   a[i++] = LEAGUE.year; a[i++] = LEAGUE.firstPlayed; a[i++] = MATCH.opp; a[i++] = MATCH.playoff; a[i++] = career.hcMain; a[i++] = career.rivals;
   a[i++] = po; a[i++] = po && po.round; a[i++] = po && po.playing; a[i++] = po && po.over; a[i++] = game;
   return i;
@@ -2628,12 +2651,16 @@ const diffLvl = () => {
   if (!same) { const t = C.k; C.k = C.t; C.t = t; C.f = DIFF_FRAME; C.v = null; C.v = diffLvlRaw(); }
   return C.v;
 };
+const DIFF_FLIP_M = [['cp', ['cover', 'drop', 'pick', 'pbu', 'shed']], ['cr', ['hit', 'fum', 'punch', 'brk']]];   // (on defense: which CPU master each flipped key follows)
 const diffLvlRaw = () => tut ? { ...DIFFICULTY.NORMAL, ...DIFF_ONE } : (() => {
   const k = curDiff(), fg = firstGameEasy(), pre = diffMode() === 'preset' || fg, d = diffRow(k), ex = fg ? {} : diffExtra();
   const lv = { ...(pre && (k === 'BABY' || k === 'UNFAIR') ? d : { ...d, ...DIFF_ATTR }), ...ex };
   // on defense (their offense is the live one) the difficulty works the other way: a harder one makes THEIR offense better (your coverage,
   // pressure, tackling and shedding all weaker), so every multiplier is flipped around NORMAL. sim / stars already mean "their offense".
   if (aiOff()) {
+    if (!pre) for (const [id, keys] of DIFF_FLIP_M) for (const key of keys) {   // (the flipped keys are the PLAYER's defense against the CPU offense: read at the CPU masters' D, not the PLAYER ones; a hand-set value stays)
+      const s = DIFF_SLIDERS.find(q => q.key === key); if (s && !(diffMode() === 'custom' && DIFFV.sliders[key] != null)) lv[key] = diffSliderAt(s, diffMasterD(id));
+    }
     const n = DIFFICULTY.NORMAL, o = { ...lv, rz: -lv.rz };
     for (const key of ['hit', 'fum', 'cover', 'drop', 'brk']) o[key] = n[key] * n[key] / lv[key];
     for (const key of ['def', 'shed', 'run']) o[key] = 1 / lv[key];   // (attributes: 1 = untouched, so only BABY / UNFAIR move them)
