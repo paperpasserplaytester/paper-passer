@@ -323,6 +323,8 @@ function extraEntries() {
     ['DIVE: CHEST SKID', dive('skid')], ['DIVE: ROLL OVER', dive('roll')], ['DIVE: ONTO HIS SIDE', dive('side')],
     ['DIVE LOOK: LAYOUT', diveLk('layout')], ['DIVE LOOK: SUPERMAN', diveLk('superman')], ['DIVE LOOK: SCISSOR', diveLk('scissor')],
     ['DIVE LOOK: SPEAR', diveLk('spear')], ['DIVE LOOK: ONE-ARM REACH', diveLk('reach')], ['DIVE LOOK: TUCK AND ROLL', diveLk('tuck')],
+    ['KICK BLOCK: LAYOUT ACROSS', diveLk('kickLay', 6)], ['KICK BLOCK: SMOTHER', diveLk('kickSmother', 6)], ['KICK BLOCK: HANDS-UP WALL', A => { A.armsUp = true; A.tick = () => { A.armsUp = true; }; }],
+    ['KICK BLOCK: HOLDER FLINCH', (A, B) => { B.x = A.x + 1.5 * YD; animAct(A, 'kneel', { dur: 0.4 }); A.later = () => { reelQuiet = true; startReel(A, 'truckStagger', B, 1.3, 0.7); reelQuiet = false; }; A.catchAt = 0.4; }],
     ['DIVE: STANDING START', diveLk('layout', 0)], ['DIVE: FULL SPEED', diveLk('superman', 10)],
     ['LEAP: ON HIS BACK', leapLand('back')], ['LEAP: ROLLING', leapLand('roll')], ['LEAP: ON HIS CHEST', leapLand(null)],
     ['TIP: LUNGE', tip('lunge')], ['TIP: BACKHAND', tip('backhand')], ['TIP: CHOP', tip('chop')], ['TIP: RAKE (BEHIND)', tip('rake')], ['TIP: STRETCH', tip('stretch')],
@@ -1595,15 +1597,22 @@ function wxIcon(code, cx, cy, r, roof, ink) {
   }
   ctx.restore();
 }
-// sound: wind = filtered noise, a gusting low whoosh (louder with the mph); rain = audio/rain.mp3 looping, louder the heavier it falls.
-// Silent off the field; snow makes no sound. rain = its volume at the heaviest rain (x VOL), fade = volume change per second
-const WX_SND = { rain: 0.12, fade: 0.5 };
-let wxAud = null, wxRainEl = null, wxSndT = 0;
+// sound: wind = audio/wind.mp3 looping (a gusting swell, louder with the mph; filtered noise only if the file can't play); rain = audio/rain.mp3
+// looping, louder the heavier it falls. Silent off the field; snow makes no sound. rain / wind = volume at the heaviest (x VOL), fade = change per s
+const WX_SND = { rain: 0.12, wind: 0.32, fade: 0.5 };
+let wxAud = null, wxRainEl = null, wxWindEl = null, wxSndT = 0;
+// one looping weather element eased toward want (tracked _v: phones that ignore .volume read 1 back)
+function wxLoopEl(el, want, dt) {
+  const v = el._v || 0, nv = Math.max(0, Math.min(1, v + Math.max(-WX_SND.fade * dt, Math.min(WX_SND.fade * dt, want - v))));
+  el._v = nv; el.volume = nv;
+  if (nv > 0.002 && el.paused) el.play().catch(() => {});
+  else if (nv <= 0.002 && !el.paused) el.pause();
+}
 const sndOn = () => !results && !paused && !settingsOpen && !showKeys && !(rec && rec.replaying && rec.hl);
 // paused / off the tab: the rain loop, the wind and the footsteps stop dead (no fade-out) and start again from the same place
 function silenceLoops() {
   try {
-    if (wxRainEl) { wxRainEl._v = 0; wxRainEl.volume = 0; if (!wxRainEl.paused) wxRainEl.pause(); }
+    for (const el of [wxRainEl, wxWindEl]) if (el) { el._v = 0; el.volume = 0; if (!el.paused) el.pause(); }
     for (const el of stepEls) if (el) { el._v = 0; el.volume = 0; if (!el.paused) el.pause(); }
     for (const n of stepWA) if (n && actx) { n.g.gain.cancelScheduledValues(actx.currentTime); n.g.gain.value = 0; }
     if (wxAud && actx) wxAud.wg.gain.cancelScheduledValues(actx.currentTime), wxAud.wg.gain.value = 0;
@@ -1617,12 +1626,12 @@ function wxAudio() {
   // rain: an HTML audio loop (works from a file too)
   const want = on ? WXI.rain * WX_SND.rain * VOL() * duck * crowdDuck() : 0;   // (crowdDuck: under a celebration's crowd pop)
   if (want > 0.002 && !wxRainEl) { try { wxRainEl = new Audio('audio/rain.mp3'); wxRainEl.loop = true; wxRainEl.volume = 0; } catch (e) {} }
-  if (wxRainEl) {
-    const v = wxRainEl._v || 0, nv = Math.max(0, Math.min(1, v + Math.max(-WX_SND.fade * dt, Math.min(WX_SND.fade * dt, want - v))));   // (tracked here: phones that ignore .volume read 1 back, so the rain never faded out or paused)
-    wxRainEl._v = nv; wxRainEl.volume = nv;
-    if (nv > 0.002 && wxRainEl.paused) wxRainEl.play().catch(() => {});
-    else if (nv <= 0.002 && !wxRainEl.paused) wxRainEl.pause();
-  }
+  if (wxRainEl) wxLoopEl(wxRainEl, want, dt);
+  // wind: the recorded loop, same mph curve x a slow gust (performance mode: no wind)
+  const gt = now / 1000, gust = 0.7 + 0.25 * Math.sin(gt * 0.6) + 0.15 * Math.sin(gt * 1.9 + 1);
+  const windK = on && !liteGame() && WXI.mph > 7 ? Math.min(1, (WXI.mph - 7) / 27) * gust : 0;
+  if (windK > 0.002 && !wxWindEl) { try { wxWindEl = new Audio('audio/wind.mp3'); wxWindEl.loop = true; wxWindEl.volume = 0; wxWindEl.onerror = () => { wxWindEl._bad = true; }; } catch (e) {} }
+  if (wxWindEl && !wxWindEl._bad) { wxLoopEl(wxWindEl, windK * WX_SND.wind * VOL() * duck * crowdDuck(), dt); return; }
   const a = actx && actx.state === 'running' ? actx : null;
   if (!a || !noiseBuf) return;
   if (!wxAud) {
@@ -1634,10 +1643,10 @@ function wxAudio() {
     src.start();
     wxAud = { wf, wg };
   }
-  const t = a.currentTime, gust = 0.7 + 0.25 * Math.sin(t * 0.6) + 0.15 * Math.sin(t * 1.9 + 1);
-  const wind = on && !liteGame() && WXI.mph > 7 ? Math.min(1, (WXI.mph - 7) / 27) * 0.3 * gust : 0;   // (performance mode: no wind hiss)
+  const t = a.currentTime, gustN = 0.7 + 0.25 * Math.sin(t * 0.6) + 0.15 * Math.sin(t * 1.9 + 1);
+  const wind = on && !liteGame() && WXI.mph > 7 ? Math.min(1, (WXI.mph - 7) / 27) * 0.3 * gustN : 0;   // (performance mode: no wind hiss)
   wxAud.wg.gain.setTargetAtTime(wind * crowdDuck(), t, 0.25);
-  wxAud.wf.frequency.setTargetAtTime(280 + 260 * gust, t, 0.3);
+  wxAud.wf.frequency.setTargetAtTime(280 + 260 * gustN, t, 0.3);
 }
 // --- footsteps: audio/footsteps.mp3 (only its steady stretch, from..to, loops). Two players only: the one you control (vol) and the
 // fastest other man on screen (other x vol). Playback rate follows his speed (rate at a standstill .. at WR_TOP, capped at max),

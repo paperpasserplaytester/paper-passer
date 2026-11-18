@@ -590,7 +590,76 @@ const DRAFT_SCHOOLS = ['BAYOU STATE', 'GREAT LAKES TECH', 'NORTH PRAIRIE', 'COAS
   'CEDAR FALLS STATE', 'GULF SHORE', 'HIGH PLAINS', 'MILL CREEK', 'CANYON STATE', 'LAKESHORE', 'EAST TIMBER', 'COPPER MOUNTAIN', 'RIVERBEND', 'STONE HARBOR', 'BLUE MESA', 'WEST DELTA', 'GRANITE STATE TECH',
   'MAGNOLIA', 'SILVER LAKE', 'FORT ASH', 'PALMETTO BAY', 'BIG SKY NORTH', 'CAPITAL CITY', 'THREE RIVERS', 'SAGEBRUSH', 'MAPLE GROVE', 'SOUTH RIDGE', 'TIDEWATER', 'ELK RAPIDS', 'SUNCOAST', 'BLACK HILLS TECH', 'WINDWARD'];
 const CHANGELOG = [
+  { v: "v0.57", secs: [
+    ["MENUS AND SHOWS", [
+      "ARE YOU SURE?: LEAVE is the red pen and X now, STAY the green stamp.",
+      "Bigger pause button. Resuming slides the tracing paper back up the way it came down before the game moves again.",
+      "The pregame and halftime shows are skipped by holding (bottom right, Esc, or a finger held still on a phone), with the cold open's ring. A tap is still NEXT.",
+      "Every popup button and every player-card button now has its own paper look and sound (OK / DONE stamps, CANCEL red pen, arrows on clips, BENCH folders, TRADE carbon...).",
+      "No more stamina announcements: the red-legs warning and the FRESH LEGS wings are gone (stamina itself works the same).",
+      "Whooshes vary: celebration whooshes change pitch, level and recording every time; throws get a slight pitch wobble.",
+    ]],
+    ["SIDELINE", [
+      "The bench no longer vanishes when it runs down the sideline with a breakaway: they run to about the 25, jump up and down until the whistle, then cheer or slump and walk home.",
+      "Players leaving the field jog at a believable pace and start part of the way to the sideline.",
+      "Sideline people now have the on-field figure's hands, pad caps and arm shapes; each bench player is sized from his own height and weight, coaches from a steady build of their own.",
+      "The head coach looks the same on the sideline and in celebrations, and when he joins one he really comes from his spot on the sideline and walks back after: never two of him.",
+    ]],
+    ["CELEBRATIONS AND STAR FACTOR", [
+      "New: the hanging ball. He flicks it up behind him where it hangs, spinning, while he goes into a second celebration, then it drops.",
+      "The first-down point is the real signal now: lead arm straight out, the other hand cocked by the facemask, both pointing, held sharp.",
+      "Fixed: the headstand (and other flips) no longer do an extra full turn on the way out.",
+      "Celebrations are drawn chest to the camera: one arm from each shoulder instead of both from the middle, and a reach toward the way he faces is foreshortened (it points at you), so two-hand poses sit in front of his chest (hands held together, hands on the helmet and high fives with a teammate stay put).",
+      "Star Factor players get a teacher's gold foil star stuck on behind them (with a moving shine and a stick-on pop) instead of the highlighter.",
+    ]],
+    ["COLD OPEN", [
+      "Phones: the start screen of the cold open is big and bright with a tapping hand, and any tap, touch or key starts it.",
+      "The notebook QB is the real player sprite drawn as a pencil outline, bigger, filling in with colour as he comes alive.",
+      "No lightning flashes. The drag prompt hatches everything behind the line and stays in one place.",
+      "A drag held from the snap is kept through the spin and the roll: the last throw goes straight to aiming.",
+      "The final catch: the scorer goes down the moment he lands, and the bench rushes on from the sideline strip, never from the stands.",
+    ]],
+  ] },
+  { v: "v0.56", secs: [
+    ["DOINKS", [
+      "A field goal or extra point kicked right on the edge of the green can hit the post: off an upright, off the crossbar, or off the corner (sometimes both). Then it is a coin flip: it drops in or bounces out. The post rings, the crowd gasps, and the replay shows the same bounce.",
+      "The other team's kicks can doink too, and simulated kicks say so now and then.",
+      "Fixed: a missed field goal in a simulated drive was never reported and the drive was treated like a punt.",
+    ]],
+    ["BLOCK AND RUSH", [
+      "No more token rush on kicks: every field goal and extra point rush sends all eleven. New calls join MIDDLE and EDGE: OVERLOAD (the center gets a man of his own and a free man comes off the edge) and EDGE PAIR (one man takes on the wing, the other bends flat around him).",
+      "The men behind the line always have a job: a second jumper behind the push, a late looper around the far edge, or a scoop man trailing the pile.",
+      "Both sides read each other: the wings pinch in against a crowded edge, a guard sinks against a stacked middle, a lineman who helps next door leaves his own gap soft, a rusher who is stuck to the end peels off toward the ball, and a bobbled hold gets everyone's second effort.",
+      "The rush never lines up perfectly: aware players sit on their marks, tired ones drift, the men who are coming set a little closer, the call side looks crowded, everyone has his own stance, and some creep, walk in late or shift a gap before the snap.",
+      "BLOCK CARD: on their kicks a card pops up over your rusher with one key (on a phone, swipe its arrow). Still held near the ball's path: W = leap at the line as it goes over. Free and close: W leap at the block point, S dive where the ball is still low, A / D reach from the side. Press it as the ball is kicked: right = he goes for it with his hands on the ball's path, wrong or late = a whiff.",
+      "Blocks look the part: a rusher lays out across the ball's path or smothers it head on with both hands, the ball comes off the hands the way it was hit (up and back off a leaper, skidding low off a diver), the holder and the kicker stagger back, and the scoop man who gets there first with room picks it up and takes a knee.",
+      "Live blocks were far rarer than the simulated ones: they are tuned to about 2% of field goals and 1% of extra points now, the same as simulated kicks.",
+    ]],
+    ["PUNTS", [
+      "Punt returns have a called side: the men who drop back set the wall to the middle, left or right, and the computer's returner heads for it first. Some returns put two men on one gunner (a vise).",
+      "Gunner against jammer is a real fight now, decided by their speed and strength; now and then a gunner beats it clean and arrives early.",
+      "The punt team reads the rush: the personal protector cheats toward the heavier side, and a free man bearing down as the ball is kicked means a hurried punt, shorter and lower.",
+      "The set gives a little away: an all-out block rush leans in, the return men sit deeper, everyone has his own stance, and nobody jumps into place at the snap any more.",
+      "The computer's returner lets a punt landing inside his 10 bounce, any returner can muff one with a cover man on him, and a cover man can bat a ball rolling at the goal line back out for a teammate to down.",
+      "Kick coverage squeezes once the returner commits upfield, and a man who overruns him plants and recovers.",
+    ]],
+    ["ONSIDE KICKS", [
+      "Nobody just swarms the ball any more. On the kicking side the fastest men arrive as the ball does and hit the hands team (only once it has gone 10 yards), the rest go for the ball and one man stays back. The hands team's front line attacks it, the second line blocks and cleans up, and the deep men stay home unless it comes to them. Some kicks overload one side, and the hands team shifts to match.",
+      "New kinds of kick from the meter: a hard drive straight at a front-line man (it comes off his chest more often) and a slow dribbler that gives the kicking team time, beside the bouncer and the pop-up.",
+      "New endings: a high-point catch, a smother, a pile where you only find out who has it after a beat, and a clean scoop by the receiving team, who can run it back (the kicking team can never advance it).",
+      "Fixed: on a pop-up, a man yards away could jump in place for it; now only a man under it goes up. An onside kick out of bounds is spotted where it crossed the sideline. A bobble squirts along the ball's way and the man's momentum instead of in any direction.",
+    ]],
+    ["KICKOFFS", [
+      "Neither kickoff line stands like a ruler any more, the return team blocks to a called side (the computer's returner follows it), one coverage man stays back as a safety, and the wedge-buster meets the lead blocker head on (a strong one blows the wedge up).",
+    ]],
+  ] },
   { v: "v0.55", secs: [
+    ["REAL SOUNDS", [
+      "Recorded sounds replace the made-up ones: a whoosh on every throw (sharper on a bullet and on kicks), a metal clang when the goal post is hit, real high fives and slaps (the stiff arm too), a pad crack and a heavy thud on a knockout, stomps, thuds and booms in celebrations, and a soft thunk when a pylon goes over.",
+      "The crowd: real boos for the road team's big plays (the old let-down sounds stay for the groans), a real rhythmic chant on the biggest celebrations, and a shush when a road player quiets the stands. Wind is a recorded loop that pauses and comes back like the rain.",
+      "New tension: a riser before a 4th down that decides a close game late, and as a big field goal lines up; a heartbeat under the meter of a clutch kick (faster after you're iced). The draft rings a bell when it reaches your pick, and contracts are signed in pencil and stamped.",
+      "Fixed: the last game's rain could squelch on the menus, and the playoff bracket's helmet crash played a wet tackle and a crowd ooh. It is one dry crack now.",
+    ]],
     ["FASTER MENUS", [
       "Menus paint at most 60 times a second (30 when you leave the mouse alone), and not at all while nothing on them can move: a still menu costs next to nothing, and the first move of the mouse brings it straight back.",
       "Menu buttons are drawn once and kept as pictures (dark mode included), and the start screen's title sheet is baked: settings draws about 5x faster, the roster and draft board about 2x in dark mode.",

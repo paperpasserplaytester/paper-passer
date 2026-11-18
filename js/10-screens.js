@@ -767,7 +767,7 @@ const BTN_LABEL_MAT = {   // label (newlines read as spaces, ▸ and "(n)" dropp
   'ROSTER': BM('clipboard', 'btnJersey'), 'STATS': BM('graph', 'btnBars'), 'PLAYER STATS': BM('graph', 'btnBars'), 'TRADES': BM('carbon', 'btnSwap'),
   'DRAFT BOARD': BM('cork'), 'PROSPECTS': BM('cork'), 'BOARD': BM('cork'), 'HALL OF FAME': BM('foil', 'star'), 'THE POST': BM('news'),
   'YES': BM('stamp', 'check'), 'LEAVE': BM('stamp', 'check'), 'ACCEPT': BM('stamp', 'check'),
-  'NO': BM('redpen', 'btnX'), 'STAY': BM('redpen', 'btnX'), 'DELETE': BM('redpen', 'btnX'),
+  'NO': BM('redpen', 'btnX'), 'STAY': BM('stamp', 'check'), 'DELETE': BM('redpen', 'btnX'),
   'SIM': BM('dice', 'dice'), 'SIM GAME': BM('dice', 'dice'), 'SIM OFFENSE': BM('dice', 'dice'), 'SIM DEFENSE': BM('dice', 'dice'),
   // category tier: the torn scrap + a job stripe (+ an icon where an obvious one exists)
   'SCRIMMAGE': BM('card', 'btnWhistle', 'go'), '1V1': BM('card', null, 'go'), 'CAREER': BM('card', null, 'go'), 'TUTORIAL': BM('card', null, 'go'),
@@ -776,8 +776,14 @@ const BTN_LABEL_MAT = {   // label (newlines read as spaces, ▸ and "(n)" dropp
   'GOALS': BM('card', null, 'go'), 'ALL-PRO TEAM': BM('card', null, 'go'), 'DEPTH CHART': BM('card', null, 'go'),
   'TEAM UPGRADES': BM('card', null, 'gold'), 'UPGRADE ALL': BM('card', null, 'gold'), 'MAKE OFFER': BM('card', null, 'gold'),
   'RE-SIGN': BM('card', null, 'ok'), 'LET GO': BM('card', null, 'danger'), 'FIRE': BM('card', null, 'danger'), 'REJECT': BM('card', null, 'danger'), 'FORFEIT': BM('card', null, 'danger'),
+  // v0.57: popup + player-card buttons that had no material (only the plain lift)
+  'OK': BM('stamp', 'check'), 'DONE': BM('stamp', 'check'), 'KEEP': BM('stamp', 'check'), 'TAKE OFFER': BM('stamp', 'check'), 'MEET ASK': BM('card', null, 'gold'),
+  'CANCEL': BM('redpen', 'btnX'), 'CLOSE': BM('card'), 'NOT NOW': BM('card', null, 'danger'), 'SKIP': BM('card'), 'LATER': BM('card'),
+  'HIDE THIS TIP': BM('sticky'), "DON'T SHOW AGAIN": BM('sticky'), 'SEND COUNTER': BM('carbon', 'btnSwap'), 'PLAY DEFENSE': BM('card', 'btnWhistle', 'go'),
+  '< PREV': BM('clip'), 'NEXT >': BM('clip'), '◂': BM('clip'), '▸': BM('clip'), '▲': BM('clip'), '▼': BM('clip'), '-': BM('clip'), '+': BM('clip'),
+  'BENCH': BM('folder'), 'BENCHED': BM('folder'), 'PROMOTE': BM('card', null, 'ok'), 'DROP': BM('card', null, 'danger'), 'TRADE': BM('carbon', 'btnSwap'), '+1': BM('card', null, 'gold'), 'HIT': BM('stamp'),
 };
-const BTN_OBJ_MAT = { gear: BM('index'), next: BM('clip', 'btnArrow'), clip: BM('clip'), trash: BM('redpen'), slot: BM('folder'), fo: BM('folder', 'btnFolder') };
+const BTN_OBJ_MAT = { gear: BM('index'), next: BM('clip', 'btnArrow'), clip: BM('clip'), trash: BM('redpen'), slot: BM('folder'), fo: BM('folder', 'btnFolder'), leave: BM('redpen', 'btnX') };
 const BTN_MAT_CACHE = new Map();
 function btnMatOf(b, label) {
   if (b.mat !== undefined) return b.mat;
@@ -786,7 +792,10 @@ function btnMatOf(b, label) {
   if (b === MENU_NEXT) return label.startsWith('CONTINUE') && !/[▸►]/.test(label) ? BTN_OBJ_MAT.next : BTN_OBJ_MAT.clip;
   if (SLOT_TRASH.includes(b)) return BTN_OBJ_MAT.trash;
   if (SLOT_BTNS.includes(b)) return BTN_OBJ_MAT.slot;
+  if (b === LEAVE_YES) return BTN_OBJ_MAT.leave;
+  if (b === CARD_HIT_BTN) return label === 'CLOSE' ? BTN_LABEL_MAT.CLOSE : BTN_LABEL_MAT.HIT;   // (HIT +0.5 etc.: the label carries a number)                              // (ARE YOU SURE?: leaving = the red pen + X, STAY = the green stamp; the online result's LEAVE keeps its label look)
   if (!label) return null;
+  if (label === '▸' || label === '►') return BTN_LABEL_MAT['◂'];   // (a lone arrow: the ▸ would be stripped below)
   let m = BTN_MAT_CACHE.get(label);
   if (m === undefined) { const n = label.replace(/[▸►]/g, '').replace(/\s*\(\d+\)/, '').trim(); m = BTN_LABEL_MAT[n.replace(/\s*\n\s*/g, ' ')] || BTN_LABEL_MAT[n.split('\n')[0].trim()] || null; if (m && m.ico === 'btnArrow' && /[▸►]/.test(label)) m = BM(m.k, null, m.job); BTN_MAT_CACHE.set(label, m); }   // (a label with its own ▸: no second arrow)
   return m;
@@ -884,7 +893,7 @@ const BTN_KIND = {
     front(b) { bmFill((p, q) => p.rect(q.x, q.y + 6, q.w, q.h - 6), b, '#ebcd8c', 'rgba(110,80,30,0.5)'); },
     frontXf(st, b) { const y1 = b.y + b.h, cx = b.x + b.w / 2, k = st.k * (1 - st.d); ctx.translate(cx, y1); ctx.scale(1, 1 - 0.06 * k); ctx.translate(-cx, -y1); },   // (the flap tips open: the back shows above it)
     fx(st, b) { if (st.save && st.d > 0.04) bmStampText('SAVED', b.x + b.w / 2, b.y + b.h / 2, '#c0392b', 1.3 - 0.3 * st.d, Math.min(1, st.d * 1.4), -0.12); },
-    snd: v => sndRec('flip', v, { ms: 420, fade: 120 }) },
+    snd: v => { sndRec('flip', v, { ms: 420, fade: 120 }); if (slotUI && slotUI.mode === 'save') sndRec('stamp', v, { fade: 80, tag: 'bs' }); } },   // (v0.55: a save slot's SAVED stamp lands with the recorded stamp)
   tag: { hero: true, anim: true, paper: '#efe0b4', lpad: 30, shape: bmTag,
     body(b) { bmFill(bmTag, b, '#efe0b4', 'rgba(120,90,40,0.55)'); const hx = b.x + 14, hy = b.y + b.h / 2;
       ctx.fillStyle = 'rgba(60,40,10,0.55)'; ctx.beginPath(); ctx.arc(hx, hy, 4.5, 0, 7); ctx.fill(); ctx.strokeStyle = '#b9a06a'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(hx, hy, 6.5, 0, 7); ctx.stroke();
@@ -936,7 +945,7 @@ const BTN_KIND = {
   stamp: { hero: true, paper: '#fffdf4', ink: '#2f6b3a', shape: bmTorn,
     body(b) { bmFill(bmTorn, b, '#fffdf4'); ctx.strokeStyle = 'rgba(47,138,70,0.8)'; ctx.lineWidth = 2.2; ctx.strokeRect(b.x + 7, b.y + 7, b.w - 14, b.h - 14); ctx.lineWidth = 1; ctx.strokeRect(b.x + 10, b.y + 10, b.w - 20, b.h - 20); },
     fx(st, b) { if (st.d > 0.04) bmStampText('APPROVED', b.x + b.w / 2, b.y + b.h / 2, '#2f8a46', 1.3 - 0.3 * st.d, Math.min(1, st.d * 1.4), -0.14); },   // (the stamp thunks down)
-    snd: v => { toneSfx('sine', [[150, 1, 70]], 0.16, 0.35 * v, 'btnThunk'); sndRec('tap', v); } },
+    snd: v => { if (sndRec('stamp', v, { fade: 80, tag: 'bs' })) return; toneSfx('sine', [[150, 1, 70]], 0.16, 0.35 * v, 'btnThunk'); sndRec('tap', v); } },   // (v0.55: the recorded stamp; the thunk if it can't play)
   redpen: { hero: true, paper: null, ink: '#a52a22', shape: bmTorn,
     body(b, m, paper) { bmFill(bmTorn, b, paper); },
     xf(st, b) { if (st.d < 0.01) return; const cx = b.x + b.w / 2, cy = b.y + b.h / 2; ctx.translate(cx, cy); ctx.rotate(0.08 * st.d); ctx.scale(1 - 0.1 * st.d, 1 - 0.12 * st.d); ctx.translate(-cx, -cy); },   // (it crumples)

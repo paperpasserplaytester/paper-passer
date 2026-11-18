@@ -1615,7 +1615,8 @@ function ngEnd(text, lock) { if (lock) NG.who.ngLock = poachNow() + CONTRACT.neg
 function ngDone() {
   const err = NG.check ? NG.check(NG.me, NG.on) : null;
   if (err) { NG.msg = err; return; }
-  const g = NG; NG = null; g.sign(g.me, g.on); upgradeSfx(); autosaveSoon();
+  const g = NG; NG = null; g.sign(g.me, g.on); autosaveSoon();
+  if (sndRec('pencil', 1, { ms: SND_USE.signMs, fade: 160, at: Math.random() * SND_USE.penAt })) setTimeout(() => sndRec('stamp', 1, { fade: 80, tag: 'ng' }), SND_USE.signMs); else upgradeSfx();   // (v0.55: signed in pencil, then stamped)
 }
 function ngSend() {
   const N = CONTRACT.neg, v = ngInterest(), err = NG.check ? NG.check(NG.me, NG.on) : null, a = NG.ask;

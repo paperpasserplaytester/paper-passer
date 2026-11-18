@@ -1039,6 +1039,28 @@ window.addEventListener('pointerup', e => {
   setTimeout(() => { hoverPt = null; }, 220);   // (the lift eases back instead of sticking)
 }, true);
 window.addEventListener('pointerup', e => { if (btnPress && btnPress.held) { try { btnSndPick(btnPress, e.pointerType === 'mouse'); } catch (err) {} btnPress.held = false; btnPress.upAt = performance.now(); } });   // (v0.55: a button with a material queues its press sound: btnSndQ, played in frame())
+// the shows' hold-to-skip (HSK, 02): runs before every other pointer listener. The bottom right corner starts a hold (and is never a click);
+// on touch a finger anywhere starts one too and its tap is played on the release instead (a still finger held COLD.skip.ms skips the show)
+function hsTapAt(pt) { if (!hsShowOn()) return; if (!hl) hsNext(); else if (hlBarHit(pt)) hlClick(pt); else hsClip(1); }
+window.addEventListener('pointerdown', e => {
+  if (!hsShowOn() || e.button !== 0 || settingsOpen || slotUI) return;
+  const p = pointerPos(e), zone = inBtn(p, hsHoldZone());
+  if (!zone && e.pointerType !== 'touch') return;
+  if (!zone && (inBtn(p, HS_BAR.next) || overPauseButton(p))) return;   // (a finger on NEXT: the button's own tap)
+  e.stopImmediatePropagation();
+  HSK.at = performance.now(); HSK.f = { id: e.pointerId, x: p.x, y: p.y, zone, moved: false }; HSK.ptr = p;
+}, true);
+window.addEventListener('pointermove', e => {
+  const F = HSK.f; if (!F || F.id !== e.pointerId) return;
+  const p = pointerPos(e); HSK.ptr = p;
+  if (!F.zone && Math.hypot(p.x - F.x, p.y - F.y) > COLD.skip.still) { F.moved = true; HSK.at = 0; }   // (it moved: a gesture, not a hold)
+}, true);
+window.addEventListener('pointerup', e => {
+  const F = HSK.f; if (!F || F.id !== e.pointerId) return;
+  const held = HSK.at; HSK.f = null; HSK.at = 0;
+  if (!F.zone && held && !F.moved) hsTapAt({ x: F.x, y: F.y });   // (touch: a short tap = NEXT, as before)
+}, true);
+window.addEventListener('keyup', e => { if (e.code === 'Escape' && HSK.at && !HSK.f) HSK.at = 0; }, true);
 // A finger on a menu / canvas button: holding it is the mouse's hover (the lift), and the tap is the click, which now happens on the RELEASE (the button
 // presses in for a moment, then the click goes through and it springs back). A finger that drags (a slider, a scrolling list) gets its press at once, at the spot it landed.
 const TAP_DEFER = { move: 12, press: 130 };   // px a tap may drift, ms the button stays pressed in before the click goes through
@@ -1080,7 +1102,7 @@ canvas.addEventListener('pointerdown', e => {
   if (celT && !paused && !results && e.button === 0 && celTClick(pointerPos(e))) return;   // (test mode: the celebration panel)
   if (slotUI) { if (e.button === 0) slotClick(pointerPos(e)); return; }
   if (settingsOpen) { if (e.button === 0) settingsClick(pointerPos(e)); return; }
-  if (HT && !hl) { if (e.button === 0) { if (!inBtn(pointerPos(e), HS_BAR.skip)) hsNext(); else hsBarHit(pointerPos(e)) && hsBarClick(pointerPos(e)); } return; }   // (a halftime card: NEXT / SKIP)
+  if (HT && !hl) { if (e.button === 0) hsNext(); return; }   // (a halftime card: a click = NEXT; skipping is a hold: HSK)
   if (hlFront()) {   // watching the highlights: the bar's buttons, else the replay's own mouse controls (hold = slow motion, right-drag = look around)
     const p = pointerPos(e);
     if (hlDel) { if (e.button === 0) hlDelClick(p); return; }   // (the delete card is up)
@@ -1186,7 +1208,8 @@ canvas.addEventListener('pointerdown', e => {
     return;
   }
   if (e.button === 0 && finishShowing() && btnHit(pointerPos(e), finishBtn())) { finishReplay(); return; }   // (FINISH: same as tapping the replay to continue)
-  if (e.button === 0 && overPauseButton(pointerPos(e))) { if (noPause()) return; paused = !paused; resetAsk = false; pauseGoals = false; aim = null; return; }
+  if (e.button === 0 && pauseClosing()) return;   // (the sheet is sliding back up: nothing to click)
+  if (e.button === 0 && overPauseButton(pointerPos(e))) { if (noPause()) return; if (paused) pauseResume(); else { paused = true; resetAsk = false; pauseGoals = false; aim = null; } return; }
   if (e.button === 0 && pauseGearOn() && btnHit(pointerPos(e), PAUSE_GEAR)) { settingsOpen = true; return; }   // (the gear beside the pause icon)
   if (paused) {
     const p = pointerPos(e), hit = b => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
@@ -1201,7 +1224,7 @@ canvas.addEventListener('pointerdown', e => {
     }
     else if (pauseGoals) { if (e.button === 0 && hit(PAUSE_MENU.back)) pauseGoals = false; }
     else if (e.button === 0 && hit(pmRect('replay'))) pauseReplay();
-    else if (e.button === 0 && hit(pmRect('resume'))) paused = false;
+    else if (e.button === 0 && hit(pmRect('resume'))) pauseResume();
     else if (e.button === 0 && pmItems().includes('goals') && hit(pmRect('goals'))) pauseGoals = true;
     else if (e.button === 0 && pmItems().includes('reset') && hit(pmRect('reset'))) { if (tut) { endTutorial(); paused = false; } else resetAsk = true; }
     else if (e.button === 0 && state !== 'sim' && !tut && hit(pmRect('sim')) && simAnyOK()) pauseSim = true;
@@ -1540,11 +1563,11 @@ function onKeyDown(e) {
   if (slotUI) { if (e.code === 'Escape') { e.preventDefault(); if (slotUI.confirm) slotUI.confirm = null; else slotUI = null; } return; }
   if (settingsOpen) { if (diffUI) { diffKey(e); return; } if (e.code === 'Escape') { e.preventDefault(); if (dbgUI) dbgUI = false; else if (spdUI) spdUI = false; else if (htUI) htUI = false; else settingsOpen = false; } return; }
   if (injuryShowing() && !paused && e.code !== 'Escape') return;   // (answer the injury timeout first)
-  if (HT && !hl) { if (e.code === 'Escape' || e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); if (!e.repeat) { if (e.code === 'Escape') hsSkip(); else hsNext(); } } return; }   // (a halftime card: Enter / Space next segment, Esc skips the show)
+  if (HT && !hl) { if (e.code === 'Escape' || e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); if (!e.repeat) { if (e.code === 'Escape') HSK.at = performance.now(); else hsNext(); } } return; }   // (a halftime card: Enter / Space next segment, HOLD Esc skips the show)
   if (hl && hl.mode === 'half' && !hl.bg) {   // a halftime clip: Enter next clip, Backspace previous clip, Esc skips the show, Space pauses
     e.preventDefault();
     if (e.repeat) return;
-    if (e.code === 'Escape') hsSkip(); else if (e.code === 'Enter') hsClip(1); else if (e.code === 'Backspace') hsClip(-1); else if (e.code === 'Space' && rec) rec.paused = !rec.paused;
+    if (e.code === 'Escape') HSK.at = performance.now(); else if (e.code === 'Enter') hsClip(1); else if (e.code === 'Backspace') hsClip(-1); else if (e.code === 'Space' && rec) rec.paused = !rec.paused;
     return;
   }
   if (hlFront()) {   // the highlights: Enter next, Backspace previous, Esc done; everything else is the replay's (Space pause, A / D scrub, arrows pan)
@@ -1577,11 +1600,11 @@ function onKeyDown(e) {
   if (e.code === 'Escape' && (e.repeat || performance.now() - showEscAt < 600)) { e.preventDefault(); return; }   // (the Esc that skipped the pregame / halftime show must not also pause)
   if (e.code === 'Escape' && (HT || hlFront() || halfShown() || (halfHold && state === 'done'))) {   // (anywhere in the halftime break Esc never pauses: it skips the show)
     e.preventDefault(); showEscAt = performance.now();
-    if (HT) hsSkip(); else if (!hl && !HT && (halfShown() || halfHold)) { hsSkipNext = true; halfOK(); }
+    if (HT) { if (!HSK.at) HSK.at = performance.now(); } else if (!hl && !HT && (halfShown() || halfHold)) { hsSkipNext = true; halfOK(); }
     return;
   }
   if (e.code === 'Escape' && noPause()) { e.preventDefault(); return; }
-  if (e.code === 'Escape') { e.preventDefault(); paused = !paused; resetAsk = false; pauseGoals = false; aim = null; return; }
+  if (e.code === 'Escape') { e.preventDefault(); if (pauseClosing()) return; if (paused) pauseResume(); else { paused = true; resetAsk = false; pauseGoals = false; aim = null; } return; }
   if (paused) return;
   if (finalReplay() && !e.repeat && e.code === 'Enter') { e.preventDefault(); finishLive(); return; }   // (the game's over: Enter = FINISH GAME, any time)
   if (!e.repeat) celebSkip();   // (any key ends a celebration)
@@ -1818,6 +1841,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   try { lgTapeTick(); } catch (e) { console.warn('league tapes', e); LGJ = null; }   // (v0.52: real league plays made while the matchup screen is up)
   if (pgPending && !settingsOpen) pgTry();   // (the pregame show, once a new game's screen is up)
   if (hl && hl.bg && (!results || (results.screen !== 'result' && results.screen !== 'pgx'))) hlClose();   // (the end-of-game reel ends once the result screen is left for good)
+  if (HSK.at) hsHoldTick();   // (holding to skip the pregame / halftime show)
   const perfU0 = performance.now();
   if (hl) { if (!settingsOpen && !(hl.bg && results.screen !== 'result')) hlStep(dt); }   // (the result screen's highlights: tapes only, the game itself stays stopped)
   else if (HT) { if (!settingsOpen) hsTick(); }   // (the halftime show's cards: the game stays stopped)
@@ -2342,6 +2366,11 @@ window.addEventListener('pointerup', e => {
   }
   if (s.set === 'def' && lineUd()) {   // a lineman / blitzer: bull rush and dropping back are the joystick; a swipe up / down is the swim (userEngage reads it like the stick)
     if (vertical) tuiKey(up ? 'ArrowUp' : 'ArrowDown', 650);
+    return;
+  }
+  if (s.set === 'def' && state === 'kick' && kproQteUp()) {   // their kick, the block card is up: the swipe is its arrow (screen directions; A / D go through the drive flip like the keys)
+    const code = vertical ? (up ? 'KeyW' : 'KeyS') : flipKey(dx > 0 ? 'KeyD' : 'KeyA');
+    if (ONL.on) tuiKey(code); else defKeyDown({ code });
     return;
   }
   if (s.set === 'def') {   // up = leap / pick (R), down = dive tackle (V), toward the runner (or the ball) = hit stick (C)

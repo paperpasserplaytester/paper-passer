@@ -34,6 +34,11 @@ function kickOdds(K, d, xp) {
 const FG_FAST = 0.72, FG_DIFF_EASY = 0.14, FG_DIFF_HARD = 0.04, DIFF_ORDER = ['BABY', 'EASY', 'NORMAL', 'HARD', 'EXTREME', 'UNFAIR'];
 // your kicks are rolled from the kicker's odds (kickOdds): both bars green = misses x green, one bar missed = odds x one, both missed = odds x none
 const KICK_ROLL = { green: 0.03, one: 0.3, none: 0.03 };
+// DOINK: a click right on the edge of green hits the post, then a straight 50/50 (in or out). FIXED and HIDDEN: never drawn, never scaled by ratings,
+// icing, weather, pressure or difficulty. pow = yards of range past the kick's distance (crossbar), aim = meter units just inside the window (upright),
+// both = the corner (dbl = odds it hits both). cpu = the computer's pre-roll this close to its odds becomes a doink. auto = Automatic kickers can doink too.
+// Looks / feel: upZ = where up an upright it hits (0 bar - 1 top), T1 / T2 = second hit / bounce-off flight s, amp = postShake size, wob / settle / freq = the post's ring.
+const DOINK = { pow: 0.6, aim: 0.035, dbl: 0.4, cpu: 0.012, auto: false, simText: 0.05, upZ: 0.45, T1: 0.18, T2: 0.55, amp: 1.2, wob: 7, settle: 0.9, freq: 38 };
 // the yellow strip at the top of the power bar: over-kicking past this power costs accuracy (aim line faster + wobble)
 const KICK_OVER = { from: 0.88, wobble: 0.12, miss: 0.25 };   // miss = odds lost at full power (/ kick accuracy)
 // the aim line speeds up with the power you kicked with: a short kick at half power sweeps slowly (easy to time), a 50-yarder needs full power and the line flies
@@ -47,6 +52,21 @@ const clockSituation = () => !game.over && (game.quarter === 2 || game.quarter =
 const fgOption = () => !patMode && ((down === 4 && fgInRange(40)) || (clockSituation() && fgInRange(50)));
 const tri = t => { const k = ((t % 1) + 1) % 1; return k < 0.5 ? k * 2 : 2 - k * 2; };   // 0..1..0 triangle wave
 
+// --- tension sounds (v0.55; KICK_TENSE in 01): the riser before a deciding snap / big kick, the heartbeat under a big kick's meter. Called every update()
+let tenseKey = null, tenseOn = false;
+function tenseOK() { return !tut && !stSimming && !LG_SAND && !(typeof CO !== 'undefined' && CO) && !(typeof oo !== 'undefined' && oo && oo.cfg) && game && !game.over; }
+function tensionTick(dt) {
+  const T = KICK_TENSE, fg = state === 'kick' && kick && !kick.punt && !kick.kickoff && !kick.userKo && !aiOff() && !simSTOn();
+  const fourth = state === 'pre' && down === 4 && (game.quarter >= 5 || (game.quarter === 4 && game.secs <= lateS(ICE.late))) && Math.abs(game.blue - game.red) <= T.margin;
+  const dKey = 'd' + game.quarter + ':' + los + ':' + down + ':' + lineToGain, key = fg ? (patMode == null && down === 4 ? dKey : 'k' + game.quarter + ':' + game.secs + ':' + los + ':' + patMode) : fourth ? dKey : null;   // (a field goal on that 4th down keeps its riser)
+  const want = tenseOK() && (fourth || (fg && kick.phase !== 'flight' && bigKick()));
+  if (want && key !== tenseKey) { tenseKey = key; tenseOn = !!sndRec('riser', T.riserVol, { fade: T.fadeMs, tag: 'ts' }); }   // (once per down / kick)
+  if (tenseOn && !want) { fadeSfx(COLD_SND.riser[0] + '#ts', T.fadeMs); tenseOn = false; }   // (the snap / the kick: it dies away)
+  if (fg && want && (kick.phase === 'power' || kick.phase === 'aim')) {   // the heartbeat while the meter is live
+    kick.hb = (kick.hb == null ? 1 : kick.hb) + dt * (kick.iced ? T.iced : T.bpm) / 60;
+    if (kick.hb >= 1) { kick.hb -= 1; sndRec('heartbeat', T.vol, { fade: 120, tag: 'kh' }); }
+  }
+}
 function startFieldGoal(prev) {   // prev = where everyone stood before the lineup (their kick decided before they set: the unit runs on from there)
   if (patMode === 'kick' && Math.abs(los - 85 * YL) > 1) patMode = null;   // (only the real extra point, from the 15, is a 1-point kick; any other field goal is 3)
   if (game.secs <= 0 && patMode === null && !tut && !game.over) { checkQuarterEnd(); if (game.pendingQuarter || game.over) return; }
@@ -278,6 +298,7 @@ function kickPresnapMove(r, dt) {
 // R (leap) / V or Tab (dive) while their field goal / PAT / punt is snapped: your nearest rusher who has gotten past his blocker goes up / out at the kick spot
 function userKickRush(c) {
   if (!kick || !kick.rush || !kick.rush.length) return false;
+  if (kproQteAnswer(c)) return true;   // (the block card is up: W / A / S / D answer it)
   if (c === 'KeyE' || c === 'KeyO' || c === 'KeyQ') {   // switch to the next rusher (the one nearest the kick spot that isn't you)
     const spot = kick.punt ? rb : { x: qb.x + 12 * S, y: qb.y }, rest = kick.rush.filter(o => o !== kick.me && !o.action).sort((a, b) => dist(a, spot) - dist(b, spot));
     if (rest.length) kick.me = rest[0];
@@ -354,6 +375,13 @@ function releaseKick() {
   // the result is a roll for both sides, mostly from the kicker's ratings (kickOdds); the bars move the odds (KICK_ROLL).
   // The computer's kicker already rolled it (kick.aiGood), so his clicks never decide it a second time.
   const odds = kickOdds(rb, kick.dist - 1.6, patMode === 'kick');
+  // DOINK: both bars green and a click inside the fixed hidden band at an edge = off the post (the roll is skipped: a straight 50/50). The computer's pre-rolled one = kick.aiDoink.
+  let dk = kick.aiGood != null ? kick.aiDoink || null : null;
+  if (kick.aiGood == null && powOK && aimOK && (DOINK.auto || !kAb(rb, 'automatic'))) {
+    const pe = (FG.range + FG.rangeSpan * kick.power) * kick.pow - kick.dist, ae = kick.window - Math.abs(kick.clickPos ?? 0);
+    if (pe <= DOINK.pow || ae <= DOINK.aim) dk = doinkMake(pe <= DOINK.pow, ae <= DOINK.aim ? ((kick.clickPos ?? 0) < 0 ? -1 : 1) : 0, Math.random() < 0.5);
+  }
+  if (dk) return doinkFly(dk, range);
   const pGood = kick.aiGood != null ? (kick.aiGood ? 1 : 0)
     : powOK && aimOK ? 1 - (1 - odds) * KICK_ROLL.green : 0;   // (no field goal without BOTH bars green: a missed range or accuracy bar is never good)
   const overK = kick.aiGood == null ? Math.max(0, ((kick.power || 0) - KICK_OVER.from) / (1 - KICK_OVER.from)) * KICK_OVER.miss / kick.acc : 0;
@@ -378,6 +406,40 @@ function releaseKick() {
   kick.t = 0;
   throwSfx(true);
   msg = 'The kick is up...';
+}
+// a doink: bar = the crossbar, side = -1 / +1 the left / right upright (both = the corner, maybe both hits), good = it drops in. Hits are world spots (x, y, z).
+function doinkMake(bar, side, good) {
+  const zb = GOAL_UP.bar * S, hits = [];
+  if (side && bar) {
+    hits.push({ x: POST_X, y: MID + side * GOAL_HALF, z: zb, side });
+    if (Math.random() < DOINK.dbl) hits.push({ x: POST_X, y: MID + side * GOAL_HALF * 0.72, z: zb, side: 0 });
+  } else if (side) hits.push({ x: POST_X, y: MID + side * GOAL_HALF, z: zb + DOINK.upZ * (GOAL_UP.h - GOAL_UP.bar) * S, side });
+  else hits.push({ x: POST_X, y: MID + Math.max(-0.8, Math.min(0.8, (kick.dir || 0) / (kick.window || 1))) * GOAL_HALF, z: zb, side: 0 });
+  const lr = side < 0 ? 'LEFT' : 'RIGHT';
+  const reason = hits.length > 1 ? `OFF THE ${lr} UPRIGHT AND THE CROSSBAR` : side ? `OFF THE ${lr} UPRIGHT` : 'OFF THE CROSSBAR';
+  return { bar, side, good, hits, i: 0, reason: good ? reason + ' AND IN!' : reason };
+}
+function doinkFly(dk, range) {
+  const h = dk.hits[0];
+  kick.good = dk.good; kick.reason = dk.reason; kick.doink = dk; dk.i = 0;
+  kick.flight = { t: 0, T: 0.85 + kick.dist * 0.012, fx: ball.x, fy: ball.y, tx: h.x, ty: h.y, zEnd: h.z, h: (95 + range * 1.8 + GOAL_UP.bar + 40) * S };
+  kick.phase = 'flight';
+  kickSfx();
+  kick.t = 0;
+  throwSfx(true);
+  msg = 'The kick is up...';
+}
+// the ball reaches post hit dk.i: the clang, the post rings (ball.hitP: taped, read by postShakeAt), then on to the next hit or the bounce in / out
+function doinkHit(dk) {
+  const h = dk.hits[dk.i++];
+  ball.hitP = [clock, dk.i > 1 ? 0.6 : 1, POST_X];
+  postShake(DOINK.amp * (dk.i > 1 ? 0.6 : 1));
+  if (dk.i < dk.hits.length) { const n = dk.hits[dk.i]; kick.flight = { t: 0, T: DOINK.T1, fx: h.x, fy: h.y, tx: n.x, ty: n.y, z0: h.z, zEnd: n.z, h: 6 * S }; return; }
+  // the last hit: in = drops through past the bar (an upright one kicks inward), out = back toward the field (an upright one kicks wide)
+  const inw = h.side ? -h.side : 0, tx = dk.good ? POST_X + 2.2 * YL : POST_X - 3.2 * YL;
+  const ty = Math.max(Y_MIN, Math.min(Y_MAX, h.y + (dk.good ? inw * 0.9 * YD : (h.side ? h.side * 2.6 * YD : (Math.random() - 0.5) * 1.5 * YD))));
+  kick.flight = { t: 0, T: DOINK.T2, fx: h.x, fy: h.y, tx, ty, z0: h.z, zEnd: 0, h: (dk.good ? 10 : 22) * S };
+  msg = dk.good ? 'Off the post...' : 'Off the post!';
 }
 
 function updateKick(dt) {
@@ -570,16 +632,18 @@ function updateKick(dt) {
     const p = Math.min(1, f.t / f.T);
     ball.x = f.fx + (f.tx - f.fx) * p;
     ball.y = f.fy + (f.ty - f.fy) * p;
-    ball.z = kickArcZ(p, f.h);
+    ball.z = kickArcZ(p, f.h) + (f.z0 || 0) * (1 - p) + (f.zEnd || 0) * p;   // (a doink's legs start / end up at the post)
     ball.rot += dt * 16; ball.tumbling = p < 1 ? { dx: f.tx - f.fx, dy: f.ty - f.fy } : null;
+    if (p >= 1 && kick.doink && kick.doink.i < kick.doink.hits.length) return doinkHit(kick.doink);
     if (p >= 1) {
-      const good = kick.good, why = kick.reason;
+      const good = kick.good, why = kick.reason, dk = kick.doink;
+      if (dk) popup(rb, dk.reason, dk.good ? '#7dff8a' : '#ff8a5a');
       // the ball doesn't just stop: it comes down past the posts (or short), hops and rolls on out of the picture
       const sp = 0.7 / f.T;
       Object.assign(ball, { loose: true, live: false, fumble: false, blocked: false, inAir: false,
                             vx: (f.tx - f.fx) * sp, vy: (f.ty - f.fy) * sp, vz: 120 * S, spin: 14 });
       kick = null;
-      if (good) { popup(rb, 'GOOD!', '#7dff8a'); endPlay('FIELD GOAL IS GOOD!  -  3 points', 0, 'fg'); }
+      if (good) { if (!dk) popup(rb, 'GOOD!', '#7dff8a'); endPlay('FIELD GOAL IS GOOD!  -  3 points', 0, 'fg'); }
       else { endPlay(`FIELD GOAL NO GOOD  -  ${why.toLowerCase()}`, 0, 'fgmiss'); }
     }
   }
@@ -589,7 +653,7 @@ function updateKick(dt) {
 // One protection-vs-rush engine for placekicks (field goals and extra points; both teams, since their kick runs the same code flipped).
 // KPRO.on = false (or the tutorial) = the old timer-and-dice logic. With it on:
 //   lineup (kproSetFG): snapper, 2 guards, 2 tackles, 2 tight ends foot to foot, 2 wings a yard back off the ends' outside hips, the holder
-//     7 yd deep. The rush: 8 in the gaps, 3 behind, and one CALL (MIDDLE / EDGE / SAFE, by KPRO.calls weights for the situation).
+//     7 yd deep. The rush: 8 in the gaps, 3 behind, and one CALL (MIDDLE / EDGE / OVER / PAIR, by KPRO.calls weights; every call sends all 11).
 //   protection (kproTick): "inside gap, never chase". Every lineman steps down inside and owns the gap inside him; the wing punches the man
 //     in his inside gap, then widens anyone outside him. Nobody releases before the kick.
 //   matchups = the line's own block battle (updateLine's, on the kick's clock; KPRO.fight): each rusher gets the second he beats his man off
@@ -625,7 +689,7 @@ const KPRO = {
   rushOff: 1.0, backOff: 1.9, backGap: 1.5,           // rushers: YL past the line; the three behind: YL back, yd apart
   point: 1.5,                                         // the block point: yards along the field (YL) in front of the ball's spot, on its path
   set: 0.45, stepIn: 0.3, anchor: 4.5, slide: 0.85,    // protection: yd the line sets back, yd each man steps down inside, his speed (yd/s), the most (yd) he ever slides
-  edgeMax: 2, clean: 0.0018, cleanK: 0.9, cleanAt: [0.3, 0.7],   // beaten clean: odds at even ratings, e^(cleanK x rating edge); seconds after the snap he is through
+  edgeMax: 2, clean: 0.0055, cleanK: 0.9, cleanAt: [0.3, 0.7],   // beaten clean: odds at even ratings, e^(cleanK x rating edge); seconds after the snap he is through. v0.56: the main way a block happens (a man beaten late or off the edge cannot reach the block point in time): tuned with all 11 rushing to about 2.2% FG / 1% PAT live (measured 1k each in test mode, the meters held a moment like a real kick: a kick snapped the instant the unit sets catches the rush still settling and blocks far less)
   drive: 0.75, dbl: 1.6, driveMax: 4.6, driveVar: [0.5, 1.6],   // a bull rush: yd/s the blocker gives at even strength; x when doubled (MIDDLE); most yd given; each drive's own luck (x from - to)
   // the block battle (the line's logic): shed = s [base, + random] until he beats his man at even ratings (x e^(-shedK x rating edge), never under shedMin unless beaten clean);
   // moveK = x the line's own move / answer / counter seconds (RUSH.shed, RUSH.react, RUSH.switchGain); switchAt = s into a stalled block he counters; soft / longarm = x the
@@ -640,9 +704,30 @@ const KPRO = {
   jumpAt: 0.2, jumpFwd: 2.4, jumpBack: 2.8,                          // the MIDDLE jumper goes up this long before the kick, carrying this far forward
   hand: 0.55, ballR: 3,                               // a block: his hands within hand yd of where the ball passes, the ball no more than ballR (S units) over his reach
   peel: 3, keep: 1.6,                                 // a man who missed runs on to a spot peel yd to the side; nobody comes within keep yd of the kicker / holder
-  patClean: 0.85,                                     // extra points: x the clean-win odds (a short, quick operation)
+  patClean: 0.55,                                     // extra points: x the clean-win odds (a short, quick operation)
   late: { p: 0.07, hands: 0.35, secs: [0.15, 0.4], pat: 0.6 },   // a slow operation (a high snap, a bobbled hold): odds at an average holder, less / more per point of his hands rating edge; seconds it costs; x on extra points. The rush keeps coming while the kicker waits: this is when an overload gets home
-  calls: { fg: { MIDDLE: 0.4, EDGE: 0.35, SAFE: 0.25 }, long: { MIDDLE: 0.55, EDGE: 0.35, SAFE: 0.1 }, pat: { MIDDLE: 0.1, EDGE: 0.3, SAFE: 0.6 } }, longYd: 45,   // the rush call's weights: a normal field goal, one of longYd+ yards, an extra point
+  // the rush call's weights: a normal field goal, one of longYd+ yards, an extra point. No fakes exist, so nobody guards one: every call sends all eleven.
+  // MIDDLE = push + jumper on a guard; EDGE = a free man off the wing; OVER = an overload (the center gets a man of his own, a free man outside: one more than the side can block);
+  // PAIR = an edge pair (an inside man on the wing makes him choose, the outside man bends flat and lays out)
+  calls: { fg: { MIDDLE: 0.35, EDGE: 0.3, OVER: 0.2, PAIR: 0.15 }, long: { MIDDLE: 0.45, EDGE: 0.25, OVER: 0.15, PAIR: 0.15 }, pat: { MIDDLE: 0.25, EDGE: 0.3, OVER: 0.25, PAIR: 0.2 } }, longYd: 45,
+  // the men behind the line with no job in the call: jump2 = odds MIDDLE's spare man is a second jumper (jy yd beside the first, j2Late s later), loop = odds he is a late edge looper
+  // (else the scoop man): he holds loopHold s, then runs around the far edge loopWide yd outside the wing; scoop = the trailer behind the pile: yd behind the line men, his speed (yd/s)
+  backJobs: { jump2: 0.4, jy: 0.55, j2Late: 0.07, loop: 0.5, loopHold: 0.28, loopWide: 1.6, scoopBack: 1.2, scoopV: 3.5, scoopTraffic: 1 },   // scoopTraffic = most opponents near a blocked ball for the scoop man to pick it up standing (else he dives like everyone)
+  // v0.56 reads: the protection answers the look at the snap (wings pinch in pinch yd vs edgeN+ men outside the end on their side, guards sink sink YL vs stack+ men in their lane);
+  // a protector who helps leaves his gap soft (an outside man on his side is widened only x softWide); a stoned rusher peels toward the ball's path peelAt s after the kick at peelV yd/s;
+  // a slow operation = one second effort: s [from, to] off every held man's shed time
+  read: { edgeN: 2, pinch: 0.45, stack: 2, sink: 0.35, softWide: 0.5, peelAt: 0.25, peelV: 3.5, effort: [0.06, 0.18] },
+  // v0.56 set: neatness (x the ragged set) per point of awareness (the group's 5th attribute, z) and by wear (0-1), kept within lo..hi; lean = YL a man who is coming sets closer;
+  // crowd = x the call side's spacing (EDGE / OVER / PAIR); st = share of line men down in four / up in two (the rest in three)
+  neat: { awr: 0.3, wear: 0.6, lo: 0.45, hi: 1.7 }, lean: 0.18, crowd: 0.88, st: { four: 0.35, two: 0.2 },
+  // pre-snap life (power / aim): creep = odds a line man creeps creepYd yd inside at creepV yd/s; late = odds a man behind the line is still getting set (lateYd yd back, settles over lateSet s);
+  // shift = odds a spare man slides shiftK x a gap over at shiftAt s; snapGap = x a gap nobody may stand inside of the snapper; onside = YL past the ball everyone stays
+  life: { creep: 0.35, creepYd: 0.45, creepV: 0.35, late: 0.18, lateYd: 0.9, lateSet: 0.8, shift: 0.3, shiftK: 0.7, shiftAt: [0.4, 1.4], shiftV: 2.2, snapGap: 0.3, onside: 0.55 },
+  // v0.56 block QTE (yours, on their FG / PAT): show = s before the foot meets the ball it can appear (only if he can get there), after = s after it that still count;
+  // side = yd off the ball's path that make a dive a reach (A / D); leapYd = yd from the block point he may be at his leap and still carry onto it, leapZ = x a standing man's reach
+  // the ball must be over there for a leap; lungeK = x KPRO.lunge for his dive; minV = yd/s his speed is taken as at least; handK = x the block hand radius when he got it right
+  qte: { show: 0.6, after: 0.06, side: 1.0, leapYd: 2.6, leapZ: 0.8, lungeK: 1.3, minV: 6, handK: 1.35 },
+  pairHold: 0.5, pairFree: [0.45, 0.4],   // PAIR: odds the wing takes the outside man (then the inside one slips him at pairFree[0] + random x [1] s), else he blocks the inside one and the outside man is clean
   sim: { fg: 0.022, pat: 0.011, punt: 0.007 },          // simulated kicks: the same block rates the live engine is tuned to
   // punts (kproSetPunt / kproPuntTick)
   pt: { calls: { BLOCK: 0.25 }, backedUp: 0.3, returnRush: [5, 6],   // the return side's call: odds of BLOCK (+ backedUp when the punter is near his own goal line), else RETURN with this many rushing
@@ -653,7 +738,19 @@ const KPRO = {
         point: 1.0, leapYd: 1.6, reach: 2.6, footZ: 8, rise: 17, keep: 0.9,   // the block point: yd in front of where it leaves his foot; a man this close goes up instead of out; hands this far in front can still meet it; the ball's height at the foot (S units) and how fast it climbs (S units per yd); nobody comes within keep yd of the punter
         dropYd: 6, dropV: 5.5,                         // RETURN: the men who don't rush drop this far (YL) at this speed (yd/s) to block for the returner
         ride: [0.35, 0.8],                             // RETURN: a ridden blocker leaves this many seconds late after the punt
-        late: { p: 0.13, secs: [0.3, 0.6] } },         // a slow operation (a low snap, a bobble): odds, seconds the punter needs to get it right. The only time an overload can get there
+        late: { p: 0.13, secs: [0.3, 0.6] },           // a slow operation (a low snap, a bobble): odds, seconds the punter needs to get it right. The only time an overload can get there
+        // v0.56 RETURN calls: the wall side (weights for middle / left / right); droppers set up wallY yd off the middle on it, the wall shifts wallShift yd that way after the kick,
+        // the computer's returner follows it for retFollow s; vise = odds a RETURN doubles one gunner (his jam hold x viseK)
+        wallW: { 0: 0.4, '-1': 0.3, 1: 0.3 }, wallY: 9, wallShift: 3.5, retFollow: 1.1, vise: 0.35, viseK: 1.6,
+        // gunner vs jammer: the jam hold x e^(-k x (the gunner's speed - the jammer's strength / coverage, z)); clean = odds at even ratings he beats it clean (hold x cleanK)
+        jamFight: { k: 0.35, clean: 0.1, cleanK: 0.25 },
+        // a hurried punt: a free rusher within yd of the block point as it is struck = dist x as far, hang x the hang time; ppShift = yd the protector sets toward the heavier rush side
+        hurry: { yd: 2.4, dist: 0.8, hang: 0.85 }, ppShift: 0.6,
+        // the set's tells: lean = YL a BLOCK rusher sets closer, dropBack = YL a RETURN dropper sets deeper
+        lean: 0.25, dropBack: 0.35,
+        // the returner: the computer's lets a punt landing inside letGo yd of his goal bounce (odds letP); a muff off the catch = muff (muffHot with a cover man within hotYd), x less by catching;
+        // bat = a cover man reaching a ball rolling at the goal line (inside yd, toward it faster than minV yd/s) bats it back out (odds p)
+        letGo: 9, letP: 0.7, muff: 0.006, muffHot: 0.03, hotYd: 2.5, bat: { yd: 2.5, p: 0.6, minV: 2 } },
 };
 const kproLive = () => KPRO.on && !tut;
 const kproFG = () => !!(kick && kick.kp && !kick.punt);
@@ -785,7 +882,7 @@ function kproUp(r, R, bp, kickT, flight) {
   const U = KPRO.up;
   if (!R.upOK || Math.abs(r.y - bp.y) > U.lane * YD) return false;
   if (flight) return !kick.flight || kick.flight.t < U.hold;
-  if (R.role !== 'back' && (R.move === 'bull' || r.bullFx > 0 || r.spinFx > 0 || r.swimLeft > 0)) return false;
+  if (R.role !== 'back' && R.role !== 'scoop' && (R.move === 'bull' || r.bullFx > 0 || r.spinFx > 0 || r.swimLeft > 0)) return false;
   return kick.t > kickT - R.upLead;
 }
 function kproSetFG() {   // from startFieldGoal, once the old lineup is made: the unit, the rush and the call
@@ -794,35 +891,168 @@ function kproSetFG() {   // from startFieldGoal, once the old lineup is made: th
   line.forEach((b, i) => { if (!b) return; b.x = lx - (i === 3 ? 0 : (Math.random() * 2 - 1) * K.stag * YD); b.y = MID + (i - 3) * g; b.kpB = { x0: b.x, y0: b.y, in: Math.sign(3 - i), back: 0, man: null, wing: false }; });
   wings.forEach((b, i) => { if (!b) return; const s = i ? 1 : -1; b.x = lx - K.wingBack * YL; b.y = MID + s * (3 * g + K.wingOut * YD); b.kpB = { x0: b.x, y0: b.y, in: -s, back: 0, man: null, wing: true }; });
   const dist = kickDistance(), W = K.calls[pat ? 'pat' : dist >= K.longYd ? 'long' : 'fg'];
-  let roll = Math.random() * (W.MIDDLE + W.EDGE + W.SAFE), call = 'SAFE';
-  for (const c of ['MIDDLE', 'EDGE', 'SAFE']) if ((roll -= W[c]) <= 0) { call = c; break; }
+  const CALLS = Object.keys(W);
+  let roll = Math.random() * CALLS.reduce((a, c) => a + W[c], 0), call = CALLS[0];
+  for (const c of CALLS) if ((roll -= W[c]) <= 0) { call = c; break; }
   const side = Math.random() < 0.5 ? -1 : 1;
   // who goes where: the biggest men inside, the fastest outside and behind
   const all = kick.rush.slice(), big = all.slice().sort((a, b) => rz(b, 'str') - rz(a, 'str')), GAPS = [-0.5, 0.5, -1.5, 1.5, -2.5, 2.5, -3.5, 3.5];
   const lineR = big.slice(0, 8), backR = all.filter(r => !lineR.includes(r)).sort((a, b) => (b.top || 0) - (a.top || 0));
   const owner = k => { const i = Math.abs(k) === 3.5 ? null : 3 + Math.sign(k) * (Math.abs(k) + 0.5); return i == null ? wings[k > 0 ? 1 : 0] : line[i]; };
   const put = (r, x, y, o) => Object.assign(r, { x, y, engaged: false, kickBlocker: null, kickBeat: 99, reblocked: true, reblockChance: 0, leapt: false, leapBat: false, diveKick: false, swam: true, kp: Object.assign({ role: 'line', v: 0, free: false, miss: false, wide: 0 }, o) });
-  const A = K.align, jx = () => Math.random() * A.depth * YL, jy = () => (Math.random() * 2 - 1) * A.wob * YD;   // (staggered and a little ragged: further apart, some a step deeper)
-  lineR.forEach((r, i) => { const b = owner(GAPS[i]); put(r, los + K.rushOff * YL + jx(), MID + GAPS[i] * g * A.spread + jy(), { gap: GAPS[i] }); r.kickBlocker = b || null; if (b && !b.kpB.man) b.kpB.man = r; });
-  backR.forEach((r, i) => put(r, los + K.backOff * YL + jx(), MID + (i - 1) * K.backGap * YD * A.spread + jy(), { role: 'back' }));
-  const guard = line[3 + side], gapMan = lineR.find(r => r.kp.gap === side * 0.5);
+  const N = K.neat, neatOf = r => !r ? 1 : Math.max(N.lo, Math.min(N.hi, 1 - N.awr * (r.at && r.at.prs != null ? rz(r, 'prs') : rz(r, 'cov')) + N.wear * Math.min(1, r.wear || 0)));   // (an aware man sits on his mark, a tired one drifts)
+  const A = K.align, jx = r => Math.random() * A.depth * YL * neatOf(r), jy = r => (Math.random() * 2 - 1) * A.wob * YD * neatOf(r);   // (staggered and a little ragged: further apart, some a step deeper)
+  lineR.forEach((r, i) => { const b = owner(GAPS[i]); put(r, los + K.rushOff * YL + jx(r), MID + GAPS[i] * g * A.spread + jy(r), { gap: GAPS[i] }); r.kickBlocker = b || null; if (b && !b.kpB.man) b.kpB.man = r; });
+  backR.forEach((r, i) => put(r, los + K.backOff * YL + jx(r), MID + (i - 1) * K.backGap * YD * A.spread + jy(r), { role: 'back' }));
+  const guard = line[3 + side], gapMan = lineR.find(r => r.kp.gap === side * 0.5), J = K.backJobs, w = wings[side > 0 ? 1 : 0], spare = [];
+  const overMan = (o, wideOK) => {   // a free man outside the wing on the call's side (EDGE / OVER / PAIR's outside man)
+    Object.assign(o.kp, { role: 'over' }); o.x = los + K.rushOff * YL; o.y = MID + side * (4.5 * g + 0.6 * YD); o.kickBlocker = null; o.kickBeat = 0;
+    if (wideOK && w && Math.random() < K.edgeHold * Math.max(0.4, 1 - 0.25 * (rz(o, 'spd') - rz(w, 'str')))) o.kp.wide = K.widen;   // (the wing gets out to him in time: he is run wide)
+  };
   if (call === 'MIDDLE' && guard && gapMan && backR.length >= 2) {
     Object.assign(backR[0].kp, { role: 'push' }); backR[0].kickBlocker = guard; backR[0].y = MID + side * 0.5 * g;   // the second man on the guard, right behind the first
     Object.assign(backR[1].kp, { role: 'jump' }); backR[1].y = MID + side * 0.15 * g; backR[1].x = los + (K.rushOff + 0.9) * YL;   // the jumper, a step behind the line men for his run
-  } else if (call === 'EDGE' && backR.length) {
-    const w = wings[side > 0 ? 1 : 0], o = backR[0];
-    Object.assign(o.kp, { role: 'over' }); o.x = los + K.rushOff * YL; o.y = MID + side * (4.5 * g + 0.6 * YD); o.kickBlocker = null; o.kickBeat = 0;
-    if (w && Math.random() < K.edgeHold * Math.max(0.4, 1 - 0.25 * (rz(o, 'spd') - rz(w, 'str')))) o.kp.wide = K.widen;   // (the wing gets out to him in time: he is run wide)
+    if (backR[2] && Math.random() < J.jump2) { Object.assign(backR[2].kp, { role: 'jump', jy: -side * J.jy * YD, jLate: J.j2Late }); backR[2].y = backR[1].y - side * J.jy * YD; backR[2].x = backR[1].x + 0.5 * YL; }   // (a second jumper beside and behind the first)
+    else spare.push(...backR.slice(2));
+  } else if (call === 'EDGE' && backR.length) { overMan(backR[0], true); spare.push(...backR.slice(1)); }
+  else if (call === 'OVER' && backR.length >= 2) {   // the overload: the center gets a man of his own (no help left to give), a free man outside the wing
+    const c = line[3];
+    overMan(backR[0], true);
+    if (c) { const r = backR[1]; Object.assign(r.kp, { role: 'line', gap: side * 1.0 }); r.x = los + K.rushOff * YL + jx(r); r.y = MID + side * 1.0 * g * A.spread + jy(r); r.kickBlocker = c; c.kpB.man = r; }
+    spare.push(...backR.slice(2));
+  } else if (call === 'PAIR' && backR.length >= 2 && w) {   // the edge pair: one man on the wing's inside shoulder, one bending flat outside him; the wing has to pick one
+    const o = backR[0], ins = backR[1];
+    overMan(o, false);
+    Object.assign(ins.kp, { role: 'line', gap: side * 4.0 }); ins.x = los + K.rushOff * YL + jx(ins); ins.y = MID + side * 4.0 * g * A.spread + jy(ins); ins.kickBlocker = w;
+    ins.kp.pair = Math.random() < K.pairHold ? 'out' : 'in';   // (out = the wing goes to the outside man: he is run wide, the inside man slips him late)
+    if (ins.kp.pair === 'out') o.kp.wide = K.widen;
+    spare.push(...backR.slice(2));
+  } else spare.push(...backR);
+  // the men with no job in the call: a late edge looper round the far side, or the scoop man trailing the rush (no fakes exist: nobody stays back)
+  for (const r of spare) {
+    if (Math.random() < J.loop) { Object.assign(r.kp, { role: 'over', hold: J.loopHold, wide: J.loopWide, loop: true }); r.y = MID - side * (3.6 * g + 0.4 * YD) + jy(r); r.kickBlocker = null; r.kickBeat = 0; }
+    else { Object.assign(r.kp, { role: 'scoop' }); r.y = MID + (Math.random() - 0.5) * 2 * g; }
   }
-  // the matchups: when each man would beat his blocker, set now and fought out after the snap (SAFE: a token rush, nobody wins)
-  for (const r of lineR) {
-    const b = r.kickBlocker; if (!b || call === 'SAFE') continue;
+  // the matchups: when each man would beat his blocker, set now and fought out after the snap
+  for (const r of lineR.concat(backR.filter(r => r.kp.role === 'line'))) {
+    const b = r.kickBlocker; if (!b) continue;
     r.kickBeat = kproShed(r, b, pat); r.kp.quick = r.kickBeat < K.fight.shedMin;
+    if (r.kp.pair === 'out') { r.kickBeat = Math.min(r.kickBeat, K.pairFree[0] + Math.random() * K.pairFree[1]); r.kp.quick = true; }   // (the wing went outside: a punch and he is by him)
   }
-  for (const r of all) { const R = r.kp; R.upOK = Math.random() < (R.role === 'back' ? K.up.back : R.role === 'line' ? K.up.line : 0); R.upLead = K.up.lead[0] + Math.random() * (K.up.lead[1] - K.up.lead[0]); }   // (hands up: who tries it, and each one's own moment)
+  kproSetLook(all, call, side, g);
+  for (const r of all) { const R = r.kp; R.upOK = Math.random() < ((R.role === 'back' || R.role === 'scoop') ? K.up.back : R.role === 'line' ? K.up.line : 0); R.upLead = K.up.lead[0] + Math.random() * (K.up.lead[1] - K.up.lead[0]); }   // (hands up: who tries it, and each one's own moment)
   const lateP = K.late.p * Math.max(0.3, 1 - K.late.hands * rz(qb, 'ctc')) * (pat ? K.late.pat : 1);
   kick.kp = { call, side, guard: call === 'MIDDLE' ? guard : null, line: line.filter(Boolean), wings: wings.filter(Boolean), bp: null, hit: false,
               late: Math.random() < lateP ? K.late.secs[0] + Math.random() * (K.late.secs[1] - K.late.secs[0]) : 0 };
+}
+// the set's looks and a few things a sharp player can read (positions are taped / sent, so plain randomness is fine): the men who are coming set a little closer, the call side
+// crowds, each man gets his own stance, and some have pre-snap life (R.life: a creep inside, a late man still walking in, a one-gap shift). Never inside the snapper's gap, never offside.
+const kproNeat = r => { const N = KPRO.neat; return !r ? 1 : Math.max(N.lo, Math.min(N.hi, 1 - N.awr * (r.at && r.at.prs != null ? rz(r, 'prs') : rz(r, 'cov')) + N.wear * Math.min(1, r.wear || 0))); };   // (an aware man sits on his mark, a tired one drifts)
+function kproSetLook(all, call, side, g) {
+  const K = KPRO, L = K.life, st = K.st;
+  for (const r of all) {
+    const R = r.kp, coming = R.role === 'over' && !R.loop || R.role === 'push' || R.role === 'jump' || (R.role === 'line' && call !== 'MIDDLE' && Math.sign(r.y - MID) === side);
+    if (coming) r.x -= K.lean * YL;
+    if (call !== 'MIDDLE' && Math.sign(r.y - MID) === side && R.role !== 'over') r.y = MID + (r.y - MID) * K.crowd;
+    kproLegal(r, g);
+    const u = Math.random();
+    R.st = R.role === 'line' ? (u < st.four ? 'four' : u < st.four + st.two ? 'two' : 'three') : R.role === 'over' ? (u < 0.5 ? 'three' : 'two') : (u < 0.6 ? 'lb' : 'two');
+    const F = {};
+    if (R.role === 'line' && Math.random() < L.creep) F.creep = { x: r.x, y: r.y - Math.sign(r.y - MID) * L.creepYd * YD };
+    else if (R.role !== 'line' && Math.random() < L.late) { F.late = { x: r.x, y: r.y }; r.x += L.lateYd * YD; }
+    if ((R.role === 'scoop' || R.loop) && Math.random() < L.shift) F.shift = { at: L.shiftAt[0] + Math.random() * (L.shiftAt[1] - L.shiftAt[0]), y: r.y + (Math.random() < 0.5 ? -1 : 1) * L.shiftK * g };
+    R.life = F.creep || F.late || F.shift ? F : null;
+  }
+}
+function kproLegal(r, g) {   // nobody lined up over the snapper, nobody offside (the get-off's own jump is the only offside)
+  const L = KPRO.life, dy = r.y - MID;
+  if (Math.abs(dy) < L.snapGap * g) r.y = MID + (Math.sign(dy) || 1) * L.snapGap * g;
+  r.x = Math.max(los + L.onside * YL, r.x);
+}
+function kproLife(r, t, dt) {   // before the snap (the power / aim meters), t = s since they began
+  const F = r.kp && r.kp.life; if (!F) return;
+  let tx = r.x, ty = r.y, v = 0;
+  if (F.late) { tx = F.late.x; ty = F.late.y; v = KPRO.life.lateYd * YD / KPRO.life.lateSet; }
+  else if (F.shift && !F.shift.done && t >= F.shift.at) { ty = F.shift.y; v = KPRO.life.shiftV * YD; }
+  else if (F.creep) { tx = F.creep.x; ty = F.creep.y; v = KPRO.life.creepV * YD; }
+  const dx = tx - r.x, dy = ty - r.y, d = Math.hypot(dx, dy);
+  if (!v || d < 0.02 * YD) { r.moving = false; if (F.late && d < 0.02 * YD) F.late = null; else if (F.shift && t >= F.shift.at && d < 0.02 * YD) F.shift.done = true; return; }
+  const s = Math.min(d, v * dt);
+  r.x += dx / d * s; r.y += dy / d * s; r.moving = v > 1 * YD; r.face = -1;
+  kproLegal(r, (KPRO.gap + KPRO.split) * YD);
+}
+// the protection reads the front at the snap (where the rushers are, never the call): the wings pinch in vs an edge-heavy side, a guard sinks vs a stacked lane
+function kproRead(P) {
+  const K = KPRO, Rd = K.read, g = (K.gap + K.split) * YD, endY = 3 * g - 0.3 * g;
+  for (const b of P.wings) { const s = Math.sign(b.y - MID), n = kick.rush.filter(r => Math.sign(r.y - MID) === s && Math.abs(r.y - MID) > endY).length; if (n >= Rd.edgeN) b.kpB.pinch = b.kpB.in * Rd.pinch * YD; }
+  for (const b of [P.line[2], P.line[4]]) { if (!b || !b.kpB) continue; const n = kick.rush.filter(r => Math.abs(r.y - b.y) < 0.8 * g && r.x < los + (K.backOff + 0.6) * YL).length; if (n >= Rd.stack) b.kpB.sink = Rd.sink * YL; }
+}
+// --- v0.56: the block QTE (yours, on their FG / PAT). Only when your free rusher can really get a hand on it (projected from where he is and how fast he is going),
+// ONE card asks for the move that fits where he will be: W = leap at the block point (the ball passes there above his head), S = dive onto the path where the ball is still
+// low (between the foot and the block point), A / D = the same layout from off to the side (A = the path is on his left, D = his right). Real time, no slow motion. The right key =
+// he does that move at its own moment (still the physical block: kproHands, hands x KPRO.qte.handK); wrong or late = a whiff. CPU rushers do the same moves by their own timing.
+const kproQteUp = () => !!(kick && kick.kp && kick.kp.qte && kick.kp.qte.ok === null);
+function kproQteKey(r, bp, kickT) {   // null = he can't get there: no card
+  const Q = KPRO.qte, K = KPRO, spot = kproBallSpot(), far = Math.max(YL, POST_X + 7 * YL - spot.x);
+  const range = (FG.range + FG.rangeSpan * (kick.power ?? kick.aiPow ?? 0.8)) * kick.pow, h = (95 + range * 1.8 + GOAL_UP.bar + 60) * S;
+  const zAt = x => kickArcZ(Math.max(0, Math.min(1, (x - spot.x) / far)), h);
+  const sp = Math.max(Math.hypot(r.vx || 0, r.vy || 0), Q.minV * YD), d = Math.hypot(bp.x - r.x, bp.y - r.y) || 1;
+  const at = s => { const a = Math.min(d, sp * Math.max(0, s)); return { x: r.x + (bp.x - r.x) / d * a, y: r.y + (bp.y - r.y) / d * a }; };   // (where he is s from now, running at the block point)
+  const pJ = at(kickT - K.jumpAt - kick.t), pD = at(kickT - K.diveAt - kick.t);
+  let lx = spot.x; for (let k = 1; k <= 60; k++) { const x = spot.x + k * 0.1 * YD; if (zAt(x) > (K.diveZ + K.ballR) * S) break; lx = x; }   // (the ball is still low enough to dive at up to here)
+  const off = Math.abs(pD.y - spot.y) > Q.side * YD;
+  let phys = null, tx = bp.x, ty = bp.y;
+  if (!off && Math.hypot(bp.x - pJ.x, bp.y - pJ.y) <= Q.leapYd * YD && zAt(bp.x) > PICK_HANDS.stand * Q.leapZ) phys = 'KeyW';
+  else if (Math.hypot(lx - pD.x, spot.y - pD.y) <= K.lunge * Q.lungeK * YD) {
+    tx = lx; ty = spot.y;
+    phys = !off ? 'KeyS' : ((MIRROR < 0) === (spot.y < pD.y) ? 'KeyA' : 'KeyD');   // (facing the kicker, the path on his left = A; the picture is mirrored for the other drive direction)
+  }
+  if (!phys) return null;
+  return { phys, code: typeof flipKey === 'function' ? flipKey(phys) : phys, tx, ty };   // (keys arrive flipped by the drive direction: compare with that)
+}
+function kproQte(r, R, bp, kickT, snap, flight) {   // your free rusher, every frame: 'auto' = the card is up / answered (he is committed: the engine runs him), null = yours to steer
+  const K = KPRO, Q = K.qte, P = kick.kp;
+  let q = P.qte;
+  if (!q && snap && !P.qteTried && !r.leapt && !r.action && kick.t >= kickT - Q.show) {
+    const k = kproQteKey(r, bp, kickT);
+    if (k) { P.qteTried = true; q = P.qte = Object.assign(k, { t0: kick.t, end: kickT + Q.after, ok: null }); }   // (not reachable yet: checked again next frame)
+  }
+  if (!q) return null;
+  if (snap) q.end = kickT + Q.after;   // (a slow operation moves it)
+  if (q.ok === null && flight && kick.flight.t > Q.after) { q.ok = false; R.miss = true; popup(r, 'TOO LATE', '#ff9f1c', undefined, true); }
+  if (q.ok && !r.leapt && !r.action && (flight || kick.t >= kickT - (q.phys === 'KeyW' ? K.jumpAt : K.diveAt))) {   // (at the move's own moment: a leap late, a dive a beat earlier)
+    r.leapt = true; r.leapBat = true; r.leapKick = kick; r.engaged = false;
+    if (q.phys === 'KeyW') { r.action = 'jump'; r.act = { t: 0, dur: JUMP_TIME, h: 14 * S }; R.jf = Math.min(K.jumpFwd * YD, Math.max(0, r.x - bp.x)) / JUMP_TIME; }
+    else { r.diveKick = true; startDive(r, q.tx, q.ty, 0.35, Math.min(Math.hypot(q.tx - r.x, q.ty - r.y), K.lunge * Q.lungeK * YD)); }
+  }
+  return 'auto';
+}
+function kproQteAnswer(c) {   // a key-down while the card is up is the answer, never steering (userKickRush; touch: the swipe sends the same keys)
+  const A = { ArrowUp: 'KeyW', ArrowDown: 'KeyS', ArrowLeft: 'KeyA', ArrowRight: 'KeyD' };
+  c = A[c] || c;
+  if (!kproQteUp() || !['KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(c)) return false;
+  const q = kick.kp.qte, r = kick.me;
+  q.ok = c === q.code; q.ans = c;
+  if (q.ok) popup(r, { KeyW: 'LEAPS!', KeyS: 'DIVES!' }[q.phys] || 'LAYS OUT!', '#ffd94a', undefined, true);
+  else { if (r && r.kp) r.kp.miss = true; popup(r, 'WHIFF', '#ff9f1c', undefined, true); }
+  return true;
+}
+// the card: a scrap of paper over your rusher with the key (or the swipe arrow), the move, and a pencil ring running out
+function drawKickQte() {
+  const q = kick && kick.kp && kick.kp.qte, r = kick && kick.me; if (!q || q.ok !== null || !r) return;
+  const z = camZ(), sx = W / 2 + MIRROR * (r.x - camX) * z, sy = viewCenterY() + (r.y - camY) * z - (r.z || 0) * z - 3.4 * YD * z;
+  const left = Math.max(0, Math.min(1, (q.end - kick.t) / Math.max(0.05, q.end - q.t0))), ang = { KeyW: -Math.PI / 2, KeyS: Math.PI / 2, KeyA: Math.PI, KeyD: 0 }[q.phys];
+  const word = { KeyW: 'LEAP', KeyS: 'DIVE' }[q.phys] || 'REACH', s = 1 + 0.06 * Math.sin(kick.t * 30);
+  ctx.save(); ctx.translate(sx, sy); ctx.scale(s, s); ctx.rotate(-0.04);
+  ctx.fillStyle = '#fffdf3'; ctx.strokeStyle = '#2b2b2b'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.roundRect(-30, -30, 60, 60, 6); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = '#ffb000'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(0, 0, 38, -Math.PI / 2, -Math.PI / 2 + left * Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = '#2b2b2b'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if (!TOUCH) { ctx.font = 'bold 26px monospace'; ctx.fillText(q.phys.slice(3), -6, -4); }
+  ctx.save(); ctx.translate(TOUCH ? 0 : 14, -4); ctx.rotate(ang); ctx.lineWidth = 3; ctx.strokeStyle = '#2b2b2b';
+  ctx.beginPath(); ctx.moveTo(TOUCH ? -11 : -5, 0); ctx.lineTo(TOUCH ? 11 : 7, 0); ctx.moveTo(TOUCH ? 4 : 2, -6); ctx.lineTo(TOUCH ? 11 : 7, 0); ctx.lineTo(TOUCH ? 4 : 2, 6); ctx.stroke(); ctx.restore();
+  ctx.font = 'bold 11px monospace'; ctx.fillText(TOUCH ? 'SWIPE ' + word : word, 0, 19);
+  ctx.restore();
 }
 const kproBallSpot = () => ({ x: qb.x + 12 * S, y: qb.y });
 function kproPoint() { const s = kproBallSpot(); return { x: s.x + KPRO.point * YL, y: s.y }; }
@@ -844,7 +1074,8 @@ function kproHands(dt) {
     const p = (h.x - f.fx) / dx;
     if (!(p > p0 - 1e-6 && p <= p1) && !(f.t === 0 && p >= -0.02 && p <= p1)) continue;   // (the ball passes his hands this frame; on the first frame, hands right on the spot count)
     const pp = Math.max(0, p), by = f.fy + (f.ty - f.fy) * pp, bz = kickArcZ(pp, f.h);
-    if (Math.abs(by - h.y) <= KPRO.hand * YD && bz <= h.z + KPRO.ballR * S) { kproBlocked(r, { x: f.fx + dx * pp, y: by, z: Math.max(4 * S, bz) }); return true; }
+    const hk = r === kick.me && kick.kp && kick.kp.qte && kick.kp.qte.ok ? KPRO.qte.handK : 1;   // (your block card answered right: a little more hand)
+    if (Math.abs(by - h.y) <= KPRO.hand * hk * YD && bz <= h.z + KPRO.ballR * S) { kproBlocked(r, { x: f.fx + dx * pp, y: by, z: Math.max(4 * S, bz) }); return true; }
   }
   return false;
 }
@@ -856,16 +1087,34 @@ function kproBlocked(r, at) {   // off his hands: the ball pops loose where he m
   qb.holding = false; rb.kickSwing = false;
   tackleSfx(true); impacts.push({ x: at.x, y: at.y - 10 * S, t: 0 }); shakeKick = 14;
   popup(r, 'BLOCKED', '#ff6b6b'); celebNote('block', r);
-  Object.assign(ball, { x: at.x, y: at.y, z: at.z, loose: true, live: true, fumble: true, blocked: true, inAir: false, tumbling: null,
-                        vx: (Math.random() - 0.45) * 5 * YD, vy: (Math.random() - 0.5) * 7 * YD, vz: 90 * S, spin: (Math.random() - 0.5) * 24 });
+  // off the hands by how they met it: a leap's hands = up and back toward the kicker, a dive = low and skidding on along his way, arms up = the old pop
+  const kind = r.action === 'jump' ? 'high' : r.action === 'dive' ? 'low' : 'arms', dv = Math.sign(r.vy || 0) || (Math.random() < 0.5 ? -1 : 1);
+  const v = kind === 'high' ? { vx: -(1 + Math.random() * 3) * YD, vy: (Math.random() - 0.5) * 4 * YD, vz: 150 * S }
+          : kind === 'low' ? { vx: (Math.random() * 4 - 1) * YD, vy: dv * (2 + Math.random() * 3) * YD, vz: 35 * S }
+          : { vx: (Math.random() - 0.45) * 5 * YD, vy: (Math.random() - 0.5) * 7 * YD, vz: 90 * S };
+  Object.assign(ball, { x: at.x, y: at.y, z: at.z, loose: true, live: true, fumble: true, blocked: true, inAir: false, tumbling: null, ...v, spin: (Math.random() - 0.5) * (kind === 'high' ? 34 : 24) });
   state = 'fumble'; fumbleT = clock; msg = 'BLOCKED!'; kick = null; kproLetGo();
+  kproBlockReact(r);
+}
+// a block, the kicking side's reaction (looks only: the reel styles, no missed-tackle stat): the holder flinches back off his knee, the kicker pulls up and stumbles
+function kproBlockReact(r) {
+  reelQuiet = true;
+  try {
+    if (qb && !qb.action || (qb && qb.action === 'kneel')) { qb.holding = false; startReel(qb, 'truckStagger', r, 1.3, 0.7); }
+    if (rb && (!rb.action || rb.action === 'kneel')) startReel(rb, 'bounceOff', r, 1.2, 0.8);
+  } finally { reelQuiet = false; }
 }
 function kproTick(dt) {   // every frame of a placekick (true = it was blocked: the kick is over)
   const K = KPRO, P = kick.kp, snap = kick.phase === 'snap', flight = kick.phase === 'flight', bp = P.bp = kproPoint(), me = defLive() ? kick.me : null;
   if (P.flag) return kproFlagTick(dt);
   if (snap && !P.go) {   // the snap: everyone's get-off; rarely somebody guessed early
-    const off = kproGetOff(kick.rush, P, me, P.call === 'SAFE' || tut ? 0 : K.off.side * (patMode === 'kick' ? K.off.sidePat : 1));
+    const off = kproGetOff(kick.rush, P, me, tut ? 0 : K.off.side * (patMode === 'kick' ? K.off.sidePat : 1));
     if (off) { P.flag = { r: off, t: 0 }; kick.phase = 'flag'; kick.t = 0; popup(off, 'OFFSIDE', '#ffd23f'); whistle(); msg = 'FLAG  -  offside, defense'; return true; }
+    kproRead(P);
+  }
+  if (snap && P.late > 0 && kick.t >= KICK_SNAP && !P.effort) {   // the rush sees the bobble: one second effort from everyone still held
+    P.effort = true; const E = K.read.effort;
+    for (const r of kick.rush) if (r !== me && r.kickBeat < 90 && r.kickBeat > kick.t && !r.kp.quick) r.kickBeat = Math.max(kick.t, r.kickBeat - (E[0] + Math.random() * (E[1] - E[0])));
   }
   if (snap && P.late > 0 && kick.t >= KICK_SNAP) {   // a slow operation: the holder is still getting it down, the kicker waits (the kick's own clock holds; every rusher's release time moves with it)
     const d = Math.min(P.late, dt); kick.t -= d; P.late -= d; P.wasLate = true;
@@ -875,7 +1124,9 @@ function kproTick(dt) {   // every frame of a placekick (true = it was blocked: 
   // (its own mover, kproGo: the shared steer() caps a man by his role, and a kick rush is a short sprint. thru = run through the spot, no slowing for it)
   const go = (p, tx, ty, top, acc, thru) => kproGo(p, tx, ty, top, acc, dt, thru);
   if (!snap && !flight) {   // before the snap nobody moves (you may shift your own rusher along the line)
-    for (const r of kick.rush) { r.moving = false; r.face = -1; r.vx = r.vy = 0; if (r === me && (kick.phase === 'power' || kick.phase === 'aim')) kickPresnapMove(r, dt); }
+    const live = kick.phase === 'power' || kick.phase === 'aim';
+    if (live) P.pre = (P.pre || 0) + dt;
+    for (const r of kick.rush) { r.moving = false; r.face = -1; r.vx = r.vy = 0; if (r === me && live) kickPresnapMove(r, dt); else if (live) kproLife(r, P.pre, dt); }
     for (const b of [...P.line, ...P.wings]) b.vx = b.vy = 0;   // (set: no speed left over from the jog on)
     return false;
   }
@@ -887,14 +1138,15 @@ function kproTick(dt) {   // every frame of a placekick (true = it was blocked: 
     const drv = man && snap && man.engaged ? (man.kp.v || 0) * (kick.rush.some(r => r.kickBlocker === b && r.kp.role === 'push' && r.engaged) ? K.dbl : 1) : 0;   // (bull-rushed: he gives ground, more with a second man on him)
     if (drv) B.back = Math.min(K.driveMax, B.back + drv * dt);
     const s1 = snap ? Math.min(1, kick.t / K.ks.step) : 1, s2 = snap ? Math.max(0, Math.min(1, (kick.t - K.ks.step) / K.ks.give)) : 1;   // (the kick-slide: the step inside, then ground given as one wave)
-    let ty = B.y0 + B.in * K.stepIn * YD * s1;
+    let ty = B.y0 + B.in * K.stepIn * YD * s1 + (B.pinch || 0) * s1;   // (+ the pinch: an edge-heavy front)
     if (man) { B.ry = B.ry == null ? man.y : B.ry + (man.y - B.ry) * Math.min(1, dt * K.dyn.follow); ty = Math.max(B.y0 - K.slide * YD, Math.min(B.y0 + K.slide * YD, ty + (B.ry - ty) * 0.6)); }   // (slides with his man, a beat behind him, inside his own slide)
-    else if (!stun && snap && P.call !== 'SAFE' && kick.t > K.fight.helpAfter) {   // nobody on him: a hand on the man next door who is about to win (the line's passHelp)
+    else if (!stun && snap && kick.t > K.fight.helpAfter) {   // nobody on him: a hand on the man next door who is about to win (the line's passHelp)
       const h = kick.rush.filter(r => r.engaged && !r.kp.free && !r.action && r.kickBeat < 90 && r.kickBlocker !== b && Math.abs(r.y - B.y0) < K.fight.helpYd * YD && r.kickBeat - kick.t < PRO.help.losing).sort((p, q) => p.kickBeat - q.kickBeat)[0];
+      if (h && !B.helping) { B.helping = true; for (const o of kick.rush) if (o.kp.role === 'over' && !o.kp.soft && Math.sign(o.y - MID) === Math.sign(b.y - MID)) { o.kp.soft = true; o.kp.wide = (o.kp.wide || 0) * K.read.softWide; } }   // (he left his own gap: the man outside gets a cleaner lane)
       if (h) { if (!h.kp.helped && !h.kp.quick) { h.kp.helped = true; h.kickBeat += PRO.help.hold; } ty = Math.max(B.y0 - K.slide * YD, Math.min(B.y0 + K.slide * YD, ty + (h.y - ty) * 0.6)); }
     }
-    if (B.wing) { const o = kick.rush.find(r => r.kp.role === 'over' && r.kp.wide && Math.sign(r.y - MID) === Math.sign(b.y - MID)); if (o && kick.t > K.wingPunch) ty = B.y0 - B.in * K.widen * 0.6 * YD; }   // (punched the inside man: now out to widen the outside one)
-    go(b, B.x0 - K.set * YL * s2 * (2 - s2) - B.back * YD, ty, K.anchor * YD, 20 * YD); kproShove(b, B, dt);
+    if (B.wing && !B.pinch) { const o = kick.rush.find(r => r.kp.role === 'over' && r.kp.wide && Math.sign(r.y - MID) === Math.sign(b.y - MID)); if (o && kick.t > K.wingPunch) ty = B.y0 - B.in * K.widen * 0.6 * YD; }   // (punched the inside man: now out to widen the outside one)
+    go(b, B.x0 - K.set * YL * s2 * (2 - s2) - B.back * YD - (B.sink || 0) * s2, ty, K.anchor * YD, 20 * YD); kproShove(b, B, dt);   // (- the sink: a stacked lane)
     b.face = 1; b.engaged = !!man && !flight && Math.hypot(man.x - b.x, man.y - b.y) < 1.4 * YD;
     b.moving = Math.hypot(b.vx || 0, b.vy || 0) > 0.4 * YD;
   }
@@ -909,22 +1161,28 @@ function kproTick(dt) {   // every frame of a placekick (true = it was blocked: 
       if (nb) { if (b.kpB) b.kpB.stun = kick.t + K.fight.stun; r.kickBlocker = nb; r.kickBeat = kick.t + K.fight.reHold[0] + Math.random() * K.fight.reHold[1]; R.engAt = null; R.v = 0; }
       else { R.free = true; r.engaged = false; if (r !== me) kproWon(r, b, bp, kick.t); }
     }
-    if (R.role === 'back' || (P.call === 'SAFE' && R.role !== 'line')) {   // watching for the fake / the short kick: a step up, hands ready
+    if (R.role === 'back') {   // (no job: a step up, hands ready. Every call gives the men behind the line a job now; kept as a fallback)
       go(r, los + (K.backOff - 0.4) * YL, r.y, 2.5 * YD, 8 * YD); r.face = -1; R.up = kproUp(r, R, bp, kickT, flight); continue;
     }
+    if (R.role === 'scoop') {   // the scoop man: trails the pile toward the block point, eyes on the ball, ready for anything that comes off a hand
+      const J = K.backJobs, lead = kick.rush.filter(o => o.kp.role === 'line').reduce((m, o) => Math.min(m, o.x), r.x);
+      go(r, Math.max(lead + J.scoopBack * YD, bp.x + 1.5 * YD), r.y + (bp.y - r.y) * 0.3, J.scoopV * YD, 12 * YD); r.face = -1; R.up = kproUp(r, R, bp, kickT, flight); continue;
+    }
+    if (snap && R.hold && kick.t < (R.rt || 0) + R.hold) { r.vx = r.vy = 0; r.moving = false; r.face = -1; continue; }   // (the looper: lets the rush go first)
     if (R.role === 'jump') {   // MIDDLE: through the gap behind the two men driving the guard, up with both hands as the ball is struck
       const gd = P.guard, gx = gd ? gd.x : los;
       if (flight || R.miss) { R.miss = true; go(r, r.x - 0.4 * YD, r.y, 2 * YD, 10 * YD); continue; }
-      if (kick.t >= kickT - K.jumpAt && !r.leapt) { r.leapt = true; r.leapBat = true; r.leapKick = kick; r.action = 'jump'; r.act = { t: 0, dur: JUMP_TIME, h: 14 * S }; R.jf = K.jumpFwd * YD / JUMP_TIME; continue; }
-      go(r, gx + K.jumpBack * YD, MID + P.side * 0.15 * K.gap * YD, top, K.accel * YD); r.face = -1; continue;   // (tight to the inside shoulder of the pile, jumpBack yd behind the guard)
+      if (kick.t >= kickT - K.jumpAt + (R.jLate || 0) && !r.leapt) { r.leapt = true; r.leapBat = true; r.leapKick = kick; r.action = 'jump'; r.act = { t: 0, dur: JUMP_TIME, h: 14 * S }; R.jf = K.jumpFwd * YD / JUMP_TIME; continue; }
+      go(r, gx + K.jumpBack * YD + (R.jLate ? 0.5 * YD : 0), MID + P.side * 0.15 * K.gap * YD + (R.jy || 0), top, K.accel * YD); r.face = -1; continue;   // (tight to the inside shoulder of the pile, jumpBack yd behind the guard)
     }
     if (R.free || R.role === 'over') {   // through (or the overload's free man): flat to the block point, a layout as the ball is struck, then off to the side
-      if (r === me) { const d = defDir(); go(r, d ? r.x + d.x * 10 * YD : r.x, d ? r.y + d.y * 10 * YD : r.y, (r.burst ? 15 : 9.2) * YD, 30 * YD, !!d); continue; }   // (yours: where you point him; R / V to go up or lay out)
+      if (r === me && !(snap || flight ? kproQte(r, R, bp, kickT, snap, flight) : null)) { const d = defDir(); go(r, d ? r.x + d.x * 10 * YD : r.x, d ? r.y + d.y * 10 * YD : r.y, (r.burst ? 15 : 9.2) * YD, 30 * YD, !!d); continue; }   // (yours: where you point him; R / V to go up or lay out; the block card commits him: kproQte)
+      if (r === me && r.action) continue;
       const past = r.x < bp.x - 0.2 * YD || flight || R.miss;
       if (past) { R.miss = true; go(r, bp.x - 2 * YD, bp.y + (Math.sign(r.y - bp.y) || 1) * K.peel * YD, Math.min(top, Math.max(AFTER_KICK.cap * YD, Math.hypot(r.vx || 0, r.vy || 0))), AFTER_KICK.accel * YD); }
       else {
         const d = Math.hypot(bp.x - r.x, bp.y - r.y);
-        if (snap && !r.leapt && kick.t >= kickT - K.diveAt && d <= K.lunge * YD) { r.leapt = true; r.diveKick = true; r.leapBat = true; r.leapKick = kick; startDive(r, bp.x, bp.y, 0.35, Math.min(d, K.lunge * YD)); continue; }
+        if (snap && r !== me && !r.leapt && kick.t >= kickT - K.diveAt && d <= K.lunge * YD) { r.leapt = true; r.diveKick = true; r.leapBat = true; r.leapKick = kick; startDive(r, bp.x, bp.y, 0.35, Math.min(d, K.lunge * YD)); continue; }
         // (run wide by the wing: around a point outside him first, then flat)
         const wideY = R.wide && r.x > los - 1.2 * YD ? bp.y + Math.sign(r.y - bp.y) * (Math.abs(r.y - bp.y) + R.wide * YD) : null;
         go(r, wideY != null ? los - 1.6 * YD : bp.x, wideY != null ? wideY : bp.y, top, K.accel * YD, true);
@@ -935,15 +1193,28 @@ function kproTick(dt) {   // every frame of a placekick (true = it was blocked: 
     // held: into his blocker (or onto the back of the man ahead of him), locked up and working; arms up as the ball is struck
     const tgt = R.role === 'push' ? kick.rush.find(o => o.kp.role === 'line' && o.kickBlocker === b) || b : b;
     if (!tgt) { go(r, bp.x, bp.y, top, K.accel * YD); continue; }
+    if (flight && r !== me && R.role === 'line' && kick.flight.t > K.read.peelAt) {   // stoned to the end: off his man, toward the ball's path for anything that comes loose
+      r.engaged = false; go(r, bp.x + 1.5 * YD, bp.y + (r.y - bp.y) * 0.5, K.read.peelV * YD, 10 * YD); r.face = -1; R.up = kproUp(r, R, bp, kickT, flight); continue;
+    }
     const off = (R.role === 'push' ? 0.75 : 0.85) * YD;
     go(r, tgt.x + off, tgt.y + (R.role === 'push' ? 0 : R.gy != null ? R.gy : (r.y - tgt.y) * 0.35), flight ? 2 * YD : K.fire * YD * bk, K.fireAcc * YD); kproShove(r, R, dt);
     r.engaged = !flight && Math.hypot(r.x - tgt.x, r.y - tgt.y) < 1.4 * YD; r.face = -1;
-    if (r.engaged && snap && b && b.kpB && P.call !== 'SAFE') {
+    if (r.engaged && snap && b && b.kpB) {
       if (R.role === 'push') r.bullFx = 0.15;   // (the second man: shoving the pile)
       else { const add = kproFight(r, b, kick.t, r === me) + (r === me ? 0 : kproRework(r, b, kick.t)); if (add && r.kickBeat < 90 && !R.quick) r.kickBeat = Math.max(K.fight.shedMin, r.kickBeat + add); }
     }
     R.up = kproUp(r, R, bp, kickT, flight);
-    if (r !== me && R.role === 'line' && !r.leapt && b && P.call !== 'SAFE' && kproLineJump(r, R, bp, snap ? kickT - kick.t : -kick.flight.t)) continue;   // (can't get through: up with the kick from where he is)
+    if (r === me && R.role === 'line' && !r.leapt && b) {   // yours, still held: the same leap at the line the computer's men take (kproLineJump), on the block card (W) instead of its dice
+      const left = snap ? kickT - kick.t : -kick.flight.t;
+      if (!P.qte && !P.qteTried && snap && left <= K.qte.show && Math.abs(r.y - bp.y) <= K.lj.lane * YD) { P.qteTried = true; P.qte = { phys: 'KeyW', code: 'KeyW', lj: true, t0: kick.t, end: kickT + K.qte.after, ok: null }; }
+      const q = P.qte;
+      if (q && q.lj) {
+        if (snap) q.end = kickT + K.qte.after;
+        if (q.ok === null && flight && kick.flight.t > K.qte.after) { q.ok = false; popup(r, 'TOO LATE', '#ff9f1c', undefined, true); }
+        if (q.ok) { R.ljOK = true; if (kproLineJump(r, R, bp, left)) continue; }
+      }
+    }
+    if (r !== me && R.role === 'line' && !r.leapt && b && kproLineJump(r, R, bp, snap ? kickT - kick.t : -kick.flight.t)) continue;   // (can't get through: up with the kick from where he is)
     if (r === me && snap) kickRushMove(r, bp, dt);   // (yours: bull / swim at him to get through sooner)
   }
   for (const r of kick.rush) r.armsUp = !!(r.kp && r.kp.up);   // (a plain flag: taped for replays, sent online; drawPlayer puts both arms up)
@@ -960,7 +1231,7 @@ function kproTick(dt) {   // every frame of a placekick (true = it was blocked: 
 //   a block: hands on the ball as it leaves the foot (kproPuntHands). Nobody touches the punter: a man who misses runs on past.
 function kproSetPunt(k) {
   const K = KPRO, T = K.pt, ps = k.punt, kicker = k.kicker, R = k.front.slice(0, 8);
-  { const A = K.align, f = A.punt; for (const q of R) { const away = Math.sign(q.x - ps.los) || 1; q.x += away * Math.random() * A.depth * f * YL; q.y = MID + (q.y - MID) * (1 + (A.spread - 1) * f) + (Math.random() * 2 - 1) * A.wob * f * YD; q.y = Math.max(Y_MIN, Math.min(Y_MAX, q.y)); } }   // (the punt rush: staggered and ragged too)
+  { const A = K.align, f = A.punt; for (const q of R) { const away = Math.sign(q.x - ps.los) || 1, nk = kproNeat(q); q.x += away * Math.random() * A.depth * f * YL * nk; q.y = MID + (q.y - MID) * (1 + (A.spread - 1) * f) + (Math.random() * 2 - 1) * A.wob * f * YD * nk; q.y = Math.max(Y_MIN, Math.min(Y_MAX, q.y)); } }   // (the punt rush: staggered and ragged too, by awareness / wear)
   const line = k.cover.filter(d => d !== kicker && d.lane >= 1 && d.lane <= 7), pp = k.cover.find(d => d !== kicker && d.lane === 8) || null;
   const deep = Math.max(0, Math.min(1, (ps.los / YL - 75) / 20));   // (the punter backed up near his own goal line: more reason to come after it)
   const call = Math.random() < T.calls.BLOCK + T.backedUp * deep ? 'BLOCK' : 'RETURN';
@@ -989,7 +1260,24 @@ function kproSetPunt(k) {
     if (call === 'RETURN') { o.out = 'ride'; continue; }   // (not coming: hands on, staying with him so he is late downfield)
     o.at = kproShed(q, o.blk, false); o.quick = o.at < K.fight.shedMin; if (!o.quick) o.at = Math.max(o.at, T.hold);   // (when he would beat his man: fought out after the snap, kproFight)
   }
-  k.kp = { call, line, pp, R, t: 0, ppMan: null, ppTried: new Set(), done: false, late: Math.random() < T.late.p ? T.late.secs[0] + Math.random() * (T.late.secs[1] - T.late.secs[0]) : 0 };
+  // v0.56: a RETURN call has a wall side (and maybe a vise on one gunner); the set shows a little of it (BLOCK rushers lean in, droppers sit deeper); every man his stance
+  let wall = null, vise = null;
+  if (call === 'RETURN') {
+    let u = Math.random() * (T.wallW[0] + T.wallW[-1] + T.wallW[1]); wall = (u -= T.wallW[0]) < 0 ? 0 : (u -= T.wallW[-1]) < 0 ? -1 : 1;
+    if (Math.random() < T.vise) {
+      const guns = k.cover.filter(d => d.lane === 0 || d.lane === 9), g = guns.find(d => wall && Math.sign(d.y - MID) === wall) || guns[Math.random() < 0.5 ? 0 : 1] || null;
+      const q = g && R.filter(x => x.kp.role === 'drop').sort((a, c) => Math.abs(a.y - g.y) - Math.abs(c.y - g.y))[0];
+      if (q) { q.kp.role = 'vise'; q.kp.gun = g; vise = { g, q }; }
+    }
+  }
+  for (const q of R) {
+    const o = q.kp, away = Math.sign(q.x - ps.los) || 1;
+    if (call === 'BLOCK') q.x = ps.los + away * Math.max(0.55 * YL, Math.abs(q.x - ps.los) - T.lean * YL);   // (closer, never across the ball)
+    else if (o.role === 'drop') q.x += away * T.dropBack * YL;
+    o.st = call === 'BLOCK' ? (Math.random() < 0.5 ? 'three' : 'four') : o.role === 'rush' ? 'three' : 'two';
+  }
+  if (pp && pp.kpB) { const n = R.reduce((a, q) => a + (q.kp.role === 'rush' ? Math.sign(q.y - MID) : 0), 0); if (n) { pp.kpB.y0 += Math.sign(n) * T.ppShift * YD; pp.y = pp.kpB.y0; } }   // (the protector counts the rush: he cheats toward the heavier side)
+  k.kp = { call, wall, vise, line, pp, R, t: 0, ppMan: null, ppTried: new Set(), done: false, late: Math.random() < T.late.p ? T.late.secs[0] + Math.random() * (T.late.secs[1] - T.late.secs[0]) : 0 };
 }
 function kproGo(p, tx, ty, top, acc, dt, thru) {   // the engine's mover (see kproTick): velocity eased toward the spot, real speed for the legs
   const x0 = p.x, y0 = p.y, dx = tx - p.x, dy = ty - p.y, d = Math.hypot(dx, dy), want = d < 1 ? 0 : thru ? top : Math.min(top, Math.sqrt(2 * acc * d) + 0.15 * top);
@@ -1012,7 +1300,8 @@ function kproPuntTick(k, dt, t0, runUp) {
     const o = q.kp, b = o.blk, bk = kproBurst(o, P.t), top = Math.min(10.5 * YD, q.top || K.top * YD) * bk;
     q.face = 1;
     if (o.role !== 'drop' && P.t < (o.rt || 0)) { q.vx = q.vy = 0; q.moving = false; continue; }   // (not off the ball yet)
-    if (o.role === 'drop') { kproGo(q, ps.los - T.dropYd * YL, q.y + (MID - q.y) * 0.15, T.dropV * YD, 10 * YD, dt); q.engaged = false; continue; }   // (RETURN: back to set up the return)
+    if (o.role === 'vise' && o.gun && !o.gun.action) { const g = o.gun, s = Math.sign(g.y - MID) || 1; kproGo(q, g.x - 0.9 * YD, g.y + s * 0.7 * YD, 7.5 * YD, 16 * YD, dt); q.engaged = Math.hypot(q.x - g.x, q.y - g.y) < 1.6 * YD; q.face = 1; continue; }   // (the vise: the second man on that gunner, on his outside shoulder)
+    if (o.role === 'drop' || o.role === 'vise') { kproGo(q, ps.los - T.dropYd * YL, q.y + (MID + (P.wall || 0) * T.wallY * YD - q.y) * (P.wall ? 0.3 : 0.15), T.dropV * YD, 10 * YD, dt); q.engaged = false; continue; }   // (RETURN: back to set up the return, toward the called wall)
     if (!o.free && b && o.out !== 'ride' && P.t >= o.at) {   // off his block: the next man on the line may pick him up once, else he is through
       const nb = !o.quick && !o.reTried ? kproReblock(q, b, bp, P.line, P.t) : null;
       o.reTried = true;
@@ -1097,6 +1386,7 @@ function kproPuntBlocked(k, q, at) {   // off his hands: a live ball where he me
 // the punt is away: a blocker who was ridden gets out late (RETURN's whole point), everyone else is already heading for his lane
 function kproPuntAfter(k) {
   const P = k.kp; if (!P || P.done) return; P.done = true;
+  const H = KPRO.pt.hurry; k.hurry = !!(P.bp && P.R.some(q => q.kp.free && !q.kp.held && !q.kp.miss && Math.hypot(q.x - P.bp.x, q.y - P.bp.y) < H.yd * YD));   // (a free man bearing down on him as he kicks: a hurried punt)
   for (const b of P.line) { b.kpRideT = b.kpRide ? KPRO.pt.ride[0] + Math.random() * (KPRO.pt.ride[1] - KPRO.pt.ride[0]) : 0; b.kpRide = false; b.engaged = false; }   // (kpRideT: added to his release delay, d.go, when the coverage starts)
   if (P.pp) P.pp.engaged = false;
   for (const q of P.R) q.engaged = false;
@@ -1126,12 +1416,13 @@ function stBanner(title, lines) {
 function stSimFG() {
   const xp = patMode === 'kick', K = rb, d = Math.round(kick.dist), blockP = KPRO.on ? (xp ? KPRO.sim.pat : KPRO.sim.fg) : 0;
   const blocked = Math.random() < blockP, good = !blocked && (kick.aiGood != null ? !!kick.aiGood : Math.random() < kickOdds(K, kick.dist - 1.6, xp));
+  const kick0dk = kick.aiDoink || null;   // (a pre-rolled doink: said in the text, nothing else changes)
   kick = null; rec = null; stSimming = true;
   if (!xp) game.secs = Math.max(0, game.secs - lateS(ST_SIM.fgSecs));
   try {
     if (blocked) endPlay(xp ? 'Blocked kick  -  the extra point is BLOCKED' : 'Blocked kick  -  FIELD GOAL BLOCKED', 0, 'fgmiss');
     else if (good) endPlay('FIELD GOAL IS GOOD!  -  3 points', 0, 'fg');
-    else endPlay(`FIELD GOAL NO GOOD  -  ${Math.random() < 0.5 ? 'wide left' : 'wide right'}`, 0, 'fgmiss');
+    else endPlay(`FIELD GOAL NO GOOD  -  ${kick0dk ? kick0dk.reason.toLowerCase() : Math.random() < DOINK.simText ? 'off the upright' : Math.random() < 0.5 ? 'wide left' : 'wide right'}`, 0, 'fgmiss');
   } finally { stSimming = false; }
   const nm = K.name || 'the kicker';
   showBanner(blocked ? 'BLOCKED!' : `${xp ? 'EXTRA POINT' : 'FIELD GOAL'} ${good ? 'GOOD' : 'NO GOOD'}`, good ? '#7dff8a' : '#ff2a2a', good ? '#0a3a14' : '#3a0000', xp ? nm : `${d} yards  -  ${nm}`);
@@ -1185,18 +1476,24 @@ function kickoffLineup(k) {
   rb.x = k.kickerX = tee - (on ? ONSIDE_K.step : 8) * YL; rb.y = MID; rb.face = 1;
   Object.assign(rb, { action: null, act: null, moving: false, kickSwing: false, kickWind: 0, kickK: 0 });
   const byHands = [...cover].sort((a, b) => rz(b, 'ctc') - rz(a, 'ctc'));
+  const OR = ONSIDE_R; k.osOver = on && Math.random() < OR.over ? (Math.random() < 0.5 ? -1 : 1) : 0;   // (v0.56: balanced, or one side overloaded; the hands team shifts with it)
+  const bySpd = [...cover].sort((a, b) => (b.top || 0) - (a.top || 0));
   cover.forEach((p, i) => {
     Object.assign(p, clean, { face: 1 });
+    p.osRole = null; p.osSlow = 0; p.osHitDone = false;
     if (!on) { p.x = tee + 10 * YL; p.y = MID + (i - (cover.length - 1) / 2) * FW * 0.86 / (cover.length - 1); return; }
     const j = byHands.indexOf(p), side = j % 2 ? 1 : -1, n = Math.floor(j / 2);   // (five a side)
-    p.x = tee - (0.35 + (n % 2) * 0.3) * YL; p.y = MID + side * (1.6 + n * 2.3) * ACROSS;
+    p.x = tee - (0.35 + (n % 2) * 0.3) * YL; p.y = MID + side * (1.6 + n * 2.3) * ACROSS + k.osOver * OR.overShift * FW;
+    p.osRole = j === cover.length - 1 ? 'safe' : bySpd.indexOf(p) < OR.lead && j > 1 ? 'lead' : 'ball';   // (the worst hands stays back, the fastest go hit the front line, the best hands go for the ball)
   });
   them.forEach((d, i) => {
     Object.assign(d, clean, { blitz: false, man: null, tackling: false, kickBlocker: null, face: -1 });
     if (on) {
-      if (i < 5) { d.x = tee + ONSIDE_K.line * YL; d.y = MID + (i - 2) * FW * 0.17; }
-      else if (i < 9) { d.x = tee + (ONSIDE_K.line + 4) * YL; d.y = MID + (i - 6.5) * FW * 0.2; }
-      else { d.x = tee + 38 * YL; d.y = MID + (i === 9 ? -1 : 1) * FW * 0.14; }
+      const sh = k.osOver * ONSIDE_R.overShift * FW * 0.8;
+      d.osSlow = 0; d.osHitDone = false;
+      if (i < 5) { d.x = tee + ONSIDE_K.line * YL; d.y = MID + (i - 2) * FW * 0.17 + sh; d.osRole = 'hands'; }
+      else if (i < 9) { d.x = tee + (ONSIDE_K.line + 4) * YL; d.y = MID + (i - 6.5) * FW * 0.2 + sh; d.osRole = 'block'; }
+      else { d.x = tee + 38 * YL; d.y = MID + (i === 9 ? -1 : 1) * FW * 0.14; d.osRole = 'deep'; }
       return;
     }
     // (one returner deep; the other ten across the line 10 yards from the kicking team's ten, just like when you return one)
@@ -1216,6 +1513,16 @@ const ONSIDE_K = { meter: 0.6, first: 0.7, highOdds: 0.4,   // meter = x the acc
  max: 32, legal: 10, ideal: [11, 17], step: 2.5, line: 10.5, runT: 0.5, flightT: 1.05, scrumT: 1.5, aim: 0.3, wobble: 0.25, high: 70,
                    base: 0.12, perCtc: 0.035, perAcc: 0.03, max2: 0.3, rate: 10, fumble: 0.12, hold: 0.8, bounce: 0.55, rollT: 1, diveR: 2.5, waitT: 2.5,
   holdThem: 0.45, holdCov: 0.65, chanceRef: 0.2, hiHold: 0.8, standK: 0.7, hopPen: 0.5, touch: 0.75, standZ: 16, diveZ: 9, jumpAt: 0.85, jumpReach: 1.4, fail: 1.1, squirt: [2.5, 6], fric: 2.6, hop: 26, lead: 0.3, giveUp: 6, outT: 0.5 };   // the physical scramble (updateOnsideKick / onsideTouch): the first hands on it get a go at holding on = holdThem (receivers) or holdCov x onsideChance / chanceRef (kickers: placement, hands, accuracy), x hiHold on a jump ball, x standK for a standing scoop, less when it's hopping high (hopPen); touch = yd hands reach; standZ / diveZ = sprite height a standing / diving man can play it at; jumpAt = share of a pop-up's flight before the jumpers can touch it; fail = s a man who bobbled it can't touch it again; squirt = yd/s off a bobble; fric = the ball's slowdown per s; hop = first hop height; lead = s ahead men aim; giveUp = s, then the nearest man falls on it; outT = s before an out-of-bounds ball is whistled   // diveR = yd: the recovery dive starts only this close (he runs there first, no long lunges); waitT = s after which the nearest man is close enough anyway   // bounce = first bounce as a share of the distance, rollT = s it hops on to where it rests   // fumble = odds the man who dives on it loses it; hold = s he's down cradling it before the whistle
+// v0.56 onside roles / kick types / endings (both teams: the same code whoever kicks). Kicking side: lead = men who arrive as the ball does and hit a hands-team man
+// (legal only once it has gone 10), ball = go for it, safe = the one who stays back; receiving side: hands = the front line attacks it, block = the second line takes on the
+// lead men and cleans up, deep = stays back unless it comes near (deepYd). hit = s a man who was hit can't play it, at hitK x speed; over = odds the kicking side overloads one side
+// (shift x the field width; the hands team shifts with it). Types: drive (power over need by driveOver: a hard low ball at a front-line man, T x driveT, h x driveH, held x driveHold off his chest),
+// dribble (power within dribbleIn of need: a slow roller, T x dribT, h x dribH, roll x dribRoll), else the bounce / the pop-up (hi). Endings: pile = pileN+ men within pileYd = a pile, the
+// reveal pileHold s later; scoop = a receiving man on his feet with no kicker within scoopRoom yd picks it up and runs (a live return); squirtSpread = rad off the blend of the ball's way
+// (squirtBall) and the toucher's momentum
+const ONSIDE_R = { lead: 4, safeBack: 3, hit: 0.55, hitK: 0.35, hitYd: 1.3, deepYd: 6, over: 0.5, overShift: 0.06,
+  driveOver: 0.25, driveT: 0.55, driveH: 0.4, driveHold: 0.6, dribbleIn: 0.08, dribT: 1.5, dribH: 0.15, dribRoll: 0.6,
+  pileN: 4, pileYd: 1.6, pileHold: 1.4, scoopRoom: 3.5, squirtSpread: 1.1, squirtBall: 0.6 };
 function updateKickoffKick(dt) {
   const k = kick;
   if (k.phase === 'tbCatch') {   // their returner fields it deep in the end zone and takes a knee
@@ -1250,6 +1557,7 @@ function updateKickoffKick(dt) {
     const good = Math.random() < Math.min(0.97, ONSIDE_CPU.legal * k.acc);
     k.power = good ? Math.min(1, k.need + Math.random() * (1 - k.need) * 0.4) : k.need * (0.55 + 0.4 * Math.random());
     k.dir = (Math.random() * 2 - 1) * k.window * (good ? 0.85 : 1.5);
+    if (k.onside && k.osOver) k.dir = Math.abs(k.dir) * k.osOver;   // (v0.56: an overloaded side kicks it that way)
     k.phase = 'run'; k.t = 0; snapSfx();
     return;
   }
@@ -1274,7 +1582,10 @@ function updateKickoffKick(dt) {
       const perfect = k.power >= k.need - 1e-6 && Math.abs(k.dir) <= k.window;
       const d = perfect ? ONSIDE_K.legal + 0.5 + Math.random() * 1.5 : ONSIDE_K.min + (ONSIDE_K.max - ONSIDE_K.min) * reach, to = { x: k.tee + d * ONSIDE_K.bounce * YL, y: MID + dir * ONSIDE_K.aim * FW * ONSIDE_K.bounce };
       const hi = d >= ONSIDE_K.legal && Math.random() < ONSIDE_K.highOdds;   // (a pop-up: it hangs, and somebody has to jump for it)
-      k.flight = { t: 0, T: ONSIDE_K.flightT * ONSIDE_K.bounce * (hi ? ONSIDE_K.hiT : 1), fx: ball.x, fy: ball.y, tx: to.x, ty: to.y, h: ONSIDE_K.high * S * ONSIDE_K.bounce * (hi ? ONSIDE_K.hiH : 1), hi, d, rx: k.tee + d * YL, ry: MID + dir * ONSIDE_K.aim * FW };
+      const OR = ONSIDE_R, over = k.power - k.need, type = hi ? 'hi' : d >= ONSIDE_K.legal && over > OR.driveOver ? 'drive' : d >= ONSIDE_K.legal && over >= 0 && over < OR.dribbleIn ? 'dribble' : 'bounce';   // (v0.56: the kind of kick, from the meter result: both teams)
+      if (type === 'drive') { const t = k.them.slice(0, 5).sort((a, b) => Math.abs(a.y - to.y) - Math.abs(b.y - to.y))[0]; if (t) to.y = t.y; }   // (a hard one right at a front-line man)
+      const tk = type === 'drive' ? OR.driveT : type === 'dribble' ? OR.dribT : 1, hk = type === 'drive' ? OR.driveH : type === 'dribble' ? OR.dribH : 1;
+      k.flight = { t: 0, T: ONSIDE_K.flightT * ONSIDE_K.bounce * (hi ? ONSIDE_K.hiT : 1) * tk, fx: ball.x, fy: ball.y, tx: to.x, ty: to.y, h: ONSIDE_K.high * S * ONSIDE_K.bounce * (hi ? ONSIDE_K.hiH : 1) * hk, hi, type, d, rx: k.tee + d * YL, ry: type === 'drive' ? to.y : MID + dir * ONSIDE_K.aim * FW };
       k.illegal = d < ONSIDE_K.legal;
       k.phase = 'flight'; k.t = 0;
       kickSfx(); throwSfx(true);
@@ -1375,32 +1686,33 @@ function koReturnStart(k, R, text) {
 // the onside kick in the air and on the ground: both teams close on the ball (nobody on the kicking team can touch it before it has gone 10 yards: a ball that
 // doesn't, or goes out of bounds, is the receivers'), it hops about, then the scramble is settled by the kicker's placement, accuracy and their best hands
 function updateOnsideKick(k, dt) {
-  const f = k.flight, O = ONSIDE_K;
-  f.t += dt;
+  const f = k.flight, O = ONSIDE_K, OR = ONSIDE_R;
+  f.t += dt; k.oc = (k.oc || 0) + dt;   // (k.oc: one clock for the whole play, flight and scramble: the hits use it)
   if (f.t > 0.45) { rb.kickSwing = false; rb.kickK = 0; rb.moving = false; }
   // who may touch it: the receivers always; the kicking team only once it has gone 10 yards (or the receivers touched it first), never on a kick that didn't
   const coverOK = () => k.touched || (!k.illegal && ball.x - k.tee >= O.legal * YL);
-  const may = p => p !== rb && (k.them.includes(p) || coverOK()) && !(p.osNo > (k.st || 0));
+  const may = p => p !== rb && (k.them.includes(p) || coverOK()) && !(p.osNo > (k.st || 0)) && !(p.osSlow > k.oc);   // (v0.56: a man just hit can't play it for a beat)
   if (k.phase === 'flight') {
     const p = Math.min(1, f.t / f.T);
     ball.x = f.fx + (f.tx - f.fx) * p; ball.y = f.fy + (f.ty - f.fy) * p; ball.z = kickArcZ(p, f.h); ball.rot += dt * 14; ball.tumbling = p < 1 ? { dx: f.tx - f.fx, dy: f.ty - f.fy } : null;
-    if (f.hi && p >= 0.8 && !f.jumped) {   // a high one: the nearest man of each side goes up for it
-      f.jumped = true;
-      const nr = list => list.filter(q => q !== rb).reduce((a, q) => !a || dist(q, ball) < dist(a, ball) ? q : a, null);
-      f.jumpers = [nr(k.cover), nr(k.them)].filter(q => q && !q.action);
-      for (const q of f.jumpers) { q.action = 'jump'; q.act = { t: 0, dur: JUMP_TIME, h: 16 * S }; }
+    if (f.hi && p >= 0.8 && p < O.jumpAt + 0.12) {   // a high one: the nearest man of each side goes up for it, but only one who is under it (v0.56: no leaping from yards away; the others keep running under it)
+      const land = { x: f.tx, y: f.ty }, reach = O.touch * O.jumpReach * 1.6 * YD;
+      const nr = list => list.filter(q => q !== rb && !q.action && dist(q, land) <= reach).reduce((a, q) => !a || dist(q, land) < dist(a, land) ? q : a, null);
+      f.jumpers = f.jumpers || [];
+      for (const [list, key] of [[k.cover, 'jc'], [k.them, 'jt']]) if (!f[key]) { const q = nr(list); if (q) { f[key] = true; q.action = 'jump'; q.act = { t: 0, dur: JUMP_TIME, h: 16 * S }; f.jumpers.push(q); } }
     }
     if (f.jumpers && p >= O.jumpAt && k.held == null) {   // the first pair of hands to reach it: caught, or knocked loose
       const c = f.jumpers.filter(q => may(q) && Math.hypot(ball.x - q.x, ball.y - q.y) < O.touch * YD * O.jumpReach).sort((a, b) => dist(a, ball) - dist(b, ball))[0];
       if (c) {
         f.jumpers = null; k.phase = 'scrum'; k.st = 0; ball.tumbling = null;
         if (onsideTouch(k, c, O.hiHold)) return;
-        osSquirt(k, O.squirt[1]); popup(c, 'KNOCKED LOOSE', '#ffd94a');
+        osSquirt(k, O.squirt[1], c); popup(c, 'KNOCKED LOOSE', '#ffd94a');
       }
     }
     if (k.phase === 'flight' && p >= 1) {   // first bounce: it skips on toward where it would rest (one continuous ball from here)
       k.phase = 'scrum'; k.st = 0; ball.tumbling = null;
-      k.bv = { vx: (f.rx - f.tx) * O.fric, vy: (f.ry - f.ty) * O.fric }; k.hopA = O.hop * S; k.hopPh = 0;
+      const rk = f.type === 'dribble' ? OR.dribRoll : 1;
+      k.bv = { vx: (f.rx - f.tx) * O.fric * rk, vy: (f.ry - f.ty) * O.fric * rk }; k.hopA = O.hop * S * (f.type === 'dribble' ? 0.4 : f.type === 'drive' ? 0.6 : 1); k.hopPh = 0;
     }
   } else {
     k.st += dt;
@@ -1421,12 +1733,24 @@ function updateOnsideKick(k, dt) {
       else if (p.action === 'down' && p !== k.diver && (k.st || 0) >= (p.osUp || 0) && k.held == null) { getUp(p); p.osDove = false; }
       return;
     }
-    const px = p.x, py = p.y, L = lead(), d = Math.hypot(L.x - p.x, L.y - p.y);
+    const px = p.x, py = p.y, L = lead(), d = Math.hypot(L.x - p.x, L.y - p.y), slow = p.osSlow > k.oc ? OR.hitK : 1;
+    // v0.56 roles: the safe man and the deep men stay back unless it comes to them; the lead men and the second line go hit someone first (once), then play the ball
+    const role = p.osRole, far = d > OR.deepYd * YD;
+    if (k.held == null && (role === 'safe' || role === 'deep') && far) { steer(p, role === 'safe' ? k.tee + OR.safeBack * YL : p.x, role === 'safe' ? MID : p.y, 3 * YD, 10 * YD, dt); clampField(p); setVelocity(p, px, py, dt); p.face = ball.x >= p.x ? 1 : -1; return; }
+    if (k.held == null && (role === 'lead' || role === 'block') && !p.osHitDone) {
+      const foes = (role === 'lead' ? k.them.filter(q => q.osRole === 'hands') : k.cover.filter(q => q.osRole === 'lead' || q.osRole === 'ball')).filter(q => !q.action && !(q.osSlow > k.oc));
+      const t = foes.sort((a, b) => dist(a, p) - dist(b, p))[0];
+      if (t && dist(t, ball) < 8 * YD) {
+        if (dist(t, p) < OR.hitYd * YD && (role === 'block' || coverOK())) {   // (the hit: legal for the kicking team only once it has gone 10)
+          p.osHitDone = true; t.osSlow = k.oc + OR.hit; t.falterUntil = clock + OR.hit * 0.8; impacts.push({ x: (p.x + t.x) / 2, y: (p.y + t.y) / 2 - 10 * S, t: 0 }); try { impactSfx({ noiseDur: 0.05, noiseFreq: 700, noiseQ: 1, noiseVol: 0.3, thumpHz: 120, thumpDur: 0.08, thumpVol: 0.4 }); } catch (e) {}
+        } else { steer(p, t.x - (role === 'lead' ? 0.6 : -0.6) * YD, t.y, spd * slow, 18 * YD, dt); clampField(p); setVelocity(p, px, py, dt); p.face = t.x >= p.x ? 1 : -1; return; }
+      } else if (role === 'lead' && !t) p.osHitDone = true;
+    }
     // close enough with the ball low: he lays out for it (the game's own dive); otherwise he runs at where it is going
     if (k.phase === 'scrum' && k.held == null && !p.osDove && may(p) && ball.z < O.diveZ * S * 1.6 && d < O.diveR * YD && d > 0.6 * YD) {
       p.osDove = true; startDive(p, L.x, L.y, 0.3, Math.max(YD, d)); return;
     }
-    if (k.held == null && d > 0.3 * YD) steer(p, L.x + ((i % 3) - 1) * 0.3 * YD, L.y + ((i % 4) - 1.5) * 0.25 * YD, spd, 16 * YD, dt);
+    if (k.held == null && d > 0.3 * YD) steer(p, L.x + ((i % 3) - 1) * 0.3 * YD, L.y + ((i % 4) - 1.5) * 0.25 * YD, spd * slow, 16 * YD, dt);
     else { p.vx *= 0.8; p.vy *= 0.8; }
     clampField(p); setVelocity(p, px, py, dt); p.face = ball.x >= p.x ? 1 : -1;
   });
@@ -1436,12 +1760,12 @@ function updateOnsideKick(k, dt) {
   if (k.held != null) {   // he's on the ground with it in his arms: the whistle after a beat
     const c = k.diver, h = c.action === 'dive' ? diveHands(c, figReach(c, 22 * S)) : c, e = Math.min(1, dt * 12);   // (the ball eases into his arms, never jumps to him)
     ball.x += (h.x - ball.x) * e; ball.y += (h.y - ball.y) * e; ball.z += (0 - ball.z) * e;
-    if (k.st >= k.held + O.hold) resolveOnside(k, k.got);
+    if (k.st >= k.held + (k.pile ? OR.pileHold : O.hold)) { if (k.pile) popup(c, 'HAS IT!', k.got ? '#7dff8a' : '#ff6b6b'); resolveOnside(k, k.got); }   // (a pile: who has it is shown only now)
     return;
   }
   if (ball.y < Y_MIN || ball.y > Y_MAX) {   // out of bounds: dead, their ball
     f.ry = ball.y; if (k.bv) { k.bv.vx *= 0.85; k.bv.vy *= 0.85; }
-    if (k.outAt == null) k.outAt = k.st;
+    if (k.outAt == null) { k.outAt = k.st; k.outX = ball.x; }   // (v0.56: spotted where it crossed the sideline)
     if (k.st - k.outAt >= O.outT) resolveOnside(k, false);
     return;
   }
@@ -1455,7 +1779,9 @@ function updateOnsideKick(k, dt) {
     if (d < bd) { bd = d; best = p; }
   }
   if (best) {
-    if (!onsideTouch(k, best, best.action === 'dive' ? 1 : O.standK)) { osSquirt(k, O.squirt[0] + Math.random() * (O.squirt[1] - O.squirt[0])); popup(best, 'BOBBLED', '#ffd94a'); }
+    const chest = f.type === 'drive' && !k.firstTouch && k.them.includes(best);   // (the hard one at a front-line man: off his chest more often)
+    k.firstTouch = true;
+    if (!onsideTouch(k, best, (best.action === 'dive' ? 1 : O.standK) * (chest ? OR.driveHold : 1))) { osSquirt(k, (O.squirt[0] + Math.random() * (O.squirt[1] - O.squirt[0])) * (chest ? 1.3 : 1), best); popup(best, chest ? 'OFF HIS CHEST' : 'BOBBLED', '#ffd94a'); }
     return;
   }
   if (k.st >= O.giveUp) {   // nobody has managed it: the nearest man who may falls on it
@@ -1470,15 +1796,29 @@ function onsideTouch(k, c, mul) {
   const hop = Math.min(1, ball.z / (O.hop * S)), base = cov ? O.holdCov * onsideChance(k) / O.chanceRef : O.holdThem;
   const odds = Math.min(0.97, base * (1 - O.hopPen * hop) * mul);
   if (Math.random() >= odds) { c.osNo = (k.st || 0) + O.fail; return false; }
+  const OR = ONSIDE_R, standing = c.action !== 'dive' && c.action !== 'jump';
+  // v0.56: a receiving man on his feet with room picks it up and runs (a live return; the kicking team may never advance it)
+  if (!cov && standing && mul < 90 && !(ball.y < Y_MIN || ball.y > Y_MAX) && !k.cover.some(q => !q.action && dist(q, c) < OR.scoopRoom * YD)) {
+    c.hasBall = true; ball.loose = ball.live = false; ball.tumbling = null; ball.z = 0; k.bv = null;
+    popup(c, 'SCOOPED!', '#ff6b6b');
+    koReturnStart(k, c, `${teamName('RED')} scoops up the onside kick and runs!`);
+    return true;
+  }
   k.diver = c; k.got = cov; k.held = k.st || 0; k.bv = null;
-  if (c.action !== 'dive' && c.action !== 'jump') { c.action = 'down'; c.act = { t: 0, fall: true, vx: 0, vy: 0, angle: c.face > 0 ? 0 : Math.PI }; }   // (falls on it)
+  const crowd = [...k.cover, ...k.them].filter(q => q !== c && dist(q, ball) < OR.pileYd * YD);
+  k.pile = crowd.length + 1 >= OR.pileN;   // (a pile: everybody piles on, and who has it is only shown after a beat)
+  if (k.pile) for (const q of crowd) if (!q.action) { q.action = 'down'; q.act = { t: 0, fall: true, vx: 0, vy: 0, angle: Math.atan2(ball.y - q.y, ball.x - q.x) }; }
+  if (standing) { c.action = 'down'; c.act = { t: 0, fall: true, vx: 0, vy: 0, angle: c.face > 0 ? 0 : Math.PI }; }   // (falls on it)
   c.hasBall = true; ball.loose = ball.live = false; ball.tumbling = null;
-  popup(c, 'RECOVERED!', cov ? '#7dff8a' : '#ff6b6b');
+  popup(c, k.pile ? 'PILE!' : c.action === 'jump' ? 'HIGH POINT!' : c.action === 'dive' ? 'SMOTHERED!' : 'RECOVERED!', k.pile ? '#ffd94a' : cov ? '#7dff8a' : '#ff6b6b');
   return true;
 }
 // the onside ball squirts off a pair of hands: a new direction at speed (yd/s), a smaller hop
-function osSquirt(k, spd) {
-  const a = Math.random() * Math.PI * 2;
+function osSquirt(k, spd, c) {   // v0.56: off the hands along the ball's way and the toucher's momentum (never just anywhere), with some spread
+  const OR = ONSIDE_R, bv = k.bv || (k.flight ? { vx: k.flight.tx - k.flight.fx, vy: k.flight.ty - k.flight.fy } : { vx: 1, vy: 0 }), bl = Math.hypot(bv.vx, bv.vy) || 1;
+  const cv = c ? { vx: c.vx || 0, vy: c.vy || 0 } : { vx: 0, vy: 0 }, cl = Math.hypot(cv.vx, cv.vy) || 1;
+  const mx = OR.squirtBall * bv.vx / bl + (1 - OR.squirtBall) * cv.vx / cl, my = OR.squirtBall * bv.vy / bl + (1 - OR.squirtBall) * cv.vy / cl;
+  const a = Math.atan2(my, mx) + (Math.random() * 2 - 1) * OR.squirtSpread;
   k.bv = { vx: Math.cos(a) * spd * YD, vy: Math.sin(a) * spd * YD }; k.hopA = Math.max(ball.z, ONSIDE_K.hop * S * 0.5); k.hopPh = 0.3;
 }
 // odds the kicking team comes up with it: base + per catching rating of their hands team, x how well placed it was
@@ -1489,7 +1829,7 @@ function onsideChance(k) {
   return Math.max(0.02, Math.min(ONSIDE_K.max2, (ONSIDE_K.base + ONSIDE_K.perCtc * hands + ONSIDE_K.perAcc * (k.acc - 1)) * place));
 }
 function resolveOnside(k, got) {
-  const f = k.flight, d = f.d, pre = k.pre, who = teamName('BLUE'), other = teamName('RED'), spot = Math.max(1, Math.min(99, Math.round(35 + d)));
+  const f = k.flight, d = f.d, pre = k.pre, who = teamName('BLUE'), other = teamName('RED'), spot = Math.max(1, Math.min(99, Math.round(k.outX != null ? k.outX / YL : k.tee / YL + d)));   // (v0.56: where it went out, not 35 + its flight)
   const out = f.ry < Y_MIN || f.ry > Y_MAX, c = k.diver;
   const at = !out && k.held != null ? Math.max(1, Math.min(99, Math.round(ball.x / YL))) : spot;   // (where he came up with it)
   kick = null; ball.z = 0; ball.tumbling = null;
@@ -1693,7 +2033,12 @@ function gunnerRelease(gunners, jam, tx, dir, dt) {
     const j = jam[i];
     if (g.action) return;
     const tag = state === 'kick' ? kick : kickoff;   // (a new punt: this gunner is jammed afresh)
-    if (g.jamTag !== tag) { g.jamTag = tag; g.jamT = 0; g.jamHold = PUNT.jam[0] + Math.random() * (PUNT.jam[1] - PUNT.jam[0]); }
+    if (g.jamTag !== tag) {   // a new punt: how long this jammer holds him (v0.56: by their ratings, a rare clean beat, longer in a vise)
+      g.jamTag = tag; g.jamT = 0;
+      const F = KPRO.pt.jamFight, edge = j ? zc(rz(g, 'spd') - Math.max(rz(j, 'str'), rz(j, 'cov'))) : 0, V = tag && tag.kp && tag.kp.vise;
+      g.jamHold = (PUNT.jam[0] + Math.random() * (PUNT.jam[1] - PUNT.jam[0])) * Math.exp(-F.k * edge) * (V && V.g === g ? KPRO.pt.viseK : 1);
+      if (Math.random() < F.clean * Math.exp(0.5 * edge) && !(V && V.g === g)) g.jamHold *= F.cleanK;
+    }
     g.jamT += dt;
     const held = j && !j.action && dist(j, g) < 2 * YD, px = g.x, py = g.y;
     const stuck = j && !j.action && g.jamT < g.jamHold;   // the jammer has his hands on him: he fights to get off the line
@@ -2188,10 +2533,11 @@ function simulateDrive(startYd, team = 'RED') {
       } else if (pos >= 62 || lastKick) {
         clk -= SIM_CLOCK_MGMT.kickT;
         const pGood = kickOdds(kickerFor(oKey), fgDist);
+        let fgR = 1;   // (the make roll: DOINK text when it lands this close to the odds)
         if (KPRO.on && rnd() < KPRO.sim.fg) { out(`${head}: ${O}'s ${Math.round(fgDist)}-yard field goal is BLOCKED!`, 0.6, 'D', true); statLine({ kick: true, good: false }); type = 'fgmiss'; nextYd = Math.max(20, Math.round(100 - pos)); }   // (blocked: the same rate the live rush is tuned to; the defense takes over at the spot)
-        else if (rnd() < pGood) { out(`${head}: ${O} kicks a ${Math.round(fgDist)}-yard field goal... IT'S GOOD. 3 points.`, 0.6, 'O'); statLine({ kick: true, good: true }); offPts = 3; type = 'fg'; nextYd = 25; }
+        else if ((fgR = rnd()) < pGood) { out(`${head}: ${O} kicks a ${Math.round(fgDist)}-yard field goal... ${pGood - fgR < DOINK.cpu ? 'OFF THE UPRIGHT AND IN! ' : ''}IT'S GOOD. 3 points.`, 0.6, 'O'); statLine({ kick: true, good: true }); offPts = 3; type = 'fg'; nextYd = 25; }
+        else { out(`${head}: ${O}'s ${Math.round(fgDist)}-yard field goal is NO GOOD${fgR - pGood < DOINK.cpu ? ' - off the upright' : ''}!`, 0.6, 'D', true); statLine({ kick: true, good: false }); type = 'fgmiss'; nextYd = Math.max(20, Math.round(100 - pos)); }   // (the spot of the kick, or the 20; a roll this close to his odds = a doink, text only)
         if (!tut) { xfSimming = true; const ks = kickerFor(oKey); xfEvent(ks, type === 'fg' ? 'fgMade' : /BLOCKED/.test(lines[lines.length - 1] && lines[lines.length - 1].t || '') ? 'kickBlocked' : 'fgMiss', Math.round(fgDist)); xfSimming = false; const xt = xfFlush(true); if (xt && lines.length) lines[lines.length - 1].t += xt; }   // (kicker star factors)
-        else { out(`${head}: ${O}'s ${Math.round(fgDist)}-yard field goal is NO GOOD!`, 0.6, 'D', true); statLine({ kick: true, good: false }); type = 'fgmiss'; nextYd = Math.max(20, Math.round(100 - pos)); }   // (the spot of the kick, or the 20)
         break;
       }
       // short yardage near midfield (or trailing late, anywhere past their own 30): they go for it
@@ -3273,10 +3619,19 @@ function startKickoff(punt = null, user = false) {
                               hitStick: false, resolved: false, recoverUntil: 0 });
   });
   for (const d of dl) { d.shedAt = 99; d.driveY0 = undefined; d.sealK = 0; }
+  for (const d of cover) { d.koSafe = !punt && d.lane === 4; d.koBust = !punt && d.lane === 5; d.koBusted = false; }   // (v0.56 kickoff: the middle two = a safety who stays back and the wedge-buster)
+  for (const p of front) { p.koLead = false; p.koHit = false; }
+  if (!punt) {   // v0.56: neither line is a ruler (the same idea as the kick protection's set: aware men on their marks, tired ones drift); never toward the other line
+    const A = KPRO.align, f = KO_V56.set;
+    for (const d of cover) { const n = kproNeat(d); d.x += Math.random() * A.depth * f * YL * n; d.y += (Math.random() * 2 - 1) * A.wob * f * YD * n; }
+    for (const p of front) { const n = kproNeat(p); p.x -= Math.random() * A.depth * f * YL * n; p.y += (Math.random() * 2 - 1) * A.wob * f * YD * n; }
+  }
   ols.forEach(o => { o.assign = null; o.lockedTo = null; });   // they pick their men once they're on the move
   lineToGain = Math.min(FIELD, 75 * YL);
   los = KICK_X;
-  kickoff = { t: 0, phase: 'ready', forming: !!punt, kicker, cover, front, flight: null, kickerX0: kicker.x, punt, ballX: KICK_X, user };
+  let koWall = 0;
+  if (!punt) { const Wt = KPRO.pt.wallW; let u = Math.random() * (Wt[0] + Wt[-1] + Wt[1]); koWall = (u -= Wt[0]) < 0 ? 0 : (u -= Wt[-1]) < 0 ? -1 : 1; }   // (v0.56: the kickoff return's called side, the punt return's weights)
+  kickoff = { t: 0, phase: 'ready', forming: !!punt, kicker, cover, front, flight: null, kickerX0: kicker.x, punt, ballX: KICK_X, user, koWall };
   if (user) kick = { userKo: true, kickoff: !punt, punt: !!punt, phase: 'wait', t: 0, meter: 0, power: 0, pos: 0, dir: 0, need: 0, window: punt ? PUNT.window : 0.35,
                      pow: kickPow(kicker), acc: kickAcc(kicker), aimSlow: Math.max(0.6, Math.min(1.9, 1 + KICKING.slow * rz(kicker, 'kac') * 0.75)),
                      target: punt ? { x: punt.land, y: MID } : { x: 0, y: MID }, tLos: punt ? punt.los : 0 };   // (your kick's reticle: click to move it, KICK / Space to go; the kicker's accuracy = how close it lands to it)
@@ -3298,6 +3653,16 @@ function startKickoff(punt = null, user = false) {
 // A kickoff blocker takes the coverage man he was paired with at the catch and gets between him and the
 // returner. If his man is gone (down, beaten past the returner) he heads back to build a wall out in front
 // of the returner, and picks up whoever comes near (or anyone, once he's set up). Then it's the usual block.
+// v0.56: the wedge-buster (d.koBust) meets the lead blocker (b.koLead): both knocked out of it for a beat. Checked from the buster's own frame (pursueMove), so it works
+// whichever code is moving the blocker (both teams' returns)
+function koBustCheck(d) {
+  if (!d.koBust || d.koBusted || d.action) return;
+  const b = [qb, rb, ...ols, ...recs, ...dl, ...back7].find(p => p.koLead && !p.koHit && p !== runner && !p.action && p.team !== d.team);
+  if (!b || dist(b, d) > KO_V56.bustYd * YD) return;
+  const edge = zc(rz(d, 'str') - (b.at && b.at.blk != null ? rz(b, 'blk') : rz(b, 'str'))), win = edge > KO_V56.bustWin;   // (by strength: a clear win blows up the wedge, else both are knocked out of it about evenly)
+  b.koHit = true; d.koBusted = true; b.stunUntil = clock + KO_V56.bustStun * (win ? 1.5 : 1); d.plantT = clock + KO_V56.bustStun * (win ? 0.5 : 1) - COVER_REACT.plant;
+  impacts.push({ x: (b.x + d.x) / 2, y: (b.y + d.y) / 2 - 10 * S, t: 0 }); tackleSfx(win); shake = Math.max(shake || 0, win ? 6 : 3); if (win) popup(d, 'WEDGE BUSTED', '#ffd94a');
+}
 function kickoffBlock(b, dt, top) {
   if (!runner) return;
   const speed = b.kv = Math.min(top, (b.kv || 0) + KICKOFF.accel * dt);   // builds up to full speed
@@ -3307,7 +3672,7 @@ function kickoffBlock(b, dt, top) {
   b.assign = null;
   const live = [...back7, ...dl].filter(d => !d.action && !d.hasBall);
   const onHim = live.some(d => dist(d, b) < 4.5 * YD && d.x >= b.x - YD);   // (engage a man a little earlier)
-  const wallX = runner.x + 4 * YL, wallY = runner.y + ((b.kickIdx ?? 5) - 4.5) * 1.9 * YD;
+  const wallX = runner.x + 4 * YL, wallY = runner.y + ((b.kickIdx ?? 5) - 4.5) * 1.9 * YD + (b.wallSide || 0) * KPRO.pt.wallShift * YD;   // (v0.56: a called punt-return wall sets toward its side)
   const set = Math.hypot(b.x - wallX, b.y - wallY) < 1.5 * YD;
   if (onHim || clock - runStart > 2.2) return updateBlocker(b, dt, speed);
   b.engaged = false;
@@ -3349,6 +3714,10 @@ function kickBounce(k, dt) {
   for (const q of team) { const up = !q.action && ball.z >= 16 * S && ball.z < G.jumpZ * S && dist(q, ball) < G.jumpR; q.reach = up; q.z = up ? Math.min(ball.z * 0.6, G.jumpLift * S) : 0; }
   const near = B.t < (B.hold || 0) ? null : [...team, ...k.cover].filter(q => !q.action && q !== k.kicker && ((team.includes(q) && ball.z < G.jumpZ * S && dist(q, ball) < G.jumpR) || (ball.z < 16 * S && dist(q, ball) < G.pick))).sort((a, b) => dist(a, ball) - dist(b, ball))[0];
   if (!near && B.t < 6) return;
+  const BT = KPRO.pt.bat;
+  if (k.punt && near && k.cover.includes(near) && !B.batted && ball.x > 0 && ball.x < BT.yd * YL && B.vx < -BT.minV * YD && Math.random() < BT.p) {   // v0.56: rolling at the goal line: he bats it back out (from the field of play) for a teammate to down
+    B.batted = true; B.vx = Math.abs(B.vx) * 0.6 + 2 * YD; B.vy *= 0.5; B.vz = 70 * S; B.hold = B.t + 0.5; near.armsUp = true; popup(near, 'BATTED BACK', '#7dff8a'); return;
+  }
   if (!near || k.cover.includes(near)) {   // the kicking team downs it (or nobody gets it): the return team's ball where it lies
     done(); if (near) popup(near, ball.x < 0 ? 'TOUCHBACK' : 'DOWNED', ball.x < 0 ? '#7fe3ff' : '#7dff8a');
     if (ball.x < 0) return endPlay(`${k.punt ? 'Punt' : 'Kickoff'}  -  downed in the end zone: TOUCHBACK`, kickTB() * YL);   // (dead in the end zone, nobody returning it)
@@ -3420,6 +3789,7 @@ function updateKickoff(dt) {
     if (k.punt) {
       // the punt: the long snap to the punter, his few long steps with it, then the kick. The line blocks the rush; the gunners are off at the snap
       const T0 = 0.3, K = k.kicker, ps = k.punt;
+      if (kproLive() && !k.kp) kproSetPunt(k);   // (v0.56: the set is made before the snap, so its looks show and nobody jumps at the snap)
       const px = K.x, py = K.y;
       if (k.t < T0) { runUp = 0; ball.x = ps.los + 0.2 * YL; ball.y = MID; ball.z = 3 * S; }
       else if (k.t < T0 + PUNT.snapT) {
@@ -3591,7 +3961,8 @@ function updateKickoff(dt) {
         kick = null;
       }
       if (k.punt) lx = kPuntSpot(k, lx);   // (Pin Point / Coffin Corner)
-      const fT = k.punt ? puntAirT(Math.abs(ball.x - lx) / YL) * (kAb(k.kicker, 'hangTime') ? ABIL_FX.hangTime : 1) : KO_AIR.T;   // (Hang Time: a longer flight, so a higher one: the peak follows the time)
+      if (k.punt && k.hurry) { lx = ball.x + (lx - ball.x) * KPRO.pt.hurry.dist; popup(k.kicker, 'HURRIED', '#ff9f1c'); }   // (v0.56: rushed: shorter and lower, same for both teams)
+      const fT = (k.punt ? puntAirT(Math.abs(ball.x - lx) / YL) * (kAb(k.kicker, 'hangTime') ? ABIL_FX.hangTime : 1) : KO_AIR.T) * (k.punt && k.hurry ? KPRO.pt.hurry.hang : 1);   // (Hang Time: a longer flight, so a higher one: the peak follows the time)
       k.flight = { t: 0, T: fT, fx: ball.x, fy: ball.y, tx: lx, ty: ly, h: kickPeak(fT) };
       k.phase = 'flight'; kickoffOutNext = null;
       k.kicker.kickSwing = true;     // the leg swings through; he holds the finish while the ball is in the air
@@ -3628,6 +3999,7 @@ function updateKickoff(dt) {
     if (k.punt) {
       const hot = k.cover.some(d => !d.isKicker && Math.hypot(d.x - f.tx, d.y - f.ty) < PUNT.hot * 2.5);
       if (f.tx > 0 && hot && (f.tx < PUNT.fairDeep * YL || Math.random() < PUNT.fairHot)) { /* (only with a defender around him: nobody close, he catches it and runs) */ k.fair = true; rb.fairSig = true; popup(rb, 'FAIR CATCH', '#ffd94a'); }
+      else if (f.tx > 0 && f.tx < KPRO.pt.letGo * YL && Math.random() < KPRO.pt.letP) { k.letGo = true; popup(rb, 'LET IT GO', '#7fe3ff'); }   // (v0.56: inside his 10: let it bounce, it may roll in for a touchback)
     } else if (f.tx < 0) {
       const deep = Math.min(1, -f.tx / ENDZONE), pr = KOK.field * tendOf(MATCH.you).fourth * (0.5 + 0.25 * (teamStars(MATCH.you).off - 1)) * (1 - 0.7 * deep);
       const needTime = (game.quarter === 4 && game.red - game.blue > 0 && game.secs <= lateS(SIM_CLOCK_MGMT.late)) || (game.quarter === 2 && game.secs <= lateS(SIM_CLOCK_MGMT.half));   // (a return burns clock: a team that needs time takes the touchback)
@@ -3676,7 +4048,8 @@ function updateKickoff(dt) {
       }
       const m = q.puntMan && !q.puntMan.action ? q.puntMan : null;
       // blocking for the returner: meet his man on the returner's side of him; nobody left to take = set the wall in front of the returner
-      const tx = m ? Math.max(m.x - 1.6 * YD, rb.x + 2 * YL) : rb.x + 4.5 * YL, ty = puntY(m ? m.y : rb.y + ((q.kickIdx ?? 5) - 4.5) * 2.7 * YD);
+      const wl = k.kp && k.kp.call === 'RETURN' ? (k.kp.wall || 0) * KPRO.pt.wallShift * YD : 0;   // (v0.56: the called wall: everyone without a man sets up toward its side)
+      const tx = m ? Math.max(m.x - 1.6 * YD, rb.x + 2 * YL) : rb.x + 4.5 * YL, ty = puntY(m ? m.y : rb.y + ((q.kickIdx ?? 5) - 4.5) * 2.7 * YD + wl);
       steer(q, tx, ty, Math.max(q.top || 0, 7 * YD), (f.t - (q.puntGo || 0) < 0.5 ? 8 : 14) * YD, dt);   // (just after planting he gets going slowly the other way)
       clampField(q); setVelocity(q, px, py, dt); q.kv = Math.hypot(q.vx, q.vy);
       const near = k.cover.filter(c => !c.action && dist(c, q) < 3 * YD).sort((a, b) => dist(a, q) - dist(b, q))[0];
@@ -3688,11 +4061,11 @@ function updateKickoff(dt) {
   const outKick = f.tx < -ENDZONE;   // (sails out the back of the end zone: he lets it go, and a knee (A) or the ball crossing the line ends it)
   if (!rb.action) {
     const px = rb.x, py = rb.y;
-    steer(rb, outKick ? -ENDZONE + 1.5 * YL : f.cx, f.cy, KO_CATCH.run * YD, 14 * YD, dt);   // (out the back: he drops back into the end zone to watch it go; else to the chest-high catch spot)
+    steer(rb, outKick ? -ENDZONE + 1.5 * YL : k.letGo ? f.tx + 6 * YL : f.cx, f.cy, KO_CATCH.run * YD, 14 * YD, dt);   // (letting it go: he backs off upfield, clear of it)   // (out the back: he drops back into the end zone to watch it go; else to the chest-high catch spot)
     clampField(rb); setVelocity(rb, px, py, dt);
     // eyes on the ball the whole way (backpedaling if he has to), hands up to field it as it comes down
     rb.face = Math.sign(f.fx - rb.x) || 1;   // the ball's coming from the kicker's end
-    rb.reach = !outKick && p > 0.75 && ball.z < 55 * S;   // hands go up only as it drops into reach, not while it's still high (and never for one sailing out the back)
+    rb.reach = !outKick && !k.letGo && p > 0.75 && ball.z < 55 * S;   // hands go up only as it drops into reach, not while it's still high (and never for one sailing out the back)
     rb.catchStyle = rb.reach ? 'body' : null;   // (a basket catch: forearms out in front at his chest, where the ball comes down)
   }
   if (outKick && p >= 1) {   // (nothing is announced until it has actually come down outside the end zone: a knee can't end it early)
@@ -3705,8 +4078,8 @@ function updateKickoff(dt) {
     kickoff = null;
     return endPlay(k.punt ? 'Punt sails out of the end zone: TOUCHBACK' : 'Kickoff sails out of the end zone: TOUCHBACK', kickTB() * YL);
   }
-  const chestCatch = !outKick && !rb.action && p >= f.pc && Math.hypot(rb.x - f.cx, rb.y - f.cy) <= KO_CATCH.reach * YD;   // (it drops to his chest right where he's set)
-  if (p >= 1 && !outKick && !chestCatch && Math.hypot(rb.x - f.tx, rb.y - f.ty) > KICK_BOUNCE.reach * YD) {   // he can't get under it in time: it hits the turf and bounces
+  const chestCatch = !outKick && !k.letGo && !rb.action && p >= f.pc && Math.hypot(rb.x - f.cx, rb.y - f.cy) <= KO_CATCH.reach * YD;   // (it drops to his chest right where he's set)
+  if (p >= 1 && !outKick && !chestCatch && (k.letGo || Math.hypot(rb.x - f.tx, rb.y - f.ty) > KICK_BOUNCE.reach * YD)) {   // he can't get under it in time: it hits the turf and bounces
     const sp = KICK_BOUNCE.roll / f.T;
     k.bounce = { t: 0, vx: (f.tx - f.fx) * sp, vy: (f.ty - f.fy) * sp, vz: KICK_BOUNCE.hop * S };
     ball.tumbling = null; rb.reach = false; k.kicker.kickSwing = false; k.kicker.kickWind = 0; k.kicker.followV = 0;
@@ -3739,24 +4112,36 @@ function updateKickoff(dt) {
     if (tut && k.user && !k.punt) { tutEvent('kickoff'); msg += '  -  click for the next play'; }   // (the kickoff lesson: once he has it, a click can move on)
     // each blocker takes the coverage man lined up across from him
     const fr = [...k.front].sort((a, b) => a.y - b.y), cv = [...k.cover].sort((a, b) => a.y - b.y);
+    const wall = k.punt ? (k.kp && k.kp.call === 'RETURN' ? k.kp.wall || 0 : 0) : k.koWall || 0;   // (v0.56: the return goes to the called side: the wall sets there, the computer's returner heads for it first)
+    rb.retWall = wall ? puntY(MID + wall * KPRO.pt.wallY * 1.6 * YD) : null;
+    for (const b of k.front) b.wallSide = wall;
     if (k.punt) {   // a punt: each man keeps the cover man he picked at the kick (and the speed he's already moving at); the rest take whoever's free
       const taken = new Set(k.front.map(b => b.puntMan).filter(Boolean)), spare = cv.filter(c => !taken.has(c) && c !== k.kicker);
       for (const b of k.front) { b.assign = b.puntMan && !b.puntMan.action ? b.puntMan : spare.shift() || null; b.kv = Math.hypot(b.vx, b.vy); b.puntMan = null; }
-    } else fr.forEach((b, i) => { b.assign = cv[i] || null; b.kv = 0; });   // (and turns around: from a standstill)
+    } else {
+      fr.forEach((b, i) => { b.assign = cv[i] || null; b.kv = 0; });   // (and turns around: from a standstill)
+      const bust = k.cover.find(d => d.koBust && !d.action), lead = [...k.front].sort((a, b) => Math.abs(a.y - rb.y) - Math.abs(b.y - rb.y))[0];   // v0.56: the man in front of the returner takes the wedge-buster
+      if (bust && lead) { const had = k.front.find(b => b.assign === bust); if (had && had !== lead) had.assign = lead.assign; lead.assign = bust; lead.koLead = true; }
+    }
     kickoff = null;
+    if (k.punt && rb.x > 0) {   // v0.56: a muff off the catch (more with a cover man on him): a live ball, the run's own fumble rules (the kicking team falls on it = their ball)
+      const T = KPRO.pt, hot = k.cover.some(d => d !== k.kicker && !d.action && dist(d, rb) < T.hotYd * YD);
+      if (Math.random() < (hot ? T.muffHot : T.muff) * Math.max(0.4, 1 - 0.3 * rz(rb, 'ctc'))) { popup(rb, 'MUFFED!', '#ff6b6b'); msg = 'MUFFED PUNT  -  live ball!'; return void fumble(rb, false, true); }
+    }
     if (k.kneel && rb.x < 0) runAction('KeyA');   // called for the knee while it was in the air: touchback
   }
 }
 
 
 // the pause / play icon: a square in the top bar's left corner (drawn by pauseIcon: two bars while the game runs, a play triangle while it's paused)
-const PAUSE_BTN = { x: 2 * TOP_PAD, y: TOP_PAD, w: TOP_BAR - 2 * TOP_PAD, h: TOP_BAR - 2 * TOP_PAD };
+const PAUSE_SIZE = 1.45;   // the pause button's side as a share of the top bar's inner height (it may hang below the bar); the gear beside it matches
+const PAUSE_BTN = { x: 2 * TOP_PAD, y: TOP_PAD, w: Math.round((TOP_BAR - 2 * TOP_PAD) * PAUSE_SIZE), h: Math.round((TOP_BAR - 2 * TOP_PAD) * PAUSE_SIZE) };
 // the settings gear: right of the pause / play icon, only while the game is paused (it replaced the pause menu's SETTINGS button)
 const PAUSE_GEAR = { x: PAUSE_BTN.x + PAUSE_BTN.w + 3 * TOP_PAD, y: PAUSE_BTN.y, w: PAUSE_BTN.w, h: PAUSE_BTN.h };
 const PAUSE_GEAR_K = 0.72;   // the gear's height as a share of the button
 const pauseGearOn = () => paused && !ONL.on && !settingsOpen;
 function pauseGearIcon(b) { const cx = b.x + b.w / 2, cy = b.y + b.h / 2, k = b.h * PAUSE_GEAR_K / 52; ctx.save(); ctx.translate(cx, cy); ctx.scale(k, k); ctx.translate(-cx, -cy); gearIcon(b); ctx.restore(); }
-const PAUSE_ICON = { size: 0.46, bar: 0.3, touchPad: 26 };   // the glyph's height as a share of the button, a pause bar's width as a share of the glyph, px a finger may miss the button by (touch only)
+const PAUSE_ICON = { size: 0.56, bar: 0.3, touchPad: 26 };   // the glyph's height as a share of the button, a pause bar's width as a share of the glyph, px a finger may miss the button by (touch only)
 function pauseIcon(b) {
   const cx = b.x + b.w / 2, cy = b.y + b.h / 2 + 1, r = b.h * PAUSE_ICON.size / 2, bw = 2 * r * PAUSE_ICON.bar;
   ctx.fillStyle = b.ink;
@@ -3782,7 +4167,15 @@ const pmItems = () => ['resume', ...(season && !exhibition && !tut ? ['goals'] :
 // the pause items are binder tabs down its right edge (pmRect), the sub-screens are drawn on it. Online pause (drawOnlineOverlay) uses the sheet too.
 const TRACE = { a: 0.8, col: '246,244,236', colD: '50,53,58', slide: 0.2, fibre: 0.55, ink: '#2b2f3a', inkSoft: '#5d6270', inkD: '#f1f1ec', inkSoftD: '#c5cbd0',
   tabW: 220, tabX: 270, tabGap: 58, hole: 5 };
-const TRS = { img: null, t0: 0, seen: 0 };
+const TRS = { img: null, t0: 0, seen: 0, out: 0 };   // (out = when the slide back up started: the pause ends when it finishes)
+// resuming from the pause menu: the sheet slides back up the way it came down, then the game runs (input is ignored meanwhile).
+// Only the player's resume goes through here; leaving, reset, online, the cold open and a game ending still set paused = false at once.
+function pauseResume() {
+  if (!paused || TRS.out) return;
+  if (ONL.on || performance.now() - TRS.seen > 150) { paused = false; return; }   // (no sheet on screen: nothing to slide)
+  TRS.out = performance.now(); aim = null;   // (the sheet keeps what it shows while it slides away)
+}
+const pauseClosing = () => paused && TRS.out > 0;
 const traceInk = soft => darkOn() ? (soft ? TRACE.inkSoftD : TRACE.inkD) : (soft ? TRACE.inkSoft : TRACE.ink);
 function traceFibres() {   // (baked once: faint fibres and flecks, stretched over the sheet's fill)
   if (TRS.img) return TRS.img;
@@ -3799,9 +4192,15 @@ function traceFibres() {   // (baked once: faint fibres and flecks, stretched ov
 }
 function drawTrace() {   // the sheet; returns the y of its bottom edge (slides down from the top bar each time a pause starts)
   const now = performance.now();
-  if (now - TRS.seen > 150) TRS.t0 = now;   // (not drawn last frame: a new pause, slide in again)
+  if (now - TRS.seen > 150) { TRS.t0 = now; TRS.out = 0; }   // (not drawn last frame: a new pause, slide in again)
   TRS.seen = now;
-  const top = TOP_BAR, h = H - TOP_BAR - FIELD_BOT, e = 1 - Math.pow(1 - Math.min(1, (now - TRS.t0) / 1000 / TRACE.slide), 3), yb = top + h * e;
+  let e = 1 - Math.pow(1 - Math.min(1, (now - TRS.t0) / 1000 / TRACE.slide), 3);
+  if (TRS.out) {   // (resuming: the same ease played backwards from wherever the slide-in got to)
+    const u = Math.min(1, (now - TRS.out) / 1000 / TRACE.slide);
+    e = Math.min(e, 1 - u * u * u);
+    if (u >= 1) { TRS.out = 0; paused = false; }
+  }
+  const top = TOP_BAR, h = H - TOP_BAR - FIELD_BOT, yb = top + h * e;
   ctx.save();
   ctx.fillStyle = `rgba(${darkOn() ? TRACE.colD : TRACE.col},${TRACE.a})`; ctx.fillRect(-PAD, top, W + 2 * PAD, yb - top);
   ctx.beginPath(); ctx.rect(-PAD, top, W + 2 * PAD, yb - top); ctx.clip();
@@ -4010,6 +4409,7 @@ const KEYBINDS_MOBILE = [
   ['STRIP', 'Try to knock the ball out'],
   ['JUMP', 'Jump for the ball: time it to arrive with the ball'],
   ['Tap your held defender', 'Chop at a stiff arm when the white ring flashes (helps tear it off)'],
+  ['Swipe (their kick, card up)', 'Block attempt: when a card pops over your free rusher, swipe the way its arrow points as the ball is kicked. Wrong way or late = a whiff'],
   ['Tackling', 'Automatic once you get to the ball carrier'],
 ];
 const KEYBINDS = [
@@ -4069,6 +4469,7 @@ const KEYBINDS = [
   ['Q', 'Same as E: switch defenders'],
   ['Click a player', 'Switch to that defender'],
   ['N', 'Show / hide the defense hint strip'],
+  ['W / A / S / D (their kick, card up)', 'Block attempt: when a card pops over your free rusher near the kick, press its key as the ball is kicked (W leap, S dive, A / D reach). Wrong key or late = a whiff'],
   ['Tackling', 'Automatic once you get to the ball carrier. Before the snap you can move, but not past the ball'],
   ['Q (before the snap)', 'Defensive audible: a new coverage / pressure look (2 a play); the defense runs to it'],
   ['C', 'Hit stick (big hit, can whiff); with the ball in the air, a knockout hit on the receiver'],

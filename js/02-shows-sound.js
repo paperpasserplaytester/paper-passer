@@ -48,7 +48,8 @@ function captureFrame() {
       saLoss: p.saLoss ? { k: p.saLoss.k, t: rec.t - (clock - p.saLoss.t) } : null, lid: p.lid ? { ...p.lid, t: rec.t - (clock - p.lid.t) } : null,   // (move looks: a look's tail after the move)
       cel: p.cel ? { ...p.cel, t0: rec.t - (clock - p.cel.t0) } : null, oneHanded: p.oneHanded, oneAt: p.oneAt,
       falterUntil: rec.t + ((p.falterUntil || 0) - clock), stumbleRec: p.stumbleRec != null ? rec.t - (clock - p.stumbleRec) : null })), ps),
-    ball: { x: ball.x, y: ball.y, z: ball.z, lift: ballLift(), rot: ball.rot, nose: ball.nose, snapNose: ball.snapNose, spiral: ball.spiral, wob: ball.wob, tucked: ball.tucked, inAir: ball.inAir, tx: ball.tx, ty: ball.ty, live: ball.live, dk: ball.dk },
+    ball: { x: ball.x, y: ball.y, z: ball.z, lift: ballLift(), rot: ball.rot, nose: ball.nose, snapNose: ball.snapNose, spiral: ball.spiral, wob: ball.wob, tucked: ball.tucked, inAir: ball.inAir, tx: ball.tx, ty: ball.ty, live: ball.live, dk: ball.dk,
+      hitP: ball.hitP ? [rec.t - (clock - ball.hitP[0]), ball.hitP[1], ball.hitP[2]] : null },   // (a doink: the post's ring on the replay clock)
     cam: [camX, camY, zoom * passPull],
     sb: { blue: game.blue, red: game.red, secs: game.secs, quarter: game.quarter },   // (the scoreboard as it was this frame: replays / highlights show the clock running and a touchdown's 6 landing)
     popups: popups.map(q => ({ i: ps.indexOf(q.p), text: q.text, color: q.color, t: q.t, ico: q.ico })),
@@ -898,18 +899,42 @@ function hsSkip() { if (!HT) return; showEscAt = performance.now(); HT.skip = tr
 function hsTick() { if (HT && !hl && performance.now() - HT.t0 > (HT.pre ? HALFTIME.preSecs : HALFTIME.cardSecs) * 1000) hsAdvance(); }   // (the pregame cards move on by themselves after preSecs; a click anywhere skips one)
 const HS_BAR = { next: { x: W - 340, y: H - 36, w: 190, h: 32 }, skip: { x: W - 140, y: H - 36, w: 120, h: 32 } };
 const hsBarHit = pt => inBtn(pt, HS_BAR.next) || inBtn(pt, HS_BAR.skip);
-function hsBarClick(pt) { if (inBtn(pt, HS_BAR.skip)) hsSkip(); else if (inBtn(pt, HS_BAR.next)) hsNext(); }
+function hsBarClick(pt) { if (inBtn(pt, HS_BAR.next)) hsNext(); }   // (SKIP is a hold now: HSK)
+// hold to skip the pregame / halftime show, the cold open's way (COLD.skip: time, zone, touch size, a still finger): hold the bottom right corner,
+// hold Esc, or on touch a finger held still anywhere. A tap never skips (it is still NEXT). Pointer logic in 14 (before TAP_DEFER), tick from frame().
+const HSK = { at: 0, f: null, ptr: null };   // at = when the hold began (0 = none), f = the pointer holding { id, x, y, zone, moved }, ptr = where it is (the ring round it)
+const hsShowOn = () => !!HT && (!hl || (hl.mode === 'half' && !hl.bg));
+const hsHoldZone = () => ({ x: W + PAD - COLD.skip.w, y: H - COLD.skip.h, w: COLD.skip.w + PAD, h: COLD.skip.h });
+function hsHoldTick() { if (!HSK.at) return; if (!hsShowOn()) { HSK.at = 0; HSK.f = null; return; } if (performance.now() - HSK.at >= COLD.skip.ms) { HSK.at = 0; HSK.f = null; hsSkip(); } }
+function hsHoldDraw(onlyHeld) {
+  const k = HSK.at ? Math.min(1, (performance.now() - HSK.at) / COLD.skip.ms) : 0;
+  if (onlyHeld && !k) return;
+  if (k) menuMoving = true;
+  const tk = TOUCH ? COLD.skip.touchK : 1;
+  holdRingDraw({ cx: W + PAD - 34 * tk, cy: H - 40 * tk + (TOUCH ? 0 : 18), R: COLD.skip.r * tk, k, tk, label: TOUCH ? 'hold anywhere to skip' : 'hold here or Esc to skip', ink: RES.line, ptr: HSK.f && !HSK.f.zone ? HSK.ptr : null });
+}
+// the hold-to-skip ring (shared: the cold open's coldSkipDraw and the shows'): a faint pencil circle, filled clockwise in gold as k goes 0 -> 1
+function holdRingDraw(o) {
+  const { cx, cy, R, k, tk = 1, label, ink = '#f4f1e4', ptr } = o;
+  ctx.save(); ctx.globalAlpha = k ? 1 : 0.55;
+  if (label) cText(label, cx - R - 10, cy, 15 * tk, ink, { align: 'right', seed: 2 });
+  ctx.save(); ctx.globalAlpha *= 0.5; cLine(cEll(cx, cy, R, R, 20), ink, 2 * tk, 801, 1, true); ctx.restore();
+  if (k) { cLine(cEll(cx, cy, R, R, 28, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k), '#ffd94a', 4.5, 802);
+    if (ptr) cLine(cEll(ptr.x, ptr.y, 30, 30, 28, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k), '#ffd94a', 4, 803); }   // (the ring round the finger / cursor)
+  ctx.restore();
+}
 function drawHsBar() {
   ctx.save();
   paperStrip(H - BOT_BAR - 2, BOT_BAR + 12);   // (paper theme: a torn notebook strip, not the dark game bar)
   if (!HT.pre) menuBtn(HS_BAR.next, HT.i < HT.segs.length - 1 ? 'NEXT ▸' : 'FINISH', IN_GAME_PAPER.blue, 16);
-  menuBtn(HS_BAR.skip, 'SKIP', IN_GAME_PAPER.red, 16);
   ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.line;
-  ctx.fillText(`${HT.pre ? 'PREGAME' : 'HALFTIME'} SHOW ${HT.i + 1} / ${HT.segs.length}     ${hl && hl.mode === 'half' ? 'CLICK / ENTER next clip     BACKSPACE previous' : 'CLICK ANYWHERE FOR THE NEXT SCREEN'}     ESC skip`, W / 2 - 120, H - BOT_BAR / 2, W - 400);
+  ctx.fillText(`${HT.pre ? 'PREGAME' : 'HALFTIME'} SHOW ${HT.i + 1} / ${HT.segs.length}     ${hl && hl.mode === 'half' ? 'CLICK / ENTER next clip     BACKSPACE previous' : 'CLICK ANYWHERE FOR THE NEXT SCREEN'}`, W / 2 - 120, H - BOT_BAR / 2, W - 400);
+  hsHoldDraw();
   ctx.restore();
 }
-function drawHsClipUI() {   // over a clip: nothing. No bar, ticker, title card, pips or name strip (click / Enter = next clip, Backspace = the last one, Esc = skip the show)
+function drawHsClipUI() {   // over a clip: nothing. No bar, ticker, title card, pips or name strip (click / Enter = next clip, Backspace = the last one, hold Esc = skip the show)
   drawReelFx();
+  if (hl && hl.mode === 'half' && !hl.bg) hsHoldDraw(true);   // (only the ring while a skip is being held: nothing else is drawn over a reel)
 }
 // the reel's furniture: pips (one box per clip, the current one filling) just above the bottom bar, and a lower-third name strip on the left above them
 const HS_UI = { pipW: 26, pipH: 8, pipGap: 6, pipUp: 16, lowX: 20, lowW: 380, lowH: 54, lowUp: 34, stampX: 150, stampY: 44, stampRot: -0.1, tickH: 24, tickV: 70 };   // (tickH / tickV: the league ticker's height and speed in px / s)
@@ -2641,14 +2666,45 @@ const COLD_SND = {
   dream:    ['audio/dream.mp3', 0.5],     click:   ['audio/click.mp3', 0.4],
   stamp:    ['audio/stamp.mp3', 0.4],     register: ['audio/register.mp3', 0.45],   // (celebration cues: a rubber stamp, a cash register drawer)
   yell:     ['audio/yell.mp3', 0.45],     gasp:    ['audio/gasp.mp3', 0.6],      jeer: ['audio/jeer.mp3', 0.6],   // (a player's shout / the stadium's gasp / the home crowd booing a road player's taunt: 4.8 s)
+  // v0.55 sound pass (replacing synthesized sounds): throws, the goal post, hands, shushes, hits, the chant, the boos, the wind loop
+  whoosh1:  ['audio/whoosh1.mp3', 0.45],  whoosh2: ['audio/whoosh2.mp3', 0.6],   // (lob: the softer, longer one / bullet: short and sharp)
+  clang:    ['audio/clang.mp3', 0.55],    // (the goal post: 2.7 s with its ring; small hits cut it short)
+  highfive: ['audio/highfive.mp3', 0.6],  smack:   ['audio/smack.mp3', 0.6],     // (ONE hit each: a high five / a hand slap)
+  shush:    ['audio/shush.mp3', 0.6],     shush2:  ['audio/shush2.mp3', 0.55],   // (short / long: 2.4 s)
+  hitcrack: ['audio/hitcrack.mp3', 0.75], boulder: ['audio/boulder.mp3', 0.8],   // (a sharp pad crack / a deep heavy thud)
+  ground:   ['audio/ground.mp3', 0.7],    thud:    ['audio/thud.mp3', 0.6],      // (a stomp on the turf / a soft foam thunk)
+  chant:    ['audio/chant.mp3', 0.8],     // (the rhythmic chant: 26 s, crowdChant plays a stretch)
+  boo2:     ['audio/boo2.mp3', 1],        // (real boos, 5.1 s: crowd clip played by crowdCheer through BOOS, not sndRec)
+  wind:     ['audio/wind.mp3', 1],        // (a 16 s seamless loop: wxAudio, 12, plays it like the rain)
 };
 const SND_USE = { penAt: 8, pencilMs: 420, signMs: 700, tickMs: 220, crumpleMs: 480, crumpleFade: 170, crumpleAt: [0, 0.4, 0.85, 1.3, 1.65], pressMs: 1500, pressVol: 0.12, slowMs: 2200, slowAt: 0.5,   // stretches the game's own uses play (ms; at = s into the clip)
   wetFrom: 0.55, wetGap: 2500, wetBig: 0.33, wetHit: 0.2, wetDive: 0.25, wetTap: 0.15,   // wet impacts: from this rain (WXI, 0-1: light rain never squelches), ms between two, levels (big hit / tackle / dive landing / toe tap)
-  wetOdds: { hit: 0.25, big: 0.45, dive: 0.4, tap: 0.25 } };   // (the chance one plays at all, by kind)
-// plays cue k at level v (x its table gain). o: ms (stop after), fade (out, ms), in (fade in, ms), at (s into the clip), tag (its own copy, so it can overlap itself)
+  wetOdds: { hit: 0.25, big: 0.45, dive: 0.4, tap: 0.25 },   // (the chance one plays at all, by kind)
+  // v0.55: throw = whoosh levels (lob / bullet); clang = ms of ring for the smallest / biggest post hit; hand = the high five / slap level jitter (+-);
+  // stiff = the stiff arm's slap level (under the celebration slap's 1); shushBig = a hush beat this strong gets the long shush; chantIn = ms after the pop the chant
+  // starts, chantK = its level x CELEB.crowd.chantVol, chantLen = s of the chant recording; koCrack / koThud = the knockout's crack / thud levels
+  // whoosh = celebration whooshes: rate (playback speed, pitch follows) and level ranges, odds of the softer whoosh1, never the same pick twice running;
+  // throwRate = +- playback-rate jitter on a throw's whoosh
+  whoosh: { rate: [0.82, 1.22], vol: [0.6, 1], soft: 0.35, steps: 5 }, throwRate: 0.06,
+  throw: { lob: 0.6, bullet: 0.95 }, clang: [700, 2700], hand: 0.12, stiff: 0.7, shushBig: 1.6, chantIn: 600, chantK: 1.6, chantLen: 26, koCrack: 0.9, koThud: 0.9,
+  warm: [['whoosh1', 'th'], ['whoosh2', 'th'], ['smack', 'sa'], ['hitcrack', 'ko'], ['boulder', 'ko']] };   // (fast cues loaded when audio starts, so the first one isn't late)
+// plays cue k at level v (x its table gain). o: ms (stop after), fade (out, ms), in (fade in, ms), at (s into the clip), tag (its own copy, so it can overlap itself),
+// rate (playback speed, pitch not preserved)
 function sndRec(k, v = 1, o = {}) {
   const c = COLD_SND[k]; if (!c) return null;
-  return playSfx(c[0] + (o.tag ? '#' + o.tag : ''), Math.min(1, c[1] * v), o.ms || 60000, o.fade == null ? 250 : o.fade, o.in || 0, o.at || 0);
+  return playSfx(c[0] + (o.tag ? '#' + o.tag : ''), Math.min(1, c[1] * v), o.ms || 60000, o.fade == null ? 250 : o.fade, o.in || 0, o.at || 0, o.rate || 1);
+}
+// a celebration whoosh: whoosh2 or now and then the softer whoosh1, at a rate (pitch) and level picked from SND_USE.whoosh, never the same pick twice running
+let whooshLast = -1;
+function celebWhoosh(v = 1) {
+  const W_ = SND_USE.whoosh, n = W_.steps * 2; let i = Math.floor(Math.random() * n);
+  if (i === whooshLast) i = (i + 1 + Math.floor(Math.random() * (n - 1))) % n;
+  whooshLast = i;
+  const soft = Math.random() < W_.soft, step = i % W_.steps, rate = W_.rate[0] + (W_.rate[1] - W_.rate[0]) * (step + Math.random()) / W_.steps;
+  return sndRec(soft ? 'whoosh1' : 'whoosh2', 0.8 * v * (W_.vol[0] + Math.random() * (W_.vol[1] - W_.vol[0])), { fade: 60, tag: 'w', rate });
+}
+function sndWarm() {   // (SND_USE.warm: the element each fast cue will play through, made and loading before its first use)
+  try { for (const [k, tag] of SND_USE.warm) { const src = COLD_SND[k][0] + (tag ? '#' + tag : ''); if (!sfxPlaying[src]) { const a = sfxPlaying[src] = new Audio(src); a.preload = 'auto'; a.load(); } } } catch (e) {}
 }
 // the paper crumple, everywhere it is used (page changes, popups, the cold open's torn page): a short slice of the 2.2 s recording, a different one each
 // time (SND_USE.crumpleAt = where the slices start, crumpleMs / crumpleFade = how long one plays and fades), never the same slice twice running
@@ -2661,7 +2717,7 @@ function crumpleSfx(v = 1) {
 }
 let wetSfxAt = 0;
 function wetSfx(v = 1, kind = 'hit') {   // a body hitting soaked turf: tackles, dive landings and slides in rain games (now and then: SND_USE.wetOdds)
-  if (typeof WXI === 'undefined' || !game || !game.wx || WXI.rain < SND_USE.wetFrom || performance.now() - wetSfxAt < SND_USE.wetGap) return;
+  if (typeof WXI === 'undefined' || !game || !game.wx || game.over || !wxLive() || !sndOn() || WXI.rain < SND_USE.wetFrom || performance.now() - wetSfxAt < SND_USE.wetGap) return;
   if (Math.random() >= (SND_USE.wetOdds[kind] || SND_USE.wetOdds.hit)) return;
   wetSfxAt = performance.now(); sndRec('splash', v * Math.min(1, 0.5 + 0.5 * WXI.rain), { fade: 200 });
 }
@@ -2693,12 +2749,13 @@ const sfxPlaying = {};
 // returns a handle { a, vol, maxMs, t0 }: raising vol / maxMs while it plays makes it louder / longer
 const sfxCtl = {};
 const SFX_SLEW = { up: 0.45, down: 0.8 };   // how fast (volume per second) a playing clip's loudness glides to a new level
-function playSfx(src, vol, maxMs, fadeMs, fadeInMs = 0, startAt = 0) {   // startAt: seconds into the clip to begin (a different stretch of it each time)
+function playSfx(src, vol, maxMs, fadeMs, fadeInMs = 0, startAt = 0, rate = 1) {   // startAt: seconds into the clip to begin (a different stretch of it each time); rate: playback speed (pitch follows it)
   try {
     // one audio element per clip, reused (a new Audio every play left hundreds of media players waiting on GC in Chrome)
     let a = sfxPlaying[src];
     if (a) a.pause(); else a = sfxPlaying[src] = new Audio(src);
     try { a.currentTime = startAt > 0 ? startAt : 0; } catch (e) {}
+    try { a.preservesPitch = a.mozPreservesPitch = a.webkitPreservesPitch = false; a.playbackRate = rate; } catch (e) {}   // (always set: the element is reused)
     a.volume = fadeInMs ? 0 : Math.min(1, vol * VOL());
     const p = a.play();
     if (p && p.catch) p.catch(() => {});
@@ -2706,7 +2763,7 @@ function playSfx(src, vol, maxMs, fadeMs, fadeInMs = 0, startAt = 0) {   // star
     const step = () => {
       if (sfxCtl[src] !== ctl) return;   // (the element was reused for a newer play of this clip: that one's loop runs it now)
       if (a.ended || a.paused && performance.now() - ctl.t0 > 400) return;
-      const end = Math.min(ctl.maxMs, isFinite(a.duration) && a.duration > 0 ? (a.duration - startAt) * 1000 : ctl.maxMs);
+      const end = Math.min(ctl.maxMs, isFinite(a.duration) && a.duration > 0 ? (a.duration - startAt) * 1000 / rate : ctl.maxMs);
       const e = performance.now() - ctl.t0;
       if (e >= end) { a.pause(); return; }
       const fin = fadeInMs ? Math.min(1, e / fadeInMs) : 1;          // fade in...
@@ -2747,7 +2804,7 @@ function ac() {
       noiseBuf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate);
       const ch = noiseBuf.getChannelData(0);
       for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
-      loadClips(actx);
+      loadClips(actx); sndWarm();
     }
     if (actx.state === 'suspended') actx.resume();
     return actx.state === 'running' ? actx : null;
@@ -2835,13 +2892,14 @@ const tackleSfx = big => { if (big) oohSfx(0.5); wetSfx(big ? SND_USE.wetBig : S
   impactSfx({ noiseDur: big ? 0.3 : 0.14, noiseFreq: big ? 480 : 750, noiseQ: 0.8, noiseVol: big ? 1.5 : 0.45,
               thumpHz: big ? 105 : 95, thumpDur: big ? 0.38 : 0.18, thumpVol: big ? 1.6 : 0.5 }); };
 // a knockout (the big hit that jars the ball out as he catches it, KNOCKOUT / KNOCKED OUT OF BOUNDS): the hit stick's own clip, a sharp crack right on top of
-// it (pads and the ball popping out) and a deep thud just behind (synthesized, no new audio)
+// it (pads and the ball popping out: the hitcrack recording) and a deep thud just behind (the boulder recording); the synthesized ones if they can't play
 const KO_SFX = { crack: { noiseDur: 0.06, noiseFreq: 2600, noiseQ: 1.4, noiseVol: 1.1, thumpHz: 190, thumpDur: 0.08, thumpVol: 0.9 },
                  thud: { noiseDur: 0.34, noiseFreq: 300, noiseQ: 0.7, noiseVol: 1.2, thumpHz: 68, thumpDur: 0.46, thumpVol: 1.7 }, thudMs: 70 };
-const knockoutSfx = () => { tackleSfx(true); impactSfx(KO_SFX.crack); setTimeout(() => impactSfx(KO_SFX.thud), KO_SFX.thudMs); };
+const knockoutSfx = () => { tackleSfx(true); sndRec('hitcrack', SND_USE.koCrack, { fade: 120, tag: 'ko' }) || impactSfx(KO_SFX.crack); setTimeout(() => sndRec('boulder', SND_USE.koThud, { fade: 250, tag: 'ko' }) || impactSfx(KO_SFX.thud), KO_SFX.thudMs); };
 // contact sounds: a truck is a heavy hit (the big tackle clips + a low thump), a stiff arm a sharp pad slap
 const truckSfx = () => { if (!clipSfx(pickOf(TACKLE_CLIPS.big), CLIP_VOL.big * 0.85)) impactSfx({ noiseDur: 0.25, noiseFreq: 520, noiseQ: 0.8, noiseVol: 1.2, thumpHz: 110, thumpDur: 0.3, thumpVol: 1.3 }); };
-const stiffSfx = () => impactSfx({ noiseDur: 0.1, noiseFreq: 1300, noiseQ: 1, noiseVol: 0.8, thumpHz: 150, thumpDur: 0.11, thumpVol: 0.7 });
+const handK = () => 1 - SND_USE.hand + 2 * SND_USE.hand * Math.random();   // (a hand hit's level, a little different each time)
+const stiffSfx = () => sndRec('smack', SND_USE.stiff * handK(), { fade: 60, tag: 'sa' }) || impactSfx({ noiseDur: 0.1, noiseFreq: 1300, noiseQ: 1, noiseVol: 0.8, thumpHz: 150, thumpDur: 0.11, thumpVol: 0.7 });
 // the end of the game: one of the three referee whistles in audio/endwhistle.mp3 ([start, end] seconds)
 const END_WHISTLES = [[0.2, 4.0], [6.75, 10.9], [15.0, 19.45]];
 // (the end of a quarter has no whistle of its own, just the normal one after the play; the half and the end of the game always get the triple whistle: endWhistle(true))
@@ -2862,8 +2920,11 @@ const snapSfx = () => impactSfx({ noiseDur: 0.06, noiseFreq: 1500, noiseQ: 1.0, 
 // a kick (kickoff, field goal, extra point): the deep thump of the foot through the ball
 // (one of the recorded ball-on-turf hits, loud; the synthesized thump if the clips aren't loaded)
 const kickSfx = () => { if (!clipSfx(pickOf(HIT_CLIPS), 1)) impactSfx({ noiseDur: 0.1, noiseFreq: 900, noiseQ: 0.9, noiseVol: 1.1, thumpHz: 140, thumpDur: 0.16, thumpVol: 1.4 }); };
-// a throw: the ball leaving the hand with a rising-then-falling whoosh; bullets are sharper and louder
+// a throw: the ball leaving the hand with a whoosh (recorded: whoosh1 lob / whoosh2 bullet, sharper and louder; also kicks); the synthesized
+// band-passed sweep only if the recording can't play
+const THROW_REL = { noiseDur: 0.04, noiseFreq: 2200, noiseQ: 1.2, noiseVol: 0.25, thumpHz: 260, thumpDur: 0.05, thumpVol: 0.2 };   // (the release's tiny tick)
 function throwSfx(bullet) {
+  if (sndRec(bullet ? 'whoosh2' : 'whoosh1', bullet ? SND_USE.throw.bullet : SND_USE.throw.lob, { fade: 60, tag: 'th', rate: 1 + (Math.random() * 2 - 1) * SND_USE.throwRate })) { impactSfx(THROW_REL); return; }
   const a = ac();
   if (!a) return;
   const t = a.currentTime, dur = bullet ? 0.28 : 0.4;
@@ -2880,7 +2941,7 @@ function throwSfx(bullet) {
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   src.connect(band); band.connect(g); g.connect(sfxOut(a));
   src.start(t); src.stop(t + dur + 0.02);
-  impactSfx({ noiseDur: 0.04, noiseFreq: 2200, noiseQ: 1.2, noiseVol: 0.25, thumpHz: 260, thumpDur: 0.05, thumpVol: 0.2 });   // release
+  impactSfx(THROW_REL);   // release
 }
 const dropSfx = () => impactSfx({ noiseDur: 0.09, noiseFreq: 1100, noiseQ: 0.9, noiseVol: 0.3, thumpHz: 170, thumpDur: 0.12, thumpVol: 0.3 });
 // a ball hitting the turf: harder bounces are louder and deeper
@@ -2905,7 +2966,7 @@ function gameImpact() {
 // the home crowd's cheer is one of these clips (one still going is the one a back-to-back play builds on)
 const CHEERS = [SFX.cheer, 'audio/cheer2.wav', COLD_SND.cheer[0]];
 // a different stretch of a crowd clip each time: where to start (s) so a reaction of ms still fits inside it
-const CROWD_LEN = { 'cheer.mp3': 4.4, 'cheer2.wav': 9.8, 'cheer3.mp3': 12, 'boo.mp3': 3.1, 'disappointed.mp3': 36.7 };
+const CROWD_LEN = { 'cheer.mp3': 4.4, 'cheer2.wav': 9.8, 'cheer3.mp3': 12, 'boo.mp3': 3.1, 'boo2.mp3': 5.1, 'disappointed.mp3': 36.7 };
 const crowdStart = (src, ms) => {
   const len = CROWD_LEN[src.replace(/#.*/, '').split('/').pop()] || 0;
   return Math.random() * Math.max(0, len - ms / 1000 - 0.5);
@@ -2971,11 +3032,12 @@ function crowdCheer(level, fav = 'you', bad = false, sure = false, huge = false)
 // A crowd's groan when its team's big play comes up empty (synthesized: a mass of voices sliding down).
 // hush = it's the home crowd: the whole place goes quiet for a beat
 // (one groan at a time: another bad play while one's still going just makes it louder, like a cheer)
-// (the recorded disappointed crowd, audio/disappointed.mp3, 37 s: it also stands in for the boos on a long road-team play)
-const DISAPPOINT = 'audio/disappointed.mp3', BOOS = [SFX.boo, DISAPPOINT];
+// (the recorded disappointed crowd, audio/disappointed.mp3, 37 s, and the "aww" of SFX.boo = the let-downs; v0.55: the road team's good plays get the real
+// boos, boo2.mp3, as two copies so a layered / handed-off boo has a second element)
+const DISAPPOINT = 'audio/disappointed.mp3', BOO_REAL = COLD_SND.boo2[0], BOOS = [BOO_REAL, BOO_REAL + '#b'];
 const pickBoo = () => BOOS.find(c => sfxCtl[c] && !sfxCtl[c].a.paused && !sfxCtl[c].a.ended) || pickOf(BOOS);
 const CROWD_SWAP_MS = 700;   // a cheer / boo / groan still going fades out over this when the other one starts
-function fadeGroan() { fadeSfx(DISAPPOINT, CROWD_SWAP_MS); fadeSfx(DISAPPOINT + '#road', CROWD_SWAP_MS); }
+function fadeGroan() { fadeSfx(DISAPPOINT, CROWD_SWAP_MS); fadeSfx(DISAPPOINT + '#road', CROWD_SWAP_MS); fadeSfx(SFX.boo, CROWD_SWAP_MS); }
 let groanAt = -1e9;
 // --- the crowd at the plays that decide a game: far past a normal big-play cheer. crowdMoment (top of endPlay, from celebWhistle) = a turnover or a
 // fourth-down stop that seals it, or a late go-ahead score; crowdFinal (endGame) = the final whistle of a close game or any overtime win (a walk-off
@@ -3035,25 +3097,25 @@ function toneSfx(type, parts, dur, vol, key) {   // parts: [Hz, level, Hz at the
   }
 }
 const CELEB_SFX = {
-  clap:    v => impactSfx({ noiseDur: 0.07, noiseFreq: 1700, noiseQ: 0.8, noiseVol: 0.75 * v, thumpHz: 320, thumpDur: 0.04, thumpVol: 0.25 * v }),
+  clap:    v => sndRec('highfive', v * handK(), { fade: 60, tag: 'hf' }) || impactSfx({ noiseDur: 0.07, noiseFreq: 1700, noiseQ: 0.8, noiseVol: 0.75 * v, thumpHz: 320, thumpDur: 0.04, thumpVol: 0.25 * v }),
   snap:    v => impactSfx({ noiseDur: 0.03, noiseFreq: 3400, noiseQ: 2.2, noiseVol: 0.6 * v, thumpHz: 1100, thumpDur: 0.025, thumpVol: 0.2 * v }),
-  slap:    v => impactSfx({ noiseDur: 0.09, noiseFreq: 1250, noiseQ: 1, noiseVol: 0.7 * v, thumpHz: 165, thumpDur: 0.09, thumpVol: 0.5 * v }),
+  slap:    v => sndRec('smack', v * handK(), { fade: 60, tag: 'sl' }) || impactSfx({ noiseDur: 0.09, noiseFreq: 1250, noiseQ: 1, noiseVol: 0.7 * v, thumpHz: 165, thumpDur: 0.09, thumpVol: 0.5 * v }),
   thud:    v => bounceSfx(Math.min(1, 0.7 * v) * 260 * S),
-  stomp:   v => impactSfx({ noiseDur: 0.12, noiseFreq: 260, noiseQ: 0.6, noiseVol: 0.5 * v, thumpHz: 72, thumpDur: 0.2, thumpVol: 1.1 * v }),
-  clang:   v => { toneSfx('sine', [[523, 1, 512], [1318, 0.6], [1975, 0.4], [2790, 0.25]], 0.75, 0.3 * v, 'clang'); impactSfx({ noiseDur: 0.04, noiseFreq: 2900, noiseQ: 1.6, noiseVol: 0.5 * v, thumpHz: 410, thumpDur: 0.06, thumpVol: 0.4 * v }); },
-  whoosh:  v => sndRec('swoosh', 0.8 * v, { ms: 260, fade: 90, tag: 'w' }),   // (no short whoosh recording yet: the swoosh's first 260 ms)
+  stomp:   v => sndRec('ground', 0.8 * v, { fade: 150, tag: 'gr' }) || impactSfx({ noiseDur: 0.12, noiseFreq: 260, noiseQ: 0.6, noiseVol: 0.5 * v, thumpHz: 72, thumpDur: 0.2, thumpVol: 1.1 * v }),
+  clang:   v => { if (sndRec('clang', v, { ms: SND_USE.clang[0] + (SND_USE.clang[1] - SND_USE.clang[0]) * Math.max(0, Math.min(1, (v - 0.6) / 0.8)), fade: 450, tag: 'cl' })) return; toneSfx('sine', [[523, 1, 512], [1318, 0.6], [1975, 0.4], [2790, 0.25]], 0.75, 0.3 * v, 'clang'); impactSfx({ noiseDur: 0.04, noiseFreq: 2900, noiseQ: 1.6, noiseVol: 0.5 * v, thumpHz: 410, thumpDur: 0.06, thumpVol: 0.4 * v }); },
+  whoosh:  v => celebWhoosh(v),   // (the whoosh recordings, varied: celebWhoosh)
   scrape:  v => sweepSfx(900, 650, 500, 0.3, 0.16 * v, 0.7),
   grunt:   () => {},   // (the synthesized grunt buzzed: silent until a recording comes in; the beats stay)
   hit:     () => { shakeKick = Math.max(shakeKick || 0, CELEB.bumpShake * 0.5); tackleSfx(false); },
   bighit:  () => { shakeKick = Math.max(shakeKick || 0, CELEB.bumpShake); tackleSfx(true); },
-  smash:   v => { shakeKick = Math.max(shakeKick || 0, CELEB.bumpShake * (0.6 + v)); tackleSfx(v >= 0.9); impactSfx({ noiseDur: 0.16, noiseFreq: 240, noiseQ: 0.6, noiseVol: 0.6 * v, thumpHz: 58, thumpDur: 0.28, thumpVol: 1.2 * v }); },   // (v0.40: two men meeting at full speed; celebFxMen adds the impact ring)
-  boom:    v => { impactSfx({ noiseDur: 0.3, noiseFreq: 190, noiseQ: 0.6, noiseVol: 0.7 * v, thumpHz: 60, thumpDur: 0.4, thumpVol: 1.2 * v }); setTimeout(() => sweepSfx(3200, 5200, 2400, 0.55, 0.14 * v, 0.6, 'crackle'), 120); },
+  smash:   v => { shakeKick = Math.max(shakeKick || 0, CELEB.bumpShake * (0.6 + v)); tackleSfx(v >= 0.9); sndRec('boulder', 0.8 * v, { fade: 200, tag: 'sm' }) || impactSfx({ noiseDur: 0.16, noiseFreq: 240, noiseQ: 0.6, noiseVol: 0.6 * v, thumpHz: 58, thumpDur: 0.28, thumpVol: 1.2 * v }); },   // (v0.40: two men meeting at full speed; celebFxMen adds the impact ring)
+  boom:    v => { sndRec('boulder', 0.7 * v, { fade: 250, tag: 'bm' }) || impactSfx({ noiseDur: 0.3, noiseFreq: 190, noiseQ: 0.6, noiseVol: 0.7 * v, thumpHz: 60, thumpDur: 0.4, thumpVol: 1.2 * v }); setTimeout(() => sweepSfx(3200, 5200, 2400, 0.55, 0.14 * v, 0.6, 'crackle'), 120); },
   shutter: v => { CELEB_SFX.snap(v); setTimeout(() => CELEB_SFX.snap(0.7 * v), 70); },   // (no shutter recording yet)
   flash:   v => CELEB_SFX.snap(0.6 * v),   // (no flash-pop recording yet: a soft snap)
   marker:  v => sndRec('pencil', 1.2 * v, { ms: 500, fade: 160, at: Math.random() * SND_USE.penAt, tag: 'mk' }),   // (no marker recording yet: a pencil stretch)
   boing:   () => {},   // (no recording yet: silent until one comes in)
   squeak:  () => {},   // (no recording yet: silent until one comes in)
-  foam:    v => CELEB_SFX.thud(0.7 * v),   // (no foam-thud recording yet: the ball thump)
+  foam:    v => sndRec('thud', 0.6 * v, { fade: 80, tag: 'fm' }) || CELEB_SFX.thud(0.7 * v),   // (the soft thud recording; the ball thump if it can't play)
   stamp:   v => sndRec('stamp', v, { fade: 80, tag: 'st' }),
   register: v => sndRec('register', v, { fade: 120 }),
   scream:  v => sndRec('yell', v, { ms: 1250, fade: 300, tag: 'y' }),   // (the scream move's beat had no sound until now)
@@ -3065,8 +3127,8 @@ const CELEB_SFX = {
   pencil:  v => sndRec('pencil', v, { ms: SND_USE.pencilMs, fade: 160, at: Math.random() * SND_USE.penAt }),   // (v0.43: a pencil line scratched on paper)
   bell:    v => sndRec('bell', 0.8 * v, { ms: 1400, fade: 500, tag: 'cb' }),   // (a bell rung: the recorded school bell)
   click:   v => sndRec('click', v, { tag: 'cc' }),   // (a key turned in a lock: the recorded click)
-  chop:    v => { sweepSfx(700, 2200, 500, 0.14, 0.2 * v, 1.4, 'chopw'); setTimeout(() => impactSfx({ noiseDur: 0.06, noiseFreq: 900, noiseQ: 1.2, noiseVol: 0.55 * v, thumpHz: 140, thumpDur: 0.1, thumpVol: 0.6 * v }), 90); },   // (an axe biting wood)
-  hush:    (v, fav, f) => { if ((fav !== MATCH.home || f === 'home') && !crowdQuiet()) { for (const c of [...CHEERS, ...BOOS]) { fadeSfx(c, 600); fadeSfx(c + '#big', 600); } hushUntil = animNow() + Math.min(6000, 2500 * v); } },   // (v = how long it stays quiet; a road player shushes the home crowd: it dies away)   // ('post:amp': the goal post is hit; the same beat is what drawGoalPostTop's spring reads: postShakeAt, 07)
+  chop:    v => { sndRec('whoosh2', 0.5 * v, { ms: 160, fade: 60, tag: 'ch' }) || sweepSfx(700, 2200, 500, 0.14, 0.2 * v, 1.4, 'chopw'); setTimeout(() => impactSfx({ noiseDur: 0.06, noiseFreq: 900, noiseQ: 1.2, noiseVol: 0.55 * v, thumpHz: 140, thumpDur: 0.1, thumpVol: 0.6 * v }), 90); },   // (an axe biting wood)
+  hush:    (v, fav, f) => { if ((fav !== MATCH.home || f === 'home') && !crowdQuiet()) { for (const c of [...CHEERS, ...BOOS, SFX.boo, DISAPPOINT]) { fadeSfx(c, 600); fadeSfx(c + '#big', 600); } hushUntil = animNow() + Math.min(6000, 2500 * v); sndRec(v >= SND_USE.shushBig ? 'shush2' : 'shush', 1, { fade: 200, tag: 'sh' }); } },   // (v = how long it stays quiet; a road player shushes the home crowd: it dies away)   // ('post:amp': the goal post is hit; the same beat is what drawGoalPostTop's spring reads: postShakeAt, 07)
 };
 // the goal post takes a hit (a dunk, a hug, a ball off the bar): the metal clang and the crowd's ooh-pop, by how hard (amp, about 0.3-1.7: CELEB.post)
 function postShake(amp = 1, fav) {
@@ -3100,16 +3162,25 @@ function crowdOhh(v = 1) {   // a sack: the deep "OHHH"
   if (performance.now() - oohAt < 2500) return; oohAt = performance.now();   // (shares the ooh's gap so the two never stack)
   sndRec('gasp', 0.6 + 0.4 * v, { ms: 3200, fade: 700 });   // (the recorded stadium gasp)
 }
-function crowdChant(bars) {   // stomp, stomp, clap on the stadium pulse's beat (PULSE.beat)
-  const C = CELEB.crowd, now = performance.now(), beat = PULSE.beat;
+function crowdChant(bars) {   // the recorded rhythmic chant, bars x 4 beats of the stadium pulse (PULSE.beat) long, fading out (stomp, stomp, clap synthesized if it can't play)
+  const C = CELEB.crowd, now = performance.now(), beat = PULSE.beat, ms = bars * beat * 4;
   if (now < chantUntil) return;
-  chantUntil = now + bars * beat * 4;
+  chantUntil = now + ms;
+  setTimeout(() => {
+    if (paused || crowdQuiet()) return;
+    crowdFx.until = Math.max(crowdFx.until, animNow() + ms);   // (the stands move the whole stretch)
+    if (sndRec('chant', C.chantVol * SND_USE.chantK, { ms, fade: Math.min(1500, ms * 0.4), in: 300, at: Math.random() * Math.max(0, SND_USE.chantLen - ms / 1000 - 1) })) return;
+    crowdChantSynth(bars);
+  }, SND_USE.chantIn);
+}
+function crowdChantSynth(bars) {   // (the old synthesized chant: the fallback)
+  const C = CELEB.crowd, beat = PULSE.beat;
   for (let b = 0; b < bars; b++) for (let i = 0; i < 3; i++) setTimeout(() => {
     if (paused || crowdQuiet()) return;
     const v = C.chantVol * Math.min(1, 0.5 + b / 3) * (b >= bars - 1 ? 0.6 : 1);
     if (i < 2) CELEB_SFX.stomp(v); else impactSfx({ noiseDur: 0.16, noiseFreq: 1500, noiseQ: 0.5, noiseVol: 0.9 * v, thumpHz: 300, thumpDur: 0.05, thumpVol: 0.15 * v });
     crowdFx.until = Math.max(crowdFx.until, animNow() + 400);
-  }, 900 + (b * 4 + i) * beat);
+  }, 300 + (b * 4 + i) * beat);
 }
 // phase 'build' (it starts) / 'peak'; hy = its hype 0-1; fav = whose moment; ev = its event ('pick6' = a defensive score)
 function crowdCeleb(phase, hy, fav, ev) {
@@ -3145,6 +3216,7 @@ function crowdGroan(level, hush = true) {
   // (a cheer or boo still going fades out under the home crowd's groan; the road fans' groan goes under the home cheer)
   if (hush) { for (const c of [...CHEERS, ...BOOS]) fadeSfx(c, CROWD_SWAP_MS); }
   playSfx(key, vol, ms, CROWD_IMPACT.fadeOut, 500, crowdStart(key, ms + 1500));
+  if (hush) playSfx(SFX.boo, vol * 0.8, 3000, 900, 80);   // (the home crowd's "aww" on top)
 }
 const BIG_PLAY = 15, CROWD_OK_GAIN = 4;   // a big play is a gain over BIG_PLAY yards; a gain of CROWD_OK_GAIN+ yards never disappoints the crowd
 let playHype = 0, playCheered = false, hushUntil = 0;  // this play's peak hype / whether the crowd's reacted yet

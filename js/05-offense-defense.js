@@ -3885,7 +3885,13 @@ function pursueMove(d, c, dt) {
   const closing = kickoffPlay && !d.isKicker && dist(d, c) < BREAKDOWN.range && dist(d, c) > LUNGE_RANGE
     && defenders().filter(o => o !== d && !o.isKicker && o.x > c.x - 2 * YD && dist(o, c) < dist(d, c)).length < KICK_COVER.gear;
   const koCov = kickoffPlay && d.lane !== undefined && !d.isKicker;   // (a kick coverage man: quicker, and cuts back far sharper)
-  const chase = d.top * (lastLine ? PURSUIT.lastLine : PURSUIT.chase) * (1 + 0.08 * (d.mom || 0)) * (closing ? BREAKDOWN.k : 1) * PURSUIT.boost * (koCov ? (kickoff && kickoff.punt ? PUNT.chaseK * PUNT_COVER.speed : KICK_COVER.speed) : 1);   // (their punt = the same coverage speed as yours)
+  if (koCov && d.koBust) koBustCheck(d);   // (v0.56: the wedge-buster meets the lead blocker)
+  if (koCov && !d.action) {   // (v0.56: overran him: he plants and recovers instead of turning on a dime)
+    const CR = COVER_REACT, sp = Math.hypot(d.vx || 0, d.vy || 0), tx = c.x - d.x, ty = c.y - d.y, td = Math.hypot(tx, ty) || 1;
+    if (sp > CR.plantV * YD && ((d.vx || 0) * tx + (d.vy || 0) * ty) / (sp * td) < CR.plantDot && !(clock - (d.plantT ?? -9) < CR.plantCd)) { d.plantT = clock; noteBreak(d, 'chop', true); }
+  }
+  const plantK = koCov && clock - (d.plantT ?? -9) < COVER_REACT.plant ? COVER_REACT.plantK : 1;
+  const chase = d.top * (lastLine ? PURSUIT.lastLine : PURSUIT.chase) * (1 + 0.08 * (d.mom || 0)) * (closing ? BREAKDOWN.k : 1) * PURSUIT.boost * (koCov ? (kickoff && kickoff.punt ? PUNT.chaseK * PUNT_COVER.speed : KICK_COVER.speed) : 1) * plantK * (koCov && d.koBust ? KO_V56.bustK : 1);   // (their punt = the same coverage speed as yours)
   const aimAt = pursuitPoint(d, c, chase, c.team === 'off' ? 1 : -1, closing ? Math.min(err, 1) : err), base = { ...aimAt }, cdir = c.team === 'off' ? 1 : -1;
   // kickoff coverage keeps its lanes: stays fanned out (tightening as it closes), the outside men contain, so nobody bunches up and gets cut back on
   // roles: the outside two a side CONTAIN (stay outside the returner, force him back in), the next men FILL their lanes (hold them
@@ -3894,13 +3900,15 @@ function pursueMove(d, c, dt) {
   if (kickoffPlay && d.lane !== undefined && !d.isKicker && kRole !== 'rush' && d.x - c.x > (kRole === 'fill' ? KICK_COVER.fillNear : KICK_COVER.near)) {
     const k = Math.min(1, (d.x - c.x) / KICK_COVER.fan), off = kOff;
     const laneY = Math.max(Y_MIN + YD, Math.min(Y_MAX - YD, c.y + off * KICK_COVER.space * k));
-    aimAt.y += (laneY - aimAt.y) * (kRole === 'fill' ? KICK_COVER.fillHold : KICK_COVER.hold) * k;
+    const csp = Math.hypot(c.vx || 0, c.vy || 0), sq = csp > COVER_REACT.commitV * YD && (c.vx || 0) * cdir / csp > COVER_REACT.commitU ? COVER_REACT.squeeze : 1;   // (v0.56: he has committed upfield: the lanes squeeze)
+    aimAt.y += (laneY - aimAt.y) * (kRole === 'fill' ? KICK_COVER.fillHold : KICK_COVER.hold) * k * sq;
     if (kRole === 'contain') aimAt.y = off < 0 ? Math.min(aimAt.y, c.y - KICK_COVER.contain) : Math.max(aimAt.y, c.y + KICK_COVER.contain);
   }
   // the outside men keep their leverage all the way in (first contain the edge, the fillers close the gap between): they never cut inside of him while he's still ahead of them
   else if (kickoffPlay && d.lane !== undefined && !d.isKicker && kRole === 'contain' && d.x > c.x - 1.5 * YD) aimAt.y = kOff < 0 ? Math.min(aimAt.y, c.y - 0.5 * KICK_COVER.contain) : Math.max(aimAt.y, c.y + 0.5 * KICK_COVER.contain);
   // not everyone runs straight at him: each man takes an angle toward his own side of the returner (outside of him, to wall off the sideline),
   // closing in as he gets near. The middle men take the smallest angle, the outside men the biggest
+  if (kickoffPlay && d.koSafe && !d.isKicker && d.x - c.x > KO_V56.safeYd * YD) aimAt.x = Math.max(aimAt.x, c.x + KO_V56.safeYd * YD);   // (v0.56: the kickoff's safety stays the last line until the returner gets close)
   if (kickoffPlay && d.lane !== undefined && !d.isKicker && d.x > c.x) {
     const laneSide = kOff < 0 ? -1 : kOff > 0 ? 1 : (d.lane % 2 ? 1 : -1), reachK2 = Math.min(1, (d.x - c.x) / (16 * YL));
     const side = Math.abs(d.y - c.y) > 1.5 * YD ? Math.sign(d.y - c.y) : laneSide;   // (the hip he is really on: a man the returner has already crossed never loops over his face to get back to his lane's side)

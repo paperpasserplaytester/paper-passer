@@ -161,7 +161,7 @@ const SIDELINE = {
   // from it that counts as there (gone: the bench man shows); a kick's clones only use it when it is no farther than the old run off the screen (the kick never waits longer).
   // turnover = after a change of possession / a kick the old units jog off from where they stood (only when the view keeps its picture; the snap never waits)
   kitLook: { helmSit: 0.45, helmHold: 0.75, helmStand: 0.8 },   // v0.52: roster bench men (both teams) in the on-field kit: share of seated men wearing the helmet, of the rest holding it (on a knee), of standing men wearing it
-  sub: { d: 2.1, spread: 0.85, arrive: 1.3, turnover: true, maxN: 22, skip: 0.5, v: 11, inPad: 0.5, fast: 3 },   // v0.52: v = yd/s a man leaving the field sprints at (was FM.speed 8); inPad = yd past a sideline that still counts as inside the field (a sub there is seated at once, never walks or sits on the field); fast = x speed while a banner / the 4th-down or PAT choice covers the field   // skip = s of real time without a tick (a replay, banner, sim box, pause) that counts as a time skip: subs / crew move on by it (slSkipCheck)
+  sub: { d: 2.1, spread: 0.85, arrive: 1.3, turnover: true, maxN: 22, skip: 0.5, v: 7.5, inPad: 0.5, fast: 3, head: [0.15, 0.55], headFar: 0.6 },   // v0.57: v = a believable jog (was 11); head = share of the way to his sideline a stand-in starts at, nearest .. farthest man (farthest = headFar x the field's width away), so they still clear before the snap   // v0.52: v = yd/s a man leaving the field sprints at (was FM.speed 8); inPad = yd past a sideline that still counts as inside the field (a sub there is seated at once, never walks or sits on the field); fast = x speed while a banner / the 4th-down or PAT choice covers the field   // skip = s of real time without a tick (a replay, banner, sim box, pause) that counts as a time skip: subs / crew move on by it (slSkipCheck)
   // help-up (host, slHelpPick): a player knocks a sideline person down -> one outcome, weights w (help = he helps him up, sorry = a swerve by without stopping, ignore,
   // other = a nearby staff member / bench man walks over (within otherR yd, there in time), self = up on his own). opp = x help for the other team's people, neutral = x help
   // for crew / cameras / vests; hurry = x ignore in a late close game (lateS(late) s left, within close points) or right after a big play. dwHelp / dwMax = extra s on the turf
@@ -207,7 +207,7 @@ const SIDELINE = {
 // delay = s he waits before walking; think = s between looks at the play
 // v0.51 the bench runs along with a carrier (slRunAlong, 07): he is within yd of his own bench's sideline, gap yd clear of every opponent, running toward the goal at
 // over speed yd/s with minLeft yd or more to go; up to n standing bench people / staff, stagger yd apart level with the goal line, at v yd/s; hold = s they stay there
-SIDELINE.runAlong = { yd: 8, gap: 4, speed: 5, minLeft: 12, n: 5, stagger: 0.8, v: [6, 7.5], hold: 4 };
+SIDELINE.runAlong = { yd: 8, gap: 4, speed: 5, minLeft: 12, n: 5, stagger: 0.8, v: [6, 7.5], hold: 4, stopYd: 25 };   // stopYd = they run no farther than this many yards from the goal line they run toward (their end of the bench area: the 25), then jump until the whistle
 const CAM_MAN = { spots: [[20, 5, 35, 1], [80, 65, 95, 2], [7, -6, 16, 2], [93, 84, 106, 2], [50, 24, 76, 1]], arc: 9, keep: 2.5, keepVar: 2, react: [0.2, 0.5], swing: [0.4, 0.7], over: 1.3, dead: 0.07, err: 0.07,   // (4th = performance tier)
   walk: 1.9, dolly: 1.1, delay: [0.5, 1.5], think: 0.25,
   // end-zone crews (behind each end line, between the post pads and the end wall): back = YD past the end line; ys = their spots across the field (share of the width, the far
@@ -365,6 +365,9 @@ const KICKOFF = { ballX: 60, runUp: 6, runUpTime: 1.15, stride: 3,   // stride =
  coverX: 50, recvX: 40, accel: 9 * YD, land: [-6, 9], out: 0.22, touchback: 30, blockSpeed: 8 * YD, safetyBack: 10 };   // safetyBack = yards further back the kicker lines up after a safety; blockSpeed = the return team's blockers' top speed (not OL: they're special-teams blockers)
 // the kicker in coverage: much slower, a poor tackler (miss = least chance he whiffs), and he hangs back as the
 // last line: lurk yards in front of the returner until the returner gets within strike yards of him
+// v0.56 kickoffs: safeYd = yd the coverage's safety keeps in front of the returner until he gets that close; bustK = x the wedge-buster's chase speed; bustYd / bustStun = yd he meets the
+// lead blocker at and s both are knocked out of it; set = x KPRO.align (wob / depth) for the kickoff lines' raggedness (neatness by awareness / wear, kproNeat)
+const KO_V56 = { safeYd: 9, bustK: 1.12, bustYd: 1.75, bustStun: 0.6, bustWin: 0.6, set: 0.6 };   // bustWin = strength edge (z) for a clear win (the wedge blown up, called out)
 const KICK_COVER = { fan: 24 * 1.2 * YD, space: 1.5 * YD, hold: 0.6, contain: 1.5 * YD, near: 4 * YD, fillHold: 0.8, fillNear: 6 * YD, tackle: 0.3, first: 0.5, cap: 0.3, gear: 2, speed: 1.05, accel: 2.2, shed: 1.6 }   // shed = x the kickoff team's odds of beating a block;   // speed / accel = x a coverage man's chase speed / acceleration (accel = how fast he changes direction)   // fillHold / fillNear = the lane fillers hold their lane fully until the returner is within fillNear; tackle = x the coverage men's miss chance (better tacklers)   // coverage lanes: fan = distance over which they stay spread, space = yards between lanes, hold = how strictly they keep the lane, contain = the outside men stay this far outside the returner
 const MLB_MID = { leash: 0.65, edge: 13, range: 9 };   // middle linebacker (yards): leash = share of the usual chase width, edge = he ignores routes wider than this off the middle, range = furthest he's pulled off it
 const KICKER = { speed: 0.68, miss: 0.5, lurk: 10, strike: 5 };
@@ -847,6 +850,9 @@ const CPU_JUMP = { base: 0.55, ctc: 1.2, reach: 1.45, contest: 2.6 * YD, oneDive
 const DIVE_TUCK = { wait: 0.03, dur: 0.2, in: 18 };   // a diving catch: s after the catch before he pulls it in, s to bring it to his chest, sprite units the hands come in
 const CPU_STRIDE = { z: 38 * S };   // the computer's receivers catch an uncontested ball up to this high in stride (hands up / over the shoulder, run after it) instead of leaping for everything
 // PUNT_COVER speed / accel = x your kick / punt coverage's chase speed and acceleration (change of direction) on their live returns
+// v0.56: every kick coverage man reacts to the returner: once he commits upfield (over commitV yd/s, commitU share of it straight up the field) the lanes squeeze (lane hold x squeeze);
+// a man running away from him (over plantV yd/s, heading dot under plantDot) plants and recovers: plant s at plantK x his chase speed, at most once every plantCd s
+const COVER_REACT = { commitV: 5, commitU: 0.8, squeeze: 0.55, plantV: 6, plantDot: -0.2, plant: 0.3, plantK: 0.55, plantCd: 0.9 };
 const PUNT_COVER = { speed: 1.25, accel: 3.6, net: 20 * YL, space: 3 * YD, hold: 0.7, stackX: 4, stackY: 1.5, stackPush: 1.5, gearRange: 9, gear: 2, hip: 0.25, gunTight: 0.06, gunNear: 9 };   // gunTight = x KICK_COVER.contain of outside leverage a gunner keeps (tight angles), none inside gunNear yd   // punt coverage net (live return): net = distance over which the lanes stay spread, space = yards between lanes, hold = how strictly a lane is kept; stack* = a teammate this far ahead (x) / across (y) yd pushes him sideways by stackPush; inside gearRange yd the first `gear` men break down; hip = yd the aim shifts to the returner's near hip
 // punt gunners (both teams' punts): shade = yd of outside shade on a tight angle straight at where the returner is going; speed = x their chase speed
 // after the catch; side = x the hover distance they sit outside him while the ball is up (yours). Punt team vs return blocks (both ways):
@@ -1684,6 +1690,10 @@ function stadiumShake() {
 // after the first click, the meters fade in and out. The computer (or the other player in two-player) can call a timeout to ice you:
 // on a big kick the CPU does it on your first click (ICE.cpuOdds). Kicker POISE: less shake, less fade, a slightly bigger green zone.
 const ICE = { late: 120, cpuOdds: 0.7, iced: 1.6, shake: 3.5, fade: 0.65, rate: 4.2, poise: 0.14, consist: 0.35, cpuMiss: 0.07 };
+// v0.55 tension sounds (tensionTick, 08): a big kick (bigKick) gets the riser as it lines up, then the recorded heartbeat while its meter is live
+// (bpm; iced = after an icing timeout; vol = its level); a 4th down in a one-score game (margin) inside lateS(ICE.late) of Q4 or in OT gets the riser
+// before the snap (riserVol; fadeMs = how fast it dies at the snap / kick). Your kicks only, never sims, the tutorial or the cold open
+const KICK_TENSE = { bpm: 70, iced: 96, vol: 0.8, riserVol: 0.7, fadeMs: 500, margin: 8 };
 const kickPoise = K => Math.max(0.6, Math.min(1.5, rm(kickP(K), 'poi', ICE.poise)));
 function bigKick() {
   if (tut || game.over) return false;
@@ -2955,12 +2965,12 @@ function loadWear() {   // each snap: read everyone's wear onto the player (p.we
     p.fresh = WEAR_FRESH.get(p.wk) || 0;
   }
   wearFreshArm = false;
-  if (game && game.redWarn && !game.redWarned && !coldHud()) { game.redWarned = true; showTopCallout(game.redWarn, '#ff6b6b'); }   // (one red-legs warning a game, before a snap)
+  // (no red-legs callout: stamina is never announced; game.redSeen still feeds the iron man goal)
 }
 function freshNote(p) {   // the first time fresh legs fire for a man this game: one green doodle
   const g = game.freshSeen || (game.freshSeen = {}), k = p.src ? p.src.name : p.wk;
   if (g[k] || tut || coldHud()) return;
-  g[k] = 1; popup(p, 'FRESH LEGS', '#7dff8a');
+  g[k] = 1;   // (no FRESH LEGS popup: the boost stays, the announcement is gone)
 }
 function wearAfter(p, w) {   // after a play's wear: highest zone, fresh legs used up, your men going red (warning + iron man)
   const z = wearZone({ wear: w });
@@ -2968,7 +2978,6 @@ function wearAfter(p, w) {   // after a play's wear: highest zone, fresh legs us
   if (WEAR_FRESH.get(p.wk) > 0) WEAR_FRESH.set(p.wk, WEAR_FRESH.get(p.wk) - 1);
   if (z < 2 || !p.src || !(ROSTER[meK()] || []).includes(p.src)) return;
   (game.redSeen || (game.redSeen = {}))[p.src.name] = 1;
-  if (!game.redWarned && !game.redWarn) game.redWarn = `${p.src.group} TIRED: RED LEGS`;
 }
 function wearPlay() {   // a scrimmage play just ended: everyone on the field tires (the defense too)
   if (tut) return;   // (the tutorial never wears anyone down)

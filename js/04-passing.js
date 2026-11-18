@@ -1164,7 +1164,7 @@ function knockPylon(p, vx, vy) {
   p.down = true; p.sideways = Math.abs(vx) >= Math.abs(vy); p.dir = Math.sign(p.sideways ? vx : vy) || 1;
   const sp = Math.hypot(vx, vy) || 1;
   p.ox = vx / sp * PYLON.slide; p.oy = vy / sp * PYLON.slide;
-  impactSfx({ noiseDur: 0.08, noiseFreq: 1800, noiseQ: 1, noiseVol: 0.12, thumpHz: 170, thumpDur: 0.09, thumpVol: 0.18 });   // a foam thunk
+  sndRec('thud', 0.35, { fade: 80, tag: 'py' }) || impactSfx({ noiseDur: 0.08, noiseFreq: 1800, noiseQ: 1, noiseVol: 0.12, thumpHz: 170, thumpDur: 0.09, thumpVol: 0.18 });   // a foam thunk (the thud recording, quiet)
 }
 function updatePylons(dt) {
   if (state === 'pre' || (rec && rec.replaying)) return;

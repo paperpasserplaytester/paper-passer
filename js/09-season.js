@@ -583,7 +583,7 @@ function poTick(now) {
   if (a) {
     if (!(a.t0 <= now) || !a.ms) a.t0 = now - (a.hit ? a.ms : 0);   // (a stamp from another page load: restart / finish it)
     const k = (now - a.t0) / a.ms;
-    if (!a.hit && k >= 0.45) { poSimGame(a.g); a.hit = true; try { tackleSfx(true); } catch (e) {} poAfter(); autosaveSoon(); }   // (the helmets crash together)
+    if (!a.hit && k >= 0.45) { poSimGame(a.g); a.hit = true; try { sndRec('hitcrack', 0.8, { fade: 120, tag: 'po' }) || impactSfx(KO_SFX.crack); } catch (e) {} poAfter(); autosaveSoon(); }   // (the helmets crash together)
     if (k >= 1) po.anim = null;
     return;
   }
@@ -2107,7 +2107,7 @@ function draftStep() {
   if (!e.x) e.k = pickOwner(D.year, D.round, e.o);
   e.me = e.k === me ? 1 : 0;
   if (e.me) {
-    if (!D.skipAll && D.passR !== D.round) { D.turn = true; return false; }
+    if (!D.skipAll && D.passR !== D.round) { draftTurnOn(true); return false; }
     draftPass(e); return true;
   }
   const p = draftAI(e.k);
@@ -2142,8 +2142,10 @@ function draftFix(D) {   // a save from before the board, made while you were on
   const me = season.team, own = D.owners || D.order.map(k => pickOwner(D.year, D.round, k)), plan = [];
   for (let i = 0; i < (D.left || 0); i++) plan.push({ o: me, k: me, x: 1, me: 1 });
   for (let s = (D.slot || 0) + 1; s < D.order.length; s++) if (own[s] !== me) plan.push({ o: D.order[s], k: own[s], x: 1 });
-  D.plans[D.round] = plan; D.pi = 0; D.turn = !!(plan[0] && plan[0].me);
+  D.plans[D.round] = plan; D.pi = 0; draftTurnOn(!!(plan[0] && plan[0].me));
 }
+// v0.55: the draft reaching your pick rings the bell, once each time D.turn goes false -> true (never on a skip-all draft, never on redraws)
+function draftTurnOn(v) { const D = OFF.draft; if (v && !D.turn && !D.skipAll) try { sndRec('bell', 0.8, { ms: 1400, fade: 500, tag: 'dr' }); } catch (e) {} D.turn = v; }
 function draftTake(p) {   // you pick him
   const D = OFF.draft, me = season.team, R = ROSTER[me], e = draftCur()[D.pi];
   D.pool.splice(D.pool.indexOf(p), 1);

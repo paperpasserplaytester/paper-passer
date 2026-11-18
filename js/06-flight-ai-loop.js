@@ -814,7 +814,8 @@ function updateFumble(dt) {
     if (p.looseDecT !== fumbleT && ball.z < 12 * S && dist(p, ball) < LOOSE_DIVE.at * YD) {
       p.looseDecT = fumbleT;
       const opps = players.filter(o => o.team !== p.team && dist(o, ball) < FUMBLE_SCOOP.traffic).length;
-      if (!looseCanRun(p) || Math.random() < LOOSE_DIVE.base + LOOSE_DIVE.perOpp * opps) {
+      const scoopMan = ball.blocked && p.kp && p.kp.role === 'scoop' && opps <= KPRO.backJobs.scoopTraffic;   // (v0.56: the scoop man trailing the rush stays on his feet for a blocked kick with room: picks it up and takes a knee, fallOnBall)
+      if (!scoopMan && (!looseCanRun(p) || Math.random() < LOOSE_DIVE.base + LOOSE_DIVE.perOpp * opps)) {
         const lead = 0.2;   // (aims a step ahead of a rolling ball)
         startDive(p, ball.x + ball.vx * lead, ball.y + ball.vy * lead, LOOSE_DIVE.dur, dist(p, ball) + 0.6 * YD);
         p.looseDive = fumbleT; p.recoverUntil = clock + p.act.dur + 0.3;
@@ -857,7 +858,9 @@ function fallOnBall(near, laid = false) {
   {
     ball.loose = ball.live = ball.fumble = false;
     near.hasBall = true;
-    const fall = () => { if (!(laid && near.action)) { near.action = 'down'; near.act = { t: 0, fall: true, vx: 0, vy: 0, angle: near.face > 0 ? 0 : Math.PI }; } };
+    const fall = () => {
+      if (ball.blocked && !laid && near.kp && near.kp.role === 'scoop') { near.action = 'kneel'; near.act = { t: 0 }; near.vx = near.vy = 0; return; }   // (v0.56: the scoop man was right there: scoops it up and takes a knee, it can't be advanced)
+      if (!(laid && near.action)) { near.action = 'down'; near.act = { t: 0, fall: true, vx: 0, vy: 0, angle: near.face > 0 ? 0 : Math.PI }; } };
     if (ball.returnFumble) {
       // an interception return fumbled: whoever falls on it has it (the offense gets it back with a fresh set of downs)
       ball.returnFumble = false;
@@ -2094,10 +2097,17 @@ function aiDecide(prevAt) {
 function aiKick() {
   if (!kick) return;
   if (kick.aiGood == null) {
-    kick.aiGood = Math.random() < kickOdds(rb, kick.dist - 1.6, patMode === 'kick');   // (kick.dist is 18.6 + yards to goal, the sim's fgDist 17 + yards to goal; rb is his kicker)
-    const short = !kick.aiGood && Math.random() < 0.4;
-    kick.aiPow = Math.min(1, short ? Math.max(0.2, kick.need - 0.12) : kick.need + 0.1 + Math.random() * 0.08);   // (well over what the kick needs)
-    kick.aiTol = kick.aiGood ? kick.window * 0.3 : kick.window * (short ? 0.3 : 1.8);   // (a good one clicks dead center)
+    const odds = kickOdds(rb, kick.dist - 1.6, patMode === 'kick'), roll = Math.random();
+    kick.aiGood = roll < odds;   // (kick.dist is 18.6 + yards to goal, the sim's fgDist 17 + yards to goal; rb is his kicker)
+    // a roll within DOINK.cpu of his odds = off the post, the same 50/50 and flight as yours (releaseKick reads kick.aiDoink)
+    if (Math.abs(roll - odds) < DOINK.cpu && (DOINK.auto || !kAb(rb, 'automatic'))) {
+      const r2 = Math.random(), side = r2 < 0.35 ? 0 : (Math.random() < 0.5 ? -1 : 1);
+      kick.aiDoink = doinkMake(side === 0 || r2 > 0.88, side, Math.random() < 0.5);
+      kick.aiGood = kick.aiDoink.good;
+    }
+    const dk = kick.aiDoink, short = !kick.aiGood && !dk && Math.random() < 0.4;
+    kick.aiPow = Math.min(1, short ? Math.max(0.2, kick.need - 0.12) : dk && dk.bar ? kick.need + 0.01 : kick.need + 0.1 + Math.random() * 0.08);   // (well over what the kick needs; a crossbar doink just makes it)
+    kick.aiTol = dk ? kick.window * (dk.side ? 0.97 : 0.3) : kick.aiGood ? kick.window * 0.3 : kick.window * (short ? 0.3 : 1.8);   // (a good one clicks dead center; an upright doink on the edge)
   }
   if (kick.phase === 'power' && kick.meter >= kick.aiPow && kick.t > 0.5) kickClick();
   else if (kick.phase === 'aim' && Math.abs(kick.pos) <= kick.aiTol && kick.t > 0.35) kickClick();
@@ -2396,6 +2406,9 @@ function aiRun(dt) {
   if (clock < (ai.stiffUntil || 0) || (c && c.stiffLock && clock < c.stiffLock.until)) keys.KeyQ = true;   // (and he keeps the arm out for the whole hold, like a player would: letting go early gave it the worse "early" odds every time)
   if (tut && c && !c.awaiting) c.speed = Math.min(c.speed || 0, DEF.tutRun * YD);   // (the tutorial's runner is catchable)
   if (!c || c.awaiting || c.action || c === passer) return;
+  if (kickoffPlay && c.retWall != null && clock - runStart < KPRO.pt.retFollow) {   // v0.56: a punt returner first heads for the called wall (yours just gets the blocks)
+    keys.ArrowLeft = true; keys.KeyA = true; if (c.retWall < c.y - YD) keys.KeyW = true; else if (c.retWall > c.y + YD) keys.KeyS = true; return;
+  }
   if (c.x < los + 2 * YL) { if (c === qb && !isRunPlay && !tut && c.x >= los - YD) keys.KeyA = true; return; }   // (a scrambling QB keeps running through the line: no keys here let him coast and slow down)
   if (c === rb && c.lane && c.lane[c.laneLeg] && isRunPlay) { keys.KeyA = true; return; }   // (a designed run follows the play art: any steering key would drop the lane)
   const ahead = defenders().filter(d => !d.engaged && d.x > c.x - YD && Math.abs(d.y - c.y) < 6 * YD).sort((a, b) => dist(a, c) - dist(b, c))[0];
@@ -2469,6 +2482,7 @@ function drawDefOverlay(g) {
     }
     return;
   }
+  if (!g && state === 'kick' && kick && kick.me && defLive() && !(rec && rec.replaying) && kproQteUp()) drawKickQte();   // (their kick: the block card over your free rusher)
   if (g && state === 'kick' && kick && kick.me && defLive() && !bannerUp() && !(rec && rec.replaying) && ringFree(kick.me)) {   // their kick: a yellow ring under the rusher you steer
     const z = camZ(), sx = W / 2 + MIRROR * (kick.me.x - camX) * z, sy = viewCenterY() + (kick.me.y - camY) * z + FOOT * z;
     ctx.save(); ctx.strokeStyle = '#ffd94a'; ctx.lineWidth = 3;
@@ -2691,6 +2705,7 @@ function update(dt) {
   showTick();   // (v0.51: a showboating carrier: looks, finishes, when it ends)
   injKneelTick();   // (an injury timeout's kneel, then the clap: 07)
   wxTick(dt);
+  tensionTick(dt);   // (v0.55: the riser / big-kick heartbeat, 08)
   // each defender's real movement over the last frame, whatever code moved him (pursue picks its speed up from it)
   for (const d of [...(back7 || []), ...(dl || [])]) { if (d.mpx != null) { d.mvx = (d.x - d.mpx) / dt; d.mvy = (d.y - d.mpy) / dt; } d.mpx = d.x; d.mpy = d.y; }
   hipHands(dt);

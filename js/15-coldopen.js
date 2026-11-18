@@ -11,6 +11,7 @@
 const COLD = {
   key: 'pocketPasser.coldDone',          // set when the cold open ends or is skipped
   under: { you: 'BUF', opp: 'MIA' },     // the real rosters underneath (bodies only: no names, logos or colours of theirs are ever shown)
+  gate: { size: 64, up: 70, hand: 40, handK: 1.6, beat: 1.1 },   // the gate's text size / lift, the hand's drop below the middle, its scale, s per tap
   skip: { ms: 1000, w: 150, h: 86, r: 15, touchK: 2, still: 10 },   // hold-to-skip: hold time, the zone (bottom right), the ring's radius; on touch the tip + ring x touchK and a finger held still (moved under still px) anywhere skips too
   arrow: { head: 22, headH: 26, shaft: 8, len: 64, gap: 12, bob: 1.6, edge: 3.5 },   // the throw prompt's arrow over each receiver (px): head half-width / height, shaft half-width, total length, gap above his helmet, bounce x, outline
   toss: { crush: 0.22, vx: 1300, vy: 900, g: 2600, r: 34 },   // the bridge's sticky notes: s to crumple, then the paper ball's throw (px/s across, up; px/s/s gravity; radius px)
@@ -18,7 +19,7 @@ const COLD = {
   rollPx: 14, rollDeg: 60, tdCam: 0.85, ghost: 0.55,   // ghost = the demo cursor's opacity (dashed, see-through: the player's pencil is the solid one)
     // tdCam = how firmly the scripted camera keeps the scorer after the last catch (F1)
   f1: { acc: 12, dec: 16, brakeYd: 1, still: 0.3, faceYd: 0.6, beat: 4.2, bounce: 4, walk: 1.5, walkVar: 0.2, walkOut: 4 },   // F1: teammates' accel / decel (YD/s^2), the last yd they brake over, the dead zone (yd), the facing hysteresis (yd), the shared bounce beat (rad/s) + height (S); the Erasers' walk (YD/s + per-man), yd past the bottom sideline they head for
-  backYd: 12, backDemo: 1.8,   // backYd = the depth of the hatched 'drag from anywhere back here' zone (yd behind the line), backDemo = s per demo pass (every other one starts away from the QB)   // touch: CSS px the roll's push (up and back, from where that finger went down) must travel
+  // touch: CSS px the roll's push (up and back, from where that finger went down) must travel
   boil: { hz: 7, amp: 0.9, prompt: 1.7 },   // dream lines: redrawn this often (a second), jitter px, x this much while a prompt is up
   rate: { prompt: 0.3, ease: 6 },        // game speed while a prompt waits (a play's own beats set theirs in COLD_PLAYS); how fast the rate eases (per s)
   write: { cps: 18, messy: 0.5 },        // captions: characters a second, how much messier each later line gets
@@ -26,7 +27,6 @@ const COLD = {
   keycap: 48,                            // a doodled keycap's size px
   retry: { erase: 0.9, redraw: 0.7, tear: 0.4, crumple: 0.7, slide: 0.4, r3Rate: 0.05, r3Any: 1, r3Auto: 3, miss: 2.6 },   // R1-R3 timings (s); miss = s without the input = a miss
   cam: { ease: 3.2, rollK: 1.05 },       // scripted camera: how fast it eases to its key (per s); the picture is scaled this much under a roll so no corner shows
-  flash: 0.08,                           // a lightning flash: s of paper-white
   crowd: { booth: 0.25, dream: 0.8, hush: 0.08 },   // the crowd bed's level: behind the booth glass, in the dream, while the heart beats
   aimEase: 7,                            // how fast a leaping receiver's hands follow the ball's meeting point (per s of real time: see the jumpAim hook)
   aim: { onYd: 6, wait: 0.5 },           // the throw drag: the aim within onYd of a receiver's spot for wait s = "let go to throw" (until then: aim at the receiver)
@@ -52,7 +52,7 @@ const COLD_TEAMS = {
 // eased between; field: the game is drawn under the scene; real: the classroom (no boil); crowd: the crowd bed's level in this scene (else COLD.crowd). Captions = [second, who (A / B / T), text].
 const COLD_SCENES = [
   { id: 'gate', wait: 'tap' },   // (only when the browser has had no click yet: sound can't start without one)
-  { id: 's1', dur: 4, crowd: 0, snd: [[2.5, 'crack'], [3.1, 'thunder2']], flash: [2.5] },
+  { id: 's1', dur: 4, crowd: 0, snd: [[2.5, 'crack'], [3.1, 'thunder2']] },   // (v0.57: no lightning flashes anywhere: the thunder and crack stay)
   { id: 's2', dur: 5, crowd: 0.08, snd: [[0.2, 'pencil', 0.9, { ms: 3000, fade: 500 }], [4.2, 'thunder1', 0.6]], draw: 3, lamps: [3.2, 3.7] },
   { id: 's3', dur: 4, field: true, cam: [[0, 50, 0, 0.6, 0], [4, 42, 0, 0.9, 0]], lines: 1.6, blots: [1.4, 3.6] },
   { id: 's4', dur: 6, field: true, cam: [[0, 42, 0, 0.9, 0], [6, 40, 0, 1, 0]], snd: [[0.05, 'flip'], [0.5, 'pencil', 0.8, { ms: 700 }], [3, 'splash', 0.6]], rain: 3, away: 5 },
@@ -108,7 +108,7 @@ function coldStart() {
   coldHand = null; quickMenu = false; paused = false; showKeys = false;
   const act = !!(navigator.userActivation && navigator.userActivation.hasBeenActive);
   CO = { first: !coldSeen(), i: act ? 0 : -1, t: 0, T: 0, last: performance.now(), rate: 0, rateTo: 0, fired: 0, back: results, pl: null, q: null, fx: null, board: null, cam: null, roll: 0,
-         beat: null, flashAt: -9, amb: null, shot: null, snd: new Set(), keys: {}, skipAt: 0, ptr: null };
+         beat: null, amb: null, shot: null, snd: new Set(), keys: {}, skipAt: 0, ptr: null };
   coldDreamOn();
   coldNext();
 }
@@ -170,7 +170,6 @@ function coldSnd(k, v = 1, o = {}) {   // a cue, remembered so the skip can fade
   CO.snd.add(c[0] + (o.tag ? '#' + o.tag : ''));
   return sndRec(k, v, o);
 }
-function coldFlash(thunder) { CO.flashAt = CO.T; if (thunder) { coldSnd('crack', 0.8); CO.thAt = CO.T + 0.3; } }
 // the classroom's own bed (one element, played once, eased in / out; null = none)
 function coldAmb(k, vol = 1) {
   const A = CO && CO.amb;
@@ -180,9 +179,8 @@ function coldAmb(k, vol = 1) {
 function coldTick(dt) {
   const sc = CO.sc;
   CO.t += dt; CO.T += dt; CO.frame = (CO.frame || 0) + 1;
-  // this scene's sound cues, flashes and thunder
+  // this scene's sound cues and thunder
   for (let i = CO.fired + 1; i < (sc.snd || []).length && sc.snd[i][0] <= CO.t; i++) { const s = sc.snd[i]; coldSnd(s[1], s[2] == null ? 1 : s[2], s[3] || {}); CO.fired = i; }
-  for (const f of sc.flash || []) if (CO.t >= f && CO.t - dt < f) CO.flashAt = CO.T;
   if (CO.thAt && CO.T >= CO.thAt) { CO.thAt = 0; coldSnd('thunder' + (1 + Math.floor(Math.random() * 2)), 0.7); }
   if (CO.amb) { const A = CO.amb; A.v += Math.max(-dt, Math.min(dt * 0.6, 1 - A.v)); const left = A.el.duration ? A.el.duration - A.el.currentTime : 9; A.el.volume = cClamp(A.v * A.vol * COLD_SND[A.k][1] * VOL() * cClamp(left / 1.6)); }   // (played once: it fades out over its own last 1.6 s)
   if (CO.beat) coldBeat(dt);
@@ -350,13 +348,6 @@ function cCaption(text, t, o = {}) {
   ctx.save(); ctx.fillStyle = 'rgba(15,18,30,0.55)'; ctx.fillRect(-PAD, H - 96, W + 2 * PAD, 62); ctx.restore();
   const n = t * COLD.write.cps * (o.fast || 1.3), r = cText(text, W / 2, H - 65, o.size || 28, '#fffdf4', { n, align: 'center', messy: o.messy == null ? 0.5 : o.messy, seed: 11, max: W - 260 });
   if (!r.done) cTip(r.tip[0] + 2, r.tip[1] + 8, -0.55, 0.8);
-}
-// a lightning flash: paper-white (a faint ruled page) for COLD.flash s
-function cFlashDraw() {
-  const d = CO.T - CO.flashAt;
-  if (d < 0 || d > COLD.flash * 3) return;
-  ctx.save(); ctx.globalAlpha = d < COLD.flash ? 1 : 1 - (d - COLD.flash) / (COLD.flash * 2);
-  cPaper(null); ctx.restore();
 }
 
 // --- cold open: dream team logos (drawn in code, never from LOGOS)
@@ -578,7 +569,16 @@ const coldScreen = (x, y, z = 0) => { const zz = camZ(), sy = viewCenterY() + (y
 
 // --- cold open: scenes (enter / tick / draw by scene id; filled in below)
 const COLD_ENTER = {}, COLD_TICK = {}, COLD_DRAW = {};
-COLD_DRAW.gate = () => { ctx.fillStyle = '#0b0c10'; ctx.fillRect(-PAD, 0, W + 2 * PAD, H); const t = CO.T; cText(TOUCH ? 'tap to begin' : 'click to begin', W / 2, H / 2, 30, 'rgba(240,238,225,0.9)', { align: 'center', a: 0.55 + 0.45 * Math.sin(t * 3) }); };
+// the gate (no click yet, so no sound): big, bright and steady, with the tapping hand; ANY pointer, touch or key starts it (coldGateGo)
+COLD_DRAW.gate = () => {
+  ctx.fillStyle = '#0b0c10'; ctx.fillRect(-PAD, 0, W + 2 * PAD, H); const t = CO.T, G = COLD.gate;
+  cText(TOUCH ? 'tap to begin' : 'click to begin', W / 2, H / 2 - G.up, G.size, '#fbf8ec', { align: 'center' });
+  const tap = (t % G.beat) / G.beat, dip = tap < 0.25 ? Math.sin(tap / 0.25 * Math.PI) : 0;
+  ctx.save(); ctx.globalAlpha = 0.95; cHand(W / 2 - 4, H / 2 + G.hand + dip * 14, G.handK); ctx.restore();
+  if (dip > 0.6) { ctx.save(); ctx.globalAlpha = (dip - 0.6) * 2; cLine(cEll(W / 2, H / 2 + G.hand - 4, 30, 12, 20), '#fbf8ec', 3, 911, 1, true); ctx.restore(); }   // (the tap's ring)
+};
+function coldGateGo() { if (CO && CO.sc && CO.sc.wait === 'tap') { coldNext(); return true; } return false; }
+for (const ev of ['touchstart', 'mousedown']) window.addEventListener(ev, e => { if (coldGateGo()) e.stopImmediatePropagation(); }, { capture: true, passive: true });   // (a phone whose pointer events don't reach us still starts it)
 
 // --- cold open: drawing one frame (the game's draw() is wrapped: see hooks)
 function coldDraw(gameDraw) {
@@ -609,7 +609,6 @@ function coldDraw(gameDraw) {
   if (CO.fx) { ctx.save(); coldFxDraw(); ctx.restore(); }
   if (CO.xf) { ctx.save(); try { coldXfDraw(); } catch (e) {} ctx.restore(); }
   if (coldEnding()) { try { CO.xg = coldGrab(CO.xg, 1, true); CO.xgT = CO.T; } catch (e) {} }   // (this scene is on its last frames: the picture the next one takes away)
-  cFlashDraw();
   if (CO.skipAt && performance.now() - CO.skipAt >= COLD.skip.ms * 0.75) { try { CO.skipG = coldGrab(CO.skipG, 1, true); CO.skipGT = CO.T; } catch (e) {} }   // (about to be skipped: this picture is the sheet that turns away)
   coldSkipDraw();
 }
@@ -656,12 +655,7 @@ function coldSoftRoom(V, k) {
 function coldSkipDraw() {
   if (CO.sc.id === 'gate') return;
   const S_ = COLD.skip, tk = coldTouch() ? S_.touchK : 1, at = coldSkipAt(), cx = at.x + S_.w - 34 * tk, cy = at.y + S_.h - 40 * tk, k = CO.skipAt ? cClamp((performance.now() - CO.skipAt) / S_.ms) : 0, R = S_.r * tk;   // (touch: twice the size)
-  ctx.save(); ctx.globalAlpha = k ? 1 : 0.55;
-  cText(coldTouch() ? 'hold anywhere to skip' : 'hold Esc to skip', cx - R - 10, cy, 15 * tk, '#f4f1e4', { align: 'right', seed: 2 });
-  ctx.save(); ctx.globalAlpha *= 0.5; cLine(cEll(cx, cy, R, R, 20), '#f4f1e4', 2 * tk, 801, 1, true); ctx.restore();
-  if (k) { cLine(cEll(cx, cy, R, R, 28, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k), '#ffd94a', 4.5, 802);
-    if (CO.ptr) cLine(cEll(CO.ptr.x, CO.ptr.y, 30, 30, 28, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k), '#ffd94a', 4, 803); }   // (the ring round the finger / cursor)
-  ctx.restore();
+  holdRingDraw({ cx, cy, R, k, tk, label: coldTouch() ? 'hold anywhere to skip' : 'hold Esc to skip', ptr: CO.ptr });   // (02: shared with the shows' hold-to-skip)
 }
 
 // --- cold open: scripted plays (COLD_PLAYS). One entry per play; the real engine runs it (snap, the aim drag, the ball's flight, the catch
@@ -696,7 +690,7 @@ const COLD_PLAYS = {
     def: { sT: { man: 'H', off: [-0.6, 0.7], lag: 0.15, tackle: true }, cbT: { path: [[0, 7, null], [3, 26, 't7']] },   // (the safety runs with the seam, on his hip)
            cbB: { path: [[0, 7, null], [3, 24, 'b9']] }, sB: { drop: 7 }, lbW: { drop: 4 }, lbM: { drop: 3 }, lbS: { drop: 3 } },
     throw: { bullet: true, lead: 43, windows: [{ id: 'seam', at: [24, null], of: 'H', input: 'down', mode: 'KeyS', arc: 0.85, short: 1.3, dive: 'twoHand' }], rate: 0.6, prompt: 0.5, promptRate: 0.05, beats: 2 },   // (a diving catch: the ball a stride past him, laid out for; short = yd he is kept short of it)
-    after: 'tackle', hold: 1.3, cam: { pre: [1.1, 0], live: [1.05, 0], flight: [1.2, 0], seam: [1.5, 0] }, stop: 0.12, flash: true, ooh: true },
+    after: 'tackle', hold: 1.3, cam: { pre: [1.1, 0], live: [1.05, 0], flight: [1.2, 0], seam: [1.5, 0] }, stop: 0.12, ooh: true },
   p3: { down: 4, togo: 'goal', ball: 88, clock: 4, clockAfter: 0, shape: [1, 3], cover: 'Cover 1 Press', snap: 'drag', pre: 2, ticks: true,
     off: { X: { route: [[7, 't6.5'], [20.9, 'e1.2']], v: 7.8 },   // (the fade runs to the back corner of the end zone: the ball is high-pointed there)
            Z: { route: [[9, null], [12, 4]], v: 7 }, Y: { route: [[6, null], [9, 2]], v: 7 }, W: { route: [[4, null], [5, -3]], v: 6.6 }, H: { route: [[8, null]], v: 7 } },
@@ -708,7 +702,7 @@ const COLD_PLAYS = {
     // over = the defender he goes up over, who ends up on the turf; one: true = a one-handed leap instead)
     throw: { windows: [{ id: 'high', at: [20.6, 'e1.3'], input: 'up', mode: 'KeyW', arc: 1.3, look: 'highPoint', over: 'cbT', inb: true }],
              rate: 0.13, prompt: 0.6, promptRate: 0.03, beat: [58, 150], riser: true },
-    after: 'td', hold: 0.6, cam: { pre: [1.25, 0], live: [1.25, 0], flight: [1.6, 2], high: [1.9, -1], low: [1.8, 3] }, stop: 0.18, stopLow: 0.15, flash: true },
+    after: 'td', hold: 0.6, cam: { pre: [1.25, 0], live: [1.25, 0], flight: [1.6, 2], high: [1.9, -1], low: [1.8, 3] }, stop: 0.18, stopLow: 0.15 },
 };
 
 // the booth's play-by-play in the top right corner (coldCall): play -> event (throw / catch / result) -> lines [who A play-by-play | B colour, text].
@@ -793,6 +787,7 @@ coldWrap('updateCamera', (o, dt) => {
 // input: the cold open takes every key and pointer first (window, capture). Only a throw drag in progress is let through to the game's own aim code
 function coldPtr(type, e) {
   if (!CO) { if (coldHand && type === 'down' && !coldLocked()) coldHand = null; return; }   // (locked: the hand stays until FRANCHISE is pressed)
+  if (type === 'down' && coldGateGo()) { e.stopImmediatePropagation(); return; }   // (the gate: any press, before anything that could throw)
   let p; try { p = pointerPos(e); } catch (err) { return; }
   CO.ptr = p;
   let pass = false; const S_ = coldSkipAt();
@@ -822,7 +817,7 @@ window.addEventListener('keydown', e => {
   e.stopImmediatePropagation(); if (!e.ctrlKey && !e.metaKey && !/^F\d+$/.test(e.code)) e.preventDefault();
   if (e.repeat) return;
   if (e.isTrusted) TOUCH = false;   // (a real keyboard = the laptop prompts; the touch layer's own made-up key events don't count)
-  if (CO.sc.wait === 'tap') return coldNext();
+  if (coldGateGo()) return;
   if (e.code === 'Escape') { CO.skipAt = performance.now(); return; }
   CO.held = CO.held || {}; CO.held[e.code] = true;
   coldInput({ type: 'key', code: e.code });
@@ -888,7 +883,7 @@ const coldPh = ph => { const L = CO.pl; L.ph = ph; L.t = 0; CO.q = null; };
 // a prompt goes up: name = which input (snap / roll / throw / catch); its miss count picks R1-R3
 function coldAsk(name, q) {
   const L = CO.pl, n = L.miss[name] || 0;
-  if (name === 'spin' || name === 'roll') aim = null;   // (a drag still held from the snap is let go of: the throw's own drag comes after the escape)
+  // (v0.57: a drag still held from the snap is KEPT through the spin and the roll: the throw prompt then goes straight to the rings and "let go" (coldPromptDraw: aim live = no demo, no hatch))
   CO.q = { name, t: 0, r3: n >= 2, ...q };
   CO.rateTo = n >= 2 ? Math.min(q.rate == null ? COLD.rate.prompt : q.rate, COLD.retry.r3Rate) : q.rate == null ? COLD.rate.prompt : q.rate;
 }
@@ -1128,6 +1123,7 @@ function coldPlayTick(dt) {
     }
   } else if (L.ph === 'after') {
     if (P.after === 'oob' && state === 'run') { keys.KeyW = true; CO.keys.KeyW = true; }
+    if (P.after === 'td' && L.rec && !L.fell) { const r = L.rec; if (r.action === 'down') L.fell = true; else if (!r.action && (r.z || 0) <= 0.5) { L.fell = true; coldFallDown(r); } }   // (the scorer: down on the frame he lands, carrying his landing momentum; F1 only waits for it)
     if (L.tap) {   // (slow until both feet are down, real speed as he steps out; the scene's hold only starts once he has)
       const r = L.rec, on = r && r.action === 'toetap' && r.act;
       if (on) { CO.rateTo = 1; if (L.done) L.t = 0; }   // (the slow motion runs up to the hands; the tap and the fall play at full speed)
@@ -1138,7 +1134,14 @@ function coldPlayTick(dt) {
   }
   try { if (state === 'done' && P.after !== 'td' && celebWaiting()) celebGo(); } catch (e) {}   // (the dream's small celebrations start by themselves; the last one waits for the sideline: F1)
 }
-function coldCaught() {   // in his hands: the hit-stop, the lightning, the crowd
+// the scorer's fall after the last catch: his momentum puts him on the turf (kept down until F1 hoists him: lyingKeep); no end-zone dance (celebReset)
+function coldFallDown(h) {
+  h.z = 0; h.action = 'down'; h.lyingKeep = true;
+  h.act = { t: 0, fall: true, back: false, side: 0, fallTime: 0.4, twist: 0, vx: (h.vx || 0) * 0.35, vy: (h.vy || 0) * 0.35, slide: 0.5, angle: Math.atan2(h.vy || 0, h.vx || h.face) };
+  try { celebReset(); } catch (e) {}
+  try { wetSfx(0.8); } catch (e) {}
+}
+function coldCaught() {   // in his hands: the hit-stop, the crowd
   const L = CO.pl, P = L.P, low = L.win.input === 'down';   // (low = a diving catch: the splash)
   coldCall(L.id, 'catch');
   if (L.win.over && L.men[L.win.over] && !L.men[L.win.over].action) try { startReel(L.men[L.win.over], 'stiffDown', L.rec); } catch (e) {}   // (the man he went up over ends up on the turf)
@@ -1176,11 +1179,9 @@ function coldPlayDraw() {
   if (Q.name === 'snap' || Q.name === 'throw') {
     // the throw drag goes BACKWARD from the QB (the real slingshot aim): away from where the ball is going
     const w = P.throw.windows[0], r = L.men[w.of || 'X'], ts = coldScreen(coldX(w.at[0]), coldY(w.at[1], r), 0), d = Math.hypot(ts.x - qs.x, ts.y - qs.y) || 1;
-    if (!aim && !Q.wait) {   // (the drag can start anywhere behind the line: a light pencil hatch over that backfield, and every other pass of the demo starts away from the QB)
-      const bk = COLD.backYd, a0 = coldScreen(los, 0, 0), a1 = coldScreen(los - bk * YL, 0, 0), b0 = coldScreen(los, FW, 0), b1 = coldScreen(los - bk * YL, FW, 0);
-      const zone = [[a0.x, a0.y], [a1.x, a1.y], [b1.x, b1.y], [b0.x, b0.y]];
-      ctx.save(); ctx.globalAlpha *= 0.32; cHatch(zone, '#fffdf4', 11, 905); ctx.restore();
-      if (Math.floor(Q.t / COLD.backDemo) % 2 === 1) { const side = qb.y < MID ? 1 : -1, aw = coldScreen(los - bk * 0.55 * YL, cClamp(qb.y + side * 7 * YD, 2 * YD, FW - 2 * YD), 0); tg = aw; }
+    if (!aim && !Q.wait) {   // (the drag can start anywhere behind the line: a light pencil hatch over ALL of it, from the line to the screen's right edge, top to bottom; the demo stays in one place)
+      const lx = Math.max(-PAD, Math.min(W + PAD, coldScreen(los, MID, 0).x)), zone = [[lx, 0], [W + PAD, 0], [W + PAD, H], [lx, H]];
+      if (lx < W + PAD) { ctx.save(); ctx.globalAlpha *= 0.32; cHatch(zone, '#fffdf4', 11, 905); ctx.restore(); }
     }
     o.to = { x: tg.x - (ts.x - qs.x) / d * 150, y: tg.y - (ts.y - qs.y) / d * 150 };
     // who to throw to: a ring where the ball should go and a bobbing arrow over the man running there (from the snap prompt on)
@@ -1560,7 +1561,7 @@ COLD_TICK.bridge = (sc) => {
     if (due.length > (CO.capN || 0)) { CO.capN = due.length; const q = due[due.length - 1]; coldSay([[q[1], q[2]]]); } }
   coldBridgeNotes().forEach((n, i) => { if (CO.t >= sc.panels[i] + sc.keep && !CO.crN[i]) { CO.crN[i] = true; crumpleSfx(0.9); } });   // (each note, once read, is crumpled and thrown off the screen)
   if (CO.t >= sc.board && !CO.board.rub) CO.board.rub = CO.T;
-  if (CO.t >= sc.board + 0.9 && CO.set.id !== 'p3') { coldSetPlay('p3'); coldBoardSit(COLD_PLAYS.p3); CO.flashAt = CO.T; }   // (the new numbers are written; the field is the final play's)
+  if (CO.t >= sc.board + 0.9 && CO.set.id !== 'p3') { coldSetPlay('p3'); coldBoardSit(COLD_PLAYS.p3); }   // (the new numbers are written; the field is the final play's)
 };
 COLD_DRAW.bridge = (sc, t) => {
   ctx.fillStyle = `rgba(8,10,20,${0.45 * cK(t, 0, 0.3) * (1 - cK(t, sc.out + 0.3, 0.6))})`; ctx.fillRect(-PAD, 0, W + 2 * PAD, H);
@@ -1600,7 +1601,10 @@ COLD_ENTER.f1 = (sc) => {
   if (!h) return;
   // the Spirals' sideline: bench players sprint on from the top sideline (plain bodies in the offense's kit: looks only, gone with the dream)
   const ex = [];
-  for (let i = 0; i < 8; i++) { const p = makePlayer('off', h.x + (i - 3.5) * 3.2 * YL, -2.2 * YD - (i % 3) * 1.1 * YD, String(11 + i * 7), { top: OL_RUN, accel: 8 * YD }); p.cold = true; p.face = 1; ex.push(p); }
+  // (v0.57: they start ON the sideline strip, between the top sideline and the wall face (bowlGeo), spread back from the goal line inside the field's
+  // length: never in the stands, never past the end line)
+  const G = bowlGeo(), goal = h.x > FIELD / 2 ? FIELD : 0, inw = goal ? -1 : 1, y0 = G.Y0 + 0.6 * YD, y1 = Y_MIN - 0.6 * YD;
+  for (let i = 0; i < 8; i++) { const p = makePlayer('off', goal + inw * (1.2 + i * 1.5) * YL, y0 + (y1 - y0) * (0.2 + 0.3 * (i % 3)), String(11 + i * 7), { top: OL_RUN, accel: 8 * YD }); p.cold = true; p.face = 1; ex.push(p); }
   try { ols = [...ols, ...ex]; CO.f1.ex = ex; } catch (e) {}
 };
 COLD_TICK.f1 = (sc, dt) => {
@@ -1610,15 +1614,13 @@ COLD_TICK.f1 = (sc, dt) => {
   game.secs = 0;
   if (!h || !F) return;
   // he comes down from the catch and his momentum puts him on the turf
-  if (!F.fell) {
-    if (h.action === 'down') F.fell = true;
-    else if (!h.action) { F.fell = true; h.z = 0; h.action = 'down';
-      h.act = { t: 0, fall: true, back: false, side: 0, fallTime: 0.4, twist: 0, vx: (h.vx || 0) * 0.35, vy: (h.vy || 0) * 0.35, slide: 0.5, angle: Math.atan2(h.vy || 0, h.vx || h.face) };
-      try { wetSfx(0.8); } catch (e) {} }
+  if (!F.fell) {   // (v0.57: normally already down: the fall starts on the frame he lands from the catch, coldFallDown from coldPlayTick's after phase)
+    if (h.action === 'down' || (L && L.fell)) F.fell = true;
+    else if (!h.action) { F.fell = true; coldFallDown(h); }
   }
   // everyone in blue runs to him (the receivers and the line, then the bench), packs in round him, hoists him up and carries him off toward midfield
   const all = [...recs, ...ols, rb, qb].filter(p => p !== h), up = cEase(cK(CO.t, sc.lift, 0.7)), carry = CO.t >= sc.lift;
-  if (carry && !F.c) { F.c = { x: h.x, y: h.y }; h.action = null; h.act = null; h.vx = h.vy = 0; F.dir = Math.sign(FIELD / 2 - h.x) || -1;
+  if (carry && !F.c) { F.c = { x: h.x, y: h.y }; h.action = null; h.act = null; h.vx = h.vy = 0; h.lyingKeep = false; F.dir = Math.sign(FIELD / 2 - h.x) || -1;
     F.bear = [...all].sort((a, b) => Math.hypot(a.x - h.x, a.y - h.y) - Math.hypot(b.x - h.x, b.y - h.y)).slice(0, 4); }
   if (F.c) {
     const v = 1.5 * YD * cEase(cK(CO.t, sc.lift + 0.6, 1));   // (the ride starts once he is up)
@@ -1833,28 +1835,46 @@ function coldPageDoodles(w, h, a, qbS) {
   } else if (qbS) coldDoodleQB(qx, qy, 1.8 * u, qbS);
   ctx.restore();
 }
-// the little doodle QB on the page (Spirals blue). Q = { blink 0-1, boil, shake 0-1, look 0-1 (up at the camera), wind 0-1, thrown }
+// the little QB on the page (v0.57): the dream QB himself (the game's drawPlayer, an animMk copy), baked once per pose into a canvas: a pencil outline of
+// that exact figure, his colour coming in as alive rises, so C5's cross-fade to the live sprite (coldQBSprite) lands on the same shape and size.
+// Q = { blink 0-1, boil, shake 0-1, look 0-1 (up at the camera), wind 0-1 (the throw's wind-up pose), thrown, alive 0-1 }
+// COLD_QB: k = his size x COLD_END.spriteH (was a smaller hand-drawn doodle), out = outline px (at the bake), R = bake resolution, ink = the pencil
+const COLD_QB = { k: 1.35, out: 2.4, R: 3, ink: '#2a3050', fill: 0.08 };
 const COLD_QB_STILL = { alive: 0.1 };
+const COLD_QB_IMG = {};
+function coldQBBake(pose) {
+  if (COLD_QB_IMG[pose] !== undefined) return COLD_QB_IMG[pose];
+  let out = null;
+  try {
+    const A = animMk(qb, 0, 1); A.x = A.y = A.z = 0; A.vx = A.vy = 0; A.cradle = pose === 'still'; A.hasBall = pose !== 'thrown';
+    if (pose !== 'still') { A.action = 'throw'; A.act = { t: pose === 'wind' ? 0.02 : 0.3, dur: 0.4 }; }
+    const bk = S * figK(A), x0 = -36 * bk, y0 = FOOT - 52 * bk * FIGURE.tall, w = 72 * bk, h = 60 * bk * FIGURE.tall, R = COLD_QB.R;
+    const m = MIRROR, q0 = qb; MIRROR = 1; qb = A;
+    let C;
+    ctx.save(); ctx.setTransform(R, 0, 0, R, 0, 0);
+    try { C = ctxBake(x0, y0, w, h, () => drawPlayer(A)); } finally { ctx.restore(); MIRROR = m; qb = q0; }
+    const mk = () => { const c = document.createElement('canvas'); c.width = C.width; c.height = C.height; return c; };
+    const sil = mk(), g = sil.getContext('2d'); g.drawImage(C, 0, 0); g.globalCompositeOperation = 'source-in'; g.fillStyle = COLD_QB.ink; g.fillRect(0, 0, sil.width, sil.height);
+    const O = mk(), o = O.getContext('2d'), d = COLD_QB.out * R / 2;
+    for (let a = 0; a < 8; a++) o.drawImage(sil, Math.round(Math.cos(a * Math.PI / 4) * d), Math.round(Math.sin(a * Math.PI / 4) * d));
+    o.globalCompositeOperation = 'destination-out'; o.drawImage(C, 0, 0);   // (only the ring outside his shape: the pencil outline)
+    o.globalCompositeOperation = 'source-over'; o.globalAlpha = COLD_QB.fill; o.drawImage(sil, 0, 0);   // (a faint graphite wash inside it)
+    out = { C, O, x0, y0, w, h, bk };
+  } catch (e) { out = null; }
+  return (COLD_QB_IMG[pose] = out);
+}
 function coldDoodleQB(x, y, s, Q) {
-  ctx.save(); ctx.translate(x + (Q.shake ? Math.sin(CO.T * 60) * 7 * Q.shake : 0), y); ctx.rotate(Q.shake ? Math.sin(CO.T * 47) * 0.12 * Q.shake : 0); ctx.scale(s, s);
-  CO.boilOn = !!Q.boil;
-  const lk = Q.look || 0, wd = Q.wind || 0, ink = '#2a3050', al = Q.alive == null ? 1 : Q.alive;   // (al: how much colour he has: a grey pencil drawing at 0)
-  cShape(cEll(0, 78, 30, 7, 12), 'rgba(40,50,90,0.2)', 1400, { ink: null });
-  cLine([[-9, 40], [-12, 74]], ink, 5, 1401); cLine([[9, 40], [13, 74]], ink, 5, 1402);
-  cShape(cRound(-20, -6, 40, 50, 10), '#2f5fb8', 1403, { w: 2.4, ink, a: al }); cText('12', 0, 18, 20, al > 0.5 ? '#ffffff' : ink, { align: 'center', seed: 3 });
-  const ax = 20 + 16 * wd, ay = -2 - 34 * wd;   // the throwing arm: cocked back, then through
-  cLine([[18, 2], [ax, ay]], ink, 5, 1404); cLine([[-18, 2], [-30 + 8 * wd, 20 - 20 * wd]], ink, 5, 1405);
-  if (!Q.thrown) cShape(cEll(ax + 6, ay - 6, 11, 7, 10), '#a8642c', 1406, { w: 1.8, ink, a: al });
-  ctx.save(); ctx.translate(0, -26 - 4 * lk); ctx.rotate(-0.25 * lk);
-  cShape(cEll(0, 0, 24, 22, 16), '#2f5fb8', 1407, { w: 2.4, ink, a: al }); if (al > 0.5) cLine([[-4, -22], [-2, 20]], '#ffffff', 3.4, 1408); else cLine([[-4, -22], [-2, 20]], ink, 1.6, 1408);
-  cShape(cRound(-2, -8 - 3 * lk, 24, 18, 6), '#f3d2b0', 1409, { w: 1.8, ink, a: al });
-  const bl = Q.blink || 0, ey = -1 - 3 * lk; ctx.fillStyle = ink;
-  for (const ex of [6, 16]) { ctx.beginPath(); ctx.ellipse(ex, ey, 2.4 + lk, Math.max(0.5, (2.4 + lk) * (1 - bl)), 0, 0, 7); ctx.fill(); }   // (the eyes: two dots, squashed flat in a blink)
-  cLine([[22, -6], [30, -4], [30, 8], [20, 10]], ink, 2, 1410);
+  const I = coldQBBake(Q.thrown ? 'thrown' : (Q.wind || 0) > 0.35 ? 'wind' : 'still'); if (!I) return;
+  const u = s / 1.8, sc = COLD_END.spriteH * u * COLD_QB.k / (41 * I.bk * FIGURE.tall), fy = y + 74 * s, al = Q.alive == null ? 1 : Q.alive, lk = Q.look || 0;
+  const r = cRnd(Math.floor(CO.T * COLD.boil.hz) * 7 + 5), j = Q.boil ? 2.5 : 0;
+  ctx.save(); ctx.translate(x + (Q.shake ? Math.sin(CO.T * 60) * 7 * Q.shake : 0) + (r() - 0.5) * j, fy + (r() - 0.5) * j); ctx.rotate((Q.shake ? Math.sin(CO.T * 47) * 0.12 * Q.shake : 0) - 0.12 * lk);
+  ctx.fillStyle = 'rgba(40,50,90,0.2)'; ctx.beginPath(); ctx.ellipse(0, 0, 30 * u * COLD_QB.k * 1.5, 7 * u * COLD_QB.k * 1.5, 0, 0, 7); ctx.fill();
+  ctx.scale(sc, sc); ctx.translate(0, -FOOT);
+  if (al > 0) { ctx.save(); ctx.globalAlpha *= al; ctx.drawImage(I.C, I.x0, I.y0, I.w, I.h); ctx.restore(); }
+  ctx.save(); ctx.globalAlpha *= 1 - 0.65 * al; ctx.drawImage(I.O, I.x0, I.y0, I.w, I.h); ctx.restore();
+  if ((Q.blink || 0) > 0.4) { ctx.strokeStyle = COLD_QB.ink; ctx.lineWidth = 1.4 * I.bk; ctx.beginPath(); const ex = 5.5 * I.bk, ey = FOOT + (-21 - 14) * I.bk * FIGURE.tall; ctx.moveTo(ex - 2 * I.bk, ey); ctx.lineTo(ex + 2 * I.bk, ey); ctx.stroke(); }   // (a blink: the eye shut behind the cage)
   ctx.restore();
-  if (Q.shake) { const r = cRnd(Math.floor(CO.T * 16)); for (let i = 0; i < 12; i++) { const a = r() * 6.28, d = 34 + r() * 40 * Q.shake; ctx.fillStyle = `rgba(60,66,96,${0.35 * Q.shake})`; ctx.beginPath(); ctx.arc(Math.cos(a) * d, 20 + Math.sin(a) * d * 0.8, 2 + r() * 3, 0, 7); ctx.fill(); } }   // (pencil dust puffs off him)
-  CO.boilOn = false;
-  ctx.restore();
+  if (Q.shake) { const rr = cRnd(Math.floor(CO.T * 16)); for (let i = 0; i < 12; i++) { const a = rr() * 6.28, d = (34 + rr() * 40 * Q.shake) * s; ctx.fillStyle = `rgba(60,66,96,${0.35 * Q.shake})`; ctx.beginPath(); ctx.arc(x + Math.cos(a) * d, y + 20 * s + Math.sin(a) * d * 0.8, (2 + rr() * 3) * s, 0, 7); ctx.fill(); } }   // (pencil dust puffs off him)
 }
 // eyelids over the screen: paper-coloured shapes with a pencil-lash edge; open 0 (shut) - 1
 function coldLids(open) {
@@ -1935,7 +1955,7 @@ COLD_TICK.c5 = (sc, dt) => {
 // the game's QB sprite standing on the page (feet at x, y in page space; u = the page's scale; k = how much of him is there); keeps his hand / chest on screen for the ball
 function coldQBSprite(x, y, u, k) {
   const E = CO.end, A = E && E.A; if (!A || k <= 0) return;
-  const bk = S * figK(A), sc = COLD_END.spriteH * u / (41 * bk * FIGURE.tall), r = cRnd(Math.floor(CO.T * COLD.boil.hz) * 7 + 3), j = 3 * (E.boil || 0);
+  const bk = S * figK(A), sc = COLD_END.spriteH * u * COLD_QB.k / (41 * bk * FIGURE.tall), r = cRnd(Math.floor(CO.T * COLD.boil.hz) * 7 + 3), j = 3 * (E.boil || 0);
   ctx.save(); ctx.globalAlpha *= k;
   ctx.translate(x + (r() - 0.5) * j, y + (r() - 0.5) * j); ctx.scale(sc, sc); ctx.translate(-A.x, -A.y - FOOT);   // (the dream boil, on him only)
   const m = MIRROR, q0 = qb; MIRROR = 1; qb = A;   // (MIRROR 1 = he faces right; qb = him, so the QB's own poses show)
