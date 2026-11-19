@@ -77,7 +77,7 @@ function jobOffersClick(pt) {
 function capBlocked() {
   const me = season.team, over = payroll(me) - capOf(me);
   if (over <= 0.05) return false;
-  offPopShow({ title: 'OVER THE SALARY CAP', lines: wrapLines(`This league has a hard cap. Your payroll is ${fmtM(payroll(me))} against a cap of ${fmtM(capOf(me))}: you are ${fmtM(over)} over. Drop or trade players to get under it before the season starts.`, 54),
+  offPopShow({ title: 'OVER THE SALARY CAP', lines: [`${fmtM(over)} over. Cut or trade to play.`], more: `This league has a hard cap. Your payroll is ${fmtM(payroll(me))} against a cap of ${fmtM(capOf(me))}: you are ${fmtM(over)} over. Drop or trade players to get under it before the season starts.`,
                btns: [{ label: 'BACK' }, { label: 'TRADES', on: () => tradeOpen(results.screen) }, { label: 'ROSTER', green: true, on: () => offOpenRoster() }] });
   return true;
 }
@@ -89,7 +89,7 @@ function offBegin() {
   let asked = false;
   try { asked = !!localStorage.getItem(OFFTUT_KEY); } catch (e) {}
   const answer = on => { try { localStorage.setItem(OFFTUT_KEY, on ? 'on' : 'off'); } catch (e) {} OFF.tut = on; offTip('awards'); };
-  if (!asked) offPopShow({ title: 'OFFSEASON TUTORIAL?', lines: wrapLines('A short popup at every step of the offseason explains what is going on: awards, contracts, free agents and job offers.', 54),
+  if (!asked) offPopShow({ title: 'OFFSEASON TUTORIAL?', lines: ['Want a quick tip at each step?'], more: 'A short popup at every step of the offseason explains what is going on: awards, contracts, free agents and job offers.',
     btns: [{ label: 'TUTORIAL', green: true, on: () => answer(true) }, { label: 'SKIP', on: () => answer(false) }] });
 }
 function offClick(pt) {
@@ -210,7 +210,7 @@ function approvalAfterGame(margin) {
 }
 function openResults() {
   SC_SCROLL.off = 0; SC_SCROLL.drag = null;   // (the scoring list starts at the latest score)
-  try { localStorage.setItem(KO_TIP_KEY, '1'); } catch (e) {}   // (one game finished: the kickoff reticle tip is gone for good)
+  koTipSeen = true; try { localStorage.setItem(KO_TIP_KEY, '1'); } catch (e) {}   // (one game finished: the kickoff reticle tip is gone for good)
   suspended = null; simMode = 'none';   // (a finished game's SIM menu pick must not carry into the next game / tutorial)
   if (twoP && twoP.flipped) flipSides();   // (two players: the result is shown from Player 1's side)
   tallyScores();
@@ -218,6 +218,7 @@ function openResults() {
   pstFinish();
   tendGameDone();
   if (rec && !rec.replaying) keepHighlight(rec);   // (the last play)
+  if (!exhibition && !tut) { try { if (rec && !rec.replaying) hsCollect(rec); photoGame(); } catch (e) { console.warn('post photos', e); } }   // (v0.68: the Post's pictures, from the game's best tapes, before seasonGameDone prints the issue)
   rec = null; aim = null; simGame = false; simFast = null; sim = null; simStop = false;
   let record = { w: 0, l: 0, t: 0 };
   try { record = { ...record, ...JSON.parse(localStorage.getItem(RECORD_KEY) || '{}') }; } catch (e) {}
@@ -796,7 +797,8 @@ function ctxBake(x0, y0, w, h, draw) {
 // with a coloured-pencil stripe by job, BTN_JOB), utility (no material: menuBtn as before). Same shared motion for all: hover lifts (longer shadow),
 // press squashes toward the desk, release springs back (BTN_PRESS). Looks / sound only: click areas (inBtn) never change.
 // Sprites: per material + label + size + pixel scale + dark mode, BTN_FX.frames boil frames (different ddSeed wobble); only the hovered one cycles.
-const BTN_FX = { lift: 3, squash: 0.04, boilFps: 8, idleWiggle: [8, 10], wiggleS: 0.35, sndVol: 0.55, frames: 3, pad: 16, ico: 0.3, glow: 0.18, quietPage: 0.6 };
+const BTN_FX = { lift: 3, squash: 0.04, boilFps: 8, idleWiggle: [8, 10], wiggleS: 0.35, sndVol: 0.55, frames: 3, pad: 16, ico: 0.3, glow: 0.18, quietPage: 0.6,
+  gagEvery: [180, 420], gagS: { ant: 5, ring: 6 }, tiredCond: 75 };   // (v0.66) rare idle gags: one every gagEvery s (random in range), lasting gagS s; tiredCond = PRACTICE sweats under this average roster condition
 const BTN_JOB = { go: '#2f5fa8', gold: '#c99a1b', danger: '#c0392b', ok: '#2f8a46' };   // category stripe: blue = go somewhere, gold = credits / XP, red = danger, green = confirm
 const BTN_JOB_LIGHT = { go: '#a9c6ff', gold: '#ffe08a', danger: '#ffb3a8', ok: '#b8f0c4' };   // (the same stripe on dark construction paper)
 let BTN_MAT_ON = true;   // (false = every button as before v0.55)
@@ -810,11 +812,11 @@ const BTN_LABEL_MAT = {   // label (newlines read as spaces, ▸ and "(n)" dropp
   'NO': BM('redpen', 'btnX'), 'STAY': BM('stamp', 'check'), 'DELETE': BM('redpen', 'btnX'),
   'SIM': BM('dice', 'dice'), 'SIM GAME': BM('dice', 'dice'), 'SIM OFFENSE': BM('dice', 'dice'), 'SIM DEFENSE': BM('dice', 'dice'),
   // category tier: the torn scrap + a job stripe (+ an icon where an obvious one exists)
-  'SCRIMMAGE': BM('card', 'btnWhistle', 'go'), '1V1': BM('card', null, 'go'), 'CAREER': BM('card', null, 'go'), 'TUTORIAL': BM('card', null, 'go'),
-  'HIGHLIGHTS': BM('card', 'btnFilm', 'go'), 'IMPORT HIGHLIGHTS': BM('card', 'btnFilm', 'go'), 'PRACTICE': BM('card', 'btnWhistle', 'go'), 'FACILITIES': BM('card', null, 'go'),
-  'FREE AGENTS': BM('card', null, 'go'), 'HIRING BOARD': BM('card', null, 'go'), 'STAFF & HIRING': BM('card', null, 'go'), 'RECORDS': BM('card', null, 'go'), 'TROPHY ROOM': BM('card', 'trophy', 'go'),
-  'GOALS': BM('card', null, 'go'), 'ALL-PRO TEAM': BM('card', null, 'go'), 'DEPTH CHART': BM('card', null, 'go'),
-  'TEAM UPGRADES': BM('card', null, 'gold'), 'UPGRADE ALL': BM('card', null, 'gold'), 'MAKE OFFER': BM('card', null, 'gold'),
+  'SCRIMMAGE': BM('card', 'btnWhistle', 'go'), '1V1': BM('card', null, 'go'), 'CAREER': BM('idcard'), 'TUTORIAL': BM('card', null, 'go'),
+  'HIGHLIGHTS': BM('card', 'btnFilm', 'go'), 'IMPORT HIGHLIGHTS': BM('card', 'btnFilm', 'go'), 'PRACTICE': BM('playbook', 'btnCone'), 'FACILITIES': BM('blueprint'),
+  'FREE AGENTS': BM('classified'), 'HIRING BOARD': BM('flyer'), 'STAFF & HIRING': BM('flyer'), 'RECORDS': BM('card', null, 'go'), 'TROPHY ROOM': BM('card', 'trophy', 'go'),
+  'GOALS': BM('checklist'), 'ALL-PRO TEAM': BM('card', null, 'go'), 'DEPTH CHART': BM('magnets'),
+  'TEAM UPGRADES': BM('card', null, 'gold'), 'UPGRADE ALL': BM('card', null, 'gold'), 'MAKE OFFER': BM('contract', null, 'gold'),
   'RE-SIGN': BM('card', null, 'ok'), 'LET GO': BM('card', null, 'danger'), 'FIRE': BM('card', null, 'danger'), 'REJECT': BM('card', null, 'danger'), 'FORFEIT': BM('card', null, 'danger'),
   // v0.57: popup + player-card buttons that had no material (only the plain lift)
   'OK': BM('stamp', 'check'), 'DONE': BM('stamp', 'check'), 'KEEP': BM('stamp', 'check'), 'TAKE OFFER': BM('stamp', 'check'), 'MEET ASK': BM('card', null, 'gold'),
@@ -823,12 +825,14 @@ const BTN_LABEL_MAT = {   // label (newlines read as spaces, ▸ and "(n)" dropp
   '< PREV': BM('clip'), 'NEXT >': BM('clip'), '◂': BM('clip'), '▸': BM('clip'), '▲': BM('clip'), '▼': BM('clip'), '-': BM('clip'), '+': BM('clip'),
   'BENCH': BM('folder'), 'BENCHED': BM('folder'), 'PROMOTE': BM('card', null, 'ok'), 'DROP': BM('card', null, 'danger'), 'TRADE': BM('carbon', 'btnSwap'), '+1': BM('card', null, 'gold'), 'HIT': BM('stamp'),
 };
-const BTN_OBJ_MAT = { gear: BM('index'), next: BM('clip', 'btnArrow'), clip: BM('clip'), trash: BM('redpen'), slot: BM('folder'), fo: BM('folder', 'btnFolder'), leave: BM('redpen', 'btnX') };
+const BTN_OBJ_MAT = { gear: BM('index'), next: BM('clip', 'btnArrow'), clip: BM('clip'), trash: BM('redpen'), slot: BM('folder'), fo: BM('folder', 'btnFolder'), leave: BM('redpen', 'btnX'), cal: BM('calendar'), ball: BM('paperball') };
 const BTN_MAT_CACHE = new Map();
 function btnMatOf(b, label) {
   if (b.mat !== undefined) return b.mat;
   if (b === START_BTNS.diff || b === HOME_BTNS[0]) return BTN_OBJ_MAT.gear;   // (the settings gear: an index card, the gear spins)
   if (b === HOME_BTNS[1]) return BTN_OBJ_MAT.fo;                              // (FRONT OFFICE: the folder family, like the filing drawer inside it)
+  if (b === MENU_NEXT && results && results.screen === 'home' && season) return BTN_OBJ_MAT.cal;   // (v0.66: home's CONTINUE / PLAYOFFS / OFFSEASON...: the desk calendar)
+  if (b === MENU_NEXT && results && results.screen === 'matchup' && /^(PLAY|RESUME)/.test(label)) return BTN_OBJ_MAT.ball;   // (v0.66: the paper football)
   if (b === MENU_NEXT) return label.startsWith('CONTINUE') && !/[▸►]/.test(label) ? BTN_OBJ_MAT.next : BTN_OBJ_MAT.clip;
   if (SLOT_TRASH.includes(b)) return BTN_OBJ_MAT.trash;
   if (SLOT_BTNS.includes(b)) return BTN_OBJ_MAT.slot;
@@ -1014,6 +1018,168 @@ Object.assign(DOODLE, {
   btnWhistle(ic) { const c = ic.c || '#9aa0a6'; ddShape([[-0.45, -0.25], [-0.95, -0.45], [-0.95, -0.05], [-0.45, 0.1]], c); ddShape(ddEll(0.15, 0.15, 0.62, 0.52, 14), c); ddLine(ddEll(0.15, 0.15, 0.2, 0.18, 8), ddInk(c), 0.08); ddLine(ddEll(0.6, -0.5, 0.17, 0.17, 8), ddInk(c), 0.08); },
   btnFilm(ic) { const c = ic.c || '#3a3f47'; ddShape([[-0.95, -0.6], [0.95, -0.6], [0.95, 0.6], [-0.95, 0.6]], c); for (let i = 0; i < 5; i++) { const x = -0.78 + i * 0.39; for (const y of [-0.48, 0.3]) ddShape([[x, y], [x + 0.18, y], [x + 0.18, y + 0.18], [x, y + 0.18]], '#ffffff'); } },
 });
+// --- v0.66 button materials: FACILITIES blueprint, PRACTICE playbook, home CONTINUE calendar, PLAY paper football, FREE AGENTS classified, HIRING flyer,
+// GOALS checklist, DEPTH CHART magnets, MAKE OFFER contract, CAREER school ID. Resting look baked (body / front, + state via K.state); hover / press only live.
+const bmLn = (x0, y0, x1, y1, col, w) => { ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); };
+const bmPart = (pts, k) => {   // a polyline drawn up to share k of its length (a line drawing itself); returns the tip
+  let tot = 0; for (let i = 1; i < pts.length; i++) tot += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  let left = tot * Math.max(0, Math.min(1, k)), tip = pts[0]; ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length && left > 0; i++) { const [ax, ay] = pts[i - 1], [bx, by] = pts[i], d = Math.hypot(bx - ax, by - ay), u = Math.min(1, left / (d || 1)); tip = [ax + (bx - ax) * u, ay + (by - ay) * u]; ctx.lineTo(tip[0], tip[1]); left -= d; }
+  ctx.stroke(); return tip;
+};
+const bmCurve = (x0, y0, cx, cy, x1, y1, n = 16) => Array.from({ length: n + 1 }, (_, i) => { const t = i / n, u = 1 - t; return [u * u * x0 + 2 * u * t * cx + t * t * x1, u * u * y0 + 2 * u * t * cy + t * t * y1]; });
+function bmPencil(x, y, rot) {   // a little yellow pencil, tip at (x, y)
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+  ctx.fillStyle = '#f2c230'; ctx.fillRect(4, -2.2, 16, 4.4); ctx.fillStyle = '#e88aa0'; ctx.fillRect(20, -2.2, 4, 4.4);
+  ctx.fillStyle = '#e8c9a0'; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(4, -2.2); ctx.lineTo(4, 2.2); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#5a4a20'; ctx.lineWidth = 0.8; ctx.strokeRect(4, -2.2, 20, 4.4); ctx.restore();
+}
+function bmCone(x, y, r, rot) {   // a training cone standing on (x, y)
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+  ctx.fillStyle = '#ef7a1a'; ctx.beginPath(); ctx.moveTo(-r * 0.55, 0); ctx.lineTo(-r * 0.12, -r * 1.5); ctx.lineTo(r * 0.12, -r * 1.5); ctx.lineTo(r * 0.55, 0); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#7a3a08'; ctx.lineWidth = 1.2; ctx.stroke(); ctx.fillStyle = '#fff4e0'; ctx.fillRect(-r * 0.36, -r * 0.8, r * 0.72, r * 0.26);
+  ctx.fillStyle = '#ef7a1a'; ctx.fillRect(-r * 0.8, -r * 0.12, r * 1.6, r * 0.2); ctx.strokeRect(-r * 0.8, -r * 0.12, r * 1.6, r * 0.2); ctx.restore();
+}
+const btnStateCache = { f: -1, fac: false, tired: false };
+function btnStates() {   // once per painted frame: is a facility upgrade affordable, is the team tired
+  const S = btnStateCache; if (S.f === UI_LAST) return S; S.f = UI_LAST; S.fac = false; S.tired = false;
+  try {
+    if (season && !exhibition && facOn() && career.prac && career.prac.fac) for (const k of Object.keys(PRAC_FAC)) { const F = career.prac.fac[k], D = PRAC_FAC[k]; if (F && !F.build && F.lvl < FAC_MAX && D.cost[F.lvl - 1] != null && (LEAGUE.coins || 0) >= facCost(D, F)) { S.fac = true; break; } }
+    if (season && !exhibition) { const r = (ROSTER[season.team] || []).filter(p => p.cond != null); if (r.length && r.reduce((a, p) => a + p.cond, 0) / r.length < BTN_FX.tiredCond) S.tired = true; }
+  } catch (e) {}
+  return S;
+}
+function calState() {   // the home calendar: week text + this week's opponent ('' = no logo)
+  if (!season) return '';
+  if (season.offseason) return 'OFFSEASON|';
+  if (season.week > SEASON_WEEKS) return 'PLAYOFFS|';
+  const g = isByeNow() ? null : gameOf(season.week), opp = g ? (g.h === season.team ? g.a : g.h) : '';
+  return `WEEK ${season.week}|${opp}`;
+}
+Object.assign(BTN_KIND, {
+  blueprint: { hero: true, paper: '#2c5f9e', ink: '#f4f8ff', shape: (p, b) => p.rect(b.x, b.y, b.w, b.h), state: () => btnStates().fac ? 'S' : '',
+    body(b, m, paper, ss) {
+      bmFill((p, q) => p.rect(q.x, q.y, q.w, q.h), b, '#2c5f9e', 'rgba(15,40,80,0.7)');
+      ctx.fillStyle = 'rgba(255,255,255,0.15)'; for (let x = b.x + 5; x < b.x + b.w; x += 10) ctx.fillRect(x, b.y, 1, b.h); for (let y = b.y + 5; y < b.y + b.h; y += 10) ctx.fillRect(b.x, y, b.w, 1);
+      ctx.strokeStyle = 'rgba(255,255,255,0.65)'; ctx.lineWidth = 1; ctx.strokeRect(b.x + 4, b.y + 4, b.w - 8, b.h - 8);
+      const X = b.x + b.w - 32, Y = b.y + 9; ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.moveTo(X, Y + 14); ctx.lineTo(X, Y); ctx.lineTo(X + 22, Y); ctx.lineTo(X + 22, Y + 20); ctx.stroke();   // (a corner of a floor plan)
+      if (ss) {   // an upgrade you can afford: a tiny scaffold
+        const sx = b.x + 9, sy = b.y + 8; ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 1.3; ctx.strokeRect(sx, sy, 16, 16); ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + 16, sy + 16); ctx.moveTo(sx + 16, sy); ctx.lineTo(sx, sy + 16); ctx.moveTo(sx, sy + 8); ctx.lineTo(sx + 16, sy + 8); ctx.stroke();
+      }
+    },
+    fx(st, b) {   // hover: a pencil draws one more wall; press: APPROVED
+      const k = st.k * (1 - st.d), X = b.x + b.w - 32, Y = b.y + 9;
+      if (k > 0.02) { ctx.strokeStyle = 'rgba(255,255,255,0.95)'; ctx.lineWidth = 1.8; const tip = bmPart([[X + 22, Y + 20], [X + 6, Y + 20]], k); bmPencil(tip[0], tip[1], -0.7); }
+      if (st.d > 0.04) bmStampText('APPROVED', b.x + b.w / 2, b.y + b.h / 2, '#e2463a', 1.3 - 0.3 * st.d, Math.min(1, st.d * 1.4), -0.14);
+    }, snd: v => sndRec('stamp', v, { fade: 80, tag: 'bs' }) },
+  playbook: { hero: true, paper: '#fffdf4', icoLive: true, shape: bmTorn, state: () => btnStates().tired ? 'T' : '',
+    body(b, m, paper, ss) {
+      bmFill(bmTorn, b, '#fffdf4');
+      ctx.strokeStyle = 'rgba(70,60,40,0.32)'; ctx.lineWidth = 1.3;
+      for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(b.x + b.w * 0.3 + i * 14, b.y + b.h - 11, 4, 0, 7); ctx.stroke(); }   // (Os)
+      for (let i = 0; i < 3; i++) { const x = b.x + b.w * 0.6 + i * 14, y = b.y + 11; ctx.beginPath(); ctx.moveTo(x - 3.5, y - 3.5); ctx.lineTo(x + 3.5, y + 3.5); ctx.moveTo(x + 3.5, y - 3.5); ctx.lineTo(x - 3.5, y + 3.5); ctx.stroke(); }   // (Xs)
+      if (ss) for (const [dx, dy] of [[0, 0], [7, 6], [-2, 11]]) { const x = b.x + 12 + dx, y = b.y + 8 + dy; ctx.fillStyle = '#5aa8e8'; ctx.beginPath(); ctx.moveTo(x, y - 4); ctx.quadraticCurveTo(x + 3, y + 1, x, y + 2.5); ctx.quadraticCurveTo(x - 3, y + 1, x, y - 4); ctx.fill(); }   // (tired: sweat drops)
+    },
+    fx(st, b, ic) {   // hover: a route arrow draws itself; press: the cone tips over
+      const k = st.k * (1 - st.d);
+      if (k > 0.02) { ctx.strokeStyle = 'rgba(47,95,168,0.85)'; ctx.lineWidth = 1.8; const P = bmCurve(b.x + b.w * 0.3 + 28, b.y + b.h - 15, b.x + b.w * 0.55, b.y + b.h * 0.15, b.x + b.w - 14, b.y + b.h * 0.42), tip = bmPart(P, k);
+        if (k > 0.85) { const a = Math.atan2(P[16][1] - P[14][1], P[16][0] - P[14][0]); ctx.fillStyle = 'rgba(47,95,168,0.85)'; ctx.beginPath(); ctx.moveTo(tip[0] + Math.cos(a) * 4, tip[1] + Math.sin(a) * 4); ctx.lineTo(tip[0] + Math.cos(a + 2.5) * 6, tip[1] + Math.sin(a + 2.5) * 6); ctx.lineTo(tip[0] + Math.cos(a - 2.5) * 6, tip[1] + Math.sin(a - 2.5) * 6); ctx.closePath(); ctx.fill(); } }
+      if (ic) bmCone(ic.x, ic.y + ic.r * 0.8, ic.r, 1.35 * st.d);
+    }, snd: v => sndRec('tap', v) },
+  calendar: { hero: true, paper: '#fffdf4', ink: '#2b2630', ly: 8, shape: (p, b) => p.rect(b.x, b.y, b.w, b.h), state: calState,
+    body(b, m, paper, ss) {
+      const [wk, opp] = (ss || '|').split('|');
+      if (opp && typeof drawLogo === 'function') drawLogo(opp, b.x + b.w - 28, b.y - 4, 34);   // (this week's opponent peeking from behind the page)
+      bmFill((p, q) => p.rect(q.x - 2, q.y - 2, q.w + 4, q.h + 4), b, '#b98a52', 'rgba(70,45,15,0.6)');   // (the cardboard back)
+      ctx.fillStyle = b._bgPaper && b._bgPaper !== '#fffdf4' ? b._bgPaper : '#c0392b'; ctx.fillRect(b.x, b.y, b.w, 18); ctx.strokeStyle = 'rgba(30,20,15,0.5)';   // (the header wears the button's own colour: home's green CONTINUE stays green) ctx.lineWidth = 1; ctx.strokeRect(b.x, b.y, b.w, 18);
+      for (let i = 0; i < 4; i++) { const x = b.x + b.w * (0.2 + i * 0.2); ctx.fillStyle = '#3a2a1a'; ctx.beginPath(); ctx.arc(x, b.y + 4, 2.4, 0, 7); ctx.fill(); }   // (binding holes)
+      ctx.fillStyle = '#ffffff'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(wk || '', b.x + b.w / 2, b.y + 11);
+    },
+    front(b) { bmFill((p, q) => p.rect(q.x, q.y + 18, q.w, q.h - 18), b, '#fffdf4', 'rgba(120,100,70,0.45)'); ctx.fillStyle = 'rgba(80,140,210,0.18)'; for (let y = b.y + 30; y < b.y + b.h - 4; y += 11) ctx.fillRect(b.x + 6, y, b.w - 12, 1); },
+    frontXf(st, b) { if (st.d < 0.01) return; const px = b.x, py = b.y + 18; ctx.translate(px, py); ctx.rotate(-0.1 * st.d); ctx.translate(-px + 8 * st.d, -py - 6 * st.d); },   // (pressed: the page tears off)
+    fx(st, b) {
+      const c = (4 + 14 * st.k) * (1 - st.d), x1 = b.x + b.w, y1 = b.y + b.h;   // (hover: the corner lifts)
+      if (c > 1) { ctx.fillStyle = 'rgba(40,25,5,0.28)'; ctx.beginPath(); ctx.moveTo(x1 - c, y1); ctx.lineTo(x1, y1); ctx.lineTo(x1, y1 - c); ctx.closePath(); ctx.fill(); ctx.fillStyle = '#f1ead8'; ctx.beginPath(); ctx.moveTo(x1 - c, y1); ctx.lineTo(x1, y1 - c); ctx.lineTo(x1 - c * 1.1, y1 - c * 1.1); ctx.closePath(); ctx.fill(); ctx.strokeStyle = 'rgba(120,100,70,0.5)'; ctx.lineWidth = 1; ctx.stroke(); }
+      if (st.d > 0.02) { ctx.strokeStyle = `rgba(120,100,70,${(0.7 * st.d).toFixed(3)})`; ctx.lineWidth = 1; ctx.beginPath(); for (let x = b.x; x <= b.x + b.w; x += 6) ctx.lineTo(x, b.y + 18 + ((x - b.x) / 6 % 2 ? 2 : -1)); ctx.stroke(); }   // (the torn edge)
+    }, snd: v => sndRec('tear', v, { ms: 380, fade: 120 }) },
+  paperball: { hero: true, paper: '#fffdf4', shape: bmTorn,
+    body(b) {
+      bmFill(bmTorn, b, '#fffdf4');
+      const px = b.x + b.w - 24, by = b.y + b.h - 10, top = b.y + 12, cb = b.y + b.h * 0.5;   // (finger goalposts: a fist, two fingers up)
+      for (const [x0, y0, x1, y1] of [[px, by, px, cb], [px - 11, cb, px + 11, cb], [px - 11, cb, px - 11, top], [px + 11, cb, px + 11, top]]) { bmLn(x0, y0, x1, y1, '#7a4a2a', 6); bmLn(x0, y0, x1, y1, '#efc29a', 4); }
+    },
+    fx(st, b) {   // the paper football: lines up on hover, is flicked through on the press
+      const px = b.x + b.w - 24, k = st.k, d = st.d, x = b.x + 22 + (px - b.x - 22) * d, y = b.y + b.h * 0.62 - (b.h * 0.4) * d, rot = 0.6 * (1 - k) - 0.15 * k + d * 6, s = 1 - 0.4 * d;
+      ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s, s);
+      ctx.fillStyle = '#f4f1e6'; ctx.beginPath(); ctx.moveTo(-9, 6); ctx.lineTo(9, 6); ctx.lineTo(0, -9); ctx.closePath(); ctx.fill(); ctx.strokeStyle = '#5a4a30'; ctx.lineWidth = 1.2; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-4.5, -1.5); ctx.lineTo(4.5, -1.5); ctx.lineTo(0, 6); ctx.closePath(); ctx.strokeStyle = 'rgba(90,74,48,0.5)'; ctx.lineWidth = 0.8; ctx.stroke(); ctx.restore();
+      if (k > 0.02 && d < 0.05) { ctx.setLineDash([2, 4]); ctx.strokeStyle = `rgba(47,95,168,${(0.5 * k).toFixed(3)})`; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(b.x + 34, b.y + b.h * 0.6); ctx.quadraticCurveTo(b.x + b.w * 0.55, b.y + 2, px, b.y + 20); ctx.stroke(); ctx.setLineDash([]); }   // (the line it'll fly)
+    }, snd: v => sndRec('swoosh', v, { ms: 300, fade: 120 }) },
+  classified: { hero: true, paper: '#efede6', ink: '#222222', shape: (p, b) => p.rect(b.x, b.y, b.w, b.h),
+    body(b) {
+      bmFill((p, q) => p.rect(q.x, q.y, q.w, q.h), b, '#efede6', 'rgba(60,60,60,0.45)');
+      ctx.fillStyle = 'rgba(30,30,30,0.6)'; ctx.fillRect(b.x + 5, b.y + 5, b.w - 10, 1.6); ctx.fillRect(b.x + 5, b.y + 8, b.w - 10, 0.8);
+      ctx.fillStyle = 'rgba(30,30,30,0.6)'; ctx.font = 'bold 8px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText('CLASSIFIEDS', b.x + 7, b.y + 14);
+      ctx.fillStyle = 'rgba(30,30,30,0.16)'; for (let y = b.y + b.h - 13; y < b.y + b.h - 4; y += 3.5) { ctx.fillRect(b.x + 7, y, b.w * 0.42, 1); ctx.fillRect(b.x + b.w * 0.53, y, b.w * 0.42, 1); }
+      ctx.strokeStyle = 'rgba(30,30,30,0.35)'; ctx.lineWidth = 1; ctx.strokeRect(b.x + b.w * 0.16, b.y + 19, b.w * 0.68, b.h - 34);   // (the ad's box)
+    },
+    fx(st, b) { const k = st.k; if (k < 0.02) return; const cx = b.x + b.w / 2, cy = b.y + b.h / 2 + 1, a0 = -2.2;   // (hover: a red pen circles it)
+      ctx.strokeStyle = 'rgba(200,40,30,0.8)'; ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.beginPath(); ctx.ellipse(cx, cy, b.w * 0.42, b.h * 0.38, -0.04, a0, a0 + Math.PI * 2.12 * k); ctx.stroke(); },
+    snd: v => sndRec('pencil', v, { ms: 300, at: 2, fade: 100 }) },
+  flyer: { hero: true, anim: true, paper: '#fdfbf2', ink: '#2b2630', ly: 3, shape: (p, b) => p.rect(b.x, b.y, b.w, b.h),
+    body(b) { bmFill((p, q) => p.rect(q.x, q.y, q.w, q.h), b, '#fdfbf2', 'rgba(120,100,70,0.45)'); ctx.fillStyle = '#c0392b'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('HELP WANTED', b.x + b.w / 2, b.y + 10); },
+    fx(st, b) {   // the tear-off tabs: flutter on hover, one tears off on the press
+      const n = 6, tw = (b.w - 16) / n, y1 = b.y + b.h, t = bmSec(st);
+      for (let i = 0; i < n; i++) {
+        const x = b.x + 8 + i * tw, gone = i === 2 ? st.d : 0;
+        ctx.save(); ctx.translate(x + tw / 2, y1); ctx.rotate(Math.sin(t * 7 + i * 1.7) * 0.14 * st.k * (1 - gone) + 0.5 * gone); ctx.translate(0, 9 * gone); ctx.globalAlpha *= 1 - 0.6 * gone;
+        ctx.fillStyle = '#fdfbf2'; ctx.fillRect(-tw / 2 + 1, 0, tw - 2, 15); ctx.strokeStyle = 'rgba(120,100,70,0.5)'; ctx.lineWidth = 0.8; ctx.setLineDash([2, 2]); ctx.strokeRect(-tw / 2 + 1, 0, tw - 2, 15); ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(40,40,60,0.45)'; ctx.fillRect(-1, 3, 1, 9); ctx.fillRect(2, 3, 1, 7); ctx.restore();
+      }
+    }, snd: v => sndRec('tear', v, { ms: 300, fade: 100 }) },
+  checklist: { hero: true, paper: '#fffdf4', lpad: 36, shape: bmTorn,
+    body(b) { bmFill(bmTorn, b, '#fffdf4'); bmLines(b, b.x + 4, b.x + b.w - 4, b.y + 14, 12, 'rgba(80,140,210,0.22)'); ctx.fillStyle = 'rgba(200,60,60,0.45)'; ctx.fillRect(b.x + 30, b.y + 3, 1.2, b.h - 6);
+      ctx.strokeStyle = '#3b3320'; ctx.lineWidth = 1.3; for (const dy of [-13, 5]) ctx.strokeRect(b.x + 11, b.y + b.h / 2 + dy, 11, 11);
+      ctx.strokeStyle = '#2f8a46'; ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(b.x + 12, b.y + b.h / 2 - 8); ctx.lineTo(b.x + 15.5, b.y + b.h / 2 - 4); ctx.lineTo(b.x + 24, b.y + b.h / 2 - 16); ctx.stroke(); },
+    fx(st, b) { const k = st.k; if (k < 0.02) return; const y = b.y + b.h / 2 + 5; ctx.strokeStyle = '#2f8a46'; ctx.lineWidth = 2.2; bmPart([[b.x + 12, y + 5], [b.x + 15.5, y + 9], [b.x + 24, y - 3]], k); },   // (hover: the second box ticks itself)
+    snd: v => sndRec('pencil', v, { ms: 260, at: 2, fade: 100 }) },
+  magnets: { hero: true, paper: '#f3f5f7', ink: '#2b2630', lpad: 40, shape: (p, b) => bmRR(p, b.x, b.y, b.w, b.h, 4),
+    body(b) { bmFill((p, q) => bmRR(p, q.x, q.y, q.w, q.h, 4), b, '#f3f5f7', 'rgba(90,96,104,0.8)'); ctx.strokeStyle = 'rgba(170,176,184,0.9)'; ctx.lineWidth = 3; ctx.beginPath(); bmRR(ctx, b.x + 2, b.y + 2, b.w - 4, b.h - 4, 3); ctx.stroke(); },
+    fx(st, b) {   // two name magnets: they swap places on hover
+      const k = st.k, ya = b.y + b.h / 2 - 11, yb = b.y + b.h / 2 + 2, e = k * k * (3 - 2 * k);
+      for (const [c, y0, y1, s] of [['#c0392b', ya, yb, 1], ['#2f5fa8', yb, ya, -1]]) { const x = b.x + 7 + s * Math.sin(Math.PI * e) * 4, y = y0 + (y1 - y0) * e;
+        ctx.fillStyle = 'rgba(40,25,5,0.25)'; ctx.fillRect(x + 1.5, y + 2, 22, 9); ctx.fillStyle = c; ctx.fillRect(x, y, 22, 9); ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fillRect(x + 3, y + 3.5, 13, 2); }
+      if (k > 0.01 && k < 0.99) menuMoving = true;
+    }, snd: v => sndRec('click', v) },
+  contract: { hero: true, paper: '#fbf6e6', ly: -6, shape: (p, b) => p.rect(b.x, b.y, b.w, b.h),
+    body(b) { bmFill((p, q) => p.rect(q.x, q.y, q.w, q.h), b, '#fbf6e6', 'rgba(120,100,70,0.5)'); ctx.fillStyle = 'rgba(60,50,30,0.2)'; ctx.fillRect(b.x + 8, b.y + 6, b.w * 0.5, 1); ctx.fillRect(b.x + 8, b.y + 9, b.w * 0.35, 1);
+      const sx = b.x + b.w * 0.5, sy = b.y + b.h - 9; ctx.fillStyle = 'rgba(40,40,60,0.75)'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillText('x', sx - 9, sy); ctx.fillStyle = 'rgba(40,40,60,0.55)'; ctx.fillRect(sx, sy + 1, b.w * 0.45, 1); },
+    fx(st, b) { if (st.d < 0.02) return; const sx = b.x + b.w * 0.5 + 2, sy = b.y + b.h - 11, L = b.w * 0.42, P = Array.from({ length: 25 }, (_, i) => [sx + L * i / 24, sy - 3 * Math.sin(i * 1.3) - (i % 6 === 2 ? 3 : 0)]);   // (press: it signs itself)
+      ctx.strokeStyle = '#1f3f9a'; ctx.lineWidth = 1.4; ctx.lineJoin = 'round'; bmPart(P, Math.min(1, st.d * 1.5)); ctx.lineJoin = 'miter'; },
+    snd: v => sndRec('pencil', v, { ms: 360, at: 2, fade: 100 }) },
+  idcard: { hero: true, paper: '#eef2f8', ink: '#22305a', lpad: 50, shape: (p, b) => bmRR(p, b.x, b.y, b.w, b.h, 7),
+    body(b) { bmFill((p, q) => bmRR(p, q.x, q.y, q.w, q.h, 7), b, '#eef2f8', 'rgba(40,60,100,0.6)');
+      ctx.save(); ctx.beginPath(); bmRR(ctx, b.x, b.y, b.w, b.h, 7); ctx.clip(); ctx.fillStyle = '#2f5fa8'; ctx.fillRect(b.x, b.y, b.w, 12); ctx.restore();
+      ctx.fillStyle = '#ffffff'; ctx.font = 'bold 8px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText('STUDENT ID', b.x + 8, b.y + 6.5);
+      const px = b.x + 8, py = b.y + 17, pw = 32, ph = b.h - 24; ctx.fillStyle = '#cfdcef'; ctx.fillRect(px, py, pw, ph); ctx.strokeStyle = 'rgba(40,60,100,0.6)'; ctx.lineWidth = 1; ctx.strokeRect(px, py, pw, ph);
+      ctx.fillStyle = '#8a97ab'; ctx.beginPath(); ctx.arc(px + pw / 2, py + ph * 0.38, pw * 0.2, 0, 7); ctx.fill(); ctx.beginPath(); ctx.ellipse(px + pw / 2, py + ph, pw * 0.36, ph * 0.32, 0, Math.PI, 0); ctx.fill();   // (the photo)
+      ctx.fillStyle = 'rgba(30,30,40,0.55)'; for (let i = 0; i < 16; i++) ctx.fillRect(b.x + b.w - 44 + i * 2.4, b.y + b.h - 11, i % 3 ? 1 : 1.8, 7); },   // (a barcode)
+    fx(st, b, ic, L) { if (st.k < 0.01) return; const u = ((bmSec(st) * 0.7) % 1.6) - 0.3, x = b.x + b.w * u;   // (hover: the laminate catches the light)
+      ctx.save(); ctx.clip(L.p2); ctx.fillStyle = `rgba(255,255,255,${(0.45 * st.k).toFixed(3)})`; ctx.beginPath(); ctx.moveTo(x, b.y - 4); ctx.lineTo(x + 16, b.y - 4); ctx.lineTo(x - 4, b.y + b.h + 4); ctx.lineTo(x - 20, b.y + b.h + 4); ctx.closePath(); ctx.fill(); ctx.restore(); menuMoving = true; },
+    snd: v => sndRec('tap', v) },
+});
+// rare idle gags on a hero button (one at a time, BTN_FX.gagEvery s apart; through the idle wiggle's slot, so they repaint only through btnWigDue): an ant walking across, a coffee ring
+function btnGagDraw(b, kind, p) {
+  if (kind === 'ant') {
+    const x = b.x - 6 + (b.w + 12) * p, y = b.y + 3, leg = Math.sin(p * 90) * 1.2;
+    ctx.fillStyle = '#1a1410'; ctx.strokeStyle = '#1a1410'; ctx.lineWidth = 0.7;
+    for (const [dx, r] of [[-3.2, 1.3], [0, 1.1], [3, 1.6]]) { ctx.beginPath(); ctx.arc(x + dx, y, r, 0, 7); ctx.fill(); }
+    ctx.beginPath(); for (const s of [-1, 1]) for (const lx of [-1.5, 0, 1.5]) { ctx.moveTo(x + lx, y); ctx.lineTo(x + lx + leg * s, y + 2.6 * s); } ctx.moveTo(x - 4, y); ctx.lineTo(x - 6.5, y - 2); ctx.stroke();
+  } else {
+    const a = Math.min(1, p * 5, (1 - p) * 4) * 0.65, cx = b.x + b.w * 0.72, cy = b.y + b.h * 0.42, r = Math.min(b.h * 0.42, 22);
+    ctx.save(); ctx.globalAlpha *= a; ctx.strokeStyle = '#7a4a1e'; ctx.lineWidth = 2.6; ctx.beginPath(); ctx.arc(cx, cy, r, 0.3, 5.6); ctx.stroke(); ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(cx + 1, cy - 0.5, r - 2.5, 0.9, 5.9); ctx.stroke(); ctx.restore();
+  }
+}
 const BTN_ICO_COL = { bolt: '#f2b51c', cloud: '#7fb2e5', check: '#2f8a46', dice: '#fffdf4', trophy: '#e8b830' };
 function btnIco(k, x, y, r) {
   ctx.save(); ctx.translate(x, y); ctx.scale(r, r);
@@ -1050,7 +1216,8 @@ const BTN_MAT_SPR = new Map();
 function btnMatClear() { for (const L of BTN_MAT_SPR.values()) { freeCanvas(L.sh); for (const f of L.fr) if (f) { freeCanvas(f.base); freeCanvas(f.front); } } BTN_MAT_SPR.clear(); }
 function btnMatLayers(b, label, size, mat, K, paper, f) {
   const s = Math.round(Math.hypot(DM_P.getTransform.call(ctx).a, DM_P.getTransform.call(ctx).b) * 8) / 8;
-  const key = `${mat.k}|${mat.ico || ''}|${mat.job || ''}|${b.x},${b.y},${b.w},${b.h}|${label}|${size}|${paper}|${s}|${dmOn ? 1 : 0}`;
+  const ss = K.state ? K.state(b, label) : '';   // (v0.66: a kind's state (scaffold / sweat / week + opponent) is part of the key: it re-bakes only when that changes)
+  const key = `${mat.k}|${mat.ico || ''}|${mat.job || ''}|${b.x},${b.y},${b.w},${b.h}|${label}|${size}|${paper}|${s}|${dmOn ? 1 : 0}|${ss}`;
   let L = BTN_MAT_SPR.get(key);
   const P = BTN_FX.pad, x0 = b.x - P, y0 = b.y - P - 6, w = b.w + 2 * P, h = b.h + 2 * P + 6;
   if (!L) {
@@ -1061,33 +1228,44 @@ function btnMatLayers(b, label, size, mat, K, paper, f) {
   }
   if (!L.fr[f]) {
     const seed = (Math.round(b.x * 7 + b.y * 13 + b.w) + f * 7919) % 2147483646 + 1, F = {};
-    F.base = ctxBake(x0, y0, w, h, () => { ddSeed = seed; K.body(b, mat, paper); if (!K.front) F.ic = btnMatLabel(b, label, size, mat, K, paper); });
-    F.front = K.front ? ctxBake(x0, y0, w, h, () => { ddSeed = seed; K.front(b, mat, paper); F.ic = btnMatLabel(b, label, size, mat, K, paper); }) : null;
+    F.base = ctxBake(x0, y0, w, h, () => { ddSeed = seed; K.body(b, mat, paper, ss); if (!K.front) F.ic = btnMatLabel(b, label, size, mat, K, paper); });
+    F.front = K.front ? ctxBake(x0, y0, w, h, () => { ddSeed = seed; K.front(b, mat, paper, ss); F.ic = btnMatLabel(b, label, size, mat, K, paper); }) : null;
     L.fr[f] = F;
   }
   return L;
 }
+// v0.62 phones in AUTO graphics, menus only: MENU_TRIM.blur x every shadowBlur (the glows were full-size blurs, the costliest thing on a menu frame), no button
+// boil / idle wiggle. QUALITY and the desktop keep today's look. The shadowBlur hook sits on the main context (ctxBake copies it onto baked canvases)
+const MENU_TRIM = { blur: 0.3 };
+const menuTrim = () => !!(TOUCH && results && gfxMode() === 'AUTO');
+(function () {
+  const D = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'shadowBlur'); if (!D || !D.set) return;
+  try { Object.defineProperty(ctx, 'shadowBlur', { configurable: true, enumerable: true, get() { return D.get.call(this); }, set(v) { D.set.call(this, v > 0 && menuTrim() ? v * MENU_TRIM.blur : v); } }); } catch (e) {}
+})();
 // the idle wiggle: one hero button at a time, every BTN_FX.idleWiggle s (random in that range), for BTN_FX.wiggleS s
 const BTN_WIG = { next: 0, key: null, t0: 0, frame: -1, n: 0, seen: 0, pick: -1 };
 const btnWigNext = now => now + 1000 * (BTN_FX.idleWiggle[0] + Math.random() * (BTN_FX.idleWiggle[1] - BTN_FX.idleWiggle[0]));
-const btnWigDue = () => BTN_WIG.seen > 0 && !BTN_WIG.key && BTN_WIG.next > 0 && performance.now() >= BTN_WIG.next && !liteOn();   // (menuDirty: a wiggle is due, so the still menu paints again)
+const btnWigDue = () => BTN_WIG.seen > 0 && !BTN_WIG.key && BTN_WIG.next > 0 && !menuTrim() && performance.now() >= BTN_WIG.next && !liteOn();   // (menuDirty: a wiggle is due, so the still menu paints again)
 function btnWiggle(b, now) {
-  const W = BTN_WIG, S = BTN_FX.wiggleS * 1000, key = `${b.x},${b.y},${b.w}`;
+  const W = BTN_WIG, key = `${b.x},${b.y},${b.w}`, S = W.gag ? BTN_FX.gagS[W.gag] * 1000 : BTN_FX.wiggleS * 1000;
   if (W.frame !== UI_LAST) { W.frame = UI_LAST; W.seen = W.n; W.n = 0; }
   const i = W.n++;
   if (!W.next) W.next = btnWigNext(now);
-  if (W.key && now - W.t0 > S * 1.5) { W.key = null; W.next = btnWigNext(now); }   // (its button went away mid-wiggle)
-  if (!W.key && now >= W.next && W.seen > 0) { if (W.pick < 0 || W.pick >= W.seen) W.pick = Math.floor(Math.random() * W.seen); if (i === W.pick) { W.key = key; W.t0 = now; W.pick = -1; } }
+  if (!W.gagNext) W.gagNext = now + 1000 * (BTN_FX.gagEvery[0] + Math.random() * (BTN_FX.gagEvery[1] - BTN_FX.gagEvery[0]));
+  if (W.key && now - W.t0 > S * 1.5) { W.key = null; W.gag = null; W.next = btnWigNext(now); }   // (its button went away mid-wiggle)
+  if (!W.key && now >= W.next && W.seen > 0) { if (W.pick < 0 || W.pick >= W.seen) W.pick = Math.floor(Math.random() * W.seen); if (i === W.pick) { W.key = key; W.t0 = now; W.pick = -1;
+    if (now >= W.gagNext) { W.gag = Math.random() < 0.5 ? 'ant' : 'ring'; W.gagNext = now + 1000 * (BTN_FX.gagEvery[0] + Math.random() * (BTN_FX.gagEvery[1] - BTN_FX.gagEvery[0])); } } }   // (v0.66: now and then the slot is a gag instead of a wiggle)
   if (W.key !== key) return 0;
-  const p = (now - W.t0) / S;
-  if (p >= 1) { W.key = null; W.next = btnWigNext(now); return 0; }
+  const S2 = W.gag ? BTN_FX.gagS[W.gag] * 1000 : BTN_FX.wiggleS * 1000, p = (now - W.t0) / S2;
+  if (p >= 1) { W.key = null; W.gag = null; W.next = btnWigNext(now); return 0; }
   menuMoving = true;
+  if (W.gag) { W.gp = p; return 0; }
   return Math.sin(p * Math.PI * 4) * 0.06 * (1 - p);
 }
 function btnMatDraw(b, label, size, face, mat, up, d, still) {
   const K = BTN_KIND[mat.k]; if (!K) return false;
   const m = DM_P.getTransform.call(ctx), sc = Math.hypot(m.a, m.b); if (!(sc > 0) || sc > 6) return false;
-  const T = tornPts(b), now = uiNow(), lite = liteOn(), k = still ? 0 : (b.hov || 0);
+  const T = tornPts(b), now = uiNow(), lite = liteOn() || menuTrim(), k = still ? 0 : (b.hov || 0);   // (v0.62: phones in AUTO: no boil frames / idle wiggle, menuTrim)
   const paper = K.paper || (b._bgPaper || '#fffdf4');
   b.ink = K.ink || paperInk(paper);
   const f = !still && !lite && k > 0.5 ? Math.floor(now / 1000 * BTN_FX.boilFps) % BTN_FX.frames : 0;   // (the boil: only the hovered one cycles its frames)
@@ -1110,6 +1288,7 @@ function btnMatDraw(b, label, size, face, mat, up, d, still) {
   if (up > 0.01) { ctx.fillStyle = `rgba(255,226,90,${(BTN_FX.glow * up).toFixed(3)})`; ctx.fill(L.p2); }
   if (d > 0.01) { ctx.fillStyle = `rgba(90,70,30,${(0.12 * d).toFixed(3)})`; ctx.fill(L.p2); }
   if (K.fx) K.fx(st, b, F.ic, L);
+  if (BTN_WIG.gag && BTN_WIG.key === `${b.x},${b.y},${b.w}` && !still && !lite) btnGagDraw(b, BTN_WIG.gag, BTN_WIG.gp || 0);   // (v0.66 idle gag)
   ctx.restore();
   if (!still) b._snd = { k: mat.k };
   return true;
@@ -1630,7 +1809,7 @@ function drawPayOverlay() {
 function drawMenus() {
   ({ start: drawStart, franchise: drawCareer, qsetup: drawQs, result: drawResults, pgx: drawPgx, home: drawHome, matchup: drawMatchup, roster: drawRoster, staff: drawStaff, playoffs: drawPlayoffs,
      awards: drawAwards, pbowl: drawPbowl, resign: drawResign, draft: drawDraft, fa: drawFA, offers: drawOffers, trade: drawTrade, tradeb: drawTradeB, toffers: drawTOffers,
-     exhibition: () => drawMatchup(true), exstats: drawExStats, hof: drawHof, trophy: drawTrophyRoom, scrap: drawScrap, post: drawPost, pawards: drawPAwards, dboard: drawDBoard, records: drawRecords, chof: drawCoachHof, practice: drawPractice, hire: drawHire, board: drawBoard, test: drawTest, onevone: drawOneVOne, oopick: drawOvPick, anims: drawAnims, coach: drawCoachEd, online: drawOnline, onresult: drawOnResult })[results.screen]();
+     exhibition: () => drawMatchup(true), exstats: drawExStats, hof: drawHof, trophy: drawTrophyRoom, scrap: drawScrap, post: drawPost, pawards: drawPAwards, dboard: drawDBoard, book: drawBook, records: drawRecords, chof: drawCoachHof, practice: drawPractice, hire: drawHire, board: drawBoard, test: drawTest, onevone: drawOneVOne, oopick: drawOvPick, anims: drawAnims, coach: drawCoachEd, online: drawOnline, onresult: drawOnResult })[results.screen]();
   if (teamPick) drawTeamPicker();
   drawTutPrompt();
   tourWatch(); drawTour();
@@ -2481,7 +2660,7 @@ function drawHome() {
   menuBtn(HOME_BACK, '', RES.bright, HOME_FS, backArrow);   // back to the start screen
   menuBtn(HOME_BTNS[1], 'FRONT\nOFFICE', RES.bright, HOME_FS);
   if (season && !exhibition) redDot(HOME_BTNS[1], offersNew());   // (unread trade offers)
-  if (season && !exhibition && ['oc', 'dc'].some(r => { const c = (STAFF[MATCH.you] || {})[r]; return c && ((c.stars >= 5 && !c.trait2) || (c.stars >= 3 && (c.tlvl || 1) < 2)); })) upgArrow(HOME_BTNS[1].x + HOME_BTNS[1].w - 38, HOME_BTNS[1].y + 3);   // (a coordinator can upgrade / add a trait)
+  if (season && !exhibition && ['oc', 'dc'].some(r => { const c = (STAFF[MATCH.you] || {})[r]; return c && ((c.stars >= 5 && !c.trait2) || traitUpReady(c)); })) upgArrow(HOME_BTNS[1].x + HOME_BTNS[1].w - 38, HOME_BTNS[1].y + 3);   // (a coordinator can upgrade / add a trait)
   menuBtn(HOME_BTNS[2], 'ROSTER', RES.bright, HOME_FS);
   if (upgTotal(season.team) > 0) upgArrow(HOME_BTNS[2].x + HOME_BTNS[2].w - 38, HOME_BTNS[2].y + 3);   // (an upgrade is ready)
   if (facOn()) {   // (unlocked after the first offseason; flashes in right after the popup)
@@ -2647,6 +2826,7 @@ function drawYearbook(p, f, cx, cy, u, o) {
   const w = Y.w * u, h = Y.h * u, bd = Y.bd * u, bb = rookie ? Y.polaroid * u : bd, iw = w - 2 * bd, ih = h - bd - bb;
   ctx.save(); ctx.translate(cx, cy); ctx.rotate(tilt);
   const x0 = -w / 2, y0 = -h / 2;
+  if ((retire || hof) && faceAgedNow(f)) drawRookieSnap(f, x0 - w * 0.12, y0 + h * 0.66, w * 0.52, o, -0.2);   // (v0.66 then and now: his rookie photo peeking out from behind)
   if (hof) {   // a drawn picture frame
     const F = Y.frame * u;
     ctx.fillStyle = '#8a5a1e'; ctx.fillRect(x0 - F, y0 - F, w + 2 * F, h + 2 * F);
@@ -2675,6 +2855,19 @@ function drawYearbook(p, f, cx, cy, u, o) {
   // his name scribbled under it like a signature
   ctx.fillStyle = 'rgba(30,40,90,0.85)'; ctx.font = `italic ${Y.sig}px ${HAND_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(p.name, 0, h / 2 + (hof ? Y.frame * u : 0) + 9, w * 0.78);
+  ctx.restore();
+}
+// v0.66 then and now: retirement and Hall of Fame cards show his rookie photo beside the last one (faceYoung: the same face before the years, no stored copy)
+const faceAgedNow = f => !!f && ((f.ln | 0) + (f.gr | 0) + (f.bag | 0) > 0 || !!(f.ag && (f.ag.hv || f.ag.hl || f.ag.gl || f.ag.jaw)));
+function drawRookieSnap(f, x, y, s, o, tilt = -0.12) {   // a small rookie polaroid centred at (x, y), s = its width (px)
+  const w = s, h = s * 1.22, bd = s * 0.06, bb = s * 0.2, iw = w - 2 * bd, ih = h - bd - bb, x0 = -w / 2 + bd, y0 = -h / 2 + bd, Rin = iw * 50 / 92;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(tilt);
+  ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.fillRect(-w / 2 + 2, -h / 2 + 3, w, h);
+  ctx.fillStyle = '#fbfaf5'; ctx.fillRect(-w / 2, -h / 2, w, h); ctx.strokeStyle = 'rgba(60,50,30,0.35)'; ctx.lineWidth = 1; ctx.strokeRect(-w / 2 + 0.5, -h / 2 + 0.5, w - 1, h - 1);
+  ctx.save(); ctx.beginPath(); ctx.rect(x0, y0, iw, ih); ctx.clip(); ctx.fillStyle = o.bg || '#d9e2f2'; ctx.fillRect(x0, y0, iw, ih);
+  drawAvatar(faceYoung(f), 0, y0 + ih / 2 + (100 * Rin / 50 - ih) / 2, Rin, { shirt: o.shirt, trim: o.trim, num: o.num, bg: o.bg, sq: true });
+  ctx.fillStyle = 'rgba(255,225,170,0.2)'; ctx.fillRect(x0, y0, iw, ih); ctx.restore();   // (an older, warmer print)
+  ctx.fillStyle = '#1f3f9a'; ctx.font = `bold ${Math.max(7, Math.round(bb * 0.62))}px ${HAND_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('ROOKIE', 0, h / 2 - bb / 2 + 1, iw);
   ctx.restore();
 }
 const conditionLabel = c => c >= 90 ? 'GREAT' : c >= 70 ? 'GOOD' : c >= 50 ? 'FAIR' : 'POOR';
@@ -2706,30 +2899,35 @@ function moraleEvent(p, ev) {
   const s = p && p.src;
   if (!moraleOn() || !yoursEntry(s)) return;
   s.morale = Math.max(MORALE.lo, Math.min(MORALE.hi, moraleRaw(s) + MORALE.ev[ev]));
-  const team = MORALE.ev[ev + 'Team'];
+  let team = MORALE.ev[ev + 'Team'];
+  if (team < 0 && stT('Peacekeeper')) team *= TRAIT_BY.Peacekeeper.v[0];   // (Peacekeeper: one man's bad moment doesn't spread as far)
   if (team) for (const o of ROSTER[MATCH.you]) if (o !== s) o.morale = Math.max(MORALE.lo, Math.min(MORALE.hi, moraleRaw(o) + team));
   moraleSync();
 }
 function moraleDecayPlay() { moraleDecay(MORALE.decayPlay); }
 // (v0.30, the Player Lounge: morale rests at moraleBase(), above 50 with lounge levels, and climbs back to it faster from below)
-const moraleBase = () => MORALE.neutral + FAC_FX.lounge.base * facLvl('lounge') + originK('morale');   // (+ a LOCKER ROOM LEADER origin early on)
+const moraleBase = () => MORALE.neutral + FAC_FX.lounge.base * facLvl('lounge') + originK('morale') + stV("Players' Coach") + (stT('Peacekeeper') >= 2 ? TRAIT_BY.Peacekeeper.chem : 0);   // (+ a LOCKER ROOM LEADER origin early on; + staff traits)
 function moraleDecay(k) {
   if (!moraleOn()) return;
-  const b = moraleBase(), up = 1 + FAC_FX.lounge.back * facLvl('lounge');
-  for (const s of ROSTER[MATCH.you] || []) { const m = moraleRaw(s); s.morale = m + (b - m) * Math.min(1, k * (m < b ? up : 1)); }
+  const b = moraleBase(), up = 1 + FAC_FX.lounge.back * facLvl('lounge'), pk = stT('Peacekeeper') >= 3 ? TRAIT_BY.Peacekeeper.back : 1;   // (Peacekeeper III: a sour player climbs back faster)
+  for (const s of ROSTER[MATCH.you] || []) { const m = moraleRaw(s); s.morale = m + (b - m) * Math.min(1, k * (m < b ? up * (m < MORALE.tiers.rattled ? pk : 1) : 1)); }
   moraleSync();
 }
 function moraleAfterGame(margin) {   // the game's over: a win lifts everyone who played, a loss sinks them (more in a blowout, more on a streak); then it drifts toward the resting point
   if (!moraleOn()) return;
   const T = MORALE_TEAM, was = LEAGUE.morale, big = Math.abs(margin) >= T.blowoutBy ? T.blowout : 0;
   LEAGUE.mStreak = margin > 0 ? (LEAGUE.mStreak || 0) + 1 : 0;
-  const d = margin > 0 ? MORALE.ev.win + big + (LEAGUE.mStreak >= T.streakAt ? T.streak : 0) : margin < 0 ? MORALE.ev.loss - big : 0;
+  let d = margin > 0 ? MORALE.ev.win + big + (LEAGUE.mStreak >= T.streakAt ? T.streak : 0) : margin < 0 ? MORALE.ev.loss - big : 0;
+  if (margin < 0) {   // staff traits after a loss: Silver Lining (halved / none if close), Fire Starter II (a small lift)
+    const sl = stT('Silver Lining'); if (sl >= 3 && -margin <= TRAIT_BY['Silver Lining'].close) d = 0; else if (sl >= 2) d *= TRAIT_BY['Silver Lining'].v[1];
+    d += stV('Fire Starter');
+  }
   for (const s of ROSTER[MATCH.you] || []) if (!s.missed) s.morale = Math.max(MORALE.lo, Math.min(MORALE.hi, moraleRaw(s) + d));
   moraleDecay(MORALE.decayGame);
   LEAGUE.moraleD = LEAGUE.morale - (was == null ? LEAGUE.morale : was);   // (the week screen's arrow)
 }
 // team-wide Lounge-era events (MORALE_TEAM): a key starter lost for weeks, a star traded / cut, the Paper Bowl
-function moraleKeyInjury(s) { const T = MORALE_TEAM; if (yoursEntry(s) && s.inj && s.inj.weeks >= T.injWeeks && s.stars >= T.injStars && startersOf(MATCH.you).has(s)) moraleShiftAll(T.injury); }
+function moraleKeyInjury(s) { const T = MORALE_TEAM; if (!stT('Silver Lining') && yoursEntry(s) && s.inj && s.inj.weeks >= T.injWeeks && s.stars >= T.injStars && startersOf(MATCH.you).has(s)) moraleShiftAll(T.injury); }
 function moraleStarGone(p) { if (p && p.stars >= MORALE_TEAM.goneStars && season && !exhibition) moraleShiftAll(MORALE_TEAM.starGone); }
 // a 0-100 morale gauge (red under 35, green over 65; the tick = the resting point)
 const MORALE_GAUGE = { lo: 35, hi: 65 };
@@ -2780,13 +2978,15 @@ const limitedWearP = p => p && p.src && isLimited(p.src) ? RECOVERY.limited.wear
 const unitSide = s => OFF_GROUPS.includes(s.group) ? 'off' : 'def';
 const trainerStars = side => (typeof career !== 'undefined' && career && career.prac && career.prac.tr && career.prac.tr[side] ? career.prac.tr[side].stars : RECOVERY.trainerBase);   // (franchise: your trainer's stars; otherwise average)
 const trainerK = side => 1 + RECOVERY.trainerPerStar * (trainerStars(side) - RECOVERY.trainerBase);
-const recoveryK = k => k && typeof k === 'object' && yoursEntry(k) ? trainerK(unitSide(k)) * moraleMul(k) * (1 + FAC_FX.rec.rest * facLvl('rec')) : 1;   // (x the wear shed per possession change: your named players only)
+const recoveryK = k => k && typeof k === 'object' && yoursEntry(k) ? trainerK(unitSide(k)) * moraleMul(k) * (1 + FAC_FX.rec.rest * facLvl('rec')) * (1 + stV('Fresh Legs', unitSide(k))) : 1;   // (+ Fresh Legs on his side)   // (x the wear shed per possession change: your named players only)
 function timeoutRecover(cpu = false) {   // your timeout: a breather (wear, more for a man in red) and a steadier locker room (morale pulled toward 50); cpu = the computer's men instead
   const side = aiOff() ? 'off' : 'def';   // (the computer's bench slots: 'team:slot' keys on its side of the ball)
+  if (cpu && side === 'def' && stT('Tempo Freak', 'off') >= 3) return;   // (Tempo Freak III: no fresh legs for their defense mid-drive)
   for (const [k, v] of WEAR_MAP) {
     const obj = k && typeof k === 'object', mine = obj && yoursEntry(k);
     if (cpu ? mine || (!obj && !String(k).startsWith(side + ':')) : !mine) continue;
-    WEAR_MAP.set(k, Math.max(0, v - (v >= WEAR.zone.red ? RECOVERY.timeoutRed : RECOVERY.timeoutWear)));
+    const fq = !cpu && stT('Fourth Quarter Legs', unitSide(k)) >= 3 ? TRAIT_BY['Fourth Quarter Legs'].to : 1;   // (Fourth Quarter Legs III: a bigger breather)
+    WEAR_MAP.set(k, Math.max(0, v - (v >= WEAR.zone.red ? RECOVERY.timeoutRed : RECOVERY.timeoutWear) * fq));
   }
   for (const p of allPlayers()) if (p.wk != null) p.wear = WEAR_MAP.get(p.wk) || 0;   // (the pips show it now)
   pipFlash = performance.now();
@@ -2804,7 +3004,7 @@ function injuryReturn(s, sev, notes) {   // the layoff is over: a bad / severe o
 }
 const contractStr = p => p.salary == null ? 'NOT LISTED' : `$${p.salary}M (${p.years}Y)`;
 // --- salary cap: payroll = every contract on the team (a player with no listed contract counts as the minimum)
-const CAP = { start: 250, step: 25, cost: 100, minPay: 0.8, max: 450, penalty: 0.75, nudge: 100, firstOff: 0.5 };   // nudge = credits at which the home screen points you to TEAM UPGRADES (once a franchise); firstOff = x the price of the cap bought after it
+const CAP = { start: 250, step: 25, cost: 150, minPay: 0.8, max: 450, penalty: 0.75, nudge: 100, firstOff: 0.5 };   // nudge = credits at which the home screen points you to TEAM UPGRADES (once a franchise); firstOff = x the price of the cap bought after it
 const capCost = () => Math.round(CAP.cost * (LEAGUE.capSale ? CAP.firstOff : 1));   // (LEAGUE.capSale: the first-time discount, gone once used)
 // CAP (kept on one line above):   // $M; +step $M of cap costs `cost` credits (front office)
 const payOf = p => p.salary == null ? CAP.minPay : p.capCut && p.capCut.y === LEAGUE.year ? Math.max(CAP.minPay, p.salary - p.capCut.m) : p.salary;   // (capCut: a signing bonus paid in credits lowers this year's hit, see CONTRACT.pl)
@@ -3531,6 +3731,9 @@ for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, e =
   const q = FVS.press;
   if (q && q.id === e.pointerId) { FVS.press = null; if (!q.moved && ev === 'pointerup' && fvLive()) fvTap({ x: q.sx, y: q.sy }); }
   if (!FVS.pts.size) FVS.press = null;
+  else if (FVS.pts.size === 1 && (!q || q.moved)) {   // (one of two fingers lifted: the one still down carries on the pan from where it is, no jump, no stop)
+    const [[id, p]] = [...FVS.pts.entries()]; FVS.press = { id, sx: p.x, sy: p.y, x: p.x, y: p.y, moved: true };
+  }
 });
 function fvWheel(e) {   // true = the roster formation view took the wheel
   if (FVS.dd && results && results.screen === 'roster') { const bx = fvDDBox(); if (inBtn(pointerPos(e), bx)) FVS.dd.scroll = (FVS.dd.scroll || 0) + Math.sign(e.deltaY); return true; }   // (the slot dropdown scrolls)

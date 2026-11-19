@@ -793,8 +793,54 @@ const POP_ARROWS = ['◂', '▸'];
 const offPopShow = p => { if (offPop) popQ.push(p); else offPop = p; };
 const offPopClose = () => { offPop = popQ.shift() || null; };
 const offPopNow = p => { if (offPop) popQ.unshift(offPop); offPop = p; };   // (jumps the queue: shown at once)
+// copy rule: a popup shows ONE short line; `more` (string or function) = the old long text, behind a small MORE tab at the card's top right.
+// POP_MORE: tab size px, wrap = chars a line of the long text. `tip` = { t, ico } = an optional coach sticky note on the card (COACH_TIPS).
+const POP_MORE = { w: 84, h: 30, pad: 18, wrap: 58, font: 15 };
+const popMoreText = P => typeof P.more === 'function' ? P.more() : P.more;
+function popMoreFlip(P) {   // swaps the short line and the long text; the card is laid out again
+  if (!P._short) P._short = P.lines.slice();
+  P.moreOn = !P.moreOn;
+  if (P.moreOn) { P._ico = P.lineIco; P.lineIco = null; } else if (P._ico) P.lineIco = P._ico;   // (row icons belong to the short lines)
+  const ls = P.moreOn ? wrapLines(String(popMoreText(P)), P.demo ? POP_DEMO.wrap : POP_MORE.wrap) : P._short.map(l => (l && l.t != null ? l.t : l));
+  if (P.log) { P.lines = ls.map(t => ({ t, head: false })); P.scroll = 0; if (P.demo) popDemoLayout(P); P.max = Math.max(0, P.lines.length * (P.lh || CL_LH) - (P.view || CL_VIEW).h); }
+  else { P.lines = ls; P.card = null; }
+}
+// a popup's check row: [{ ico (DOODLE key), label, ok }] centred on cx: doodle, label, then a green pencil check or a red X
+function popChecks(list, cx, y) {
+  const cw = 250, x0 = cx - (list.length * cw) / 2;
+  ctx.save(); ctx.lineCap = ctx.lineJoin = 'round';
+  list.forEach((q, i) => {
+    const x = x0 + i * cw + 24;
+    if (DOODLE[q.ico]) { ctx.save(); ctx.translate(x, y); ctx.scale(15, 15); ddSeed = 4219 + i; try { DOODLE[q.ico]({ k: q.ico, c: '#3b3320', p: 1, seed: 3 }, 1, 1); } catch (e) {} ctx.restore(); }
+    ctx.fillStyle = RES.line; ctx.font = 'bold 17px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(q.label, x + 24, y);
+    const mx = x + 34 + ctx.measureText(q.label).width + 12; ctx.lineWidth = 3.5; ctx.strokeStyle = q.ok ? '#2f8f3a' : '#c0392b'; ctx.beginPath();
+    if (q.ok) { ctx.moveTo(mx - 9, y); ctx.lineTo(mx - 2, y + 8); ctx.lineTo(mx + 11, y - 10); } else { ctx.moveTo(mx - 8, y - 8); ctx.lineTo(mx + 8, y + 8); ctx.moveTo(mx + 8, y - 8); ctx.lineTo(mx - 8, y + 8); }
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+// a coach's sticky note on a popup card (P.tip = { t, ico }): small, tilted, over the card's bottom-left corner. COACH_NOTE = size / look
+const COACH_NOTE = { w: 210, font: 16, lh: 19, wrap: 20, tilt: -0.06, ico: 15, paper: '#fff27a', ink: '#2a2418' };
+function popTipNote(P, c) {
+  const T = P.tip; if (!T || !T.t) return;
+  const N = COACH_NOTE, ls = wrapLines(T.t, N.wrap), h = 40 + ls.length * N.lh, x = c.x - 40, y = c.y + c.h - h * 0.45;   // (hangs off the bottom-left corner, clear of the text and the check row)
+  ctx.save(); ctx.translate(x + N.w / 2, y + h / 2); ctx.rotate(N.tilt); ctx.translate(-N.w / 2, -h / 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.fillRect(4, 5, N.w, h); ctx.fillStyle = N.paper; ctx.fillRect(0, 0, N.w, h);
+  ctx.fillStyle = 'rgba(200,170,40,0.35)'; ctx.fillRect(N.w / 2 - 30, -8, 60, 16);   // (tape)
+  if (T.ico && DOODLE[T.ico]) { ctx.save(); ctx.translate(22, 22); ctx.scale(N.ico / 2, N.ico / 2); ctx.lineJoin = ctx.lineCap = 'round'; ddSeed = 7919; try { DOODLE[T.ico]({ k: T.ico, c: "#3b3320", p: 1, seed: 7 }, 1, 1); } catch (e) {} ctx.restore(); }
+  ctx.fillStyle = 'rgba(40,34,20,0.7)'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText("COACH'S TIP", 42, 22);
+  ctx.fillStyle = N.ink; ctx.font = `bold ${N.font}px monospace`; ls.forEach((l, i) => ctx.fillText(l, 12, 44 + i * N.lh));
+  ctx.restore();
+}
+function popMoreTab(P, c) {   // the MORE / LESS tab, top right of the card c
+  if (!P.more) return;
+  P.moreBtn = Object.assign(P.moreBtn || {}, { x: c.x + c.w - POP_MORE.w - POP_MORE.pad, y: c.y + POP_MORE.pad, w: POP_MORE.w, h: POP_MORE.h });
+  popBtnDraw = true; menuBtn(P.moreBtn, P.moreOn ? 'LESS' : 'MORE', RES.bright, POP_MORE.font); popBtnDraw = false;
+}
+const popMoreClick = (P, pt) => !!(P.more && P.moreBtn && inBtn(pt, P.moreBtn) && (popMoreFlip(P), true));
 function offPopClick(pt) {
   if (offPop.lock) return;   // (waiting on an animation)
+  if (popMoreClick(offPop, pt)) return;
   if (offPop.saysBtn && inBtn(pt, offPop.saysBtn)) { offPop.saysOn = !offPop.saysOn; return; }   // (a demo popup's tier "?": tap shows / hides what the tier means)
   if (offPop.custom) { offPop.custom.click(pt); return; }   // (a category popup: its own tabs, arrows, cards)
   if (offPop.hide && offPop.hideBtn && inBtn(pt, offPop.hideBtn)) { SETTINGS[typeof offPop.hide === 'string' ? offPop.hide : 'hideGoalsTip'] = true; saveSettings(); offPopClose(); return; }   // (HIDE THIS TIP / DON'T SHOW AGAIN: hide = the SETTINGS key it sets (true = the new-goals tip); settings can turn it back on)
@@ -853,7 +899,7 @@ function drawOffPop() {
   // (P.player = { p, k }: his roster card on the left of the popup, the text beside it)
   const nb = P.bars ? P.bars.length : 0;
   const dh0 = P.demo ? POP_DEMO.hs + 16 : 0;   // (v0.60: a popup's demo box under the title)
-  const pc = P.player, w = pc ? 1000 : 760, h = Math.max(150 + dh0 + P.lines.length * 28 + 70 + nb * POP_BAR.h + (nb ? 14 : 0) + (P.price ? 44 : 0), pc ? 430 : 0), card = P.card || (P.card = { x: W / 2 - w / 2, y: Math.max(20, Math.round((H - h) / 2)), w, h });
+  const pc = P.player, w = pc ? 1000 : 760, h = Math.max(150 + dh0 + P.lines.length * 28 + 70 + nb * POP_BAR.h + (nb ? 14 : 0) + (P.price ? 44 : 0) + (P.checks ? 56 : 0), pc ? 430 : 0), card = P.card || (P.card = { x: W / 2 - w / 2, y: Math.max(20, Math.round((H - h) / 2)), w, h });
   ctx.save(); ctx.translate(4, 6); tornPath(card); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill(); ctx.restore();
   tornPath(card); ctx.fillStyle = '#fffdf4'; ctx.fill();
   ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.arc(W / 2, card.y + 10, 7, 0, Math.PI * 2); ctx.fill();   // the pin
@@ -867,6 +913,7 @@ function drawOffPop() {
   if (P.xpBig != null) { ctx.save(); ctx.font = 'bold 54px monospace'; const s = String(P.xpBig), sw = ctx.measureText(s).width, x0 = tx - (sw + 60) / 2; xpIcon(x0 + 22, card.y + 150 + dh, 22); ctx.fillStyle = XPC.col; ctx.textAlign = 'left'; ctx.fillText(s, x0 + 56, card.y + 152 + dh); ctx.restore(); }   // (v0.52: the XP bank, big, with its token)
   P.lines.forEach((l, i) => ctx.fillText(l, P.left ? card.x + 40 : tx, card.y + 112 + dh + (P.xpBig != null ? 110 : 0) + i * 28, tw));
   if (P.price) priceTag(tx, card.y + 112 + dh + P.lines.length * 28 + 10, P.price.was, P.price.now, 26);   // (optional sale price: { was, now })
+  if (P.checks) popChecks(P.checks, tx, card.y + 112 + dh + P.lines.length * 28 + 22 + (P.price ? 44 : 0));   // (a row of icon + check / X: what you have and what you lack)
   if (nb) {   // what moved: each bar slides from the old value to the new one, with the change beside it
     if (P.barT0 == null) P.barT0 = performance.now();
     const k = Math.max(0, Math.min(1, (performance.now() - P.barT0 - POP_BAR.delay) / POP_BAR.ms)), e = 1 - Math.pow(1 - k, 3);
@@ -887,24 +934,39 @@ function drawOffPop() {
     const bw = bwOf(b); Object.assign(b, { x: bx, y: card.y + card.h - 84, w: bw, h: 62 }); bx += bw + gap;
     popBtnDraw = true; menuBtn(b, b.label, b.green ? IN_GAME_PAPER.green : RES.bright, 26); popBtnDraw = false;
   });
+  popMoreTab(P, card); popTipNote(P, card);   // (the MORE flip and the coach's sticky note)
   if (P.hide) {   // a small button in the bottom right corner: never show this tip again
-    P.hideBtn = P.hideBtn || { x: card.x + card.w - 224, y: card.y + card.h - 70, w: 190, h: 40 };
+    P.hideBtn = Object.assign(P.hideBtn || {}, { x: card.x + card.w - 224, y: card.y + card.h - 70, w: 190, h: 40 });   // (re-placed: MORE can resize the card)
     popBtnDraw = true; menuBtn(P.hideBtn, typeof P.hide === 'string' ? "DON'T SHOW AGAIN" : 'HIDE THIS TIP', RES.bright, typeof P.hide === 'string' ? 14 : 16); popBtnDraw = false;
   }
   ctx.restore();
 }
+// offseason intro cards: [title, ONE short line, the old long text (behind MORE)]; COACH_TIPS = a sticky-note tip per card (text, DOODLE key), add more freely
 const OFF_TIPS = {
-  awards: ['AWARDS', 'The league honors its best players and one head coach. Every award your team wins pays 2 ¤, and winners wear that medal on their player card forever. Circled cards are yours.'],
-  pbowl: ['THE PAPER BOWL', 'The winning team is on the left. Every player on the champion gets a ring, shown at the bottom right of his card. Open a card and press STATS for his game.'],
-  resign: ['EXPIRING CONTRACTS', 'These players are in the last year of their deal. RE-SIGN them at their asking price (it counts against your salary cap) or LET GO and a rookie takes the spot. Decide on everyone to move on.'],
-  fa: ['FREE AGENTS', 'Players other teams let go. Open a card and SIGN him: you need an open roster spot on his side of the ball and the cap room. Use ROSTER to DROP a player and free a spot. Anyone nobody signs stays in your FRONT OFFICE.'],
-  newyear: ['A NEW SEASON', 'Every contract loses a year, everyone is a year older, and the oldest players start to retire. Coordinators with expiring deals may leave too.'],
-  offers: ['JOB OFFERS', 'Winning (and deep playoff runs) makes better teams call. Weak teams will hire almost anybody. Click a team to take the job, or REJECT ALL to stay where you are.'],
+  awards: ['AWARDS', 'Every award your team wins pays 2 ¤.', 'The league honors its best players and one head coach. Every award your team wins pays 2 ¤, and winners wear that medal on their player card forever. Circled cards are yours.'],
+  pbowl: ['THE PAPER BOWL', 'Champions get rings. Tap a card for stats.', 'The winning team is on the left. Every player on the champion gets a ring, shown at the bottom right of his card. Open a card and press STATS for his game.'],
+  resign: ['EXPIRING CONTRACTS', 'Keep him or let him walk.', 'These players are in the last year of their deal. RE-SIGN them at their asking price (it counts against your salary cap) or LET GO and a rookie takes the spot. Decide on everyone to move on.'],
+  fa: ['FREE AGENTS', 'Need a roster spot and cap room.', 'Players other teams let go. Open a card and SIGN him: you need an open roster spot on his side of the ball and the cap room. Use ROSTER to DROP a player and free a spot. Anyone nobody signs stays in your FRONT OFFICE.'],
+  newyear: ['A NEW SEASON', 'Everyone ages a year. Old legs retire.', 'Every contract loses a year, everyone is a year older, and the oldest players start to retire. Coordinators with expiring deals may leave too.'],
+  offers: ['JOB OFFERS', 'Win more, better teams call.', 'Winning (and deep playoff runs) makes better teams call. Weak teams will hire almost anybody. Click a team to take the job, or REJECT ALL to stay where you are.'],
 };
+const COACH_TIPS = {
+  awards: ['Big games win votes. Show off!', 'pdTrophy'],
+  pbowl: ['Rings look great on a card.', 'pdTrophy'],
+  resign: ["Don't pay for last year's stats.", 'pdHourglass'],
+  fa: ['Cheap vets fill holes fast.', 'pdPen'],
+  newyear: ['Young legs win long seasons.', 'pdPage'],
+  offers: ['Loyalty is nice. Rings are nicer.', 'pdLetter'],
+  draftIntro: ["Don't draft a kicker in round 1.", 'pdBoard'],
+  draftScout: ['Scout the ones you love first.', 'pdBinoc'],
+};
+const coachTip = k => COACH_TIPS[k] ? { t: COACH_TIPS[k][0], ico: COACH_TIPS[k][1] } : null;
 function offTip(step) {
   if (!OFF || !OFF.tut || OFF.shown[step]) return;
   OFF.shown[step] = 1;
-  offPopShow({ title: OFF_TIPS[step][0], lines: wrapLines(OFF_TIPS[step][1], 54), demo: { k: 'tip', label: OFF_TIPS[step][0] } });
+  const T = OFF_TIPS[step], me = season && season.team;
+  offPopShow({ title: T[0], lines: [T[1]], more: T[2], tip: coachTip(step), demo: { k: 'tip', label: T[0] },
+    ...(step === 'fa' && me ? { checks: [{ ico: 'pdBenchFull', label: 'ROSTER SPOT', ok: ['off', 'def'].some(sd => rosterSide(me, sd).length < spotsOf(me, sd)) }, { ico: 'pdPiggy', label: 'CAP ROOM', ok: capRoom(me) > 0 }] } : {}) });
 }
 
 // --- honors: a medal for each award, a ring for each Paper Bowl win
@@ -1556,7 +1618,7 @@ function resignClick(pt) {
   if (inBtn(pt, OFF_ROSTER_BTN)) { offOpenRoster(); return; }
   if (rsOverCap() && inBtn(pt, RS_TRADE_BTN)) {   // over the cap: trade your way under it (the salary cap is ignored for both teams in these deals)
     TR.capFree = true; tradeOpen('resign');
-    offPopShow({ title: 'CAP-FREE TRADES', lines: wrapLines('You are over the salary cap. Trades made from here ignore the cap for both teams, so you can move salary and make room to re-sign your players.', 54) });
+    offPopShow({ title: 'CAP-FREE TRADES', lines: ['Over the cap? These trades skip it.'], more: 'You are over the salary cap. Trades made from here ignore the cap for both teams, so you can move salary and make room to re-sign your players.' });
     return;
   }
   if (inBtn(pt, RS_TRADE_BTN)) { TR.capFree = false; tradeOpen('resign'); return; }
@@ -1886,7 +1948,7 @@ function faClick(pt) {
     if (!inBtn(pt, SIGN_BTN)) return;
     const p = F.sel;
     if (!faHasSpot(me, p)) { spotFullPop(p, `There is no open ${OFF_GROUPS.includes(p.group) ? 'offensive' : 'defensive'} roster spot for ${p.name}. Open the ROSTER and DROP a player first.`); return; }   // (v0.58: may carry the one-time spot offer)
-    if (p.salary > capRoom(me)) { offPopShow({ title: 'NOT ENOUGH CAP', lines: wrapLines(`You need ${fmtM(p.salary - capRoom(me))} more cap room to sign ${p.name}. Drop a player to free up salary.`, 54) }); return; }
+    if (p.salary > capRoom(me)) { offPopShow({ title: 'NOT ENOUGH CAP', lines: [`Need ${fmtM(p.salary - capRoom(me))} more. Drop someone first.`], more: `You need ${fmtM(p.salary - capRoom(me))} more cap room to sign ${p.name}. Drop a player to free up salary.` }); return; }
     if (LEAGUE.coins < signCost(p)) { offPopShow({ title: 'NOT ENOUGH ¤', lines: wrapLines(`Signing ${p.name} costs ${signCost(p)} ¤ and you have ${LEAGUE.coins}.`, 54) }); return; }
     offPopShow({ title: 'SIGN HIM?', lines: [`${p.name} (${p.tag}, ${p.stars} stars)`, `${fmtM(p.salary)} a year for ${p.years} year${p.years > 1 ? 's' : ''}`, `Costs ${signCost(p)} ¤.`],
       btns: [{ label: 'CANCEL' }, { label: 'OK', green: true, on: () => faSign(p) }] });
@@ -1939,20 +2001,20 @@ const DRAFT = {
   classes: ['BARE', 'WEAK', 'AVERAGE', 'STRONG', 'STACKED'],
 };
 const DRAFTTUT_KEY = 'pocketPasser.draftTut';
-const DRAFT_TIPS = {
-  intro: ['THE DRAFT', 'Six rounds, one pick each. Every team drafts and the worst record picks first. The board shows every pick as it is made: NEXT PICK plays one, SIM TO MY PICK jumps to your turn. PROSPECTS is the class that is left. Skip a round and that pick carries over to next year (once).'],
-  list: ['THE PROSPECTS', 'Click a rookie to open his page. OFFENSE and DEFENSE sort the board (click again for everyone), and the arrows flip through the screens. His potential shows ????? until you scout him.'],
-  page: ['A ROOKIE', 'SCOUT (a few a round) shows a guess at his potential and value. DRAFT signs him to his rookie deal: young, cheap, 3-4 years. Only drafting him shows his true potential.'],
-  scout: ['SCOUTED', 'A scout is usually close but not exact. The gold outlined stars are the most he is likely to reach; the empty boxes on his attributes are his room to grow. Better rookies tend to have more potential.'],
-  full: ['ROSTER FULL', 'There is no open spot on his side of the ball. Go back, open ROSTER and DROP a player, then come back and draft him.'],
-  round2: ['NEXT ROUND', 'The other teams have picked. Each round the best rookies go first, so later rounds are thinner. Skipped rounds carry one pick to next year.'],
-  end: ['DRAFT OVER', 'Rookies grow toward their potential every offseason. Undrafted players become free agents you can sign.'],
+const DRAFT_TIPS = {   // [title, ONE short line (string or function), the old long text (behind MORE), coach tip key]
+  intro: ['THE DRAFT', () => { let n = 0; try { n = draftOrder().indexOf(season.team) + 1; } catch (e) {} return n > 0 ? `Worst team picks first. You pick #${n}.` : 'Worst team picks first.'; }, 'Six rounds, one pick each. Every team drafts and the worst record picks first. The board shows every pick as it is made: NEXT PICK plays one, SIM TO MY PICK jumps to your turn. PROSPECTS is the class that is left. Skip a round and that pick carries over to next year (once).', 'draftIntro'],
+  list: ['THE PROSPECTS', 'Tap a rookie to meet him.', 'Click a rookie to open his page. OFFENSE and DEFENSE sort the board (click again for everyone), and the arrows flip through the screens. His potential shows ????? until you scout him.'],
+  page: ['A ROOKIE', 'Scout for a peek. Draft to keep.', 'SCOUT (a few a round) shows a guess at his potential and value. DRAFT signs him to his rookie deal: young, cheap, 3-4 years. Only drafting him shows his true potential.', 'draftScout'],
+  scout: ['SCOUTED', 'Gold stars = how good he could get.', 'A scout is usually close but not exact. The gold outlined stars are the most he is likely to reach; the empty boxes on his attributes are his room to grow. Better rookies tend to have more potential.'],
+  full: ['ROSTER FULL', 'No room. Drop someone first.', 'There is no open spot on his side of the ball. Go back, open ROSTER and DROP a player, then come back and draft him.'],
+  round2: ['NEXT ROUND', 'Later rounds, thinner picks.', 'The other teams have picked. Each round the best rookies go first, so later rounds are thinner. Skipped rounds carry one pick to next year.'],
+  end: ['DRAFT OVER', 'Rookies grow every offseason.', 'Rookies grow toward their potential every offseason. Undrafted players become free agents you can sign.'],
 };
 function dTip(step) {
   const D = OFF && OFF.draft;
   if (!D || !D.tut || D.shown[step]) return;
   D.shown[step] = 1;
-  offPopShow({ title: DRAFT_TIPS[step][0], lines: wrapLines(DRAFT_TIPS[step][1], 54), demo: { k: 'tip', label: DRAFT_TIPS[step][0] } });
+  const T = DRAFT_TIPS[step]; offPopShow({ title: T[0], lines: [typeof T[1] === 'function' ? T[1]() : T[1]], more: T[2], tip: coachTip(T[3]), demo: { k: 'tip', label: T[0] } });
 }
 const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) * 2;   // about -3..3, mostly near 0
 const draftValue = (rating, pts) => { const m = 0.5 * rating + 0.5 * pts, i = DRAFT.value.findIndex(v => m >= v); return i < 0 ? 7 : i + 1; };
@@ -1998,7 +2060,7 @@ function draftOrder() {
   const T = seasonTable(), fin = season.fin || {}, champ = season.pb && season.pb.win;
   return Object.keys(NFL).filter(k => ROSTER[k]).map(k => [k, 0.55 * winPct(T[k]) + 0.45 * (fin[k] || 0) + (k === champ ? 0.5 : 0) + Math.random() * 0.01]).sort((a, b) => a[1] - b[1]).map(x => x[0]);
 }
-const draftScouts = () => DRAFT.scouts + DRAFT.scoutBonus * ['oc', 'dc'].reduce((n, r) => n + traitLv((STAFF[season.team] || {})[r], 'Scout'), 0);
+const draftScouts = () => DRAFT.scouts + DRAFT.scoutBonus * ['oc', 'dc'].reduce((n, r) => n + (traitOn((STAFF[season.team] || {})[r], 'Extra Eyes') ? 1 : 0), 0);   // (Extra Eyes level 1: +3 scoutable; levels 2-3 add prospect scout slots)
 function uniqueNum(R, p) {
   const nums = new Set(R.map(q => String(q.num)));
   if (nums.has(String(p.num))) { let n = 1; while (nums.has(String(n))) n++; p.num = String(n); }
@@ -2076,7 +2138,7 @@ function offToDraft() {
   try { asked = localStorage.getItem(DRAFTTUT_KEY); } catch (e) {}
   // (the tutorial is for the first draft only: once it has run, the setting flips to off for every later draft)
   if (OFF.tut || asked) { D.tut = !!OFF.tut || asked === 'on'; if (asked === 'on' && !OFF.tut) { try { localStorage.setItem(DRAFTTUT_KEY, 'off'); } catch (e) {} } go(); return; }
-  offPopShow({ title: 'DRAFT TUTORIAL?', lines: wrapLines('A short popup at every step of the draft explains scouting, picking and carrying picks over.', 54),
+  offPopShow({ title: 'DRAFT TUTORIAL?', lines: ['Want a quick tip at each step?'], more: 'A short popup at every step of the draft explains scouting, picking and carrying picks over.',
     btns: [{ label: 'TUTORIAL', green: true, on: () => { D.tut = true; try { localStorage.setItem(DRAFTTUT_KEY, 'on'); } catch (e) {} go(); } },
            { label: 'SKIP', on: () => { try { localStorage.setItem(DRAFTTUT_KEY, 'off'); } catch (e) {} go(); } }] });
 }
@@ -2276,7 +2338,7 @@ function drawDraft() {
   menuBtn(DRAFT_VIEW_BTN, 'BOARD', RES.bright, 22);
   ctx.font = 'bold 12px monospace'; ctx.fillStyle = D.turn ? '#1f8a3b' : RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText((D.turn ? 'YOU ARE ON THE CLOCK   ' : '') + (D.log.length ? `JUST PICKED: ${D.log.join('   ')}` : ''), W / 2, 88);
-  list.slice(D.page * OFFSEASON.perPage, (D.page + 1) * OFFSEASON.perPage).forEach((p, i) => { rosterCard(p, ROSTER_CARDS[i], me, null, `${fmtM(p.salary)} ${p.years}Y`); if (p.flag && scoutsOn()) scoutBadge(ROSTER_CARDS[i], p.flag); });
+  list.slice(D.page * OFFSEASON.perPage, (D.page + 1) * OFFSEASON.perPage).forEach((p, i) => { rosterCard(p, ROSTER_CARDS[i], me, null, `${fmtM(p.salary)} ${p.years}Y`); if (p.flag && scoutsOn()) scoutBadge(ROSTER_CARDS[i], p.flag); else if (p.warn && scoutsOn()) scoutBadge(ROSTER_CARDS[i], 'warn', p.warn); });
   if (pages > 1) {
     ROSTER_ARROWS.forEach((b, i) => menuBtn(b, i ? '▸' : '◂', RES.bright, 30));
     ctx.font = 'bold 16px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`SCREEN ${D.page + 1} / ${pages}`, W / 2, 620);
@@ -2313,7 +2375,7 @@ function draftClick(pt) {
     }
     if (inBtn(pt, DRAFT_PICK_BTN) && D.turn) {
       if (!faHasSpot(me, p)) { dTip('full'); spotFullPop(p, `There is no open ${OFF_GROUPS.includes(p.group) ? 'offensive' : 'defensive'} roster spot for ${p.name}. Go back, open the ROSTER and DROP a player first.`); return; }
-      if (p.salary > capRoom(me)) { offPopShow({ title: 'NOT ENOUGH CAP', lines: wrapLines(`You need ${fmtM(p.salary - capRoom(me))} more cap room to draft ${p.name}. Drop a player to free up salary.`, 54) }); return; }
+      if (p.salary > capRoom(me)) { offPopShow({ title: 'NOT ENOUGH CAP', lines: [`Need ${fmtM(p.salary - capRoom(me))} more. Drop someone first.`], more: `You need ${fmtM(p.salary - capRoom(me))} more cap room to draft ${p.name}. Drop a player to free up salary.` }); return; }
       offPopShow({ title: 'DRAFT HIM?', lines: [`${p.name} (${p.tag}, ${p.stars} stars)`, `${fmtM(p.salary)} a year for ${p.years} years`, `Round ${D.round}, pick ${D.pi + 1} (#${D.n + 1} overall).`],
         btns: [{ label: 'CANCEL' }, { label: 'OK', green: true, on: () => draftTake(p) }] });
     }
@@ -2390,7 +2452,32 @@ function boardWeek() {   // a week of the season went by
   for (const p of C.pool) p.bd.pv = Math.round((p.bd.pv + BOARD.ema * (hw * boardHype(p) + (1 - hw) * boardForm(p, wk) - p.bd.pv)) * 100) / 100;
   boardSort(C);
   boardList(C).forEach((p, i) => { p.bd.h.push(i + 1); if (p.bd.h.length > BOARD.hist) p.bd.h.shift(); });
+  scoutReports(C);
   BD_CF = null;
+}
+// --- prospect scouting (v0.64): the board's SCOUT button sends the scout for his side (p.scQ = { by: side, wk }), a week later he files a report
+// (p.rep = { wk, by, note }): scoutErrK cuts the error to SCOUT.repErr, the flags are settled. Slots a week = SCOUT.slots by stars + Extra Eyes. Cleaned in scoutDraftOver.
+const SCOUT_NOTES = ['Plays faster than he times.', 'Hands like glue in traffic.', 'Wins with leverage, not size.', 'Motor never stops.', 'Needs a year in the weight room.', 'Sees it before it happens.',
+  'Raw, but the tools are real.', 'Smooth hips, sticky in man.', 'Takes bad angles in space.', 'Leader in the locker room.', 'Tape is better than the stats.', 'Gets lost when the play breaks down.',
+  'First step is special.', 'Will need to learn the playbook.', 'Tough as nails, plays hurt.', 'Ceiling is higher than the board thinks.', 'What you see is what you get.', 'Coaches love him.'];
+const scoutWk = () => season ? (season.offseason ? 99 : season.week) : 0;
+const scoutSlots = side => { const sc = scoutsOf(season.team)[side], s = sc.stars; return SCOUT.slots[s >= 4 ? 2 : s >= 2.5 ? 1 : 0] + stV('Extra Eyes', side); };
+const scoutUsed = side => scoutPool().filter(p => p.scQ && p.scQ.by === side && p.scQ.wk === scoutWk()).length;
+const scoutSide = p => OFF_GROUPS.includes(p.group) ? 'off' : 'def';
+function scoutSend(p) {   // the row's SCOUT button: false when he has no slot left this week
+  const side = scoutSide(p);
+  if (p.rep || p.scQ || scoutUsed(side) >= scoutSlots(side)) return false;
+  p.scQ = { by: side, wk: scoutWk() }; autosaveSoon(); return true;
+}
+function scoutReports(C) {   // a week went by: everyone who was out gets his report
+  const L = boardList(C), sc = scoutsOf(season.team);
+  for (const p of C.pool) if (p.scQ && scoutWk() > p.scQ.wk) {
+    const s = sc[p.scQ.by], i = L.indexOf(p), kind = scoutKind(p, Math.max(0, i));
+    p.rep = { wk: scoutWk() - 1, by: s.name, note: SCOUT_NOTES[Math.floor(bdHash(`note:${p.name}`) * SCOUT_NOTES.length)] };
+    p.seen = 1; if (kind) p.flag = kind; else if (p.flag) delete p.flag;   // (a report settles the flags: no false alarms left)
+    delete p.scQ;
+    (LEAGUE.scoutNews = LEAGUE.scoutNews || []).push(`${s.name} filed a report on ${p.name} (${p.tag}).`);
+  }
 }
 // that week's stat line, made up on demand from a seeded stream (his name + the week) and that week's form
 function boardStatLine(p, wk) {
@@ -2466,7 +2553,7 @@ function boardMock(C) {
 // --- the draft board screen ('dboard'; FRONT OFFICE > DRAFT BOARD): BIG BOARD | MOCK DRAFT, position chips, a row = rank, weekly move, position, name,
 // school, stars now + your scouts' potential range, rank trend. A row opens the player card with this week's stat line and the scout's note.
 const DB = { tab: 0, pos: 'ALL', page: 0, sel: null, mock: null, back: 'staff' };
-const DB_TABS = [{ x: 60, y: 104, w: 220, h: 44 }, { x: 290, y: 104, w: 220, h: 44 }], DB_POS = ['ALL', 'QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'CB', 'S'];
+const DB_TABS = [{ x: 60, y: 104, w: 150, h: 44 }, { x: 218, y: 104, w: 150, h: 44 }, { x: 376, y: 104, w: 150, h: 44 }], DB_TAB_N = ['BIG BOARD', 'MOCK DRAFT', 'REPORTS'], DB_POS = ['ALL', 'QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'CB', 'S'];
 const DB_CHIPS = DB_POS.map((g, i) => ({ x: 544 + i * 68, y: 104, w: 62, h: 44 })), DB_ROWS = [];
 const dbRow = i => DB_ROWS[i] || (DB_ROWS[i] = { x: 60, y: 160 + i * 42, w: 1160, h: 38 });
 const DB_PREV = { x: 500, y: 640, w: 90, h: 52 }, DB_NEXT = { x: 690, y: 640, w: 90, h: 52 };
@@ -2500,7 +2587,10 @@ function drawDBoard() {
   ctx.fillText(`CLASS: ${boardLabel(q, BOARD.str)}`, 690, 82);
   for (let i = 0; i < 4; i++) { ctx.fillStyle = i <= lvl ? RES.gold : RES.bright; ctx.fillRect(860 + i * 24, 74, 20, 15); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.strokeRect(860 + i * 24, 74, 20, 15); }
   ctx.fillStyle = RES.dim; ctx.textAlign = 'right'; ctx.fillText(boardLive(C) ? 'DRAFT DAY' : season.offseason || !C.wk ? 'PRESEASON' : `AFTER WEEK ${C.wk}`, 1220, 82);
-  DB_TABS.forEach((b, i) => menuBtn(b, i ? 'MOCK DRAFT' : 'BIG BOARD', DB.tab === i ? SEL : RES.bright, 20));
+  if (!scoutsOn() && DB.tab === 2) DB.tab = 0;
+  DB_TABS.forEach((b, i) => { if (i < 2 || scoutsOn()) menuBtn(b, DB_TAB_N[i], DB.tab === i ? SEL : RES.bright, 16); });
+  if (scoutsOn()) drawDbScouts();
+  if (DB.tab === 2) { drawDbReports(C); menuBtn(BACK_BTN, '', RES.bright, 22, backArrow); return; }
   DB_CHIPS.forEach((b, i) => menuBtn(b, DB_POS[i], DB.pos === DB_POS[i] ? SEL : RES.bright, 16, i ? bb => { ctx.fillStyle = POS_COL[DB_POS[i]]; ctx.fillRect(bb.x + 6, bb.y + bb.h - 8, bb.w - 12, 3); } : null));
   const rows = dboardRows(C), per = BOARD.rows, pages = Math.max(1, Math.ceil(rows.length / per));
   DB.page = Math.min(DB.page, pages - 1);
@@ -2521,14 +2611,55 @@ function drawDBoard() {
       if (p.flag && scoutsOn()) { ctx.font = 'bold 12px monospace'; ctx.fillStyle = p.flag === 'gen' ? RES.gold : '#2e8b57'; ctx.fillText(p.flag === 'gen' ? 'GEN' : 'UNDER', b.x + 526, cy); }
       ctx.font = 'bold 13px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(boardSchool(p), b.x + 574, cy, 190);
       starsRow(b.x + 786, cy, p.stars, 8); potRow(b.x + 786, cy, p.stars, hi, 8);
-      ctx.fillStyle = b.ink; ctx.font = 'bold 13px monospace'; ctx.fillText(lo === hi ? `POT ${lo}` : `POT ${lo}-${hi}`, b.x + 880, cy);
-      dbSpark(b.x + 1000, b.y + 8, 144, b.h - 16, p.bd.h);
+      ctx.fillStyle = b.ink; ctx.font = 'bold 13px monospace'; ctx.fillText(`${lo === hi ? `POT ${lo}` : `POT ${lo}-${hi}`}${p.rep ? ' ✓' : ''}`, b.x + 880, cy);
+      dbSpark(b.x + 990, b.y + 8, scoutsOn() ? 62 : 144, b.h - 16, p.bd.h);
     });
+    if (scoutsOn() && !boardLive(C)) { const sb = dbScoutBtn(i), st = p.rep ? 'REPORT' : p.scQ ? '⏱ OUT' : scoutUsed(scoutSide(p)) >= scoutSlots(scoutSide(p)) ? 'FULL' : 'SCOUT';
+      menuBtn(sb, st, st === 'REPORT' ? '#6cc070' : st === 'SCOUT' ? '#ffd23f' : CARD_GRAY, 13, null, st === 'SCOUT' || st === 'REPORT'); }
   });
   if (pages > 1) { menuBtn(DB_PREV, '◂', RES.bright, 26); menuBtn(DB_NEXT, '▸', RES.bright, 26); }
   ctx.font = 'bold 16px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`${DB.page + 1} / ${pages}`, W / 2, 667);
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
 }
+const DB_SBTN = [], dbScoutBtn = i => DB_SBTN[i] || (DB_SBTN[i] = { x: 1120, y: 164 + i * 42, w: 92, h: 30 });   // (a row's SCOUT button, inside the 38 px row)
+const DB_SCARD = { off: { x: 820, y: 618, w: 210, h: 86 }, def: { x: 1040, y: 618, w: 210, h: 86 } };
+function drawDbScouts() {   // your two scouts, bottom right: face, stars, trait sticker, who he is watching, slots left
+  const S = scoutsOf(season.team);
+  for (const side of ['off', 'def']) {
+    const b = DB_SCARD[side], sc = S[side], out = scoutPool().filter(p => p.scQ && p.scQ.by === side), left = Math.max(0, scoutSlots(side) - scoutUsed(side));
+    ctx.fillStyle = FOLDER.manila; ctx.fillRect(b.x, b.y, b.w, b.h); penOutline(b.x, b.y, b.w, b.h, side === 'off' ? 3 : 4);
+    ctx.save(); ctx.beginPath(); ctx.rect(b.x + 6, b.y + 6, 52, 58); ctx.clip(); ctx.fillStyle = '#d9e2f2'; ctx.fillRect(b.x + 6, b.y + 6, 52, 58); drawAvatar(sc.face, b.x + 32, b.y + 38, 26, { shirt: side === 'off' ? '#2a62b0' : '#b82a30' }); ctx.restore();
+    ctx.fillStyle = RES.line; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(sc.name, b.x + 64, b.y + 14, b.w - 70);
+    starsRow(b.x + 70, b.y + 32, sc.stars, 7);
+    if (sc.trait) { ctx.save(); ctx.translate(b.x + 30, b.y + 74); ctx.rotate(-0.06); ctx.fillStyle = '#fff3a0'; ctx.fillRect(-26, -8, 52, 16); ctx.fillStyle = RES.line; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center'; ctx.fillText(sc.trait.toUpperCase(), 0, 1, 50); ctx.restore(); ctx.textAlign = 'left'; }
+    ctx.fillStyle = RES.dim; ctx.font = 'bold 11px monospace'; ctx.fillText(out.length ? `WATCHING: ${out.map(p => p.name.split(' ').pop()).join(', ')}` : 'WATCHING: NOBODY', b.x + 64, b.y + 52, b.w - 70);
+    ctx.fillStyle = left ? '#2e8b57' : '#c81b1b'; ctx.fillText(`${left} SLOT${left === 1 ? '' : 'S'} LEFT THIS WEEK`, b.x + 64, b.y + 70, b.w - 70);
+  }
+}
+function drawDbReports(C) {   // the REPORTS tab: the scout's spiral notepad, one prospect a page, the filed list down the side
+  const L = C.pool.filter(p => p.rep), me = season.team;
+  DB.rp = Math.max(0, Math.min(DB.rp || 0, L.length - 1));
+  ctx.fillStyle = RES.line; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText('FILED', 60, 172);
+  L.slice(0, 11).forEach((p, i) => menuBtn(dbRepRow(i), `${p.tag} ${p.name}`, i === DB.rp ? SEL : RES.bright, 13));
+  const X = 380, Y = 160, Wd = 820, Hd = 450;
+  ctx.fillStyle = '#fffdf2'; ctx.fillRect(X, Y, Wd, Hd); penOutline(X, Y, Wd, Hd, 17);
+  ctx.strokeStyle = 'rgba(80,120,200,0.25)'; ctx.lineWidth = 1; for (let y = Y + 60; y < Y + Hd - 10; y += 28) { ctx.beginPath(); ctx.moveTo(X + 10, y); ctx.lineTo(X + Wd - 10, y); ctx.stroke(); }
+  ctx.strokeStyle = '#8a8f99'; ctx.lineWidth = 3; for (let x = X + 30; x < X + Wd - 20; x += 34) { ctx.beginPath(); ctx.ellipse(x, Y, 7, 12, 0, 0, Math.PI * 2); ctx.stroke(); }   // (the spiral)
+  if (!L.length) { ctx.fillStyle = RES.dim; ctx.font = 'italic bold 22px monospace'; ctx.textAlign = 'center'; ctx.fillText('No reports yet. Send a scout from the board.', X + Wd / 2, Y + Hd / 2); return; }
+  const p = L[DB.rp], [lo, hi] = boardRange(me, p);
+  ctx.save(); ctx.beginPath(); ctx.rect(X + 30, Y + 40, 170, 200); ctx.clip(); ctx.fillStyle = '#e8eef6'; ctx.fillRect(X + 30, Y + 40, 170, 200); drawPortrait(p, X + 115, Y + 240, 3.2, me); ctx.restore();
+  penOutline(X + 30, Y + 40, 170, 200, 5);
+  ctx.fillStyle = RES.line; ctx.textAlign = 'left'; ctx.font = 'bold 28px monospace'; ctx.fillText(p.name.toUpperCase(), X + 230, Y + 62, Wd - 260);
+  ctx.font = 'bold 16px monospace'; ctx.fillText(`${p.tag}  ·  ${boardSchool(p)}  ·  AGE ${p.age}`, X + 230, Y + 96, Wd - 260);
+  starsRow(X + 240, Y + 128, p.stars, 10); potRow(X + 240, Y + 128, p.stars, hi, 10);
+  ctx.fillStyle = RES.gold; ctx.font = 'bold 18px monospace'; ctx.fillText(`POTENTIAL ${lo === hi ? lo : `${lo}-${hi}`} ★`, X + 380, Y + 128);
+  (ATTRS[p.group] || []).forEach((k, i) => { ctx.fillStyle = RES.line; ctx.font = 'bold 15px monospace'; ctx.fillText(`${ATTR_NAME[k] || k.toUpperCase()}  ${Math.round((p.at || {})[k] || 0)}`, X + 230 + (i % 3) * 190, Y + 170 + Math.floor(i / 3) * 28, 180); });
+  ctx.fillStyle = '#2a3f8f'; ctx.font = 'italic bold 22px monospace'; ctx.fillText(`"${p.rep.note}"`, X + 40, Y + 300, Wd - 80);
+  if (p.flag) { ctx.fillStyle = p.flag === 'gen' ? RES.gold : '#2e8b57'; ctx.font = 'bold 18px monospace'; ctx.fillText(p.flag === 'gen' ? 'GENERATIONAL.' : 'UNDERRATED: TAKE HIM EARLY.', X + 40, Y + 340); }
+  if (p.warn) { ctx.fillStyle = '#c81b1b'; ctx.font = 'bold 18px monospace'; ctx.fillText(`WARNING: ${p.warn}`, X + 40, Y + 368); }
+  ctx.fillStyle = RES.dim; ctx.font = 'italic 15px monospace'; ctx.fillText(`- ${p.rep.by}, filed week ${p.rep.wk}`, X + 40, Y + Hd - 30);
+}
+const DB_RROWS = [], dbRepRow = i => DB_RROWS[i] || (DB_RROWS[i] = { x: 60, y: 190 + i * 38, w: 300, h: 34 });
 function drawDBoardPage(C, p) {   // his card + this week's line + the scout's note
   const me = season.team, rk = boardList(C).indexOf(p) + 1, d = p.bd.r && rk ? p.bd.r - rk : 0, sc = scoutsOn() ? scoutFor(p) : null, wk = boardLive(C) ? 0 : C.wk || 0;
   drawPlayerPage(me, p, null);
@@ -2536,6 +2667,8 @@ function drawDBoardPage(C, p) {   // his card + this week's line + the scout's n
   const L = [[boardSchool(p), RES.line], [rk ? `BOARD #${rk}, ${move}` : 'NOT ON THE BOARD', RES.line], [`POTENTIAL ${lo === hi ? lo : `${lo}-${hi}`} STARS`, RES.gold], ['', null],
     ...wrapLines(`${wk ? `WEEK ${wk}: ` : ''}${boardStatLine(p, wk)}`, DB_NOTE.chars).map(t => [t, RES.line])];
   if (sc) L.push(['', null], ...wrapLines(`${sc.name.toUpperCase()}: READS WITHIN ${(DRAFT.scoutErr * scoutErrK(sc, p)).toFixed(1)} PTS. ${p.flag ? (p.flag === 'gen' ? 'REPORT: GENERATIONAL.' : 'REPORT: UNDERRATED.') : p.seen ? 'NOTHING UNUSUAL.' : 'NOT WATCHED YET.'}`, DB_NOTE.chars).map(t => [t, RES.dim]));
+  if (sc && p.rep) L.push(...wrapLines(`REPORT (WEEK ${p.rep.wk}): "${p.rep.note}"`, DB_NOTE.chars).map(t => [t, '#2a3f8f']));
+  if (sc && p.warn) L.push([`WARNING: ${p.warn}`, '#c81b1b']);
   ctx.font = 'bold 13px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   L.forEach(([t, col], i) => { if (t) { ctx.fillStyle = col; ctx.fillText(t, DB_NOTE.x, DB_NOTE.y + i * DB_NOTE.dy, DB_NOTE.w); } });
 }
@@ -2545,14 +2678,23 @@ function dboardClick(pt) {
   if (!C) { results.screen = 'home'; return; }
   if (DB.sel) { if (helpClick(pt, DB.sel)) return; if (inBtn(pt, BACK_BTN)) DB.sel = null; return; }
   if (inBtn(pt, BACK_BTN)) { results.screen = DB.back || 'staff'; return; }
-  const t = DB_TABS.findIndex(b => inBtn(pt, b));
+  const t = DB_TABS.findIndex((b, i) => (i < 2 || scoutsOn()) && inBtn(pt, b));
   if (t >= 0) { DB.tab = t; DB.page = 0; return; }
+  if (DB.tab === 2) { const L = C.pool.filter(p => p.rep); for (let i = 0; i < 11; i++) if (L[i] && inBtn(pt, dbRepRow(i))) { DB.rp = i; return; } return; }
   const c = DB_CHIPS.findIndex(b => inBtn(pt, b));
   if (c >= 0) { DB.pos = DB_POS[c]; DB.page = 0; return; }
   const rows = dboardRows(C), per = BOARD.rows, pages = Math.max(1, Math.ceil(rows.length / per));
   if (pages > 1 && inBtn(pt, DB_PREV)) { DB.page = (DB.page - 1 + pages) % pages; return; }
   if (pages > 1 && inBtn(pt, DB_NEXT)) { DB.page = (DB.page + 1) % pages; return; }
-  for (let i = 0; i < per; i++) if (inBtn(pt, dbRow(i))) { const e = rows[DB.page * per + i]; if (e) DB.sel = e.p; return; }
+  for (let i = 0; i < per; i++) if (inBtn(pt, dbRow(i))) {
+    const e = rows[DB.page * per + i]; if (!e) return;
+    if (scoutsOn() && !boardLive(C) && inBtn(pt, dbScoutBtn(i))) {   // (the row's SCOUT button: send him / read the report)
+      if (e.p.rep) { DB.tab = 2; DB.rp = C.pool.filter(p => p.rep).indexOf(e.p); return; }
+      if (!e.p.scQ && !scoutSend(e.p)) foMsg = { t: performance.now(), text: 'NO SLOTS LEFT THIS WEEK' };
+      return;
+    }
+    DB.sel = e.p; return;
+  }
 }
 
 // --- the other teams sign what is left, then the new year
@@ -2786,11 +2928,19 @@ function leagueWeek(me) {
   FA_POOL.sort((a, b) => b.stars - a.stars || a.age - b.age); FA_POOL.length = Math.min(FA_POOL.length, 80);
   recalcTeamStars();
 }
+function talentSpot(p) {   // v0.64 Talent Spotter: +0.5 potential once for each of your players on his side; III = one rookie a year +1
+  const side = OFF_GROUPS.includes(p.group) ? 'off' : 'def', L = stT('Talent Spotter', side), up = n => { const to = Math.min(ATTR_TOTAL, ptsOf(p) + n); p.potPts = to; p.potFixed = true; p.potCaps = null; p.potential = starsOfScore(to); };
+  if (!L || p.group === 'K') return;
+  if (!p.tsBoost) { p.tsBoost = 1; up(STAR_HALF); }
+  if (L >= 3 && p.fresh && LEAGUE.tsYear !== LEAGUE.year) { LEAGUE.tsYear = LEAGUE.year; up(STAR_HALF * 2); }
+}
 function offTick() {   // a year goes by: contracts, ages
+  if (season && xpcOn()) for (const p of ROSTER[season.team] || []) talentSpot(p);
   for (const p of [...Object.values(ROSTER).flat(), ...FA_POOL]) {
     if (p.fresh) delete p.fresh;   // (just drafted: no year older, no growth yet)
     else {
       p.age++;
+      try { faceAge(p.face, p.age, p.name, 'pl'); } catch (e) {}   // (v0.66: picture day: lines, bags, grey, hairline move up with the years)
       // growth toward potential: the young gain a share of the room they have left (the most at 21-23), nobody past 28
       const room = ptsOf(p) - scoreOf(p), k = p.age <= 23 ? 0.4 : p.age <= 26 ? 0.3 : p.age <= 28 ? 0.15 : 0;
       if (room > 0 && k) { shiftAttrs(p, Math.min(room, Math.round(room * Math.min(0.9, k * pracGrow(p)) + Math.random() * 1.5))); rate(p); }
@@ -2800,7 +2950,22 @@ function offTick() {   // a year goes by: contracts, ages
   }
   aiSetbacks();
   pracOffseason();   // (construction goes on; young players may gain potential)
+  try { ageStaffYear(); } catch (e) { console.warn('ageStaffYear', e); }
 }
+// v0.66: every coordinator, scout, trainer, other teams' head coaches and you: a year older (yours already had a birthday in hireOffseason) + picture day
+function ageStaffYear() {
+  const mine = new Set();
+  if (season) try { for (const r of hireRolesAll()) mine.add(hireGet(r)); } catch (e) {}
+  const one = (p, role) => { if (!p || !p.face) return; staffAged(p, role); if (!mine.has(p)) p.age++; faceAge(p.face, p.age, p.name, 'co'); };
+  for (const s of Object.values(STAFF)) {
+    one(s.oc, 'oc'); one(s.dc, 'dc'); if (s.hc) one(s.hc, 'hc');
+    if (s.sc) { one(s.sc.off, 'so'); one(s.sc.def, 'sd'); }
+    if (s.tr) { one(s.tr.off, 'to'); one(s.tr.def, 'td'); }
+  }
+  if (career.prac && career.prac.tr) { one(career.prac.tr.off, 'to'); one(career.prac.tr.def, 'td'); }
+  if (season && career.face) { careerAge(); career.age++; faceAge(career.face, career.age, [career.first, career.last].join(' '), 'co'); }   // (the creator can still change anything: a hand-set mark stays until his next stage)
+}
+const careerAge = () => { if (career.age == null && career.face) career.age = staffAge(career.face, 'me', [career.first, career.last].join(' ')); return career.age; };
 // computer teams' bad luck each offseason, so the league's powers rise and fall (and some are forced to rebuild): young players who bust
 // (potential gone), vets who fall off a cliff, stars whose bodies give out (a career-altering injury), and a few teams hit hard all at once
 const AI_SETBACK = { blunder: 0.15, blunderMin: 0.6, retire: 0.04, retireAge: 30, bust: 0.12, bustYrs: 3, bustDrop: 4, cliff: 0.14, cliffAge: 30, cliffDrop: [4, 9], wreck: 0.035, wreckStars: 3.5, wreckDrop: [5, 10], wreckPot: 6, collapse: 2, collapseHits: 3, collapseDrop: [3, 7] };
@@ -2827,7 +2992,7 @@ function offStaff(me) {   // coordinators' contracts: an extension, or he's gone
     const mine = k === me && contractsOn(), sour = mine && c.sour && Math.random() < CONTRACT.staff.refuseLeave;   // (MANAGE CONTRACTS: yours leaves when his deal ends unless you extended him)
     if (c.years > 0 && !sour) continue;
     if (mine || Math.random() < 0.4) {
-      const n = { role: c.role, name: `${pick(NAME_FIRST)} ${pick(NAME_LAST)}`, stars: Math.max(1, Math.min(5, c.stars + rint(-1, 1))), trait: pick(Object.keys(TRAIT_INFO)), years: rint(2, 4), face: makeFace(Math.random, true) };
+      const n = { role: c.role, name: `${pick(NAME_FIRST)} ${pick(NAME_LAST)}`, stars: Math.max(1, Math.min(5, c.stars + rint(-1, 1))), trait: pick(traitPool(coordRole(c))), quirk: hireQuirk('oc'), years: rint(2, 4), face: makeFace(Math.random, true) };
       if (k === me) { msgs.push(mine ? `${c.role} ${c.name}'s contract ${sour ? 'was not enough to keep him' : 'ran out'}: he left. ${n.name} is the new one.` : `${c.role} ${c.name} resigned. ${n.name} is the new one.`); if (career.cxp) career.cxp[r] = 0; }
       if (NFL[k] && (k === me || n.stars >= 4 || c.stars >= 4)) postNote('coachMove', { team: pTeam(k), name: n.name, old: c.name, role: r === 'oc' ? 'offensive coordinator' : 'defensive coordinator', stars: n.stars }, { w: k === me ? 9 : 5, team: k });
       s[r] = n;

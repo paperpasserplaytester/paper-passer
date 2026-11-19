@@ -96,6 +96,7 @@ function throwBall() {
   stiffClear(P);
   if (t.dist < 3 * YD || P.action) return;
   hsEv('throw', P);   // (the release: a long completion's highlight starts here)
+  annThrow(P, t);   // (the announcers: a deep ball is held until it comes down)
   if (tut) tut.bullet = bulletMode;
   if (trick) {
     if (t.x < P.x - 0.5 * YD) return;   // (a screen catcher just keeps running)
@@ -134,8 +135,9 @@ function throwBall() {
   if (!(tut && tutStep() && tutStep().target) && (scramble > 0.1 || heat > 0 || hitNow || shaky || deepErr > 0 || across > 0 || backing > 0.05 || crossField > 0)) {
     // (under pressure the miss is less predictable: sometimes near-perfect, sometimes way off)
     const wild = hitNow || heat > 0.5 ? Math.random() ** 0.6 * 1.5 : 0.35 + 0.65 * Math.random();
-    let err = (((scramble * MOVING_ERROR + across * CROSS_BODY * onRun + backing * BACKPEDAL.err * shortK(t.dist) + crossField * CROSS_FIELD.err) * (trick ? 1 : moveAcc(P)) * (1 + SCRAMBLE_QB.err * (trick ? 0 : immobileQB(qb))) * onRun + heat * PRESSURE_THROW.err * shortK(t.dist) + (hitNow ? PRESSURE_THROW.hitErr : 0)) * (1 - POCKET.accuracy * inPocket()) * ACC_PEN / rm(P, 'acc', 'accuracy') + shaky + deepErr) * t.dist * distK(t.dist) * wild * dots * (trick ? 1 : 1 - HANDED.acc * handLat(qb)) * (trick ? 1 : 1 - STEP_ACC * stepUp()) * (trick || (tut && tut.defOn) ? 1 : accHelp(P)) * (trick ? 1 : pulseErr(P) * scrambleAwr(aimX, aimY)), a = Math.random() * Math.PI * 2;
+    let err = (((scramble * MOVING_ERROR + across * CROSS_BODY * onRun + backing * BACKPEDAL.err * shortK(t.dist) + crossField * CROSS_FIELD.err) * (trick ? 1 : moveAcc(P)) * (1 + SCRAMBLE_QB.err * (trick ? 0 : immobileQB(qb))) * onRun + (heat * PRESSURE_THROW.err * shortK(t.dist) + (hitNow ? PRESSURE_THROW.hitErr : 0)) * (aiOff() ? 1 : diffX('thrPress'))) * (1 - POCKET.accuracy * inPocket()) * ACC_PEN / rm(P, 'acc', 'accuracy') + shaky + deepErr) * t.dist * distK(t.dist) * wild * dots * (trick ? 1 : 1 - HANDED.acc * handLat(qb)) * (trick ? 1 : 1 - STEP_ACC * stepUp()) * (trick || (tut && tut.defOn) ? 1 : accHelp(P)) * (trick ? 1 : pulseErr(P) * scrambleAwr(aimX, aimY)), a = Math.random() * Math.PI * 2;
     if (aimX < los) err *= BEHIND_LOS.err * Math.max(0.4, rm(P, 'acc', 'accuracy'));   // (a screen / swing behind the line: very accurate, and the rating (divided out above) doesn't change it)
+    err /= aiOff() ? diffX('cpuAcc') : diffX('thrWin');   // (CPU QB ACCURACY / THROW ACCURACY WINDOW)
     err = Math.min(err, MISS_CAP * YL);
     const ux = tdx / tdl, uy = tdy / tdl, x0 = t.x, y0 = t.y;
     const missAt = ang => {
@@ -209,7 +211,7 @@ function throwBall() {
   // a bullet on the move is sometimes slung sidearm: lower release, the arm whipped round flat
   const slingSp = Math.hypot(P.vx || 0, P.vy || 0) / YD;
   if (bullet && !grounded && Math.random() < (slingSp >= SIDEARM.run ? SIDEARM.moving : SIDEARM.still)) { P.act.side = true; ball.z0 *= SIDEARM.low; }
-  else if (dl.some(d => d.leapBat && d.action === 'jump' && dist(d, P) < THROW_LOOK.laneYd * YD)) P.act.lane = true;   // a lineman up with his hands in the lane (DL_LEAP, above): the arm drops, slung flat round him (looks only)
+  else if (dl.some(d => d.leapBat && d.action === 'jump' && Math.hypot(d.x - P.x, d.y - P.y) < THROW_LOOK.laneYd * YD)) P.act.lane = true;   // (v0.68 fix: `dist` is this function's own throw length here, a number)   // a lineman up with his hands in the lane (DL_LEAP, above): the arm drops, slung flat round him (looks only)
   else if (handLat(P) < -THROW_LOOK.cross) P.act.cross = true;   // on the move toward his off-hand side: thrown across his body (looks only)
   P.face = trick ? Math.sign(t.x - P.x) || P.face : throwFaceFor(P, aimX);   // (the QB faces where he meant to throw: downfield, or back for a pass aimed behind him; judged from the aim, not a miss)
   msg = (trick ? 'TRICK PLAY!  ' : '') + (bullet ? 'Bullet!  ' : '') + `To ${who(tgt)}  -  W jump  S dive  A run catch  D one hand`;
@@ -288,10 +290,14 @@ let playWho = '';        //"Caught by X (from Y)" / "X ran the ball" for the lin
 let stopClock = false;   // set by incomplete(): no runoff after this play
 function endPlay(text, next, kind) {
   perfNote('endPlay');   // (FRAME TIMES spike tag)
+  const pick = game.penPick, pq = pick && game.penQ;   // (v0.68 the second pass, after the flag's accept / decline: penTick)
+  if (pq) state = pq.st;
   playEndedAt = performance.now();
   const clutch = kind === 'fg' && bigKick();   // (a late kick that ties or wins it: asked before the points go up; the kicker's celebration)
   const wasKickoff = kickoffPlay || puntRet || puntRetPlay;   // (kick and punt returns aren't rushes)
-  const pen = !wasKickoff && (rbpPenalty(kind, next) || kproPenalty());   // (run-block holding: the play comes back, replay the down; a kick rusher offside: 5 yards, kick it again)
+  let pen = !wasKickoff && (rbpPenalty(kind, next) || flagPenalty(kind, next) || kproPenalty());   // (run-block holding: the play comes back, replay the down; v0.68 pass-pro holding / pass interference / roughing (flagPenalty); a kick rusher offside: 5 yards, kick it again)
+  if (pen && !pen.dead && !pq && penAsk(text, next, kind, pen)) return;   // (v0.68 a live-ball foul: parked on game.penQ until the fouled side chooses)
+  if (pq) { pen = pick === 'accept' ? pq.pen : null; game.penDeclined = pick !== 'accept'; game.penPick = null; game.penQ = null; if (!pen) text += '  -  flag declined'; }
   if (pen) { text = pen.text; next = los; kind = ''; }
   else celebWhistle(text, kind);   // (celebrations: a blocked kick, a pick, a recovery, a sack)
   if (!pen && !kind && /SACKED/.test(text) && state !== 'done') sackCall();   // (whatever path ended it: the banner is up at the whistle)
@@ -325,11 +331,12 @@ function endPlay(text, next, kind) {
   // QB runs (scrambles past the line or tucking it): the defense keys on him; other plays cool it off one step at a time
   const qbRan = !wasKickoff && !isRunPlay && patMode === null && !tut && runner === qb && qb.x > los;
   qbRunStreak = qbRan ? Math.min(QB_RUN_STREAK.max, qbRunStreak + 1) : Math.max(0, qbRunStreak - QB_RUN_STREAK.cool);
-  pstSpecial(text, next, kind);
-  if (!wasKickoff && !(pen && pen.dead)) { recordPlayStats(text, next, kind); pstPlay(text, next, kind); }   // (a dead-ball flag is no play)
+  if (!game.revRedo) pstSpecial(text, next, kind);
+  if (!wasKickoff && !(pen && pen.dead) && !game.revRedo) { recordPlayStats(text, next, kind); pstPlay(text, next, kind); }   // (a dead-ball flag is no play; v0.68 a touchdown given after review is not counted twice)
   else playPass = null;
   recLive();   // (records that fell this play)
   hsScoreRec(text, next, kind);   // (the halftime reel: how good a highlight was it)
+  annPlayEnd(text, next, kind, wasKickoff, pen);   // (the announcers: the result, or a crazy play's call)
   // the play's yardage floats up over whoever had it (+7 YDS / -3 YDS); nothing on incompletions or turnovers
   const gainer = runner || (playCatcher && playCatcher.hasBall ? playCatcher : null) || (/SACKED/.test(text) ? qb : null) ||
     (['drop', 'pocket', 'run'].includes(state) && !ball.inAir && !ball.loose && kind !== 'punt' && kind !== 'turnover' ? qb : null);   // (a scrambling QB carries the ball without hasBall)
@@ -357,6 +364,7 @@ function endPlay(text, next, kind) {
     pendingSim = null;
     game.lastRunoff = game.runoff = game.runoffTotal = 0;
     checkQuarterEnd();   // a return that ends with zeros on the clock ends the quarter / half / game
+    try { refEnd({ relay: true, spot: at, tb: /TOUCHBACK/i.test(text), fair: /fair catch/i.test(text), oob: /out of bounds|pushed out|stepped out/i.test(text), period: game.secs <= 0 || !!game.over, far: /TOUCHBACK/i.test(text) }); } catch (e) {}   // (v0.68 the officials spot it; v0.68 touchback / fair catch / out of bounds signals)
     setTimeout(whistle, 150);
     if (tut && twoP && twoP.koOnly) { tutEvent('kickoff'); tut.koUnflip = true; msg = 'Click for the next play'; }   // (the kickoff lesson: its live return is the end, then the sides go back; the click's tutNext moves on, so the "play defense?" card comes up after the unflip, not mid-flip)
     return;
@@ -372,6 +380,7 @@ function endPlay(text, next, kind) {
     if (!made && /^Blocked kick|BLOCKED/.test(text)) { msg = `The extra point is BLOCKED  -  click`; if (kind !== 'turnover') showBanner('BLOCKED!'); }
     else if (!made && patMode === 'kick' && kind !== 'turnover') showBanner('MISSED!');   // (red = your kick, green = theirs, white two-player: showBanner's own side colors)
     if (made && patMode === 'kick') { showBanner("IT'S GOOD!", '#7dff8a', '#0a3a14', who(rb) || 'Extra point'); celebAsk(clutch ? 'bigKick' : 'pat', rb); }
+    try { refEnd({ made: made && patMode === 'kick', miss: !made && patMode === 'kick' && kind !== 'turnover' && !/BLOCK/i.test(text), td: made && patMode === 'two' }); } catch (e) {}   // (v0.68 officials' signals)
     patMode = null;
     if (game.ot && game.quarter >= 5 && !game.over) { game.ot.done.BLUE = true; game.ot.score = game.blue + game.red; otCheck('BLUE'); }   // (overtime: your possession's over)
     checkQuarterEnd();   // (a touchdown on the last play: now the clock's run out)
@@ -383,6 +392,7 @@ function endPlay(text, next, kind) {
     return;
   }
   let note = '';
+  next = refBadSpot(next, kind, pen);   // (v0.68 booth: the officials' spot; the true one is kept on game.truth, the stats above already used it)
   if (pen) { nextLos = pen.spot; nextDown = pen.first ? 1 : down; nextLtg = pen.first ? Math.min(FIELD, pen.spot + 10 * YL) : lineToGain; }
   else if (kind) newDrive();
   else if (next <= 0) { note = `SAFETY  -  2 points for ${teamName('RED')}, you kick off to them`; game.red += 2; newDrive(); showBanner('SAFETY!'); celebAsk('safety', celebFlags.tk ? celebFlags.tk.p : [...dl, ...back7].sort((a, b) => dist(a, ball) - dist(b, ball))[0]); }
@@ -438,6 +448,15 @@ function endPlay(text, next, kind) {
   if (kind === 'td' || kind === 'turnover') playHype = 0;
   else if (kind !== 'punt') crowdPayoff(gain, gain >= CROWD_OK_GAIN || firstDownCall);   // (a gain of 4+ never disappoints the crowd)
   if (!kind && !pen && !note.startsWith('SAFETY')) celebPlayEnd({ gain: (next - los) / YL, first: firstDownCall, inc: /incomplete/i.test(text), downs: note === 'Turnover on downs' });   // (the small celebrations, both sides: see celebrations)
+  try {   // (v0.68 the officials: signals, and the ball spotted and relayed to the hash on a plain down / a flag)
+    const inc = /incomplete/i.test(text) && !pen, sfty = note.startsWith('SAFETY'), tdx = kind === 'td' || /TOUCHDOWN|PICK SIX|SCOOP AND SCORE|RETURN TD/.test(text);
+    const oob = /out of bounds|pushed out|stepped out|sideline catch/i.test(text), sell = !pen && Math.abs(ball.y - MID) > FW * REF.crew.sideK && (/sideline catch|toe/i.test(text) || (inc && Math.min(Math.abs(ball.y - Y_MIN), Math.abs(ball.y - Y_MAX)) < REF.crew.sellYd * YD));
+    refEnd({ td: tdx, safety: sfty, made: kind === 'fg', miss: kind === 'fgmiss' && !/block/i.test(text), pen, penQ: !!(pen && pen.q), inc, first: firstDownCall, turn: kind === 'turnover' || note === 'Turnover on downs',
+      oob, sell, fum: kind === 'turnover' && /FUMBLE|RECOVER/i.test(text), downs: note === 'Turnover on downs', fair: /fair catch/i.test(text), tb: /TOUCHBACK/i.test(text), declined: !!game.penDeclined, period: game.secs <= 0 || !!game.over,
+      far: inc && Math.abs(ball.x - los) > REF.crew.relay.far * YL, relay: (!kind && !sfty && note !== 'Turnover on downs') || !!pen, spot: pen ? pen.spot : inc ? los : next });
+    game.penDeclined = false;
+  } catch (e) {}
+  try { refReviewAfter(); } catch (e) { console.warn(e); }   // (v0.68 booth review / an open ruling to challenge)
   if (oo) { nextLos = 25 * YL; nextDown = 1; nextLtg = nextLos + 10 * YL; if (!aiOff()) pendingSim = null; }   // (1v1 test: every rep starts from the same spot, the ball never advances)
   if (oo && oo.cfg) celebOoEnd(text, kind, (next - los) / YL);   // (a 1v1 rep: its winner celebrates)
   if (tut) { if (kind === 'fg') tutEvent('fg'); else if (kind === 'punt') tutEvent('punt', 'kickoff'); else if (twoP && twoP.koOnly) tutEvent('kickoff');   // (the real kickoff: its live return ends the lesson, then the sides go back)
@@ -446,6 +465,8 @@ function endPlay(text, next, kind) {
 }
 function touchdown() {
   perfNote('touchdown');   // (FRAME TIMES spike tag)
+  try { game.tdClose = refTdClose(); } catch (e) { game.tdClose = false; }   // (v0.68 booth: only a genuinely close score may be looked at)
+  try { if (refTdShort()) return; } catch (e) { console.warn(e); }   // (v0.68 booth: rarely ruled down just short; the review / a challenge can give it back)
   try { showTd(); } catch (e) {}   // (v0.51: showing off into the end zone: a bigger celebration)
   const twoPt = patMode === 'two';   // (endPlay clears patMode)
   const tdYds = Math.max(1, Math.round((FIELD - los) / YL));   // how long the touchdown was
@@ -591,7 +612,7 @@ function tryCatch(text, kind) {
   if (toSideline(tgt) < SIDELINE_ZONE && !secure) prob *= 0.93;
   if (onHim >= 2) prob *= (secure ? CONTESTED_DOUBLE.secure : CONTESTED_DOUBLE.normal) * Math.pow(CONTESTED_DOUBLE.extra, onHim - 2);
   else if (onHim === 1) prob *= secure ? CONTESTED_SECURE : CONTESTED;
-  if (onHim) prob *= mm * HC_HANDS_CONTESTED();
+  if (onHim) prob *= mm * HC_HANDS_CONTESTED() * defTraitK(null, 'cov');   // (v0.64: your DC's Bend Don't Break / Third Down Specialist, contested balls only)
   if (onHim && (tgt === rb || tgt.pos === 'RB')) prob *= RB_CONTESTED;
   if (onHim) prob = Math.min(0.99, prob * traffic * AB.cont);
   if (onHim && ball.forced && Math.random() < CPU_OFF.crazy * Math.max(0.5, rm(tgt, 'ctc', 'contested'))) { prob = Math.max(prob, 0.9); popup(tgt, 'CRAZY CATCH', '#ffd94a'); }   // (a throw the computer's QB forced into coverage: now and then the receiver makes a circus catch)
@@ -617,8 +638,8 @@ function tryCatch(text, kind) {
   if (fightOne) prob *= HANDFIGHT.catch;   // one arm tied up by the DB
   if (ball.duck) prob *= 1 - DUCK_DROP * Math.min(1, ball.duck);   // a wobbler from a hit QB is hard to haul in, even when open
   if (!oneHanded && !fightOne && !onHim) prob = 1 - (1 - prob) * TWO_HAND_DROP;   // a ball that hits both hands is almost never dropped (one-handers keep their odds)
-  prob = 1 - (1 - prob) * (1 + WXF.drop * wxP());   // (a wet / snowy ball is slicker)
-  prob = 1 - (1 - prob) / diffX('catchTol');   // (difficulty: the margin on a catch, both teams)
+  prob = 1 - (1 - prob) * (1 + WXF.drop * wxP()) * wxXK('drop') * (oneHanded || onHim >= 1 ? wxXK('dropHard') : 1);   // (a wet / snowy ball is slicker; thunderstorm / blizzard: much more, most when contested or one-handed)
+  prob = 1 - (1 - prob) / diffX(aiOff() ? 'cpuCatch' : 'youCatch');   // (difficulty: PLAYER CATCHING, or CPU CATCHING when the CPU has the ball)
   prob = Math.max(AB.sure, Math.min(0.995, prob + AB.add));   // (abilities: Soft Hands / Clutch Gene / Chemistry / Shutdown; Vise Grip / Moss Mode floors)
   if (Math.random() < prob) return catchBall(text, kind);
   if (fightOne) {
@@ -666,7 +687,7 @@ function catchHit(kind) {
   const puncher = userHit ? null : back7.filter(x => (x.role === 'CB' || x.role === 'S') && !x.action && dist(x, tgt) <= PUNCH.range * YD &&
                                     dist(x, tgt) > 0.3 * YD)
                        .sort((a, b) => dist(a, tgt) - dist(b, tgt))[0];
-  if (puncher && !vise && Math.random() < PUNCH.chance * (diffFor(puncher).punch ?? 1) * (1 - JUMP_TIMING.pbu * jq) * (tgt.catchStyle === 'overBasket' ? PUNCH.basket : 1) *
+  if (puncher && !vise && Math.random() < PUNCH.chance * (diffFor(puncher).punch ?? 1) * defTraitK(puncher, "punch") * (1 - JUMP_TIMING.pbu * jq) * (tgt.catchStyle === 'overBasket' ? PUNCH.basket : 1) *
                                  rm(puncher, 'ctc', 'ball') / rv(tgt, 'ctc', puncher, 'ctc', 'contested')) {
     tgt.hasBall = false;
     puncher.action = 'swat'; puncher.act = { t: 0, dur: 0.3, punch: true };
@@ -787,6 +808,7 @@ function catchBall(text, kind = 'normal') {
                     tgt.runCatch && !tgt.action ? 'runcatch' : null);
   const secure = tgt.catchMode === 'secure';
   if (ball.tipped) hsEv('tipcatch', tgt);   // (tipped, then caught anyway: a halftime reel moment; no callout of its own)
+  annCatch(tgt);   // (the announcers: caught; tipped then caught = a crazy play)
   pstCatch();
   if ((ball.tx - ball.fx) / YL > MORALE.deepYd) moraleEvent(tgt, 'deep');
   catchSfx();   // (every catch: in the end zone and at the sideline too)
@@ -1267,7 +1289,7 @@ function wrapTackle(c, d) {
             twist: fromSide ? 0 : Math.max(-0.5, Math.min(0.5, ny / (8 * YD))) * (Math.random() < 0.5 ? 1 : 0.6),
             // a side hit carries him sideways with the tackler; otherwise he slides along the combined momentum
             vx: nx * TACKLE_FALL.push * (1 + TACKLE_WET.push * wxP()), vy: ny * (fromSide ? TACKLE_FALL.sideCarry : TACKLE_FALL.push) * (1 + TACKLE_WET.push * wxP()),   // (rain / snow: they slide on further, more in snow, off both men's momentum)
-            slide: TACKLE_FALL.slideTime * (1 + TACKLE_WET.time * wxP()), angle: Math.atan2(ny, nx || c.face) };
+            slide: TACKLE_FALL.slideTime * (1 + TACKLE_WET.time * wxP()) * wxSlideK(), angle: Math.atan2(ny, nx || c.face) };
   if (d && d.action === 'dive' && d.act) {
     // he dove at him: he stays laid out on the turf, riding down on the runner's legs (not popping up into a standing wrap-up)
     // (he lies behind the runner on the side he came from, helmet toward him: judged from the launch spot, since the dive can carry him past)
@@ -1347,7 +1369,7 @@ function tackleCarrier(c, d, trip) {
   if (tut && c.guard) tutEvent('protect');   // (tutorial: tackled with both arms on the ball)
   const odds = abilFumBase(d, base) * FUMBLE_SCALE * (aiOff() ? DEF_FUMBLE : diffFor(d).fum) * (c === qb ? QB_FUMBLE * qbHitFumble(d) : c === rb ? RB_FUMBLE / rbVis(RB_VISION.fumble) : 1) * (c.sprint ? SPRINT_FUMBLE : 1) * (d && d.role === 'LB' ? 1.5 : 1) * (big && d && udCtl(d) ? USER_HIT.fumble : 1) * rm(d, 'tck', 'fumble') * rm(d, 'str', FUMBLE_STR) / rm(c, 'str', 'powerResist') / rm(c, 'str', FUMBLE_STR) * (c.guard ? PROTECT.fumble : 1) * (d && d.secure ? DEF.secure.fumble : 1)   // (a strong carrier keeps the ball secure)
               * (big && (moveOdds > 0 || hurdleHit) ? HIT_MOVE_FUMBLE : 1)   // (hit stick on a man mid break-tackle move)
-              * WEAR.zoneFum[wearZone(c)] / moraleMulP(c) * abilFumK(c, d, big) * (c.reachGoal ? REACH_FUMBLE : 1) * (c.star ? 1 : BACKUP_FUMBLE) * (1 + WXF.fumble * wxP());   // (a backup's low ratings made him fumble a lot: tamed; tired = looser ball; Truzz: no tackle jars it)
+              * WEAR.zoneFum[wearZone(c)] / moraleMulP(c) * abilFumK(c, d, big) * (c.reachGoal ? REACH_FUMBLE : 1) * (c.star ? 1 : BACKUP_FUMBLE) * (1 + WXF.fumble * wxP()) * wxXK('fumble');   // (a backup's low ratings made him fumble a lot: tamed; tired = looser ball; Truzz: no tackle jars it)
   let showK = 1;
   if (sh) {   // x SHOW.fumK, x hitK more from behind (he is not looking), x 1.3 more with the ball held out
     const vx = c.vx || c.face, blind = d && (d.x - c.x) * Math.sign(vx) < 0;
@@ -1375,7 +1397,7 @@ function tackleCarrier(c, d, trip) {
   // going for the strip: as he wraps him up he punches at the ball (QBs hold it loosest)
   if (!big && d && d.act && !d.secure && !c.guard && !xfOn(c, 'secondWind') && Math.random() < (c === qb ? STRIP.trySack : STRIP.tryRun)) {
     d.act.punch = true;
-    if (Math.random() < 0.7 * STRIP.fumble * (diffFor(d).punch ?? 1) * (c === qb ? STRIP.qb : c === rb ? STRIP.rb : 1) * rm(d, 'tck', 'fumble') * abilFumK(c, d, false)) {
+    if (Math.random() < 0.7 * STRIP.fumble * (diffFor(d).punch ?? 1) * defTraitK(d, "punch") * (c === qb ? STRIP.qb : c === rb ? STRIP.rb : 1) * rm(d, 'tck', 'fumble') * abilFumK(c, d, false)) {
       popup(d, 'STRIPPED', '#ff6b6b');
       return fumble(c, false, 'STRIPPED');
     }
@@ -1459,6 +1481,7 @@ function fumble(c, big, called) {   // called = already announced (STRIPPED / ST
   { const fd = allPlayers().filter(o => o.team !== c.team && dist(o, c) < 2.5 * YD).sort((a, b) => dist(a, c) - dist(b, c))[0];
     celebNote('fum', fd); xfEvent(c.src, 'fumT'); if (fd) xfEvent(fd.src, 'forcedFum'); }   // (who knocked it out: the nearest opponent on him; star factor counts)   // (who knocked it out: the nearest opponent on him)
   moraleEvent(c, 'fumble');
+  if (annGate()) { if (c.team === 'off') ANN_S.pl.fumOff = true; annSay('fumble', { pri: 4 }); }   // (the announcers)
   // a fumble goes in the books whoever ends up with it
   if (patMode === null && c.team === 'off') { const s = statOf(c); if (s) s.fum++; }
   ball.x = c.x; ball.y = c.y; ball.z = 12 * S;
@@ -1491,6 +1514,7 @@ function sackCall() {
   if (SL.on) slFlash(2);   // (sideline cameras)
   if (sackPid === runPid || tut) return;
   sackPid = runPid;
+  annSay('sack', { pri: 3 });   // (the announcers)
   if (rec && !rec.replaying) rec.big = true;
   crowdCheer(SACK_CROWD, aiOff() ? 'you' : 'opp', false, true);
 }
@@ -1529,7 +1553,7 @@ function sack(r) {
     // strip sack: he takes the QB down with one arm and punches at the ball with the other
     if (Math.random() < STRIP.trySack * Math.min(3, strip)) {
       r.act.punch = true;
-      if (Math.random() < STRIP.fumble * STRIP.qb * (diffFor(r).punch ?? 1) * blindMult * strip * rm(r, 'tck', 'fumble')) {
+      if (Math.random() < STRIP.fumble * STRIP.qb * (diffFor(r).punch ?? 1) * defTraitK(r, "punch") * blindMult * strip * rm(r, 'tck', 'fumble')) {
         popup(qb, 'STRIP SACK', '#ff6b6b');
         qb.vx = (qb.x - r.x) * 2; qb.vy = (qb.y - r.y) * 2;
         return fumble(qb, false, 'STRIP SACK');
@@ -1555,6 +1579,7 @@ const bigSackRoll = r => Math.hypot(r.vx, r.vy) > 0.6 * (r.rush || r.top) && Mat
 function hitAsHeThrows() {
   const r = rusherOnQb();
   if (!r) return;
+  annSay('hitThrow', { pri: 2 });   // (the announcers)
   tackleLunge(r, qb.x, qb.y, 0.2, 0.95 * YD);   // (a ground distance: it was written in sprite units)
   r.recoverUntil = clock + 1;
   const hx = qb.x - r.x, hy = qb.y - r.y, hl = Math.hypot(hx, hy) || 1;
@@ -1615,7 +1640,7 @@ const diveEta = (p, tx, ty) => { const dx = tx - p.x, dy = ty - p.y, d = Math.hy
 // v0 = the speed he already has along the dive. Returns v (air speed), vg / tw (a timed dive's gather: s still on his feet first, and his speed through
 // it), Tl (s until he lands), Ts (s sliding), S (total px), h (peak), airT (s in the air)
 function diveKin(L, v, arrive, z0, v0 = 0) {
-  const mu = DIVE.friction * YD, airCap = z0 > 0 ? airTime(0, z0) : airTime(AIR.dive.max), nat = v * v / (2 * mu);
+  const mu = DIVE.friction * YD / wxSlideK(), airCap = z0 > 0 ? airTime(0, z0) : airTime(AIR.dive.max), nat = v * v / (2 * mu);
   let vv = v, vg = 0, tw = 0, air, Ls = nat;
   if (arrive != null && z0 > 0) { vv = Math.min(v, L / Math.max(0.05, arrive)); air = airCap; Ls = vv * vv / (2 * mu); }
   else if (arrive != null) {
@@ -1680,7 +1705,7 @@ function landOffFeet(p, how, vx, vy, wet) {
   p.action = 'dive'; p.tkStyle = null;
   if (p.hasBall && p.jumpCaught) p.diveCaught = p.jumpCaught;   // (a leaping catch that lands on the turf: the dive's tucked-in arms carry on, not a second raised pair on top of the catch arms)
   // the same landing as any dive: he slides out on friction from the speed he came down with (further on a slick field)
-  const v = Math.hypot(vx, vy), Ls = v * v / (2 * DIVE.friction * YD) * (1 + WXF.wetSlide * wet), Ts = v > 1 ? 2 * Ls / v : 0, dur = Math.max(0.3, Ts);
+  const v = Math.hypot(vx, vy), Ls = v * v / (2 * DIVE.friction * YD) * (1 + WXF.wetSlide * wet) * wxSlideK(), Ts = v > 1 ? 2 * Ls / v : 0, dur = Math.max(0.3, Ts);
   p.act = { t: 0, dur, fx: p.x, fy: p.y, tx: p.x + (v > 1 ? vx / v * Ls : 0), ty: p.y + (v > 1 ? vy / v * Ls : 0), angle: how === 'back' ? (p.face > 0 ? Math.PI : 0) : Math.atan2(vy, vx),   // (on his back: head goes the way his back faces)
             kin: { v, vg: 0, tw: 0, Tl: 0, Ts, S: Ls, lift: 0, h: 0, airT: 0 }, airH: 0, airT: 0, at: 0, z0: 0, air: 0.001, face: p.face, post: how || undefined };
   return dur;
@@ -1742,7 +1767,16 @@ function runFade(p) {
   const y = p.ranPid === runPid ? p.ranYd || 0 : 0, R = RUN_FADE;
   const f = y <= R.yd ? R.max * y / R.yd : R.max + (y - R.yd) / R.per * 0.01;
   const fl = game && game.quarter >= 4 ? facLvl('rec') : 0, late = fl && p.src && yoursEntry(p.src) ? 1 - FAC_FX.rec.late * fl : 1;   // (your Recovery Center: fresher legs in the 4th quarter and overtime)
-  return 1 - Math.min(R.cap, f) * (p.retPid === runPid ? R.ret : 1) * late;   // (retPid: he's this play's kick / punt returner)
+  return 1 - Math.min(R.cap, f) * (p.retPid === runPid ? R.ret : 1) * late * staffFade(p);   // (retPid: he's this play's kick / punt returner)
+}
+function staffFade(p) {   // v0.64 staff traits on your men late: Fresh Legs III (4th quarter), Fourth Quarter Legs (4th; II = overtime too); Tempo Freak II = their defense fades more
+  if (!game || !p) return 1;
+  const mine = p.src && yoursEntry(p.src), q = game.quarter || 1, side = p.team === 'off' ? 'off' : 'def';
+  if (!mine) return p.team === 'def' && q >= 1 && stT('Tempo Freak') >= 2 && !aiOff() ? TRAIT_BY['Tempo Freak'].wear : 1;
+  let k = 1;
+  if (q === 4 || (q >= 5 && stT('Fourth Quarter Legs', side) >= 2)) { if (stT('Fourth Quarter Legs', side)) k *= TRAIT_BY['Fourth Quarter Legs'].v[0]; }
+  if (q >= 4 && stT('Fresh Legs', side) >= 3) k *= TRAIT_BY['Fresh Legs'].q4;
+  return k;
 }
 // offense turning from going backward to forward: min = the backward speed (yd/s) that counts, accel = x how fast his velocity turns, top = x his top speed for dur s after
 const REVERSE = { min: 1.2, accel: 0.5, top: 0.85, dur: 0.45 };

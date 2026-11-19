@@ -58,6 +58,7 @@ function updateFlight(dt) {
   const gap = dist(tgt, ball);
   userPickCheck(dt);   // (your leap for it)
   if (state !== 'flight') return;
+  flagFlight(remaining);   // (v0.68 penalties: interference both ways, a late hit on the QB)
   if (ud && ud.userJump && ud.userJump.won && !ud.userJump.done) return;   // (your won pick is on its way into his hands: nobody else plays the ball meanwhile)
 
   // linemen at the line can get a paw on a low, flat throw: mostly bullets, rarely a lob,
@@ -423,7 +424,7 @@ function updateLoose(dt = 0) {
       if (r < 0.75) popLoose(p, 'Bobbled!', 120 * S, 2.5 * YD);
     } else {
       // tipped balls get picked (if he's turned to it): it's heading for the turf, so he usually lays out for it
-      if (r < LOOSE_D.pick * rm(p, 'ctc', 'ball') * (facesBall(p) ? 1 : PICK_BLIND) && facingPlay(p)) {
+      if (r < LOOSE_D.pick * rm(p, 'ctc', 'ball') * (facesBall(p) ? 1 : PICK_BLIND) * defTraitK(p, 'pick') && facingPlay(p)) {   // (Takeaway Culture II: more tips become picks)
         const low = ball.z < LOOSE_HEIGHT * 0.6 || ball.vz < 0;
         if (low && !p.action) startDive(p, ball.x, ball.y, 0.25, Math.min(DIVE_LUNGE, dist(p, ball)));
         if (low && p.action === 'dive') { p.loosePick = runPid; return; }   // (the catch waits for his hands: see the top of updateLoose)
@@ -649,7 +650,7 @@ function chaseReturner(p, d, dt) {
       // offensive players aren't sure tacklers, but a lineman or a man coming square at him usually gets him down
       const square = ((p.x - d.x) * (d.vx || -1) + (p.y - d.y) * (d.vy || 0)) > 0;
       const odds = Math.min(p.big ? 0.98 : 0.95, (p.hitStick ? PICK_RETURN.hitTackle : PICK_RETURN.tackle) * (p.big ? PICK_RETURN.big : 1) * (square ? PICK_RETURN.square : 1))
-        * (puntRet ? PUNT.tackleK * (firstTry ? PUNT.firstK : 1) : 1) * (d.retMove && clock < d.retMove.until ? PICK_RETURN.moveMiss : 1);   // (a move you timed: the tackle is much likelier to miss)
+        * (puntRet ? PUNT.tackleK * (firstTry ? PUNT.firstK : 1) : 1) * (d.retMove && clock < d.retMove.until ? PICK_RETURN.moveMiss : 1) / (!puntRet ? defTraitK(d, 'ret') : 1);   // (a move you timed: the tackle is much likelier to miss; Takeaway Culture III: your returner breaks more)
       // (a returner who dove for it and is still on the ground: any touch puts him down)
       if (Math.random() < odds || d.action === 'dive' || d.action === 'getup') return downed(p.hitStick);
       // beaten by a move: the same break-tackle reactions as on offense (his reel, rarely the iconic one); no move = bounced / slid off
@@ -669,7 +670,7 @@ function chaseReturner(p, d, dt) {
   const top = p.topBase || (p.big ? OL_RUN : QB_RUN);
   const held = clock < (p.pickHeldUntil || 0);   // tied up by a return blocker: barely moving
   // cut him off: aim at where he'll be when we get there, pinning him to the sideline if he's headed for it
-  const ck = puntRet ? PUNT.chaseK * PUNT_COVER.speed : 1;   // (a punt team runs lanes and finishes better than a defense chasing a pick)
+  const ck = puntRet ? PUNT.chaseK * PUNT_COVER.speed * diffRetCov(d) : 1;   // (a punt team runs lanes and finishes better than a defense chasing a pick)
   let chase = top * ck * (held ? 0.2 : PICK_RETURN.chase);
   const aimAt = pursuitPoint(p, d, top * ck * PICK_RETURN.chase, -1), base = { ...aimAt };
   if (puntRet && puntPlay && p.x < d.x + 1.5 * YD) {   // the punt team: the two widest men (the gunners) contain (keep their leverage on the outside), the rest hold lanes in a net between them
@@ -973,6 +974,7 @@ function updateBall(dt) {
         ball.spin = (ball.spin || 0) * 0.5 + (Math.random() - 0.5) * 8;
       }
       ball.wob = (Math.random() - 0.5) * 2;   // the way it'll curl as it rolls out
+      const pk = wxPlug(ball.x, ball.y); if (pk < 1) { ball.vz *= pk; ball.vx *= pk; ball.vy *= pk; }   // (a puddle / mud: it plugs)
     } else ball.vz = 0;
   };
   if (ball.z > 0 || ball.vz > 0) {
@@ -1100,6 +1102,11 @@ function switchDefender(eKey, oKey) {
     if (side.length) { pickUd(side[0].d); return; }
   }
   const at = state === 'flight' ? { x: ball.tx, y: ball.ty } : runner || ball;
+  const car = state !== 'flight' && (runner || allPlayers().find(p => p.hasBall));
+  if (near && car) {   // a carrier: the man most likely to tackle him (likelyTackler, also kick coverage / turnover returns); again = the next most likely
+    const pk = likelyTackler(defenders(), car), pk2 = pk === ud ? likelyTackler(defenders(), car, ud) : null;
+    if (pk) { pickUd(pk2 || pk); return; }
+  }
   const list = defenders().filter(d => d.action !== 'down').sort((a, b) => dist(a, at) - dist(b, at));
   pickUd(list[0] === ud && list[1] ? list[1] : list[0]);
 }
@@ -1802,7 +1809,8 @@ function liveFormPick() {
   const hurry = (c.q === 2 || c.q >= 4) && c.secs <= lateS(120) && (c.q === 2 || c.trail > 0);
   const milk = c.q >= 4 && c.trail < 0 && c.secs <= CLOCK_OUT.secs;   // (protecting a lead late: no empty sets)
   const sit = formSit({ down: c.down, togo: c.togo, pos: c.pos, hurry });
-  const w = FORMS.map(f => { const L = LIVE_FORM[f.id]; return !L || (L.gun && !gunOK) || (f.id === 'EMPTY' && milk) ? 0 : Math.pow(f.sit[sit], 1 + FORM.sitSharp * oc) * (f === fav ? FORM.favW : 1) * (L.w || 1); });
+  const sharp = hurry && !aiOff() && stT('Two-Minute Professor', 'off') ? 2 : 1;   // (Two-Minute Professor: sharper formation picks in the hurry-up)
+  const w = FORMS.map(f => { const L = LIVE_FORM[f.id]; return !L || (L.gun && !gunOK) || (f.id === 'EMPTY' && milk) ? 0 : Math.pow(f.sit[sit], (1 + FORM.sitSharp * oc) * sharp) * (f === fav ? FORM.favW : 1) * (L.w || 1) * bookFormK(f.id); });
   let r = Math.random() * w.reduce((a, b) => a + b, 0);
   for (let i = 0; i < FORMS.length; i++) if ((r -= w[i]) <= 0 && w[i] > 0) return FORMS[i].id;
   return gunOK ? 'SHOTGUN' : 'SINGLEBACK';
@@ -1847,13 +1855,34 @@ const liveCalls = () => liveForm && !tut ? LIVE_CALLS[liveForm] : null;
 const lerpOc = ([a, b]) => a + (b - a) * ocSkill();
 function liveFitK(name) {   // weight x for a pass concept from this formation
   const C = liveCalls(); if (!C) return 1;
-  return C.good.includes(name) ? lerpOc(LIVE_FIT.good) : C.bad.includes(name) ? lerpOc(LIVE_FIT.bad) : 1;
+  const s = staffFitK(), book = bookCallK(name);   // (your OC's traits sharpen the fits; the binder's circles / cross-outs)
+  return (C.good.includes(name) ? lerpOc(LIVE_FIT.good) * s : C.bad.includes(name) ? lerpOc(LIVE_FIT.bad) / s : 1) * book;
+}
+const liveHurry = () => { const c = sheetCtx(); return (c.q === 2 || c.q >= 4) && c.secs <= lateS(TRAIT_BY['Two-Minute Professor'].secs) && (c.q === 2 || c.trail > 0); };
+function staffFitK() {   // v0.64: x on the good fits (/ on the poor ones) from your OC's traits, your offense only
+  if (aiOff() || exhibition || tut || !xpcOn()) return 1;
+  let k = 1; const T = TRAIT_BY;
+  const sw = stV('Script Writer', 'off'); if (sw && (game.scriptN || 0) < sw) k *= T['Script Writer'].fit;
+  const rz = stT('Red Zone Artist', 'off'), yd = (FIELD - los) / YL; if (rz && yd <= T['Red Zone Artist'].v[rz - 1]) k *= rz >= 3 && yd <= 5 ? T['Red Zone Artist'].fit5 : T['Red Zone Artist'].fit;
+  if (stT('Two-Minute Professor', 'off') >= 2 && liveHurry()) k *= T['Two-Minute Professor'].fit;
+  if (stT('Feed the Hot Hand', 'off') && hotHand()) k *= 1.1;
+  return k;
+}
+function hotHand() {   // Feed the Hot Hand: the receiver (or, at III, the back) who is rolling right now, or null
+  const L = stT('Feed the Hot Hand', 'off'); if (!L || !game.hot) return null;
+  const T = TRAIT_BY['Feed the Hot Hand'], need = T.v[L - 1];
+  let best = null; for (const [n, h] of Object.entries(game.hot)) if ((h.c || 0) >= need || (L >= 3 && (h.r || 0) >= T.runs)) best = n;
+  return best;
+}
+function hotNote(p, kind, gain) {   // a catch / a good run for the hot hand tally (from pstPlay's caller: endPlay)
+  if (!game || !p || !p.src || aiOff()) return; const n = p.src.name, h = game.hot = game.hot || {}; const e = h[n] = h[n] || { c: 0, r: 0 };
+  if (kind === 'catch') e.c++; else if (kind === 'run' && gain >= TRAIT_BY['Feed the Hot Hand'].good) e.r++;
 }
 const livePoor = name => { const C = liveCalls(); return !!C && C.bad.includes(name); };
 function liveRunCall() {   // the run scheme from this formation (null = the old odds); outside = an outside scheme
   const C = liveCalls(); if (!C || !C.run) return null;
   const L = [...SCHEME_ODDS.inside.map(([k, w]) => [k, w * 0.55, false]), ...SCHEME_ODDS.outside.map(([k, w]) => [k, w * 0.45, true])]
-    .map(([k, w, o]) => [k, w * (C.run[k] ? lerpOc(LIVE_FIT.run) * C.run[k] : 1) * (C.badRun.includes(k) ? lerpOc(LIVE_FIT.badRun) : 1), o]);
+    .map(([k, w, o]) => [k, w * (C.run[k] ? lerpOc(LIVE_FIT.run) * C.run[k] * staffFitK() : 1) * (C.badRun.includes(k) ? lerpOc(LIVE_FIT.badRun) / staffFitK() : 1) * bookCallK(k), o]);
   if (C.run.pinPull && rbpPinOK()) L.push(['pinPull', 0.45 * RBP.pin.w * lerpOc(LIVE_FIT.run) * C.run.pinPull * rbpPinFit(), true]);   // (pin & pull: the shotgun's offset back only, weighted by the look)
   let r = Math.random() * L.reduce((t, x) => t + x[1], 0);
   for (const [k, w, o] of L) if ((r -= w) <= 0) return { scheme: k, outside: o, poor: C.badRun.includes(k) };
@@ -1986,7 +2015,7 @@ function sheetWant(c) {
 }
 const sheetFit = (c, want) => { const tags = SHEET_TAGS[c.name]; return tags ? tags.reduce((s, k) => s + (want[k] ?? 0.3), 0) / tags.length : 0.5; };
 // the live offense's coordinator calls this play from the sheet? (decided once a play)
-const aiFollows = () => ai.follows != null ? ai.follows : (ai.follows = !tut && Math.random() < sheetFollow(ocSkill()));
+const aiFollows = () => ai.follows != null ? ai.follows : (ai.follows = !tut && Math.random() < sheetFollow(ocSkill()) * diffX('cpuCall'));   // (CPU PLAY-CALLING: follows the down-and-distance sheet more)
 
 // --- their offense, played by the computer ---
 // How good their offense is, the way simulateDrive works it out: their offense's stars (the difficulty's, if set) against your defense's,
@@ -2057,7 +2086,7 @@ function aiWantsRun() {
   }
   if (!hurry && !milk) passOdds += (xfLit(qb) ? CPU_OFF.xfQb : 0) - (xfLit(rb) ? CPU_OFF.xfRb : 0);   // (a hot star factor QB: throw more; a hot star factor back: run more)
   if (!milk) { const cx = sheetCtx(), left = Math.max(0, Math.min(1, ((4 - cx.q) * QUARTER_SECS + cx.secs) / (4 * QUARTER_SECS))); passOdds += TRAIL_PASS.max * Math.min(1, Math.max(0, cx.trail) / TRAIL_PASS.pts) * (1 - Math.pow(left, TRAIL_PASS.curve)); }   // (the further behind and the less time left, the more they throw)
-  return Math.random() >= Math.max(0.08, Math.min(0.92, passOdds + CPU_OFF.passAdd));   // (+passAdd: the computer throws a lot more than it runs)
+  return Math.random() >= Math.max(0.08, Math.min(0.92, passOdds + CPU_OFF.passAdd - wxAiRun()));   // (extreme weather: grind it out)   // (+passAdd: the computer throws a lot more than it runs)
 }
 function aiOffense(dt) {
   if (!ai) ai = newAi();
@@ -2145,7 +2174,7 @@ function aiDecide(prevAt) {
   if (down < 4 && !lastKick && !clockSituation()) return;
   const needTD = noHope || (q4 && trail > 3 && (left <= lateS(SIM_CLOCK_MGMT.late) || (togo <= 6 && Math.random() < 0.9)));
   const follows = aiFollows(), sheetGo = down === 4 && follows && Math.random() < sheetGoP(sheetCtx());   // (the decision sheet's 4th down chart, its overrides and the team's 4th down tendency)
-  if ((pos >= 62 && !needTD && !sheetGo) || lastKick) {
+  if ((pos >= 117 - 55 * wxXK('kick') * wxFgWind() && !needTD && !sheetGo) || lastKick) {   // (extreme weather: a shorter leg, so a shorter try)
     return startFieldGoal(prevAt);
   }
   const desperate = (noHope || q4 && trail > 0 && left < lateS(60)) && pos >= 30;
@@ -2157,7 +2186,7 @@ function aiDecide(prevAt) {
 function aiKick() {
   if (!kick) return;
   if (kick.aiGood == null) {
-    const odds = kickOdds(rb, kick.dist - 1.6, patMode === 'kick'), roll = Math.random();
+    const odds = cpuKOdds(rb, kick.dist - 1.6, patMode === 'kick'), roll = Math.random();   // (CPU KICKER ACCURACY)
     kick.aiGood = roll < odds;   // (kick.dist is 18.6 + yards to goal, the sim's fgDist 17 + yards to goal; rb is his kicker)
     // a roll within DOINK.cpu of his odds = off the post, the same 50/50 and flight as yours (releaseKick reads kick.aiDoink)
     if (Math.abs(roll - odds) < DOINK.cpu && (DOINK.auto || !kAb(rb, 'automatic'))) {
@@ -2230,7 +2259,11 @@ function aiTarget(force) {
     }   // (the interception lesson: the throw leads him a full step, a good ball on the fade that only the defender can stop)
     if (Math.hypot(px - qb.x, py - qb.y) > maxThrow(px - qb.x, py - qb.y) * 0.95) continue;
     if (!aimUd && !tut && (px < qb.x + 2 * YD || r.x < qb.x + 0.5 * YD)) continue;   // (and never to a man who is standing behind him: the lead on a moving receiver made a backwards throw look like a forward one)   // (never a pass backwards: he moves, throws it away or forces one downfield)
-    const sep = Math.min(...defenders().map(d => Math.hypot(d.x + d.vx * T * 0.5 - px, d.y + d.vy * T * 0.5 - py))) / YD;
+    let sep = Math.min(...defenders().map(d => Math.hypot(d.x + d.vx * T * 0.5 - px, d.y + d.vy * T * 0.5 - py))) / YD;
+    if (!aimUd && !tut) {   // (v0.64 Disguise Artist: your DC's looks blur his read of who is open; III = now and then he sees open grass that isn't there)
+      const dz = defTraitK(null, 'read') - 1; if (dz) sep *= 1 + dz * (Math.random() * 2 - 1);
+      if (stT('Disguise Artist', 'def') >= 3 && yourDefLive() && sep < 1.5 && Math.random() < TRAIT_BY['Disguise Artist'].into) sep += 2;
+    }
     if (offJam && sep < openMin) continue;
     // (still in his stem, before the break: only when he's wide open; a back / flat man near the line isn't held to it)
     if (!aimUd && !tut && r !== rb && r.route && r.path && r.path.length >= 2 && !(r.leg >= 1) && r.x - los > AI_STEM.minYd * YL && sep < openMin * AI_STEM.open * Math.max(0.6, 1 + AI_STEM.awr * rz(qb, 'awr'))) continue;
@@ -2266,7 +2299,7 @@ function aiTarget(force) {
       side = -(AI_SIDE.cross + (runLane != null ? AI_SIDE.crossRun : 0)) * cross + ((py - MID) * (qb.y - MID) >= 0 ? AI_SIDE.same : -AI_SIDE.same);
       if (Math.abs(qb.vy) > 0.15 * QB_SPEED && Math.abs(r.vy) > 0.15 * WR_TOP) side += (qb.vy * r.vy > 0 ? 1 : -1) * AI_SIDE.dir;
     }
-    const score = aimUd ? -dist(r, ud) : side + sep * safeK + zb - 2.4 * across - 0.9 * Math.max(0, crowd - 1) + Math.min(LANE.max, lane) * LANE.weight + (!tut && needSticks && px >= lineToGain ? (short4 ? 4 : down >= 3 ? 1.4 : 0.7) * sk : 0) + (!tut && needSticks && px < lineToGain - (short4 ? 0.5 : 4) * YL ? -(short4 ? 3.5 : 0.8) * sk : 0) + Math.min(AI_DEEP.cap, (px - los) / YL) * AI_DEEP.per * depthK * powK - (!tut && (px - los) / YL < AI_DEEP.shortYd ? AI_DEEP.shortPen * Math.min(1, (AI_DEEP.shortYd - (px - los) / YL) / AI_DEEP.shortYd) : 0) + ((px - los) / YL >= AI_DEEP.at && !short4 ? AI_DEEP.bonus * powK * (clock - (qb.escapedAt ?? -9) < ESCAPE.time ? ESCAPE.deep : 1) : 0) + (aimUd || tut || r === rb ? 0 : (rm(r, 'ctc', 'contested') - 1) * CPU_OFF.star) + (aimUd || tut || !xfLit(r) ? 0 : CPU_OFF.xfTarget) + (aimUd || tut ? 0 : aiDepthBias((px - los) / YL, sep, hp0)) + (stopClk && toSideline({ y: py }) < AI_CLOCK.oobYd * YD ? AI_CLOCK.oobBonus : 0) + Math.random() * Math.max(0.2, 1.2 - 0.2 * e) * (aimUd || tut ? 1 : CPU_QB.noise / accQ);   // (a better offense reads it better; he likes his better wideouts and tight ends)
+    const score = aimUd ? -dist(r, ud) : side + sep * safeK + zb - 2.4 * across - 0.9 * Math.max(0, crowd - 1) + Math.min(LANE.max, lane) * LANE.weight + (!tut && needSticks && px >= lineToGain ? (short4 ? 4 : down >= 3 ? 1.4 : 0.7) * sk : 0) + (!tut && needSticks && px < lineToGain - (short4 ? 0.5 : 4) * YL ? -(short4 ? 3.5 : 0.8) * sk : 0) + Math.min(AI_DEEP.cap, (px - los) / YL) * AI_DEEP.per * depthK * powK * wxAiDeep() - (!tut && (px - los) / YL < AI_DEEP.shortYd ? AI_DEEP.shortPen * wxAiShort() * Math.min(1, (AI_DEEP.shortYd - (px - los) / YL) / AI_DEEP.shortYd) : 0) + ((px - los) / YL >= AI_DEEP.at && !short4 ? AI_DEEP.bonus * powK * wxAiDeep() * (clock - (qb.escapedAt ?? -9) < ESCAPE.time ? ESCAPE.deep : 1) : 0) + (aimUd || tut || r === rb ? 0 : (rm(r, 'ctc', 'contested') - 1) * CPU_OFF.star) + (aimUd || tut || !xfLit(r) ? 0 : CPU_OFF.xfTarget) + (aimUd || tut ? 0 : aiDepthBias((px - los) / YL, sep, hp0)) + (stopClk && toSideline({ y: py }) < AI_CLOCK.oobYd * YD ? AI_CLOCK.oobBonus : 0) + Math.random() * Math.max(0.2, 1.2 - 0.2 * e) * (aimUd || tut ? 1 : CPU_QB.noise / accQ);   // (a better offense reads it better; he likes his better wideouts and tight ends)
     const crossed = !aimUd && !tut && Math.abs(py - qb.y) > (CROSS_FIELD.from + 0.5 * CROSS_FIELD.span) * FW;
     if (!best || score > best.score) best = { px, py, sep, score, crowd, crossed };
     if (sep >= openMin && sep >= 0.9 * (1 - hp0) && crowd < 3 && (!bestOpen || score > bestOpen.score)) bestOpen = { px, py, sep, score, crowd, crossed };
@@ -2338,14 +2371,14 @@ function aiPocket() {
     ai.stepUp = Math.random() < Math.max(0.15, Math.min(0.95, CPU_QB.stepBase + CPU_QB.stepPer * rz(qb, 'acc')));
   }
   // good blocking and a pocket that has formed: he stays in it (no rollout, no tucking it) until it breaks down or somebody is on him
-  const solid = !hold && !tut && heat < AI_PAT.solidHeat * Math.max(0.6, 1 + AI_PAT.solidAwr * rz(qb, 'awr')) && inPocket() > 0 && !aiCollapsing() && !(qb.escapedAt != null && clock - qb.escapedAt < ESCAPE.time);
+  const solid = !hold && !tut && heat < AI_PAT.solidHeat * Math.max(0.6, 1 + AI_PAT.solidAwr * diffAwrZ(qb, rz(qb, 'awr'))) && inPocket() > 0 && !aiCollapsing() && !(qb.escapedAt != null && clock - qb.escapedAt < ESCAPE.time);
   if (ai.roll && !solid && !hold && !tut && !qb.action && qb.x < los + YD && clock < ai.throwAt + 1.2 && toSideline(qb) > CPU_QB.rollTo * YD) keys[qb.y < MID ? 'KeyW' : 'KeyS'] = true;   // (rolling out toward the nearer sideline, not past the line)
   if (ai.flush == null) ai.flush = Math.random() < Math.max(0.1, Math.min(0.9, AI_PAT.flushBase + AI_PAT.flushPer * (rz(qb, 'spd') + rz(qb, 'agi'))));   // (a fast, shifty QB leaves the pocket under pressure)
-  if (ai.flush && !hold && !tut && !qb.action && rusher && heat > AI_PAT.flushHeat * Math.max(0.5, 1 + AI_PAT.flushAwr * rz(qb, 'awr')) && qb.x < los + YD && toSideline(qb) > CPU_QB.rollTo * 0.5 * YD) { keys[rusher.y > qb.y ? 'KeyW' : 'KeyS'] = true; keys.KeyA = qb.x < los - 2 * YD; }   // (flushed out: away from the closest rusher, up toward the line, and he can still throw on the run)
+  if (ai.flush && !hold && !tut && !qb.action && rusher && heat > AI_PAT.flushHeat * Math.max(0.5, 1 + AI_PAT.flushAwr * diffAwrZ(qb, rz(qb, 'awr'))) && qb.x < los + YD && toSideline(qb) > CPU_QB.rollTo * 0.5 * YD) { keys[rusher.y > qb.y ? 'KeyW' : 'KeyS'] = true; keys.KeyA = qb.x < los - 2 * YD; }   // (flushed out: away from the closest rusher, up toward the line, and he can still throw on the run)
   // the line repels him: every rusher near pushes him the other way (a blocked one only up close), and with a clean pocket he climbs it
   const threats = hold ? [] : [...dl, ...back7.filter(d => d.blitz)];   // (a lineman on the ground is still in the way: he steps around him)
   let rx = 0, ry = 0;
-  const awK = Math.max(AI_POCKET.min, Math.min(AI_POCKET.max, 1 + AI_POCKET.per * rz(qb, 'awr')));   // (awareness: how early and how far he feels the rush)
+  const awK = Math.max(AI_POCKET.min, Math.min(AI_POCKET.max, 1 + AI_POCKET.per * diffAwrZ(qb, rz(qb, 'awr'))));   // (awareness: how early and how far he feels the rush)
   for (const r of threats) {
     const winning = r.engaged && r.shedAt < 50 && r.shedAt - clock < AI_POCKET.winT;   // (about to beat his block)
     if (r.engaged && !winning && awK < AI_POCKET.feelEng) continue;   // (a low-awareness QB only feels the free rushers and the ones breaking free)
@@ -2402,7 +2435,7 @@ function aiPocket() {
   // the yards rather than force one. He turns upfield but keeps reading until he reaches the line: a man who comes open on the way
   // still gets the ball (throwing on the run); a covered one doesn't
   if (!hold && !tut && !qb.action && scrOK && !solid && (ai.roll || ai.flush) && qb.x < los &&Math.abs(qb.y - MID) > ROLL_RUN.edge * YD && (!pick || pick.sep < ROLL_RUN.sep)) {
-    if (ai.rollRun == null) ai.rollRun = Math.random() < Math.max(ROLL_RUN.min, Math.min(ROLL_RUN.max, ROLL_RUN.base + ROLL_RUN.per * (rz(qb, 'spd') + rz(qb, 'acc') + rz(qb, 'awr')) / 3));
+    if (ai.rollRun == null) ai.rollRun = Math.random() < Math.max(ROLL_RUN.min, Math.min(ROLL_RUN.max, ROLL_RUN.base + ROLL_RUN.per * (rz(qb, 'spd') + rz(qb, 'acc') + diffAwrZ(qb, rz(qb, 'awr'))) / 3));
     if (ai.rollRun && (ai.runCommit || clock > ai.throwAt + ROLL_RUN.wait || heat > 0.5)) {   // (pressure on him: he goes now)
       ai.runCommit = true; keys.KeyA = true; keys.KeyD = false;
       if (toSideline(qb) < ROLL_RUN.room * YD) { keys.KeyW = qb.y > MID; keys.KeyS = qb.y < MID; } else keys.KeyW = keys.KeyS = false;   // (straight upfield; near the sideline he bends back in)
@@ -2776,8 +2809,13 @@ function update(dt) {
   if (dt <= 0) return;
   DIFF_FRAME++;   // (a new game step: diffLvl's kept row is rebuilt)
   if (tut && tut.defAsk) return;   // (the tutorial's "play defense or sim it?" card: nothing moves until you pick)
+  if (wxDelayUp()) return;   // (the lightning delay card: everything waits)
   clock += dt;
+  if (ANN_S.cur) annTick();   // (the announcers' queue: real time)
+  if (game && game.penQ) penTick();   // (v0.68 a flag waiting for its accept / decline)
+  if (revWait) revTick();   // (v0.68 a booth review waiting for the play to end)
   if (SL.on) slTick(dt);   // (sideline people: their clock; hides the chain crew for kicks)
+  if (REF.force) flagForceTick();   // (v0.68 TEST ONLY: a forced penalty happens on this play)
   showTick();   // (v0.51: a showboating carrier: looks, finishes, when it ends)
   injKneelTick();   // (an injury timeout's kneel, then the clap: 07)
   wxTick(dt);
@@ -2922,6 +2960,8 @@ function update(dt) {
   ball.tucked = false;
   ball.snapNose = null;
   const snapOn = snapBall();   // (the snap: in the center's hand, then on its way back; also during a pitch play's wait, when nobody is the holder yet)
+  if (wxSnapWas && !snapOn && shotgun && (state === 'drop' || state === 'pocket')) wxBobbleNote(qb, true);   // (thunderstorm: a wet shotgun snap now and then)
+  wxSnapWas = snapOn;
   exchPose();   // (handoff / pitch / play-action looks for this frame)
   if (holder && state !== 'kick' && state !== 'kickoff' && state !== 'punt') {
     const a = holder.action;
@@ -3352,6 +3392,7 @@ function updateCamera(dt) {
   // the pan and the zoom ride a critically damped spring (they were a plain ease toward the target: whenever the target switched, at the snap, the throw, the catch,
   // a turnover, the whistle, the camera lurched off at full speed that very frame). The spring keeps its speed, so every switch is eased into as well as out of.
   const wp = CAM.smooth * tc * (slowKO ? CAM.koPan : puntCam ? CAM.puntPan : slowOther || CAM.pan), wz = CAM.smooth * tc * (slowKO ? CAM.koZoom : puntCam ? CAM.puntZoom : slowOther || CAM.zoomEase);
+  if (camJump && !CAM.v2) { camJump = false; camX = pcx; camY = pcy; if (wantZ > 0 && isFinite(wantZ)) zoom = wantZ; camS.x = null; }   // (the try's set-up: straight there)
   if (camS.x !== camX || camS.y !== camY || camS.z !== zoom) camS.vx = camS.vy = camS.vz = 0;   // (a replay / a new game placed the camera itself: from rest)
   const capV = CAM.maxPan * tc;   // (a long trip, e.g. from the extra point out to midfield, pans at a steady speed instead of one lunge)
   if (CAM.v2) { passPull = 1; return cam2Apply(dt, cx, cy, wantZ, wp, wz, capV, dn ? 'dead' : scorer ? 'td' : state, null); }   // (v2: these shots keep today's framing, only the smoothing is new)
@@ -3544,7 +3585,9 @@ function cam2Shot(dt, dn, rn, pickCam) {
   return true;
 }
 // the v2 smoothing for every live shot: timed target blend between shots, zoom dead band, the spring, then pan tied to zoom (the subject never leaves the frame)
+let camJump = false;   // one-shot: the next camera update starts ON its shot (no pan): the try after a touchdown (proceed's patNext), whatever the replay / TD hold left the camera on
 function cam2Apply(dt, cx, cy, want, wp, wz, capV, kind, info) {
+  if (camJump) { camJump = false; if (isFinite(cx) && isFinite(cy)) { camX = cx; camY = cy; } if (want > 0 && isFinite(want)) zoom = want; camS.x = null; }
   if (!(zoom > 0 && isFinite(zoom))) { zoom = want > 0 && isFinite(want) ? want : 0.5; camS.z = null; }   // (never stuck on a broken zoom)
   if (!isFinite(camX) || !isFinite(camY)) { camX = isFinite(cx) ? cx : 0; camY = isFinite(cy) ? cy : MID; camS.x = null; }
   const C = C2, fresh = C.zt == null || camS.x !== camX || camS.y !== camY || camS.z !== zoom;

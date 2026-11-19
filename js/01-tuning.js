@@ -31,6 +31,10 @@ const RENDER_K = 1.1;   // (phones: was 0.75; the crowd has its own canvases and
 // v0.60 phones in GRAPHICS: AUTO (in a game, not in performance mode): the render scale follows the phone instead of a fixed RENDER_K. Starts at the screen's own
 // density (up to max), steps down `step` when the smoothed paint time stays over budget ms for down s, back up after up s under upMs; only changed at a dead ball
 // (pre / done: a resize clears the canvas and rebuilds the field cache). min = the floor. (14: dynResTick / dynResOn, used by fitScreen)
+// v0.62 phones: the in-game frame cap (paint only; the game still steps on real dt). AUTO = 60 until frames stay over slowMs for holdS s, then 30 for the
+// rest of that game (back to 60 only between games); SETTINGS.fps '30' / '60' pins it. cold = the cold open on a phone runs at 30 from its first frame.
+// menuTouch = MENU_PACE.fps on a phone. slack = share of a refresh a paint may come early (vsync jitter)
+const FPS_CAP = { on: true, hi: 60, lo: 30, slowMs: 19, holdS: 2, menuTouch: 30, cold: true, slack: 0.5 };
 const DYN_RES = { on: true, min: 0.75, max: 2, step: 0.15, budget: 13, upMs: 8, down: 2, up: 6 };
 // v0.55 menu pacing (frame() in 14): menus paint at most fps, idleFps after idleMs with no input, and not at all while nothing on them can change
 // (a slow beatMs repaint covers anything that changes without a clock or input: a late image, a cloud sync note)
@@ -142,6 +146,17 @@ const FIGURE = { grow: 1.2, tall: 1.1, torso: 6, pads: 9.5, trim: 6.5 };
 // side view of the torso in play (looks only): half-widths when he's seen from the side (tv = 1), lerped from the front ones; the number squashes away by tv = numAt. on: false = the old front-on figure
 FIGURE.side = { on: true, torso: 4.2, pads: 6.8, trim: 4.6, numAt: 0.55, legs: 0.4 };   // legs = hip spread side-on (x the front one)
 const figK = p => ((p && p.size) || 1) * FIGURE.grow;                 // his sprite scale against the old figure
+// build (looks only, never a collider / reach / speed): heavy FOR HIS HEIGHT = wide, light for his height = narrow, every position, front and side view.
+// From his BMI (wt lb / ht in, x 703): mid = an even build, span = BMI points to the extreme; min / max = jersey + pad width there; body = share of it on the whole sprite's
+// width (arms, legs, helmet ride it a little), shadow = share on the shadow. No height / weight: big men get bulk (old TE / lineman look), the rest 1. on: false = the old look
+FIGURE.build = { on: true, mid: 30.5, span: 7, min: 0.74, max: 1.5, body: 0.4, shadow: 0.8 };
+function figBuild(p) {
+  const B = FIGURE.build;
+  if (!B.on || !p) return p && p.big ? 1 + 0.18 * bulkOf(p) / B.body : 1;
+  if (!(p.wt > 0 && p.ht > 0)) return p.big ? 1 + (B.max - 1) * 0.6 * bulkOf(p) : 1;
+  const z = Math.max(-1, Math.min(1, (703 * p.wt / (p.ht * p.ht) - B.mid) / B.span));
+  return z > 0 ? 1 + z * (B.max - 1) : 1 + z * (1 - B.min);
+}
 // sideline people (07-drawing, `// --- sideline people`): chain crew + down judge, both benches (roster players, coaches, trainers, staff), cameramen, cheerleaders,
 // props (`// --- sideline props`) and injury exits (INJURY_EXIT below). Looks only, never part of a play. d* = yd past the sideline
 // a body stands (same y convention as a player's; raised if needed so every collider's inner edge is `gap` yd past the sideline feet); crewSide 0 = top, 1 = bottom
@@ -675,7 +690,8 @@ const STIFF_LOOK = {
 };
 // ball arm: a carrier tucks it in his outside arm (the one nearest the near sideline); he only switches once he's `hyst` yd past the middle, and a
 // switch takes `swap` s (ball in both hands: no stiff arm with it). The CPU returner's quick stiff arm lasts ret [min, max] s
-const BALL_ARM = { hyst: 3, swap: 0.25, ret: [0, 1.4], retTry: 0.1 };   // retTry = s between the CPU returner's looks for a man to stiff-arm
+const BALL_ARM = { hyst: 3, swap: 0.25, ret: [0, 1.4], retTry: 0.1 };
+const STIFF_AIM = { hyst: 0.5, hold: 0.3 };   // stiff arm held with nobody on it: the arm points at the nearest man; hyst = yd across he must be past to swap sides, hold = s between swaps (no flicker between two men)   // retTry = s between the CPU returner's looks for a man to stiff-arm
 // a stiff arm or truck that wins: for time seconds the runner gets speed x top speed and breaks tackles x break
 const POWER_BOOST = { time: 1.3, speed: 1.08, break: 1.35 };
 // protect the ball (hold G): both arms wrapped round it, slow x top speed, fumble x fumble chance, no moves
@@ -994,6 +1010,11 @@ const SCOUT = {
   under: { rounds: 2, find: 0.12, findStar: 0.1, max: 4 },   // UNDERRATED = really worth a pick this many rounds earlier than the board has him; most of them one scout reports
   focus: 0.25,                                   // + to both odds for his assigned group / his named prospects
   wrong: 0.5, wrongStar: 0.1,                    // chance of one false alarm a draft = wrong - wrongStar x stars
+  combine1: 0.9,                                 // Combine Guy I: x his error (exact on the physical numbers)
+  bustRounds: 3, bustGap: 4,                     // Bust Detector: looks at prospects on the board's first rounds whose real potential is this many points under the board's guess
+  // v0.64 prospect scouting (draft board SCOUT button): a scout sends himself to a prospect for a week, then files a report
+  slots: [1, 2, 3],                              // prospects a week a scout can look at, by stars (1-2 / 2.5-3.5 / 4+); + Extra Eyes
+  repErr: 0.25, repStar: 0.08,                   // a report cuts his potential error to this share (x (1 - repStar a star above 1))
 };
 // Draft board (your franchise; `// --- the draft board` in 09-season): next spring's class exists from week 1 (scoutClass / LEAGUE.nextClass, one class
 // ahead only). No college games: every prospect gets one form roll a week (boardWeek, from leagueWeek). Kept per prospect: p.bd = { pv (perceived score),
@@ -1055,7 +1076,152 @@ const POACH = {
   pMin: 0.03, pMax: 0.95,
   lockWeeks: 6, yearWeeks: 30,                   // a no: he won't hear another offer for this many weeks (yearWeeks = the week count's length of a year)
   years: 2,                                      // the contract he signs
+  scoutK: 0.25,                                  // scouting him first (his dossier) = this share of the least credits, at least 1 (1-2 credits)
 };
+// --- staff traits (v0.64): ONE table for coordinators ('co' = either, 'oc', 'dc'), scouts ('sc') and trainers ('tr'). The stored shape stays
+// c.trait / c.tlvl / c.trait2 (the trait's name). Levels: a coordinator's tlvl (2 at 3 stars, 3 at 4 stars, buttons on his page); scouts and trainers
+// level with their stars (STAFF_TL). A second trait (trait2) counts as level 1. `traitOn(c, id)` = 0-3; `stT(id, side)` / `stV(id, side)` = the
+// level / the level's number `v` for YOUR franchise's staff (side 'off' / 'def' / null = any). Every hook reads stV / stT with a named number here.
+const STAFF_TRAITS = [
+  { id: "Players' Coach", role: 'co', lv: ['+5% player mood', '+8% player mood', 'his side asks a little less to extend'], v: [5, 8, 8], ask: 0.05 },
+  { id: 'Fire Starter', role: 'co', lv: ['mood boost when hired', '+ a small boost after a loss', '+ at halftime when trailing'], hire: 6, v: [0, 2, 2], half: 3 },
+  { id: 'Peacekeeper', role: 'co', lv: ["sour moods don't spread", '+ staff chemistry', "a sour player's own mood recovers faster"], v: [0.5, 0.5, 0.5], chem: 2, back: 1.6 },
+  { id: 'Fresh Legs', role: 'co', lv: ['+5% condition a game', '+8% condition a game', 'less 4th-quarter fatigue on his side'], v: [0.05, 0.08, 0.08], q4: 0.75 },
+  { id: 'Silver Lining', role: 'co', lv: ["injuries don't sink the room", 'morale drop after a loss halved', 'none after a close loss'], v: [1, 0.5, 0.5], close: 7 },
+  { id: 'Extra Eyes', role: 'co', lv: ['+3 scoutable players', '+1 prospect scout slot a week', '+2 prospect scout slots a week'], v: [0, 1, 2] },
+  { id: 'Talent Spotter', role: 'co', lv: ['+0.5 potential', 'young players gain XP faster', '+1 potential for one rookie a year'], v: [0.5, 0.5, 0.5], xp: 1.15, young: 24 },
+  { id: 'Mad Scientist', role: 'oc', lv: ['+1 formation in his binder', '+1 pencil', '+1 more of each'], forms: [1, 1, 2], pens: [0, 1, 2] },
+  { id: 'Script Writer', role: 'oc', lv: ['first 3 plays get a fit bonus', 'first 5 plays', '+ first drive after halftime'], v: [3, 5, 5], fit: 1.25 },
+  { id: 'Tempo Freak', role: 'oc', lv: ['faster snaps', 'their defense tires faster', 'no defensive subs mid-drive'], v: [0.8, 0.8, 0.8], wear: 1.25 },
+  { id: 'Quarterback Whisperer', role: 'oc', lv: ['QB XP +10%', '+1 audible', '+1 hot route'], v: [1.1, 1.1, 1.1] },
+  { id: 'Red Zone Artist', role: 'oc', lv: ['fit bonus inside the 10', 'inside the 20', 'a bigger one inside the 5'], v: [10, 20, 20], fit: 1.2, fit5: 1.4 },
+  { id: 'Feed the Hot Hand', role: 'oc', lv: ['after 3 catches his routes are called more', 'after 2', '+ a back after 3 good runs'], v: [3, 2, 2], runs: 3, good: 5, k: 2.5 },
+  { id: 'Two-Minute Professor', role: 'oc', lv: ['sharper formations in the hurry-up', 'sharper calls too', 'one free clock stop a half'], v: [1, 1, 1], fit: 1.2, secs: 120 },
+  { id: 'Send Everybody', role: 'dc', lv: ['+1 blitz call in his binder', 'blitzers get home faster', 'less big-play risk when it misses'], v: [0, 1.08, 1.08], big: 0.7 },
+  { id: 'Disguise Artist', role: 'dc', lv: ['CPU QBs read coverage worse', 'much worse', 'they sometimes throw into it'], v: [0.12, 0.25, 0.25], into: 0.08 },
+  { id: "Bend Don't Break", role: 'dc', lv: ['tighter coverage inside the 20', 'inside the 30', 'a boost on goal-line stands'], v: [20, 30, 30], cov: 0.9, gl: 0.8 },
+  { id: 'Takeaway Culture', role: 'dc', lv: ['more punch-out tries', 'more tips become picks', 'longer returns'], v: [1.3, 1.3, 1.3], tips: 1.3, ret: 1.1 },
+  { id: 'Third Down Specialist', role: 'dc', lv: ['better calls on 3rd and long', 'every 3rd down', '4th down too'], v: [7, 1, 1], k: 0.88 },
+  { id: 'Gem Finder', role: 'sc', lv: ['sharper on rounds 5-7', 'rounds 3-7', 'marks one hidden gem a year'], v: [5, 3, 3], err: 0.6 },
+  { id: 'Bust Detector', role: 'sc', lv: ['warns off 1 prospect a year', '2 a year', 'says why'], v: [1, 2, 2] },
+  { id: 'Combine Guy', role: 'sc', lv: ['exact speed + strength', 'steadier other grades', 'exact on every physical'], v: [0, 0.8, 0.6] },
+  { id: 'Bone Setter', role: 'tr', lv: ['injuries 1 week shorter', 'lower playing-hurt risk', 'fewer season-enders'], v: [1, 1, 1], hurt: 0.8, season: 0.6 },
+  { id: 'Ice Bath', role: 'tr', lv: ['+1 recovery slot', 'stronger slots', '+1 more'], v: [1, 1, 2], k: 1.15 },
+  { id: 'Fourth Quarter Legs', role: 'tr', lv: ['less 4th-quarter fatigue', 'overtime too', 'bigger legs bump on timeouts'], v: [0.8, 0.8, 0.8], to: 1.5 },
+];
+const STAFF_TL = [3, 4];                          // a scout / trainer's trait level: 2 from this many stars, 3 from this many
+const TRAIT_OLD = { Likeable: "Players' Coach", Motivator: 'Fire Starter', Negotiator: 'Peacekeeper', Physio: 'Fresh Legs', Positive: 'Silver Lining', Scout: 'Extra Eyes' };   // coordinator renames (the trainer's Physio keeps its name)
+const TRAIT_ASK = ['Halftime Genius', 'Mind Reader', 'Eraser', 'Film Junkie'];   // waiting on Brandon: never in a pool until built
+const STAFF_QUIRKS = {   // c.quirk: no levels, some staff only (QUIRK_ODDS of a generated man)
+  Stubborn: { text: 'fewer pencils; his signature call stays', pens: -1, role: 'co' },
+  Climber: { text: 'gets head coach calls sooner', poach: 1.6 },
+  Loyal: { text: 'hard to poach, cheaper to extend', poach: 0.35, ask: 0.85 },
+  Gambler: { text: 'goes for it / blitzes more in sims', go: 1.5, role: 'co' },
+};
+const QUIRK_ODDS = 0.3;
+// --- binders (v0.64): your coordinators' playbooks. Everything lives ON the coordinator (c.book), so a new man starts clean.
+// c.book = { m: { key: 1 circled | -1 crossed }, r: { 'form|call|slot': route }, j: { 'cov|slot': job }, memo: { form, shell, lean, blitz, press, orig } }
+// offense keys = 'FORM|call' (calls = LIVE_CALLS good / bad combos and run schemes); defense keys = the coverage name.
+const BOOK = {
+  forms: 4,                                      // formations in an OC's binder (his top ones for his style; Mad Scientist adds)
+  offBook: 0.15,                                 // x a formation's weight in your live picks when it is not in his binder
+  pens: { base: 0, perStar: 1, perHC: 0.5 },     // pencils (route / job edits) = round(base + perStar x his stars + perHC x your head coach stars)
+  marks: { base: 2, perStar: 1, perHC: 1 },      // circles (and, separately, cross-outs) = round(base + perStar x stars + perHC x HC stars)
+  perCall: 1, perCall5: 2,                       // route / job edits per call (a 5-star coordinator: perCall5)
+  moreK: 2.2,                                    // x a circled call's weight
+  simK: 5,                                       // most circles counted toward the sims' small nudge (1% each)
+  jobs: ['DEEP', 'MID', 'FLAT', 'MAN', 'BLITZ'], // the back seven's jobs, in the cycle order
+  memoStars: [3, 5],                             // your head coach stars for the memo's favourite formation / shell, and for the lean
+};
+const TRAIT_BY = Object.fromEntries(STAFF_TRAITS.map(t => [t.id, t]));
+const traitMig = (c, trainer) => { if (!c) return c; if (!trainer) { if (TRAIT_OLD[c.trait]) c.trait = TRAIT_OLD[c.trait]; if (TRAIT_OLD[c.trait2]) c.trait2 = TRAIT_OLD[c.trait2]; } if (c.trait2 && c.trait2 === c.trait) c.trait2 = null; return c; };
+const traitPool = role => STAFF_TRAITS.filter(t => !TRAIT_ASK.includes(t.id) && (t.role === role || (t.role === 'co' && (role === 'oc' || role === 'dc')))).map(t => t.id);
+function traitOn(c, id) {   // his level in a trait, 0-3
+  if (!c) return 0;
+  const coord = /COORDINATOR/.test(c.role || '') || c.role === 'oc' || c.role === 'dc', base = coord ? Math.min(3, c.tlvl || 1) : 1 + (c.stars >= STAFF_TL[0]) + (c.stars >= STAFF_TL[1]);
+  return Math.max(c.trait === id ? base : 0, c.trait2 === id ? 1 : 0);
+}
+const traitText = (id, lv) => { const t = TRAIT_BY[id]; return t ? t.lv.slice(0, Math.max(1, lv)).join(' / ') : ''; };
+function myStaffList(side) {   // your franchise's staff (side: 'off' / 'def' / null = all)
+  if (typeof xpcOn !== 'function' || !xpcOn()) return [];
+  const s = STAFF[meK()] || {}, tr = career.prac && career.prac.tr || {}, sc = s.sc || {}, out = [];   // (meK: your team even while the sides are flipped)
+  if (side !== 'def') out.push(s.oc, tr.off, sc.off); if (side !== 'off') out.push(s.dc, tr.def, sc.def);
+  return out.filter(Boolean);
+}
+const stT = (id, side) => myStaffList(side).reduce((m, c) => Math.max(m, traitOn(c, id)), 0);
+const stV = (id, side, key = 'v') => { const l = stT(id, side), t = TRAIT_BY[id]; return l && t[key] ? (Array.isArray(t[key]) ? t[key][l - 1] : t[key]) : 0; };
+const quirkOf = (c, q) => !!c && c.quirk === q;
+const yourDefLive = () => typeof aiOff === 'function' && aiOff() && !exhibition && !tut && xpcOn();   // (you are playing their drive)
+function defTraitK(p, kind) {   // x on a live play's odds from your DC's traits; p = the defender (or null for team-wide), only while you play defense
+  if (!yourDefLive() || (p && p.team !== 'def')) return 1;
+  const T = TRAIT_BY, yd = (los || 0) / YL;   // (flipped: their offense drives toward FIELD too, so yards to go = FIELD - los)
+  const toGo = (FIELD - los) / YL;
+  if (kind === 'punch') return stT('Takeaway Culture', 'def') ? T['Takeaway Culture'].v[0] : 1;
+  if (kind === 'pick') return stT('Takeaway Culture', 'def') >= 2 ? T['Takeaway Culture'].tips : 1;
+  if (kind === 'ret') return stT('Takeaway Culture', 'def') >= 3 ? T['Takeaway Culture'].ret : 1;
+  if (kind === 'rush') return stV('Send Everybody', 'def') || 1;
+  if (kind === 'cov') {   // x their catch odds: Bend Don't Break inside the 20 / 30, goal-line stands; Third Down Specialist on 3rd (and long) / 4th
+    let k = 1; const b = stT("Bend Don't Break", 'def');
+    if (b && toGo <= T["Bend Don't Break"].v[b - 1]) k *= toGo <= 5 && b >= 3 ? T["Bend Don't Break"].gl : T["Bend Don't Break"].cov;
+    if (thirdDownOn()) k *= T['Third Down Specialist'].k;
+    return k;
+  }
+  if (kind === 'read') return 1 + stV('Disguise Artist', 'def');   // x the CPU QB's read error
+  return 1;
+}
+function thirdDownOn() {   // Third Down Specialist: this down counts (3rd and long / every 3rd / 4th too)
+  const L = stT('Third Down Specialist', 'def'); if (!L || typeof down === 'undefined') return false;
+  const togo = (lineToGain - los) / YL;
+  return (down === 3 && (L >= 2 || togo >= TRAIT_BY['Third Down Specialist'].v[0])) || (down === 4 && L >= 3);
+}
+// Referees (v0.68): penalties (SETTINGS.penalties, gate flagsOn()) and booth review / challenges (SETTINGS.booth, gate boothOn()). Per save; a scrimmage /
+// online game reads its own exPenalties / exBooth (default off; online = the host's). Off in the tutorial, the cold open, 1v1 and test mode (unless REF.force).
+// Odds below are x diffX('flags') x the penalty's own slider (flHold / flDpi / flOpi / flRough / flOff / flFalse, GAME RULES sliders in DIFF_SLIDERS).
+const REF = {
+  force: null,   // TEST ONLY: 'hold' | 'pphold' | 'dpi' | 'opi' | 'rough' | 'false' | 'spot' | 'spotGoal' | 'knock' = make it happen on the next chance (null = off)
+  miss: 0.02,    // a real foul that no official flags (very rare)
+  ghost: 0.0015, // a flag with no foul (DPI / OPI / holding only, and only where there was contact) per contact
+  pre: { fs: 0.012, off: 0.008, road: 1.5, jump: 0.6, yds: 5 },   // at the snap (a dice roll): false start / offside odds per snap, road offense x (1 + road x stadium pulse), YL the man lurches across, yards
+  // booth review (boothOn): a bad spot only near the sticks (near YL) or a goal-line score with a defender within tdNear yd; never on 4th down
+  spot: { near: 0.8, odds: 0.08, blindK: 3, over: [0.1, 0.45], max: 1.1, tdNear: 1.6, tdOdds: 0.04, tdShort: 0.4, look: 0.12, tdLook: 0.35, tdMargin: 0.6, pylon: 1.2 },   // v0.68 a touchdown may only be looked at / ruled short when the ball is within tdMargin YL of the goal line, a defender within tdNear yd, and he dives / falls / reaches, is within pylon yd of a sideline, or caught it there (refTdClose)   // odds x blindK when the nearest official is down / screened; over = YL it lands past the line the wrong way; max = biggest error YL; tdShort = YL short of the goal line; look / tdLook = a right call the booth looks at anyway (STANDS)
+  // v0.68 accept / decline (penChoose, `// --- penalty choice` in 05): s of the referee's call before the choice (announce at annAt, the foul's signal at sigAt); s the CPU takes;
+  // expected points = ep0 + epK x yards from the offense's goal, less downK[down-1] x (0.5 + to go / 10); 4th down = best of a field goal (fgV from fgYd on), a punt (punt yd)
+  // or going for it (togo <= goYd, costs goCost); safety = -2 - kickV; late in a half (lateS NFL s via lateS()) the leading side wants the clock running: clock points
+  choose: { callS: 4.2, annAt: 0.6, sigAt: 2.6, cpuS: 1.1, ep0: -0.6, epK: 0.068, downK: [0, 0.35, 0.85], fgYd: 62, fgV: 2.3, punt: 40, goYd: 1.5, goCost: 0.9, kickV: 0.6, lateS: 120, clock: 1.2 },
+  boothCatch: 0.65,  // share of bad calls the booth reverses by itself; the rest are what challenges are for
+  chal: 2,            // challenges a game (a lost one also costs a timeout)
+  rev: { still: 1.6, stamp: 1.8,   // s: the still frame when replays are off; the stamp
+    wait: 1.2, slate: 1.8, look: 1.3, slowK: 0.3, rockSpan: 0.6, rockK: 0.35, rockN: 2, hold: 0.45, push: 2.2, base: 1.15, zoomE: 2.2, border: 6 },   // v0.68 booth mode: s after the whistle it may start; slate s; the last `look` s of the tape played x slowK, then rockN rocks over rockSpan s at rockK x, held `hold` s at each end; zoom x push while looking (base before), eased zoomE /s; border px
+  pphold: { grab: 0.16, slow: 0.45, flag: 0.5, yds: 10 },   // pass pro: a beaten blocker grabs (x 1.4 - his blocking 0-1), the rusher slowed like a run grab; flag odds on a grab; yards
+  dpi: { r: 0.8, early: 0.3, v: 1.2, odds: 0.35, watch: 0.4 },   // contact = a defender within r yd of the target, closing at v yd/s+, with more than `early` s before the ball gets there; flag odds (x watch when he is looking at the ball)
+  opi: { r: 0.9, window: 0.35, v: 1.6, odds: 0.25, yds: 10 },     // the target closing on a defender within r yd in the last `window` s; flag odds; yards (replay the down)
+  rough: { r: 1.2, late: 0.35, max: 1.4, v: 3, hit: 0.3, flag: 0.85, yds: 15 },   // a rusher reaching the QB `late` s past PRESSURE_THROW.window (until max s after the throw) at v yd/s+: hit odds (else he pulls up), flag odds on the hit
+  // the crew on the field (`// --- officials`, 07; looks only, always on): home = [role, yd line, yd off the middle] at setup; distances: along the field YL, across YD
+  crew: { home: [['R', 40, 5], ['U', 54, -1], ['L', 50, 0], ['B', 70, 3]],
+    think: 0.25, jog: 4.2, run: 6.6,          // s between each man's looks; yd/s jogging between plays / running in a live play
+    R: { back: 13, side: 5 }, U: { deep: 6 }, B: { deep: 20, lead: 11 }, L: { out: 0.9, lag: 2 },   // pre-snap / live spots (R behind the backfield to the QB's arm side, U over the ball, B deep, L on the far sideline)
+    ko: { rBack: 5, rIn: 4, pylon: 0.6, pBack: 2, pSide: 5, uIn: 2, deep: 5, wide: 6 },   // kicks (refKickSpot): referee YL behind the kicker / YD in from his sideline, deep men YD in from the pylons; punts: referee YL behind / YD beside the punter, umpire YD in on the line, deep man YL past / YD wide of the returner
+    gl: { yd: 10, live: 6 },                   // goal line: los within yd YL = line judge on the goal line, deep man on the end line; live ball within `live` YL = the line judge holds the goal line
+    run2: { yd: 6, rTrail: 7, uDeep: 5 },      // a run still within yd YL of the line: referee YL behind the back, umpire YL off the ball over the middle
+    sellYd: 1.5,                               // yd from a sideline an incompletion counts as a close call the sideline man sells
+    sideK: 0.3,                               // share of the field width off the middle that counts as "at the sideline" (pylon touchdowns, close sideline catches)
+    snapTp: 1.2,                              // yd: an official further than this from his pre-snap spot at the snap is put on it (refSnap)
+    gap: 2.6, camR: 3, reAim: 1.6, minMove: 1.1,   // yd kept from any player, yd off the camera's centre, yd a new spot must differ to re-aim, smallest walk
+    hitR: 0.75, knockV: 6.2, cone: 0.7, knock: 0.12, bumpV: 2.6,   // collider yd; a knockdown = player faster than knockV yd/s heading at him (cos >= cone), then a knock roll (else a stagger bump); a bump above bumpV
+    dodge: 0.6, dodgeR: 3.4, dodgeV: 3.5,      // odds he gets out of the way (once a play), when a man at dodgeV yd/s+ is within dodgeR yd and closing
+    help: 30, dust: 0.25,                      // yd an official walks over to help a knocked-down one; s after the pull-up he dusts off
+    relay: { toss: 0.55, gap: 0.45, near: 3,   // ball relay: s in the air, s between catch and next throw, yd from the hash = he walks it there himself
+      hand: 1.2, shovel: 6, pTime: 0.45, pDelay: 0.5, upWait: 1.4, far: 25, boyToss: 0.8, boyMax: 18 },   // v0.68 first leg: the man with the ball hands it over within hand yd, shovels it underhand within shovel yd (pTime s in the air, pDelay s after the whistle); an incompletion past far YL = a ball boy tosses a fresh one in (boyToss s; boyMax yd off his sideline he throws from)
+    sig: 0.35, flagFly: 0.5, flagAt: 0.22,     // s after the whistle the signals start; a flag's flight s; s into the throw it leaves the hand
+    stripes: { n: 4, w: 0.75, nFar: 2, wFar: 1.1 },   // an official's vertical shirt stripes: count / width (x sprite unit) close up, and far off (lod 0-1)
+    build: { tall: [0.93, 1.08], wide: [0, 0.9] } },  // each official's seeded height (x his scale) and build width (P.bw 0 lean .. 1 heavy)
+};
+const flagsTest = () => !!REF.force;
+const refGate = () => !(typeof tut !== 'undefined' && tut) && !(typeof CO !== 'undefined' && CO) && !(typeof oo !== 'undefined' && oo) &&!(exhibition && exhibition.test && !flagsTest()) && !(typeof LG_SAND !== 'undefined' && LG_SAND);
+const refSet = k => exhibition ? SETTINGS['ex' + k[0].toUpperCase() + k.slice(1)] === true : SETTINGS[k] !== false;   // ('penalties' / 'booth': franchise default on, scrimmage / online default off)
+function flagsOn() { return refGate() && (refSet('penalties') || REF.force != null); }
+const flagK = key => flagsOn() ? diffX('flags') * diffX(key) : 0;   // (a penalty's odds multiplier: 0 with penalties off)
+function boothOn() { return refGate() && (refSet('booth') || REF.force === 'spot' || REF.force === 'spotGoal'); }
 // Contracts (SETTINGS.contracts, gate contractsOn(); code: `// --- contracts` in 11-cards-trades): your head coach deal (credits, paid at the
 // season's end), staff extensions / poach alerts, player extensions. Off = AUTO (the old behaviour, the HC deal renews by itself).
 const CONTRACT = {
@@ -1108,6 +1274,16 @@ const TOP_BAR_MOBILE_K = 1;   // the top bar's height x TOP_BAR_FULL on a phone 
 const TOP_BAR_FULL = 64, TOP_BAR_K = IS_MOBILE ? TOP_BAR_MOBILE_K : 0.7, TOP_BAR = Math.round(TOP_BAR_FULL * TOP_BAR_K), HUD_K = TOP_BAR / TOP_BAR_FULL, TOP_PAD = 4, FIELD_BOT = 0;
 const BOT_BAR = (() => { const q = new URLSearchParams(location.search).get('touch'); return q === '1' || (q !== '0' && (/Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent) || (matchMedia('(pointer: coarse)').matches && matchMedia('(hover: none)').matches))) ? 46 : 40; })();   // (phones: was 60, a slimmer bar)
 const BB = BOT_BAR / 40;
+// ANNOUNCERS (v0.68, `// --- announcers` in 02; lines ANN_LINES in 00): the cold open's two booth voices call real games, top left under the pause icon.
+// A = play-by-play, B = colour. One line on screen at a time, on REAL time (slow motion never freezes a line).
+// cps = letters written a second; gap = s after a line is written before the next queued one starts; hold = s a last line stays up once written; fade = s to fade;
+// holdMax = most a held line ("going deep...") waits for its result; maxQ = lines that may wait; recent = last lines said this game never picked again;
+// colorOdds = chance B answers, by priority (always at crazy+); crazy = priority of the crazy plays (big shaky text);
+// pad = px under the top bar, touchY = extra px down on touch (clear of the stick), card = face card px, face = face radius px, size / bigSize = text px, maxW = widest bubble
+const ANN = { cps: 30, gap: 0.55, hold: 2.1, fade: 0.45, holdMax: 3.2, maxQ: 2, recent: 24, minLines: 12, slide: 0.32, pop: 0.22,
+  colorOdds: { 0: 0.15, 1: 0.3, 2: 0.55, 3: 0.75 }, crazy: 5, longTd: 50, deepYd: 25,
+  pad: 8, touchY: 34, card: 64, face: 21, size: 17, bigSize: 22, maxW: 300, shake: 1.6,
+  reelEnd: 1.9, reelGap: 0.9 };   // halftime reel: B's comment comes reelEnd s before a clip's last frame, never sooner than reelGap s after its last moment
 
 // Routes, in yards: [downfield, toward the middle]. stop = sits down at the end
 // (hitches, curls, sticks and comebacks; everything else keeps running after its last break).
@@ -1458,15 +1634,20 @@ const pickCoverage = (not) => {
   let c;
   const short = shortToGo();
   // (Play-Calling Guide part 7) the situation's call, used with the same follow odds as the offense's sheet (by the DC's stars)
-  if (!tut && MATCH.opp && Math.random() < sheetFollow(dcAdapt())) {
-    const w = defSheet(), names = Object.keys(w).filter(n => n !== not && COVERAGES.includes(n));
+  const td = yourDefLive() && thirdDownOn();   // (v0.64 Third Down Specialist: your DC always goes by the sheet on his downs)
+  if (!tut && MATCH.opp && (td || Math.random() < sheetFollow(dcAdapt()))) {
+    const w = defSheet(), names = Object.keys(w).filter(n => n !== not && COVERAGES.includes(n) && bookCallK(n, 'def') > 0);
     const tot = names.reduce((s, n) => s + w[n], 0);
-    if (tot > 0) { let r = Math.random() * tot; for (const n of names) if ((r -= w[n]) < 0) return n; }
+    const bk = aiOff() ? 1 : diffX('blitz'), wt = n => w[n] * (BLITZ_COVERAGES.includes(n) ? bk : 1) * bookCallK(n, 'def');   // (CPU BLITZ FREQUENCY; your DC's binder circles / cross-outs)
+    const tot2 = names.reduce((s, n) => s + wt(n), 0);
+    if (tot2 > 0) { let r = Math.random() * tot2; for (const n of names) if ((r -= wt(n)) < 0) return n; }
   }
   if (T && T.c0 && Math.random() < TEND_CALL.cover0 && COVER_0 !== not) return COVER_0;
   const ad = dcAdapt();   // a sharper coordinator reads the repeated play and calls the scheme to stop it
   const rate = (T ? T.blitzCall : COVERAGE_ODDS.blitzRate) + (short ? SHORT_YARDAGE.blitz : 0) + (inRz ? REDZONE_D.blitz : 0) + ad * ADAPT.blitz * (runStack() * RUN_STREAK.blitz + qbHeat() * QB_RUN_STREAK.blitz + passHeat() * PASS_STREAK.blitz);
-  do c = Math.random() < rate ? pick(BLITZ_COVERAGES) : weighted(); while (c === not);
+  const rateD = rate * (aiOff() ? 1 : diffX('blitz'));   // (CPU BLITZ FREQUENCY)
+  let tries = 0;
+  do c = Math.random() < rateD ? pick(BLITZ_COVERAGES) : weighted(); while ((c === not || (bookCallK(c, 'def') <= 0 && tries < 12)) && ++tries < 40);   // (a crossed-out call is re-rolled; never an empty list)
   return c;
 };
 // --- coordinators: route calling and defensive logic ---
@@ -1610,11 +1791,23 @@ const A5 = {
   cov: { cover: 0.14, sell: 0.25, jam: 0.06, low: 0.4 },       // COVERAGE: staying on him / reading it, biting on double moves, a slightly stickier jam; low = share of the penalty a below-average rating keeps (poor cover men aren't helpless)
 };
 const AI_STEM = { open: 3.6, minYd: 1, awr: 0.12 };   // awr = how much each awareness step tightens it (a sharp QB waits for the break; a poor one throws in the stem a bit more)   // the computer's QB and a receiver still in his stem (before the first break, past minYd): only a throw when he's open x this much more than usual
+// difficulty: PLAYER / CPU AWARENESS scale how much the 5th attribute (AWARENESS / BALANCE / COVERAGE) pays off, never the rating: m > 1 = a good one helps more,
+// a poor one hurts less, plus flat x (m - 1) steps (so an average man moves too). The PLAYER's men read youAwr, the CPU's cpuAwr.
+const A5_DIFF = { attrs: { awr: 1, bal: 1, cov: 1 }, flat: 1 };
+// difficulty hooks' sizes (phase 3 sliders): rushMvSec = s a CPU rusher's shed comes sooner per +100% CPU PASS RUSH MOVES; retCov = cover speed x (PLAYER / CPU RETURNS)^-retCov
+const DIFF_HOOK = { rushMvSec: 1.5, retCov: 0.35 };
+function diffMineP(p) { try { return !!p && (p.team === 'off') !== aiOff(); } catch (e) { return !!p && p.team === 'off'; } }   // (one of the PLAYER's men on the field right now)
+const diffRetCov = c => { try { return Math.pow(diffX(diffMineP(c) ? 'youRet' : 'cpuRet'), -DIFF_HOOK.retCov); } catch (e) { return 1; } };   // (cover speed vs this returner)
+function diffAwrZ(p, z) {
+  let m = 1; try { m = diffX(((p && p.team === 'off') !== aiOff()) ? 'youAwr' : 'cpuAwr'); } catch (e) {}
+  return m === 1 ? z : (z >= 0 ? z * m : z / m) + (m - 1) * A5_DIFF.flat;
+}
 const balK = c => Math.max(0.6, Math.min(1.6, rm(c, 'bal', A5.rb.stumble)));   // (1 for anyone without BALANCE)
 const balMove = (c, k) => Math.max(0.7, Math.min(1.4, rm(c, 'bal', A5.rb[k])));
 const attr5 = (p, a, dflt) => p && p.at && p.at[a] != null ? p.at[a] : dflt;
 const qbAwr = () => attr5(qb, 'awr', 9) * moraleMulP(qb);   // (his read: a shaken QB sees the field worse; a fired-up one better)
-const audMax = () => { const b = Math.max(2, Math.min(A5.qb.audMax, 2 + Math.floor((qbAwr() - 10) / A5.qb.audPer + 0.5))); const w = abilOn(qb, 'audibleWizard') ? ABIL_FX.audibleWizard.aud : 0; try { return Math.max(1, Math.round(b * diffLvl().audibles)) + w; } catch (e) { return b + w; } };   // (Audible Wizard: +2)   // (difficulty: x the awareness limit, yours)
+const qbAwrK = () => 10 + diffAwrZ(qb, (qbAwr() - 10) / RATING.spread) * RATING.spread;   // (the same read through PLAYER AWARENESS: audibles, hot routes, reveals)
+const audMax = () => { const b = Math.max(2, Math.min(A5.qb.audMax, 2 + Math.floor((qbAwrK() - 10) / A5.qb.audPer + 0.5))); const w = abilOn(qb, 'audibleWizard') ? ABIL_FX.audibleWizard.aud : 0; const qw = !aiOff() && stT('Quarterback Whisperer', 'off') >= 2 ? 1 : 0; try { return Math.max(1, Math.round(b * diffLvl().audibles)) + w + qw; } catch (e) { return b + w + qw; } };   // (+1: Quarterback Whisperer II)   // (Audible Wizard: +2)   // (difficulty: x the awareness limit, yours)
 // fewer picks: the target's awareness (adjusts to a bad ball), the QB's (the computer's QB a lot more)
 const pickK = () => {
   let k = 1;
@@ -1655,7 +1848,7 @@ function awrSticks() {
 const HOT = { routes: ['slant', 'go', 'out', 'curl', 'post', 'hitch', 'drag', 'corner', 'comeback'],
   smart: { man: ['slant', 'comeback', 'whip', 'go'], zone: ['curl', 'dig', 'stick', 'hitch'], blitz: ['slant', 'hitch', 'stick'] } };
 let hotUsed = new Set();
-const hotMax = () => Math.max(1, Math.min(3, 1 + Math.floor((qbAwr() - 9) / A5.qb.hotPer + 0.5))) + (abilOn(qb, 'audibleWizard') ? ABIL_FX.audibleWizard.hot : 0);
+const hotMax = () => Math.max(1, Math.min(3, 1 + Math.floor((qbAwrK() - 9) / A5.qb.hotPer + 0.5))) + (abilOn(qb, 'audibleWizard') ? ABIL_FX.audibleWizard.hot : 0) + (!aiOff() && stT('Quarterback Whisperer', 'off') >= 3 ? 1 : 0);   // (+1: Quarterback Whisperer III)
 function hotList(r) {
   if (attr5(r, 'awr', 0) < A5.wr.smart) return HOT.routes;
   const key = shellKey(coverage), sm = back7.some(d => d.blitz) ? HOT.smart.blitz : key === 'c0' || key === 'c1' ? HOT.smart.man : HOT.smart.zone;
@@ -1684,7 +1877,7 @@ function pulseLvl() {
   if (!MATCH.home || tut || state === 'sim' || game.over) return 0;
   const imp = Math.max(0, Math.min(1, (gameImpact() - CROWD_IMPACT.min) / (CROWD_IMPACT.max - CROWD_IMPACT.min)));
   const red = MATCH.home !== 'you' ? Math.max(0, Math.min(1, (los - (FIELD - 20 * YL)) / (20 * YL))) : 0;   // (the road team knocking on the door: the place is rocking)
-  return Math.max(0, Math.min(1, PULSE.base + PULSE.tense * imp + PULSE.red * red + (down >= 3 ? PULSE.third : 0)));
+  return Math.max(0, Math.min(1, PULSE.base + PULSE.tense * imp + PULSE.red * red + (down >= 3 ? PULSE.third : 0))) * (typeof wxPulseK === 'function' ? wxPulseK() : 1);   // (thunderstorm: a soaked crowd; after a lightning delay: calm)
 }
 const roadOff = () => MATCH.home !== 'you';   // (the offense on the field is always 'you': see offHomeTop)
 const pulseErr = P => { const l = pulseLvl(); return !l ? 1 : roadOff() ? 1 + PULSE.err * l / Math.max(0.7, rm(P, 'awr', PULSE.calm)) : 1 - PULSE.homeOff * l; };
@@ -1716,7 +1909,7 @@ function bigKick() {
 }
 const iceOpen = () => pvpOn() && state === 'kick' && kick && !kick.punt && !kick.kickoff && !kick.userKo && !kick.iced && kick.phase === 'power' && twoP && twoP.to > 0 && patMode !== 'kick' && bigKick();   // (never on a PAT)
 function iceKick(cpu) {
-  kick.iced = true; kick.nv = ICE.iced; kick.phase = 'power'; kick.t = 0; kick.meter = 0;
+  kick.iced = true; kick.nv = ICE.iced * diffX('kIce') * wxXK('ice'); kick.phase = 'power'; kick.t = 0; kick.meter = 0;
   if (twoP && twoP.to > 0) twoP.to--;
   showBanner(`TIMEOUT  -  ${teamName('RED')}`.toUpperCase(), '#ffffff', '#1b2a3a', 'ICING THE KICKER');
   setTimeout(whistle, 0);
@@ -1726,13 +1919,13 @@ function iceKick(cpu) {
 const kickFade = () => !kick || !kick.nv || kick.phase === 'power' || kAb(rb, 'iceProof') || kAb(rb, 'automatic') ? 1 : Math.max(0.08, 1 - Math.min(0.92, ICE.fade * kick.nv / kickPoise(rb) * 0.5) * (1 + Math.sin(clock * ICE.rate * Math.PI * 2 + 1.3 * Math.sin(clock * 2.1))));
 // --- QB awareness you can see: red arrows on the blitzers he reads before the snap, OPEN calls (and a raised arm) on open men after it
 function awrReset() {
-  for (const d of back7) d.awrSeen = Math.random() < Math.max(0, Math.min(1, (qbAwr() - A5.qb.blitzFrom) / A5.qb.blitzSpan)) * (aiOff() ? 1 : diffX('info'));   // (difficulty: a share of the reads his awareness gives)
+  for (const d of back7) d.awrSeen = Math.random() < Math.max(0, Math.min(1, (qbAwrK() - A5.qb.blitzFrom) / A5.qb.blitzSpan)) * (aiOff() ? 1 : diffX('info'));   // (difficulty: a share of the reads his awareness gives)
   for (const r of recs) { r.openRoll = Math.random(); r.openUntil = 0; r.openCalled = false; r.openOn = false; r.hotI = null; r.hot = null; }
   hotUsed = new Set();
 }
 function awrTick() {
   if (aiOff() || tut || !(state === 'drop' || state === 'pocket')) return;
-  const share = Math.max(0, Math.min(1, (qbAwr() - A5.qb.openFrom) / A5.qb.openSpan)) * diffX('info'), run = inPocket() < 0.3;
+  const share = Math.max(0, Math.min(1, (qbAwrK() - A5.qb.openFrom) / A5.qb.openSpan)) * diffX('info'), run = inPocket() < 0.3;
   const room = A5.qb.openYd * YD * (run ? A5.qb.openRun : 1);
   for (const r of catchers()) {
     if (r.openCalled && r.openOn) {   // (called open: the wave stays up while he keeps his room, drops once a man closes on him)
@@ -1922,8 +2115,43 @@ for (const [team, s] of Object.entries(PHYS)) ROSTER[team].forEach((p, i) => {
 //   facial 0 none, 1 stubble, 2 mustache, 3 goatee, 4 short beard, 5 full beard, 6 long beard, 7 chin strap
 //   eyes 0 dark brown, 1 brown, 2 hazel, 3 blue, 4 green | expr 0 smile, 1 neutral, 2 grin, 3 stern
 //   acc bits: 1 skull cap / hat, 2 headband, 4 glasses, 8 headset, 16 earrings (your coach only) | cap = hat colour, beard = beard colour (default: the hair's)
-const FACE_SKINS = ['#f6d9c0', '#eec39d', '#dba679', '#c68a5e', '#a56b43', '#8a5233', '#6d3e25', '#4a2a19'];
-const FACE_HAIRS = ['#17110d', '#3a2414', '#6b4423', '#b58a4a', '#d8b865', '#a8431f', '#b8b8b8'];
+//   v0.61 (face objects only, never in the codes; every one optional: missing = the old look): hv hair variant (HAIR_VARS), tip, skins 8-11 /
+//   hair colours 7-11 appended, facial 8-13, eyeSh 4-8, brow 4-6, nose 5-7, frk 4-6, lip, ear, chin, bag, tat (neck tattoo, made-up only), hl (hairline
+//   override: 0 rounded / 1 line-up / 2 widow's peak / 3 receding), bcs (beard colour picked apart from the hair in the creator). Coach gear: hat
+//   (FACE_NAMES.hat; cap = FACE_CAPS.length = team colour), gl glasses style, hs headset, mth mouth, fit outfit (coaches only; players keep the jersey),
+//   xt bits 1 pencil behind the ear / 2 whistle on a lanyard / 4 towel / 8 chain, er earring type. Names / ranges: FACE_NAMES, FACE_N.
+const FACE_SKINS = ['#f6d9c0', '#eec39d', '#dba679', '#c68a5e', '#a56b43', '#8a5233', '#6d3e25', '#4a2a19',
+  '#c49d6c', '#e2b47c', '#7c4f47', '#3c2826'];   // (8-11 appended, never reorder: olive, golden, cool brown, cool deep)
+const FACE_HAIRS = ['#17110d', '#3a2414', '#6b4423', '#b58a4a', '#d8b865', '#a8431f', '#b8b8b8',
+  '#6e6a66', '#e4e0d8', '#7c3420', '#3d5fcf', '#8a3fb5'];   // (7-11 appended, never reorder: salt and pepper, white, auburn, dyed blue, dyed violet)
+const FACE_SKIN_N0 = 8, FACE_HAIR_N0 = 7;   // (the old ramps' lengths: on-field looks without a face pick from these only)
+const FACE_SKIN_D = [0, 1, 2, 3, 4, 5, 6, 7, 3, 2, 5.5, 7.5];   // how deep each tone is (the appended ones sit between the old steps)
+const skD = s => FACE_SKIN_D[s] ?? s;
+const FACE_TIPS = [null, '#ecd98c', '#4f8fe6', '#d4503c', '#e07ac8'];   // f.tip: bleached / dyed tips (made-up faces and coaches only)
+const FACE_BEADS = ['#e8c040', '#f4f2ec', '#c84a3a', '#3a8ad8'];
+// f.hv = the variant inside the hair FAMILY f.hair (the hex code and LOOK_STYLE only know the family; a headshot player gets a variant of his own family)
+const HAIR_VARS = [['CLEAN', 'SHAVED', 'HORSESHOE'], ['LOW FADE', 'MID FADE', 'HIGH FADE', 'LINE-UP', '360 WAVES'], ['CREW CUT', 'SIDE PART', 'TEXTURED CROP', "WIDOW'S PEAK", 'RECEDING'],
+  ['SLICK BACK', 'SIDE SWEEP', 'CURTAINS', 'POMPADOUR'], ['ROUND', 'TAPERED', 'FROHAWK', 'SPONGE CURLS'], ['STRAIGHT', 'WAVY', 'SHAGGY', 'MULLET', 'MAN BUN', 'PONYTAIL'],
+  ['SHORT LOCS', 'SHOULDER LOCS', 'TIED BACK', 'HIGH BUN', 'LOCS + FADE'], ['CORNROWS', 'BOX BRAIDS', 'BEADS', 'TWO BRAIDS'], ['CLASSIC', 'SLANTED', 'PART LINE'], ['LOOSE CURLS', 'TIGHT COILS', 'TWISTS']];
+const HV_W = [[5, 3, 1], [3, 3, 2, 2, 1.2], [4, 2.5, 2.5, 1.2, 1.2], [3, 3, 2, 1.2], [4, 3, 1, 2], [3, 3, 2, 0.6, 1.5, 1.5], [2, 4, 1.5, 1, 1.5], [4, 3, 1.5, 1.2], [4, 1.5, 1.5], [3, 3, 2]];
+const hvOld = f => f.hair === 5 && f.hx === 3 ? 4 : f.hair === 9 && f.hx === 4 ? 2 : f.hair === 1 && f.hx === 1 ? 1 : null;   // (old hx extras that became variants)
+const hvOf = f => { const n = (HAIR_VARS[f.hair] || [0]).length; return f.hv != null ? Math.min(n - 1, Math.max(0, f.hv | 0)) : hvOld(f) ?? 0; };
+const hatOf = f => f.hat ?? (f.acc & 1 ? 1 : 0);   // (old faces: acc bit 1 = the skull cap)
+// names for the coach creator; also the ranges coachClamp keeps a face inside (FACE_N = how many choices a small-int field has)
+const FACE_NAMES = {
+  shape: ['ROUND', 'OVAL', 'SQUARE', 'LONG'], chin: ['PLAIN', 'CLEFT', 'POINTED', 'WIDE'], jaw: ['SLIM', 'MEDIUM', 'THICK'], ear: ['SMALL', 'NORMAL', 'LARGE', 'CAULIFLOWER'],
+  frk: ['NONE', 'FRECKLES', 'DIMPLES', 'CHEEK SHADOW', 'MOLE', 'CHEEK SCAR', 'BROW SCAR'], tat: ['NONE', 'NECK SCRIPT', 'NECK STAR'],
+  hair: ['BALD', 'BUZZ', 'SHORT', 'SWEPT', 'AFRO', 'LONG', 'DREADS', 'BRAIDS', 'HIGH-TOP', 'CURLY TOP'], tip: ['NONE', 'BLEACHED', 'BLUE', 'RED', 'PINK'],
+  eyeSh: ['ROUND', 'NARROW', 'HOODED', 'WIDE-SET', 'MONOLID', 'ALMOND', 'UPTURNED', 'DOWNTURNED', 'DEEP-SET'], brow: ['THIN', 'THICK', 'ARCHED', 'FLAT', 'BUSHY', 'SLIT', 'UNIBROW'],
+  nose: ['POINTED', 'BUTTON', 'BROAD', 'LONG', 'BRIDGE', 'NARROW', 'WIDE', 'CROOKED'], lip: ['THIN', 'MEDIUM', 'FULL'], expr: ['SMILE', 'NEUTRAL', 'GRIN', 'STERN'],
+  mo: ['PLAIN', 'SMIRK', 'GAP-TOOTH', 'MOUTHGUARD'], bag: ['NONE', 'LIGHT', 'HEAVY'], ln: ['NONE', 'SOME', 'DEEP'],
+  facial: ['CLEAN', 'STUBBLE', 'MUSTACHE', 'GOATEE', 'SHORT BEARD', 'FULL BEARD', 'LONG BEARD', 'CHIN STRAP', 'SOUL PATCH', 'HANDLEBAR', 'MUTTON CHOPS', 'CHIN GOATEE', 'PATCHY', 'BRAIDED BEARD'],
+  hat: ['NONE', 'SKULL CAP', 'BALL CAP', 'VISOR', 'BUCKET HAT', 'BEANIE', 'BANDANA'], gl: ['NONE', 'THIN', 'ROUND', 'AVIATOR', 'THICK', 'SUNGLASSES', 'READERS'],
+  hs: ['NONE', 'BOTH EARS', 'ONE EAR'], mth: ['NONE', 'TOOTHPICK', 'GUM', 'WHISTLE', 'PLAY SHEET'], fit: ['V-NECK', 'HOODIE', 'CUT-OFF', 'QUARTER-ZIP', 'POLO', 'SUIT', 'SWEATER VEST'],
+  er: ['OFF', 'HOOPS', 'STUDS', 'DIAMONDS', 'ONE HOOP', 'DANGLES'],
+};
+const FACE_N = { mo: 4, hx: 5, gr: 5, eb: 6, stud: 2, xt: 16, mk: 2, co: 2, bcs: 2, acc: 32 };
+for (const k in FACE_NAMES) FACE_N[k] = FACE_NAMES[k].length;
 const FACE_EYES = ['#2b1a10', '#5a3a1c', '#8a6a2a', '#3a74c8', '#3a8a4a', '#6f7f6a', '#7d8a96', '#9a6a3a'];   // (5-7 appended: green-hazel, grey, light brown; 0-4 keep their meaning)
 const FACE_CAPS = ['#1c1c24', '#2a3c66', '#7a7a80', '#4a6a3a', '#7a5130', '#b83a3a', '#e8e8e8'];
 const FACE_LINE = '#2b2630', FACE_BG = '#e5e1d6';
@@ -2039,6 +2267,11 @@ const faceWPick = (r, w) => { let t = r() * w.reduce((a, b) => a + b, 0); for (l
 // mo 0 by expression / 1 smirk / 2 gap-tooth grin / 3 mouthguard bite | frk 0 none / 1 freckles / 2 dimples / 3 cheek shadow | hx 0 / 1 fade lines /
 // 2 mohawk / 3 bun / 4 twists | jaw 0 slim / 1 / 2 thick (PHYS weight) | ln 0-2 forehead lines, gr grey temples (BIO age) | eb eye black 0 none /
 // 1 strips / 2 smeared / 3 sticker / 4 triangles / 5 one side (players only, portraits only) | stud = earring studs instead of hoops.
+// v0.61 added (same rule, appended picks): eyeSh 4-8, brow 4-6, nose 5-7, frk 4-6 (scars made-up only), hv (a variant of HIS OWN hair family, every
+// face), lip, ear (cauliflower weighted to OL / DL; filled once the group is known), chin, bag (age), tat (made-up only). Old hx 1 / 3 / 4 read as
+// variants where they fit (hvOld). Coordinators: coachGear (gear styles from the name). Drawing: drawAvatar0 (hair behind the head -> ears / head ->
+// eyes, brows, nose, marks -> beards -> chin patches -> mouth -> mustache -> hair on top (cap / stubble / loc / braid / curl helpers) -> what hangs
+// below a hat -> hats -> glasses, headset (rides over hairTop / hatTop), earrings, extras, mouth items). New drawn field = add it to FACE_KEYS.
 const FACE_MORE = { eb: 0.21, ebW: { LB: 2.1, CB: 2.1, S: 2.1, WR: 1.7, RB: 1.7, QB: 0.6, TE: 0.9, DL: 1, OL: 0.4, K: 0.08 },   // eye black: share x group weight
   ebKinds: [5, 1.4, 2, 1.3, 0.35], ebSmearDef: 3,   // strips / smeared / sticker / triangles / one side (rare); smeared x this on defenders
   heavy: 270, slim: 200, old: 32, older: 36, pen: 0.55 };   // jaw by weight (lb), forehead lines / grey by age; pen = width share of the uneven second pencil pass
@@ -2046,12 +2279,12 @@ const faceDer = f => ((f.skin * 7 + f.shape * 13 + f.hair * 17 + f.hc * 19 + f.f
 function faceMore(f, name, grp, p, r) {
   if (!f) return f;
   let h = name ? [...name].reduce((t, ch) => (t * 31 + ch.charCodeAt(0)) % 2147483647, 17) : (faceDer(f) % 2147483646) + 1;
-  const rr = r || (() => (h = (h * 16807 + 11) % 2147483647) / 2147483647), M = FACE_MORE, pl = grp && grp !== 'COACH';
-  if (f.brow == null) f.brow = faceWPick(rr, [4, 3, 2, 3]);
-  if (f.eyeSh == null) f.eyeSh = faceWPick(rr, [5, 2, 2, 2]);
-  if (f.nose == null) f.nose = faceWPick(rr, [3, 3, 3, 2, 2]);
+  const rr = r || (() => (h = (h * 16807 + 11) % 2147483647) / 2147483647), M = FACE_MORE, pl = grp && grp !== 'COACH', sd = skD(f.skin), co = grp === 'COACH' || f.co;
+  if (f.brow == null) f.brow = faceWPick(rr, [4, 3, 2, 3, 1.5, f.mk ? 0.5 : 0, 0.3]);
+  if (f.eyeSh == null) f.eyeSh = faceWPick(rr, [5, 2, 2, 2, 1, 1.5, 1, 1, 0.8]);
+  if (f.nose == null) f.nose = faceWPick(rr, [3, 3, 3, 2, 2, 1.5, sd >= 4 ? 2 : 0.8, 0.5]);
   if (f.mo == null) f.mo = faceWPick(rr, [12, 2, 1, pl ? 1.3 : 0]);
-  if (f.frk == null) f.frk = faceWPick(rr, [7, f.skin <= 2 ? 1.6 : 0, 1.3, 1.2]);
+  if (f.frk == null) f.frk = faceWPick(rr, [7, sd <= 2.2 ? 1.6 : 0, 1.3, 1.2, 0.9, f.mk ? 0.5 : 0, f.mk ? 0.4 : 0]);   // (scars: made-up faces only)
   if (f.stud == null) f.stud = rr() < 0.4 ? 1 : 0;
   if (f.hx == null) f.hx = f.mk ? faceWPick(rr, [7, [1, 2, 8, 9].includes(f.hair) ? 2.2 : 0, f.hair <= 1 && !f.hc ? 0.8 : 0, f.hair === 5 ? 1.5 : 0, [2, 9].includes(f.hair) ? 1.2 : 0]) : 0;
   if (f.jaw == null && p && p.wt) f.jaw = p.wt >= M.heavy ? 2 : p.wt <= M.slim ? 0 : 1;
@@ -2061,20 +2294,125 @@ function faceMore(f, name, grp, p, r) {
     if (!pl) f.eb = 0;
     else { const def = ['LB', 'CB', 'S', 'DL'].includes(grp); f.eb = rr() < Math.min(0.9, M.eb * (M.ebW[grp] ?? 1)) ? 1 + faceWPick(rr, M.ebKinds.map((k, i) => i === 1 && def ? k * M.ebSmearDef : k)) : 0; }
   }
+  // v0.61 (appended so the older picks above keep their values): hair variant inside his own family, lips, ears, chin, eye bags, neck tattoo
+  if (f.hv == null) { const o = hvOld(f); if (o != null) f.hv = o; else { const old = co || (p && p.age >= M.old), w = (HV_W[f.hair] || [1]).map((v, i) => (f.hair === 0 && i === 2) || (f.hair === 2 && i === 4) ? v * (old ? 2 : 0.2) : v); f.hv = faceWPick(rr, w); } }
+  if (f.lip == null) f.lip = faceWPick(rr, sd >= 4 ? [1, 3, 3] : [2.5, 3, 1.2]);
+  if (f.ear == null && (grp || f.co)) f.ear = faceWPick(rr, [2, 6, 2, grp === 'OL' || grp === 'DL' ? 1.4 : pl ? 0.25 : 0]);   // (cauliflower ears: mostly linemen)
+  if (f.chin == null) f.chin = faceWPick(rr, [7, 1.3, 1.2, f.jaw === 2 ? 2 : 1]);
+  if (f.bag == null) f.bag = p && p.age ? (p.age >= M.older ? 2 : p.age >= M.old + 2 ? 1 : 0) : co ? faceWPick(rr, [3, 3, 2]) : 0;
+  if (f.tat == null) f.tat = f.mk ? faceWPick(rr, [co ? 30 : 14, 1, 1]) : 0;
   return f;
 }
-// a made-up face (r = a random function): players without a headshot, and a random coach
+// --- aging (v0.66): staff ages read from their looks, and a yearly "picture day" that moves the age marks UP (never down) ---
+// gr: 0 none / 1 grey temples (as before) / 2 salt and pepper / 3 grey / 4 white (coaches only); the beard runs one grey level ahead. Genes from the
+// name (agingGenes): when he greys (early / normal / late / never), whether his hairline goes and when, how much he weathers. Marks set here are
+// remembered in f.ag (the stage's target), so a value lowered by hand in the coach creator stays until his next stage. f.hv0 = his first hair variant.
+const AGING = {
+  base: { oc: 44, dc: 44, so: 38, sd: 38, to: 36, td: 36, hc: 46, me: 40 },   // a staff member's starting age by role, before what his face shows
+  mark: { ln: 4, gr: 5, bag: 2, greyHair: 8, whiteHair: 14, recede: 5, gl: 2 },   // years added per mark (gr per level; grey / white hair colour, receding hairline, glasses)
+  spread: 4, min: 28, max: 70,   // name-hash spread (+-), clamp
+  stages: {   // ages each level is reached at (genes shift them); players keep faceMore's 32 / 36 anchors, coaches run older
+    pl: { ln: [32, 36], bag: [34, 36], gr: [36, 41, 47], first: 29 },   // first = the earlier "first lines" a weathered man gets
+    co: { ln: [40, 50], bag: [44, 54], gr: [42, 50, 58, 66], gl: 52, jaw: 60 },
+  },
+  greyK: { early: -5, normal: 0, late: 6 }, greyW: [2, 5, 2, 1],   // early / normal / late / never (weights)
+  recede: 0.45, recedeAt: { pl: [31, 37], co: [42, 58] },   // share whose hairline goes, and the age range it goes in
+  weather: [0.75, 1.3],   // how fast lines / bags come (x the years past each stage)
+  glOdds: 0.55, jawOdds: 0.3,   // coaches: share who need glasses late / get a heavier jaw
+};
+const ageHash = (s, salt) => { let h = 2166136261 ^ salt; for (const ch of String(s || '')) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return ((h >>> 0) % 100000) / 100000; };
+function agingGenes(f, name) {   // his own clock, from his name (or the face itself when nameless)
+  const key = name || String(faceDer(f)), A = AGING, w = A.greyW, tot = w.reduce((a, b) => a + b, 0);
+  let g = ageHash(key, 1) * tot, gi = 0; while (gi < w.length - 1 && g >= w[gi]) g -= w[gi++];
+  const kind = pl => { const [a, b] = A.recedeAt[pl]; return a + ageHash(key, 3) * (b - a); };
+  return { grey: ['early', 'normal', 'late', 'never'][gi], recede: ageHash(key, 2) < A.recede, recedeAt: kind, weather: A.weather[0] + ageHash(key, 4) * (A.weather[1] - A.weather[0]), gl: ageHash(key, 5) < A.glOdds, jaw: ageHash(key, 6) < A.jawOdds };
+}
+function staffAge(f, role, name) {   // a staff member / coach with no age yet: a base by role + years for what his face already shows
+  const A = AGING, M = A.mark; let a = A.base[role] ?? A.base.oc;
+  if (f) {
+    a += (f.ln | 0) * M.ln + (f.gr | 0) * M.gr + (f.bag | 0) * M.bag;
+    if (f.hc === 6 || f.hc === 7) a += M.greyHair; else if (f.hc === 8) a += M.whiteHair;
+    const hv = hvOf(f); if ((f.hair === 0 && hv === 2) || (f.hair === 2 && hv === 4) || f.hl === 3) a += M.recede;
+    if (f.gl ?? (f.acc & 4 ? 1 : 0)) a += M.gl;
+  }
+  a += Math.round((ageHash(name || (f ? faceDer(f) : role), 7) * 2 - 1) * A.spread);
+  return Math.max(A.min, Math.min(A.max, Math.round(a)));
+}
+const staffAged = (o, role) => { if (o && o.age == null) o.age = staffAge(o.face, role, o.name); return o; };
+function faceAge(f, age, name, kind = 'pl') {   // once a year (offTick / hireOffseason / ageStaffYear); kind 'pl' player, 'co' staff / coaches
+  if (!f || !age) return f;
+  const A = AGING, S = A.stages[kind === 'pl' ? 'pl' : 'co'], G = agingGenes(f, name), made = !!f.mk || kind !== 'pl';
+  f.ag = f.ag || {};
+  const raise = (k, t) => { if (t > (f.ag[k] ?? 0)) { f[k] = Math.max(f[k] | 0, t); f.ag[k] = t; } };   // (only when his stage moved past the last one set: a hand-lowered value stays)
+  const lvl = (ages, a) => ages.reduce((n, s) => n + (a >= s ? 1 : 0), 0);
+  const wa = S.ln[0] + (age - S.ln[0]) * G.weather;   // (weathered men line up faster)
+  raise('ln', Math.min(2, Math.max(lvl(S.ln, wa), S.first && G.weather > 1.15 && age >= S.first ? 1 : 0)));
+  raise('bag', Math.min(2, lvl(S.bag, S.bag[0] + (age - S.bag[0]) * G.weather)));
+  if (G.grey !== 'never' && f.hc !== 6 && f.hc !== 7 && f.hc !== 8 && f.hair > 0) raise('gr', Math.min(kind === 'pl' ? 3 : 4, lvl(S.gr, age - A.greyK[G.grey])));
+  if (G.recede) {   // the hairline: the receding variant of HIS OWN family (headshot players: only where faceMore already allows one)
+    if (f.hv0 == null) f.hv0 = hvOf(f);
+    if (age >= G.recedeAt(kind === 'pl' ? 'pl' : 'co')) {
+      if (f.hair === 2 && hvOf(f) !== 4) { f.hv = 4; f.ag.hv = 1; }
+      else if (made && [1, 3, 5, 9].includes(f.hair) && f.hl == null) { f.hl = 3; f.ag.hl = 1; }
+    }
+  }
+  if (kind !== 'pl') {
+    if (G.gl && age >= S.gl && !(f.gl ?? (f.acc & 4 ? 1 : 0)) && !f.ag.gl) { f.gl = 6; f.acc = (f.acc | 0) | 4; f.ag.gl = 1; }   // (readers)
+    if (G.jaw && age >= S.jaw && (f.jaw ?? 1) < 2 && !f.ag.jaw) { f.jaw = (f.jaw ?? 1) + 1; f.ag.jaw = 1; }
+    if (age >= S.bag[1] + 6) raise('bag', 2);
+  }
+  return f;
+}
+const faceYoung = f => {   // his rookie photo: the same face before the years (no stored copy)
+  if (!f) return f;
+  const g = { ...f, ln: 0, gr: 0, bag: 0 }, a = f.ag || {};
+  if (f.hv0 != null) g.hv = f.hv0;
+  if (a.hl) delete g.hl;
+  if (a.gl) { g.gl = 0; g.acc = (f.acc | 0) & ~4; }
+  if (a.jaw) g.jaw = Math.max(0, (f.jaw ?? 1) - 1);
+  return g;
+};
+// a made-up face (r = a random function): players without a headshot, and a random coach (+ his gear: hat, glasses, headset, mouth, outfit, extras)
 function makeFace0(r, coach = false) {
-  const skin = faceWPick(r, [3, 5, 6, 8, 9, 11, 7, 3]), light = skin <= 2;
-  const hair = faceWPick(r, coach ? [20, 8, 34, 24, 0, 0, 0, 0, 0, 8] : [3, 30, 20, 5, 8, 2, 12, 5, 5, 10]);
-  const hc = light ? faceWPick(r, coach ? [3, 3, 4, 3, 2, 1, 4] : [3, 4, 5, 4, 3, 1, 0]) : faceWPick(r, coach ? [8, 1, 0, 0, 0, 0, 3] : [10, 1, 0, 0, 0, 0, 0]);
-  let acc = 0, cap = 0;
-  if (coach) { if (r() < 0.55) acc |= 4; if (r() < 0.55) acc |= 8; if (r() < 0.4) { acc |= 1; cap = faceWPick(r, [3, 2, 3, 2, 2, 0, 2]); } }
-  else { const a = r(); acc = a < 0.05 ? 1 : a < 0.08 ? 2 : 0; }
-  return { skin, shape: faceWPick(r, [4, 4, 3, 2]), hair, hc, facial: faceWPick(r, coach ? [30, 10, 8, 8, 18, 16, 2, 2] : [1, 0, 0, 0, 0, 0, 0, 0]),   // players with no headshot: clean-shaven (no invented facial hair)
-           eyes: faceWPick(r, skin >= 4 ? [6, 4, 0, 0, 0, 0, 0, 1] : [1, 4, 2, 4, 2, 1, 1.4, 1.4]), expr: faceWPick(r, [30, 30, 22, 18]), acc, cap, bc: hc, mk: 1 };
+  const skin = faceWPick(r, [3, 5, 6, 8, 9, 11, 7, 3, 3, 3, 3, 2]), sd = skD(skin), light = sd <= 2.2;
+  const hair = faceWPick(r, coach ? [18, 9, 30, 22, 3, 3, 2, 2, 1, 7] : [3, 30, 20, 5, 8, 2, 12, 5, 5, 10]);
+  const hc = light ? faceWPick(r, coach ? [3, 3, 4, 3, 2, 1, 4, 3, 1.5, 0.5, 0, 0] : [3, 4, 5, 4, 3, 1, 0, 0, 0, 0.6, 0.15, 0.15])
+                   : faceWPick(r, coach ? [8, 1, 0, 0, 0, 0, 3, 3, 1.5, 0, 0, 0] : [10, 1.5, 0.3, 0, 0, 0, 0, 0, 0, 0.1, 0.12, 0.12]);
+  let acc = 0, cap = 0, bc = hc;
+  const F = { skin, shape: faceWPick(r, [4, 4, 3, 2]), hair, hc,
+    facial: faceWPick(r, coach ? [30, 10, 8, 8, 18, 16, 2, 2, 1.5, 1.5, 1, 1.5, 1, 0.3] : [10, 3, 1, 2, 1.6, 0.8, 0.1, 1.2, 0.5, 0.15, 0.1, 0.6, 1.2, 0.05]),   // (players: clean-shaven most often, heavy beards rare)
+    eyes: faceWPick(r, sd >= 4 ? [6, 4, 0, 0, 0, 0, 0, 1] : [1, 4, 2, 4, 2, 1, 1.4, 1.4]), expr: faceWPick(r, [30, 30, 22, 18]), acc, cap, bc, mk: 1 };
+  if (r() < (coach ? 0.02 : 0.08) && hair > 0) F.tip = 1 + faceWPick(r, [4, 1.5, 1, 1]);
+  if (coach) {
+    F.co = 1;
+    if (hc < 6 && r() < 0.22) F.bc = r() < 0.5 ? 6 : 7;   // (grey beard, dark hair)
+    F.gl = r() < 0.5 ? 1 + faceWPick(r, [4, 2, 1.5, 2, 1.2, 1]) : 0; if (F.gl) acc |= 4;
+    F.hs = r() < 0.55 ? (r() < 0.8 ? 1 : 2) : 0; if (F.hs) acc |= 8;
+    F.hat = r() < 0.45 ? 1 + faceWPick(r, [3, 4, 2, 0.8, 1.2, 0.6]) : 0; if (F.hat === 1) acc |= 1;
+    F.cap = cap = faceWPick(r, [3, 2, 3, 2, 2, 0.5, 2, 3]);   // (the last = the team colour)
+    F.mth = faceWPick(r, [10, 1, 1.2, 0.8, 1]); F.fit = faceWPick(r, [3, 3, 0.6, 3, 3, 1.5, 1]);
+    F.xt = (r() < 0.15 ? 1 : 0) | (r() < 0.25 ? 2 : 0) | (r() < 0.1 ? 4 : 0) | (r() < 0.08 ? 8 : 0);
+    if (r() < 0.12) { acc |= 16; F.er = 1 + faceWPick(r, [2, 3, 1, 1, 0.5]); }
+  } else { const a = r(); acc = a < 0.05 ? 1 : a < 0.08 ? 2 : 0; }
+  F.acc = acc;
+  return F;
 }
 const makeFace = (r, coach = false) => faceMore(makeFace0(r, coach), null, coach ? 'COACH' : null, null, r);   // (+ the face extras; eye black is filled later where the group is known)
+// a coordinator card's face (COACH_FACE code) gets its gear styles from his name: the code's hat / glasses / headset stay on, only their style,
+// the outfit, mouth item and extras are rolled (never his skin, hair family or beard)
+function coachGear(f, name) {
+  if (!f) return f;
+  let h = [...(name || '')].reduce((t, ch) => (t * 31 + ch.charCodeAt(0)) % 2147483647, 29);
+  const r = () => (h = (h * 16807 + 11) % 2147483647) / 2147483647;
+  f.co = 1;
+  if (f.gl == null) f.gl = f.acc & 4 ? 1 + faceWPick(r, [4, 2, 1.5, 2, 1.2, 1]) : 0;
+  if (f.hs == null) f.hs = f.acc & 8 ? (r() < 0.8 ? 1 : 2) : 0;
+  if (f.hat == null) f.hat = f.acc & 1 ? 1 + faceWPick(r, [3, 4, 2, 0.8, 1.2, 0.6]) : 0;
+  if (f.mth == null) f.mth = faceWPick(r, [10, 1, 1.2, 0.8, 1]);
+  if (f.fit == null) f.fit = faceWPick(r, [3, 3, 0.6, 3, 3, 1.5, 1]);
+  if (f.xt == null) f.xt = (r() < 0.15 ? 1 : 0) | (r() < 0.25 ? 2 : 0) | (r() < 0.1 ? 4 : 0) | (r() < 0.08 ? 8 : 0);
+  return faceMore(f, name, 'COACH');
+}
 for (const [team, s] of Object.entries(FACES)) ROSTER[team].forEach((p, i) => {
   const c = s.split(',')[i];
   if (c && c !== '-') p.face = decodeFace(c);
@@ -2092,11 +2430,13 @@ for (const t of Object.keys(FACES)) for (const p of ROSTER[t]) {
 // cached: each face + size + options is drawn once into a small canvas (AV_CACHE, bounded, freed with freeCanvas) and blitted; the roster, trade and
 // draft screens draw dozens a frame. drawAvatar0 = the real drawing (swaps the global ctx while it bakes, so it never reads ctx's font patch: HAND_FONT)
 const AV_CACHE = new Map(), AV = { max: 180, minPx: 6, maxPx: 300 };
+const FACE_KEYS = ['skin', 'shape', 'hair', 'hc', 'facial', 'eyes', 'expr', 'acc', 'cap', 'bc', 'brow', 'eyeSh', 'nose', 'mo', 'frk', 'hx', 'jaw', 'ln', 'gr', 'eb', 'stud',
+  'hv', 'tip', 'lip', 'ear', 'chin', 'bag', 'tat', 'hl', 'hat', 'gl', 'hs', 'mth', 'fit', 'xt', 'er'];   // (every field drawAvatar0 reads: the cache key; a new drawn field goes here)
+const faceMix = (a, b, t) => { const p = c => [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16)), A = p(a), B = p(b); return '#' + A.map((v, i) => Math.round(v + (B[i] - v) * t).toString(16).padStart(2, '0')).join(''); };
 function drawAvatar(f, cx, cy, R, o = {}) {
   const t = ctx.getTransform(), k = Math.hypot(t.a, t.b) || 1, pr = R * k;
   if (pr < AV.minPx || pr > AV.maxPx) return drawAvatar0(f, cx, cy, R, o);
-  const key = [f.skin, f.shape, f.hair, f.hc, f.facial, f.eyes, f.expr, f.acc, f.cap, f.bc, f.brow, f.eyeSh, f.nose, f.mo, f.frk, f.hx, f.jaw, f.ln, f.gr, f.eb, f.stud,
-    Math.round(pr * 2), o.shirt, o.trim, o.num, o.bg, o.expr, o.hurt ? 1 : 0, o.sq ? 1 : 0, o.noEb ? 1 : 0].join(',');
+  const key = FACE_KEYS.map(k => f[k]).join(',') + '|' + [Math.round(pr * 2), o.shirt, o.trim, o.num, o.bg, o.expr, o.hurt ? 1 : 0, o.sq ? 1 : 0, o.noEb ? 1 : 0].join(',');
   let c = AV_CACHE.get(key);
   if (c) { AV_CACHE.delete(key); AV_CACHE.set(key, c); }   // (most recently used last)
   else {
@@ -2109,10 +2449,15 @@ function drawAvatar(f, cx, cy, R, o = {}) {
   const s2 = c.width / k; ctx.drawImage(c, cx - s2 / 2, cy - s2 / 2, s2, s2);
 }
 function drawAvatar0(f, cx, cy, R, o = {}) {
-  const u = R / 50, skin = FACE_SKINS[f.skin], dark = mixHex(skin, 0.2), hair = FACE_HAIRS[f.hc], beard = FACE_HAIRS[f.bc], hat = FACE_CAPS[f.cap];
-  const line = FACE_LINE, TAU = Math.PI * 2, D = faceDer(f), dv = (k, n) => ((D >>> k) % n);
+  const grL = f.gr | 0, greyTo = (c, l) => l <= 1 ? c : faceMix(c, l === 2 ? FACE_HAIRS[7] : l === 3 ? FACE_HAIRS[6] : FACE_HAIRS[8], l === 2 ? 0.5 : l === 3 ? 0.78 : 0.9);   // (v0.66 aging: gr 2-4 grey the hair, the beard one level ahead; 0 / 1 draw as before)
+  const u = R / 50, skin = FACE_SKINS[f.skin] || FACE_SKINS[3], dark = mixHex(skin, 0.2), hair = greyTo(FACE_HAIRS[f.hc] || FACE_HAIRS[0], grL), beard = greyTo(FACE_HAIRS[f.bc ?? f.hc] || FACE_HAIRS[f.hc] || FACE_HAIRS[0], grL >= 2 ? Math.min(f.co ? 4 : 3, grL + 1) : 0);
+  const line = FACE_LINE, TAU = Math.PI * 2, D = faceDer(f), dv = (k, n) => ((D >>> k) % n), sd = skD(f.skin);
   const brow = f.brow ?? dv(2, 4), eyeSh = f.eyeSh ?? (dv(5, 3) ? 0 : dv(7, 4)), nose = f.nose ?? dv(9, 5), mo = f.mo ?? 0, frk = f.frk ?? 0, hx = f.hx ?? 0;
   const jaw = f.jaw ?? 1, ln = f.ln ?? (f.hc === 6 ? 1 : 0), gr = f.gr ?? 0, eb = f.eb ?? 0, expr = o.expr ?? f.expr;
+  const ys = f.hair, hv = hvOf(f), ear = f.ear ?? 1, chn = f.chin ?? 0, bag = f.bag ?? 0, tat = f.tat ?? 0, fh = f.facial;
+  const hat = hatOf(f), hatC = (f.cap ?? 0) >= FACE_CAPS.length ? (o.shirt || '#2a62b0') : FACE_CAPS[f.cap ?? 0] || FACE_CAPS[0];
+  const gl = f.gl ?? (f.acc & 4 ? 1 : 0), hs = f.hs ?? (f.acc & 8 ? 1 : 0), mth = f.mth ?? 0, xt = f.xt ?? 0, tipC = FACE_TIPS[f.tip ?? 0] || null;
+  const capped = hat > 0 && hat !== 3;   // (a visor shows the hair on top)
   const rx = [20, 18, 21, 17][f.shape] + (jaw - 1) * 0.8, ry = [22, 25, 23, 27][f.shape], top = -4 - ry, chin = -4 + ry, my = chin - 9;   // head (units: the circle's radius is 50)
   ctx.save(); ctx.translate(cx, cy); ctx.scale(u, u);
   ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.lineWidth = 1.7; ctx.strokeStyle = line;
@@ -2121,67 +2466,216 @@ function drawAvatar0(f, cx, cy, R, o = {}) {
   const fin = (fill, stroke = true) => { if (fill) { ctx.fillStyle = fill; ctx.fill(); } if (stroke) pen(); };
   const ell = (x, y, a, b, fill, stroke = true) => { ctx.beginPath(); ctx.ellipse(x, y, a, b, 0, 0, TAU); fin(fill, stroke); };
   const rr = (x, y, w, h, r, fill, stroke = true) => { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); fin(fill, stroke); };
-  const headPath = (e = 0) => { ctx.beginPath(); if (f.shape === 2) { if (ctx.roundRect) ctx.roundRect(-rx - e, top - e, 2 * rx + 2 * e, 2 * ry + 2 * e, 11); else ctx.rect(-rx - e, top - e, 2 * rx + 2 * e, 2 * ry + 2 * e); } else ctx.ellipse(0, -4, rx + e, ry + e, 0, 0, TAU); };
+  const reset = () => { ctx.strokeStyle = line; ctx.lineWidth = 1.7; };
+  const headPath = (e = 0) => {   // (chin 2 pointed / 3 wide reshape the lower half; the square head keeps its box)
+    ctx.beginPath();
+    if (f.shape === 2) { if (ctx.roundRect) ctx.roundRect(-rx - e, top - e, 2 * rx + 2 * e, 2 * ry + 2 * e, 11); else ctx.rect(-rx - e, top - e, 2 * rx + 2 * e, 2 * ry + 2 * e); return; }
+    const a = rx + e, b = ry + e, cs = chn === 2 || jaw < 2 ? chn : 3;   // (a heavy jaw = the wide chin: one outline, no double chin)
+    if (cs === 2 || cs === 3) {
+      ctx.ellipse(0, -4, a, b, 0, Math.PI, TAU);
+      if (cs === 2) { ctx.bezierCurveTo(a, -4 + b * 0.55, a * 0.42, -4 + b * 0.94, 0, -4 + b + 1.2); ctx.bezierCurveTo(-a * 0.42, -4 + b * 0.94, -a, -4 + b * 0.55, -a, -4); }
+      else { ctx.bezierCurveTo(a, -4 + b * 0.78, a * 0.78, -4 + b, 0, -4 + b); ctx.bezierCurveTo(-a * 0.78, -4 + b, -a, -4 + b * 0.78, -a, -4); }
+      ctx.closePath();
+    } else ctx.ellipse(0, -4, a, b, 0, 0, TAU);
+  };
   const hatch = (x0, y0, x1, y1, col, a, gap = 3.2, w = 1, slant = 0.6) => {   // (coloured-pencil strokes over a fill; caller clips)
     ctx.save(); ctx.strokeStyle = col; ctx.globalAlpha *= a; ctx.lineWidth = w; ctx.beginPath();
-    for (let x = x0 - (y1 - y0) * slant, i = 0; x < x1; x += gap, i++) { const j = ((D >>> (i % 23)) & 3) * 0.35; ctx.moveTo(x + j, y1); ctx.lineTo(x + (y1 - y0) * slant - j, y0); }
+    for (let x = x0 - Math.abs(y1 - y0) * Math.abs(slant), i = 0; x < x1 + Math.abs(y1 - y0) * Math.abs(slant); x += gap, i++) { const j = ((D >>> (i % 23)) & 3) * 0.35; ctx.moveTo(x + j, y1); ctx.lineTo(x + (y1 - y0) * slant - j, y0); }
     ctx.stroke(); ctx.restore();
+  };
+  const shp = (P, fill, tex, w) => { P(); ctx.fillStyle = fill; ctx.fill(); if (tex) { ctx.save(); P(); ctx.clip(); tex(); ctx.restore(); } P(); const w0 = ctx.lineWidth; if (w) ctx.lineWidth = w; pen(); ctx.lineWidth = w0; };   // fill, texture inside, then the pencil outline
+  const lightH = f.hc === 3 || f.hc === 4 || f.hc === 8, texA = f.hc === 7 ? 1.5 : 1;
+  const hairTex = f.hc === 7 ? '#ddd8cf' : mixHex(hair, lightH ? (f.hc === 8 ? 0.24 : 0.3) : 0.38, lightH ? 0 : 255);
+  const tipBand = (y0, y1, up) => {   // dyed / bleached tips over whatever is clipped (up = fade above y0 instead of below y1)
+    if (!tipC) return; ctx.save(); ctx.fillStyle = tipC; ctx.globalAlpha *= 0.62; ctx.fillRect(-60, y0, 120, y1 - y0); ctx.globalAlpha *= 0.45; ctx.fillRect(-60, up ? y0 - 3 : y1, 120, 3); ctx.restore();
+    hatch(-60, up ? y0 - 3 : y0, 60, up ? y1 : y1 + 3, mixHex(tipC, 0.3, 255), 0.35, 2.4, 0.8, 0.3);
+  };
+  const coils = (x0, y0, x1, y1, g, a = 0.38) => {   // coil texture: little open spirals instead of straight strokes
+    ctx.save(); ctx.strokeStyle = hairTex; ctx.globalAlpha *= a * texA; ctx.lineWidth = 0.7; ctx.beginPath();
+    for (let y = y0, i = 0; y < y1; y += g * 0.85, i++) for (let x = x0 + (i % 2) * g / 2, k = 0; x < x1; x += g, k++) {
+      const r = g * (0.24 + ((D >>> ((i * 7 + k) % 27)) & 3) * 0.05), a0 = (i * 5 + k * 3) % 6;
+      ctx.moveTo(x + Math.cos(a0) * r, y + Math.sin(a0) * r); ctx.arc(x, y, r, a0, a0 + 4.4);
+    }
+    ctx.stroke(); ctx.restore();
+  };
+  const bumpy = (x, y, a, b, n, amp) => {   // a scalloped ellipse (afros)
+    ctx.beginPath(); ctx.moveTo(x + a, y);
+    for (let i = 1; i <= n; i++) { const t = i / n * TAU, tm = (i - 0.5) / n * TAU, j = 1 + ((D >>> (i % 23)) & 3) * 0.2; ctx.quadraticCurveTo(x + Math.cos(tm) * (a + amp * 2 * j), y + Math.sin(tm) * (b + amp * 2 * j), x + Math.cos(t) * a, y + Math.sin(t) * b); }
+    ctx.closePath();
+  };
+  const qpt = (x0, y0, mx, my_, x1, y1, t) => { const a = (1 - t) * (1 - t), b = 2 * t * (1 - t), c = t * t; return [a * x0 + b * mx + c * x1, a * y0 + b * my_ + c * y1, 2 * (1 - t) * (mx - x0) + 2 * t * (x1 - mx), 2 * (1 - t) * (my_ - y0) + 2 * t * (y1 - my_)]; };
+  const loc = (x0, y0, x1, y1, bend, w0, w1, col = hair, seg = true) => {   // a tapered, slightly curved strand with a rounded end (locs, long-hair strands); segment marks along it
+    const mx = (x0 + x1) / 2 + bend, my_ = (y0 + y1) / 2, N = 7, P = [];
+    for (let i = 0; i <= N; i++) { const q = qpt(x0, y0, mx, my_, x1, y1, i / N), L = Math.hypot(q[2], q[3]) || 1; P.push([q[0], q[1], (w0 + (w1 - w0) * i / N) / 2, -q[3] / L, q[2] / L]); }
+    const path = () => { ctx.beginPath(); P.forEach((q, i) => i ? ctx.lineTo(q[0] + q[3] * q[2], q[1] + q[4] * q[2]) : ctx.moveTo(q[0] + q[3] * q[2], q[1] + q[4] * q[2]));
+      const e = P[N], a0 = Math.atan2(e[4], e[3]); ctx.arc(e[0], e[1], e[2], a0, a0 + Math.PI, true);
+      for (let i = N; i >= 0; i--) ctx.lineTo(P[i][0] - P[i][3] * P[i][2], P[i][1] - P[i][4] * P[i][2]); ctx.closePath(); };
+    path(); ctx.fillStyle = col; ctx.fill();
+    if (tipC) { ctx.save(); path(); ctx.clip(); ctx.fillStyle = tipC; ctx.globalAlpha *= 0.7; ctx.beginPath(); ctx.arc(P[N][0], P[N][1], Math.hypot(x1 - x0, y1 - y0) * 0.22, 0, TAU); ctx.fill(); ctx.restore(); }
+    path(); ctx.lineWidth = 0.9; pen(); ctx.lineWidth = 1.7;
+    if (seg) { ctx.save(); ctx.strokeStyle = hairTex; ctx.globalAlpha *= 0.75 * texA; ctx.lineWidth = 0.65; ctx.beginPath();
+      for (let i = 1; i < N; i++) { const q = P[i], w = q[2] * 0.85; ctx.moveTo(q[0] + q[3] * w, q[1] + q[4] * w); ctx.quadraticCurveTo(q[0] - q[4] * 0.9, q[1] + q[3] * 0.9, q[0] - q[3] * w, q[1] - q[4] * w); }
+      ctx.stroke(); ctx.restore(); }
+  };
+  const braid = (x0, y0, x1, y1, bend, w, bead, col = hair) => {   // a braid: a chain of small tilted bumps (beads at the end)
+    const mx = (x0 + x1) / 2 + bend, my_ = (y0 + y1) / 2, n = Math.max(3, Math.round(Math.hypot(x1 - x0, y1 - y0) / (w * 0.9)));
+    ctx.lineWidth = 0.6; ctx.strokeStyle = line;
+    for (const tp of tipC ? [0, 1] : [0]) {   // (all the bumps of one colour in one path: one fill, one stroke)
+      ctx.beginPath();
+      for (let i = 0; i <= n; i++) { const t = i / n; if ((tipC && t > 0.78 ? 1 : 0) !== tp) continue; const q = qpt(x0, y0, mx, my_, x1, y1, t), a = Math.atan2(q[3], q[2]) + (i % 2 ? 0.55 : -0.55);
+        ctx.moveTo(q[0] + Math.cos(a) * w * 0.62, q[1] + Math.sin(a) * w * 0.62); ctx.ellipse(q[0], q[1], w * 0.62, w * 0.42, a, 0, TAU); }
+      ctx.fillStyle = tp ? tipC : col; ctx.fill(); ctx.stroke();
+    }
+    if (bead) { const q = qpt(x0, y0, mx, my_, x1, y1, 1), L = Math.hypot(q[2], q[3]) || 1; ell(x1 + q[2] / L * w * 0.9, y1 + q[3] / L * w * 0.9, w * 0.5, w * 0.55, FACE_BEADS[Math.round(Math.abs(x0) * 3) & 3], false); }
+    ctx.lineWidth = 1.7;
   };
   const clipOuter = () => { ctx.beginPath(); if (o.sq) ctx.rect(-46, -50, 92, 100); else ctx.arc(0, 0, 50, 0, TAU); };
   clipOuter(); ctx.fillStyle = o.bg || FACE_BG; ctx.fill();
   ctx.save(); clipOuter(); ctx.clip();
-  // shoulders, v-neck, number (the neck thicker on a heavy man)
-  ctx.beginPath(); ctx.moveTo(-50, 52); ctx.quadraticCurveTo(-46, 26, -14, 22); ctx.lineTo(14, 22); ctx.quadraticCurveTo(46, 26, 50, 52); ctx.closePath(); fin(o.shirt || '#2a62b0');
-  ctx.save(); ctx.beginPath(); ctx.moveTo(-50, 52); ctx.quadraticCurveTo(-46, 26, -14, 22); ctx.lineTo(14, 22); ctx.quadraticCurveTo(46, 26, 50, 52); ctx.closePath(); ctx.clip(); hatch(-50, 22, -10, 52, '#000', 0.12, 4); ctx.restore();
-  const nw = [7, 8, 10.5][jaw]; rr(-nw, 8, 2 * nw, 18, 2, dark);
-  ctx.beginPath(); ctx.moveTo(-8, 22); ctx.lineTo(0, 34); ctx.lineTo(8, 22); ctx.closePath(); fin('#ffffff');
-  if (o.num != null) { ctx.fillStyle = o.trim || '#fff'; ctx.font = 'bold 11px ' + HAND_FONT; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(o.num, 0, 43); }
-  const capped = f.acc & 1, hairTex = mixHex(hair, f.hc >= 3 && f.hc <= 4 ? 0.3 : 0.38, f.hc >= 3 && f.hc <= 4 ? 0 : 255);
-  // hair behind the head
-  if (f.hair === 4 && !capped) { ell(0, -17, rx + 9, 25, hair); ctx.save(); ctx.beginPath(); ctx.ellipse(0, -17, rx + 9, 25, 0, 0, TAU); ctx.clip(); hatch(-rx - 9, -42, rx + 9, 8, hairTex, 0.4, 3); ctx.restore(); }
-  if (f.hair === 5) { rr(-rx - 5, -22, 2 * rx + 10, 56, 8, hair); ctx.save(); ctx.beginPath(); ctx.rect(-rx - 5, -22, 2 * rx + 10, 56); ctx.clip(); hatch(-rx - 5, -22, rx + 5, 34, hairTex, 0.35, 3.5, 0.9, 0.1); ctx.restore(); }
-  if (f.hair === 6) for (let k = 0; k < 6; k++) for (const s of [-1, 1]) rr(s * (rx + 1.5 - k * 2.6) - 2, -16 + k * 1.2, 4.4, 26 + (k % 3) * 5, 2.2, hair);
-  if (f.hair === 7) for (const s of [-1, 1]) rr(s * (rx + 2) - 1.8, -14, 3.6, 24, 1.8, hair);
-  if (hx === 3 && !capped) ell(0, top - 6, 7, 6, hair);   // (bun)
-  // ears and head (+ a heavier jaw)
-  ell(-rx, -4, 3.4, 5, skin); ell(rx, -4, 3.4, 5, skin);
-  if (jaw === 2) { ctx.beginPath(); ctx.ellipse(0, chin - 7, rx * 0.92, 9, 0, 0, Math.PI); fin(skin); }
+  // --- shoulders: the jersey (players: v-neck + number) or a coach's outfit (f.fit; missing = the old v-neck)
+  const shirt = o.shirt || '#2a62b0', nw = [7, 8, 10.5][jaw], fit = f.fit ?? 0;
+  const shPath = () => { ctx.beginPath(); ctx.moveTo(-50, 52); ctx.quadraticCurveTo(-46, 26, -14, 22); ctx.lineTo(14, 22); ctx.quadraticCurveTo(46, 26, 50, 52); ctx.closePath(); };
+  if (fit === 1 || fit === 2) ell(0, 12, rx + 7, 15, mixHex(shirt, 0.28));   // (the hood, behind the neck)
+  shPath(); fin(fit === 5 ? '#2b2d37' : fit === 6 ? '#efece4' : shirt);
+  ctx.save(); shPath(); ctx.clip(); hatch(-50, 22, -10, 52, '#000', 0.12, 4); ctx.restore();
+  if (fit === 2) for (const s of [-1, 1]) {   // (cut-off sleeves: the arms show, a frayed edge)
+    ctx.beginPath(); ctx.moveTo(s * 50, 52); ctx.lineTo(s * 50, 36); ctx.quadraticCurveTo(s * 45, 28, s * 37, 30); ctx.lineTo(s * 35, 52); ctx.closePath(); fin(skin);
+    ctx.save(); ctx.strokeStyle = mixHex(shirt, 0.3, 255); ctx.lineWidth = 0.8; ctx.beginPath(); for (let y = 31; y < 52; y += 2.4) { ctx.moveTo(s * 36.2, y); ctx.lineTo(s * 34, y + 1); } ctx.stroke(); ctx.restore();
+  }
+  rr(-nw, 8, 2 * nw, 18, 2, dark);   // neck (thicker on a heavy man)
+  if (fit === 0) {
+    ctx.beginPath(); ctx.moveTo(-8, 22); ctx.lineTo(0, 34); ctx.lineTo(8, 22); ctx.closePath(); fin('#ffffff');
+    if (o.num != null) { ctx.fillStyle = o.trim || '#fff'; ctx.font = 'bold 11px ' + HAND_FONT; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(o.num, 0, 43); }
+  } else if (fit === 1 || fit === 2) {   // hoodie: the hood rolled round the neck, drawstrings
+    ctx.beginPath(); ctx.moveTo(-nw - 9, 16); ctx.quadraticCurveTo(0, 44, nw + 9, 16); ctx.lineTo(nw + 3, 20); ctx.quadraticCurveTo(0, 28, -nw - 3, 20); ctx.closePath(); fin(mixHex(shirt, 0.15));
+    ctx.strokeStyle = '#f2f0ea'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(-4, 29); ctx.lineTo(-5, 42); ctx.moveTo(4, 29); ctx.lineTo(5.5, 41); ctx.stroke(); reset();
+    ctx.fillStyle = '#c8c4bc'; ctx.fillRect(-5.8, 41.5, 1.6, 2.6); ctx.fillRect(4.7, 40.5, 1.6, 2.6);
+  } else if (fit === 3) {   // quarter-zip: collar up the neck, zip a little open
+    rr(-nw - 3, 11, 2 * nw + 6, 14, 4, mixHex(shirt, 0.12));
+    ctx.beginPath(); ctx.moveTo(-2.6, 11); ctx.lineTo(0, 19); ctx.lineTo(2.6, 11); ctx.closePath(); ctx.fillStyle = dark; ctx.fill();
+    ctx.strokeStyle = '#c9c9cf'; ctx.lineWidth = 0.9; ctx.beginPath(); ctx.moveTo(0, 19); ctx.lineTo(0, 52); ctx.stroke(); reset(); rr(-1.3, 19, 2.6, 4.5, 0.8, '#d8d8de');
+  } else if (fit === 4) {   // polo: collar points, placket, two buttons
+    for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(s * (nw + 2), 18); ctx.lineTo(s * 1, 23); ctx.lineTo(s * 6, 31); ctx.lineTo(s * (nw + 7), 24); ctx.closePath(); fin(mixHex(shirt, 0.22, 255)); }
+    rr(-2.2, 23, 4.4, 15, 1, mixHex(shirt, 0.1)); ctx.fillStyle = '#f4f2ec'; for (const y of [27, 33]) { ctx.beginPath(); ctx.arc(0, y, 0.9, 0, TAU); ctx.fill(); }
+  } else if (fit === 5) {   // suit and tie (the tie in the team colour)
+    ctx.beginPath(); ctx.moveTo(-10, 21); ctx.lineTo(10, 21); ctx.lineTo(0, 46); ctx.closePath(); fin('#f6f4ee');
+    for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(s * 1.5, 21); ctx.lineTo(s * 9, 20); ctx.lineTo(s * 5.5, 27); ctx.closePath(); fin('#ffffff'); }
+    ctx.beginPath(); ctx.moveTo(-2.4, 22.5); ctx.lineTo(2.4, 22.5); ctx.lineTo(1.8, 26.5); ctx.lineTo(-1.8, 26.5); ctx.closePath(); fin(shirt);
+    ctx.beginPath(); ctx.moveTo(-1.8, 26.5); ctx.lineTo(1.8, 26.5); ctx.lineTo(3.2, 40); ctx.lineTo(0, 44); ctx.lineTo(-3.2, 40); ctx.closePath(); fin(shirt);
+    for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(s * 10, 21); ctx.lineTo(s * 16, 23.5); ctx.lineTo(s * 11, 31); ctx.lineTo(s * 13.5, 33); ctx.lineTo(s * 3, 52); ctx.lineTo(s * 1.2, 46); ctx.closePath(); fin('#363946'); }
+  } else if (fit === 6) {   // sweater vest over a collared shirt
+    for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(s * (nw + 1), 18); ctx.lineTo(s * 1, 23); ctx.lineTo(s * 7, 29); ctx.lineTo(s * (nw + 6), 23); ctx.closePath(); fin('#ffffff'); }
+    const vp = () => { ctx.beginPath(); ctx.moveTo(-36, 52); ctx.lineTo(-31, 33); ctx.quadraticCurveTo(-27, 25, -14, 23.5); ctx.lineTo(0, 42); ctx.lineTo(14, 23.5); ctx.quadraticCurveTo(27, 25, 31, 33); ctx.lineTo(36, 52); ctx.closePath(); };
+    shp(vp, shirt, () => { hatch(-36, 22, 36, 52, mixHex(shirt, 0.3, 255), 0.3, 2.6, 0.8, 0.5); hatch(-36, 22, 36, 52, mixHex(shirt, 0.3), 0.2, 3.4, 0.8, -0.5); });
+  }
+  // neck tattoo (made-up faces), chain, whistle on a lanyard, towel on the shoulder
+  if (tat) { ctx.save(); ctx.strokeStyle = '#2e4a6a'; ctx.globalAlpha = 0.6; ctx.lineWidth = 0.8; const x = (dv(3, 2) ? 1 : -1) * (nw - 3.4); ctx.beginPath();
+    if (tat === 1) for (let k = 0; k < 3; k++) { ctx.moveTo(x - 2.4, 13 + k * 2.6); ctx.bezierCurveTo(x - 1, 11.8 + k * 2.6, x + 0.6, 14.2 + k * 2.6, x + 2.4, 12.6 + k * 2.6); }
+    else { for (let k = 0; k < 5; k++) { const a = -Math.PI / 2 + k * TAU * 2 / 5; ctx[k ? 'lineTo' : 'moveTo'](x + Math.cos(a) * 3, 17 + Math.sin(a) * 3); } ctx.closePath(); }
+    ctx.stroke(); ctx.restore(); }
+  if (xt & 8) { ctx.save(); ctx.strokeStyle = '#d9a82a'; ctx.lineWidth = 1.3; ctx.setLineDash([1.4, 0.9]); ctx.beginPath(); ctx.moveTo(-nw - 1, 20); ctx.quadraticCurveTo(0, 36, nw + 1, 20); ctx.stroke(); ctx.restore(); ell(0, 28.6, 1.8, 2.2, '#e8bd3a', false); }
+  if (xt & 2) { ctx.strokeStyle = '#1c1c24'; ctx.lineWidth = 1.3; ctx.beginPath(); ctx.moveTo(-nw + 1, 20); ctx.lineTo(-1.4, 40); ctx.moveTo(nw - 1, 20); ctx.lineTo(1.4, 40); ctx.stroke(); reset(); ctx.lineWidth = 1.1; rr(-2.6, 39.5, 7, 4.2, 1.6, '#c9ccd2'); ell(4.4, 41.6, 1.2, 1.2, '#8a8e96', false); reset(); }
+  if (xt & 4) { const tw = () => { ctx.beginPath(); ctx.moveTo(17, 23); ctx.quadraticCurveTo(30, 21.5, 40, 30); ctx.lineTo(45, 52); ctx.lineTo(30, 52); ctx.quadraticCurveTo(28, 36, 15, 29); ctx.closePath(); };
+    shp(tw, '#f4f2ec', () => { ctx.strokeStyle = mixHex(shirt, 0.1); ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(22, 24.5); ctx.quadraticCurveTo(33, 28, 37, 52); ctx.moveTo(25, 23.5); ctx.quadraticCurveTo(36, 27, 40, 52); ctx.stroke(); }); }
+  // --- hair behind the head
+  let hairTop = top - 1.3, hairW = rx + 1.3, capH = 11, capE = 1.3, hatTop = top - 2.4;
+  if (ys === 4 && !capped && hv !== 3) {   // afro body: scalloped, coil texture (tapered = narrower, frohawk = the ridge)
+    const P = hv === 1 ? [0, -19, rx + 5, 24, 15] : hv === 2 ? [0, top - 2, 8, 15, 9] : [0, -17, rx + 9, 25, 18];
+    shp(() => bumpy(P[0], P[1], P[2], P[3], P[4], 1.8), hair, () => { coils(-P[2] - 4, P[1] - P[3] - 4, P[2] + 4, P[1] + P[3], 4); tipBand(P[1] - P[3] - 5, P[1] - P[3] + 7); });
+    hairTop = P[1] - P[3] - 3; hairW = P[2] + 3;
+  }
+  if (ys === 5) {
+    if (hv <= 2) {   // long: narrow at the crown, wider past the jaw, an uneven bottom edge (wavy / shaggy)
+      const wav = hv === 1 ? 2.5 : 0, yb = chin + 12, W2 = 2 * rx + 16;
+      const lp = () => { ctx.beginPath(); ctx.moveTo(0, top - 2.5); ctx.bezierCurveTo(-rx - 2, top - 2, -rx - 4, -14, -rx - 5.5, 2); ctx.bezierCurveTo(-rx - 7 - wav, 14, -rx - 9 - wav, yb - 8, -rx - 8, yb);
+        for (let i = 1; i <= 7; i++) { const x = -rx - 8 + W2 * i / 7; ctx.quadraticCurveTo(x - W2 / 14, yb + (hv === 2 ? (i % 2 ? 6 : -1) : 2.5 + dv(i * 2, 3)), x, yb + (hv === 2 ? (i % 2 ? -2 : 2) : dv(i * 3, 3) - 1)); }
+        ctx.bezierCurveTo(rx + 9 + wav, yb - 8, rx + 7 + wav, 14, rx + 5.5, 2); ctx.bezierCurveTo(rx + 4, -14, rx + 2, top - 2, 0, top - 2.5); ctx.closePath(); };
+      shp(lp, hair, () => {
+        if (hv === 1) { ctx.save(); ctx.strokeStyle = hairTex; ctx.globalAlpha *= 0.45 * texA; ctx.lineWidth = 0.9; ctx.beginPath(); for (let x = -rx - 10; x < rx + 10; x += 3.4) { ctx.moveTo(x, top); for (let y = top; y < yb + 8; y += 2.5) ctx.lineTo(x + Math.sin(y * 0.4 + x) * 1.5, y); } ctx.stroke(); ctx.restore(); }
+        else hatch(-rx - 10, top, rx + 10, yb + 8, hairTex, 0.35 * texA, 3.2, 0.9, 0.08);
+        tipBand(yb - 6, yb + 8, true); });
+    } else if (hv === 3) {   // mullet: short top, long at the back of the neck
+      const mp = () => { ctx.beginPath(); ctx.moveTo(-rx + 1, -3); ctx.quadraticCurveTo(-rx - 3, chin, -rx + 1, chin + 14); for (let i = 1; i <= 6; i++) { const x = -rx + 1 + (2 * rx - 2) * i / 6; ctx.lineTo(x - (rx - 1) / 6, chin + 17 + dv(i * 3, 3)); ctx.lineTo(x, chin + 13.5); } ctx.quadraticCurveTo(rx + 3, chin, rx - 1, -3); ctx.closePath(); };
+      shp(mp, hair, () => { hatch(-rx - 8, -8, rx + 8, chin + 20, hairTex, 0.35 * texA, 3.2, 0.9, 0.08); tipBand(chin + 10, chin + 22, true); });
+    } else if (hv === 5) loc(rx - 2, -6, rx + 7, chin + 17, 3, 7, 3.5, hair, false);   // (ponytail behind, past the neck)
+  }
+  if (ys === 6 && hv !== 3) {   // locs behind the head: from the crown, varied lengths (tied back = a bundle down the back)
+    const yEnd = hv === 0 ? chin - 4 : hv === 4 ? chin + 3 : chin + 17;
+    for (const s of [-1, 1]) for (let k = 0; k < (hv === 2 ? 4 : 5); k++) {
+      const L = dv(k * 4 + (s > 0 ? 2 : 0), 7);
+      if (hv === 2) loc(s * (rx - 7 + k * 1.3), top + 8, s * (rx + 1 + k * 1.2), chin + 12 + L, s * 1.5, 4.2, 3.2);
+      else loc(s * (rx - 5 + k * 2.2), top + 7 + k * 1.4, s * (rx + 2.5 + k * 1.4), yEnd + L - 3, s * (1.5 + k * 0.6), 4.4, 3.4);
+    }
+    hairW = rx + 8;
+  }
+  if (ys === 7 && (hv === 1 || hv === 2)) for (const s of [-1, 1]) for (let k = 0; k < 4; k++) braid(s * (rx - 4 + k * 2), top + 9 + k, s * (rx + 2 + k * 1.6), chin + 14 + dv(k * 3 + (s > 0 ? 1 : 0), 6), s * 1.2, 3.2, hv === 2);
+  // --- ears (small / normal / large / cauliflower) and head (+ a heavier jaw)
+  const ew = [2.8, 3.4, 4.2, 4.3][ear] ?? 3.4, eh = [4.2, 5, 6.2, 5.4][ear] ?? 5;
+  for (const s of [-1, 1]) {
+    ell(s * rx, -4, ew, eh, skin);
+    ctx.strokeStyle = mixHex(skin, 0.35); ctx.lineWidth = 0.8; ctx.beginPath(); if (s > 0) ctx.arc(rx + 0.6, -4, eh * 0.48, -1.2, 1.2); else ctx.arc(-rx - 0.6, -4, eh * 0.48, Math.PI - 1.2, Math.PI + 1.2); ctx.stroke(); reset();
+    if (ear === 3) { ctx.lineWidth = 0.6; for (let k = 0; k < 3; k++) ell(s * (rx + 1), -6.5 + k * 2.4, 1.6, 1.3, mixHex(skin, 0.08)); reset(); }
+  }
   headPath(); fin(skin);
   ctx.save(); headPath(); ctx.clip();   // (skin: pencil shading down the shadow side and under the jaw, a light stroke on the far cheek)
   hatch(-rx - 2, top, -rx * 0.35, chin + 2, mixHex(skin, 0.32), 0.2, 2.8, 1.1);
   hatch(-rx, chin - 6, rx, chin + 2, mixHex(skin, 0.3), 0.16, 2.6, 1, 0.25);
   ctx.strokeStyle = mixHex(skin, 0.35, 255); ctx.globalAlpha = 0.35; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(rx * 0.55, -14); ctx.quadraticCurveTo(rx * 0.75, -6, rx * 0.6, 2); ctx.stroke(); ctx.globalAlpha = 1;
   if (frk === 3) { ctx.fillStyle = mixHex(skin, 0.25); ctx.globalAlpha = 0.22; for (const s of [-1, 1]) { ctx.beginPath(); ctx.ellipse(s * rx * 0.6, 3, 4.5, 6, 0, 0, TAU); ctx.fill(); } ctx.globalAlpha = 1; }
-  ctx.restore(); ctx.lineWidth = 1.7; ctx.strokeStyle = line;
-  // face: eyes (bigger, with a highlight; shape), brows, nose
-  const frown = expr === 4, stern = expr === 3, ex = eyeSh === 3 ? 9.5 : 8, ewy = eyeSh === 1 ? 2.4 : eyeSh === 2 ? 3 : 3.7, ewx = eyeSh === 1 ? 5 : 4.8;
-  const bcol = f.hair === 0 && f.hc === 6 ? '#888' : (f.hc === 4 || f.hc === 3 ? '#8a6a30' : hair);
-  for (const s of [-1, 1]) {
-    ell(s * ex, -6, ewx, ewy, '#ffffff', false);
-    ctx.save(); ctx.beginPath(); ctx.ellipse(s * ex, -6, ewx, ewy, 0, 0, TAU); ctx.clip();
-    ell(s * ex, -5.8, 2.9, 2.9, FACE_EYES[f.eyes] || FACE_EYES[0], false); ell(s * ex, -5.8, 1.35, 1.35, '#111', false); ell(s * ex - 0.9, -6.9, 0.75, 0.75, '#ffffff', false);
-    if (eyeSh === 2) { ctx.beginPath(); ctx.rect(s * ex - 6, -11, 12, 4.4); ctx.fillStyle = skin; ctx.fill(); }   // (hooded: the lid over the top)
+  ctx.restore(); reset();
+  if (chn === 1) { ctx.strokeStyle = mixHex(skin, 0.38); ctx.lineWidth = 0.9; ctx.beginPath(); ctx.moveTo(0, chin - 4.2); ctx.quadraticCurveTo(0.6, chin - 2.6, 0, chin - 1.2); ctx.stroke(); reset(); }   // (cleft chin)
+  // --- face: eyes (shapes, a highlight), bags, brows, nose
+  const frown = expr === 4, stern = expr === 3, lens = eyeSh >= 4 && eyeSh <= 7;
+  const ex = eyeSh === 3 ? 9.5 : 8, ewy = [3.7, 2.4, 3, 3.7, 2.6, 3, 3, 3, 3.2][eyeSh] ?? 3.7, ewx = eyeSh === 1 ? 5 : lens ? 5.2 : 4.8, tilt = eyeSh === 6 ? -0.17 : eyeSh === 7 ? 0.17 : 0;
+  const eyeP = (s, upper) => {
+    ctx.beginPath();
+    if (!lens) { if (upper) ctx.ellipse(s * ex, -6, ewx, ewy, 0, Math.PI * 1.05, Math.PI * 1.95); else ctx.ellipse(s * ex, -6, ewx, ewy, 0, 0, TAU); return; }
+    ctx.save(); ctx.translate(s * ex, -6); ctx.rotate(tilt * s); const up = eyeSh === 4 ? 1.4 : 2;
+    ctx.moveTo(-ewx, 0); ctx.quadraticCurveTo(0, -ewy * up, ewx, 0); if (!upper) ctx.quadraticCurveTo(0, ewy * 1.7, -ewx, 0);
     ctx.restore();
-    ctx.beginPath(); ctx.ellipse(s * ex, -6, ewx, ewy, 0, Math.PI * 1.05, Math.PI * 1.95); ctx.lineWidth = 1; ctx.strokeStyle = line; ctx.stroke();   // (upper lid line)
-    const by = eyeSh === 2 ? -12.4 : -12, bw = [1.4, 2.9, 1.9, 2.2][brow], in0 = frown ? by - 1.8 : stern ? by + 1.5 : by - 0.5, out0 = frown ? by + 0.6 : stern ? by - 1.5 : by;
+  };
+  const bcol = f.hair === 0 && f.hc === 6 ? '#888' : f.hc === 8 ? '#c8c4bc' : f.hc === 7 ? '#4f4a46' : f.hc >= 10 ? '#2b1d14' : (f.hc === 4 || f.hc === 3 ? '#8a6a30' : hair);
+  for (const s of [-1, 1]) {
+    eyeP(s); ctx.fillStyle = '#ffffff'; ctx.fill();
+    ctx.save(); eyeP(s); ctx.clip();
+    ell(s * ex, -5.8, 2.9, 2.9, FACE_EYES[f.eyes] || FACE_EYES[0], false); ell(s * ex, -5.8, 1.35, 1.35, '#111', false); ell(s * ex - 0.9, -6.9, 0.75, 0.75, '#ffffff', false);
+    if (eyeSh === 2 || eyeSh === 8) { ctx.beginPath(); ctx.rect(s * ex - 6, -11, 12, eyeSh === 8 ? 3.6 : 4.4); ctx.fillStyle = skin; ctx.fill(); }   // (hooded / deep-set: the lid over the top)
+    ctx.restore();
+    eyeP(s, true); ctx.lineWidth = eyeSh === 4 ? 1.3 : 1; ctx.strokeStyle = line; ctx.stroke();   // (upper lid line)
+    if (eyeSh === 8) { ctx.strokeStyle = mixHex(skin, 0.38); ctx.globalAlpha = 0.55; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.ellipse(s * ex, -6.4, ewx + 0.6, ewy + 1.6, 0, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke(); ctx.globalAlpha = 1; }   // (deep-set: shadow under the brow bone)
+    if (bag) { ctx.strokeStyle = mixHex(skin, 0.36); ctx.globalAlpha = 0.6; ctx.lineWidth = 0.7; ctx.beginPath(); for (let k = 0; k < bag; k++) { const y = -6 + ewy + 1.3 + k * 1.5; ctx.moveTo(s * ex - 3.6 + k, y); ctx.quadraticCurveTo(s * ex, y + 1.6, s * ex + 3.6 - k, y); } ctx.stroke(); ctx.globalAlpha = 1; }
+    const by = eyeSh === 2 || eyeSh === 8 ? -12.4 : -12, bw = [1.4, 2.9, 1.9, 2.2, 3.6, 2.6, 2.8][brow] ?? 2, in0 = frown ? by - 1.8 : stern ? by + 1.5 : by - 0.5, out0 = frown ? by + 0.6 : stern ? by - 1.5 : by;
+    const bc = gr && f.hc !== 6 ? mixHex(bcol, 0.3, 255) : bcol;
     ctx.beginPath(); ctx.moveTo(s * (ex + 4.5), out0);
     if (brow === 2) ctx.quadraticCurveTo(s * (ex + 0.5), by - 3.4, s * (ex - 4), in0); else if (brow === 3) ctx.lineTo(s * (ex - 4), out0 + (in0 - out0) * 0.4); else ctx.quadraticCurveTo(s * ex, by - 1.4, s * (ex - 4), in0);
-    ctx.lineWidth = bw; ctx.strokeStyle = gr && f.hc !== 6 ? mixHex(bcol, 0.3, 255) : bcol; ctx.stroke();
+    ctx.lineWidth = bw; ctx.strokeStyle = bc; ctx.stroke();
+    if (brow === 4) { ctx.lineWidth = 0.7; ctx.beginPath(); for (let k = 0; k < 6; k++) { const x = s * (ex + 4 - k * 1.5), y = out0 + (in0 - out0) * k / 6 - 0.6; ctx.moveTo(x, y + 1.6); ctx.lineTo(x - s * 0.8, y - 1.4); } ctx.stroke(); }   // (bushy: stray hairs)
+    if ((brow === 5 && s === (dv(4, 2) ? 1 : -1)) || (frk === 6 && s === (dv(6, 2) ? 1 : -1))) {   // (a shaved slit / a scar through the brow)
+      ctx.strokeStyle = skin; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.moveTo(s * (ex + 1.6), by - 2.6); ctx.lineTo(s * (ex + 0.6), by + 1.4); ctx.stroke();
+      if (frk === 6) { ctx.strokeStyle = faceMix(skin, '#b05a5a', 0.4); ctx.lineWidth = 0.7; ctx.beginPath(); ctx.moveTo(s * (ex + 1.9), by - 4); ctx.lineTo(s * (ex + 0.3), by + 2.6); ctx.stroke(); }
+    }
+    if (brow === 6 && s > 0) { ctx.strokeStyle = bc; ctx.lineWidth = bw * 0.6; ctx.beginPath(); ctx.moveTo(-ex + 4, in0 + 0.2); ctx.quadraticCurveTo(0, in0 + 0.8, ex - 4, in0 + 0.2); ctx.stroke(); }   // (unibrow)
   }
   ctx.lineWidth = 1.2; ctx.strokeStyle = mixHex(skin, 0.42); ctx.beginPath();
   if (nose === 0) { ctx.moveTo(0, -5); ctx.lineTo(-1.8, 2); ctx.lineTo(1.6, 2.4); }
   else if (nose === 1) { ctx.moveTo(-2.4, 1.2); ctx.quadraticCurveTo(0, 3.6, 2.4, 1.2); ctx.moveTo(-0.6, -3); ctx.lineTo(-1, 0); }   // (button)
   else if (nose === 2) { ctx.moveTo(-1, -4); ctx.lineTo(-2, 0.5); ctx.moveTo(-4, 1); ctx.quadraticCurveTo(-3.6, 3.2, -1.4, 2.6); ctx.quadraticCurveTo(0, 3.6, 1.4, 2.6); ctx.quadraticCurveTo(3.6, 3.2, 4, 1); }   // (broad)
   else if (nose === 3) { ctx.moveTo(0.4, -8); ctx.lineTo(-0.6, 1.6); ctx.quadraticCurveTo(0.6, 3.2, 2.2, 2); }   // (long, straight)
+  else if (nose === 5) { ctx.moveTo(0.2, -8); ctx.lineTo(-0.2, 1.4); ctx.quadraticCurveTo(0.8, 2.4, 1.6, 1.6); }   // (narrow)
+  else if (nose === 6) { ctx.moveTo(-1.4, -3); ctx.lineTo(-2.4, 0.4); ctx.moveTo(-5, 1); ctx.quadraticCurveTo(-4.8, 3.8, -1.8, 3); ctx.quadraticCurveTo(0, 4, 1.8, 3); ctx.quadraticCurveTo(4.8, 3.8, 5, 1); }   // (wide)
+  else if (nose === 7) { ctx.moveTo(-0.4, -8); ctx.quadraticCurveTo(1.6, -4, 0.2, -1.4); ctx.lineTo(-1.6, 1.8); ctx.quadraticCurveTo(0.4, 3.2, 2, 2); }   // (crooked: a bent bridge)
   else { ctx.moveTo(-0.6, -7); ctx.quadraticCurveTo(-3, -1, -1.4, 1.8); ctx.quadraticCurveTo(0.5, 3, 2, 1.8); }   // (bridge)
   ctx.stroke();
+  if (nose === 2 || nose === 6) { ctx.fillStyle = mixHex(skin, 0.45); ctx.globalAlpha = 0.4; for (const s of [-1, 1]) { ctx.beginPath(); ctx.ellipse(s * 2, 2.4, 1, 0.6, 0, 0, TAU); ctx.fill(); } ctx.globalAlpha = 1; }   // (a nostril hint)
   if (frk === 1) { ctx.fillStyle = mixHex(skin, 0.35); for (let k = 0; k < 9; k++) { const s = k % 2 ? 1 : -1, a = dv(k * 3, 7), b = dv(k * 3 + 1, 5); ctx.beginPath(); ctx.arc(s * (5 + a), -0.5 + b * 0.9, 0.55, 0, TAU); ctx.fill(); } }
+  if (frk === 4) { const s = dv(8, 2) ? 1 : -1; ctx.fillStyle = mixHex(skin, 0.55); ctx.beginPath(); ctx.arc(s * (ex + 2.5), my - 3 + dv(10, 4), 0.9, 0, TAU); ctx.fill(); }   // (mole)
+  if (frk === 5) { const s = dv(9, 2) ? 1 : -1, x = s * rx * 0.55; ctx.strokeStyle = faceMix(skin, '#9a4a4a', 0.35); ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(x - s * 1.6, -1); ctx.lineTo(x + s * 1.4, 5); for (let k = 0; k < 3; k++) { const y = 0.2 + k * 1.9, xx = x - s * 1 + s * k; ctx.moveTo(xx - 1, y + 0.4); ctx.lineTo(xx + 1, y - 0.4); } ctx.stroke(); }   // (cheek scar, stitched)
   if (ln) {   // (age: lines on the forehead, a little crow's-foot at 2)
     ctx.strokeStyle = mixHex(skin, 0.3); ctx.lineWidth = 0.8; ctx.beginPath();
     ctx.moveTo(-8, top + 10.5); ctx.quadraticCurveTo(0, top + 9.5, 8, top + 10.5); if (ln > 1) { ctx.moveTo(-6, top + 13.5); ctx.quadraticCurveTo(0, top + 12.6, 6, top + 13.5); for (const s of [-1, 1]) { ctx.moveTo(s * (ex + 5.2), -7); ctx.lineTo(s * (ex + 7.4), -8.4); ctx.moveTo(s * (ex + 5.2), -5.4); ctx.lineTo(s * (ex + 7.4), -4.6); } }
     ctx.stroke();
   }
-  ctx.lineWidth = 1.7; ctx.strokeStyle = line;
+  reset();
   // eye black (portraits only): strips / smeared / sticker / triangles / one side
   if (eb && !o.noEb) {
     ctx.fillStyle = '#16161a';
@@ -2193,97 +2687,267 @@ function drawAvatar0(f, cx, cy, R, o = {}) {
       else { ctx.beginPath(); ctx.moveTo(x - 4, y); ctx.lineTo(x + 4, y); ctx.lineTo(x, y + 5.4); ctx.closePath(); ctx.fill(); }
     }
   }
-  // facial hair
-  const fh = f.facial, bardy = fh >= 4 && fh <= 6;
-  if (fh === 1 || bardy) {
+  // --- facial hair: beards and stubble first, then the chin patches, the mouth, the mustache on top
+  const bardy = (fh >= 4 && fh <= 6) || fh === 13, bTex = mixHex(beard, 0.35, 255);
+  const beardFill = (up, a = 1) => {
     ctx.save(); headPath(); ctx.clip(); ctx.beginPath();
-    const up = fh === 1 ? my - 6 : fh === 4 ? my - 12 : my - 15;
     ctx.moveTo(-rx - 2, up); ctx.lineTo(-rx - 2, chin + 3); ctx.lineTo(rx + 2, chin + 3); ctx.lineTo(rx + 2, up);
     ctx.quadraticCurveTo(rx * 0.55, my - 6.5, 0, my - 6); ctx.quadraticCurveTo(-rx * 0.55, my - 6.5, -rx - 2, up); ctx.closePath();
-    ctx.globalAlpha = fh === 1 ? 0.3 : 1; ctx.fillStyle = beard; ctx.fill(); ctx.globalAlpha = 1;
-    if (fh !== 1) { ctx.clip(); hatch(-rx - 2, up, rx + 2, chin + 3, mixHex(beard, 0.35, 255), 0.3, 2.6, 0.8, 0.15); }
+    ctx.globalAlpha = a; ctx.fillStyle = beard; ctx.fill(); ctx.globalAlpha = 1;
+    if (a >= 1) { ctx.clip(); hatch(-rx - 2, up, rx + 2, chin + 3, bTex, 0.3, 2.6, 0.8, 0.15); }
     ctx.restore();
-    if (fh >= 5) { ctx.beginPath(); ctx.ellipse(0, chin - 2, rx * 0.96, 6, 0, 0, Math.PI); ctx.fillStyle = beard; ctx.fill(); pen(); }
-    if (fh === 6) { ctx.beginPath(); ctx.moveTo(-rx * 0.7, chin - 3); ctx.quadraticCurveTo(0, chin + 22, rx * 0.7, chin - 3); ctx.closePath(); fin(beard); }
-    if (fh !== 1) { ctx.beginPath(); ctx.ellipse(0, my + 0.5, 5.5, 2.6, 0, 0, TAU); ctx.fillStyle = mixHex(skin, 0.15); ctx.fill(); }   // lips
+  };
+  if (fh === 1) beardFill(my - 6, 0.3);
+  if (fh === 12) {   // patchy stubble: clumps with skin between
+    ctx.save(); headPath(); ctx.clip(); ctx.fillStyle = beard; ctx.globalAlpha = 0.5;
+    for (const [qx, qy, n] of [[-rx * 0.62, my - 1, 9], [rx * 0.6, my - 2, 7], [0, my + 6.5, 10], [-4, my - 4.6, 5], [4.5, my - 4.6, 4], [-rx * 0.8, my - 9, 5], [rx * 0.8, my - 7, 3]])
+      for (let k = 0; k < n; k++) { const a = k * 2.4 + qx, r = 0.8 + (k % 4) * 0.9; ctx.beginPath(); ctx.arc(qx + Math.cos(a) * r, qy + Math.sin(a) * r * 0.8, 0.5, 0, TAU); ctx.fill(); }
+    ctx.restore();
   }
-  if (fh === 7) { ctx.save(); headPath(); ctx.clip(); ctx.beginPath(); ctx.ellipse(0, -4, rx - 1, ry - 1, 0, 0.15, Math.PI - 0.15); ctx.lineWidth = 2.6; ctx.strokeStyle = beard; ctx.stroke(); ctx.restore(); ctx.lineWidth = 1.7; ctx.strokeStyle = line; }
-  if (frk === 2 && expr !== 4) { ctx.strokeStyle = mixHex(skin, 0.35); ctx.lineWidth = 0.9; for (const s of [-1, 1]) { ctx.beginPath(); ctx.arc(s * 8.6, my + 0.4, 1.4, s > 0 ? 2.2 : -0.4, s > 0 ? 3.6 : 1, false); ctx.stroke(); } ctx.strokeStyle = line; ctx.lineWidth = 1.7; }
-  // mouth (o.expr = morale: 2 grin, 1 flat, 4 frown; mo only flavours the face's own expression)
-  const my2 = my, m = o.expr != null ? 0 : mo;
-  if (m === 3) { ctx.beginPath(); ctx.moveTo(-7, my2 - 1.5); ctx.quadraticCurveTo(0, my2 + 7, 7, my2 - 1.5); ctx.closePath(); fin(o.trim && o.trim !== '#ffffff' ? o.trim : '#3a7ad8'); ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 0.7; ctx.beginPath(); ctx.moveTo(-4.5, my2 + 0.8); ctx.lineTo(4.5, my2 + 0.8); ctx.stroke(); ctx.strokeStyle = line; ctx.lineWidth = 1.7; }   // (mouthguard bite)
-  else if (expr === 2 || m === 2) { ctx.beginPath(); ctx.moveTo(-7, my2 - 1); ctx.quadraticCurveTo(0, my2 + 9, 7, my2 - 1); ctx.closePath(); fin('#ffffff'); if (m === 2) { ctx.fillStyle = '#5a1f1f'; ctx.fillRect(-0.7, my2 - 0.8, 1.4, 3.2); } }
+  if (bardy) {
+    beardFill(fh === 4 ? my - 12 : my - 15);
+    if (fh !== 4) { ctx.beginPath(); ctx.ellipse(0, chin - 2, rx * 0.96, 6, 0, 0, Math.PI); ctx.fillStyle = beard; ctx.fill(); pen(); }
+  }
+  if (fh === 6) {   // long beard: full, an uneven bottom edge, hair strokes
+    const lb = () => { ctx.beginPath(); ctx.moveTo(-rx * 0.92, chin - 6); ctx.bezierCurveTo(-rx * 0.96, chin + 6, -rx * 0.72, chin + 12, -rx * 0.45, chin + 15);
+      for (let i = 1; i <= 6; i++) { const x = -rx * 0.45 + rx * 0.9 * i / 6; ctx.quadraticCurveTo(x - rx * 0.075, chin + 17 + (i % 2 ? 2.5 : 0) + dv(i * 3, 2), x, chin + 15 + (i === 6 ? 0 : dv(i * 5, 3) * 0.8)); }
+      ctx.bezierCurveTo(rx * 0.72, chin + 12, rx * 0.96, chin + 6, rx * 0.92, chin - 6); ctx.closePath(); };
+    shp(lb, beard, () => hatch(-rx, chin - 6, rx, chin + 22, bTex, 0.35, 2.4, 0.8, 0.05));
+  }
+  if (fh === 13) { braid(0, chin + 1, 0.6, chin + 16, 0.8, 4.2, false, beard); rr(-2.2, chin + 14, 4.4, 1.8, 0.8, '#c8a040', false); }   // (braided beard: the braid hanging from the chin)
+  if (bardy) { ctx.beginPath(); ctx.ellipse(0, my + 0.5, 5.5, 2.6, 0, 0, TAU); ctx.fillStyle = mixHex(skin, 0.15); ctx.fill(); }   // lips
+  if (fh === 7) { ctx.save(); headPath(); ctx.clip(); ctx.beginPath(); ctx.ellipse(0, -4, rx - 1, ry - 1, 0, 0.15, Math.PI - 0.15); ctx.lineWidth = 2.6; ctx.strokeStyle = beard; ctx.stroke(); ctx.restore(); reset(); }
+  if (fh === 10) {   // mutton chops: down the cheeks to the jaw corners, chin clear
+    ctx.save(); headPath(); ctx.clip();
+    for (const s of [-1, 1]) shp(() => { ctx.beginPath(); ctx.moveTo(s * (rx + 2), -14); ctx.lineTo(s * (rx + 2), chin - 3); ctx.quadraticCurveTo(s * rx * 0.72, chin, s * 9.5, my + 1.5); ctx.quadraticCurveTo(s * rx * 0.55, my - 7, s * (rx - 4.2), -8); ctx.lineTo(s * (rx - 3.8), -14); ctx.closePath(); }, beard, () => hatch(-rx - 2, -14, rx + 2, chin, bTex, 0.3, 2.6, 0.8, 0.15));
+    ctx.restore();
+  }
+  if (frk === 2 && expr !== 4) { ctx.strokeStyle = mixHex(skin, 0.35); ctx.lineWidth = 0.9; for (const s of [-1, 1]) { ctx.beginPath(); ctx.arc(s * 8.6, my + 0.4, 1.4, s > 0 ? 2.2 : -0.4, s > 0 ? 3.6 : 1, false); ctx.stroke(); } reset(); }
+  const my2 = my;
+  if (fh === 3) {   // goatee: chin patch joined to the mustache by thin lines round the mouth (drawn before the mouth, so a grin sits on top of it)
+    ctx.beginPath(); ctx.moveTo(-7, my2 - 3); ctx.lineTo(-8.5, my2 + 3); ctx.quadraticCurveTo(-7, my2 + 12.5, 0, my2 + 13); ctx.quadraticCurveTo(7, my2 + 12.5, 8.5, my2 + 3); ctx.lineTo(7, my2 - 3);
+    ctx.lineTo(5.6, my2 - 0.5); ctx.quadraticCurveTo(0, my2 + 5.2, -5.6, my2 - 0.5); ctx.closePath(); ctx.fillStyle = beard; ctx.fill();
+  }
+  if (fh === 11) { ctx.beginPath(); ctx.moveTo(-5.8, my2 + 1.4); ctx.quadraticCurveTo(-7.6, my2 + 11, 0, my2 + 12.6); ctx.quadraticCurveTo(7.6, my2 + 11, 5.8, my2 + 1.4); ctx.quadraticCurveTo(0, my2 + 5.6, -5.8, my2 + 1.4); ctx.closePath(); ctx.fillStyle = beard; ctx.fill(); }   // (chin goatee, no mustache)
+  if (fh === 8) { ctx.beginPath(); ctx.moveTo(-1.8, my2 + 3.4); ctx.quadraticCurveTo(0, my2 + 2.8, 1.8, my2 + 3.4); ctx.lineTo(0, my2 + 7.6); ctx.closePath(); ctx.fillStyle = beard; ctx.fill(); }   // (soul patch)
+  // mouth (o.expr = morale: 2 grin, 1 flat, 4 frown; mo only flavours the face's own expression); lips (thin / medium / full) under it
+  const m = o.expr != null ? 0 : mo, grin = expr === 2 || m === 2;
+  if (f.lip && !bardy && m !== 3 && !grin) {
+    ctx.save(); ctx.fillStyle = faceMix(skin, '#9c3f3f', sd >= 5 ? 0.16 : 0.28); ctx.globalAlpha = f.lip === 2 ? 0.75 : 0.5;
+    const ly = my2 + (expr === 0 ? 3.4 : expr === 4 ? 1 : 2.2); ctx.beginPath(); ctx.ellipse(0, ly, f.lip === 2 ? 5 : 3.8, f.lip === 2 ? 2.1 : 1.3, 0, 0, TAU); ctx.fill();
+    if (f.lip === 2) { ctx.beginPath(); ctx.ellipse(-2, my2 - 1.3, 2.6, 1.1, 0.1, 0, TAU); ctx.ellipse(2, my2 - 1.3, 2.6, 1.1, -0.1, 0, TAU); ctx.fill(); }
+    ctx.restore();
+  }
+  if (m === 3) { ctx.beginPath(); ctx.moveTo(-7, my2 - 1.5); ctx.quadraticCurveTo(0, my2 + 7, 7, my2 - 1.5); ctx.closePath(); fin(o.trim && o.trim !== '#ffffff' ? o.trim : '#3a7ad8'); ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 0.7; ctx.beginPath(); ctx.moveTo(-4.5, my2 + 0.8); ctx.lineTo(4.5, my2 + 0.8); ctx.stroke(); reset(); }   // (mouthguard bite)
+  else if (grin) { ctx.beginPath(); ctx.moveTo(-7, my2 - 1); ctx.quadraticCurveTo(0, my2 + 9, 7, my2 - 1); ctx.closePath(); fin('#ffffff'); if (m === 2) { ctx.fillStyle = '#5a1f1f'; ctx.fillRect(-0.7, my2 - 0.8, 1.4, 3.2); } }
   else { ctx.beginPath(); ctx.lineWidth = 1.6; ctx.strokeStyle = '#5a1f1f';
     if (m === 1) { ctx.moveTo(-5, my2 + 0.6); ctx.quadraticCurveTo(1, my2 + 2.4, 6, my2 - 2); }   // (smirk)
     else if (expr === 0) { ctx.moveTo(-6, my2 - 1); ctx.quadraticCurveTo(0, my2 + 5, 6, my2 - 1); }
     else if (expr === 1) { ctx.moveTo(-4.5, my2); ctx.lineTo(4.5, my2); }
     else if (expr === 4) { ctx.moveTo(-5.5, my2 + 2.6); ctx.quadraticCurveTo(0, my2 - 3, 5.5, my2 + 2.6); }   // (frown)
     else { ctx.moveTo(-5, my2 + 1); ctx.quadraticCurveTo(0, my2 - 1.5, 5, my2 + 1); }
-    ctx.stroke(); ctx.lineWidth = 1.7; ctx.strokeStyle = line; }
+    ctx.stroke(); reset(); }
   if (fh === 2 || fh === 3 || bardy) {   // mustache
     ctx.beginPath(); ctx.moveTo(-7, my2 - 3.5); ctx.quadraticCurveTo(-3, my2 - 7, 0, my2 - 3.8); ctx.quadraticCurveTo(3, my2 - 7, 7, my2 - 3.5);
     ctx.quadraticCurveTo(3, my2 - 1.5, 0, my2 - 2.6); ctx.quadraticCurveTo(-3, my2 - 1.5, -7, my2 - 3.5); ctx.closePath(); ctx.fillStyle = beard; ctx.fill();
   }
-  if (fh === 3) {   // goatee: chin patch joined to the mustache by thin sideburns around the mouth
-    ctx.beginPath(); ctx.moveTo(-7, my2 - 3); ctx.lineTo(-8.5, my2 + 3); ctx.quadraticCurveTo(-7, my2 + 12.5, 0, my2 + 13); ctx.quadraticCurveTo(7, my2 + 12.5, 8.5, my2 + 3); ctx.lineTo(7, my2 - 3);
-    ctx.lineTo(5.6, my2 - 0.5); ctx.quadraticCurveTo(0, my2 + 5.2, -5.6, my2 - 0.5); ctx.closePath(); ctx.fillStyle = beard; ctx.fill();
-    ctx.beginPath(); ctx.lineWidth = 1.6; ctx.strokeStyle = '#5a1f1f'; ctx.moveTo(-4.5, my2 + 0.6); ctx.quadraticCurveTo(0, my2 + 3.5, 4.5, my2 + 0.6); ctx.stroke(); ctx.lineWidth = 1.7; ctx.strokeStyle = line;
+  if (fh === 9) for (const s of [-1, 1]) {   // handlebar: curled up at the ends
+    ctx.beginPath(); ctx.moveTo(0, my2 - 3.8); ctx.quadraticCurveTo(s * 4, my2 - 7.2, s * 8, my2 - 3.4); ctx.quadraticCurveTo(s * 10.6, my2 - 1.6, s * 11.4, my2 - 5.6);
+    ctx.quadraticCurveTo(s * 12, my2 - 1.4, s * 8.4, my2 - 1.4); ctx.quadraticCurveTo(s * 4, my2 - 1.8, 0, my2 - 2.6); ctx.closePath(); ctx.fillStyle = beard; ctx.fill(); ctx.lineWidth = 0.7; pen(); reset();
   }
-  // hair on top (every style gets pencil strokes)
-  const ys = f.hair;
-  const hairline = h => { ctx.beginPath(); ctx.moveTo(-60, -60); ctx.lineTo(60, -60); ctx.lineTo(60, top + h); ctx.quadraticCurveTo(0, top + h + 6, -60, top + h); ctx.closePath(); };
-  const cap = (h, e = 1.3, fill = hair) => {
-    ctx.save(); hairline(h); ctx.clip(); headPath(e); fin(fill); headPath(e); ctx.clip(); hatch(-rx - e, top - e, rx + e, top + h + 6, hairTex, ys === 1 ? 0.3 : 0.42, 2.6, 0.85, 0.35); ctx.restore();
-    ctx.save(); headPath(e + 0.6); ctx.clip(); ctx.beginPath(); ctx.moveTo(-rx - e, top + h - 1); ctx.quadraticCurveTo(0, top + h + 6, rx + e, top + h - 1); ctx.lineWidth = 0.9; pen(); ctx.restore(); ctx.lineWidth = 1.7;
+  // --- hair on top (skipped under a hat, except what hangs below it)
+  const hlK = f.hl ?? (ys === 2 ? [0, 0, 0, 2, 3][hv] : ys === 1 && hv === 3 ? 1 : ys === 8 ? 1 : ys === 7 && (hv === 0 || hv === 3) ? 1 : 0);
+  const hairline = (h, k = hlK, open = false) => {   // the region above the hairline (open = just the forehead edge, for the pencil line)
+    const y = top + h, tx = rx - 3.2; ctx.beginPath();
+    if (!k) { if (open) { ctx.moveTo(-rx - capE, y - 1); ctx.quadraticCurveTo(0, y + 6, rx + capE, y - 1); } else { ctx.moveTo(-60, -60); ctx.lineTo(60, -60); ctx.lineTo(60, y); ctx.quadraticCurveTo(0, y + 6, -60, y); ctx.closePath(); } return; }
+    const st = (a, b) => { if (open) ctx.moveTo(a, b); else { ctx.moveTo(-60, -60); ctx.lineTo(60, -60); ctx.lineTo(60, b); ctx.lineTo(a, b); } };
+    const end = b => { if (!open) { ctx.lineTo(-60, b); ctx.closePath(); } };
+    if (k === 1) { st(tx + 0.8, y + 9); ctx.lineTo(tx, y + 0.6); ctx.lineTo(-tx, y + 0.6); ctx.lineTo(-tx - 0.8, y + 9); end(y + 9); }   // (line-up: square temples)
+    else if (k === 2) { st(tx + 1, y + 7); ctx.quadraticCurveTo(tx * 0.55, y - 1.8, 0, y + 4.6); ctx.quadraticCurveTo(-tx * 0.55, y - 1.8, -tx - 1, y + 7); end(y + 7); }   // (widow's peak)
+    else { st(tx + 1, y + 6); ctx.quadraticCurveTo(tx * 0.7, y - 8, tx * 0.3, y - 1.5); ctx.quadraticCurveTo(0, y + 2.6, -tx * 0.3, y - 1.5); ctx.quadraticCurveTo(-tx * 0.7, y - 8, -tx - 1, y + 6); end(y + 6); }   // (receding)
   };
+  const capClip = () => { hairline(capH); ctx.clip(); headPath(capE); ctx.clip(); };
+  const cap = (h, e = 1.3, fill = hair, k = hlK, tex = 'h') => {   // the hair over the skull down to the hairline (tex: h strokes / c coils / b pulled back / l loc roots / g braid parting / n none)
+    capH = h; capE = e;
+    ctx.save(); hairline(h, k); ctx.clip(); headPath(e); fin(fill); headPath(e); ctx.clip();
+    if (tex === 'h') hatch(-rx - e, top - e, rx + e, top + h + 9, hairTex, 0.42 * texA, 2.6, 0.85, 0.35);
+    else if (tex === 'c') coils(-rx - e, top - e, rx + e, top + h + 8, 3.8);
+    else if (tex === 'b') { ctx.strokeStyle = hairTex; ctx.globalAlpha = 0.5 * texA; ctx.lineWidth = 0.8; ctx.beginPath(); for (let x = -rx; x <= rx; x += 3.4) { ctx.moveTo(x, top + h + 6); ctx.quadraticCurveTo(x * 1.05, top + 4, x * 0.15, top - 2); } ctx.stroke(); ctx.globalAlpha = 1; }
+    else if (tex === 'l') { ctx.strokeStyle = hairTex; ctx.globalAlpha = 0.6 * texA; ctx.lineWidth = 0.7; ctx.beginPath(); for (let y = top, i = 0; y < top + h + 6; y += 3, i++) for (let x = -rx - 2 + (i % 2) * 2; x < rx + 2; x += 4) { ctx.moveTo(x - 1.6, y); ctx.quadraticCurveTo(x, y + 1.8, x + 1.6, y); } ctx.stroke(); ctx.globalAlpha = 1; }
+    else if (tex === 'g') { ctx.strokeStyle = mixHex(skin, 0.25); ctx.globalAlpha = 0.7; ctx.lineWidth = 0.7; ctx.beginPath(); for (let x = -rx * 0.6; x <= rx * 0.61; x += rx * 0.3) { ctx.moveTo(x, top + h + 2); ctx.lineTo(x * 0.6, top - 2); } for (const y of [top + 3, top + 7.5]) { ctx.moveTo(-rx, y + 2); ctx.quadraticCurveTo(0, y - 1, rx, y + 2); } ctx.stroke(); ctx.globalAlpha = 1; }
+    tipBand(top - e - 1, top + 3.5); ctx.restore();
+    ctx.save(); headPath(e + 0.6); ctx.clip(); hairline(h, k, true); ctx.lineWidth = 0.9; pen(); ctx.restore(); reset();
+  };
+  const stubble = (h, a, y0 = -60, y1 = 60, k = hlK) => {   // short ticks with the skin showing through (buzz cuts, fades, shaved heads)
+    capH = h; capE = 0.6;
+    ctx.save(); hairline(h, k); ctx.clip(); headPath(0.6); ctx.clip(); ctx.beginPath(); ctx.rect(-60, y0, 120, y1 - y0); ctx.clip();
+    ctx.globalAlpha = a * 0.35; ctx.fillStyle = hair; ctx.fillRect(-rx - 2, top - 2, 2 * rx + 4, 2 * ry); ctx.globalAlpha = Math.min(1, a * texA);
+    ctx.strokeStyle = hair; ctx.lineWidth = 0.75; ctx.beginPath();
+    for (let y = top - 1, i = 0; y < top + h + 10; y += 1.6, i++) for (let x = -rx - 1 + (i % 2) * 0.8, k2 = 0; x < rx + 1; x += 1.7, k2++) { const j = ((D >>> ((i + k2 * 3) % 29)) & 3) * 0.3; ctx.moveTo(x + j, y); ctx.lineTo(x + j + 0.5, y - 0.75); }
+    ctx.stroke(); ctx.restore();
+  };
+  const fadeSides = (y, a = 0.7) => stubble(14, a, y, 60);   // (short faded sides below y)
+  const curl = (x, y, r, fill) => { ctx.lineWidth = 1.1; ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.92, 0, 0, TAU); ctx.fillStyle = fill; ctx.fill(); ctx.stroke(); ctx.save(); ctx.strokeStyle = hairTex; ctx.globalAlpha *= 0.7 * texA; ctx.lineWidth = 0.7; ctx.beginPath(); const a0 = Math.abs(x * 7 + y) % 6; ctx.arc(x + 0.3, y + 0.3, r * 0.52, a0, a0 + 4.2); ctx.stroke(); ctx.restore(); reset(); };
   if (!capped && ys > 0) {
-    if (ys === 1) { ctx.globalAlpha = 0.88; cap(8, 1); ctx.globalAlpha = 1; }
-    else if (ys === 2) cap(11);
-    else if (ys === 3) { cap(13, 2.4); }
-    else if (ys === 4) cap(9, 1.5);
-    else if (ys === 5) cap(12);
-    else if (ys === 6) cap(12, 2);
-    else if (ys === 7) { cap(10, 1.5); ctx.save(); hairline(10); ctx.clip(); ctx.strokeStyle = mixHex(hair, 0.4, 255); ctx.lineWidth = 0.9; for (let x = -12; x <= 12; x += 4) { ctx.beginPath(); ctx.moveTo(x, top - 4); ctx.lineTo(x * 0.9, top + 12); ctx.stroke(); } ctx.restore(); ctx.strokeStyle = line; ctx.lineWidth = 1.7; }
-    else if (ys === 8) { rr(-rx - 1, top - 9, 2 * rx + 2, 22, 6, hair); ctx.save(); hairline(13); ctx.clip(); headPath(1.3); fin(hair); ctx.restore(); ctx.save(); ctx.beginPath(); ctx.rect(-rx - 1, top - 9, 2 * rx + 2, 22); ctx.clip(); hatch(-rx - 1, top - 9, rx + 1, top + 13, hairTex, 0.4, 2.6, 0.85, 0.1); ctx.restore(); }
-    else if (ys === 9) { cap(11, 1.3); for (let k = 0; k < 7; k++) { const a = Math.PI + (k + 0.5) * Math.PI / 7; ell(Math.cos(a) * (rx + 0.5), -4 + Math.sin(a) * (ry + 0.5), 4.4, 4.4, hair); } }
-    ctx.beginPath(); ctx.strokeStyle = mixHex(hair, 0.35, 255); ctx.lineWidth = 1.3; ctx.moveTo(-5, top + 1); ctx.lineTo(-8, top + 6); ctx.stroke(); ctx.strokeStyle = line; ctx.lineWidth = 1.7;
-    if (gr) { ctx.fillStyle = FACE_HAIRS[6]; ctx.globalAlpha = 0.75; for (const s of [-1, 1]) { ctx.beginPath(); ctx.ellipse(s * (rx - 1.5), top + 12, 2.6, 5, 0, 0, TAU); ctx.fill(); } ctx.globalAlpha = 1; }   // (grey at the temples)
-    if (hx === 1) { ctx.strokeStyle = mixHex(skin, 0.15); ctx.lineWidth = 0.8; for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(s * (rx - 0.5), top + 9); ctx.lineTo(s * (rx - 5), top + 6.5); ctx.stroke(); } ctx.strokeStyle = line; ctx.lineWidth = 1.7; }   // (fade lines)
-    if (hx === 4) for (let k = 0; k < 5; k++) { const x = -10 + k * 5; ctx.beginPath(); ctx.arc(x, top + 1, 2.2, 0, TAU); ctx.fillStyle = hair; ctx.fill(); ctx.strokeStyle = hairTex; ctx.lineWidth = 0.7; ctx.stroke(); ctx.strokeStyle = line; ctx.lineWidth = 1.7; }   // (twists)
+    if (ys === 1) {   // buzz: stubble (fades lighten below their line), line-up, 360 waves
+      const fy = top + [17, 13, 9, 40, 40][hv]; stubble(9, 1, -60, fy); if (hv <= 2) stubble(9, 0.3, fy, 60);
+      if (hv === 3) { ctx.save(); headPath(0.6); ctx.clip(); hairline(9, 1, true); ctx.lineWidth = 0.8; ctx.strokeStyle = mixHex(hair, 0.2); ctx.stroke(); ctx.restore(); reset(); }
+      if (hv === 4) { ctx.save(); capClip(); ctx.strokeStyle = mixHex(hair, 0.4, 255); ctx.globalAlpha = 0.6; ctx.lineWidth = 0.75; ctx.beginPath(); for (let j = 0; j < 4; j++) { const y0 = top + 1.5 + j * 2.6; for (let x = -rx, i = 0; x <= rx; x += 0.9, i++) { const y = y0 + (x / rx) * (x / rx) * 4 + Math.sin(x * 1.3 + j) * 0.55; if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); } } ctx.stroke(); ctx.restore(); }
+    } else if (ys === 2) {   // short: crew / side part / textured crop / widow's peak / receding
+      cap(hv === 4 ? 9 : 11, hv === 0 ? 1.2 : 1.4);
+      if (hv === 0) { ctx.strokeStyle = hair; ctx.lineWidth = 1.3; ctx.beginPath(); for (let k = 0; k <= 12; k++) { const a = Math.PI * 1.1 + k * Math.PI * 0.8 / 12, px = Math.cos(a) * (rx + 1.2), py = -4 + Math.sin(a) * (ry + 1.2); ctx.moveTo(px, py); ctx.lineTo(px + Math.cos(a) * 1.8 + Math.sin(a) * 0.5, py + Math.sin(a) * 1.8); } ctx.stroke(); reset(); hairTop = top - 3; }
+      if (hv === 1) { const s = dv(12, 2) ? 1 : -1; ctx.save(); capClip(); ctx.strokeStyle = skin; ctx.lineWidth = 0.9; ctx.beginPath(); ctx.moveTo(s * rx * 0.45, top + capH + 2); ctx.lineTo(s * rx * 0.3, top + 0.5); ctx.stroke(); ctx.strokeStyle = hairTex; ctx.lineWidth = 0.8; ctx.globalAlpha = 0.6; ctx.beginPath(); for (let k = 0; k < 4; k++) { ctx.moveTo(s * rx * 0.3, top + 1.5 + k * 2.4); ctx.quadraticCurveTo(-s * rx * 0.2, top + k * 2.6, -s * (rx + 1), top + 5 + k * 2.6); } ctx.stroke(); ctx.restore(); }
+      if (hv === 2) { const y = top + capH, n = 9, st = (2 * rx - 4) / n; shp(() => { ctx.beginPath(); ctx.moveTo(-rx + 2, y - 4); for (let i = 0; i < n; i++) { const x = -rx + 2 + i * st; ctx.lineTo(x + st / 2, y + 2.8 + ((D >>> i) & 1) * 1.2); ctx.lineTo(x + st, y + 0.4); } ctx.lineTo(rx - 2, y - 4); ctx.closePath(); }, hair, () => hatch(-rx, y - 5, rx, y + 5, hairTex, 0.45 * texA, 1.8, 0.8, -0.2), 1.1); }
+    } else if (ys === 3) {   // swept: slick back / side sweep / curtains / pompadour
+      cap(hv === 2 ? 10 : 13, 2.2);
+      if (hv === 0) { ctx.save(); capClip(); ctx.strokeStyle = hairTex; ctx.globalAlpha = 0.6 * texA; ctx.lineWidth = 0.9; ctx.beginPath(); for (const x of [-11, -6, -1, 4, 9]) { ctx.moveTo(x, top + 13); ctx.quadraticCurveTo(x * 1.15, top + 3, x * 0.5, top - 2); } ctx.stroke(); ctx.restore(); }
+      if (hv === 1) { const s = dv(12, 2) ? 1 : -1; shp(() => { ctx.beginPath(); ctx.moveTo(-s * rx * 0.4, top + 1); ctx.quadraticCurveTo(-s * rx * 0.15, top + 11, s * (rx - 0.5), top + 14.5); ctx.quadraticCurveTo(s * (rx + 1.8), top + 4, s * rx * 0.3, top - 2); ctx.quadraticCurveTo(-s * rx * 0.1, top - 2.2, -s * rx * 0.4, top + 1); ctx.closePath(); }, hair, () => hatch(-rx - 3, top - 5, rx + 3, top + 15, hairTex, 0.45 * texA, 2.4, 0.85, -s * 0.6), 1.1); hairTop = top - 3; }
+      if (hv === 2) for (const s of [-1, 1]) shp(() => { ctx.beginPath(); ctx.moveTo(s * 0.6, top + 1); ctx.quadraticCurveTo(s * rx * 0.5, top + 3, s * (rx - 0.5), top + 15); ctx.lineTo(s * (rx - 3.4), top + 17.5); ctx.quadraticCurveTo(s * rx * 0.45, top + 10.5, s * 1.4, top + 6.5); ctx.closePath(); }, hair, () => hatch(-rx, top, rx, top + 18, hairTex, 0.45 * texA, 2.4, 0.85, -s * 0.5), 1.1);
+      if (hv === 3) { shp(() => { ctx.beginPath(); ctx.moveTo(-rx + 0.5, top + 9); ctx.bezierCurveTo(-rx - 1, top - 4, -rx * 0.2, top - 12, rx * 0.35, top - 10); ctx.quadraticCurveTo(rx + 2.5, top - 6, rx + 0.8, top + 7); ctx.quadraticCurveTo(rx * 0.3, top + 0.5, -rx * 0.3, top + 3); ctx.quadraticCurveTo(-rx * 0.8, top + 4.5, -rx + 0.5, top + 9); ctx.closePath(); }, hair, () => { ctx.strokeStyle = hairTex; ctx.globalAlpha = 0.55 * texA; ctx.lineWidth = 0.85; ctx.beginPath(); for (let k = 0; k < 5; k++) { ctx.moveTo(-rx + 3 + k, top + 11 - k); ctx.bezierCurveTo(-rx + k * 2, top - 3 + k * 2, rx * 0.2, top - 8 + k * 2.4, rx - k, top + 6 - k * 0.5); } ctx.stroke(); ctx.globalAlpha = 1; tipBand(top - 12, top - 4); }); hairTop = top - 11; }
+    } else if (ys === 4) {   // afro front: coils over the skull; tapered / frohawk sides faded; sponge curls = small coil clumps
+      if (hv === 1 || hv === 2) fadeSides(top + (hv === 2 ? 4 : 13), hv === 2 ? 0.75 : 0.9);
+      if (hv === 2) { stubble(10, 0.7); shp(() => { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(-6.5, top - 3, 13, 16, 6); else ctx.rect(-6.5, top - 3, 13, 16); }, hair, () => coils(-8, top - 4, 8, top + 14, 3)); }
+      else if (hv === 3) { cap(9, 1.3, hair, 0, 'c'); for (let r = 0; r < 2; r++) for (let k = 0; k < 7 - r; k++) { const x = -rx * 0.8 + (k + r * 0.5) * rx * 0.27, y = top - 1 + r * 4 + Math.abs(x) * 0.12; for (let j = 0; j < 3; j++) curl(x + (j - 1) * 1.3, y - (j === 1 ? 1.2 : 0), 1.6 + dv(k + j, 2) * 0.3, r === 0 && tipC ? faceMix(hair, tipC, 0.7) : hair); } hairTop = top - 4; }
+      else cap(9, 1.5, hair, 0, 'c');
+    } else if (ys === 5) {   // long on top: a part; man bun / ponytail pulled back
+      cap(hv === 3 ? 10 : 12, hv >= 4 ? 1.5 : 1.8, hair, 0, hv >= 4 ? 'b' : 'h');
+      if (hv <= 2) { const s = dv(14, 3) - 1; ctx.save(); capClip(); ctx.strokeStyle = skin; ctx.globalAlpha = 0.8; ctx.lineWidth = 0.9; ctx.beginPath(); ctx.moveTo(s * rx * 0.25, top + capH + 2); ctx.lineTo(s * rx * 0.12, top + 0.5); ctx.stroke(); ctx.restore(); }
+      if (hv === 4) { ell(0, top - 4.5, 7, 5.8, hair); ctx.save(); ctx.strokeStyle = hairTex; ctx.lineWidth = 0.8; ctx.globalAlpha = 0.7 * texA; ctx.beginPath(); ctx.arc(0, top - 4.5, 3.6, 0.5, 4.6); ctx.stroke(); ctx.restore(); ctx.strokeStyle = '#2a2a30'; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(-4, top + 0.6); ctx.quadraticCurveTo(0, top + 1.8, 4, top + 0.6); ctx.stroke(); reset(); hairTop = top - 11; }
+      if (hv === 5) { ctx.strokeStyle = '#2a2a30'; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(rx - 3, -9); ctx.lineTo(rx + 0.5, -7); ctx.stroke(); reset(); }
+    } else if (ys === 6) {   // locs: roots on the skull, locs falling from the crown over the forehead / temples; high bun; fade sides
+      if (hv === 4) fadeSides(top + 12, 0.8);
+      cap(hv === 4 ? 9 : 11, 2.2, hair, 0, 'l');
+      if (hv === 3) { const bp = () => { ctx.beginPath(); ctx.ellipse(0, top - 6, 10, 7.5, 0, 0, TAU); }; shp(bp, hair, () => { ctx.strokeStyle = hairTex; ctx.globalAlpha = 0.65 * texA; ctx.lineWidth = 0.75; ctx.beginPath(); for (let k = 0; k < 6; k++) { ctx.moveTo(-9 + k * 3.4, top - 12); ctx.quadraticCurveTo(-7 + k * 3, top - 4, -8 + k * 3.2, top - 0.5); } ctx.stroke(); ctx.globalAlpha = 1; tipBand(top - 14, top - 9); }); ctx.strokeStyle = '#c84a3a'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(-6, top + 0.6); ctx.quadraticCurveTo(0, top + 2.2, 6, top + 0.6); ctx.stroke(); reset(); hairTop = top - 14; }
+      else if (hv !== 2) { const sh = hv === 0 ? 0.8 : 1; for (const i of [-3, 3, -2, 2, -1, 1, 0]) { if (hv === 4 && Math.abs(i) === 3) continue; const a = Math.abs(i), s = Math.sign(i) || 1, xi = i / 3 * (rx - 1); loc(xi * 0.4, top - 0.5, xi * 1.14 + s * (hv === 0 ? 2 : 1), top + ([11, 14, 17, 26][a] + dv(a * 3 + (s > 0 ? 1 : 0), 3)) * sh, s * (1.4 + a * 0.4), 4.2, 3.3); } hairTop = top - 2.5; }
+    } else if (ys === 7) {   // braids: cornrows following the skull back from the hairline; box braids / beads over a parted base
+      if (hv === 0 || hv === 3) { cap(10, 1.4, mixHex(skin, 0.3), 1, 'n'); const n = hv === 3 ? 4 : 7; for (let i = 0; i < n; i++) { const t = i / (n - 1) - 0.5, xi = t * 1.7 * (rx - 2); braid(xi, top + capH + 1, xi * 0.42, top - 0.5, xi * 0.14, hv === 3 ? 3.8 : 3); } }
+      else cap(11, 1.6, hair, 0, 'g');
+    } else if (ys === 8) {   // high-top: flared sides, a soft textured top, faded sides below it (slanted / a part line)
+      fadeSides(top + 9, 0.75);
+      const w0 = rx - 1.2, w1 = rx + 2.4, yb = top + 11, yl = top - (hv === 1 ? 8 : 11), yr = top - (hv === 1 ? 15 : 11), yt = Math.min(yl, yr);
+      const htP = () => { ctx.beginPath(); ctx.moveTo(-w0, yb); ctx.quadraticCurveTo(-w0 - 0.4, yb - 8, -w1, yl + 2.5); ctx.quadraticCurveTo(-w1, yl, -w1 + 2, yl);
+        for (let i = 1; i <= 9; i++) { const x = -w1 + 2 + (2 * w1 - 4) * i / 9, yy = yl + (yr - yl) * i / 9; ctx.quadraticCurveTo(x - (w1 - 2) / 9, yy - 1.6 - ((D >>> i) & 1) * 0.8, x, yy); }
+        ctx.quadraticCurveTo(w1, yr, w1, yr + 2.5); ctx.quadraticCurveTo(w0 + 0.4, yb - 8, w0, yb); ctx.quadraticCurveTo(0, yb + 3, -w0, yb); ctx.closePath(); };
+      shp(htP, hair, () => { hatch(-w1, yt - 3, w1, yb + 3, hairTex, 0.4 * texA, 2.4, 0.85, 0.05); coils(-w1, yt - 2, w1, top, 3.2, 0.35); tipBand(yt - 3, yt + 3); });
+      if (hv === 2) { ctx.strokeStyle = skin; ctx.lineWidth = 1.1; ctx.beginPath(); ctx.moveTo(w0 - 3.6, yb - 0.5); ctx.lineTo(w0 - 5.8, yl + 4); ctx.stroke(); reset(); }
+      capH = 11; capE = 1.3; hairTop = yt - 2.4; hairW = w1 + 0.5;
+    } else if (ys === 9) {   // curly top: curls only on top (loose / tight coils / twists), short sides
+      fadeSides(top + 10, 0.8); cap(hv === 0 ? 8 : 9, 1.2, hair, 0, 'n');
+      if (hv === 2) for (let k = 0; k < 7; k++) { const x = -rx * 0.75 + k * rx * 0.25; braid(x, top + 6.5, x + 0.6, top - 4 + Math.abs(x) * 0.15, 0.4, 3.4); }
+      else { const rows = hv === 0 ? [[5, top - 1, 4.6], [4, top + 5.5, 4.2]] : [[8, top - 2, 2.5], [7, top + 2, 2.4], [6, top + 6, 2.3]];
+        rows.forEach(([n, y, r], ri) => { for (let k = 0; k < n; k++) { const x = (k - (n - 1) / 2) * (2 * rx * 0.86 / n) + (dv(k + ri * 7, 3) - 1) * 0.5, r2 = r * (0.85 + dv(k * 2 + ri, 4) * 0.08); curl(x, y + Math.abs(x) * 0.18 + (dv(k + ri, 2) - 0.5), r2, ri === 0 && tipC ? faceMix(hair, tipC, 0.7) : hair); } }); }
+      hairTop = top - 6; hairW = rx + 2;
+    }
+    if (ys === 2 || ys === 3 || ys === 5) { ctx.beginPath(); ctx.strokeStyle = mixHex(hair, 0.35, 255); ctx.lineWidth = 1.3; ctx.moveTo(-5, top + 1); ctx.lineTo(-8, top + 6); ctx.stroke(); reset(); }   // (a shine)
+    if (gr && ![4, 6, 7].includes(ys)) {   // grey at the temples, inside the hair, blended with strokes
+      ctx.save(); capClip(); ctx.beginPath(); for (const s of [-1, 1]) { ctx.moveTo(s * (rx - 1) + 4.4, top + capH - 1); ctx.ellipse(s * (rx - 1), top + capH - 1, 4.4, 7, 0, 0, TAU); } ctx.clip();
+      ctx.fillStyle = FACE_HAIRS[6]; ctx.globalAlpha = 0.3; ctx.fillRect(-60, -60, 120, 120); ctx.globalAlpha = 1; hatch(-rx - 5, top, rx + 5, top + capH + 8, '#dcdcdc', 0.75, 1.5, 0.8, 0.5); ctx.restore();
+    }
+    if (hx === 1 && (ys === 2 || ys === 8)) { ctx.strokeStyle = mixHex(skin, 0.15); ctx.lineWidth = 0.8; for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(s * (rx - 0.5), top + 9); ctx.lineTo(s * (rx - 5), top + 6.5); ctx.stroke(); } reset(); }   // (old fade lines)
+    if (hx === 4 && ys === 2) for (let k = 0; k < 5; k++) { const x = -10 + k * 5; ctx.beginPath(); ctx.arc(x, top + 1, 2.2, 0, TAU); ctx.fillStyle = hair; ctx.fill(); ctx.strokeStyle = hairTex; ctx.lineWidth = 0.7; ctx.stroke(); reset(); }   // (old twists)
   }
-  if (ys <= 1 && hx === 2 && !capped) { rr(-3.4, top - 5, 6.8, 18, 3, hair); }   // (mohawk)
-  if (ys === 0 && !capped) { ctx.beginPath(); ctx.moveTo(-6, top + 4); ctx.quadraticCurveTo(-3, top + 2, 0, top + 2.6); ctx.lineWidth = 1.5; ctx.strokeStyle = mixHex(skin, 0.45, 255); ctx.stroke(); ctx.strokeStyle = line; ctx.lineWidth = 1.7; }
-  // accessories, redrawn to sit on the head
-  if (capped) {   // skull cap / hat: a dome, a folded band and its shadow on the forehead
-    ctx.save(); ctx.beginPath(); ctx.rect(-60, -60, 120, top + 15 + 60); ctx.clip(); headPath(2.4); fin(hat); headPath(2.4); ctx.clip(); hatch(-rx - 3, top - 3, rx + 3, top + 15, mixHex(hat, 0.3, 255), 0.25, 3, 0.8); ctx.restore();
-    ctx.save(); headPath(); ctx.clip(); ctx.fillStyle = 'rgba(0,0,0,0.16)'; ctx.fillRect(-rx - 2, top + 15.5, 2 * rx + 4, 2.4); ctx.restore();
-    rr(-rx - 2.6, top + 10.5, 2 * rx + 5.2, 5.6, 2, mixHex(hat, 0.3), true);
-    ctx.beginPath(); ctx.moveTo(-rx - 1, top + 13.2); ctx.quadraticCurveTo(0, top + 14.2, rx + 1, top + 13.2); ctx.lineWidth = 0.6; ctx.strokeStyle = mixHex(hat, 0.5, 255); ctx.stroke();   // (the fold)
-    ctx.beginPath(); ctx.moveTo(-6, top + 3); ctx.lineTo(-9, top + 8); ctx.lineWidth = 1.3; ctx.strokeStyle = mixHex(hat, 0.4, 255); ctx.stroke(); ctx.strokeStyle = line; ctx.lineWidth = 1.7;
+  if (!capped && ys === 0) {   // bald: clean / a shaved shadow / horseshoe
+    if (hv === 1) stubble(9, 0.45);
+    if (hv === 2) { ctx.save(); headPath(1); ctx.clip(); for (const s of [-1, 1]) shp(() => { ctx.beginPath(); ctx.moveTo(s * (rx + 2), -1.5); ctx.lineTo(s * (rx + 2), top + 12); ctx.quadraticCurveTo(s * rx * 0.86, top + 12.5, s * rx * 0.76, top + 16); ctx.quadraticCurveTo(s * rx * 0.8, -6, s * (rx - 2), -1.5); ctx.closePath(); }, hair, () => hatch(-rx - 2, top + 8, rx + 2, 0, hairTex, 0.4 * texA, 2.6, 0.85, 0.35)); ctx.restore(); reset(); }
+    ctx.beginPath(); ctx.moveTo(-6, top + 4); ctx.quadraticCurveTo(-3, top + 2, 0, top + 2.6); ctx.lineWidth = 1.5; ctx.strokeStyle = mixHex(skin, 0.45, 255); ctx.stroke(); reset();
+  }
+  if (ys <= 1 && hx === 2 && !capped) rr(-3.4, top - 5, 6.8, 18, 3, hair);   // (old mohawk)
+  // what hangs below a hat too: long hair over the ears + strands in front of the shoulders, side locs, side braids, two long braids, sideburns
+  if (ys === 5 && hv <= 2) for (const s of [-1, 1]) {
+    shp(() => { ctx.beginPath(); ctx.moveTo(s * rx * 0.45, top + 11); ctx.quadraticCurveTo(s * (rx - 1), top + 11.5, s * (rx - 2.8), top + 20); ctx.quadraticCurveTo(s * (rx - 3.2), -2, s * (rx - 1.8), chin - 6); ctx.quadraticCurveTo(s * (rx + 0.5), chin, s * (rx + 1.5), chin + 2);
+      ctx.lineTo(s * (rx + 6), chin + 1); ctx.quadraticCurveTo(s * (rx + 4.5), -8, s * (rx + 1.6), top + 6); ctx.quadraticCurveTo(s * rx * 0.75, top + 4, s * rx * 0.45, top + 11); ctx.closePath(); }, hair,
+      () => hatch(-rx - 8, top, rx + 8, chin + 4, hairTex, 0.38 * texA, 2.8, 0.85, 0.06), 1.1);
+    loc(s * (rx + 2.5), chin - 5, s * (rx + 9.5), chin + 22 + dv(s > 0 ? 5 : 6, 4), s * (hv === 1 ? 3 : 1.5), 7, hv === 2 ? 2.4 : 3.6, hair, false);
+  }
+  if (ys === 6 && (hv === 0 || hv === 1)) for (const s of [-1, 1]) loc(s * (rx - 1.2), top + 12, s * (rx + 1.8), hv ? chin + 4 : chin - 7, s * 1, 4, 3.2);
+  if (ys === 7 && (hv === 1 || hv === 2)) for (const s of [-1, 1]) for (let k = 0; k < 2; k++) braid(s * (rx - 2.5 + k * 2), top + 12 + k, s * (rx + 0.5 + k * 1.5), chin + 8 + k * 4, s, 3.2, hv === 2);
+  if (ys === 7 && hv === 3) for (const s of [-1, 1]) braid(s * (rx + 0.5), -3, s * (rx + 5), chin + 26, s * 2.4, 5);
+  if ([1, 2, 3, 8, 9].includes(ys) || (ys === 4 && hv !== 2) || (ys === 6 && hv === 4)) {   // sideburns (joining a beard)
+    const joined = (fh >= 4 && fh <= 7) || fh === 10 || fh === 13, y0 = capped ? top + 15 : top + capH + 3;
+    ctx.save(); headPath(); ctx.clip(); ctx.fillStyle = hair; ctx.globalAlpha = ys === 1 ? 0.6 : 1;
+    for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(s * (rx + 1), y0); ctx.lineTo(s * (rx - 3.6), y0 + 1); ctx.lineTo(s * (rx - 3.2), joined ? my - 8 : -1.5); ctx.lineTo(s * (rx + 1), joined ? my - 6 : -1); ctx.closePath(); ctx.fill(); }
+    ctx.restore();
+  }
+  // --- hats (skull cap / ball cap / visor / bucket / beanie / bandana), then the other accessories
+  if (hat) {
+    const hc = hatC, hl2 = mixHex(hc, 0.35, 255), sh = mixHex(hc, 0.3);
+    const dome = yb => { ctx.save(); ctx.beginPath(); ctx.rect(-60, -60, 120, yb + 60); ctx.clip(); headPath(2.4); fin(hc); headPath(2.4); ctx.clip(); hatch(-rx - 3, top - 3, rx + 3, yb, hl2, 0.25, 3, 0.8); ctx.restore(); };
+    const fShadow = y => { ctx.save(); headPath(); ctx.clip(); ctx.fillStyle = 'rgba(0,0,0,0.16)'; ctx.fillRect(-rx - 2, y, 2 * rx + 4, 2.6); ctx.restore(); };
+    const brim = (y0, y1, w) => { ctx.beginPath(); ctx.moveTo(-rx - w, y0); ctx.quadraticCurveTo(0, y0 - 3.5, rx + w, y0); ctx.quadraticCurveTo(rx + w - 1, y1 - 0.5, 0, y1); ctx.quadraticCurveTo(-rx - w + 1, y1 - 0.5, -rx - w, y0); ctx.closePath(); fin(mixHex(hc, 0.15));
+      ctx.strokeStyle = hl2; ctx.lineWidth = 0.7; ctx.beginPath(); ctx.moveTo(-rx - w + 2, y0 + 0.6); ctx.quadraticCurveTo(0, y0 - 2.2, rx + w - 2, y0 + 0.6); ctx.stroke(); reset(); };
+    if (hat === 1) {   // skull cap: a dome, a folded band and its shadow on the forehead
+      dome(top + 15); fShadow(top + 15.5);
+      rr(-rx - 2.6, top + 10.5, 2 * rx + 5.2, 5.6, 2, sh, true);
+      ctx.beginPath(); ctx.moveTo(-rx - 1, top + 13.2); ctx.quadraticCurveTo(0, top + 14.2, rx + 1, top + 13.2); ctx.lineWidth = 0.6; ctx.strokeStyle = mixHex(hc, 0.5, 255); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-6, top + 3); ctx.lineTo(-9, top + 8); ctx.lineWidth = 1.3; ctx.strokeStyle = mixHex(hc, 0.4, 255); ctx.stroke(); reset();
+    } else if (hat === 2) {   // ball cap: crown, seams, button, the brim toward us
+      dome(top + 12); fShadow(top + 15.6);
+      ctx.strokeStyle = sh; ctx.lineWidth = 0.7; ctx.beginPath(); ctx.moveTo(0, top - 2); ctx.lineTo(0, top + 11); ctx.moveTo(-rx * 0.55, top + 1); ctx.quadraticCurveTo(-rx * 0.4, top + 6, -rx * 0.45, top + 11); ctx.moveTo(rx * 0.55, top + 1); ctx.quadraticCurveTo(rx * 0.4, top + 6, rx * 0.45, top + 11); ctx.stroke(); reset();
+      ctx.lineWidth = 1; ell(0, top - 2.2, 1.6, 1.1, sh); reset(); brim(top + 11, top + 15.6, 4);
+    } else if (hat === 3) { fShadow(top + 15.6); rr(-rx - 2.2, top + 8.5, 2 * rx + 4.4, 5, 2, hc); brim(top + 11.5, top + 15.8, 4); }   // visor: band + brim, the hair shows on top
+    else if (hat === 4) {   // bucket hat: soft crown, band, a drooping brim
+      const cp = () => { ctx.beginPath(); ctx.moveTo(-rx - 1.5, top + 12); ctx.bezierCurveTo(-rx - 1, top - 10, rx + 1, top - 10, rx + 1.5, top + 12); ctx.closePath(); };
+      shp(cp, hc, () => { hatch(-rx - 3, top - 6, rx + 3, top + 12, hl2, 0.25, 3, 0.8); ctx.fillStyle = sh; ctx.fillRect(-rx - 3, top + 8, 2 * rx + 6, 3); });
+      ctx.beginPath(); ctx.moveTo(-rx - 9, top + 16); ctx.quadraticCurveTo(-rx - 2, top + 8.5, 0, top + 9.5); ctx.quadraticCurveTo(rx + 2, top + 8.5, rx + 9, top + 16); ctx.quadraticCurveTo(0, top + 12.5, -rx - 9, top + 16); ctx.closePath(); fin(mixHex(hc, 0.12));
+      ctx.save(); ctx.setLineDash([1.2, 1.4]); ctx.strokeStyle = hl2; ctx.lineWidth = 0.6; ctx.beginPath(); ctx.moveTo(-rx - 6, top + 14.2); ctx.quadraticCurveTo(0, top + 9, rx + 6, top + 14.2); ctx.stroke(); ctx.restore(); reset(); hatTop = top - 4.5;
+    } else if (hat === 5) {   // beanie: taller dome, a ribbed cuff
+      const bp = () => { ctx.beginPath(); ctx.moveTo(-rx - 2.6, top + 15); ctx.lineTo(-rx - 2.2, top + 6); ctx.bezierCurveTo(-rx - 1.5, top - 11, rx + 1.5, top - 11, rx + 2.2, top + 6); ctx.lineTo(rx + 2.6, top + 15); ctx.closePath(); };
+      shp(bp, hc, () => hatch(-rx - 3, top - 8, rx + 3, top + 15, hl2, 0.25, 2.2, 0.8, 0.05));
+      rr(-rx - 3, top + 8, 2 * rx + 6, 7, 2.4, mixHex(hc, 0.12)); ctx.strokeStyle = sh; ctx.lineWidth = 0.7; ctx.beginPath(); for (let x = -rx - 1.5; x < rx + 2; x += 2.2) { ctx.moveTo(x, top + 9); ctx.lineTo(x, top + 14); } ctx.stroke(); reset(); hatTop = top - 6.5;
+    } else if (hat === 6) {   // bandana: a dotted cloth tied at the side
+      dome(top + 13); ctx.save(); ctx.beginPath(); ctx.rect(-60, -60, 120, top + 73); ctx.clip(); headPath(2.4); ctx.clip(); ctx.fillStyle = 'rgba(255,255,255,0.75)'; for (let y = top - 1, i = 0; y < top + 13; y += 3.4, i++) for (let x = -rx + (i % 2) * 2.2; x < rx + 2; x += 4.4) { ctx.beginPath(); ctx.arc(x, y, 0.6, 0, TAU); ctx.fill(); } ctx.restore();
+      ctx.beginPath(); ctx.moveTo(-rx - 2.2, top + 12.6); ctx.quadraticCurveTo(0, top + 14, rx + 2.2, top + 12.6); ctx.lineWidth = 0.9; pen(); reset();
+      for (const a of [0.5, 1.1]) { ctx.beginPath(); ctx.moveTo(rx + 1.5, top + 10); ctx.lineTo(rx + 1.5 + Math.cos(a) * 7, top + 10 + Math.sin(a) * 7); ctx.lineTo(rx + 1.5 + Math.cos(a + 0.35) * 6, top + 10 + Math.sin(a + 0.35) * 6); ctx.closePath(); ctx.lineWidth = 1; fin(hc); reset(); }
+    }
   }
   if (f.acc & 2) {   // headband: follows the skull's curve, a little sheen
     const hb = o.trim && o.trim !== '#ffffff' ? o.trim : '#f2f2f2';
     ctx.beginPath(); ctx.moveTo(-rx - 1.4, top + 9); ctx.quadraticCurveTo(0, top + 6, rx + 1.4, top + 9); ctx.lineTo(rx + 1.4, top + 14); ctx.quadraticCurveTo(0, top + 11, -rx - 1.4, top + 14); ctx.closePath(); fin(hb);
-    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(-rx * 0.6, top + 9.6); ctx.quadraticCurveTo(0, top + 7.4, rx * 0.4, top + 9); ctx.stroke(); ctx.strokeStyle = line; ctx.lineWidth = 1.7;
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(-rx * 0.6, top + 9.6); ctx.quadraticCurveTo(0, top + 7.4, rx * 0.4, top + 9); ctx.stroke(); reset();
   }
-  if (f.acc & 4) {   // glasses: thin hand-drawn frames
-    ctx.strokeStyle = '#4a3420'; ctx.lineWidth = 1.05;
-    for (const s of [-1, 1]) { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(s * (ex + 0.5) - 5.6, -10.2, 11.2, 8.2, 2.8); else ctx.rect(s * (ex + 0.5) - 5.6, -10.2, 11.2, 8.2); ctx.fillStyle = 'rgba(255,255,255,0.22)'; ctx.fill(); pen(); }
-    ctx.beginPath(); ctx.moveTo(-ex + 5.6, -6.6); ctx.quadraticCurveTo(0, -8, ex - 5.6, -6.6); ctx.moveTo(-ex - 6, -7); ctx.lineTo(-rx, -6); ctx.moveTo(ex + 6, -7); ctx.lineTo(rx, -6); ctx.stroke();
-    ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 0.6; for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(s * (ex + 0.5) - 3.5, -8.6); ctx.lineTo(s * (ex + 0.5) - 1.6, -8.6); ctx.stroke(); }
-    ctx.strokeStyle = line; ctx.lineWidth = 1.7;
+  if (gl) {   // glasses: thin / round / aviator / thick frames / sunglasses / readers low on the nose
+    const gy = gl === 6 ? -1.6 : -6;
+    ctx.strokeStyle = gl === 4 || gl === 5 ? '#1e1e24' : gl === 3 ? '#b8963a' : '#4a3420'; ctx.lineWidth = gl === 4 ? 2.1 : 1.05;
+    const lensP = s => { const x = s * (ex + 0.5); ctx.beginPath();
+      if (gl === 2) ctx.arc(x, gy, 5, 0, TAU);
+      else if (gl === 3) { ctx.moveTo(x - s * 5.4, gy - 3.6); ctx.lineTo(x + s * 5.8, gy - 3.8); ctx.quadraticCurveTo(x + s * 6.2, gy + 4.8, x + s * 0.6, gy + 4.6); ctx.quadraticCurveTo(x - s * 5.6, gy + 3.4, x - s * 5.4, gy - 3.6); }
+      else if (gl === 6) { ctx.moveTo(x - 4.6, gy - 1.2); ctx.lineTo(x + 4.6, gy - 1.2); ctx.quadraticCurveTo(x + 4.4, gy + 3.2, x, gy + 3.4); ctx.quadraticCurveTo(x - 4.4, gy + 3.2, x - 4.6, gy - 1.2); }
+      else if (ctx.roundRect) ctx.roundRect(x - 5.6, gy - 4.2, 11.2, 8.2, gl === 1 ? 2.8 : 1.8); else ctx.rect(x - 5.6, gy - 4.2, 11.2, 8.2); };
+    for (const s of [-1, 1]) { lensP(s); ctx.fillStyle = gl === 5 ? 'rgba(20,22,30,0.88)' : gl === 3 ? 'rgba(90,120,140,0.3)' : 'rgba(255,255,255,0.22)'; ctx.fill(); pen(); }
+    const bx = ex + 0.5 - (gl === 2 ? 5 : gl === 6 ? 4.6 : 5.6);
+    ctx.beginPath(); ctx.moveTo(-bx, gy - 0.6); ctx.quadraticCurveTo(0, gy - 2, bx, gy - 0.6); if (gl === 3) { ctx.moveTo(-bx, gy - 3.4); ctx.lineTo(bx, gy - 3.4); }
+    ctx.moveTo(-ex - 6, gy - 1); ctx.lineTo(-rx, -6); ctx.moveTo(ex + 6, gy - 1); ctx.lineTo(rx, -6); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 0.6; for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(s * (ex + 0.5) - 3.5, gy - 2.6); ctx.lineTo(s * (ex + 0.5) - (gl === 5 ? 0.5 : 1.6), gy - (gl === 5 ? 0.2 : 2.6)); ctx.stroke(); }
+    reset();
   }
-  if (f.acc & 8) {   // headset: band over the top, cups on the ears, a boom mic with its foam
-    ctx.beginPath(); ctx.ellipse(0, -4, rx + 3.2, ry + 3.2, 0, Math.PI * 1.04, Math.PI * 1.96); ctx.lineWidth = 2.6; ctx.strokeStyle = '#2a2a30'; ctx.stroke();
-    ctx.strokeStyle = line; ctx.lineWidth = 1.2; rr(-rx - 6.2, -9.5, 6.4, 12.5, 2.4, '#2a2a30'); rr(rx - 0.2, -9.5, 6.4, 12.5, 2.4, '#2a2a30');
+  if (hs) {   // headset: the band rides over the hair / hat, cups on the ears (or one), a boom mic with its foam
+    const rb = Math.max(rx + 3.2, hairW + 1.2), qb = Math.max(ry + 3.2, -4 - (capped ? hatTop : hairTop) + 1.4);
+    ctx.beginPath(); ctx.ellipse(0, -4, rb, qb, 0, Math.PI * 1.04, Math.PI * 1.96); ctx.lineWidth = 2.6; ctx.strokeStyle = '#2a2a30'; ctx.stroke();
+    if (rb > rx + 4.5) { const ey = -4 + qb * Math.sin(Math.PI * 1.04), exx = rb * Math.cos(Math.PI * 1.04); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(exx, ey); ctx.lineTo(-rx - 3, -9); if (hs === 1) { ctx.moveTo(-exx, ey); ctx.lineTo(rx + 3, -9); } ctx.stroke(); }
+    ctx.strokeStyle = line; ctx.lineWidth = 1.2; rr(-rx - 6.2, -9.5, 6.4, 12.5, 2.4, '#2a2a30'); if (hs === 1) rr(rx - 0.2, -9.5, 6.4, 12.5, 2.4, '#2a2a30'); else rr(rx - 1.5, -14, 4, 7, 2, '#3a3a40');
     ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.fillRect(-rx - 5, -8, 1.4, 9);
     ctx.beginPath(); ctx.moveTo(-rx - 3, 3); ctx.quadraticCurveTo(-rx + 1, my + 4, -5, my + 3.5); ctx.lineWidth = 1.3; ctx.strokeStyle = '#2a2a30'; ctx.stroke();
-    ell(-5, my + 3.5, 2.2, 1.8, '#3a3a40', false); ctx.strokeStyle = line; ctx.lineWidth = 1.7;
+    ell(-5, my + 3.5, 2.2, 1.8, '#3a3a40', false); reset();
   }
-  if (f.acc & 16) {   // earrings (bit 16: only in face objects, the hex codes hold 0-15): small gold hoops, or studs
+  if (f.acc & 16) {   // earrings (bit 16: face objects only): hoops / studs / diamonds / one hoop / dangles (old faces: stud picks)
+    const er = f.er || (f.stud ? 2 : 1), ly = -4 + eh - 1;
     ctx.strokeStyle = '#d9a82a'; ctx.fillStyle = '#e8bd3a'; ctx.lineWidth = 1.1;
-    for (const s of [-1, 1]) { ctx.beginPath(); if (f.stud) { ctx.arc(s * (rx + 0.6), 0.6, 1.1, 0, TAU); ctx.fill(); } else { ctx.arc(s * (rx + 0.6), 3.6, 1.8, 0, TAU); ctx.stroke(); } }
-    ctx.strokeStyle = line; ctx.lineWidth = 1.7;
+    for (const s of er === 4 ? [-1] : [-1, 1]) { const x = s * (rx + 0.6); ctx.beginPath();
+      if (er === 2) { ctx.arc(x, ly - 2.4, 1.1, 0, TAU); ctx.fill(); }
+      else if (er === 3) { ctx.fillStyle = '#eaf4ff'; ctx.arc(x, ly - 2.4, 1.4, 0, TAU); ctx.fill(); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(x - 2.2, ly - 2.4); ctx.lineTo(x + 2.2, ly - 2.4); ctx.moveTo(x, ly - 4.6); ctx.lineTo(x, ly - 0.2); ctx.stroke(); ctx.fillStyle = '#e8bd3a'; ctx.strokeStyle = '#d9a82a'; ctx.lineWidth = 1.1; }
+      else if (er === 5) { ctx.moveTo(x, ly - 1); ctx.lineTo(x, ly + 3); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x, ly + 2.4); ctx.lineTo(x, ly + 6); ctx.moveTo(x - 1.4, ly + 3.6); ctx.lineTo(x + 1.4, ly + 3.6); ctx.stroke(); }
+      else { ctx.arc(x, ly + 0.6, 1.8, 0, TAU); ctx.stroke(); } }
+    reset();
+  }
+  if (xt & 1) { ctx.save(); ctx.translate(rx + 1.2, -10.5); ctx.rotate(-0.85); ctx.lineWidth = 0.7; rr(-8, -1.2, 13, 2.4, 0.4, '#f2c230'); ctx.beginPath(); ctx.moveTo(5, -1.2); ctx.lineTo(8, 0); ctx.lineTo(5, 1.2); ctx.closePath(); fin('#e9cfa2'); rr(-9.6, -1.2, 1.8, 2.4, 0.5, '#e98a9a'); ctx.restore(); reset(); }   // (pencil behind the ear)
+  if (mth === 1) { ctx.strokeStyle = '#d8b878'; ctx.lineWidth = 0.9; ctx.beginPath(); ctx.moveTo(3, my + 0.4); ctx.lineTo(11.5, my - 2.6); ctx.stroke(); reset(); }   // (toothpick)
+  else if (mth === 2) { ctx.lineWidth = 1; ell(1, my + 1.4, 4.6, 4.2, '#f39ac6'); ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.beginPath(); ctx.arc(-0.6, my - 0.2, 1.1, 0, TAU); ctx.fill(); reset(); }   // (a gum bubble)
+  else if (mth === 3) { ctx.lineWidth = 1; rr(-1.4, my - 1.6, 9, 3.6, 1.4, '#c9ccd2'); ell(6.6, my + 0.3, 2.2, 2.2, '#c9ccd2'); ctx.strokeStyle = '#1c1c24'; ctx.beginPath(); ctx.moveTo(8, my + 1.6); ctx.quadraticCurveTo(10, chin + 4, 9, chin + 12); ctx.stroke(); reset(); }   // (whistle)
+  else if (mth === 4) {   // play sheet held up over the mouth
+    ctx.save(); ctx.translate(-2, my + 5.5); ctx.rotate(-0.12); ctx.lineWidth = 1.1; rr(-12, -9.5, 22, 17, 1.2, '#fbfaf4');
+    ctx.strokeStyle = '#7a8aa8'; ctx.lineWidth = 0.5; ctx.beginPath(); for (let y = -6; y < 7; y += 3) { ctx.moveTo(-10, y); ctx.lineTo(8, y); } ctx.stroke();
+    ctx.strokeStyle = '#c83a3a'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(-7, -5); ctx.lineTo(-4, -2); ctx.moveTo(-4, -5); ctx.lineTo(-7, -2); ctx.moveTo(-5, 1); ctx.quadraticCurveTo(0, -4, 5, 0); ctx.stroke(); ctx.beginPath(); ctx.arc(4, 3.5, 1.6, 0, TAU); ctx.stroke();
+    ctx.lineWidth = 1.1; ctx.strokeStyle = line; rr(-15, 2, 7, 9, 3, skin); ctx.restore(); reset();
   }
   if (o.hurt) {   // a band-aid doodle (the INJ / TIRED tags stay the readable source)
     const s = dv(6, 2) ? 1 : -1, fore = !!eb || dv(8, 3) === 0, bx = fore ? s * 5 : s * (ex + 2), by = fore ? top + 9 : 2;
@@ -2291,7 +2955,7 @@ function drawAvatar0(f, cx, cy, R, o = {}) {
     rr(-6, -2, 12, 4, 2, '#e9c39a', false); ctx.lineWidth = 0.7; ctx.strokeStyle = '#9a6a3a'; ctx.stroke();
     ctx.fillStyle = '#f6e2c8'; ctx.fillRect(-2, -1.6, 4, 3.2);
     ctx.lineWidth = 0.5; ctx.beginPath(); ctx.moveTo(-1, -1.6); ctx.lineTo(-1, 1.6); ctx.moveTo(1, -1.6); ctx.lineTo(1, 1.6); ctx.moveTo(-2, 0); ctx.lineTo(2, 0); ctx.stroke();
-    ctx.restore(); ctx.strokeStyle = line; ctx.lineWidth = 1.7;
+    ctx.restore(); reset();
   }
   ctx.restore();
   if (!o.sq) { ctx.beginPath(); ctx.arc(0, 0, 50, 0, TAU); ctx.lineWidth = 2.4; ctx.strokeStyle = line; pen(); }
@@ -2935,7 +3599,7 @@ const kRangeYd = K => (kAb(K, 'bigLeg') ? ABIL_FX.bigLeg : 0) + (kAb(K, 'moonSho
 function kickWxLoss(K) {   // odds lost to the weather on a kick
   if (typeof wxLive !== 'function' || !wxLive() || kAb(K, 'automatic')) return 0;
   const wk = kAb(K, 'weatherman') ? ABIL_FX.weatherman : kAb(K, 'windRead') ? ABIL_FX.windRead : 1, rk = kAb(K, 'weatherman') ? ABIL_FX.weatherman : 1;
-  return KICK_WX.wind * Math.min(1, (WXI.mph || 0) / 30) * wk + KICK_WX.wet * wxP() * rk;
+  return KICK_WX.wind * Math.min(1, (WXI.mph || 0) / 30) * wk + (KICK_WX.wet * wxP() + (wxExt() === 'storm' ? WX_X.storm.kickLoss : 0)) * rk;   // (thunderstorm: more lost)
 }
 function kPuntSpot(k, lx) {   // the punt's landing spot (world x; the ball goes toward 0): Pin Point = right on his aim, Coffin Corner = pulled toward the goal line
   if (xfOn(k.kicker, 'pinPoint') && k.aimX != null) return k.aimX;
@@ -3001,6 +3665,7 @@ function wearPlay() {   // a scrimmage play just ended: everyone on the field ti
     else if (run && ols.includes(p)) k *= WEAR.run.ol * (1 + runHeat() * RUN_STREAK.wear);
     else if (!run && dl.includes(p)) k *= WEAR.rush;
     if (p === qb) k *= Math.max(WEAR.qbMin, WEAR.qb - WEAR.qbSpd * rz(p, 'spd'));
+    if (diffMineP(p)) k *= diffX('stam');   // (STAMINA DRAIN: the PLAYER's men)
     if ((!run && abilOn(p, 'motor')) || xfOn(p, 'secondWind')) k = 0;   // (Motor: rushing never wears him down; Second Wind: no stamina drain)
     const nw = Math.min(1, (WEAR_MAP.get(p.wk) || 0) + k); WEAR_MAP.set(p.wk, nw); wearAfter(p, nw);
   }
@@ -3068,7 +3733,7 @@ function xfCount(conds, ctr, e, v, k) {
 function xfTurnOn(s, x) {
   if (diffX('xfMax') < 1 && (ROSTER[xfTeam(s)] || []).filter(q => q.xf && q.xf.on).length >= Math.max(1, Math.round(XF_CAP_BASE * diffX('xfMax')))) return;   // (difficulty: fewer at once per team)
   x.on = true; x.c = []; x.o = [];
-  if (state !== 'sim' && ols && ols.length) celebNote('xf', allPlayers().find(p => p.src === s));   // (he celebrates it at the next whistle: see celebrations)
+  if (state !== 'sim' && ols && ols.length) { celebNote('xf', allPlayers().find(p => p.src === s)); annSay('xf', { pri: 5 }); }   // (he celebrates it at the next whistle: see celebrations)
   XF_NOTES.push({ s, on: true });
   if (xfTeam(s) === meK() && !xfSimming) goalEvent('xf');   // (lit in a simulated drive: no goal credit)
 }
@@ -3388,7 +4053,7 @@ const ownTop = p => { const ref = speedRef(p); return ref && absTop(p) ? effTop(
 const rmSpd = (p, k) => Math.max(0.2, rm(p, 'spd', k) - (typeof k === 'number' ? k : RATE_K[k]) * (p && p.team === 'def' && p.grp && !tut ? diffFor(p).rz : 0));
 // the rate multiplier from that: 1 + k * steps (k from RATE_K by name, or a number); never below 0.2
 // (named rates also get the body-weight nudge from BODY.weightK: heavier = stronger, lighter = quicker)
-const rm = (p, a, k) => Math.max(0.2, 1 + (typeof k === 'number' ? k : RATE_K[k]) * rz(p, a) + (BODY.weightK[k] || 0) * wz(p));
+const rm = (p, a, k) => Math.max(0.2, 1 + (typeof k === 'number' ? k : RATE_K[k]) * (A5_DIFF.attrs[a] ? diffAwrZ(p, rz(p, a)) : rz(p, a)) + (BODY.weightK[k] || 0) * wz(p));
 // body weight / height over his group's star average, in BODY steps (0 for bench players)
 const wz = p => p && p.wt && p.grp && BODY_AVG[p.grp] ? (p.wt - BODY_AVG[p.grp].wt) / BODY.wtStep : 0;
 const hz = p => p && p.ht && p.grp && BODY_AVG[p.grp] ? (p.ht - BODY_AVG[p.grp].ht) / BODY.htStep : 0;

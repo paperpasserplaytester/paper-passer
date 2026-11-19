@@ -943,6 +943,7 @@ function postIssue(kind, g) {
   for (const s of arcStories) cands.push({ w: 7 + (s.big ? 4 : 0), st: s, k: 'arc' });
   const recent = P.issues.slice(0, 3).flatMap(i => [i.head.k, ...i.st.map(s => s.k)]);   // (the same kind of story in the last three papers counts less)
   for (const c of cands) c.w *= Math.pow(0.55, recent.filter(k => k === c.k).length);
+  if (PHOTO_PEND.length) for (const c of cands) if (photoGameStory(c.st, me)) c.w *= POST_PHOTO.storyK;   // (v0.68: the editors have pictures of your game: its story runs more often)
   const pickd = [], cnt = {};
   let pool = cands.slice();
   while (pool.length && pickd.length < POST.storyMax) {
@@ -954,6 +955,7 @@ function postIssue(kind, g) {
   pickd.sort((a, b) => b.w - a.w);
   const stories = pickd.map(c => c.st);
   if (!stories.length) { const sl = { team: pTeam(me) }; stories.push(mkStory('off', 'Quiet Week Around the League', 'Not much happened, and the editors are not even sorry.', null, false)); }
+  if (kind === 'wk' || kind === 'po') { try { photoAttach(stories, me); } catch (e) { console.warn('post photos', e); } } else PHOTO_PEND = [];   // (v0.68: this game's pictures)
   const T = seasonTable(), roll = []; const notable = [];
   for (const k of Object.keys(ROSTER)) if (NFL[k]) for (const p of ROSTER[k]) if (p.stars >= 4) notable.push([p, k]);
   for (let i = 0; i < 3 && notable.length; i++) { const [p, k] = rPick(r, notable), sl = snapSlots(snapOf(p, k), { team: pTeam(k) }); roll.push(postFill(rPick(r, RUMORS), sl)); }
@@ -971,6 +973,7 @@ function postIssue(kind, g) {
   P.issues.unshift(iss);
   P.issues.forEach((it, i) => { if (i >= POST.full) { it.st = it.st.slice(0, 3); delete it.sc; delete it.rum; delete it.let; delete it.ed; delete it.cls; delete it.std; if (it.wire) it.wire = it.wire.slice(0, 4).map(w => ({ k: w.k, t: w.t })); } });
   if (P.issues.length > POST.keep) P.issues.length = POST.keep;
+  try { photoPrune(P); } catch (e) {}
   P.wire = [];
   if (kind === 'wk') postEventRoll(r);
   postBuilding = null; postTradeWk = null;
@@ -1034,6 +1037,169 @@ function pCard(s, x, y, w, h, mini) {   // a player card like the roster's, prin
   const r = Math.max(4, Math.min(mini ? 5 : 8, (w - 14) / 11));
   starsRow(x + w / 2 - 4.4 * r, y + h - (mini ? 8 : 12), s.s || 0, r);
 }
+// ---- photos from real plays (v0.68; tunables POST_PHOTO in 02): at the end of your game (openResults, before seasonGameDone prints the issue) photoGame takes
+// POST_PHOTO.perGame pictures from the best tapes the end-of-game reel keeps (HTS.game, varied by man): photoPlan picks the frame (a catch / pick at the top of his leap,
+// a hit just after contact, the goal-line cross, the kick off the foot) and steps round it for one where nobody stands in front of him; photoShoot puts that frame on
+// screen through the highlight player (hlOpen / stepReplay: the reel draws no HUD), aims a tight camera at him, his nearest opponent and the ball, copies the crop and
+// keeps it as a small grey JPEG. postIssue -> photoAttach hands them to the stories (banner about your game = the best one, a story about a man = one he is in);
+// stored OUTSIDE the slot save in PHOTOS (id -> { d, cap }) = its own key PHOTO_KEY.<slot> (packed; photosSave from saveToSlot, photosLoad from loadFromSlot,
+// cleared by leagueReset, removed by deleteSlot; old saves' LEAGUE.post.ph is moved over), only on the issues that keep every panel (POST.full) and clipped stories (photoPrune). League tapes (lgTake) queue
+// PHOTO_LGQ: photoLgTick shoots one a frame on the matchup screen and adds it to the matching story of the newest issue. No photo = the old portrait.
+let PHOTO_PEND = [], PHOTO_SHOOT = false, PHOTO_MS = 0, PHOTOS = {};
+function photosSave(i) {   // (saveToSlot) this franchise's photos under their own key: the slot save stays small
+  const k = `${PHOTO_KEY}.${i}`;
+  try { if (!Object.keys(PHOTOS).length) localStorage.removeItem(k); else localStorage.setItem(k, lsPacked(PHOTOS)); }
+  catch (e) { console.warn('post photos: not saved (storage full?)', e); }   // (the save itself is already written; the paper falls back to portraits)
+}
+function photosLoad(i) {   // (loadFromSlot, after LEAGUE is in)
+  PHOTOS = {}; PHOTO_IMG.clear();
+  try { PHOTOS = lsJson(localStorage.getItem(`${PHOTO_KEY}.${i}`)) || {}; } catch (e) { PHOTOS = {}; }
+  const P = LEAGUE.post; if (P && P.ph) { Object.assign(PHOTOS, P.ph); delete P.ph; }   // (a save from before the photos had their own key)
+}
+const PHOTO_LGQ = [], PHOTO_IMG = new Map();
+const PHOTO_LEAP = ['catch', 'moss', 'spectacular', 'iconic', 'tipcatch', 'pick'];
+function photoPlan(c) {   // { i, t, k }: whose picture (index in the tape's players), the moment, the framing kind; null = nothing usable
+  const fr = c && c.frames; if (!fr || fr.length < 10) return null;
+  const A = c.apex || [], top = hsTopApex(c), PP2 = POST_PHOTO, at = t => { let j = 0; while (j < fr.length - 1 && fr[j + 1].t <= t) j++; return j; };
+  let k = 'run', i = -1, t = top ? top.t : fr[fr.length - 1].t - 0.6, gx = null;
+  const pk = A.find(e => e.k === 'pick');
+  if (pk && pk.i >= 0) { k = 'leap'; i = pk.i; t = pk.t; }
+  else if (top && PHOTO_LEAP.includes(top.k) && top.i >= 0) { k = 'leap'; i = top.i; t = top.t; }
+  else if (c.air && c.ci >= 0) { k = 'leap'; i = c.ci; t = c.air[1]; }
+  else if (c.type === 'fg') { k = 'fg'; i = 1; const j = fr.findIndex((f, n) => n > 0 && f.ball.inAir && f.ball.z > 0); t = j >= 0 ? fr[j].t : t; }
+  else if (top && top.k === 'hit') { k = 'hit'; i = fr[at(top.t)].runner >= 0 ? fr[at(top.t)].runner : top.i; }
+  else if (c.td) {
+    const L = fr[fr.length - 1], ri = L.runner >= 0 ? L.runner : fr.reduce((a, f) => f.runner >= 0 ? f.runner : a, -1);
+    if (ri >= 0) { const xe = L.players[ri].x; gx = xe > FIELD / 2 ? FIELD : 0; const j = fr.findIndex(f => f.players[ri] && (gx ? f.players[ri].x >= gx : f.players[ri].x <= 0)); k = 'goal'; i = ri; if (j >= 0) t = fr[j].t; }
+  }
+  if (i < 0) { const f = fr[at(t)]; i = top && top.i >= 0 ? top.i : f.runner; }
+  if (i < 0) return null;
+  const [w0, w1] = PP2.win[k], aim = t + PP2.off[k];
+  let best = null;
+  for (const f of fr) {
+    if (f.t < t + w0 || f.t > t + w1) continue;
+    const p = f.players[i], b = f.ball; if (!p) continue;
+    let s = -Math.abs(f.t - aim) * 1.5;
+    const bd = Math.hypot(b.x - p.x, b.y - p.y, ((b.z || 0) - (p.z || 0) - 24 * S) * 0.5) / YD;
+    if (k === 'leap') s += (p.z || 0) / YD * 3 - Math.max(0, bd - 0.6) * 2 + (b.inAir ? 0.8 : 0) - Math.max(0, f.t - t) * 8;   // (the ball still coming into his hands, never after he has it)
+    else if (k === 'hit') s += (p.z || 0) / YD * 3 + (p.action ? 0.6 : 0);
+    else if (k === 'goal') s += -Math.abs(p.x - gx) / YD + (p.z || 0) / YD * 2;
+    if (k !== 'fg' && bd > PP2.ballYd) s -= 2;
+    for (let n = 0; n < f.players.length; n++) { if (n === i) continue; const q = f.players[n], dx = Math.abs(q.x - p.x), dy = q.y - p.y; if (dx < 0.6 * YD && dy > 0 && dy < 1.2 * YD) s -= PP2.occl * (1 - dx / (0.6 * YD)); }   // (a man in front of him hides him)
+    if (!best || s > best.s) best = { s, t: f.t };
+  }
+  return best ? { i, t: best.t, k } : null;
+}
+function photoShoot(c, plan) {   // the picture: that frame on screen with the photo's camera, a crop of it as a grey JPEG data URL (null = failed)
+  if (hl) return null;
+  const P = POST_PHOTO; let out = null, o = null;
+  PHOTO_SHOOT = true;
+  try {
+    hlOpen([{ ...c, shows: 0, top: false, slow: false }], 'half'); if (!hl) return null;
+    rec.paused = true; rec.intro = rec.rewind = rec.loopPan = null; rec.hsCam = null; rec.rt = plan.t; rec.idx = 0;
+    stepReplay(0); shake = 0; popups = [];
+    const ap = allPlayers(), p = ap[plan.i]; if (!p) return null;
+    const top = q => q.y - (q.z || 0) - P.head * S * figK(q), bot = q => q.y - (q.z || 0) + P.feet * S * figK(q), hw = P.half * S;   // (a whole figure, helmet to feet)
+    const xs = [p.x - hw, p.x + hw], ys = [top(p), bot(p)];
+    let opp = null, od = P.oppYd * YD;
+    for (const q of ap) if (q !== p && q.team !== p.team) { const d = Math.hypot(q.x - p.x, q.y - p.y); if (d < od) { od = d; opp = q; } }
+    if (opp) xs.push(opp.x - hw, opp.x + hw), ys.push(top(opp), bot(opp));
+    if (Math.hypot(ball.x - p.x, ball.y - p.y) < P.ballYd * YD) { xs.push(ball.x); ys.push(ball.y - (ball.z || 0)); }
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), base = (P.wide[plan.k] || P.wide.run) * YD;
+    const wW = Math.min(base * P.grow, Math.max(base, Math.max(x1 - x0, (y1 - y0) * P.ar) * P.pad)), hH = wW / P.ar;
+    const dir = Math.sign(p.vx || 0) || Math.sign(p.face || 0) || 1;   // (which way he is going: the shot sits ahead of him)
+    const m = 0.06 * wW, fit = (v, a, b, half) => Math.max(b + m - half, Math.min(a - m + half, v));   // (never cut him: the shot is moved until his whole figure is inside)
+    const cx = fit((x0 + x1) / 2 + dir * wW * P.lead, p.x - hw, p.x + hw, wW / 2), cy = fit((y0 + y1) / 2, top(p), bot(p), hH / 2);
+    const cw = Math.min(W * 0.9, (H - TOP_BAR - FIELD_BOT) * 0.9 * P.ar, Math.max(P.w / RK, 320)), ch = cw / P.ar;
+    const zc = Math.max(cw / wW, camBowlZ(cx, cy));
+    camX = cx; camY = cy; passPull = 1; zoom = zc / (userZoom * (TOUCH ? TOUCH_ZOOM : 1) * (1 + celebPunch()));
+    ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0); draw(); ctx.restore();
+    o = document.createElement('canvas'); o.width = P.w; o.height = Math.round(P.w / P.ar);
+    const g = o.getContext('2d');
+    g.drawImage(canvas, (PAD + W / 2 - cw / 2) * RK, (viewCenterY() - ch / 2) * RK, cw * RK, ch * RK, 0, 0, o.width, o.height);
+    g.globalCompositeOperation = 'saturation'; g.fillStyle = '#808080'; g.fillRect(0, 0, o.width, o.height); g.globalCompositeOperation = 'source-over';   // (grey: the paper prints it in ink, and a grey JPEG is smaller)
+    { const im = g.getImageData(0, 0, o.width, o.height), a = im.data, hs = new Uint32Array(256), n = a.length / 4;   // (auto levels: the grey turf would print as flat mud)
+      for (let j = 0; j < a.length; j += 4) hs[a[j]]++;
+      let lo = 0, hi = 255, c = 0; while (lo < 254 && (c += hs[lo]) < n * P.lv[0]) lo++; c = 0; while (hi > lo + 1 && (c += hs[hi]) < n * (1 - P.lv[1])) hi--;
+      const k = 255 / Math.max(1, hi - lo);
+      for (let j = 0; j < a.length; j += 4) { const v = Math.max(0, Math.min(255, Math.pow((a[j] - lo) * k / 255, P.lv[2]) * 255 || 0)); a[j] = a[j + 1] = a[j + 2] = v; }
+      g.putImageData(im, 0, 0); }
+    out = o.toDataURL('image/jpeg', P.q);
+  } catch (e) { console.warn('post photo', e); out = null; }
+  finally { if (hl) hlClose(); PHOTO_SHOOT = false; if (o) freeCanvas(o); }
+  return out;
+}
+const photoWho = (c, plan) => { const s = c.cast && c.cast[plan.i]; return (s && s.src && s.src.name) || c.who || ''; };   // (the man in the picture, not always the clip's headline man)
+function photoCap(c, plan, when) {   // who + what + when, from the clip
+  const who = photoWho(c, plan), pick = (c.apex || []).some(e => e.k === 'pick');
+  const what = plan.k === 'leap' ? (pick ? 'picks it off' : 'goes up for the catch') : plan.k === 'hit' ? 'at the moment of impact' : plan.k === 'goal' ? 'crosses the goal line' : plan.k === 'fg' ? 'kicks it through' : 'breaks free';
+  const tm = when != null ? when : String(c.title || '').split('  -  ').pop();
+  return `${who ? who + ' ' + what : 'The big play'}${tm ? ', ' + tm : ''}`;
+}
+function photoGame() {
+  PHOTO_PEND = [];
+  if (!postOn() || hl || !HTS.game.length || season.team !== MATCH.you) return;
+  const t0 = PERF_NOW(), list = HTS.game.filter(c => c.frames).sort((a, b) => b.score - a.score), men = new Set(), n = TOUCH ? POST_PHOTO.perGameTouch : POST_PHOTO.perGame;
+  for (const pass of [0, 1]) for (const c of list) {   // (first one picture a man; the second pass only fills up)
+    if (PHOTO_PEND.length >= n || PERF_NOW() - t0 > POST_PHOTO.budgetMs) break;
+    if (PHOTO_PEND.some(q => q.c === c) || (!pass && (!c.who || men.has(c.who)))) continue;   // (first pass: named men only, one picture each)
+    const plan = photoPlan(c); if (!plan) continue;
+    const d = photoShoot(c, plan); if (!d) continue;
+    const who = photoWho(c, plan); if (who) men.add(who); if (c.who) men.add(c.who);
+    PHOTO_PEND.push({ c, d, who, cap: photoCap(c, plan), score: c.score });
+  }
+  PHOTO_PEND.sort((a, b) => b.score - a.score); PHOTO_PEND.forEach(q => { q.c = null; });
+  PHOTO_MS = PERF_NOW() - t0; perfMark('postPhotos', t0);
+}
+const photoGameStory = (s, me) => s && s.lg === me && (/^(win|loss|tie|blowout|thriller|gwin|gloss|huge)$/.test(s.k) || /^po(Win|Loss)\d$/.test(s.k));
+function photoPut(s, d, cap) { const P = postS(), ph = PHOTOS, id = `p${(P.phN = (P.phN || 0) + 1)}`; ph[id] = { d, cap }; s.ph = id; return id; }
+function photoAttach(stories, me) {   // (postIssue) this game's pictures onto the issue's stories
+  const L = PHOTO_PEND; PHOTO_PEND = []; if (!L.length) return;
+  const use = (s, q) => { photoPut(s, q.d, q.cap); L.splice(L.indexOf(q), 1); };
+  if (photoGameStory(stories[0], me)) use(stories[0], L[0]);   // (the banner about your game: the game's best picture)
+  for (const s of stories) { if (!L.length) break; const n = s.s && s.s.n, q = !s.ph && n && L.find(x => x.who === n); if (q) use(s, q); }   // (a story about a man: a picture he is in)
+  for (const s of stories) { if (!L.length) break; if (!s.ph && photoGameStory(s, me)) use(s, (s.k === 'huge' && L.find(x => x.who && String(s.t + ' ' + s.b).includes(x.who))) || L[0]); }
+}
+function photoPrune(P) {   // pictures live only on the newest POST.full issues and on clipped stories
+  if (!PHOTOS) return;
+  const live = new Set();
+  P.issues.forEach((it, n) => { for (const s of [it.head, ...(it.st || [])]) if (s && s.ph) { if (n >= POST.full) delete s.ph; else live.add(s.ph); } });
+  for (const c of P.scrap) if (c.ph) live.add(c.ph);
+  for (const k of Object.keys(PHOTOS)) if (!live.has(k)) { delete PHOTOS[k]; PHOTO_IMG.delete(k); }
+}
+function photoLgTick() {   // one league tape's picture a frame (matchup screen): onto the newest issue's story about that man / team
+  const { e, clip } = PHOTO_LGQ.shift(), P = postS(), it = P.issues[0];
+  if (!postOn() || !it || it.yr !== e.yr || it.wk !== e.wk || it.kind !== 'wk') return;
+  const all = [it.head, ...(it.st || [])], me = season.team;
+  if (all.filter(s => s && s.ph && s.lgp).length >= POST_PHOTO.lgMax) return;
+  const s = all.find(s => s && !s.ph && s.s && s.s.n === e.pn) || all.find(s => s && !s.ph && !s.s && s.lg && s.lg === e.team && s.lg !== me);
+  if (!s) return;
+  const plan = photoPlan(clip); if (!plan) return;
+  const d = photoShoot(clip, plan); if (!d) return;
+  photoPut(s, d, photoCap(clip, plan, `week ${e.wk}`)); s.lgp = 1;
+  menuInputAt = PERF_NOW();   // (the Post repaints with it)
+}
+function photoImg(id) {   // the decoded picture (null until it has loaded)
+  let im = PHOTO_IMG.get(id);
+  if (!im) { const m = PHOTOS[id]; if (!m) return null; im = new Image(); im.onload = () => { menuInputAt = PERF_NOW(); }; im.src = m.d; PHOTO_IMG.set(id, im); }
+  return im.complete && im.naturalWidth ? im : null;
+}
+const photoOf = s => s && s.ph && PHOTOS[s.ph] ? s.ph : null;
+function pPhoto(id, x, y, w, h) {   // a photo printed in the paper: halftone newsprint, ink border, italic caption; develops like the polaroid portraits the first time
+  const m = PHOTOS[id], im = photoImg(id), dv = Math.min(1, pSeen(`ph:${postV.ai}:${postV.pg}:${id}:${Math.round(x)}`) / POST_UI.devMs);
+  dmHold++;   // (dark mode never greys the photo's print pass)
+  ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+  ctx.fillStyle = '#d4cab0'; ctx.fillRect(x, y, w, h);
+  if (im) ctx.drawImage(im, x, y, w, h);
+  ctx.globalCompositeOperation = 'saturation'; ctx.fillStyle = '#808080'; ctx.fillRect(x, y, w, h);
+  ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = '#efe4c6'; ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = pDots(); ctx.fillRect(x, y, w, h);
+  ctx.globalCompositeOperation = 'source-over';
+  if (dv < 1 && results && results.screen === 'post') { ctx.globalAlpha = (1 - dv) * 0.92; ctx.fillStyle = '#3a3428'; ctx.fillRect(x, y, w, h); ctx.globalAlpha = (1 - dv) * (1 - dv) * 0.6; ctx.fillStyle = PP.paper; ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1; }
+  ctx.restore(); dmHold = Math.max(0, dmHold - 1);
+  ctx.strokeStyle = PP.ink; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+  if (m && m.cap) { ctx.font = `italic 11px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(m.cap, x, y + h + 3, w); }
+}
 function pPortrait(s, x, y, w, h, lg) {   // a player card, or a team logo printed as a halftone newsprint photo; the first time it is seen it develops like a polaroid
   const dk = pSeen(`dev:${postV.ai}:${postV.pg}:${Math.round(x)}:${Math.round(y)}:${lg || (s && s.n) || ''}`), dv = Math.min(1, dk / POST_UI.devMs);
   if (dv < 1 && results && results.screen === 'post') { try { pPortraitNow(s, x, y, w, h, lg); } finally { ctx.save(); ctx.globalAlpha = (1 - dv) * 0.92; ctx.fillStyle = '#3a3428'; ctx.fillRect(x, y, w, (!lg && s && s.n) ? h + 14 : h); ctx.globalAlpha = (1 - dv) * (1 - dv) * 0.6; ctx.fillStyle = PP.paper; ctx.fillRect(x, y, w, (!lg && s && s.n) ? h + 14 : h); ctx.restore(); } return; }
@@ -1062,7 +1228,7 @@ function pClip(it, s, x, y) {
   ctx.fillText(on ? '✂ CLIPPED' : '✂ CLIP', x, y);
   pHit(x - 70, y - 9, 70, 18, () => {
     const i = P.scrap.findIndex(c => c.key === postClipKey(it, s));
-    if (i >= 0) P.scrap.splice(i, 1); else { P.scrap.unshift({ key: postClipKey(it, s), n: it.n, yr: it.yr, wk: it.wk, k: s.k, t: s.t, b: s.b, s: s.s, big: s.big }); if (P.scrap.length > POST.scrap) P.scrap.length = POST.scrap; }
+    if (i >= 0) P.scrap.splice(i, 1); else { P.scrap.unshift({ key: postClipKey(it, s), n: it.n, yr: it.yr, wk: it.wk, k: s.k, t: s.t, b: s.b, s: s.s, big: s.big, ph: photoOf(s) || undefined }); if (P.scrap.length > POST.scrap) P.scrap.length = POST.scrap; }
   });
 }
 // ---- the Post's looks: saga tracker strip, live / auto / good / bad marks, typewriter headlines, STOP THE PRESSES, polaroids, margin thermometers (time-based, off in performance mode) ----
@@ -1132,7 +1298,9 @@ function pStory(it, s, x, y, w, bottom, o = {}) {   // headline, optional portra
   const extra = askHere && bottom - yy > 106 + 2 * lh + 20 ? 108 : A && !o.noTrk && bottom - yy > 40 + 3 * lh + 20 ? 36 : 0;
   const f = `${o.bs || 14}px ${PF}`, avail = Math.max(1, Math.floor((bottom - yy - 20 - extra) / lh));
   let ye;
-  if ((s.s || s.lg) && o.pw && yy + o.ph + 18 <= bottom - 20) { pPortrait(s.s || { n: '' }, x, yy, o.pw, o.ph, s.s ? null : s.lg); ye = Math.max(pFlowBeside(s.b, x, yy, w, lh, f, PP.ink, avail, o.pw + 10, o.ph + 16), yy + o.ph + 18); }   // (the picture only where it fits above the bottom)
+  const pid = o.pw ? photoOf(s) : null, ph2 = Math.floor(Math.min(Math.min(w * 0.5, o.pw * 1.7) / POST_PHOTO.ar, bottom - 38 - yy)), pw2 = Math.round(ph2 * POST_PHOTO.ar);   // (v0.68: a real photo, landscape, floated left; smaller to fit a short story box, left out under POST_PHOTO.minH)
+  if (pid && ph2 >= POST_PHOTO.minH && yy + ph2 + 18 <= bottom - 20) { pPhoto(pid, x, yy, pw2, ph2); ye = Math.max(pFlowBeside(s.b, x, yy, w, lh, f, PP.ink, avail, pw2 + 10, ph2 + 16), yy + ph2 + 18); }
+  else if ((s.s || s.lg) && o.pw && yy + o.ph + 18 <= bottom - 20) { pPortrait(s.s || { n: '' }, x, yy, o.pw, o.ph, s.s ? null : s.lg); ye = Math.max(pFlowBeside(s.b, x, yy, w, lh, f, PP.ink, avail, o.pw + 10, o.ph + 16), yy + o.ph + 18); }   // (the picture only where it fits above the bottom)
   else ye = pFlow(s.b, x, yy, w, lh, f, PP.ink, avail);
   if (extra === 108) { postAskBox(x, ye + 4, w, 100); ye += 106; }
   else if (extra === 36 && A) { pTracker(A, x, ye + 5, Math.min(w - 90, 300), 26); ye += 34; }
@@ -1185,7 +1353,8 @@ function pageFront(it) {
   pRule(26, y + 8, W - 26, 2); y += 18;
   const more = it.st.slice(5), bot = more.length || it.q ? 580 : 606, cw = 392;   // (the ALSO INSIDE line / your pull quote takes the bottom strip)
   pRule(437, y, 438, bot - y); pRule(842, y, 843, bot - y);
-  let ly = h.s || h.lg ? Math.max(pFlowBeside(h.b, 34, y, cw, 24, `18px ${PF}`, PP.ink, 11, 182, 206), y + 190 + 18, (pPortrait(h.s || { n: '' }, 34, y, 170, 190, h.s ? null : h.lg), 0)) : pFlow(h.b, 34, y, cw, 24, `18px ${PF}`, PP.ink, 11);
+  const hp = photoOf(h), phH = Math.round(cw / POST_PHOTO.ar);   // (v0.68: the banner's photo runs the column's full width, the story below it)
+  let ly = hp ? (pPhoto(hp, 34, y, cw, phH), pFlow(h.b, 34, y + phH + 20, cw, 24, `18px ${PF}`, PP.ink, Math.max(2, Math.min(11, Math.floor((bot - 40 - (y + phH + 20)) / 24))))) : h.s || h.lg ? Math.max(pFlowBeside(h.b, 34, y, cw, 24, `18px ${PF}`, PP.ink, 11, 182, 206), y + 190 + 18, (pPortrait(h.s || { n: '' }, 34, y, 170, 190, h.s ? null : h.lg), 0)) : pFlow(h.b, 34, y, cw, 24, `18px ${PF}`, PP.ink, 11);
   { const P = postS(), A = h.a && P.arcs.find(q => q.id === h.a), E = P.ev;   // (the banner story's saga: its question, or its tracker strip)
     if (A && E && E.arc === A.id && postV.ai === 0 && postItemDef(E) && bot - ly > 130) { postAskBox(34, ly + 4, cw, 100); ly += 106; }
     else if (A && bot - ly > 90) { pTracker(A, 34, ly + 6, 300, 28); ly += 38; }
@@ -1344,7 +1513,7 @@ function pageScrap() {
     ctx.fillStyle = PP.red; ctx.fillRect(x + w - 40, y - 4, 10, 36);
     ctx.font = `italic 11px ${PF}`; ctx.fillStyle = PP.dim; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(`No. ${c.n} · ${postYear(c.yr)}${c.wk ? ' · week ' + c.wk : ''}`, x + 10, y + 8);
     const it = { n: c.n };
-    pStory(it, c, x + 10, y + 22, w - 20, y + 206, { hs: 19, bs: 13, lh: 16, hl: 2, pw: c.s ? 84 : 0, ph: 96, noExtra: false });
+    pStory(it, c, x + 10, y + 22, w - 20, y + 206, { hs: 19, bs: 13, lh: 16, hl: 2, pw: c.s || photoOf(c) ? 84 : 0, ph: 96, noExtra: false });
   });
   if (pages > 1) { pTabBtn('◂ PREV', 34, 584, 100, () => { postV.sp = (postV.sp - 1 + pages) % pages; }); pTabBtn('NEXT ▸', 1146, 584, 100, () => { postV.sp = (postV.sp + 1) % pages; }); }
 }
@@ -1548,6 +1717,7 @@ function drawChangelog(P) {
     Object.assign(b, { x: W / 2 - tot / 2 + k * (bw + gap), y: c.y + c.h - 76, w: bw, h: 56 });
     popBtnDraw = true; menuBtn(b, b.label, RES.bright, 26); popBtnDraw = false;
   });
+  popMoreTab(P, c); popTipNote(P, c);   // (the MORE flip and the coach's sticky note: 09's popups block)
   ctx.restore();
 }
 (() => {   // drag to scroll (touch / mouse)
@@ -1558,10 +1728,14 @@ function drawChangelog(P) {
 })();
 const VER_BTN = { x: 8, y: 8, w: 96, h: 36 };
 let START_BAKE = null;   // (v0.55: the version + the title sheet, baked; rebuilt when the version, dark mode or the pixel scale changes)
-function drawStart() {
-  deskBg();
+function startBake() {   // (v0.62: also called by the cold open's c4 to build it before the ending needs it)
   const t = START_TITLE, s = Math.round(Math.hypot(DM_P.getTransform.call(ctx).a, DM_P.getTransform.call(ctx).b) * 8) / 8, key = `${GAME_VERSION}|${dmOn ? 1 : 0}|${s}`;
   if (!START_BAKE || START_BAKE._k !== key) { freeCanvas(START_BAKE); START_BAKE = ctxBake(0, 0, t.x + t.w + 30, t.y + t.h + 30, drawStartStill); START_BAKE._k = key; }
+  return START_BAKE;
+}
+function drawStart() {
+  deskBg();
+  const t = START_TITLE; startBake();
   ctx.drawImage(START_BAKE, START_BAKE._x, START_BAKE._y, START_BAKE._w, START_BAKE._h);
   if (dmOn) { const o = dmRgb('#fffdf4'), gr = dmFillCol('#fffdf4'); if (o) dmNote(dmBox(t.x, t.y, t.x + t.w, t.y + t.h), o, gr ? dmRgb(gr) : o); }
   drawStartBtns();
@@ -2015,7 +2189,7 @@ const ONL_NET = {
   slowMs: 1500,         // ms the slow rate holds after a backed-up tick
   // the guest's playback clock (ONL.pt, see onlGuestStep): it stays the travel time + a margin behind the host, the margin = 1.6 snapshot gaps + 2.5 x the jitter,
   // kept within delayMin..delayMax ms. It drifts there by running up to `stretch` faster / slower (steerMs: ms off for the full stretch); jumpMs off = jumps
-  delayMin: 70, delayMax: 220, stretch: 0.04, steerMs: 500, jumpMs: 400,
+  delayMin: 70, delayMax: 220, stretch: 0.04, steerMs: 500, jumpMs: 400, dlyEase: 1.5, ahead: 0.6,   // dlyEase = 1/s the delay target eases at; ahead = clock rate while the picture runs too far ahead (never backwards)
   curve: true,          // positions on a curve that follows each snapshot's speeds (false = straight lines between snapshots, as before)
   curveFit: 0.5, curveSlack: 0.1 * YD,   // ... only when both speeds x the gap are within this share of the move made (+ slack px): a blocked / pushed man's speed isn't his movement
   extrapMs: 100,        // ms the guest carries every move on past the newest snapshot (a late / lost one), along its speed...
@@ -2326,9 +2500,14 @@ function onlGuestStep() {
   const buf = ONL.buf; if (!buf.length) { onlEvRun(); return; }
   const ps = allPlayers();
   if (buf[0].pos.length !== ps.length * 3) { onlEvRun(); return; }
-  const ne = buf[buf.length - 1], want = now - onlDelayTarget();
-  if (ONL.pt == null || Math.abs(ONL.pt - want) > ONL_NET.jumpMs) ONL.pt = want;   // (a stall or a new cast: straight there)
+  const dT = onlDelayTarget(); ONL.dly = ONL.dly == null ? dT : ONL.dly + (dT - ONL.dly) * Math.min(1, dtR * ONL_NET.dlyEase);   // (v0.62: the delay target eased: a jumpy jitter / drift estimate no longer jerks the clock)
+  const ne = buf[buf.length - 1], want = now - ONL.dly;
+  // (v0.62: the drawn clock never runs backwards: behind by more than jumpMs = jump forward; ahead by that much = run slow (ONL_NET.ahead) until it is close again)
+  if (ONL.pt == null) ONL.pt = ONL.ptHi != null ? Math.max(want, Math.min(ONL.ptHi, ne.at)) : want;   // (a new cast: from where the last picture was, if it still has snapshots there)
+  else if (want - ONL.pt > ONL_NET.jumpMs) ONL.pt = want;
+  else if (ONL.pt - want > ONL_NET.jumpMs) ONL.pt += dtR * 1000 * ONL_NET.ahead;
   else ONL.pt += dtR * 1000 * (1 + Math.max(-ONL_NET.stretch, Math.min(ONL_NET.stretch, (want - ONL.pt) / ONL_NET.steerMs)));
+  ONL.ptHi = ONL.pt;
   onlEvRun();
   const rt = ONL.pt;
   while (buf.length > 2 && buf[1].at <= rt) { const e = buf.shift(); if (!e.ap) onlApply(e, ps); }
@@ -2340,7 +2519,7 @@ function onlGuestStep() {
   const S = ONL.st, ext = rt > ne.at;
   const g = a.g, L = (p, q, k) => p + (q - p) * k, A = a.pos, B = b && b.pos, VA = a.vel, VB = b && b.vel, NA = a.an, NB = b && b.an;
   if (!a.ap) onlApply(a, ps);
-  const clk = b ? L(a.c, b.c, t) + past : a.c, dc = b ? b.c - a.c : 0, dClk = ONL.lastClk != null ? clk - ONL.lastClk : 0; ONL.lastClk = clk;
+  const clk = b ? L(a.c, b.c, t) + past : a.c, dc = b ? b.c - a.c : 0, dClk = ONL.lastClk != null ? Math.max(0, clk - ONL.lastClk) : 0; ONL.lastClk = clk;
   // (what the picture needs from this snapshot's globals, unpacked once: not again every drawn frame)
   if (!a.u) a.u = { ball: unslim(g.ball, ps), po: g.po.filter(q => q.i >= 0).map(q => ({ p: ps[q.i], text: q.text, color: q.color, t: q.t, t0: q.t, ico: q.ico })), im: g.im.map(q => { const o = unslim(q, ps); o.__t0 = o.t; return o; }), pp: g.pp ? unslim(g.pp, ps) : null };
   const fixK = Math.exp(-3 * dtR * 1000 / ONL_NET.fixMs), bd = b && b.d;
@@ -2518,7 +2697,7 @@ function onlEvRun() {
   const now = performance.now();
   while (Q.length && (ONL.pt == null || ONL.pt >= Q[0].at || now - Q[0].rx > ONL_EV.stuckMs)) {
     const e = Q.shift();
-    if (ONL.guest && ONL.on) { ONL.evPlay = true; try { e.f.apply(null, e.a); } catch (err) {} ONL.evPlay = false; }
+    if (ONL.guest && ONL.on) { ONL.evPlay = true; try { e.f.apply(null, e.a); } catch (err) { if (!ONL_EV.warned) { ONL_EV.warned = true; console.warn('online: a forwarded event failed on the guest', e.f && e.f.name, err); } } ONL.evPlay = false; }   // (logged once a session)
   }
 }
 // inputs. The guest sends key down / up (codes), pointer down / move / up (logical canvas coordinates) and right-clicks, only when they change.
@@ -2591,6 +2770,7 @@ function onlMsg(d) {   // NET.onmsg's game messages (true: handled)
   if (d.t === 'ak') { if (ONL.host && d.e === ONL.epoch && d.n > (ONL.ack || 0) && d.n <= ONL.seq) ONL.ack = d.n; return true; }   // (the guest has this snapshot: the next ones only carry what changed after it)
   if (d.t === 'ev') { onlGotEvent(d); return true; }
   if (d.t === 'sl') { if (ONL.guest) slNet(d); return true; }
+  if (d.t === 'ann') { if (ONL.guest) annNet(d); return true; }   // (v0.68: the host's announcer line)
   if (d.t === 'slq') { if (ONL.host && ONL.on) { ONL.slRef = undefined; ONL.castKey = ''; } return true; }   // (the guest has no sideline people: the next cast carries them again)   // (one sideline-people event, on the host's sideline clock)
   if (d.t === 'in') { onlHandleInput(d); return true; }
   return false;
@@ -2642,7 +2822,7 @@ window.addEventListener('contextmenu', e => {
 function onlBeginMatch(c, asHost) {   // c: what the lobby settled on (teams, uniforms, ball, weather); both devices run this on PLAY
   if (ONL.on || !onlLobbyActive()) return;
   ONL.host = !!asHost; ONL.guest = !asHost;
-  ONL.on = true; ONL.buf = []; ONL.full = []; ONL.gPrev = null; ONL.st = onlStNew(); ONL.pt = null; ONL.evQ = []; ONL.tr = null; ONL.gapAvg = 0; ONL.jit = 0; ONL.lastArr = 0; ONL.lastH = null; ONL.pred = null; ONL.predOff = false; ONL.pq = 0; ONL.gQ = 0; ONL.castKey = ''; ONL.slRef = undefined; ONL.slGot = -1; ONL.hold = {}; ONL.gHeld = {}; ONL.gDown = false; ONL.seq = 0;
+  ONL.on = true; ONL.buf = []; ONL.full = []; ONL.gPrev = null; ONL.st = onlStNew(); ONL.pt = null; ONL.ptHi = null; ONL.dly = null; ONL.evQ = []; ONL.tr = null; ONL.gapAvg = 0; ONL.jit = 0; ONL.lastArr = 0; ONL.lastH = null; ONL.pred = null; ONL.predOff = false; ONL.pq = 0; ONL.gQ = 0; ONL.castKey = ''; ONL.slRef = undefined; ONL.slGot = -1; ONL.hold = {}; ONL.gHeld = {}; ONL.gDown = false; ONL.seq = 0;
   ONL.feel = c.fl === 'DELAY' ? 'DELAY' : 'PREDICT'; if (ONL.feel === 'DELAY') ONL.predOff = true;   // (CONTROL FEEL: DELAY = no prediction on the guest; the host's own keys wait ONL_NET.inDelayMs, onlDelayKey)
   ONL.gLag = 0; ONL.gStat = null; ONL_HIST.length = 0;
   ONL.savedSimDef = SETTINGS.simDefense; SETTINGS.simDefense = false;   // (defense is always played: the saved setting is ignored, and never written back)
@@ -2820,7 +3000,7 @@ function onlMsg2(d) {   // phase 4's messages (true: handled)
   if (d.t === 'away') { if (ONL.on && !results) ONL.away = { who: onlOpp(), kind: 'AWAY', until: performance.now() + RECONNECT_SECS * 1000 }; return true; }
   if (d.t === 'back') { if (ONL.away && ONL.away.kind === 'AWAY') ONL.away = null; return true; }
   if (d.t === 'rejoin') { if (ONL.host && ONL.on) { ONL.away = null; ONL.castKey = ''; ONL.slRef = undefined; NET.send({ t: 'resumed' }); } return true; }
-  if (d.t === 'resumed') { ONL.buf = []; ONL.full = []; ONL.pt = null; ONL.lost = null; ONL.joinBusy = false; return true; }
+  if (d.t === 'resumed') { ONL.buf = []; ONL.full = []; ONL.pt = null; ONL.ptHi = null; ONL.lost = null; ONL.joinBusy = false; return true; }
   if (d.t === 'over') { if (ONL.guest && ONL.on) onlShowResult(d.sum); return true; }
   if (d.t === 'rematch') { if (ONL.on) { ONL.rem[onlOpp()] = true; onlRematchCheck(); } return true; }
   return false;

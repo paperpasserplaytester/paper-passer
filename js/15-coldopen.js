@@ -58,13 +58,13 @@ const COLD_SCENES = [
   { id: 's2', dur: 5, crowd: 0.08, snd: [[0.2, 'pencil', 0.9, { ms: 3000, fade: 500 }], [4.2, 'thunder1', 0.6]], draw: 3, lamps: [3.2, 3.7] },
   { id: 's3', dur: 4, field: true, cam: [[0, 50, 0, 0.6, 0], [4, 42, 0, 0.9, 0]], lines: 1.6, blots: [1.4, 3.6] },
   { id: 's4', dur: 6, field: true, cam: [[0, 42, 0, 0.9, 0], [6, 40, 0, 1, 0]], snd: [[0.05, 'flip'], [0.5, 'pencil', 0.8, { ms: 700 }], [3, 'splash', 0.6]], rain: 3, away: 5 },
-  { id: 's5', dur: 12, crowd: 0.18, snd: [[0.3, 'thunder1', 0.7], [2.5, 'thunder2', 0.6], [4.7, 'thunder1', 0.7], [6.9, 'thunder3', 0.6], [9.1, 'crack', 0.7]], panel: 2.2, ink: [0.4, 0.9, 1.4] },
-  { id: 's6', dur: 5.6, cap: [[0.5, 'A', 'Forty-one seconds.'], [2.1, 'B', 'Down three. In this rain.'], [3.9, 'A', 'Here they come.']] },
+  { id: 's5', dur: 7, crowd: 0.18, snd: [[0.3, 'thunder1', 0.7], [1.6, 'thunder2', 0.6], [2.9, 'thunder1', 0.7], [4.2, 'thunder3', 0.6], [5.5, 'crack', 0.7]], panel: 1.3, ink: [0.3, 0.65, 1] },   // (v0.62: was 12 s; every panel kept, one a 1.3 s)
+  { id: 's6', dur: 4, cap: [[0.45, 'A', 'Forty-one seconds.'], [1.5, 'B', 'Down three. In this rain.'], [2.7, 'A', 'Here they come.']] },   // (v0.62: was 5.6 s)
   { id: 'p1', play: 'p1', field: true },
   { id: 'p2', play: 'p2', field: true },
-  { id: 'bridge', dur: 10, out: 6.2, field: true, snd: [[0.2, 'thunder1', 0.5], [1.4, 'thunder1', 0.45], [2.6, 'thunder1', 0.45], [3.6, 'eraser', 1, { ms: 900 }], [4.5, 'pencil', 1, { ms: 700 }]],
-    panels: [0.2, 1.4, 2.6], keep: 1.05, board: 3.6,   // (keep = s each note stays before it is crumpled and thrown away)   // (when each note is slapped down: their kinds / text = coldBridgeNotes; out = s the notes are taken away)
-    cap: [[3.9, 'B', 'Kicker waved off!'], [5.6, 'A', 'Fourth and goal. Four seconds.']] },   // (the three sticky-note plays have no booth line)
+  { id: 'bridge', dur: 7, out: 4.6, field: true, snd: [[0.15, 'thunder1', 0.5], [1, 'thunder1', 0.45], [1.85, 'thunder1', 0.45], [2.6, 'eraser', 1, { ms: 900 }], [3.5, 'pencil', 1, { ms: 700 }]],   // (v0.62: was 10 s, every note and line kept)
+    panels: [0.15, 1, 1.85], keep: 0.85, board: 2.6,   // (keep = s each note stays before it is crumpled and thrown away)   // (when each note is slapped down: their kinds / text = coldBridgeNotes; out = s the notes are taken away)
+    cap: [[2.85, 'B', 'Kicker waved off!'], [3.95, 'A', 'Fourth and goal. Four seconds.']] },   // (the three sticky-note plays have no booth line)
   { id: 'p3', play: 'p3', field: true },
   { id: 'f1', dur: 11, field: true, lift: 3.3, walk: 0.9,   // (lift = s he is hoisted onto their shoulders; walk = s the Erasers start off the field)
     snd: [[0, 'cheer', 1, { fade: 2500 }], [0.9, 'eraser', 1, { ms: 800 }], [1.8, 'pencil', 1, { ms: 700 }]], board: 0.9, rush: 1.2, peak: 5.2 },
@@ -86,10 +86,11 @@ const COLD_END = {
   set: 0.6, throw: 1.25, release: 0.12,   // he sets with it at his chest; the throwing motion starts; the ball leaves his hand this long into it
   fly: 0.6, arc: 46, back: 0.2,   // the ball's flight across the screen, its arc (px), how fast the tear also runs back to the left edge
   spriteH: 150, ballK: 1.5,       // his height on the page (px at the page's full size); the ball's size x his own scale
-  peel: 0.7, quiet: 0.5,          // the halves curling off; the quiet on the bare desk (only the clock)
-  fall: 0.45, hold: 0.4, lift: 0.3, morph: 1,   // the stamp: drop, sits, lifts away; the stamped scrap turning into the title sheet
+  peel: 0.45, quiet: 0.15,          // (v0.62: the whole ending about half as long: was peel 0.7 quiet 0.5 fall 0.45 hold 0.4 lift 0.3 morph 1 btnGap 0.15 frDraw 0.6)
+           // the halves curling off; the quiet on the bare desk (only the clock)
+  fall: 0.3, hold: 0.15, lift: 0.2, morph: 0.5,   // the stamp: drop, sits, lifts away; the stamped scrap turning into the title sheet
   shake: [7, 0.25], specks: 26,   // the THUMP: shake px / s, ink specks round it
-  btnGap: 0.15, btnFade: 0.3, frDraw: 0.6, handIn: 0.3,   // the start screen's buttons one at a time; FRANCHISE drawn in by the pencil; the hand slides in
+  btnGap: 0.04, btnFade: 0.25, frDraw: 0.4, handIn: 0.25,   // the start screen's buttons one at a time; FRANCHISE drawn in by the pencil; the hand slides in
   unRub: 0.55, unGap: 0.22,       // unlocked: the eraser's pass over each locked button, s between buttons
 };
 const COLD_UNLOCK = 'game';   // the first-launch lock opens: 'game' = when your first FRANCHISE game ends, 'save' = when the new career is created
@@ -594,6 +595,10 @@ function coldDraw(gameDraw) {
   if (!CO.warm && !sc.field && CO.t > 0.15) { CO.warm = true;
     try { ctx.save(); gameDraw(); ctx.restore(); } catch (e) {}
     try { for (const v of crowdCanvases(crowdImg)) if (v.width) ctx.drawImage(v, 0, 0, 2, 2, 0, 0, 2, 2); } catch (e) {} }
+  // v0.62: every recorded cue's element made and loading under the first scenes (a few a frame), so the plays never pay a first decode mid-shot
+  if (CO.warm && !sc.field && (CO.warmA || 0) >= 0) { try { const ks = Object.keys(COLD_SND); let n = 0;
+    for (let i = CO.warmA || 0; i < ks.length && n < 3; i++, n++) { const src = COLD_SND[ks[i]][0]; if (!sfxPlaying[src]) { const a = sfxPlaying[src] = new Audio(src); a.preload = 'auto'; try { a.load(); } catch (e) {} } }
+    CO.warmA = (CO.warmA || 0) + n; if (CO.warmA >= ks.length) CO.warmA = -1; } catch (e) { CO.warmA = -1; } }
   if (sc.field) {
     const roll = CO.roll || 0;
     ctx.save();
@@ -1526,8 +1531,8 @@ COLD_DRAW.s5 = (sc, t) => {
 COLD_ENTER.s6 = () => coldFaces();
 function coldFaces() { if (!CO.facesTried) { CO.facesTried = true; try { CO.faces = [makeFace(cRnd(1207), true), makeFace(cRnd(3391), true)]; } catch (e) { CO.faces = null; } } return CO.faces; }   // (made lazily with the same seeds: coldGoto can go straight into a play)
 // one announcer (i 0 = A, 1 = B) with the doodled headset, about (x, y); size = the face's radius (S6 draws them at 104)
-function coldAnnouncer(i, x, y, size) {
-  const F = coldFaces(), k = size / 104;
+function coldAnnouncer(i, x, y, size, F0) {   // (F0: the faces to use; the game's announcers (02) pass their own, CO is null there)
+  const F = F0 || coldFaces(), k = size / 104;
   ctx.save(); ctx.translate(x, y); ctx.scale(k, k);
   try { if (F) drawAvatar(F[i], 0, 0, 104, {}); } catch (e) {}
   if (!F) cShape(cEll(0, 0, 80, 96, 20), '#f1c9a0', 240 + i, { w: 2.4 });
@@ -1588,7 +1593,7 @@ COLD_DRAW.bridge = (sc, t) => {
         for (let j = 0; j < 3; j++) cLine([[-70 - j * 6, -40 + j * 12], [-56 - j * 6, -40 + j * 12]], RES.line, 1.6, 969 + j);   // (speed lines)
       } else if (kind === 'sack') { cShape(cEll(-10, -26, 40, 22, 14), '#e8798a', 940, { w: 2 }); cLine([[-70, -2], [50, -2]], RES.line, 2, 941); cLine([[-36, -20], [-16, -34]], RES.line, 2, 942); cLine([[-36, -34], [-16, -20]], RES.line, 2, 943); }   // (a pile of pink)
       else { for (let k = 0; k < 2; k++) { const bx = -34 + k * 56; cShape(cEll(bx, -30, 22, 13, 12), '#a8642c', 944 + k, { w: 2 }); cLine(cEll(bx, 2, 32, 5, 10), 'rgba(40,50,90,0.4)', 1.6, 946 + k, 1, true); } for (let j = 0; j < 3; j++) cLine([[52 + j * 10, -8 + j * 4], [62 + j * 10, -16 + j * 4]], RES.line, 1.8, 948 + j); }   // (two balls on the turf)
-      cText(text, 0, 54, 24, kind === 'sack' ? '#c0392b' : RES.line, { align: 'center', seed: 9 + i, n: (lt - 0.25) * 34, messy: 0.6, max: w - 30 });
+      cText(text, 0, 54, 24, kind === 'sack' ? '#c0392b' : RES.line, { align: 'center', seed: 9 + i, n: (lt - 0.25) * 44, messy: 0.6, max: w - 30 });
     } });
     ctx.restore();
   });
@@ -1660,13 +1665,14 @@ COLD_TICK.f1 = (sc, dt) => {
 };   // (no flash at the peak any more: it came right after the last catch)
 COLD_DRAW.f1 = (sc, t) => {
   const L = CO.pl, h = L && L.rec; if (!h) return;
-  // the ref doodle: arms straight up
-  const s = coldScreen(h.x - 5 * YL, h.y + 5 * YD, 0), k = cBack(cK(t, 0.25, 0.3)), z = Math.min(1.6, camZ() / (CO.z1 || 1)) * 1.1;
-  ctx.save(); ctx.translate(s.x, s.y); ctx.scale(z, z);
-  cShape(cRound(-13, -46, 26, 40, 6), '#f7f7f2', 960, { w: 2 }); for (let i = -1; i <= 1; i++) cShape(cRect(i * 8 - 2.5, -46, 5, 40), '#2a2d3a', 961 + i, { ink: null });
-  cShape(cEll(0, -56, 10, 10, 12), '#fbe9d2', 964, { w: 1.8 }); cShape([...cEll(0, -61, 11, 7, 8, Math.PI, Math.PI * 2), [17, -60]], '#2a2d3a', 965, { w: 1.4 });
-  cLine([[-12, -40], [-16, -40 - 34 * k]], RES.line, 3, 966); cLine([[12, -40], [16, -40 - 34 * k]], RES.line, 3, 967); cLine([[-6, -6], [-7, 14]], RES.line, 3, 968); cLine([[6, -6], [7, 14]], RES.line, 3, 969);
-  ctx.restore();
+  // the referee: the game's own official (SLK.REF, the sideline paint) giving the touchdown signal (rfTD), held with the arms up
+  const s = coldScreen(h.x - 5 * YL, h.y + 5 * YD, 0), sh = coldScreen(h.x, h.y, 0), z = camZ() * COLD_FIT;
+  try {
+    const L = CO.refL || (CO.refL = slLibMake(SLK.REF, null));
+    L.people[0].f = Math.sign(sh.x - s.x) || -1; L.A[0] = { id: SLRI.rfTD, t0: 0 };
+    const m0 = MIRROR; ctx.save(); ctx.translate(s.x, s.y); ctx.scale(z, z); MIRROR = 1;
+    try { slLibDraw(L, Math.min(t, 1.9)); } finally { MIRROR = m0; ctx.restore(); }
+  } catch (e) {}
 };
 COLD_ENTER.f2 = () => { CO.board.hide = true; try { CELEB.force = CELEB.forceHype = null; } catch (e) {} };
 COLD_DRAW.f2 = (sc, t) => {
@@ -1920,6 +1926,15 @@ COLD_DRAW.c3 = (sc, t) => {
   const j = t >= sc.jolt ? Math.max(0, 1 - (t - sc.jolt) * 5) : 0, tilt = cK(t, sc.down, 1.1);
   coldRoom({ dx: Math.sin(t * 60) * 4 * j, dy: -6 * (t >= sc.jolt ? 1 : 0) + Math.sin(t * 50) * 4 * j, laugh: cK(t, 0.5, 0.3) * (1 - cK(t, sc.down, 0.9)), tilt, page: tilt });
 };
+// v0.62: the ending's first-use costs are paid here, under the classroom (the start screen's baked title + desk, then its button sprites, drawn into a throwaway canvas)
+{ const c4Tick = COLD_TICK.c4; COLD_TICK.c4 = (sc, dt) => { c4Tick(sc, dt);
+  if (!CO.warmS && CO.t > 0.6) { CO.warmS = 1; try { deskBg(); startBake(); } catch (e) {} }
+  else if (CO.warmS === 1 && CO.t > 1.4) { CO.warmS = 2; try { const c = ctxBake(0, 0, 32, 32, () => { ctx.save(); drawStartBtns(); ctx.restore(); }); freeCanvas(c); } catch (e) {} }
+}; }
+// the page grab the ending peels, at half size on a phone (it is only ever drawn stretched and moving)
+function coldHalfRes(c) {
+  try { const h = document.createElement('canvas'); h.width = Math.ceil(c.width / 2); h.height = Math.ceil(c.height / 2); h.getContext('2d').drawImage(c, 0, 0, h.width, h.height); freeCanvas(c); return h; } catch (e) { return c; }
+}
 COLD_DRAW.c4 = (sc, t) => {
   const up = 1 - cK(t, 0, 0.9), dn = cK(t, sc.down, 1.4), out = cK(t, sc.out[0], sc.out[1] - sc.out[0]);
   coldRoom({ ...coldView(t), tilt: Math.max(up, dn), page: Math.max(up, dn), out, door: true, teach: cK(t, 0.8, 1.6) });
@@ -1952,7 +1967,7 @@ COLD_TICK.c5 = (sc, dt) => {
     E.h0 = E.hand ? { ...E.hand } : { x: 420, y: 430 }; E.rel = CO.t; E.tear = coldTearPts(E);
     coldSnd('swoosh', 0.9, { ms: 900, fade: 300 }); coldSnd('tear', 1);
   }
-  if (E.grab) { coldAmb(null); CO.ripOut = { c: E.grab, tear: E.tear }; E.grab = null; coldEnd(false); }   // (the ball is off the right edge: the start screen pulls the page apart)
+  if (E.grab) { coldAmb(null); CO.ripOut = { c: coldTouch() ? coldHalfRes(E.grab) : E.grab, tear: E.tear }; E.grab = null; coldEnd(false); }   // (the ball is off the right edge: the start screen pulls the page apart)
 };
 // the game's QB sprite standing on the page (feet at x, y in page space; u = the page's scale; k = how much of him is there); keeps his hand / chest on screen for the ball
 function coldQBSprite(x, y, u, k) {

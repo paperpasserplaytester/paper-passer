@@ -203,7 +203,7 @@ function rateTrenches() {
     const rt = rushType(d), ak = (abilOn(d, 'longArms') ? ABIL_FX.longArms : 1) * (abilOn(d, 'finisher') ? ABIL_FX.finisher : 1)   // (Long Arms / Finisher: off the block sooner; Strong Base / Quick Feet: bull / speed rushes work less)
       / (abilOn(o, 'strongBase') && rt === 'power' ? ABIL_FX.strongBase : 1) / (abilOn(o, 'quickFeet') && rt === 'speed' ? ABIL_FX.quickFeet : 1);
     if (d.shedAt < 50) d.shedAt *= ak;
-    if (!abilOn(o, 'brickWall') && Math.random() < QUICK_WIN / Math.sqrt(diffFor(d).shed) * (weak ? WEAK_RUSH.quick : 1) * rm(d, 'str', 'quickWin') * rm(d, 'prs', A5.dl.quickWin) / rmo(o, 'blk', 'quickWin')) d.shedAt = Math.min(d.shedAt, 0.8 + Math.random() * 0.7);
+    if (!abilOn(o, 'brickWall') && Math.random() < QUICK_WIN * (aiOff() ? 1 : diffX('rushMv')) / Math.sqrt(diffFor(d).shed) * (weak ? WEAK_RUSH.quick : 1) * rm(d, 'str', 'quickWin') * rm(d, 'prs', A5.dl.quickWin) / rmo(o, 'blk', 'quickWin')) d.shedAt = Math.min(d.shedAt, 0.8 + Math.random() * 0.7);
     if (abilOn(d, 'speedRusher') && d.src && d.src.srDrive !== ABIL_ST.drive) { d.src.srDrive = ABIL_ST.drive; d.shedAt = Math.min(d.shedAt, ABIL_FX.speedRush); }   // (Speed Rusher: his first rush each drive wins)
     if (xfOn(d, 'unblockable')) d.shedAt = Math.min(d.shedAt, XFX.unblockable);   // (Unblockable: free inside 1.5 s)
     if (xfOn(o, 'fortress') && !xfOn(d, 'unblockable')) d.shedAt = 99;              // (Fortress: his man never gets home)
@@ -240,7 +240,7 @@ function newDrive() { passStreak = 0; nextLos = 25 * YL; nextDown = 1; nextLtg =
 let QUARTER_SECS = Math.round(Math.max(1, Math.min(8, +SETTINGS.quarterMin || 2)) * 60);   // (SETTINGS.quarterMin, set on the settings page)
 const RUNOFF_SECS = 5;   // (the average; runoffSecs picks each play's)
 const RUNOFF = { pass: [3, 2.5], run: [4.5, 2.5] };   // [min, + random] s: passes 3-5.5, runs 4.5-7 (a run keeps the clock going longer)
-const runoffSecs = run => { const [lo, r] = run ? RUNOFF.run : RUNOFF.pass; return Math.round((lo + Math.random() * r) * 10) / 10; };
+const runoffSecs = run => { const [lo, r] = run ? RUNOFF.run : RUNOFF.pass, tf = !aiOff() && !exhibition && stT('Tempo Freak', 'off') ? TRAIT_BY['Tempo Freak'].v[0] : 1; return Math.round((lo + Math.random() * r) * tf * 10) / 10; };   // (Tempo Freak: your offense snaps faster)
 // simulated drives, per play: playT / shortT = [min, +random] s a play / an incompletion or sack takes (then RUNOFF_SECS
 // unless it stopped); kickT = a punt / field goal; hurry-up when <= half s are left in Q2, or <= late s in Q4 trailing
 // or tied; milk the clock when ahead with <= milk s left; timeouts in Q4 only under toAt s; kick a FG with <= kickAt s left;
@@ -305,10 +305,16 @@ function clockOut() {
 }
 function announceOT() { endWhistle(); showBanner('OVERTIME', '#ffd94a', '#3a2a00', 'Tied after four quarters'); }
 // on to the next quarter / period; starting overtime it tosses the coin and returns who receives
+function staffHalftime() {   // v0.64 staff traits at the half: Fire Starter III (trailing: a lift), Two-Minute Professor III (one free clock stop = a timeout), Script Writer III (the script again)
+  if (exhibition || !xpcOn()) return;
+  if (stT('Fire Starter') >= 3 && game.blue < game.red) moraleShiftAll(TRAIT_BY['Fire Starter'].half);
+  if (stT('Two-Minute Professor') >= 3) game.timeouts++;
+  if (stT('Script Writer') >= 3) game.scriptN = 0;
+}
 function nextPeriod() {
   game.quarter++; game.pendingQuarter = false;
   if (SL.on) slTvWalk();   // (sideline: the TV official walks on for the break)
-  if (game.quarter < 5) { game.secs = QUARTER_SECS; if (game.quarter === 3) { xfHalftime(); wearFreshArm = true; game.timeouts = diffTO(); if (twoP) twoP.to = 3; } return null; }
+  if (game.quarter < 5) { game.secs = QUARTER_SECS; if (game.quarter === 3) { xfHalftime(); wearFreshArm = true; game.timeouts = diffTO(); if (twoP) twoP.to = 3; staffHalftime(); } return null; }
   const post = postseason();
   game.secs = QUARTER_SECS;   // overtime is as long as a quarter
   if (game.quarter === 5 || (post && game.quarter % 2 === 1)) {   // overtime starts (or a new playoff "half" of it): fresh timeouts
@@ -374,7 +380,7 @@ function halfOK() {
 }   // (from the sim panel: straight on to the second half, not back to the same sim screen)
 function announceHalf() { endWhistle(true); if (simGame || simFast) return; halfHold = true; halfGo = false; halfT0 = halfLeave = 0; }   // (drawTurnoverBanner shows HALFTIME once the other banners are done)
 // the final whistle: the horn sounds; a live game then shows the last play's replay with FINISH GAME over it
-function endGame() { game.over = true; endWhistle(true); crowdFinal(); celebGameEnd(); }   // (the winners celebrate before the result screen: see celebrations)
+function endGame() { game.over = true; endWhistle(true); crowdFinal(); celebGameEnd(); setTimeout(() => { if (game.over && !(hl && hl.mode === 'half' && !hl.bg)) annClear(true); }, 4000); }   // (the announcers' baked canvases go once the last line has had its say)   // (the winners celebrate before the result screen: see celebrations)
 const finalReplay = () => game.over && !results && state === 'done' && !ONL.on;
 let tossWinner = null;   // who receives the opening kickoff ('BLUE' = you, 'RED' = them): rolled when the matchup screen comes up, so it's known before the game starts
 let tossUntil = 0;   // performance.now() ms until the opening coin toss is decided: nobody is drawn on the field before that
@@ -463,12 +469,14 @@ function pstRec(s) {
 // a play ended (endPlay): passing, receiving and rushing lines
 function pstPlay(text, next, kind) {
   const pp = playPass; playPass = null;
+  try { dynLiveNote(text, next, kind, pp); } catch (e) {}   // (adaptive difficulty: the live-only tally)
   if (tut || patMode !== null || kind === 'fg' || kind === 'fgmiss' || kind === 'punt') return;
   if (/SACKED/.test(text)) { const q = pstRec(qb && qb.src); if (q) q.sq++; xPlay(text, next, kind, pp, true); return; }
   xPlay(text, next, kind, pp, false);
   const td = kind === 'td', yds = kind === 'turnover' || !Number.isFinite(td ? FIELD : next) ? 0 : Math.round(((td ? FIELD : next) - los) / YL);
   { const T = (game.ty || (game.ty = { you: { rush: 0, pass: 0 }, opp: { rush: 0, pass: 0 } }))[twoP && twoP.flipped ? 'opp' : 'you'];   // (team yards: their offense while the sides are flipped)
     if (pp) { if (playCatcher) T.pass += yds; } else if (runner) T.rush += yds; }
+  if (!(twoP && twoP.flipped)) { game.scriptN = (game.scriptN || 0) + 1; if (pp && playCatcher) hotNote(playCatcher, 'catch', yds); else if (!pp && runner) hotNote(runner, 'run', yds); }   // (v0.64: Script Writer's count, Feed the Hot Hand's tally)
   if (pp) {
     const Q = pstRec(pp.q), C = playCatcher ? pstRec(playCatcher.src) : null, T = C || pstRec(tgt && tgt.src);   // (the man who caught it was targeted: a pass that ended up with another receiver never gives catches > targets)
     if (Q) Q.pa++;
@@ -1367,6 +1375,8 @@ function pstSimGame(g, wk) {
 
 function newGame() {
   pstGame = null; playPass = null;   // (a new game's stat lines)
+  if (game) { game.penQ = null; game.penPick = null; game.penDeclined = false; } revWait = null; REV = null;   // (v0.68: no flag card / review left over from a game quit mid-way)
+  annClear(true);  // (the announcers: new bags, the baked faces freed)
   fillMorale();   // (every roster entry has morale / rehab fields)
   depthSync(MATCH.you);   // (your locked depth-chart men lead their groups again, so startersOf / the sims agree with the chart)
   if (twoP && twoP.flipped) flipSides();   // (quit mid-game: back to Player 1's side first)
@@ -1378,9 +1388,10 @@ function newGame() {
   if (hl && hl.bg) hlClose(); HTS.clips = []; HTS.cards = []; HTS.game = []; HT = null; pgPending = true;   // (and no halftime reel left from the old game; the pregame show comes up once the game screen does)
   kick = null; kickoff = null; aim = null;   // (a restart: no reticle or meters left over from the old game's kick)
   patNext = false; patMode = null; tryFlip = null; pendingSim = null; kickoffNext = false; kickoffPlay = false; fourthPending = false;   // (left right after a score: the old game's try / kickoff must not carry into this one)
-  Object.assign(game, { blue: 0, red: 0, quarter: 1, secs: QUARTER_SECS, over: false, pendingQuarter: false, runoff: 0, runoffTotal: 0,
+  Object.assign(game, { dynLive: null, blue: 0, red: 0, quarter: 1, secs: QUARTER_SECS, over: false, pendingQuarter: false, runoff: 0, runoffTotal: 0,
                         timeouts: diffTO(), lastRunoff: 0, qs: { blue: [0, 0, 0, 0], red: [0, 0, 0, 0] }, log: [], ot: null, simTO: null,
-                        defSimmed: false, ty: { you: { rush: 0, pass: 0 }, opp: { rush: 0, pass: 0 } } });   // ty = team rushing / passing yards this game (live plays)
+                        defSimmed: false, ty: { you: { rush: 0, pass: 0 }, opp: { rush: 0, pass: 0 } }, scriptN: 0, hot: {} });   // ty = team rushing / passing yards this game (live plays); scriptN = your snaps so far (Script Writer); hot = catches / good runs (Feed the Hot Hand)
+  if (!exhibition && xpcOn() && stT('Two-Minute Professor') >= 3) game.timeouts++;   // (Two-Minute Professor III: one free clock stop a half)
   nextLos = 25 * YL; nextDown = 1; nextLtg = 35 * YL;
   game.recvFirst = tossWinner || (Math.random() < 0.5 ? 'BLUE' : 'RED');   // the coin toss (already settled on the matchup screen)
   tossWinner = null;
@@ -1416,8 +1427,10 @@ const catchers = () => {
 
 function reset() {
   runPid++;   // (a new play: everyone's yards run start over)
+  annReset();   // (the announcers: a finished line goes, one still being written runs into the pre-snap)
+  flagPen = null;   // (v0.68: no flag carries into the next play)
   if (kitHold) { kitHold = false; applyKits(); }   // (the kick's bodies kept their kits behind the sim box: the real ones come back with the new play)
-  if (Array.isArray(ols) && qb) for (const p of allPlayers()) { if (!p) continue; p.armsUp = false; p.coast = null; p.crease = null; p.flat = null; }   // (crease / flat: the paper reactions, one play only)   // (not on the very first reset at load: nobody exists yet)
+  if (Array.isArray(ols) && qb) for (const p of allPlayers()) { if (!p) continue; p.armsUp = false; p.refToss = 0; p.refTossK = 0; p.coast = null; p.crease = null; p.flat = null; }   // (crease / flat: the paper reactions, one play only)   // (not on the very first reset at load: nobody exists yet)
   //   // (a kick rusher's raised arms never carry into the next play; nor an old scorer's end-zone coast: the camera panned to him, by then an unrelated man, at every later whistle until the next kickoff)
   if (tut && tut.koUnflip) { tut.koUnflip = false; if (twoP && twoP.koOnly) { flipSides(); twoP = null; } }   // (the tutorial's kickoff return is over: the sides go back now, not while the players are still on the field in their kits)
   if (tut && !(tutStep() || {}).kick) { kick = null; kickoff = null; kickoffPlay = false; puntPlay = null; puntRet = puntRetPlay = false; game.kickPending = null; }   // (nothing of a kicking lesson lingers into the next play)
@@ -1441,7 +1454,8 @@ function reset() {
   if (!tut && !exhibition && !game.over) preSnap = { yl: YL, fl: !!(twoP && twoP.flipped && twoP.ai), game: JSON.parse(JSON.stringify(game)), los, down, ltg: lineToGain, patMode, stats: JSON.parse(JSON.stringify(STATS)) };
   noPlayLines = false; kickoffPlay = false;   // (a fresh snap setup: a kickoff's flags must not outlive it, or the lines stayed hidden for the whole next play when it was advanced quickly)
   ballFar = -Infinity; downPend = null;
-  fourthPending =down === 4 || fgOption() || patMode === 'choose';
+  fourthPending = patMode === 'choose' || ((down === 4 || fgOption()) && !preKickLive());   // (v0.68: your own offense lines up and picks with the corner buttons, preKickBtns; the dim stays for the computer / online / tutorial)
+  preKickBack = null;
   if (aiOff() && down === 4 && patMode === null && !tut) showBanner('4TH DOWN', '#ffffff', '#3a1b1b', downAndDistance());   // (their 4th down, on defense: you see it coming)
   clock = 0;
   audiblesLeft = 2; defAudLeft = 2;
@@ -1773,6 +1787,7 @@ function assignRoutesOnce() {
       const o = slanters.reduce((a, b) => Math.abs(b.y - MID) > Math.abs(a.y - MID) ? b : a), p = SLANT_SPACE;
       setPath(o, { name: 'Slant', pts: [[p.stem, -p.out], [p.depth, p.inside]] }, s.dir);
     }
+    bookRouteSide(s, combo.name);   // (v0.64: your OC's pencilled routes for this call)
     if (tes.length) s.combo += '  (TE: ' + tes.map(r => r.teBlock ? 'block' : r.teRoute).join(', ') + ')';
   }
   // mesh: one drag from each side, crossing the field at about 5 yd, the second just over the first (the 5-yard spacing leaves the pair alone)
@@ -1873,7 +1888,7 @@ function blitzWalk(dt) {
   if (state !== 'pre' || tut || (kickoff && kickoff.forming) || coverage === GOAL_LINE) return;
   if (allPlayers().some(p => p.fmTo)) return;   // (still lining up)
   blitzWalkT += dt;
-  if (blitzWalkT < BLITZ_DISGUISE.walk.delay) return;
+  if (blitzWalkT < BLITZ_DISGUISE.walk.delay * (aiOff() ? 1 : diffX('disg'))) return;   // (CPU DISGUISE: shows it later)
   for (const d of back7) {
     const w = d.blitzShow;
     if (!d.blitz || !w || d.action || (d === ud && typeof udCtl === 'function' && udCtl(d))) continue;
@@ -1915,7 +1930,7 @@ function alignDefense() {
     p.blitzShow = dis ? { x: los + Math.min(deep, Math.max(x, sx)) * YL, y: ay + (y - ay) * BLITZ_DISGUISE.walk.show } : null;
     p.walked = !dis;
     Object.assign(p, { blitz: true, edge: Math.abs(y - MID) > 3 * YD, side: Math.sign(y - MID) || 1,
-                       rush: (p.role === 'LB' ? 9.0 : 9.5) * YD * rm(p, 'spd', 'speed'), rushV: deep > x ? BLITZ_DISGUISE.start * YD : 0, push: 1.0 * YD, shedAt: 99, shed: false, rbHit: false });
+                       rush: (p.role === 'LB' ? 9.0 : 9.5) * YD * rm(p, 'spd', 'speed') * defTraitK(p, 'rush') /* (Send Everybody II: your blitzers get home faster) */, rushV: deep > x ? BLITZ_DISGUISE.start * YD : 0, push: 1.0 * YD, shedAt: 99, shed: false, rbHit: false });
   };
   // strong side = the side with more receivers (top on a tie); SAM / WILL / SS / FS and the ends and tackles are named from it
   const strongTop = sides[0].recs.length >= sides[1].recs.length, sg = strongTop ? -1 : 1;
@@ -2065,6 +2080,7 @@ function alignDefense() {
     }
   }
   // one backer left in a zone with everyone else on a man, rushing or deep: he takes the middle hook, not the outside backer's zone
+  bookJobsLive({ set, manOn, blitz });   // (v0.64: your DC's pencilled jobs, when you play defense)
   rotateToOpen(set);
   // (any position: a lone corner or safety left in an outside zone takes the middle too; checked after the rotation, which can leave one)
   const zoners = back7.filter(d => !d.blitz && !d.man && d.zone && !d.zone.deep);
@@ -2369,6 +2385,8 @@ function snap(run = false) {
   // no play may start with 0:00 on the clock (only a try after a score)
   if (game.secs <= 0 && patMode === null && !tut && !game.over) { checkQuarterEnd(); if (game.pendingQuarter || game.over) return; }
   if (preSnap && !tut && !exhibition) { preSnap.game.timeouts = game.timeouts; preSnap.play = playCfg(); }   // (the call as it stands at the snap: audibles, hot routes)
+  annSnap();   // (the announcers: cleared at the snap)
+  if (state === 'pre' && patMode === null && flagPreSnap()) return;   // (v0.68: a false start / offside: dead ball, no play)
   state = 'drop';
   clock = 0;
   if (SL.on) slFreeze();   // (a crew walk still going stops where it is: nobody on the sideline moves during a play unless he's hit)
