@@ -1048,8 +1048,8 @@ function pCard(s, x, y, w, h, mini) {   // a player card like the roster's, prin
 let PHOTO_PEND = [], PHOTO_SHOOT = false, PHOTO_MS = 0, PHOTOS = {};
 function photosSave(i) {   // (saveToSlot) this franchise's photos under their own key: the slot save stays small
   const k = `${PHOTO_KEY}.${i}`;
-  try { if (!Object.keys(PHOTOS).length) localStorage.removeItem(k); else localStorage.setItem(k, lsPacked(PHOTOS)); }
-  catch (e) { console.warn('post photos: not saved (storage full?)', e); }   // (the save itself is already written; the paper falls back to portraits)
+  try { if (!Object.keys(PHOTOS).length) localStorage.removeItem(k); else localStorage.setItem(k, lsPacked(PHOTOS)); return true; }
+  catch (e) { console.warn('post photos: not saved (storage full?)', e); return false; }   // (the save itself is already written; the paper falls back to portraits)
 }
 function photosLoad(i) {   // (loadFromSlot, after LEAGUE is in)
   PHOTOS = {}; PHOTO_IMG.clear();
@@ -1775,7 +1775,7 @@ function drawStartBtns() {
   }
 }
 function titleStamp(cx, cy) { qsStamp(cx, cy - 12, 'PAPER PASSER', '#c0392b', -0.005, 1, 60, { distress: 7 }); }   // (centre of the title sheet, inside its own tilt)
-const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-17 SIDEVIEW-49';
+const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-19 SIDEVIEW-50';
 let hlFlash = -1e9;   // when the main menu's HIGHLIGHT button was last clicked
 let quickMenu = false;   // QUICK PLAY (START_BTNS.ex) drop down: EXHIBITION / 1V1 / ONLINE take the place of FRANCHISE / CAREER / TUTORIAL (same buttons, same size)
 function startClick(p) {
@@ -2184,6 +2184,7 @@ function olAutoJoin() {   // ?join=CODE opens JOIN with the code filled in
 const ONL_BACKLOG = 48000;   // bytes waiting in the data channel above which the host skips snapshots
 // online tuning: the host's send rate, the guest's smoothing, and the head start its own player gets. Looks and timing only: the host still decides every play.
 const ONL_NET = {
+  castKeep: 0.6,       // a line-up change where at least this share of the new list was already on the field goes as a partial cast (only the new men whole)
   hz: 20, hzFast: 30,   // snapshots a second, host -> guest (hzFast: while a kick meter or the aiming reticle is up)
   hzSlow: 10,           // ... while the link is backed up
   slowMs: 1500,         // ms the slow rate holds after a backed-up tick
@@ -2232,7 +2233,7 @@ function unslim(v, ps) {
 // what changed on a player since the last send: { set: {prop: value}, del: [props that went away] }
 // properties only the host's own simulation reads (measured: drawing a whole game never touches them), so they are never sent: steering targets, last-frame
 // movement, run yardage, shed / break timers...
-const ONL_HOST_ONLY = new Set(['koSafe', 'koBust', 'koBusted', 'koLead', 'koHit', 'osRole', 'osSlow', 'osHitDone', 'plantT', 'retWall', 'wallSide', 'saN', 'saPid', 'saAng', 'chopAt', 'bt', 'celWalk', 'slDgP', 'slDgOk', 'slU', 'slArr','kp', 'kpB', 'cx', 'cy', 'sx', 'sy', 'mpx', 'mpy', 'mvx', 'mvy', 'ranYd', 'gs', 'rel', 'hipT', 'brkT', 'shedAt', 'sealK', 'rushV', 'wk',   // (rvx / rvy stay: the guest's own aim line reads them in maxThrow)
+const ONL_HOST_ONLY = new Set(['kickHomeTag', 'leapKick', 'kickBlocker', 'koSafe', 'koBust', 'koBusted', 'koLead', 'koHit', 'osRole', 'osSlow', 'osHitDone', 'plantT', 'retWall', 'wallSide', 'saN', 'saPid', 'saAng', 'chopAt', 'bt', 'celWalk', 'slDgP', 'slDgOk', 'slU', 'slArr','kp', 'kpB', 'cx', 'cy', 'sx', 'sy', 'mpx', 'mpy', 'mvx', 'mvy', 'ranYd', 'gs', 'rel', 'hipT', 'brkT', 'shedAt', 'sealK', 'rushV', 'wk',   // (rvx / rvy stay: the guest's own aim line reads them in maxThrow)
   // what drawPlayer itself eases and stamps every drawn frame (neck, eyes, stance, turn, kick arms, the tackle pose): the guest's own drawing keeps its own. They were
   // over half of every snapshot, and the host's clock stamps kept resetting the guest's easing
   'yawAt', 'yaw', 'headAt', 'headW', 'stAt', 'stKey', 'stB', 'ezT', 'hkE', 'kaE', 'knE', 'faceAt', 'faceShow', 'gPose', 'gPoseT', 'gLegs',
@@ -2338,6 +2339,9 @@ function onlGlobals(ps, pm) {
 }
 function onlHostCast(ps, pm, key) {   // (always on the reliable channel: everything after it builds on it)
   const seq = ++ONL.seq;
+  { const old = ONL.castKey && ONL.castPs, om = old && new Map(old.map((p, i) => [p, i])), map = om && ps.map(p => { const j = om.get(p); return j === undefined ? -1 : j; });
+    if (map && map.filter(j => j >= 0).length >= Math.max(1, ps.length * ONL_NET.castKeep)) return onlHostCastPart(ps, pm, key, seq, map); }
+  ONL.castPs = ps.slice();
   ONL.castKey = key; ONL.epoch = (ONL.epoch || 0) + 1; ONL.castSeq = ONL.relSeq = ONL.ack = seq;
   ONL.sent = ps.map(onlNewSt); ONL.gSt = { v: {}, s: {}, o: {} };   // (gSt: the globals sent so far; a new cast sends them all again)
   const full = ps.map((p, i) => { onlDelta(p, pm, ONL.sent[i], seq); return onlSince(ONL.sent[i], 0)[0]; });
@@ -2345,12 +2349,39 @@ function onlHostCast(ps, pm, key) {   // (always on the reliable channel: everyt
   // the sideline people (~52 KB) go once: with the first cast, and again only when the cast of people itself is a new one (a new game, the setting, an injury
   // exit's extra man: SL.cast is then a new object) or the guest says it has none ('slq'). Everything else about them already travels as 'sl' events (slEvent).
   // sv = which pack this cast belongs with; sn = the sideline clock, so the guest's stays on the host's between events.
+  onlCastSl(m);
+  const len = NET.send(m);
+  ONL.castN = ONL.castN || { full: 0, part: 0, fullC: [], partC: [] }; ONL.castN.full++; ONL.castN.fullC.push(len);
+  if (NET_CFG.logCast) console.log('net: cast ' + len + ' chars' + (m.sl !== undefined ? ' (with the sideline pack: ' + JSON.stringify(m.sl).length + ')' : '') + ', ' + ps.length + ' players, src ' + full.reduce((t, f) => t + (f.src ? JSON.stringify(f.src).length : 0), 0));
+}
+function onlCastSl(m) {
   const slc = SL.on && SL.cast ? SL.cast : null;
   if (slc !== ONL.slRef) { ONL.slRef = slc; ONL.slV = (ONL.slV | 0) + 1; m.sl = slPack(); }
   else if (slc) m.sn = Math.round(SL.now * 1000) / 1000;
   m.sv = ONL.slV | 0;
+}
+// a partial cast: most of the line-up stayed (subs jogging off, a man added). map[i] = the old index of new man i, or -1 (full[i] = his whole properties).
+// Kept men keep their sent state at the new index and only send what changed since the guest's base (d / x); any property holding a player reference is
+// sent again (the indices moved). The globals go whole (they hold indices too). A new epoch, so stale snapshots are still refused.
+function onlHostCastPart(ps, pm, key, seq, map) {
+  const base = Math.max(ONL.ack || 0, ONL.castSeq || 0, ONL.relSeq || 0), sent = ONL.sent, full = [], d = [], x = []; let gone = false, nNew = 0;
+  ONL.castKey = key; ONL.castPs = ps.slice(); ONL.epoch = (ONL.epoch || 0) + 1;
+  ONL.sent = ps.map((p, i) => {
+    const j = map[i];
+    if (j < 0) { const st = onlNewSt(); onlDelta(p, pm, st, seq); full[i] = onlSince(st, 0)[0]; d[i] = 0; nNew++; return st; }
+    const st = sent[j];
+    for (const k in st.v) if (typeof st.v[k] === 'string' && st.v[k].includes('"__p"')) { delete st.v[k]; delete st.r[k]; }
+    onlDelta(p, pm, st, seq); const r = onlSince(st, base); full[i] = 0; d[i] = r[0]; x[i] = r[1]; if (r[1]) gone = true; return st;
+  });
+  const g = onlGlobals(ps, pm), G = ONL.gSt = { v: {}, s: {}, o: {} };
+  for (const k of Object.keys(g)) { G.v[k] = JSON.stringify(g[k]); G.s[k] = seq; G.o[k] = g[k]; }
+  ONL.castSeq = ONL.relSeq = ONL.ack = seq;
+  const m = { t: 'castp', e: ONL.epoch, n: seq, h: Math.round(performance.now()), map, full, d, g, sizes: [ols.length, recs.length, dl.length, back7.length, fgExit.length] };
+  if (gone) m.x = x;
+  onlCastSl(m);
   const len = NET.send(m);
-  if (NET_CFG.logCast) console.log('net: cast ' + len + ' chars' + (m.sl !== undefined ? ' (with the sideline pack: ' + JSON.stringify(m.sl).length + ')' : '') + ', ' + ps.length + ' players, src ' + full.reduce((t, f) => t + (f.src ? JSON.stringify(f.src).length : 0), 0));
+  ONL.castN = ONL.castN || { full: 0, part: 0, fullC: [], partC: [] }; ONL.castN.part++; ONL.castN.partC.push(len);
+  if (NET_CFG.logCast) console.log('net: partial cast ' + len + ' chars, ' + ps.length + ' players, ' + nNew + ' new' + (m.sl !== undefined ? ' (with the sideline pack: ' + JSON.stringify(m.sl).length + ')' : ''));
 }
 const onlRunLive = () => state === 'run' || ((state === 'drop' || state === 'pocket') && isRunPlay);   // (a ball carrier steered by keys: the fast rate, like an aimed pass. At the slow rate a run play was drawn a snapshot later and felt sluggish next to a pass play)
 // --- lag compensation (host only): the guest sees the game ONL.gLag ms late, so his defensive presses are judged against that picture too.
@@ -2387,7 +2418,8 @@ function onlHostTick() {
   if (NET._simQ.length) NET.simPump();
   const now = performance.now();
   // the guest's finger has been "down" but silent: its release got lost (the guest keeps sending its spot while held), so let go for him
-  if (ONL.gDown && ONL.gLast && now - (ONL.gAt || 0) > 1500) { ONL.gDown = false; try { sendMouse('pointermove', ONL.gLast, canvas); sendMouse('pointerup', ONL.gLast, canvas); } catch (e) {} }
+  if (ONL.gDown && ONL.gLast && now - (ONL.gAt || 0) > 1500 && aim) onlGuestCancel();   // (guest went quiet mid-aim: cancel, never throw)
+  else if (ONL.gDown && ONL.gLast && now - (ONL.gAt || 0) > 1500) { ONL.gDown = false; try { sendMouse('pointermove', ONL.gLast, canvas); sendMouse('pointerup', ONL.gLast, canvas); } catch (e) {} }
   // (a backed-up channel (weak link) only gets later and later: skip this tick instead of piling on, and send slower for a moment. A skipped snapshot is simply
   // folded into the next. Input and sound events still go through)
   let backed = false;
@@ -2425,9 +2457,36 @@ function onlGotCast(m) {
   ONL.full = m.full; ONL.buf = []; ONL.pos = pos; ONL.vel = vel; ONL.anim = an; ONL.epoch = m.e; ONL.rxSeq = m.n; ONL.pred = null; ONL.pt = null; ONL.lastC = null; ONL.lastClk = null;   // (a new cast: the buffer and the playback clock start over)   // (full: only its length is read from here on, "is there a cast")
   // the host's sideline people: whole when the cast carries them (sl), else the ones this device already has. Not the pack this cast goes with (sv), or none here
   // while the host has some (sn): ask for it again
+  onlCastSlIn(m);
+}
+function onlCastSlIn(m) {
   if ('sl' in m) { slUnpack(m.sl); ONL.slGot = m.sv; }
   else if (ONL.slGot !== m.sv || (m.sn != null && !SL.cast)) { const now = performance.now(); if (!ONL.slqAt || now - ONL.slqAt > 1500) { ONL.slqAt = now; NET.send({ t: 'slq' }); } }
   else if (m.sn != null) { SL.now = m.sn; SL.pn = performance.now(); }
+}
+// guest: a partial cast (onlHostCastPart). Kept men keep their objects (and their __rx / __ex corrections); the picture's clock (ONL.pt) runs on. The buffered
+// snapshots' property changes go onto the players first (they name players by the old indices), then their positions are re-indexed for playback.
+function onlGotCastP(m) {
+  const old = allPlayers().slice(), sz = m.sizes, cnt = 2 + sz[0] + sz[1] + sz[2] + sz[3] + sz[4], map = m.map;
+  if (!ONL.full.length || !ONL.pos || map.length !== cnt || map.some(j => j >= old.length)) { console.warn('net: partial cast does not fit, asking for a full one'); NET.send({ t: 'slq' }); return; }
+  for (const e of ONL.buf) if (!e.ap) onlApply(e, old);
+  const ps = map.map((j, i) => j >= 0 ? old[j] : makePlayer(m.full[i].team, m.full[i].x || 0, m.full[i].y || 0, m.full[i].num));
+  ps.forEach((p, i) => { const f = map[i] < 0 ? m.full[i] : m.d[i], xs = m.x && m.x[i];
+    if (f) { for (const k in f) onlPut(p, k, f[k], ps); if (f.sxf && p.src) p.src.xf = p.sxf; }
+    if (xs) for (const k of xs) p[k] = undefined; });
+  const ri = (a, w, nw) => { const b = new Float64Array(cnt * w); for (let i = 0; i < cnt; i++) { const j = map[i]; for (let c = 0; c < w; c++) b[i * w + c] = j >= 0 ? a[j * w + c] : nw(m.full[i], c); } return b; };
+  const nPos = (f, c) => +f[c ? (c === 1 ? 'y' : 'z') : 'x'] || 0, nVel = () => 0, nAn = (f, c) => c === 2 ? 0 : (k => typeof f[k] === 'number' ? f[k] : NaN)(c ? 'stride' : 'run');
+  for (const e of ONL.buf) { e.pos = ri(e.pos, 3, nPos); e.vel = ri(e.vel, 2, nVel); e.an = ri(e.an, 3, nAn); e.g = m.g; }
+  const pos = ri(ONL.pos, 3, nPos), vel = ri(ONL.vel, 2, nVel), an = ri(ONL.anim, 3, nAn);
+  ps.forEach((p, i) => { const f = map[i] >= 0 && m.d[i]; if (!f) return;
+    if (typeof f.x === 'number') pos[i * 3] = f.x; if (typeof f.y === 'number') pos[i * 3 + 1] = f.y; if ('z' in f) pos[i * 3 + 2] = +f.z || 0;
+    if ('vx' in f) vel[i * 2] = +f.vx || 0; if ('vy' in f) vel[i * 2 + 1] = +f.vy || 0;
+    if ('run' in f) an[i * 3] = typeof f.run === 'number' ? f.run : NaN; if ('stride' in f) an[i * 3 + 1] = typeof f.stride === 'number' ? f.stride : NaN; });
+  let i = 0; qb = ps[i++]; rb = ps[i++];
+  ols = ps.slice(i, i += sz[0]); recs = ps.slice(i, i += sz[1]); dl = ps.slice(i, i += sz[2]); back7 = ps.slice(i, i += sz[3]); fgExit = ps.slice(i, i += sz[4]);
+  ONL.full = map; ONL.pos = pos; ONL.vel = vel; ONL.anim = an; ONL.epoch = m.e; ONL.rxSeq = m.n; ONL.gPrev = m.g;   // (pt / ptHi / pred / buf kept: the picture runs on)
+  ONL.castPN = (ONL.castPN | 0) + 1;
+  onlCastSlIn(m);
 }
 function onlGotSnap(m) {
   const n = ONL.full.length;
@@ -2750,8 +2809,11 @@ function onlGuestPtr(m) {
   ONL.gAt = performance.now(); ONL.gLast = pt;
   if (m.k === 'pd') { if (!onlMayPoint(true, pt)) { ONL.gDown = false; return; } ONL.gDown = true; ONL.fromGuest = true; try { sendMouse('pointerdown', pt, canvas); } finally { ONL.fromGuest = false; } }
   else if (m.k === 'pm') { if (ONL.gDown) sendMouse('pointermove', pt, canvas); }   // (canvas: the drag handlers sit on it; the event bubbles up to the window's)
-  else if (m.k === 'pu') { if (ONL.gDown) { sendMouse('pointermove', pt, canvas); sendMouse('pointerup', pt, canvas); } ONL.gDown = false; }   // (the last move first: the release's own spot, which the throttled moves may have skipped, is the throw's end point)
+  else if (m.k === 'pc' && aim && ONL.gDown) onlGuestCancel();   // (a cancelled touch never throws: the aim goes away as offline)
+  else if (m.k === 'pu' || m.k === 'pc') { if (ONL.gDown) { sendMouse('pointermove', pt, canvas); sendMouse('pointerup', pt, canvas); } ONL.gDown = false; }   // (the last move first: the release's own spot, which the throttled moves may have skipped, is the throw's end point)
 }
+// the guest's press ends without a throw: the offline pointercancel's aim = null (no pointerup, so nothing is released)
+function onlGuestCancel() { ONL.gDown = false; aim = null; }
 function onlHandleInput(m) {
   if (!ONL.host || !ONL.on) return;
   if (m.k === 'kd' || m.k === 'pd') ONL.inputAt.guest = performance.now();   // (AFK: the guest is there)
@@ -2766,6 +2828,7 @@ function onlHandleInput(m) {
 function onlMsg(d) {   // NET.onmsg's game messages (true: handled)
   if (d.t === 'start') { onlStartGuest(d); return true; }
   if (d.t === 'cast') { if (ONL.guest) onlGotCast(d); return true; }
+  if (d.t === 'castp') { if (ONL.guest) onlGotCastP(d); return true; }
   if (d.t === 'snap') { if (ONL.guest) onlGotSnap(d); return true; }
   if (d.t === 'ak') { if (ONL.host && d.e === ONL.epoch && d.n > (ONL.ack || 0) && d.n <= ONL.seq) ONL.ack = d.n; return true; }   // (the guest has this snapshot: the next ones only carry what changed after it)
   if (d.t === 'ev') { onlGotEvent(d); return true; }

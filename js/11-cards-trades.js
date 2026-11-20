@@ -417,7 +417,7 @@ function hofToggle(team, p) {
   const i = HOF.findIndex(h => h.p.name === p.name);
   if (i >= 0) HOF.splice(i, 1);
   else { HOF.push({ team, p: { name: p.name, tag: p.tag, group: p.group, stars: p.stars, face: p.face, num: p.num, age: p.age } }); postWire('hof', p, team); }
-  try { localStorage.setItem(pstKey(HOF_KEY), JSON.stringify(HOF)); } catch (e) {}
+  lsTry(pstKey(HOF_KEY), lsPacked(HOF));
 }
 function hofCard(h, bb) {
   const p = h.p;
@@ -572,7 +572,7 @@ function checkBox(x, y, s, on, col) {
   if (on) { ctx.lineWidth = 2.6; ctx.beginPath(); ctx.moveTo(x + s * 0.2, y + s * 0.02); ctx.lineTo(x + s * 0.42, y + s * 0.26); ctx.lineTo(x + s * 0.86, y - s * 0.34); ctx.stroke(); }
   ctx.restore();
 }
-function chofSave() { try { localStorage.setItem(pstKey(CHOF_KEY), JSON.stringify(CHOF)); } catch (e) {} }
+function chofSave() { return lsTry(pstKey(CHOF_KEY), lsPacked(CHOF)); }
 function retireCoach() {
   const t = career.tenure, spans = [...(career.past || []), ...(t ? [{ ...t }] : [])];
   const e = {
@@ -1549,9 +1549,34 @@ function bookSideSlots(f) {   // the formation's receivers by side (sign of w), 
   for (const k of [1, -1]) S[k].sort((a, b) => Math.abs(f.slots[b].w) - Math.abs(f.slots[a].w));
   return S;
 }
-function bookSlotXY(f, x, y, w, h, s) {   // the same math as drawFormation (big)
-  const los = y + h * 0.27, sx = w / 41, sy = (h - (los - y) - 72) / 7.2, r = 15, lat = v => Math.sign(v) * (Math.min(Math.abs(v), 5) * 2 + Math.max(0, Math.abs(v) - 5) * 0.85);
+function bookSlotXY(f, x, y, w, h, s, L) {   // the same math as drawFormation (big); L = the page's fitted layout (bookOffLayout)
+  const los = L ? L.los : y + h * 0.27, sx = w / 41, sy = L ? L.sy : (h - (los - y) - 72) / 7.2, r = 15, lat = v => Math.sign(v) * (Math.min(Math.abs(v), 5) * 2 + Math.max(0, Math.abs(v) - 5) * 0.85);
   return { px: x + w / 2 + lat(s.w) * sx, py: los + (s.on ? r + 2 : r + 2 + s.d * sy), los, sx };
+}
+// v0.70 the page fits the play: offense = the line of scrimmage low enough that the deepest route end fits above it and the deepest back (and his name) just below;
+// defense = the whole picture (deepest zone / safety to the rushers and the QB) centred in the box. Tunables: px margins, backfield px a yard, route px a yard (min / max)
+const BOOK_LAY = { top: 30, bot: 30, bf: 22, names: 34, ydMin: 4, ydMax: 14, edge: 10, run: 26, defPad: 14, defBase: 420 };
+function bookOffLayout(c, f, call) {
+  const D = BOOK_DIAG, L = BOOK_LAY, r = 15, maxD = Math.max(0, ...f.slots.map(s => s.on ? 0 : s.d || 0));
+  const los = D.y + D.h - L.bot - (r + 2 + maxD * L.bf + L.names), lay = { los, sy: L.bf, syR: L.ydMax, sxR: 1.6 * D.w / 41 };
+  const sel = call && bookCalls(BK.team, f.id).find(x => x.name === call), R = sel && sel.kind === 'pass' ? bookOffRoutes(c, f, call) : [];
+  let deep = 1;
+  for (const q of R) { const rt = ROUTES[q.route]; if (rt) for (const [dx] of rt.pts) deep = Math.max(deep, dx); }
+  lay.syR = Math.max(L.ydMin, Math.min(L.ydMax, (los - D.y - L.top) / deep));
+  if (!R.length) lay.syR = Math.min(lay.syR, (los - D.y - L.top) / (L.run / 10));
+  for (const q of R) { const rt = ROUTES[q.route]; if (!rt) continue; const P = bookSlotXY(f, D.x, D.y, D.w, D.h, f.slots[q.si], lay);
+    for (const [, dy] of rt.pts) { const m = -q.side * dy; if (!m) continue; const room = m < 0 ? P.px - D.x - L.edge : D.x + D.w - L.edge - P.px; lay.sxR = Math.min(lay.sxR, Math.max(0, room) / Math.abs(m)); } }
+  return lay;
+}
+function bookArrow(x0, y0, x1, y1, seed, len = 11) {   // (adds a hand-drawn arrowhead at x1, y1 pointing away from x0, y0)
+  const a = Math.atan2(y1 - y0, x1 - x0);
+  penLine(x1, y1, x1 - len * Math.cos(a - 0.45), y1 - len * Math.sin(a - 0.45), seed, 0.6); penLine(x1, y1, x1 - len * Math.cos(a + 0.48), y1 - len * Math.sin(a + 0.48), seed + 1, 0.6);
+}
+function bookDefShift(c, cov) {   // px the defense page's printed spots move so the whole call fits the box (BOOK_SPOT / BOOK_REC / BOOK_QB are drawn at LOS = BOOK_LAY.defBase)
+  const D = BOOK_DIAG, L = BOOK_LAY; let top = 1e9, bot = -1e9;
+  for (const sl of BOOK_SLOTS) { const [, y] = BOOK_SPOT[sl], j = bookJob(c, cov, sl); top = Math.min(top, y - 30, j === 'DEEP' ? 170 - 36 : j === 'MID' ? 300 - 28 : j === 'FLAT' ? 350 - 30 : 1e9); bot = Math.max(bot, y + 31); }
+  bot = Math.max(bot, BOOK_QB[1] + 12, ...BOOK_REC.map(r => r[1] + 12));
+  return Math.round(D.y + D.h / 2 - (top + bot) / 2);
 }
 const BOOK_NAMED = { 'Mesh': ['go', 'shallow', 'shallowHi'], 'Y-Cross': ['go', 'deepCross', 'drag'], 'Wheel': ['slant', 'wheel', 'flat'] };   // plays the combo tables don't list: a side's routes for the diagram, outside-in
 const BOOK_FILL = ['go', 'seam', 'drag', 'flat'];   // (any extra man past a combo's length: these, in order)
@@ -1608,15 +1633,28 @@ function drawBookOff(c, ed) {
   const f = FORM_BY[forms[BK.tab]], D = BOOK_DIAG, calls = bookCalls(BK.team, f.id);
   if (BK.call && !calls.some(x => x.name === BK.call)) BK.call = null;
   if (!BK.call) { const fp = calls.find(x => x.kind === 'pass' && x.good) || calls.find(x => x.kind === 'pass'); if (fp) BK.call = fp.name; }   // (never a bare page: his top pass call shows)
-  drawFormation(f, D.x, D.y, D.w, D.h, { ps: formPersonnel(BK.team, f) });
-  const sel = calls.find(x => x.name === BK.call);
-  if (sel && sel.kind === 'pass') for (const R of bookOffRoutes(c, f, sel.name)) {   // the routes: ink as printed, pencil where edited
-    const s = f.slots[R.si], P = bookSlotXY(f, D.x, D.y, D.w, D.h, s), rt = ROUTES[R.route]; if (!rt) continue;
-    const syR = (P.los - D.y - 26) / 18, sxR = P.sx * 1.6;
-    ctx.save(); ctx.strokeStyle = R.edited ? '#6b6b6b' : '#c0392b'; ctx.lineWidth = R.edited ? 2.5 : 3; if (R.edited) ctx.setLineDash([5, 3]);
-    ctx.beginPath(); ctx.moveTo(P.px, P.py - 15); for (const [dx, dy] of rt.pts) ctx.lineTo(Math.max(D.x + 8, Math.min(D.x + D.w - 8, P.px - R.side * dy * sxR)), Math.max(D.y + 22, P.los - dx * syR)); ctx.stroke(); ctx.restore();
-    ctx.fillStyle = R.edited ? '#6b6b6b' : '#c0392b'; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center'; ctx.fillText(R.route.toUpperCase(), P.px, P.py + 50);
+  const sel = calls.find(x => x.name === BK.call), lay = bookOffLayout(c, f, BK.call), pts = BK.pts = [];
+  drawFormation(f, D.x, D.y, D.w, D.h, { ps: formPersonnel(BK.team, f), los: lay.los, sy: lay.sy, hand: true, pts });
+  ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  if (sel && sel.kind === 'pass') for (const R of bookOffRoutes(c, f, sel.name)) {   // the routes: a wobbly red pencil as printed, grey dashes where edited; a hand-drawn arrowhead
+    const s = f.slots[R.si], P = bookSlotXY(f, D.x, D.y, D.w, D.h, s, lay), rt = ROUTES[R.route]; if (!rt) continue;
+    const L = [[P.px, P.py - 15]]; for (const [dx, dy] of rt.pts) { const q = [P.px - R.side * dy * lay.sxR, lay.los - dx * lay.syR]; pts.push(q.slice()); L.push([Math.max(D.x + 4, Math.min(D.x + D.w - 4, q[0])), Math.max(D.y + 4, q[1])]); }
+    const sd = R.si * 31 + R.route.length * 7, col = R.edited ? '#6b6b6b' : '#c0392b', n = L.length - 1;
+    ctx.strokeStyle = col; ctx.lineWidth = R.edited ? 2.2 : 2.8; ctx.beginPath();
+    if (R.edited) penDash(L.flat(), sd, 7, 4, 0.9); else penPoly(L, sd, 1.3);
+    if (n > 0) bookArrow(L[n - 1][0], L[n - 1][1], L[n][0], L[n][1], sd + 9);
+    ctx.stroke();
+    ctx.fillStyle = col; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center'; ctx.fillText(R.route.toUpperCase(), P.px, P.py + 50);
   }
+  else if (sel) {   // a run: T-ends on the blockers on the line, the carrier's path up through the line
+    ctx.strokeStyle = '#3b3320'; ctx.lineWidth = 2.2; ctx.beginPath();
+    f.slots.forEach((s, i) => { if (!s.on || s.k === 'C' && false) return; if (!(s.role === 'OL' || s.role === 'TE' || s.role === 'WING')) return; const P = bookSlotXY(f, D.x, D.y, D.w, D.h, s, lay), t = P.py - 15 - BOOK_LAY.run;
+      penLine(P.px, P.py - 17, P.px, t, i * 5 + 3, 0.6); penLine(P.px - 8, t, P.px + 8, t, i * 5 + 4, 0.5); pts.push([P.px - 8, t]); });
+    ctx.stroke();
+    const bi = f.slots.findIndex(s => s.role === 'RB' || s.k === 'RB' || s.k === 'TB' || s.k === 'HB');
+    if (bi >= 0) { const P = bookSlotXY(f, D.x, D.y, D.w, D.h, f.slots[bi], lay), e = [P.px, lay.los - BOOK_LAY.run - 30]; ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 2.8; ctx.beginPath(); penPoly([[P.px, P.py - 17], [P.px + 6, lay.los + 4], e], 77, 1.2); bookArrow(P.px + 6, lay.los + 4, e[0], e[1], 79); ctx.stroke(); pts.push(e); }
+  }
+  ctx.restore();
   ctx.textAlign = 'left'; ctx.fillStyle = RES.dim; ctx.font = 'bold 12px monospace';
   ctx.fillText(sel ? (sel.kind === 'pass' ? (ed ? 'TAP A RECEIVER: PENCIL A NEW ROUTE (TAP AGAIN TO CYCLE / ERASE)' : 'HIS ROUTES') : 'A RUN: NO ROUTE EDITS') : 'PICK A CALL TO SEE ITS ROUTES', D.x, D.y + D.h + 6, D.w);
   calls.forEach((x, i) => {
@@ -1643,32 +1681,37 @@ function drawBookDef(c, ed) {
   BOOK_SIT.forEach((s, i) => menuBtn(bookTab(i), s.n, i === BK.tab ? '#fff3a0' : RES.bright, 12));
   const sit = BOOK_SIT[BK.tab], covs = Object.keys(sit.w).filter(k => BOOK_JOBS[k]), mx = Math.max(...covs.map(k => sit.w[k]));
   if (!BK.call || !covs.includes(BK.call)) BK.call = covs[0];
-  const D = BOOK_DIAG, cov = BK.call, N = bookDefNames(BK.team), los = 420;
-  ctx.fillStyle = FORM_COL.field; ctx.fillRect(D.x, D.y, D.w, D.h); penOutline(D.x, D.y, D.w, D.h, 41);
+  const D = BOOK_DIAG, cov = BK.call, N = bookDefNames(BK.team), sh = bookDefShift(c, cov), los = BOOK_LAY.defBase + sh, Y = v => v + sh, pts = BK.pts = [];
+  ctx.fillStyle = '#fffdf4'; ctx.fillRect(D.x, D.y, D.w, D.h);
+  ctx.save(); ctx.strokeStyle = 'rgba(90,140,210,0.28)'; ctx.lineWidth = 1; ctx.beginPath(); for (let k = 1; k < 9; k++) penLine(D.x + 6, D.y + k * D.h / 9, D.x + D.w - 6, D.y + k * D.h / 9, 300 + k, 0.7); ctx.stroke(); ctx.restore();
+  penOutline(D.x, D.y, D.w, D.h, 41);
+  ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   ctx.beginPath(); penDashLine(D.x + 4, los, D.x + D.w - 4, los, 77, 8, 5, 0.8); ctx.strokeStyle = '#3b3320'; ctx.lineWidth = 2; ctx.stroke();
-  ctx.fillStyle = 'rgba(120,120,120,0.45)';   // (a greyed offense)
-  for (let i = 0; i < 5; i++) ctx.fillRect(320 + i * 30 - 10, los + 6, 20, 20);
-  for (const [x, y] of [...BOOK_REC, BOOK_QB]) { ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2); ctx.fill(); }
+  ctx.strokeStyle = 'rgba(110,110,110,0.6)'; ctx.lineWidth = 1.8;   // (a greyed offense: pencil boxes and O's)
+  for (let i = 0; i < 5; i++) { const x = 320 + i * 30; ctx.beginPath(); penPoly([[x - 10, los + 6], [x + 10, los + 6], [x + 10, los + 26], [x - 10, los + 26], [x - 10, los + 6]], 500 + i, 0.9); ctx.stroke(); pts.push([x, los + 26]); }
+  for (const [x, y] of [...BOOK_REC, BOOK_QB]) { penEllipse(x, Y(y), 10, 10, x + y); ctx.stroke(); pts.push([x, Y(y) + 10]); }
   const jobs = Object.fromEntries(BOOK_SLOTS.map(s => [s, bookJob(c, cov, s)]));
-  for (const s of BOOK_SLOTS) {   // jobs: zone = highlighter patch, man = string to his man, blitz = marker arrow
-    const [x, y] = BOOK_SPOT[s], j = jobs[s], left = x < 380;
-    ctx.save();
-    const zone = (zx, zy, rx, ry, fill, ink, sd) => { penEllipse(zx, zy, rx, ry, sd); ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = ink; ctx.lineWidth = 1.8; ctx.stroke(); };   // (a highlighter patch with a pencil edge)
-    if (j === 'DEEP') zone(x + (left ? 30 : -30) * (s[0] === 'c' ? 1 : 0), 170, 85, 34, 'rgba(255,230,60,0.35)', 'rgba(170,140,20,0.6)', x + 1);
-    else if (j === 'MID') zone(x, 300, 55, 26, 'rgba(120,230,120,0.35)', 'rgba(40,130,60,0.55)', x + 2);
-    else if (j === 'FLAT') zone(left ? 120 : 640, 350, 60, 28, 'rgba(255,170,90,0.35)', 'rgba(190,100,30,0.55)', x + 3);
-    else if (j === 'MAN') { const r = BOOK_REC.reduce((a, b) => Math.hypot(b[0] - x, b[1] - y) < Math.hypot(a[0] - x, a[1] - y) ? b : a); ctx.strokeStyle = '#7a4a1a'; ctx.lineWidth = 1.5; ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(x, y); ctx.quadraticCurveTo((x + r[0]) / 2, (y + r[1]) / 2 - 18, r[0], r[1]); ctx.stroke(); }
-    else if (j === 'BLITZ') { ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(x, y + 12); ctx.lineTo(BOOK_QB[0] + (x - 380) * 0.2, BOOK_QB[1] - 16); ctx.stroke(); const a = Math.atan2(BOOK_QB[1] - 16 - y - 12, BOOK_QB[0] + (x - 380) * 0.2 - x); ctx.fillStyle = '#c0392b'; ctx.beginPath(); const ex = BOOK_QB[0] + (x - 380) * 0.2, ey = BOOK_QB[1] - 16; ctx.moveTo(ex, ey); ctx.lineTo(ex - 12 * Math.cos(a - 0.4), ey - 12 * Math.sin(a - 0.4)); ctx.lineTo(ex - 12 * Math.cos(a + 0.4), ey - 12 * Math.sin(a + 0.4)); ctx.fill(); }
-    ctx.restore();
+  const zone = (zx, zy, rx, ry, col, sd) => { zx = Math.max(D.x + rx + 4, Math.min(D.x + D.w - rx - 4, zx)); penEllipse(zx, zy, rx, ry, sd); penHatchE(zx, zy, rx, ry, col, sd); penEllipse(zx, zy, rx, ry, sd); ctx.strokeStyle = col; ctx.lineWidth = 1.8; ctx.stroke(); pts.push([zx - rx, zy - ry], [zx + rx, zy + ry]); };   // (a hatched pencil bubble)
+  for (const s of BOOK_SLOTS) {   // jobs: zone = hatched bubble, man = a pencil string to his man, blitz = a marker arrow
+    const [x, y0] = BOOK_SPOT[s], y = Y(y0), j = jobs[s], left = x < 380;
+    if (j === 'DEEP') zone(x + (left ? 30 : -30) * (s[0] === 'c' ? 1 : 0), Y(170), 85, 34, '#c99a12', x + 1);
+    else if (j === 'MID') zone(x, Y(300), 55, 26, '#2f8a4a', x + 2);
+    else if (j === 'FLAT') zone(left ? 120 : 640, Y(350), 60, 28, '#c46a22', x + 3);
+    else if (j === 'MAN') { const r = BOOK_REC.reduce((a, b) => Math.hypot(b[0] - x, b[1] - y0) < Math.hypot(a[0] - x, a[1] - y0) ? b : a), ry = Y(r[1]), q = []; for (let k = 0; k <= 8; k++) { const t = k / 8, mx = (x + r[0]) / 2, my = (y + ry) / 2 - 18; q.push((1 - t) * (1 - t) * x + 2 * t * (1 - t) * mx + t * t * r[0], (1 - t) * (1 - t) * y + 2 * t * (1 - t) * my + t * t * ry); } ctx.strokeStyle = '#7a4a1a'; ctx.lineWidth = 1.6; ctx.beginPath(); penDash(q, x + 7, 3, 4, 0.6); ctx.stroke(); }
+    else if (j === 'BLITZ') { const ex = BOOK_QB[0] + (x - 380) * 0.2, ey = Y(BOOK_QB[1]) - 16; ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 3.4; ctx.beginPath(); penLine(x, y + 12, ex, ey, x + 11, 1.4); bookArrow(x, y + 12, ex, ey, x + 13, 14); ctx.stroke(); pts.push([ex, ey]); }
   }
-  N.DL.forEach((p, i) => { const x = 380 + (i - (N.DL.length - 1) / 2) * 52, y = los - 18; ctx.fillStyle = '#b82a30'; ctx.fillRect(x - 10, y - 10, 20, 20); ctx.fillStyle = RES.line; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center'; ctx.fillText(lastName(p).slice(0, 7), x, y - 18, 50); });   // (spread so the names don't run together)
+  const X = (x, y, rr, sd) => { ctx.beginPath(); penLine(x - rr, y - rr, x + rr, y + rr, sd, 1); penLine(x + rr, y - rr, x - rr, y + rr, sd + 1, 1); ctx.stroke(); };   // (a marker X)
+  ctx.strokeStyle = '#b82a30'; ctx.lineWidth = 3.4;
+  N.DL.forEach((p, i) => { const x = 380 + (i - (N.DL.length - 1) / 2) * 52, y = los - 18; ctx.strokeStyle = '#b82a30'; ctx.lineWidth = 3.4; X(x, y, 8, 600 + i); ctx.fillStyle = RES.line; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center'; ctx.fillText(lastName(p).slice(0, 7), x, y - 18, 50); pts.push([x, y - 24]); });   // (spread so the names don't run together)
   for (const s of BOOK_SLOTS) {
-    const [x, y] = BOOK_SPOT[s], edt = c.book && c.book.j[`${cov}|${s}`];
-    ctx.fillStyle = '#b82a30'; ctx.beginPath(); ctx.arc(x, y, 14, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.stroke();
-    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center'; ctx.fillText(s.slice(0, 2).toUpperCase(), x, y + 1);
-    ctx.fillStyle = RES.line; ctx.font = 'bold 11px monospace'; ctx.fillText(lastName(N[s]), x, y - 22, 90);
+    const [x, y0] = BOOK_SPOT[s], y = Y(y0), edt = c.book && c.book.j[`${cov}|${s}`];
+    ctx.strokeStyle = '#b82a30'; ctx.lineWidth = 3.6; X(x, y, 11, x + y0);
+    ctx.fillStyle = RES.line; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center'; ctx.fillText(s.slice(0, 2).toUpperCase(), x + 17, y - 9);
+    ctx.font = 'bold 11px monospace'; ctx.fillText(lastName(N[s]), x, y - 22, 90);
     ctx.fillStyle = edt ? '#6b6b6b' : '#2a3f8f'; ctx.font = edt ? 'italic bold 11px monospace' : 'bold 11px monospace'; ctx.fillText(edt ? `✎ ${jobs[s]}` : jobs[s], x, y + 25);
+    pts.push([x, y - 30], [x, y + 31]);
   }
+  ctx.restore();
   if (!BOOK_SLOTS.some(s => jobs[s] === 'DEEP')) { ctx.save(); ctx.translate(D.x + D.w - 110, D.y + 50); ctx.rotate(0.1); ctx.fillStyle = '#ff6b6b'; ctx.fillRect(-90, -24, 180, 48); ctx.fillStyle = '#ffffff'; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center'; ctx.fillText('NO DEEP HELP', 0, 1); ctx.restore(); }
   ctx.textAlign = 'left'; ctx.fillStyle = RES.dim; ctx.font = 'bold 12px monospace';
   ctx.fillText(SETTINGS.simDefense ? 'JOB EDITS NEED PLAY DEFENSE (SETTINGS)' : ed ? 'TAP A DEFENDER: PENCIL A NEW JOB (TAP AGAIN TO CYCLE / ERASE)' : 'HIS JOBS', D.x, D.y + D.h + 6, D.w);
@@ -1722,7 +1765,7 @@ function bookClick(pt) {
     }
     const sel = calls.find(x => x.name === BK.call);
     if (ed && sel && sel.kind === 'pass') for (const R of bookOffRoutes(c, f, sel.name)) {
-      const P = bookSlotXY(f, BOOK_DIAG.x, BOOK_DIAG.y, BOOK_DIAG.w, BOOK_DIAG.h, f.slots[R.si]);
+      const P = bookSlotXY(f, BOOK_DIAG.x, BOOK_DIAG.y, BOOK_DIAG.w, BOOK_DIAG.h, f.slots[R.si], bookOffLayout(c, f, sel.name));
       if (Math.hypot(pt.x - P.px, pt.y - P.py) <= 22) { const pr = bookComboRoutes(sel.name, bookSideSlots(f)[R.side].length)[bookSideSlots(f)[R.side].indexOf(R.si)]; bookCycle(c, 'r', R.key, `${f.id}|${sel.name}|`, [pr, ...HOT.routes.filter(r => r !== pr && ROUTES[r])], pr); return; }
     }
   } else {
@@ -1732,7 +1775,7 @@ function bookClick(pt) {
       if (ed && inBtn(pt, bookMk(i, 1))) { bookMark(c, covs[i], -1); return; }
       if (inBtn(pt, bookRow(i))) { BK.call = covs[i]; return; }
     }
-    if (ed && !SETTINGS.simDefense) for (const s of BOOK_SLOTS) { const [x, y] = BOOK_SPOT[s]; if (Math.hypot(pt.x - x, pt.y - y) <= 20) { const pr = BOOK_JOBS[BK.call][s]; bookCycle(c, 'j', `${BK.call}|${s}`, `${BK.call}|`, [pr, ...BOOK.jobs.filter(j => j !== pr)], pr); return; } }
+    if (ed && !SETTINGS.simDefense) for (const s of BOOK_SLOTS) { const [x, y0] = BOOK_SPOT[s], y = y0 + bookDefShift(c, BK.call); if (Math.hypot(pt.x - x, pt.y - y) <= 20) { const pr = BOOK_JOBS[BK.call][s]; bookCycle(c, 'j', `${BK.call}|${s}`, `${BK.call}|`, [pr, ...BOOK.jobs.filter(j => j !== pr)], pr); return; } }
   }
 }
 // --- head coach memo (v0.64): clipped to the binder's cover. 3+ HC stars: the OC's favourite formation (c.form, which ocFavForm reads) / the DC's main shell;
@@ -2767,6 +2810,7 @@ function celFineNews() {
 }
 function homeNews() {
   const up = LEAGUE.upgNew || [], tr = LEAGUE.tradeNews || [];
+  if (loadQuiet) { loadQuiet = false; LEAGUE.upgCoins = 0; LEAGUE.xpNew = 0; LEAGUE.xpSim = 0; coinFly = []; coinPending = 0; xpPending = 0; }   // (v0.70: opened from the load screen: already banked, no tokens fly)
   try { celFineNews(); } catch (e) { console.warn('fines', e); }   // (v0.51: celebration fines from the last game)
   if (LEAGUE.upgCoins) {   // maxed-out players paid credits: explained the first time only, then they just fly from the ROSTER button to the credits box
     const n = LEAGUE.upgCoins; LEAGUE.upgCoins = 0;

@@ -1943,7 +1943,7 @@ function wxIcon(code, cx, cy, r, roof, ink) {
 }
 // sound: wind = audio/wind.mp3 looping (a gusting swell, louder with the mph; filtered noise only if the file can't play); rain = audio/rain.mp3
 // looping, louder the heavier it falls. Silent off the field; snow makes no sound. rain / wind = volume at the heaviest (x VOL), fade = change per s
-const WX_SND = { rain: 0.12, wind: 0.32, fade: 0.5 };
+const WX_SND = { rain: 0.12, wind: 0.32, fade: 0.5, menuK: 3 };   // menuK = how much faster the loops fade out when the game goes to a menu
 let wxAud = null, wxRainEl = null, wxWindEl = null, wxSndT = 0;
 // one looping weather element eased toward want (tracked _v: phones that ignore .volume read 1 back)
 function wxLoopEl(el, want, dt) {
@@ -1966,7 +1966,7 @@ function wxAudio() {
   const now = performance.now(), dt = wxSndT ? Math.min(0.1, (now - wxSndT) / 1000) : 0;
   wxSndT = now;
   const on = sndOn() && wxLive() && !(rec && rec.replaying && rec.paused);   // (a paused replay silences the weather too)
-  if (!sndOn()) { silenceLoops(); return; }
+  if (!sndOn()) { if (results && !paused && dt) { for (const el of [wxRainEl, wxWindEl]) if (el) wxLoopEl(el, 0, dt * WX_SND.menuK); return; } silenceLoops(); return; }   // (v0.70: off to a menu = faded out; a pause / hidden tab still stops dead)
   // rain: an HTML audio loop (works from a file too)
   const want = on ? WXI.rain * WX_SND.rain * VOL() * duck * crowdDuck() : 0;   // (crowdDuck: under a celebration's crowd pop)
   if (want > 0.002 && !wxRainEl) { try { wxRainEl = new Audio('audio/rain.mp3'); wxRainEl.loop = true; wxRainEl.volume = 0; } catch (e) {} }
@@ -3998,33 +3998,117 @@ function customKey(code) {
   if (hit) return hit[3];
   return act.some(a => a[2] === code && bindKeyOf(a) !== code) ? 'None' : undefined;
 }
-const BIND_LIST = { top: 78, bottom: 622, row: 37 };   // the keybinds list scrolls inside this band (the wheel); RESET KEYS stays under it
+const BIND_LIST = { top: 164, bottom: 606, row: 37, head: 34 };   // the keybinds list (CONTROLS popup) scrolls inside this band (the wheel); RESET KEYS stays under it; head = a group header's height
+const BIND_GROUPS = [   // the CONTROLS list's groups, in order (a BIND_ACTIONS id left out of every group lands under OTHER)
+  ['MOVING', ['up', 'upArrow', 'upI', 'down', 'downArrow', 'downK', 'left', 'leftR', 'leftJ', 'leftJR', 'right', 'rightR', 'rightArrow', 'rightArrowR', 'rightL', 'rightLR']],
+  ['SPRINTING', ['sprint', 'sprintR', 'sprint2', 'sprint2R', 'shiftL', 'shiftR']],
+  ['GAME', ['snap', 'timeout']],
+  ['PASSING', ['audible', 'bullet']],
+  ['RUNNING WITH THE BALL', ['stiff', 'truck', 'spin', 'hurdle', 'dive', 'diveTab', 'protect']],
+  ['DEFENSE', ['audibleD', 'switchQ', 'switchD', 'switchE', 'hints']],
+  ['TACKLING AND PLAYING THE BALL', ['hit', 'diveD', 'secure', 'jumpD', 'strip', 'chop']]];
+const BIND_ROWS = (() => {   // the list top to bottom: { h: header } or { i: BIND_ACTIONS index }, each with y = its offset in the list
+  const seen = new Set(), out = [];
+  for (const [g, ids] of BIND_GROUPS) { out.push({ h: g }); for (const id of ids) { const i = BIND_ACTIONS.findIndex(a => a[0] === id); if (i >= 0 && !seen.has(i)) { seen.add(i); out.push({ i }); } } }
+  const rest = BIND_ACTIONS.map((a, i) => i).filter(i => !seen.has(i));
+  if (rest.length) { out.push({ h: 'OTHER' }); rest.forEach(i => out.push({ i })); }
+  let y = 0; for (const r of out) { r.y = y; y += r.h ? BIND_LIST.head : BIND_LIST.row; }
+  out.total = y; return out;
+})();
 let bindScroll = 0;
-const bindMax = () => Math.max(0, BIND_ACTIONS.length * BIND_LIST.row - (BIND_LIST.bottom - BIND_LIST.top));
+const bindMax = () => Math.max(0, BIND_ROWS.total - (BIND_LIST.bottom - BIND_LIST.top));
 const SET_X = 90;
-// The left settings panel is made of GROUPS (SET_GROUPS: a header + the buttons under it). A button is either a toggle / cycler (click changes it in
-// place), a POPUP (DEBUG, HALFTIME, PREGAME: a small panel over the page, the buttons behind it hold still: see settingsPopUp) or a SCREEN of its own
-// (DIFFICULTY, SAVE / LOAD). Everything must end above y = SET_BOTTOM (the BACK button sits at the panel's bottom-left). To add a setting: put its button
-// in SET_BTNS inside the group it belongs to (rows are SET_ROW apart, two to a row = SET_HALF wide, or one = SET_FULL), draw it in drawSettingsMain,
-// handle it in settingsClick; a new group needs a SET_GROUPS entry and a free band of rows (check the last row ends above SET_BOTTOM).
-const SET_HALF = 215, SET_FULL = 440, SET_X2 = SET_X + 225, SET_BOTTOM = 615;
+// v0.68 layout. The main page (SET_MAIN) = SAVE / LOAD on top, seven category objects laid on the desk (SET_CATS: CONTROLS, DIFFICULTY = its own page,
+// RULES, FRANCHISE, SOUND, SHOWS, GRAPHICS), the volume bar (SET_VOL_MAIN) and a small DEBUG in the corner. A category opens a popup (setCat) of
+// full-width NAME: VALUE rows: setCatLayout moves that category's SET_BTNS onto rows (SET_POP; CONTROLS = SET_POP_KEYS with the keybinds list) and
+// parks every other row off screen, so settingsClick's per-button code runs unchanged. To add a setting: a SET_BTNS key (placed by setCatLayout),
+// the key in its category's SET_CAT_ROWS, its row text in SET_ROW_TEXT, its click in settingsClick, hover text in SET_TIPS.
+const SET_MAIN = { x: 240, y: 50, w: 800, h: 620 };
+const SET_CAT_ROWS = {
+  controls: ['autoSw', 'zoom', 'swap'],   // (+ the keybinds list; swap = touch only, with TOUCH_HELP instead of the keys)
+  rules: ['qtr', 'inj', 'pinj', 'wx', 'morale', 'flags', 'booth', 'dir'],
+  franchise: ['scouts', 'deals', 'simDef', 'spd', 'setup'],
+  sound: ['vol', 'ann'],   // (vol = volDn + the bar + volUp)
+  shows: ['ht', 'pg', 'rep', 'recPop', 'batPop', 'taunt', 'post'],
+  graphics: ['bri', 'lite', 'fps', 'dark', 'side', 'flash'] };   // (bri = briDn + the brightness bar + briUp)
+const SET_BARS = { vol: 'volume', bri: 'brightness' };   // bar rows: row id -> SETTINGS key (0-1, shown 0-100%; - / + = 10, a click or drag on the bar = any value)
+const SET_ROW_KEYS = [...new Set(Object.values(SET_CAT_ROWS).flat().flatMap(k => SET_BARS[k] ? [k + 'Dn', k + 'Up'] : [k]))];
+const setRowOf = k => /^(vol|bri)(Dn|Up)$/.test(k) ? k.slice(0, 3) : k;   // (a bar's - / + key -> its row id)
+const SET_CAT_W = 165, SET_CAT_H = 110;
+const SET_CATS = [   // [id, label, x, y, tilt, material]; diff = SET_BTNS.diff
+  ['controls', 'CONTROLS', 280, 180, -0.05, BM('playbook', 'btnCone')], ['diff', 'DIFFICULTY', 465, 180, 0.03, null],   // (no material: its own dial card, diffGaugeFace)
+  ['rules', 'RULES', 650, 180, -0.02, BM('clipboard', 'btnWhistle')], ['franchise', 'FRANCHISE', 835, 180, 0.05, BM('contract')],
+  ['sound', 'SOUND', 372, 322, 0.04, BM('cans')], ['shows', 'SHOWS', 557, 322, -0.05, BM('card', 'btnFilm', 'go')], ['graphics', 'GRAPHICS', 742, 322, 0.02, BM('blueprint')],
+].map(([id, label, x, y, rot, mat]) => ({ id, label, x, y, w: SET_CAT_W, h: SET_CAT_H, rot, mat }));
+const SET_VOL_MAIN = { dn: { x: 330, y: 466, w: 76, h: 44 }, up: { x: 874, y: 466, w: 76, h: 44 } };
+const SET_BRI_MAIN = { dn: { x: 330, y: 522, w: 76, h: 44 }, up: { x: 874, y: 522, w: 76, h: 44 } };   // (the brightness bar, under the volume)
+const SET_MAIN_KEYS = ['save', 'load', 'diff', 'dbg'];
+const SET_RESET = { x: 256, y: 618, w: 210, h: 36, sure: 3 };   // RESET TO DEFAULTS (main page, bottom left): a second click within `sure` s does it
+let setResetAt = 0;   // (when the first click armed it)
+const SET_RESET_MAP = {   // row key -> the SETTINGS keys it puts back to SETTINGS_FACTORY (missing there = deleted); difficulty keeps its own page and RESET
+  autoSw: ['autoSwitch'], zoom: ['camZoom'], swap: ['swapSides'], inj: ['injuries'], pinj: ['pracInjuries'], wx: ['weather'], morale: ['morale'],
+  flags: ['penalties', 'exPenalties'], booth: ['booth', 'exBooth'], dir: ['driveDir'], qtr: ['quarterMin'], scouts: ['scouts'], deals: ['contracts'],
+  simDef: ['simDefense'], spd: ['simST'], ann: ['announcers'], rep: ['replays'], recPop: ['hideRecPop'], batPop: ['hideBattlePop'], taunt: ['taunts'],
+  post: ['post'], lite: ['liteMode'], fps: ['fps'], dark: ['darkMode'], side: ['sideline'], flash: ['flashes'], volDn: ['volume'], briDn: ['brightness'],
+  ht: ['halftime', 'ht'], pg: ['pregame', 'pg'], keys: ['binds'] };
+function setResetAll() {   // every setting on the settings pages back to its default (in a game: the locked ones stay)
+  const lock = setInGame(), sd0 = SETTINGS.simDefense; let kept = 0;
+  for (const [k, list] of Object.entries(SET_RESET_MAP)) {
+    if (lock && SET_GAME_LOCK.includes(k)) { kept++; continue; }
+    for (const sk of list) { if (sk in SETTINGS_FACTORY) SETTINGS[sk] = JSON.parse(JSON.stringify(SETTINGS_FACTORY[sk])); else { delete SETTINGS[sk]; if (!inSave() || GLOBAL_SET.includes(sk)) delete SETTINGS_DEF[sk]; } }   // (saveSettings only copies keys that exist: a removed one must leave the stored defaults too)
+  }
+  if (!lock) { QUARTER_SECS = SETTINGS.quarterMin * 60; if (typeof game !== 'undefined' && game && game.secs > QUARTER_SECS) game.secs = QUARTER_SECS; }
+  if (SETTINGS.simDefense !== sd0 && !ONL.on) {   // (as the SIMULATE DEFENSE row does)
+    if (!twoP || (twoP.ai && !twoP.flipped)) twoP = SETTINGS.simDefense || tut ? null : { flipped: false, to: 3, ai: true };
+    else if (!twoP.ai) twoP.def = !SETTINGS.simDefense;
+  }
+  moraleSync(); slSetting(); buildRemap(); fpsCap.lock = false; fpsCap.over = 0; rebinding = null;
+  saveSettings(); note(kept ? 'RESET. GAME SETTINGS STAY LOCKED' : 'SETTINGS RESET');
+}   // (on the main page; everything else lives in a category popup)
+const SET_POP = { x: 330, y: 70, w: 620, h: 580, rowX: 370, rowW: 540, top: 138, row: 40, gap: 8, qtrH: 58, tipY: 560, done: { x: 370, y: 584, w: 540, h: 46 } };
+const SET_POP_KEYS = { x: 240, y: 50, w: 800, h: 628, tipY: 150, done: { x: 760, y: 622, w: 240, h: 44 }, keyX: 280, keyW: 700, bar: 996 };   // (the CONTROLS popup)
 const SET_BTNS = {
-  // GAME: saves, difficulty, drive direction
-  save: { x: SET_X, y: 106, w: SET_HALF, h: 38 }, load: { x: SET_X2, y: 106, w: SET_HALF, h: 38 },
-  diff: { x: SET_X, y: 150, w: SET_HALF, h: 38 }, dir: { x: SET_X2, y: 150, w: SET_HALF, h: 38 },
-  // GAMEPLAY
-  inj: { x: SET_X, y: 218, w: 140, h: 38 }, pinj: { x: SET_X + 150, y: 218, w: 140, h: 38 }, wx: { x: SET_X + 300, y: 218, w: 140, h: 38 },   // (pinj = PRACTICE INJURIES)
-  simDef: { x: SET_X, y: 262, w: 140, h: 38 }, autoSw: { x: SET_X + 150, y: 262, w: 140, h: 38 }, morale: { x: SET_X + 300, y: 262, w: 140, h: 38 },
-  zoom: { x: SET_X, y: 306, w: 66, h: 38 }, rep: { x: SET_X + 75, y: 306, w: 66, h: 38 }, spd: { x: SET_X + 150, y: 306, w: 66, h: 38 }, scouts: { x: SET_X + 225, y: 306, w: 66, h: 38 }, deals: { x: SET_X + 300, y: 306, w: 66, h: 38 }, taunt: { x: SET_X + 374, y: 306, w: 66, h: 38 },   // (deals = MANAGE CONTRACTS, see CONTRACT)   // (spd = SIM KICKS; taunt = how often a celebration is a taunt, see CELEB.tauntSet)
-  qtr: { x: SET_X, y: 350, w: 206, h: 58 }, flags: { x: SET_X + 215, y: 350, w: 66, h: 58 }, booth: { x: SET_X + 294.5, y: 350, w: 66, h: 58 }, setup: { x: SET_X + 374, y: 350, w: 66, h: 58 },   // (setup = RUN SETUP QUESTIONS again)   // (v0.68: flags = PENALTIES, booth = BOOTH REVIEW, see REF / refKey)
-  // SOUND & SHOWS
-  volDn: { x: SET_X, y: 434, w: 76, h: 38 }, volUp: { x: SET_X + 364, y: 434, w: 76, h: 38 },
-  ht: { x: SET_X, y: 478, w: 66, h: 38 }, pg: { x: SET_X + 75, y: 478, w: 66, h: 38 }, recPop: { x: SET_X + 150, y: 478, w: 66, h: 38 }, batPop: { x: SET_X + 225, y: 478, w: 66, h: 38 }, flash: { x: SET_X + 300, y: 478, w: 66, h: 38 }, ann: { x: SET_X + 374, y: 478, w: 66, h: 38 },   // (flash = lightning FLASHES; ann = ANNOUNCERS, see ANN)   // (recPop / batPop = the RECORD BOOK and PRACTICE BATTLES popups on the home screen: SETTINGS.hideRecPop / hideBattlePop)
-  // EXTRAS
-  dbg: { x: SET_X, y: 542, w: 66, h: 38 }, dark: { x: SET_X + 75, y: 542, w: 66, h: 38 }, post: { x: SET_X + 150, y: 542, w: 66, h: 38 }, lite: { x: SET_X + 225, y: 542, w: 66, h: 38 }, side: { x: SET_X + 300, y: 542, w: 66, h: 38 }, fps: { x: SET_X + 374, y: 542, w: 66, h: 38 },   // (lite = GRAPHICS, see LITE; side = SIDELINE people, see 07; fps = FRAME RATE on phones, FPS_CAP; v0.62: six across like the zoom row)
-  swap: { x: 665, y: 580, w: 540, h: 56 },   // (swap: touch only, in the controls panel)
+  save: { x: 300, y: 104, w: 320, h: 46 }, load: { x: 660, y: 104, w: 320, h: 46 },
+  diff: SET_CATS[1], dbg: { x: 950, y: 618, w: 74, h: 36 },
 };
-const SET_GROUPS = [['GAME', 94], ['GAMEPLAY', 206], ['SOUND & SHOWS', 422], ['EXTRAS', 530]];   // [header, y of its text]
+for (const k of SET_ROW_KEYS) SET_BTNS[k] = { x: -9999, y: -9999, w: 540, h: 40 };
+let setCat = null;   // the open category popup: null | 'controls' | 'rules' | 'franchise' | 'sound' | 'shows' | 'graphics'
+const SET_ROW_TEXT = {   // each row's NAME: VALUE (the old button labels on one line)
+  autoSw: () => `AUTO SWITCH: ${SETTINGS.autoSwitch ? 'ON' : 'OFF'}`, zoom: () => `CAMERA ZOOM: ${SETTINGS.camZoom !== false ? 'ON' : 'OFF'}`,
+  swap: () => `SWAP SIDES: ${SETTINGS.swapSides ? 'ON' : 'OFF'}  (joystick / aim)`,
+  inj: () => `INJURIES: ${SETTINGS.injuries ? 'ON' : 'OFF'}`, pinj: () => `PRACTICE INJURIES: ${SETTINGS.pracInjuries !== false ? 'ON' : 'OFF'}`,
+  wx: () => `WEATHER: ${SETTINGS.weather !== false ? 'ON' : 'OFF'}`, morale: () => `MORALE: ${SETTINGS.morale !== false ? 'ON' : 'OFF'}`,
+  flags: () => `PENALTIES: ${refSet('penalties') ? 'ON' : 'OFF'}`, booth: () => `BOOTH REVIEW: ${refSet('booth') ? 'ON' : 'OFF'}`,
+  dir: () => `DRIVE DIRECTION: ${DRIVE_DIRS[SETTINGS.driveDir || 'left'].toUpperCase()}`,
+  scouts: () => `SCOUTS: ${SETTINGS.scouts !== false ? 'ON' : 'OFF'}`, deals: () => `CONTRACTS: ${SETTINGS.contracts !== false ? 'MANAGE' : 'AUTO'}`,
+  simDef: () => `SIMULATE DEFENSE: ${SETTINGS.simDefense ? 'ON' : 'OFF'}`, spd: () => `SIMULATE KICKS: ${SETTINGS.simST ? 'ON' : 'OFF'}`, setup: () => 'SETUP QUESTIONS',
+  ann: () => `ANNOUNCERS: ${SETTINGS.announcers === false ? 'OFF' : 'ON'}`,
+  ht: () => 'HALFTIME SHOW', pg: () => 'PREGAME SHOW', rep: () => `REPLAYS: ${SETTINGS.replays}`,
+  recPop: () => `RECORD POPUPS: ${SETTINGS.hideRecPop ? 'OFF' : 'ON'}`, batPop: () => `BATTLE POPUPS: ${SETTINGS.hideBattlePop ? 'OFF' : 'ON'}`,
+  taunt: () => `TAUNTS: ${SETTINGS.taunts || 'NORMAL'}`, post: () => `THE POST: ${SETTINGS.post !== false ? 'ON' : 'OFF'}`,
+  lite: () => `GRAPHICS: ${gfxMode()}`, fps: () => `FRAME RATE: ${SETTINGS.fps || 'AUTO'}`, dark: () => `DARK MODE: ${SETTINGS.darkMode ? 'ON' : 'OFF'}`,
+  side: () => `SIDELINE: ${SETTINGS.sideline || 'ALL'}`, flash: () => `LIGHTNING FLASHES: ${SETTINGS.flashes === false ? 'OFF' : 'ON'}` };
+// the keys on screen right now (main page or the open popup)
+const setCatKeys = () => !setCat ? SET_MAIN_KEYS : setCat === 'controls' ? ['autoSw', 'zoom', ...(TUI.on ? ['swap'] : [])] : SET_ROW_KEYS.filter(k => SET_CAT_ROWS[setCat].includes(setRowOf(k)));
+function setCatLayout() {   // park every row, then lay the open category's rows out
+  const B = SET_BTNS, P = SET_POP;
+  for (const k of SET_ROW_KEYS) { B[k].x = -9999; B[k].y = -9999; }
+  if (!setCat) return;
+  if (setCat === 'controls') {
+    const K = SET_POP_KEYS, hw = (K.keyW - 20) / 2;
+    Object.assign(B.autoSw, { x: K.keyX, y: 100, w: hw, h: 38 }); Object.assign(B.zoom, { x: K.keyX + hw + 20, y: 100, w: hw, h: 38 });
+    if (TUI.on) Object.assign(B.swap, { x: K.keyX, y: 570, w: K.keyW, h: 40 });
+    return;
+  }
+  let y = P.top;
+  for (const k of SET_CAT_ROWS[setCat]) {
+    if (SET_BARS[k]) { Object.assign(B[k + 'Dn'], { x: P.rowX, y, w: 60, h: P.row }); Object.assign(B[k + 'Up'], { x: P.rowX + P.rowW - 60, y, w: 60, h: P.row }); y += P.row + P.gap; continue; }
+    const h = k === 'qtr' ? P.qtrH : P.row;
+    Object.assign(B[k], { x: P.rowX, y, w: P.rowW, h });
+    if (k === 'qtr') { QTR_BAR.x = P.rowX + 60; QTR_BAR.w = P.rowW - 120; }
+    y += h + P.gap;
+  }
+}
 const FPS_MODES = ['AUTO', '30', '60'];   // SETTINGS.fps = FRAME RATE (phones: FPS_CAP / fpsInterval in 14; computers are never capped)
 const LITE_MODES = ['AUTO', 'PERFORMANCE', 'QUALITY'];   // SETTINGS.liteMode = the GRAPHICS setting (see gfxMode / LITE in 07; old saved 'ON' / 'OFF' = PERFORMANCE / QUALITY)
 const GFX_SHORT = { AUTO: 'AUTO', PERFORMANCE: 'PERF', QUALITY: 'QUAL' };   // (the 80 px settings button)
@@ -4033,25 +4117,25 @@ const SL_MODES = ['ALL', 'CREW', 'OFF'];     // SETTINGS.sideline (sideline peop
 // settings opened from a game's pause menu: the ones that change the game being played are locked until it ends
 const SET_GAME_LOCK = ['setup', 'flags', 'booth', 'inj', 'pinj', 'wx', 'diff', 'dir', 'simDef', 'spd', 'morale', 'qtr', 'scouts', 'deals', 'post', 'save', 'load', 'dbg'];
 const setInGame = () => !results && typeof game !== 'undefined' && !!game && !game.over;
-const SET_TIP_Y = 598;   // the one-line tip / note under the last group
+const SET_TIP_Y = 598;   // the main page's one-line tip / note (popups: SET_POP.tipY)
 const SET_TIPS = {   // hover tips: ONE short line each, copy rules (plain, no parentheses / semicolons); functions = different text on / off
-  recPop: () => SETTINGS.hideRecPop ? 'RECORDS: off. The Post still reports them.' : 'RECORDS: a popup when a record falls.',
+  recPop: () => SETTINGS.hideRecPop ? 'RECORD POPUPS: off. The Post still reports them.' : 'RECORD POPUPS: a popup when a record falls.',
   ann: () => SETTINGS.announcers === false ? 'ANNOUNCERS: off. A quiet broadcast.' : 'ANNOUNCERS: two voices call the action.',
-  flash: () => SETTINGS.flashes === false ? 'FLASHES: off. Thunder still rolls.' : 'FLASHES: lightning lights up the screen.',
-  batPop: () => SETTINGS.hideBattlePop ? 'BATTLES: off. Still in PRACTICE and the Post.' : 'BATTLES: a popup when a big battle ends.',
-  setup: () => 'SETUP QUIZ: answer the coaching questions again.',
-  flags: () => refSet('penalties') ? 'FLAGS: hold, grab or hit late and it costs you.' : 'FLAGS: off. The refs still spot the ball.',
-  booth: () => refSet('booth') ? 'BOOTH: close calls get a second look.' : 'BOOTH: off. Every spot is perfect.',
+  flash: () => SETTINGS.flashes === false ? 'LIGHTNING FLASHES: off. Thunder still rolls.' : 'LIGHTNING FLASHES: lightning lights up the screen.',
+  batPop: () => SETTINGS.hideBattlePop ? 'BATTLE POPUPS: off. Still in PRACTICE and the Post.' : 'BATTLE POPUPS: a popup when a big battle ends.',
+  setup: () => 'SETUP QUESTIONS: answer the coaching questions again.',
+  flags: () => refSet('penalties') ? 'PENALTIES: hold, grab or hit late and it costs you.' : 'PENALTIES: off. The refs still spot the ball.',
+  booth: () => refSet('booth') ? 'BOOTH REVIEW: close calls get a second look.' : 'BOOTH REVIEW: off. Every spot is perfect.',
   taunt: () => (SETTINGS.taunts || 'NORMAL') === 'OFF' ? 'TAUNTS: off. Nobody taunts.' : 'TAUNTS: how often a celebration gets cheeky.',
-  deals: () => SETTINGS.contracts !== false ? 'MANAGE CONTRACTS: you make every deal.' : 'MANAGE CONTRACTS: auto. The game handles deals.',
+  deals: () => SETTINGS.contracts !== false ? 'CONTRACTS: you make every deal.' : 'CONTRACTS: auto. The game handles deals.',
   scouts: () => SETTINGS.scouts !== false ? 'SCOUTS: hire two to sharpen draft reads.' : 'SCOUTS: off. Just the plain SCOUT button.',
-  simDef: () => SETTINGS.simDefense ? 'SIM DEFENSE: their drives play themselves.' : 'SIM DEFENSE: off. You play defense.',
+  simDef: () => SETTINGS.simDefense ? 'SIMULATE DEFENSE: their drives play themselves.' : 'SIMULATE DEFENSE: off. You play defense.',
   autoSw: () => 'AUTO SWITCH: grab the defender nearest the ball.',
   morale: () => 'MORALE: big plays and games swing your players.',
-  pinj: () => 'PRACTICE INJ: players can get hurt in practice.',
+  pinj: () => 'PRACTICE INJURIES: players can get hurt in practice.',
   inj: () => 'INJURIES: hits hurt, legs get tired.',
-  dir: () => 'DRIVE: which way you drive on screen.',
-  spd: () => SETTINGS.simST ? 'SIM KICKS: kicks and returns play themselves.' : 'SIM KICKS: off. You play every kick.',
+  dir: () => 'DRIVE DIRECTION: which way you drive on screen.',
+  spd: () => SETTINGS.simST ? 'SIMULATE KICKS: kicks and returns play themselves.' : 'SIMULATE KICKS: off. You play every kick.',
   rep: () => 'REPLAYS: how often big plays replay.',
   wx: () => 'WEATHER: starts next game.',
   ht: () => 'HALFTIME SHOW: pick what plays.',
@@ -4063,10 +4147,10 @@ const SET_TIPS = {   // hover tips: ONE short line each, copy rules (plain, no p
   side: () => 'SIDELINE: who stands on the sidelines. Looks only.' };
 // a settings popup (DEBUG / HALFTIME / PREGAME) is up: the page behind it holds still (menuBtn / hoverAmt / pressDepth check this); the popup's own buttons draw with setPopDraw on
 let setPopDraw = false;
-const settingsPopUp = () => settingsOpen && !diffUI && !!(dbgUI || htUI || spdUI);
-const KEY_BTNS = BIND_ACTIONS.map((a, i) => ({ x: 665, y: 78 + i * 37, w: 540, h: 33 }));
-const KEY_RESET = { x: 840, y: 626, w: 190, h: 36 };
-const placeKeyBtns = () => KEY_BTNS.forEach((b, i) => { b.y = BIND_LIST.top + i * BIND_LIST.row - bindScroll; });
+const settingsPopUp = () => settingsOpen && !diffUI && !!(dbgUI || htUI || spdUI || setCat);
+const KEY_BTNS = BIND_ACTIONS.map((a, i) => ({ x: SET_POP_KEYS.keyX, y: BIND_LIST.top + i * 37, w: SET_POP_KEYS.keyW, h: 33 }));
+const KEY_RESET = { x: SET_POP_KEYS.keyX, y: 622, w: 240, h: 44 };
+const placeKeyBtns = () => { for (const r of BIND_ROWS) if (!r.h) KEY_BTNS[r.i].y = BIND_LIST.top + r.y - bindScroll; };
 const inBindView = p => p.y >= BIND_LIST.top && p.y <= BIND_LIST.bottom;
 let rebinding = null, qtrDrag = false;   // rebinding = the action waiting for a key press
 const QTR_BAR = { x: SET_X + 18, w: 170 };
@@ -4094,13 +4178,15 @@ const TOUCH_HELP = [
 // the debug page: goes over the settings screen (DEBUG, bottom of the settings panel)
 let dbgUI = false;
 const DBG_PANEL = { x: 330, y: 70, w: 620, h: 560 };
-const DBG_BTNS = { hit: { x: 370, y: 140, w: 540, h: 54 }, mobile: { x: 370, y: 204, w: 540, h: 54 }, tools: { x: 370, y: 268, w: 540, h: 54 }, perf: { x: 370, y: 332, w: 540, h: 54 }, net: { x: 370, y: 396, w: 540, h: 54 }, dyn: { x: 370, y: 460, w: 540, h: 54 }, back: { x: 370, y: 556, w: 540, h: 56 } };   // (dyn = ADAPTIVE: LAST GAME readout)   // (perf = the frame-time readout, see PERF_HUD; net = FAKE LAG for testing online, see NET_SIM)
+const DBG_BTNS = { hit: { x: 370, y: 140, w: 540, h: 54 }, mobile: { x: 370, y: 204, w: 540, h: 54 }, tools: { x: 370, y: 268, w: 540, h: 54 }, perf: { x: 370, y: 332, w: 540, h: 54 }, net: { x: 370, y: 396, w: 540, h: 54 }, dyn: { x: 370, y: 460, w: 265, h: 54 }, store: { x: 645, y: 460, w: 265, h: 54 }, back: { x: 370, y: 556, w: 540, h: 56 } };   // (dyn = ADAPTIVE: LAST GAME readout)   // (perf = the frame-time readout, see PERF_HUD; net = FAKE LAG for testing online, see NET_SIM)
 function drawDebug() {
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
   if (dbgUI === 'dyn') return drawDynDebug();
+  if (dbgUI === 'store') return drawStoreDebug();
   resPanel(DBG_PANEL.x, DBG_PANEL.y, DBG_PANEL.w, DBG_PANEL.h, [['DEBUG', null]], RES.bright);
   const Y = IN_GAME_PAPER.yellow;
-  menuBtn(DBG_BTNS.dyn, 'ADAPTIVE: LAST GAME', Y, 24);   // (per master: live sample, expected, actual, step)
+  menuBtn(DBG_BTNS.dyn, 'ADAPTIVE', Y, 24);
+  menuBtn(DBG_BTNS.store, 'STORAGE', Y, 24);   // (what is using this device's save space: storeReport)
   menuBtn(DBG_BTNS.hit, `HITBOXES: ${SETTINGS.hitboxes ? 'ON' : 'OFF'}`, Y, 24);
   menuBtn(DBG_BTNS.mobile, `MOBILE MODE: ${TUI.on ? 'ON' : 'OFF'}`, Y, 24);
   menuBtn(DBG_BTNS.tools, `HIDE EXTRA TOOLS: ${SETTINGS.hideTools ? 'ON' : 'OFF'}`, Y, 24);   // (the start screen's ANIMATION LIBRARY + TEST MODE)
@@ -4108,6 +4194,18 @@ function drawDebug() {
   menuBtn(DBG_BTNS.net, `FAKE LAG: ${SETTINGS.netSim || 'OFF'}`, Y, 24);   // (online test bench: delays / drops what this device receives)
   menuBtn(DBG_BTNS.back, 'DONE', Y, 24);
 }
+function drawStoreDebug() {   // DEBUG > STORAGE: storeReport, per slot and the biggest keys
+  const R = DBG_STORE || (DBG_STORE = storeReport(true));
+  resPanel(150, 70, 980, 560, [['STORAGE: ' + mbOf(R.total) + ' USED', null]], RES.bright);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.font = 'bold 14px monospace'; ctx.fillStyle = RES.dim; ctx.fillText('BY SLOT', 180, 130); ctx.fillText('BIGGEST KEYS', 560, 130);
+  const top = Math.max(1, R.groups.length ? R.groups[0].n : 1), bar = (x, y, w, n) => { ctx.fillStyle = 'rgba(58,111,176,0.25)'; ctx.fillRect(x, y - 9, w * n / top, 18); };
+  R.groups.slice(0, 13).forEach((g, i) => { const y = 160 + i * 28; bar(180, y, 340, g.n); ctx.fillStyle = RES.line; ctx.font = 'bold 15px monospace'; ctx.fillText(g.g + '  ' + mbOf(g.n), 186, y); });
+  R.keys.slice(0, 13).forEach((k, i) => { const y = 160 + i * 28; ctx.fillStyle = RES.line; ctx.font = '15px monospace'; ctx.fillText(k.name + '  ' + mbOf(k.n), 560, y, 540); });
+  ctx.fillStyle = RES.dim; ctx.font = '13px monospace'; ctx.fillText('Also logged in the console. Sizes are characters stored.', 180, 530);
+  menuBtn({ x: 515, y: 556, w: 250, h: 56 }, 'BACK', IN_GAME_PAPER.yellow, 22);
+}
+let DBG_STORE = null;   // (the report, made when the page opens)
 function drawDynDebug() {   // the last judged game, per adaptive master (tuning DYN_M)
   resPanel(150, 70, 980, 560, [['ADAPTIVE: LAST GAME', null]], RES.bright);
   const dy = inSave() ? dynFix(DIFFV.dyn) : null, L = dy && dy.last;
@@ -4131,8 +4229,9 @@ function drawDynDebug() {   // the last judged game, per adaptive master (tuning
   menuBtn({ x: 515, y: 556, w: 250, h: 56 }, 'BACK', IN_GAME_PAPER.yellow, 22);
 }
 function debugClick(p) {
-  if (dbgUI === 'dyn') { if (inBtn(p, { x: 515, y: 556, w: 250, h: 56 }) || !inBtn(p, { x: 150, y: 70, w: 980, h: 560 })) dbgUI = true; return; }
+  if (dbgUI === 'dyn' || dbgUI === 'store') { if (inBtn(p, { x: 515, y: 556, w: 250, h: 56 }) || !inBtn(p, { x: 150, y: 70, w: 980, h: 560 })) dbgUI = true; return; }
   if (inBtn(p, DBG_BTNS.dyn)) { dbgUI = 'dyn'; return; }
+  if (inBtn(p, DBG_BTNS.store)) { dbgUI = 'store'; DBG_STORE = null; return; }
   if (inBtn(p, DBG_BTNS.hit)) { SETTINGS.hitboxes = !SETTINGS.hitboxes; COLLIDE.show = SETTINGS.hitboxes; }
   else if (inBtn(p, DBG_BTNS.tools)) SETTINGS.hideTools = !SETTINGS.hideTools;
   else if (inBtn(p, DBG_BTNS.perf)) SETTINGS.perfHud = !SETTINGS.perfHud;
@@ -4173,6 +4272,7 @@ function speedClick(p) {
 function drawSettings() {
   drawSettingsMain();
   setPopDraw = true;   // (the popup's own buttons animate; the page behind it holds still)
+  if (setCat && !diffUI) drawSetCat();   // (a category popup: HALF TIME / PRE GAME open their page on top of it)
   if (spdUI && !diffUI) drawSpeedSet();
   if (dbgUI && !diffUI) drawDebug();
   if (htUI && !diffUI) drawHtSettings();
@@ -4206,104 +4306,149 @@ function drawSettingsMain() {
   deskBg();
   if (QS && !QS.full) { drawQs(); return; }   // (RUN SETUP QUESTIONS: the questionnaire, minus the locker room)
   if (diffUI) { drawDiffUI(); return; }
-  resPanel(SET_X - 40, 50, 520, 620, [['SETTINGS', null]], RES.bright);
-  resPanel(640, 50, 600, 620, [[TUI.on ? 'TOUCH CONTROLS' : 'KEYBINDS  (click, press a key, BKSP clears)', null]], RES.bright);
+  setCatLayout();
+  resPanel(SET_MAIN.x, SET_MAIN.y, SET_MAIN.w, SET_MAIN.h, [['SETTINGS', null]], RES.bright);
   const B = SET_BTNS;
   const Y = IN_GAME_PAPER.yellow;   // (the settings buttons are yellow, to stand out from the white panels)
   { const lock = setInGame(); for (const k of SET_GAME_LOCK) B[k].lockGrey = lock; }   // opened from the pause menu: what would change this game is a flat grey scrap that doesn't move (menuBtn)
-  menuBtn(B.inj, `INJURIES: ${SETTINGS.injuries ? 'ON' : 'OFF'}`, Y, 14);
-  menuBtn(B.pinj, `PRAC INJ: ${SETTINGS.pracInjuries !== false ? 'ON' : 'OFF'}`, Y, 14);
-  menuBtn(B.dir, `DRIVE: ${DRIVE_DIRS[SETTINGS.driveDir || 'left'].toUpperCase()}`, Y, 19);
-  // (difficulty is a franchise setting: greyed out anywhere else, where it's always NORMAL)
-  menuBtn(B.diff, `DIFFICULTY: ${diffLabel()}`, Y, 16);   // (opens the difficulty page; read-only where it can't be changed)
-  menuBtn(B.wx, `WEATHER: ${SETTINGS.weather !== false ? 'ON' : 'OFF'}`, Y, 14);
-  menuBtn(B.volDn, '-', Y, 32); menuBtn(B.volUp, '+', Y, 32);
-  ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';   // (group headers)
-  for (const [g, gy] of SET_GROUPS) { ctx.fillText(g, SET_X, gy); ctx.fillRect(SET_X + ctx.measureText(g).width + 8, gy, SET_FULL - ctx.measureText(g).width - 8, 1); }
-  const bx = SET_X + 92, by = B.volDn.y + 2, bw = 256, bh = 34;   // the volume: a bar between - and +
+  menuBtn(B.save, 'SAVE GAME', canSave() ? Y : '#a9a9a9', 24, null, canSave());
+  menuBtn(B.load, 'LOAD GAME', hasSave() && !tut ? Y : '#a9a9a9', 24, null, hasSave() && !tut);
+  for (const c of SET_CATS) {   // the category objects, each laid a little crooked on the desk
+    const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+    ctx.save(); ctx.translate(cx, cy); ctx.rotate(c.rot); ctx.translate(-cx, -cy);
+    if (c.id === 'diff') menuBtn(c, '', SET_GAUGE.paper, 20, diffGaugeFace);   // (DIFFICULTY opens the difficulty page; read-only where it can't be changed)
+    else menuBtn(c, c.label, Y, 20);
+    ctx.restore();
+  }
+  setVolRow(SET_VOL_MAIN.dn, SET_VOL_MAIN.up, Y);
+  setVolRow(SET_BRI_MAIN.dn, SET_BRI_MAIN.up, Y, 'brightness');
+  menuBtn(B.dbg, 'DEBUG', Y, 13);
+  { const sure = setResetAt && performance.now() - setResetAt < SET_RESET.sure * 1000; if (!sure) setResetAt = 0;
+    menuBtn(SET_RESET, sure ? 'SURE? CLICK AGAIN' : 'RESET TO DEFAULTS', sure ? '#f2a39a' : RES.bright, 13); }
+  if (!setCat) setTipLine(SET_TIP_Y, SET_MAIN.x + SET_MAIN.w / 2, 700);
+  setLocks(SET_MAIN_KEYS);
+  menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
+}
+// the DIFFICULTY card: a dial from easy (green) to hard (red), the needle on the current level, which wobbles while hovered
+const SET_GAUGE = { paper: '#f4efe2', r: 40, lw: 11, cols: ['#3f9a4a', '#9cc23c', '#e8c43a', '#e98a2e', '#c8402f'], wobble: 0.07, wobbleHz: 9 };
+function diffGaugeD() {   // 0 = easiest .. 1 = hardest: a preset's place in DIFFICULTY, else the masters' average D
+  try {
+    if (diffUiMode() === 'preset') { const k = Object.keys(DIFFICULTY), i = k.indexOf(diffUiPreset()); if (i >= 0) return i / (k.length - 1); }
+    const L = DIFF_MASTERS.map(q => diffMasterD(q.id)).filter(v => isFinite(v));
+    if (L.length) return Math.max(0, Math.min(1, L.reduce((a, v) => a + v, 0) / L.length));
+  } catch (e) {}
+  return 0.5;
+}
+function diffGaugeFace(q) {
+  const G = SET_GAUGE, cx = q.x + q.w / 2, cy = q.y + q.h - 26, r = G.r, grey = q.lockGrey, n = G.cols.length, hov = q.hov || 0;
+  ctx.save();
+  ctx.fillStyle = q.ink; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('DIFFICULTY', cx, q.y + 15);
+  ctx.lineWidth = G.lw; ctx.lineCap = 'butt';
+  for (let i = 0; i < n; i++) { ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI + i * Math.PI / n, Math.PI + (i + 1) * Math.PI / n); ctx.strokeStyle = grey ? (i % 2 ? '#a9a9a9' : '#bdbdbd') : G.cols[i]; ctx.stroke(); }
+  ctx.strokeStyle = q.ink; ctx.lineWidth = 1.5;
+  for (let i = 0; i <= 10; i++) { const a = Math.PI + i * Math.PI / 10, r0 = r - G.lw / 2 - (i % 5 ? 3 : 7); ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); ctx.lineTo(cx + Math.cos(a) * (r - G.lw / 2), cy + Math.sin(a) * (r - G.lw / 2)); ctx.stroke(); }
+  const a = Math.PI * (1.04 + 0.92 * diffGaugeD()) + (hov > 0.01 ? Math.sin(uiNow() / 1000 * G.wobbleHz) * G.wobble * hov : 0);
+  if (hov > 0.01) menuMoving = true;
+  ctx.strokeStyle = grey ? '#6d6d6d' : '#b3261e'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * (r - 4), cy + Math.sin(a) * (r - 4)); ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx, cy, 4.5, 0, Math.PI * 2); ctx.fillStyle = q.ink; ctx.fill();
+  ctx.fillStyle = q.ink; ctx.font = 'bold 13px monospace'; ctx.fillText(diffLabel(), cx, cy + 15);
+  ctx.restore();
+}
+// the bar between a - and a + (volume / brightness; main page and the SOUND / GRAPHICS popups)
+const setBarRect = (dn, up) => { const x = dn.x + dn.w + 16; return { x, y: dn.y + 2, w: up.x - x - 16, h: dn.h - 4 }; };
+const setBarVal = key => SETTINGS[key] ?? (key === 'brightness' ? 0.5 : 1);
+let barDrag = null;   // { key, dn, up } while a bar is being dragged (pointermove / pointerup in 14)
+function setBarFromX(d, x) {
+  const r = setBarRect(d.dn, d.up), v = Math.round(Math.max(0, Math.min(1, (x - r.x) / r.w)) * 100) / 100;
+  if (v !== setBarVal(d.key)) SETTINGS[d.key] = v;
+}
+function barDragEnd() { if (barDrag.key === 'volume') catchSfx(); barDrag = null; saveSettings(); }   // (a blip at the new volume once let go)
+function setBarHit(p, main) {   // the bar under a click, if any
+  const B = SET_BTNS, L = [['volume', B.volDn, B.volUp], ['brightness', B.briDn, B.briUp]];
+  if (main) L.push(['volume', SET_VOL_MAIN.dn, SET_VOL_MAIN.up], ['brightness', SET_BRI_MAIN.dn, SET_BRI_MAIN.up]);
+  const h = L.find(([, dn, up]) => inBtn(p, setBarRect(dn, up)));
+  return h ? { key: h[0], dn: h[1], up: h[2] } : null;
+}
+function setVolRow(dn, up, Y, key = 'volume') {
+  menuBtn(dn, '-', Y, 32); menuBtn(up, '+', Y, 32);
+  const { x: bx, y: by, w: bw, h: bh } = setBarRect(dn, up), v = setBarVal(key);
   ctx.fillStyle = RES.bright; ctx.fillRect(bx, by, bw, bh);
-  ctx.fillStyle = RES.strip; ctx.fillRect(bx, by, bw * SETTINGS.volume, bh);
+  ctx.fillStyle = RES.strip; ctx.fillRect(bx, by, bw * v, bh);
   ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(bx, by, bw, bh);
   ctx.fillStyle = RES.line; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(`VOLUME ${Math.round(SETTINGS.volume * 100)}%`, bx + bw / 2, by + bh / 2 + 1);
-  menuBtn(B.rep, `REPLAYS:\n${SETTINGS.replays}`, Y, 10);   // (two lines: 'TOUCHDOWNS' must fit a sixth-width scrap)
-  menuBtn(B.scouts, `SCOUTS:\n${SETTINGS.scouts !== false ? 'ON' : 'OFF'}`, Y, 11);
-  menuBtn(B.deals, `DEALS:\n${SETTINGS.contracts !== false ? 'MANAGE' : 'AUTO'}`, Y, 11);   // (MANAGE CONTRACTS: see CONTRACT / contractsOn)
-  menuBtn(B.taunt, `TAUNTS:\n${SETTINGS.taunts || 'NORMAL'}`, Y, 11);
-  menuBtn(B.setup, 'SETUP\nQUIZ', Y, 12);
-  menuBtn(B.flags, `FLAGS:\n${refSet('penalties') ? 'ON' : 'OFF'}`, Y, 11);
-  menuBtn(B.booth, `BOOTH:\n${refSet('booth') ? 'ON' : 'OFF'}`, Y, 11);
-  menuBtn(B.spd, `SIM KICKS:
-${SETTINGS.simST ? 'ON' : 'OFF'}`, Y, 10);   // (was the SPEED popup: the speeds are now difficulty sliders)
-  menuBtn(B.qtr, '', Y, 24, q => {   // the quarter length: a slider, 1-8 minutes
+  ctx.fillText(`${key.toUpperCase()} ${Math.round(v * 100)}%`, bx + bw / 2, by + bh / 2 + 1);
+}
+function setLocks(keys) {   // a padlock in the corner of each locked setting on screen
+  if (!setInGame()) return;
+  for (const k of keys) if (SET_GAME_LOCK.includes(k)) {
+    const b = SET_BTNS[k]; ctx.save(); ctx.fillStyle = RES.line; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('🔒', b.x + b.w - 3, b.y + 2); ctx.restore();
+  }
+}
+function setTipLine(y, x, w) {   // the note (LOCKED...) or a one-line tip for the setting under the mouse
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if (settingsNote && performance.now() - settingsNote.t0 >= 2500) settingsNote = null;   // (v0.55: gone once shown: no clock read after)
+  if (settingsNote) { ctx.font = 'bold 17px monospace'; ctx.fillStyle = RES.gold; ctx.fillText(settingsNote.text, x, y); return; }
+  const keys = setCatKeys(), popTop = !setCat || !(dbgUI || htUI || spdUI);
+  const hk = popTop && hoverPt && Object.keys(SET_TIPS).find(k => keys.includes(k) && inBtn(hoverPt, SET_BTNS[k]));
+  if (hk) { ctx.font = 'bold 13px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(SET_TIPS[hk](), x, y, w); }
+}
+function drawQtrRow(b) {   // the quarter length: a slider, 1-8 minutes
+  menuBtn(b, '', IN_GAME_PAPER.yellow, 24, q => {
     const m = SETTINGS.quarterMin, bx = QTR_BAR.x, bw = QTR_BAR.w, cy = q.y + 40;
     ctx.fillStyle = q.ink; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = 'bold 17px monospace'; ctx.fillText(`QUARTER: ${m} MIN`, q.x + q.w / 2, q.y + 16);
+    ctx.font = 'bold 17px monospace'; ctx.fillText(`QUARTER: ${m} MINUTES`, q.x + q.w / 2, q.y + 16);
     ctx.fillStyle = '#c9c3b0'; ctx.fillRect(bx, cy - 3, bw, 6);
-    const lk = B.qtr.lockGrey;   // (locked in a game: the slider is grey too)
+    const lk = b.lockGrey;   // (locked in a game: the slider is grey too)
     ctx.fillStyle = lk ? '#8d8d8d' : RES.strip; ctx.fillRect(bx, cy - 3, bw * (m - 1) / 7, 6);
     for (let i = 0; i < 15; i++) { ctx.fillStyle = q.ink; ctx.fillRect(bx + bw * i / 14 - 1, cy - (i % 2 ? 5 : 8), 2, i % 2 ? 10 : 16); }
     ctx.beginPath(); ctx.arc(bx + bw * (m - 1) / 7, cy, 10, 0, Math.PI * 2); ctx.fillStyle = lk ? '#c4c4c4' : RES.gold; ctx.fill(); ctx.strokeStyle = q.ink; ctx.lineWidth = 2; ctx.stroke();
   });
-  menuBtn(B.save, 'SAVE GAME', canSave() ? Y : '#a9a9a9', 24, null, canSave());
-  menuBtn(B.load, 'LOAD GAME', hasSave() && !tut ? Y : '#a9a9a9', 24, null, hasSave() && !tut);
-  menuBtn(B.simDef, `SIM DEFENSE: ${SETTINGS.simDefense ? 'ON' : 'OFF'}`, Y, 14);
-  menuBtn(B.autoSw, `AUTO SWITCH: ${SETTINGS.autoSwitch ? 'ON' : 'OFF'}`, Y, 14);
-  menuBtn(B.morale, `MORALE: ${SETTINGS.morale !== false ? 'ON' : 'OFF'}`, Y, 14);
-  menuBtn(B.zoom, `CAM ZOOM:
-${SETTINGS.camZoom !== false ? 'ON' : 'OFF'}`, Y, 10);
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  if (settingsNote && performance.now() - settingsNote.t0 >= 2500) settingsNote = null;   // (v0.55: gone once shown: no clock read after)
-  if (settingsNote) { ctx.font = 'bold 17px monospace'; ctx.fillStyle = RES.gold; ctx.fillText(settingsNote.text, SET_X + 220, SET_TIP_Y); }
-  else {   // a one-line tip for the button under the mouse
-    const hk = !settingsPopUp() && hoverPt && Object.keys(SET_TIPS).find(k => inBtn(hoverPt, B[k]));
-    if (hk) { ctx.font = 'bold 13px monospace'; ctx.fillStyle = RES.dim; ctx.fillText(SET_TIPS[hk](), SET_X + 220, SET_TIP_Y, SET_FULL); }
+}
+// a category popup (setCat): dim, panel, its rows, DONE; CONTROLS also holds the keybinds list (or the touch help)
+function drawSetCat() {
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
+  setCatLayout();
+  const B = SET_BTNS, Y = IN_GAME_PAPER.yellow, K = setCat === 'controls', P = K ? SET_POP_KEYS : SET_POP;
+  const name = K ? (TUI.on ? 'TOUCH CONTROLS' : 'CONTROLS  (click, press a key, BKSP clears)') : SET_CATS.find(c => c.id === setCat).label;
+  resPanel(P.x, P.y, P.w, P.h, [[name, null]], RES.bright);
+  const keys = setCatKeys();
+  for (const r of SET_CAT_ROWS[setCat]) if (SET_BARS[r]) setVolRow(B[r + 'Dn'], B[r + 'Up'], Y, SET_BARS[r]);
+  for (const k of keys) {
+    if (setRowOf(k) !== k) continue;
+    if (k === 'qtr') drawQtrRow(B.qtr); else menuBtn(B[k], SET_ROW_TEXT[k](), Y, 18);
   }
-  menuBtn(B.dbg, 'DEBUG', Y, 13);
-  menuBtn(B.dark, `DARK
-${SETTINGS.darkMode ? 'ON' : 'OFF'}`, Y, 12);
-  menuBtn(B.post, `POST
-${SETTINGS.post !== false ? 'ON' : 'OFF'}`, Y, 12);
-  menuBtn(B.lite, `GFX
-${GFX_SHORT[gfxMode()]}`, Y, 12);
-  menuBtn(B.side, `SIDE
-${SETTINGS.sideline || 'ALL'}`, Y, 12);
-  menuBtn(B.fps, `FPS
-${SETTINGS.fps || 'AUTO'}`, Y, 12);
-  menuBtn(B.ht, `HALF
-TIME`, Y, 12); menuBtn(B.pg, `PRE
-GAME`, Y, 12);
-  menuBtn(B.ann, `CALLS
-${SETTINGS.announcers === false ? 'OFF' : 'ON'}`, Y, 12);
-  menuBtn(B.recPop, `RECORDS
-${SETTINGS.hideRecPop ? 'OFF' : 'ON'}`, Y, 12); menuBtn(B.batPop, `BATTLES
-${SETTINGS.hideBattlePop ? 'OFF' : 'ON'}`, Y, 12);
-  menuBtn(B.flash, `FLASHES
-${SETTINGS.flashes === false ? 'OFF' : 'ON'}`, Y, 12);
-  if (setInGame()) for (const k of SET_GAME_LOCK) {   // (and a padlock in its corner)
-    const b = B[k]; ctx.save(); ctx.fillStyle = RES.line; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillText('🔒', b.x + b.w - 3, b.y + 2); ctx.restore();
-  }
-  menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
+  setLocks(keys);
+  setTipLine(P.tipY, P.x + P.w / 2, P.w - 40);
+  menuBtn(P.done, 'DONE', Y, 22);
+  if (!K) return;
   if (TUI.on) {   // phones / tablets: no keys to rebind, the touch controls instead
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; let ty = BIND_LIST.top + 14;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; let ty = BIND_LIST.top + 4;
     for (const [k, v] of TOUCH_HELP) {
-      ctx.fillStyle = RES.line; ctx.font = 'bold 19px monospace'; ctx.fillText(k, 665, ty);
-      ctx.fillStyle = RES.dim; ctx.font = '16px monospace'; ctx.fillText(v, 665, ty + 22); ty += 52;
+      ctx.fillStyle = RES.line; ctx.font = 'bold 19px monospace'; ctx.fillText(k, P.keyX, ty);
+      ctx.fillStyle = RES.dim; ctx.font = '16px monospace'; ctx.fillText(v, P.keyX, ty + 20); ty += 45;
     }
-    menuBtn(B.swap, `SWAP SIDES: ${SETTINGS.swapSides ? 'ON' : 'OFF'}  (joystick / aim)`, Y, 19);
     return;
   }
   bindScroll = Math.min(bindScroll, bindMax()); placeKeyBtns();
-  ctx.save(); ctx.beginPath(); ctx.rect(650, BIND_LIST.top - 4, 590, BIND_LIST.bottom - BIND_LIST.top + 8); ctx.clip();
-  BIND_ACTIONS.forEach((a, i) => {
-    const k = bindKeyOf(a), on = rebinding === a[0];
-    menuBtn(KEY_BTNS[i], on ? `${a[1]}:  press a key...` : `${a[1]}:  ${k ? keyName(k) : '-'}`, on ? SEL : Y, 19);
-  });
+  ctx.save(); ctx.beginPath(); ctx.rect(P.keyX - 10, BIND_LIST.top - 4, P.keyW + 20, BIND_LIST.bottom - BIND_LIST.top + 8); ctx.clip();
+  for (const r of BIND_ROWS) {
+    const ry = BIND_LIST.top + r.y - bindScroll;
+    if (ry > BIND_LIST.bottom + 4 || ry + BIND_LIST.row < BIND_LIST.top - 4) continue;   // (off the band)
+    if (r.h) {   // a group header: the name and a rule
+      ctx.fillStyle = RES.dim; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      const ty = ry + BIND_LIST.head / 2 + 2, tw = ctx.measureText(r.h).width;
+      ctx.fillText(r.h, P.keyX, ty); ctx.fillRect(P.keyX + tw + 10, ty, P.keyW - tw - 10, 1);
+      continue;
+    }
+    const a = BIND_ACTIONS[r.i], k = bindKeyOf(a), on = rebinding === a[0];
+    menuBtn(KEY_BTNS[r.i], on ? `${a[1]}:  press a key...` : `${a[1]}:  ${k ? keyName(k) : '-'}`, on ? SEL : Y, 19);
+  }
   ctx.restore();
   if (bindMax() > 0) {   // a scrollbar for the list
     const tr = BIND_LIST.bottom - BIND_LIST.top, th = Math.max(30, tr * tr / (tr + bindMax()));
-    ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(1226, BIND_LIST.top, 8, tr);
-    ctx.fillStyle = RES.strip; ctx.fillRect(1226, BIND_LIST.top + (tr - th) * bindScroll / bindMax(), 8, th);
+    ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(P.bar, BIND_LIST.top, 8, tr);
+    ctx.fillStyle = RES.strip; ctx.fillRect(P.bar, BIND_LIST.top + (tr - th) * bindScroll / bindMax(), 8, th);
   }
   menuBtn(KEY_RESET, 'RESET KEYS', RES.bright, 19);
 }
@@ -4492,19 +4637,27 @@ function diffKey(e) {
   }
   const r = diffRows[U.sel]; if (r) { if (r.y < DLIST.top) U.scroll -= DLIST.top - r.y; else if (r.y + r.h > DLIST.bottom) U.scroll += r.y + r.h - DLIST.bottom; }
 }
+function setVolStep(up, key = 'volume') {   // - / + = 10 at a time, from wherever the bar is
+  SETTINGS[key] = Math.round(Math.max(0, Math.min(1, setBarVal(key) + (up ? 0.1 : -0.1))) * 100) / 100;
+  if (key === 'volume') catchSfx();   // a blip at the new level
+}
 function settingsClick(p) {
   if (QS && !QS.full) { qsClick(p); return; }
-  if (!diffUI && !dbgUI && !spdUI && !htUI && setInGame() && SET_GAME_LOCK.some(k => inBtn(p, SET_BTNS[k]))) { note('LOCKED DURING A GAME'); return; }
+  if (!diffUI) setCatLayout();
+  if (!diffUI && !dbgUI && !spdUI && !htUI && setInGame() && SET_GAME_LOCK.some(k => setCatKeys().includes(k) && inBtn(p, SET_BTNS[k]))) { note('LOCKED DURING A GAME'); return; }
   if (diffUI) { diffClick(p); return; }
   if (dbgUI) { debugClick(p); return; }
   if (spdUI) { speedClick(p); return; }
   if (htUI) { htClick(p); return; }
-  const B = SET_BTNS;
+  const B = SET_BTNS, main = !setCat, keysOn = setCat === 'controls' && !TUI.on;   // (main = the category page; keysOn = the CONTROLS popup's keybinds list)
+  if (setCat) { const P = setCat === 'controls' ? SET_POP_KEYS : SET_POP; if (inBtn(p, P.done) || !inBtn(p, P)) { setCat = null; rebinding = null; return; } }
+  else { const c = SET_CATS.find(q => q.id !== 'diff' && inBtn(p, q)); if (c) { setCat = c.id; bindScroll = 0; return; } }
+  { const bar = setBarHit(p, main); if (bar) { barDrag = bar; setBarFromX(bar, p.x); return; } }   // (a click on a bar sets it there; dragging keeps setting it)
   placeKeyBtns();
-  if (rebinding) { rebinding = null; if (inBindView(p) && BIND_ACTIONS.some((a, i) => inBtn(p, KEY_BTNS[i]))) { /* a click on another row switches to it */ } else return; }
-  const ki = inBindView(p) && !TUI.on ? KEY_BTNS.findIndex(b => inBtn(p, b)) : -1;
+  if (rebinding) { rebinding = null; if (keysOn && inBindView(p) && BIND_ACTIONS.some((a, i) => inBtn(p, KEY_BTNS[i]))) { /* a click on another row switches to it */ } else return; }
+  const ki = keysOn && inBindView(p) ? KEY_BTNS.findIndex(b => inBtn(p, b)) : -1;
   if (ki >= 0) { rebinding = BIND_ACTIONS[ki][0]; return; }
-  if (inBtn(p, KEY_RESET)) { SETTINGS.binds = {}; buildRemap(); }
+  if (keysOn && inBtn(p, KEY_RESET)) { SETTINGS.binds = {}; buildRemap(); }
   else if (inBtn(p, B.qtr)) { qtrDrag = true; setQtrFromX(p.x); }
   else if (inBtn(p, B.setup)) { qsOpen(false); return; }
   else if (inBtn(p, B.flags)) { const k = refKey('penalties'); SETTINGS[k] = !refSet('penalties'); }   // (v0.68 PENALTIES)
@@ -4513,11 +4666,11 @@ function settingsClick(p) {
   else if (inBtn(p, B.pinj)) SETTINGS.pracInjuries = SETTINGS.pracInjuries === false;
   else if (inBtn(p, B.wx)) SETTINGS.weather = SETTINGS.weather === false;   // (takes effect next game)
   else if (inBtn(p, B.dir)) { const k = Object.keys(DRIVE_DIRS); SETTINGS.driveDir = k[(k.indexOf(SETTINGS.driveDir || 'left') + 1) % k.length]; }
-  else if (inBtn(p, B.diff)) diffUI = { scroll: 0, sel: 0 };
-  else if (inBtn(p, B.volDn) || inBtn(p, B.volUp)) {
-    SETTINGS.volume = Math.round(Math.max(0, Math.min(1, SETTINGS.volume + (inBtn(p, B.volUp) ? 0.1 : -0.1))) * 10) / 10;
-    catchSfx();   // a blip at the new level
-  }
+  else if (main && inBtn(p, B.diff)) diffUI = { scroll: 0, sel: 0 };
+  else if (inBtn(p, B.volDn) || inBtn(p, B.volUp)) setVolStep(inBtn(p, B.volUp));   // (the SOUND popup's row)
+  else if (main && (inBtn(p, SET_VOL_MAIN.dn) || inBtn(p, SET_VOL_MAIN.up))) setVolStep(inBtn(p, SET_VOL_MAIN.up));   // (the main page's bar)
+  else if (inBtn(p, B.briDn) || inBtn(p, B.briUp)) setVolStep(inBtn(p, B.briUp), 'brightness');   // (the GRAPHICS popup's row)
+  else if (main && (inBtn(p, SET_BRI_MAIN.dn) || inBtn(p, SET_BRI_MAIN.up))) setVolStep(inBtn(p, SET_BRI_MAIN.up), 'brightness');
   else if (inBtn(p, B.rep)) SETTINGS.replays = REPLAY_MODES[(REPLAY_MODES.indexOf(SETTINGS.replays) + 1) % REPLAY_MODES.length];
   else if (inBtn(p, B.simDef)) {
     if (ONL.on) return;   // (online: defense is always played)
@@ -4532,10 +4685,11 @@ function settingsClick(p) {
   else if (inBtn(p, B.morale)) { SETTINGS.morale = SETTINGS.morale === false; moraleSync(); }   // (off: every player reads 50 and nothing moves it; the attribute panel still shows)
   else if (inBtn(p, B.taunt)) { const L = Object.keys(CELEB.tauntSet); SETTINGS.taunts = L[(L.indexOf(SETTINGS.taunts || 'NORMAL') + 1) % L.length]; }   // (looks only: how often a celebration is a taunt)
   else if (inBtn(p, B.autoSw)) SETTINGS.autoSwitch = !SETTINGS.autoSwitch;   // (on defense, a pass in the air switches you to the closest man)
-  else if (inBtn(p, B.save) && canSave()) { if (curSlot !== null && curSlot !== undefined) saveToSlot(curSlot); else slotUI = { mode: 'save', scroll: 0, confirm: null }; }   // (one click: saves over the franchise's own slot; the slot picker only when it has none yet)
-  else if (inBtn(p, B.load) && hasSave() && !tut) slotUI = { mode: 'load', scroll: 0, confirm: null };
-  else if (inBtn(p, BACK_BTN)) settingsOpen = false;
-  else if (inBtn(p, B.dbg)) dbgUI = true;
+  else if (main && inBtn(p, B.save) && canSave()) { if (curSlot !== null && curSlot !== undefined) saveToSlot(curSlot); else slotUI = { mode: 'save', scroll: 0, confirm: null }; }   // (one click: saves over the franchise's own slot; the slot picker only when it has none yet)
+  else if (main && inBtn(p, B.load) && hasSave() && !tut) slotUI = { mode: 'load', scroll: 0, confirm: null };
+  else if (main && inBtn(p, BACK_BTN)) settingsOpen = false;
+  else if (main && inBtn(p, B.dbg)) dbgUI = true;
+  else if (main && inBtn(p, SET_RESET)) { if (setResetAt && performance.now() - setResetAt < SET_RESET.sure * 1000) { setResetAt = 0; setResetAll(); return; } setResetAt = performance.now(); return; }
   else if (inBtn(p, B.dark)) SETTINGS.darkMode = !SETTINGS.darkMode;
   else if (inBtn(p, B.lite)) SETTINGS.liteMode = gfxNext();
   else if (inBtn(p, B.fps)) { SETTINGS.fps = FPS_MODES[(FPS_MODES.indexOf(SETTINGS.fps || 'AUTO') + 1) % FPS_MODES.length]; fpsCap.lock = false; fpsCap.over = 0; }   // (v0.62 FRAME RATE: phones only, see FPS_CAP)
@@ -4641,12 +4795,13 @@ function ioImport(kind, done) {
 const SYNC = { owner: 'paperpasserplaytester', repo: 'paper-passer-saves', branch: 'main', dir: 'accounts', tok: 'Q2cycDFrc3dBTExHTVdXSlZCWjB4NWRSZHBadE5JalQwOXZkMWQ3YjRkOUxDb2dwenk5WWN5angyY0JfVDU0M2R1d3FFYmY1MFk2Mk5ZVEMxMV90YXBfYnVodGln',   // tok = the token reversed, then base64 (keeps GitHub's leak scanner from revoking it)
   iters: 150000,                // PBKDF2 rounds (slower = harder to guess a password from a stolen file)
   every: 60,                    // seconds between auto syncs while the page is visible (push if this device changed, else check for a newer cloud save)
+  timeout: 25,                  // seconds a GitHub request may take before it is given up (so SIGNING IN... can't hang forever)
   user: /^[a-z0-9_]{3,16}$/, minPass: 6,
   light: ['pocketPasser.settings', 'pocketPasser.koTipSeen', 'pocketPasser.offTut', 'pocketPasser.draftTut', 'pocketPasser.coach', 'pocketPasser.coldDone'] };   // keys that don't count as "this device has data" when signing in
 const SYNC_KEY = 'pocketPasser.account';   // this device's sign-in (never synced)
 let acct = null;    // { user, key (raw AES key, base64: the password itself is never stored), sha (cloud file sha last seen), hash (this device's data hash then), at (last sync) }
 let acctUI = null;  // the DOM popup (real inputs, so phones get their keyboard and password managers work)
-const sync = { busy: false, err: '', wait: null, etag: null, offline: false, snooze: null };   // snooze = a cloud / device choice put off with DECIDE LATER: no auto sync until the next launch, SYNC NOW or ACCOUNT   // offline = no internet (navigator / a failed fetch): no sync tries until the 'online' event
+const sync = { busy: false, err: '', wait: null, etag: null, offline: false, snooze: null, taking: false, busyNote: '' };   // taking = syncTake is wiping + reloading (the popup can't close); busyNote = what a background sign-in is doing (shown if the popup is reopened)   // snooze = a cloud / device choice put off with DECIDE LATER: no auto sync until the next launch, SYNC NOW or ACCOUNT   // offline = no internet (navigator / a failed fetch): no sync tries until the 'online' event
 const syncNetOk = () => !sync.offline && navigator.onLine !== false;   // wait = { kind: 'pull' | 'choose', ... } held until the main menu
 try { acct = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null'); } catch (e) {}
 const syncOn = () => !!(SYNC.owner && SYNC.repo && SYNC.tok && window.crypto && crypto.subtle && window.fetch);
@@ -4690,41 +4845,61 @@ async function unseal(raw, text) {   // -> { user, data, t }; throws 'pass' on a
 // GitHub contents API
 const ghTok = () => atob(SYNC.tok).split('').reverse().join('');
 const ghUrl = path => `https://api.github.com/repos/${SYNC.owner}/${SYNC.repo}/contents/${path}`;
+async function ghFetch(url, o) {   // fetch with SYNC.timeout: a hung request throws 'timeout' (body reads included)
+  const ac = window.AbortController ? new AbortController() : null, tm = ac && setTimeout(() => ac.abort(), SYNC.timeout * 1000);
+  try { const r = await fetch(url, ac ? Object.assign({ signal: ac.signal }, o) : o); r._done = () => clearTimeout(tm); return r; }
+  catch (e) { clearTimeout(tm); throw e && e.name === 'AbortError' ? new Error('timeout') : e; }
+}
+async function ghBody(r, kind) { try { return await r[kind](); } catch (e) { throw e && e.name === 'AbortError' ? new Error('timeout') : e; } finally { r._done(); } }
 async function ghGet(path, etag) {   // -> { text, sha, etag } | null (no file) | 'same' (unchanged since etag: doesn't count against the rate limit)
   const h = { Authorization: `Bearer ${ghTok()}`, Accept: 'application/vnd.github.raw+json' };
   if (etag) h['If-None-Match'] = etag;
-  const r = await fetch(`${ghUrl(path)}?ref=${SYNC.branch}`, { cache: 'no-store', headers: h });
+  const r = await ghFetch(`${ghUrl(path)}?ref=${SYNC.branch}`, { cache: 'no-store', headers: h });
+  if (r.status === 304 || r.status === 404 || !r.ok) r._done();
   if (r.status === 304) return 'same';
   if (r.status === 404) return null;
   if (!r.ok) throw new Error('net' + r.status);
-  const bytes = new Uint8Array(await r.arrayBuffer()), head = u8(`blob ${bytes.length}\0`), all = new Uint8Array(head.length + bytes.length);
+  const bytes = new Uint8Array(await ghBody(r, 'arrayBuffer')), head = u8(`blob ${bytes.length}\0`), all = new Uint8Array(head.length + bytes.length);
   all.set(head); all.set(bytes, head.length);   // (git's blob sha, the one a PUT has to quote)
   return { text: new TextDecoder().decode(bytes), sha: await hexHash('SHA-1', all), etag: r.headers.get('ETag') };
 }
 async function ghPut(path, text, sha) {   // -> the new sha; throws 'conflict' if the file changed since `sha` (or exists, when sha is null)
   const body = { message: `sync ${path.split('/').pop().slice(0, 8)}`, content: b64(u8(text)), branch: SYNC.branch };
   if (sha) body.sha = sha;
-  const r = await fetch(ghUrl(path), { method: 'PUT', cache: 'no-store', headers: { Authorization: `Bearer ${ghTok()}`, Accept: 'application/vnd.github+json' }, body: JSON.stringify(body) });
-  if (r.status === 409 || r.status === 422) throw new Error('conflict');
-  if (!r.ok) throw new Error('net' + r.status);
+  const r = await ghFetch(ghUrl(path), { method: 'PUT', cache: 'no-store', headers: { Authorization: `Bearer ${ghTok()}`, Accept: 'application/vnd.github+json' }, body: JSON.stringify(body) });
+  if (r.status === 409 || r.status === 422) { r._done(); throw new Error('conflict'); }
+  if (!r.ok) { r._done(); throw new Error('net' + r.status); }
   sync.etag = null;
-  return (await r.json()).content.sha;
+  return (await ghBody(r, 'json')).content.sha;
 }
 function syncErrText(e) {
   const m = (e && e.message) || '';
   return m === 'pass' ? 'WRONG USERNAME OR PASSWORD' : m === 'nouser' ? 'WRONG USERNAME OR PASSWORD' : m === 'taken' ? 'THAT USERNAME IS TAKEN'
-    : m === 'space' ? 'NOT ENOUGH SPACE ON THIS DEVICE' : m === 'old' ? 'THIS BROWSER IS TOO OLD TO SYNC' : m === 'net401' || m === 'net403' ? 'SYNC IS MISCONFIGURED (TOKEN REFUSED)'
-    : m.startsWith('net') ? 'SYNC SERVER ERROR, TRY AGAIN' : "CAN'T REACH THE SYNC SERVER";
+    : m === 'space' ? `CLOUD SAVE TOO BIG FOR THIS DEVICE${e.need ? `: ${mbOf(e.need)}, ONLY ${mbOf(e.fit || 0)} FIT` : ''}. DELETE OLD FRANCHISES ON YOUR OTHER DEVICE, THEN SYNC IT` : m === 'old' ? 'THIS BROWSER IS TOO OLD TO SYNC' : m === 'net401' || m === 'net403' ? 'SYNC IS MISCONFIGURED (TOKEN REFUSED)'
+    : m === 'timeout' ? 'THE SYNC SERVER IS NOT ANSWERING, TRY AGAIN' : m.startsWith('net') ? 'SYNC SERVER ERROR, TRY AGAIN' : "CAN'T REACH THE SYNC SERVER";
 }
-function syncApply(data) {   // replace this device's data with the cloud's (all or nothing)
+const mbOf = n => (n / 1048576).toFixed(1) + ' MB';   // (localStorage sizes are in characters; close enough to MB for a message)
+function syncApply(data, first) {   // first = [key, value]: a small record written right after the wipe, before the big keys (the sign-in, so it survives the reload)   // replace this device's data with the cloud's (all or nothing: a part-applied bundle would delete the missing slots from the cloud on the next push)
   const o = JSON.parse(data), old = JSON.parse(syncBundle());
   const wipe = () => Object.keys(JSON.parse(syncBundle())).forEach(k => localStorage.removeItem(k));
-  try { wipe(); for (const k in o) localStorage.setItem(k, o[k]); }
-  catch (e) { try { wipe(); for (const k in old) localStorage.setItem(k, old[k]); } catch (e2) {} throw new Error('space'); }
+  let need = 0, fit = 0; for (const k in o) need += k.length + o[k].length;
+  try { wipe(); if (first) localStorage.setItem(first[0], first[1]); for (const k in o) { localStorage.setItem(k, o[k]); fit += k.length + o[k].length; } }
+  catch (e) {
+    try { if (first) localStorage.removeItem(first[0]); wipe(); for (const k in old) localStorage.setItem(k, old[k]); } catch (e2) { console.error('sync: could not put the old data back', e2); }   // (the first record goes too: the old data must get its exact room back)
+    const err = new Error('space'); err.need = need; err.fit = fit; console.warn('sync: cloud save too big for this device', mbOf(need), 'needed,', mbOf(fit), 'fit'); storeReport(true); throw err;
+  }
 }
 async function syncTake(data, sha) {   // apply a cloud save, remember it as synced, restart the page so every screen reads it
-  syncApply(data);
-  acct.sha = sha; acct.hash = await bundleHash(syncBundle()); acct.at = Date.now(); acctStore();
+  sync.taking = true; acctRender();   // (wipes + reloads: the popup can't be closed now)
+  const prev = localStorage.getItem(SYNC_KEY);
+  try {
+    acct.sha = sha; acct.hash = await bundleHash(data); acct.at = Date.now();   // (data is the other device's syncBundle: same sorted keys, so its hash = this device's after the apply)
+    syncApply(data, [SYNC_KEY, JSON.stringify(acct)]);   // (the sign-in record goes in first: acctStore swallows a full storage, which used to leave a fresh device signed out after the reload)
+  } catch (e) {
+    sync.taking = false;
+    try { if (prev) localStorage.setItem(SYNC_KEY, prev); else localStorage.removeItem(SYNC_KEY); } catch (e2) {}
+    throw e;
+  }
   location.reload();
 }
 async function syncUpload(sha) {   // overwrite the cloud with this device
@@ -4777,7 +4952,7 @@ async function acctSignIn(create) {
   if (!SYNC.user.test(user)) { U.note = 'USERNAME: 3-16 LETTERS, NUMBERS OR _'; acctRender(); return; }
   if (pass.length < SYNC.minPass) { U.note = `PASSWORD: AT LEAST ${SYNC.minPass} CHARACTERS`; acctRender(); return; }
   if (create && pass !== U.p2) { U.note = "PASSWORDS DON'T MATCH"; acctRender(); return; }
-  sync.busy = true; U.note = create ? 'CREATING ACCOUNT...' : 'SIGNING IN...'; acctRender();
+  sync.busy = true; sync.err = ''; U.note = sync.busyNote = create ? 'CREATING ACCOUNT...' : 'SIGNING IN...'; acctRender();
   try {
     const key = await acctKey(user, pass), path = await acctPath(user), f = await ghGet(path), local = syncBundle(), h = await bundleHash(local);
     if (create) {
@@ -4789,21 +4964,33 @@ async function acctSignIn(create) {
       const c = await unseal(key, f.text);
       U.p = '';
       if (c.data === local) { acct = { user, key, sha: f.sha, hash: h, at: Date.now() }; acctStore(); U.note = 'SIGNED IN. ALREADY UP TO DATE.'; }
-      else if (bundleEmpty(local)) { acct = { user, key, sha: null, hash: null, at: 0 }; sync.busy = false; await syncTake(c.data, f.sha); return; }
+      else if (bundleEmpty(local)) {
+        acct = { user, key, sha: null, hash: null, at: 0 }; sync.busy = false; sync.busyNote = '';
+        try { await syncTake(c.data, f.sha); return; } catch (e) { acct = null; throw e; }   // (didn't fit: not signed in, so nothing pushes this empty device over the cloud)
+      }
       else { U.view = 'choose'; U.choose = { data: c.data, t: c.t, sha: f.sha, local, pending: { user, key } }; U.note = ''; }   // (not signed in until he picks)
     }
   } catch (e) { U.note = syncErrText(e); }
-  sync.busy = false; acctRender();
+  sync.busy = false; sync.busyNote = ''; acctDone(U);
 }
 async function acctChoose(useCloud) {
   const U = acctUI, c = U.choose;
   if (c.pending) acct = { user: c.pending.user, key: c.pending.key, sha: c.sha, hash: null, at: 0 };
-  sync.busy = true; U.note = useCloud ? 'LOADING CLOUD SAVE...' : 'UPLOADING...'; acctRender();
+  sync.busy = true; U.note = sync.busyNote = useCloud ? 'LOADING CLOUD SAVE...' : 'UPLOADING...'; acctRender();
   try {
     if (useCloud) { await syncTake(c.data, c.sha); return; }
     await syncUpload(c.sha); U.view = 'in'; U.choose = null; U.note = 'UPLOADED. THIS DEVICE IS THE CLOUD SAVE NOW.';
-  } catch (e) { U.note = syncErrText(e); if (c.pending) { acct = null; } else { sync.err = U.note; } }
-  sync.busy = false; acctStore(); acctRender();
+  } catch (e) { U.note = syncErrText(e); if (c.pending) { acct = null; } if (!c.pending || acctUI !== U) sync.err = U.note; }
+  sync.busy = false; sync.busyNote = ''; acctStore(); acctDone(U);
+}
+function acctDone(U) {   // a sign-in / choice finished, maybe after BACK closed its popup (U = the popup it started in)
+  if (acctUI === U) { acctRender(); return; }
+  if (U.view === 'choose' && U.choose) {   // (it ended in a choice: reopen on it, the way syncGate does)
+    if (!acctUI) acctOpen();
+    Object.assign(acctUI, { view: 'choose', choose: U.choose, note: '' });
+  } else if (acctUI) acctUI.note = U.note;
+  else if (U.note && !acct) sync.err = U.note;   // (a failed background sign-in: shown next time ACCOUNT opens)
+  acctRender();
 }
 function syncAgo(t) {
   if (!t) return 'NEVER';
@@ -4815,55 +5002,91 @@ function acctOpen() {
   if (acctUI) return;
   const el = document.createElement('div');
   acctUI = { el, view: 'main', mode: 'in', u: acct ? acct.user : '', p: '', p2: '', note: '', choose: null };
-  el.style.cssText = 'position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);font-family:monospace;';
+  el.style.cssText = `position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(20,14,6,0.55);font-family:${HAND_FONT};`;
+  acctCss();
   ['pointerdown', 'pointerup', 'pointermove', 'mousedown', 'mouseup', 'mousemove', 'touchstart', 'touchmove', 'touchend', 'click', 'wheel', 'keydown', 'keyup', 'contextmenu'].forEach(t => el.addEventListener(t, e => {
     e.stopPropagation();   // (the game never sees typing or taps meant for the popup)
-    if (t === 'keydown' && e.key === 'Escape' && !sync.busy && acctUI.view !== 'choose') acctClose();
-    if (t === 'click' && e.target === el && !sync.busy && acctUI.view !== 'choose') acctClose();
+    if (t === 'keydown' && e.key === 'Escape') acctBack();   // (Escape / a click outside = BACK, in every view)
+    if (t === 'click' && e.target === el) acctBack();
   }));
   document.body.appendChild(el);
   const z = sync.snooze; if (z) { sync.snooze = null; acctUI.view = 'choose'; acctUI.choose = { data: z.data, t: z.t, sha: z.sha, local: syncBundle() }; }   // (a put-off choice comes back when he opens ACCOUNT)
   acctRender();
 }
 function acctClose() { if (!acctUI) return; acctUI.el.remove(); acctUI = null; }
+function acctCss() {   // the popup's look: a notebook page with tape, torn-paper buttons like menuBtn, ruled lines for inputs (made once)
+  if (document.getElementById('acctCss')) return;
+  const st = document.createElement('style'); st.id = 'acctCss';
+  const torn = 'polygon(0% 6%,8% 0%,22% 4%,37% 0%,52% 5%,68% 1%,83% 4%,100% 0%,98% 30%,100% 58%,97% 100%,80% 95%,63% 100%,47% 96%,30% 100%,14% 95%,0% 100%,2% 64%,0% 34%)';
+  st.textContent = `
+.acc-card{position:relative;width:min(470px,92vw);max-height:92vh;overflow:auto;box-sizing:border-box;padding:0 24px 20px 44px;color:var(--ink);font-family:${HAND_FONT};font-weight:bold;
+  background-color:var(--pg);background-image:linear-gradient(90deg,transparent 30px,var(--mar) 30px,var(--mar) 32px,transparent 32px),repeating-linear-gradient(180deg,transparent 0,transparent 33px,var(--rule) 33px,var(--rule) 34px);
+  border:1.5px solid var(--edge);border-radius:3px;box-shadow:3px 5px 0 rgba(40,25,5,.28),0 16px 34px rgba(0,0,0,.35);transform:rotate(-.5deg)}
+.acc-tape{position:absolute;top:2px;left:50%;width:120px;height:26px;margin-left:-60px;transform:rotate(-2deg);background:rgba(246,226,122,.75);box-shadow:0 1px 2px rgba(0,0,0,.15);pointer-events:none;z-index:3}
+.acc-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:14px;margin:0 -24px 4px -44px;padding:34px 24px 8px 14px;background:var(--pg)}
+.acc-title{font-size:30px;letter-spacing:1px}
+.acc-bw{display:inline-flex;flex:1;min-width:132px;margin:6px;filter:drop-shadow(3px 4px 0 rgba(40,25,5,.28));transform:rotate(var(--t,0deg));transition:transform .12s,filter .12s}
+.acc-bw:hover{transform:rotate(var(--t,0deg)) translateY(-3px);filter:drop-shadow(5px 7px 0 rgba(40,25,5,.24))}
+.acc-bw:active{transform:rotate(var(--t,0deg)) translate(2px,3px);filter:drop-shadow(1px 1px 0 rgba(40,25,5,.18))}
+.acc-btn{flex:1;padding:13px 10px 11px;border:none;cursor:pointer;color:#fff;font:bold 19px ${HAND_FONT};clip-path:${torn};
+  background-image:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,0) 50%,rgba(0,0,0,.08))}
+.acc-btn:hover{background-image:linear-gradient(rgba(255,226,90,.32),rgba(255,226,90,.32))}
+.acc-btn:disabled{opacity:.5;cursor:default}
+.acc-back{flex:0 0 auto;min-width:0;margin:0}
+.acc-back .acc-btn{color:${RES.line};background-color:#fffdf4;padding:9px 16px 7px;font-size:18px}
+.acc-row{display:flex;flex-wrap:wrap;margin:10px -6px 0}
+.acc-p{margin:6px 0;line-height:28px;font-size:17px;color:var(--sub)}
+.acc-lab{display:block;margin-top:6px;font-size:14px;line-height:20px;color:var(--sub)}
+.acc-in{display:block;width:100%;box-sizing:border-box;margin:0 0 4px;padding:4px 2px;border:none;border-bottom:2px solid var(--ink);border-radius:0;outline:none;background:transparent;color:var(--ink);font:bold 22px ${HAND_FONT}}
+.acc-in:focus{border-bottom-color:#3a6fb0;background:rgba(255,226,90,.18)}
+.acc-warn{margin:12px 0 0;padding:8px 12px;background:#ffe680;color:#5a3a00;transform:rotate(.8deg);box-shadow:2px 3px 0 rgba(40,25,5,.2);font-size:15px;line-height:22px}
+.acc-link{display:block;text-align:center;margin-top:12px;color:var(--ink);font-size:16px}`;
+  document.head.appendChild(st);
+}
 function acctRender() {
   const U = acctUI; if (!U) return;
-  const dark = !!SETTINGS.darkMode, bg = dark ? '#3b3d40' : '#fffdf4', ink = dark ? '#f0ece0' : RES.line, sub = dark ? '#b8b8b0' : '#5b6688';
-  const esc = s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`), dis = sync.busy ? ' disabled' : '';
-  const btn = (a, label, col, txt = '#fff') => `<button type="button" data-a="${a}"${dis} style="flex:1;min-width:120px;margin:5px;padding:12px 8px;font:bold 17px monospace;color:${txt};background:${col};border:3px solid ${ink};cursor:pointer;opacity:${sync.busy ? 0.55 : 1}">${label}</button>`;
-  const row = (...b) => `<div style="display:flex;flex-wrap:wrap;margin:8px -5px 0">${b.join('')}</div>`;
-  const p = (t, c = sub, size = 15) => `<div style="color:${c};font-size:${size}px;line-height:1.35;margin:6px 0">${t}</div>`;
-  const field = (name, label, type, ac) => `<label style="display:block;margin-top:10px;font-size:14px;color:${sub}">${label}<input name="${name}" type="${type}" value="${esc(U[name] || '')}" autocomplete="${ac}" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="${name === 'u' ? 16 : 64}"${dis} style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:10px;font:bold 18px monospace;color:${ink};background:${dark ? '#2a2c2e' : '#fff'};border:3px solid ${ink}"></label>`;
-  const note = U.note || (!U.choose && sync.err) || '';
-  let h = `<div style="background:${bg};color:${ink};border:4px solid ${ink};box-shadow:6px 8px 0 rgba(0,0,0,0.35);width:min(440px,92vw);max-height:92vh;overflow:auto;padding:20px 22px;box-sizing:border-box;font-weight:bold">`;
-  h += `<div style="font-size:30px;letter-spacing:1px">ACCOUNT</div>`;
-  if (!syncOn()) h += p('Cloud sync is not set up in this build yet.') + row(btn('close', 'CLOSE', IN_GAME_PAPER.off));
+  const dark = darkOn(), P = IN_GAME_PAPER;
+  const vars = dark ? `--pg:${DM.page};--ink:#f0ece0;--sub:#b8b8b0;--rule:rgba(255,255,255,.07);--mar:rgba(220,90,80,.35);--edge:rgba(0,0,0,.5)`
+    : `--pg:#fffdf4;--ink:${RES.line};--sub:#5b6688;--rule:rgba(80,120,190,.2);--mar:rgba(220,80,70,.45);--edge:rgba(120,100,70,.45)`;
+  const esc = s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`), busy = sync.busy || sync.taking, dis = busy ? ' disabled' : '';
+  let tilt = 0;
+  const btn = (a, label, col) => `<span class="acc-bw" style="--t:${[-1.2, 0.9, -0.5, 1.3][tilt++ % 4]}deg"><button type="button" class="acc-btn" data-a="${a}"${dis} style="background-color:${col}">${label}</button></span>`;
+  const row = (...b) => `<div class="acc-row">${b.join('')}</div>`;
+  const p = (t, c) => `<div class="acc-p"${c ? ` style="color:${c}"` : ''}>${t}</div>`;
+  const field = (name, label, type, ac) => `<label class="acc-lab">${label}<input class="acc-in" name="${name}" type="${type}" value="${esc(U[name] || '')}" autocomplete="${ac}" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="${name === 'u' ? 16 : 64}"${dis}></label>`;
+  const note = sync.taking ? 'LOADING CLOUD SAVE...' : U.note || (sync.busy && sync.busyNote) || (!U.choose && sync.err) || '';
+  let h = `<div class="acc-card" style="${vars}"><div class="acc-tape"></div><div class="acc-head">`;
+  h += `<span class="acc-bw acc-back" style="--t:-2deg"><button type="button" class="acc-btn" data-a="back"${sync.taking ? ' disabled' : ''}>&larr; BACK</button></span><span class="acc-title">ACCOUNT</span></div>`;
+  if (!syncOn()) h += p("Cloud sync isn't in this build yet.");
   else if (U.view === 'choose') {
     const c = U.choose;
-    h += p('This device and your cloud save are different. Which one do you want to keep? The other is replaced.', ink, 16);
-    h += p(`CLOUD (saved ${syncAgo(c.t)}): ${bundleInfo(c.data)}`) + p(`THIS DEVICE: ${bundleInfo(c.local)}`);
-    h += row(btn('cloud', 'USE CLOUD SAVE', IN_GAME_PAPER.blue), btn('upload', 'KEEP THIS DEVICE', IN_GAME_PAPER.green));
-    h += c.pending ? row(btn('cancel', 'CANCEL', IN_GAME_PAPER.off)) : row(btn('later', 'DECIDE LATER', IN_GAME_PAPER.off)) + p('Nothing syncs until you choose (ACCOUNT or SYNC NOW asks again).', sub, 13);
+    h += p('This device and the cloud differ. Keep which one?', 'var(--ink)');
+    h += p(`CLOUD, ${syncAgo(c.t)}: ${bundleInfo(c.data)}`) + p(`THIS DEVICE: ${bundleInfo(c.local)}`);
+    h += row(btn('cloud', 'USE CLOUD', P.blue), btn('upload', 'KEEP THIS DEVICE', P.green));
   } else if (acct) {
-    h += p(`SIGNED IN AS <span style="color:${ink}">${esc(acct.user.toUpperCase())}</span>`, sub, 17) + p(`LAST SYNCED: ${sync.busy ? 'SYNCING...' : syncAgo(acct.at)}`);
-    h += p('Franchise saves, highlights, stats, Hall of Fame, settings and your online record sync on their own every minute and when you leave the game.', sub, 13);
-    h += row(btn('sync', 'SYNC NOW', IN_GAME_PAPER.green), btn('out', 'SIGN OUT', IN_GAME_PAPER.red)) + row(btn('close', 'CLOSE', IN_GAME_PAPER.off));
+    h += p(`Signed in as <span style="color:var(--ink)">${esc(acct.user.toUpperCase())}</span>`) + p(`Last synced: ${sync.busy ? 'SYNCING...' : syncAgo(acct.at)}`);
+    h += row(btn('sync', 'SYNC NOW', P.green), btn('out', 'SIGN OUT', P.red));
   } else {
     const nu = U.mode === 'new';
-    h += p(nu ? 'Make an account, then sign in with it on your other devices.' : 'Sign in to sync your saves, highlights, stats and settings across devices.', sub, 14);
-    h += `<form onsubmit="return false">${field('u', 'USERNAME', 'text', 'username')}${field('p', 'PASSWORD', 'password', nu ? 'new-password' : 'current-password')}${nu ? field('p2', 'CONFIRM PASSWORD', 'password', 'new-password') : ''}</form>`;
-    if (nu) h += p("No password reset: if you forget it, that cloud save can't be opened. Write it down.", '#c0453a', 13);
-    h += row(nu ? btn('create', 'CREATE ACCOUNT', IN_GAME_PAPER.green) : btn('signin', 'SIGN IN', IN_GAME_PAPER.green), btn('close', 'CLOSE', IN_GAME_PAPER.off));
-    h += `<div style="text-align:center;margin-top:10px"><a href="#" data-a="mode" style="color:${ink};font-size:15px">${nu ? 'HAVE AN ACCOUNT? SIGN IN' : 'NEW? CREATE AN ACCOUNT'}</a></div>`;
+    h += p(nu ? 'One account for all your devices.' : 'Sign in to play your saves anywhere.');
+    h += `<form onsubmit="return false">${field('u', 'USERNAME', 'text', 'username')}${field('p', 'PASSWORD', 'password', nu ? 'new-password' : 'current-password')}${nu ? field('p2', 'PASSWORD AGAIN', 'password', 'new-password') : ''}</form>`;
+    if (nu) h += `<div class="acc-warn">No password reset. Write it down!</div>`;
+    h += row(nu ? btn('create', 'CREATE ACCOUNT', P.green) : btn('signin', 'SIGN IN', P.green));
+    h += `<a href="#" class="acc-link" data-a="mode">${nu ? 'HAVE AN ACCOUNT? SIGN IN' : 'NEW? MAKE AN ACCOUNT'}</a>`;
   }
-  if (note) h += p(note, /\.\.\.$|CREATED|SIGNED IN|UPLOADED|UP TO DATE/.test(note) ? (dark ? '#9be7a0' : '#2f7a4a') : '#c0453a', 15);
+  if (note) h += p(note, /\.\.\.$|CREATED|SIGNED IN|UPLOADED|UP TO DATE/.test(note) ? (dark ? '#9be7a0' : '#2f7a4a') : '#c0453a');
   h += '</div>';
   U.el.innerHTML = h;
-  U.el.querySelectorAll('[data-a]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); if (!sync.busy) acctAct(b.dataset.a); }));
+  U.el.querySelectorAll('[data-a]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); if (b.dataset.a === 'back') acctBack(); else if (!sync.busy && !sync.taking) acctAct(b.dataset.a); }));
   U.el.querySelectorAll('input').forEach(i => {
     i.addEventListener('input', () => { U[i.name] = i.value; });
     i.addEventListener('keydown', e => { if (e.key === 'Enter' && !sync.busy) { e.preventDefault(); acctAct(U.mode === 'new' ? 'create' : 'signin'); } });
   });
+}
+function acctBack() {   // the one way out, in every view, never disabled (busy: the work finishes in the background; only a cloud save being applied holds it)
+  const U = acctUI; if (!U || sync.taking) return;
+  if (U.view === 'choose' && U.choose && !sync.busy) { acctAct(U.choose.pending ? 'cancel' : 'later'); if (!acctUI) return; }
+  acctClose();
 }
 function acctAct(a) {
   const U = acctUI;
@@ -4926,12 +5149,36 @@ function slotOrder() {
 // until localStorage was full and new franchises could no longer save. keepBase: a franchise without a slot is still using them.
 const PHOTO_KEY = 'pocketPasser.photos';   // (v0.68: the Post's photos, one key a slot: photosSave / photosLoad in 13)
 const SLOT_DATA_KEYS = [PST_KEY, LPST_KEY, REC_KEY, LGHL_KEY, HOF_KEY, CHOF_KEY, PHOTO_KEY];
-const STORE_PACK = [SAVE_KEY, LPST_KEY, PST_KEY, REC_KEY, LGHL_KEY];   // keys stored packed (lzPack; always read them through lsJson). Smallest win last.
+const STORE_PACK = [SAVE_KEY, LPST_KEY, PST_KEY, LGHL_KEY, HOF_KEY, CHOF_KEY];   // keys stored packed (lzPack; always read them through lsJson). Smallest win last.
 // how full the storage is, for the message when a save doesn't fit
 function storeUsed() { let n = 0; try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); n += k.length + (localStorage.getItem(k) || '').length; } } catch (e) {} return n; }
+// what is using the space (DEBUG > STORAGE; logged whenever a save or a sync doesn't fit): chars per key, biggest first, and per slot
+const STORE_NAMES = { save: 'SAVE', pstatsL: 'LEAGUE STATS', pstats: 'STATS', photos: 'PHOTOS', hof: 'HALL OF FAME', coachHof: 'COACH HOF', lgHL: 'LEAGUE CLIPS', records: 'OLD RECORDS' };
+function storeReport(log) {   // -> { total, keys: [{ k, n, slot, name }], groups: [{ g, n }] } (sizes in characters)
+  const keys = [], by = {}; let total = 0;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i), n = k.length + (localStorage.getItem(k) || '').length, m = /^pocketPasser\.(.+?)(?:\.(\d+))?$/.exec(k);
+      const slot = !m ? null : m[2] != null ? +m[2] : -1;   // (null = not this game's, -1 = no slot)
+      const name = m ? (STORE_NAMES[m[1]] || m[1].toUpperCase()) : k, g = slot == null ? 'OTHER SITES / APPS' : slot < 0 ? 'NO SLOT' : `SLOT ${slot + 1}`;
+      keys.push({ k, n, slot, name: slot != null && slot >= 0 ? `${name} ${slot + 1}` : name }); by[g] = (by[g] || 0) + n; total += n;
+    }
+  } catch (e) {}
+  keys.sort((a, b) => b.n - a.n);
+  const groups = Object.entries(by).map(([g, n]) => ({ g, n })).sort((a, b) => b.n - a.n), R = { total, keys, groups };
+  if (log) { console.warn(`storage: ${mbOf(total)} used`); console.table(groups.map(x => ({ group: x.g, MB: +(x.n / 1048576).toFixed(2) }))); console.table(keys.slice(0, 25).map(x => ({ key: x.k, MB: +(x.n / 1048576).toFixed(3) }))); }
+  return R;
+}
+const storeTop = (n = 2) => storeReport().keys.filter(x => x.slot != null).slice(0, n).map(x => `${x.name} ${mbOf(x.n)}`).join(', ');
+function storeFull(what) {   // the STORAGE FULL note (settings line + a toast on any screen), with the biggest users
+  storeReport(true);
+  const t = `${what}: STORAGE FULL. BIGGEST: ${storeTop()}. DELETE AN OLD SAVE`;
+  note(t); ioToast(t);
+}
 function storeTidy(keepBase) {
   try {
     if (!keepBase) for (const b of SLOT_DATA_KEYS) localStorage.removeItem(b);
+    for (let k = -1; k < SLOTS; k++) localStorage.removeItem(k < 0 ? REC_KEY : `${REC_KEY}.${k}`);   // (v0.69: the dead old records book: nothing reads it)
     const m = slotMetas();
     for (let k = 0; k < SLOTS; k++) if (!m[k] && k !== curSlot && !localStorage.getItem(SLOT_KEY(k))) { for (const b of SLOT_DATA_KEYS) localStorage.removeItem(`${b}.${k}`); }
   } catch (e) {}
@@ -4947,13 +5194,26 @@ function saveToSlot(i, auto, imported) {   // imported: a save file's data (writ
   try {
     const data = imported || buildSave(), m = slotMetas().slice(), txt = lsPacked(data);   // (packed: ~6x smaller)
     try { localStorage.setItem(SLOT_KEY(i), txt); }
-    catch (e) { storeTidy(curSlot === null); localStorage.setItem(SLOT_KEY(i), txt); }   // (full: clear the leftovers and try once more)
+    catch (e) {
+      storeTidy(curSlot === null);   // (full: clear the leftovers and try once more)
+      try { localStorage.setItem(SLOT_KEY(i), txt); }
+      catch (e2) { if (imported) throw e2; localStorage.removeItem(`${PHOTO_KEY}.${i}`); localStorage.setItem(SLOT_KEY(i), txt); }   // (still full: this slot's photos are the first thing dropped)
+    }
     m[i] = metaOfData(data); localStorage.setItem(SLOT_META, JSON.stringify(m)); slotMetaCache = m;
     if (imported) return;
-    curSlot = i; if (!pstStash) { storeTidy(false); pstSaveSlot(i); }
-    photosSave(i);   // (the Post's photos: their own key, after storeTidy)   // (the stats are in memory and now go under the slot: drop the slot-less copies first)
-    note(auto ? 'AUTOSAVED' : data.live ? 'GAME SAVED (at the last snap)' : 'GAME SAVED');
-  } catch (e) { if (imported) throw e; console.warn('save failed', e, 'storage chars used:', storeUsed()); note(/quota|storage/i.test((e && (e.name + e.message)) || '') ? 'COULD NOT SAVE: STORAGE FULL (DELETE AN OLD SAVE)' : 'COULD NOT SAVE'); }
+    storeFails = [];   // (from here: what didn't fit this save; earlier failed stat writes are rewritten below anyway)
+    let statsOk = true, photosOk = true;
+    curSlot = i;
+    if (!pstStash) {   // (the stats are in memory and now go under the slot: drop the slot-less copies first)
+      storeTidy(false);
+      statsOk = pstSaveSlot(i) && recSave() !== false;
+      if (!statsOk) { localStorage.removeItem(`${PHOTO_KEY}.${i}`); photosOk = false; storeFails = []; statsOk = pstSaveSlot(i) && recSave() !== false; }   // (stats before photos: drop the photos and try again)
+    }
+    if (statsOk && photosOk) photosOk = photosSave(i);   // (the Post's photos: their own key, written last, after storeTidy)
+    if (!statsOk) storeFull('SAVED, BUT STATS DID NOT FIT');
+    else if (!photosOk) storeFull('SAVED WITHOUT PHOTOS');
+    else note(auto ? 'AUTOSAVED' : data.live ? 'GAME SAVED (at the last snap)' : 'GAME SAVED');
+  } catch (e) { if (imported) throw e; console.warn('save failed', e, 'storage chars used:', storeUsed()); if (/quota|storage/i.test((e && (e.name + e.message)) || '')) storeFull('COULD NOT SAVE'); else note('COULD NOT SAVE'); }
 }
 function importSave(d) {   // a save file's data: checked, then into the first empty slot (none: asks before replacing the oldest)
   const ok = d && d.v === 1 && d.season && d.match && NFL[d.match.you] && d.career && d.world && d.world.roster && d.world.roster[d.match.you];
@@ -4971,7 +5231,7 @@ function loadFromSlot(i) {
   let d = null;
   try { d = lsJson(localStorage.getItem(SLOT_KEY(i))); } catch (e) {}
   if (!d || !d.season) { note('NO SAVED GAME'); return; }
-  curSlot = i; slotUI = null; payToFly = 0; coinPending = 0; coinFly = []; payFrom = null; suspended = null; resumeRoster = null; pstLoadSlot(i);
+  curSlot = i; slotUI = null; payToFly = 0; coinPending = 0; coinFly = []; xpPending = 0; loadQuiet = true; payFrom = null; suspended = null; resumeRoster = null; pstLoadSlot(i);
   slNewGame();   // (sideline people: a fresh cast, put on their spots at the next reset; nothing of them is saved)
   { const sd = typeof d.diff === 'string' ? d.diff : d.diff && d.diff.preset || (d.world && d.world.settings && d.world.settings.difficulty); if (DIFFS.includes(sd)) SETTINGS.difficulty = sd; diffLoad(d.diff); }   // (diffLoad: mode / sliders / dynamic state; an old save's name = preset mode)
   { const own = d.setV && d.world && d.world.settings;   // (this save's own settings; a save without them gets a copy of the defaults. Volume and replays stay the global ones)
@@ -5617,7 +5877,7 @@ const qsRowsOf = id => ({   // [label, kind, value getter, setter on a tap (p = 
     ['Instant replays', 'cycle', () => SETTINGS.replays, () => qsSet('replays', REPLAY_MODES[(REPLAY_MODES.indexOf(SETTINGS.replays) + 1) % REPLAY_MODES.length]), 'which plays run back by themselves'],
   ],
   general: [
-    ['Volume', 'slider', () => SETTINGS.volume, p => { const x0 = QS_ROW(0).x + QS_ROW(0).w - 230; if (p.x < x0 - 24) return; SETTINGS.volume = Math.round(Math.max(0, Math.min(1, (p.x - x0) / 210)) * 10) / 10; saveSettings(); catchSfx(); }],
+    ['Volume', 'slider', () => SETTINGS.volume, p => { const x0 = QS_ROW(0).x + QS_ROW(0).w - 230; if (p.x < x0 - 24) return; SETTINGS.volume = Math.round(Math.max(0, Math.min(1, (p.x - x0) / 210)) * 100) / 100; saveSettings(); catchSfx(); }],
     ['Dark mode', 'check', () => !!SETTINGS.darkMode, () => qsSet('darkMode', !SETTINGS.darkMode), 'grey menus for the night'],
     ['Graphics', 'cycle', () => gfxMode(), () => qsSet('liteMode', gfxNext()), 'PERFORMANCE = lighter looks for slow devices, QUALITY = sharpest (AUTO = lighter online only)'],
     ['Sideline people', 'cycle', () => SETTINGS.sideline || 'ALL', () => qsSet('sideline', SL_MODES[(SL_MODES.indexOf(SETTINGS.sideline || 'ALL') + 1) % SL_MODES.length]), 'benches, crews and cheerleaders'],
@@ -5796,7 +6056,7 @@ function qsClick(p) {
   qsRowsOf(pg.id).forEach((r, i) => { if (inBtn(p, QS_ROW(i + r0))) r[3](p); });
   if (pg.id === 'help') {
     if (inBtn(p, QS_HELP.acct)) acctOpen();
-    else if (inBtn(p, QS_HELP.keys)) { if (QS.full) settingsOpen = true; else QS = null; }   // (keybinds = the settings page's right side)
+    else if (inBtn(p, QS_HELP.keys)) { if (QS.full) { settingsOpen = true; setCat = 'controls'; } else { QS = null; setCat = 'controls'; } }   // (keybinds = the settings' CONTROLS popup)
   }
   if (pg.id === 'sign' && !QS.signT && inBtn(p, { x: QS_SIGN.x - 10, y: QS_SIGN.y - 20, w: QS_SIGN.w + 20, h: QS_SIGN.h + 20 })) { QS.signT = performance.now(); qsSfx('sign'); }
 }

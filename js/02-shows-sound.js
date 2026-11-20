@@ -95,7 +95,7 @@ function recordFrame(dt) {
   if (state === 'done') {
     rec.doneT += dt;
     if (rec.hs && !rec.hs.done && rec.doneT >= tail) hsCollect(rec);   // (the tape is complete: the halftime reel keeps its best window)
-    if (!rec.played && rec.doneT >= Math.max(RUNOFF_SECS, tail) && !(game.runoff > 0) && !bannerUp() && (replayWanted() || finalReplay())) startReplay();
+    if (!rec.played && !game.penQ && rec.doneT >= Math.max(RUNOFF_SECS, tail) && !(game.runoff > 0) && !bannerUp() && (replayWanted() || finalReplay())) startReplay();   // (v0.69: a flag is accepted / declined first)
   }
 }
 // left click during a replay: it's over, straight on (back to how the play ended)
@@ -177,7 +177,7 @@ let lastRec = null;
 // the pause menu's REPLAY: the play that just ended (a finished play, or the last one before this snap); a click ends it and goes on as usual
 // (also before the first click of a field goal / extra point: the power meter hasn't been started yet)
 const kickBefore = () => (state === 'kick' && kick && !kick.cpuKo && (kick.phase === 'enter' || kick.phase === 'power')) || (state === 'kickoff' && kick && kick.userKo && ['wait', 'target', 'power'].includes(kick.phase));   // (a kick not yet taken: REPLAY shows the play before it, lastRec)
-const replayAvail = () => !tut && !results && !game.over && (state === 'pre' || state === 'done' || kickBefore()) && ((rec && rec.frames.length > 5 && !rec.replaying) || ((state === 'pre' || kickBefore()) && lastRec));
+const replayAvail = () => !tut && !results && !game.over && !game.penQ && (state === 'pre' || state === 'done' || kickBefore()) && ((rec && rec.frames.length > 5 && !rec.replaying) || ((state === 'pre' || kickBefore()) && lastRec));
 function pauseReplay() {
   if (!replayAvail()) return;
   // before the snap (the last play's tape): the replay plays on the live players, so everyone's set-up for this play is kept and put back after
@@ -2538,7 +2538,8 @@ const POST_UI = { laterK: 0.75, pinMax: 3, writeMs: 1400, anim: { tab: 650, stam
 // to fit his man + the ball, pad = room around them; lead = share of the width the shot sits ahead of where he is going (the action faces into the picture);
 // off = s after the moment the frame aims at, win = [from, to] s round it that are searched; occl = cost of a man in front of him; oppYd / ballYd = in the shot within this far;
 // lgMax = league pictures added to one issue
-const POST_PHOTO = { perGame: 3, w: 440, ar: 1.8, q: 0.62, wide: { leap: 12, hit: 11.5, goal: 13, fg: 15, run: 12.5 }, grow: 1.6, pad: 1.4, lead: 0.12,
+const POST_PHOTO = { perGame: 3, w: 400, ar: 1.8, q: 0.55,   // (v0.69: was 440 / 0.62; about a quarter smaller in storage)
+  wide: { leap: 12, hit: 11.5, goal: 13, fg: 15, run: 12.5 }, grow: 1.6, pad: 1.4, lead: 0.12,
   off: { leap: -0.04, hit: 0.1, goal: 0, fg: 0.06, run: 0 }, win: { leap: [-0.4, 0.04], hit: [0, 0.45], goal: [-0.2, 0.3], fg: [0, 0.2], run: [-0.25, 0.25] },
   occl: 1.6, oppYd: 6, ballYd: 7, head: 34, feet: 16, half: 14, lgMax: 2,   // (head / feet / half = sprite units a figure reaches above / below his spot and to each side)
   budgetMs: 160, perGameTouch: 2, storyK: 1.35, minH: 52,   // (minH = smallest a story's photo prints, px tall)   // (storyK = your game's story weight x this when there are pictures of it)
@@ -2599,6 +2600,7 @@ function sagaPop(a) {
 // (EVENTS = the midweek decisions: a text table in js/00-text.js)
 
 const SETTINGS = { weather: true, simDefense: false, scouts: true, contracts: true, autoSwitch: false, defHints: true, injuries: true, pracInjuries: true, difficulty: 'NORMAL', diffMode: 'preset', volume: 1, replays: 'BIG PLAYS', starHud: true, hideNames: false, hitboxes: false, hideTools: true, morale: true, quarterMin: 2, halftime: true, ht: { highlights: true, league: true, historic: true, qb: true, def: true, match: true }, pregame: true, pg: { historic: true, qb: true, def: true, match: true }, binds: {}, darkMode: false, cinema: false, simST: false, perfHud: false, netSim: 'OFF' };   // perfHud = the frame-time readout (DEBUG > FRAME TIMES, see PERF_HUD)   // cinema = CINEMATIC highlight reels (no UI over the field)   // simST = SIM SPECIAL TEAMS: your kickoffs, punts, field goals and kick returns are simulated (off = you play them)   // darkMode = grey menus (see `// --- dark mode`)   // quarterMin = minutes per quarter (1-8); binds = { action: key code } overrides (see BIND_ACTIONS)   // starHud = the Star Factor tips panel (H toggles; stays hidden in every game until H)
+const SETTINGS_FACTORY = JSON.parse(JSON.stringify(SETTINGS));   // (the defaults, before the saved settings load: settings' RESET TO DEFAULTS)
 try { Object.assign(SETTINGS, JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}); } catch (e) {}
 SETTINGS.hitboxes = false; COLLIDE.show = false;   // (debug only: never saved or loaded, so it can't come back on by itself; the settings button / ` key flip it for this session)
 if (SETTINGS.dynV !== 1) { SETTINGS.diffMode = 'dynamic'; SETTINGS.dynV = 1; }   // (new franchises default to dynamic difficulty: older saved settings get that once; existing saves keep their own level)
@@ -3185,7 +3187,7 @@ const OPP_POPUPS = new Set(['BOOM!', 'SACKED', 'INTERCEPTED', 'KNOCKOUT', 'KNOCK
 // crossfade (s), rise / fall = volume change per second, run = yards past the line for a full-hype run
 // scramble = s of the QB extending the play for full scramble hype (capped at scrambleMax)
 // tense = extra hum in a close, late game (full at max tension), red = extra hum in the red zone (full at the goal line), redZone = yards out it starts
-const CROWD_SFX = { tense: 0.14, red: 0.12, redZone: 20, base: 0.27, peak: 0.8, quiet: 0.17, xfade: 2.5, rise: 0.55, fall: 0.15, run: 20, deep: 35, scramble: 4, scrambleMax: 0.7 };
+const CROWD_SFX = { tense: 0.14, red: 0.12, redZone: 20, base: 0.27, peak: 0.8, quiet: 0.17, xfade: 2.5, rise: 0.55, fall: 0.15, run: 20, deep: 35, scramble: 4, scrambleMax: 0.7, turn: 0.6, turnClose: 40 };   // turn / turnClose = a returned turnover's swell (v0.70)
 // reactions scale min..max with how much the moment matters (gameImpact); stack = louder per back-to-back big play;
 // hype = how built-up a play has to get before its end earns a cheer or a groan; road = the road team's fans
 // (and the buzz for the road team's big plays) x the home crowd's volume
@@ -3198,7 +3200,7 @@ const CROWD_SFX = { tense: 0.14, red: 0.12, redZone: 20, base: 0.27, peak: 0.8, 
 // runMs apart) multiplies the odds of the next by this. A boo plays ONCE and fades: never extended or handed off (a huge play may still layer the second copy once).
 const BOO = { minLevel: 0.85, gapMs: 9000, perDrive: 2, decay: 0.45, runMs: 45000 };
 let booEnd = 0, booLast = 0, booRun = 0, booDrive = 0, booKey = '';
-const CROWD_IMPACT = { stackCap: 0.85, hugeLong: 1.4, hugeLayer: 1, fadeOut: 1800, min: 0.7, max: 1.25, stack: 0.15, stackLevel: 0.15, handoff: 1.3, handoffFade: 900, hype: 0.4, road: 0.75 };
+const CROWD_IMPACT = { stackCap: 0.85, hugeLong: 1.4, hugeLayer: 1, fadeOut: 1800, fadeIn: 350, popIn: 140, menuFade: 900, min: 0.7, max: 1.25, stack: 0.15, stackLevel: 0.15, handoff: 1.3, handoffFade: 900, hype: 0.4, road: 0.75 };
 const SACK_CROWD = 0.8;   // crowd level of a sack (a big play for the defense: see sackCall)
 const CHEER_POPUPS = { 'HURDLE': 0.6, 'BROKEN TACKLE': 0.45, 'JUKED': 0.5, 'SPIN MOVE': 0.55, 'TRUCKED': 0.7, 'BOOM!': 0.8,
                        'SACKED': 0.8, 'TOUCHDOWN': 1, 'INTERCEPTED': 0.9, 'KNOCKOUT': 0.8, 'KNOCKED OUT OF BOUNDS': 0.8, 'PUNCHED OUT': 0.7, 'BLOCKED': 0.8,
@@ -3523,14 +3525,16 @@ function gameImpact() {
 // the home crowd's cheer is one of these clips (one still going is the one a back-to-back play builds on)
 const CHEERS = [SFX.cheer, 'audio/cheer2.wav', COLD_SND.cheer[0]];
 // a different stretch of a crowd clip each time: where to start (s) so a reaction of ms still fits inside it
-const CROWD_LEN = { 'cheer.mp3': 4.4, 'cheer2.wav': 9.8, 'cheer3.mp3': 12, 'boo.mp3': 3.1, 'boo2.mp3': 5.1, 'disappointed.mp3': 36.7 };
+const CROWD_LEN = { 'cheer.mp3': 4.4, 'cheer2.wav': 9.8, 'cheer3.mp3': 12, 'boo.mp3': 3.1, 'boo2.mp3': 5.1, 'jeer.mp3': 4.8, 'gasp.mp3': 3.2, 'ooh.mp3': 2.6, 'chant.mp3': 26, 'crowd.mp3': 39.3, 'crowd2.mp3': 34.3, 'disappointed.mp3': 36.7 };
+const crowdLast = {};   // (v0.70) the last clip each pool played: never the same one twice in a row
+const crowdPick = (pool, tag) => { const base = c => c.replace(/#.*/, ''), opts = pool.filter(c => base(c) !== crowdLast[tag]), c = pickOf(opts.length ? opts : pool); crowdLast[tag] = base(c); return c; };
 const crowdStart = (src, ms) => {
   const len = CROWD_LEN[src.replace(/#.*/, '').split('/').pop()] || 0;
   return Math.random() * Math.max(0, len - ms / 1000 - 0.5);
 };
 function pickCheer() {
   const live = CHEERS.find(c => sfxCtl[c] && !sfxCtl[c].a.paused && !sfxCtl[c].a.ended);
-  return live || pickOf(CHEERS);
+  return live || crowdPick(CHEERS, 'cheer');
 }
 const CHEER_GATE ={ floor: 0.2, span: 0.55 };   // a reaction at this level or lower never plays; at floor + span or more it always does, between: the odds
 // the boo gate: true = this road-team play gets ONE boo (it is booked here: gap, drive count, run decay); a huge play while a boo is still going only layers the second
@@ -3597,7 +3601,7 @@ function crowdCheer(level, fav = 'you', bad = false, sure = false, huge = false)
   if (home) { for (const c of BOOS) fadeSfx(c, CROWD_SWAP_MS); for (const c of CHEERS) fadeSfx(c + '#road', CROWD_SWAP_MS); for (const c of BOOS) fadeSfx(c + '#big', CROWD_SWAP_MS); }
   else { for (const c of CHEERS) fadeSfx(c, CROWD_SWAP_MS); for (const c of CHEERS) fadeSfx(c + '#big', CROWD_SWAP_MS); }
   fadeGroan();
-  playSfx(src, vol, ms, CROWD_IMPACT.fadeOut, home ? 700 : 500, crowdStart(src, ms + 1500));
+  playSfx(src, vol, ms, CROWD_IMPACT.fadeOut, Math.max(CROWD_IMPACT.fadeIn, home ? 700 : 500), crowdStart(src, ms + 1500));
   if (huge) {   // a touchdown or a pick: a second clip on top of the first (clips top out at full volume, so louder means layered)
     const second = (home ? CHEERS : BOOS).find(c => c !== src);
     playSfx(second + '#big', Math.min(1, vol * CROWD_IMPACT.hugeLayer), ms, CROWD_IMPACT.fadeOut, 400, crowdStart(second, ms + 1500));
@@ -3611,8 +3615,8 @@ function crowdCheer(level, fav = 'you', bad = false, sure = false, huge = false)
 // (one groan at a time: another bad play while one's still going just makes it louder, like a cheer)
 // (the recorded disappointed crowd, audio/disappointed.mp3, 37 s, and the "aww" of SFX.boo = the let-downs; v0.55: the road team's good plays get the real
 // boos, boo2.mp3, as two copies so a layered / handed-off boo has a second element)
-const DISAPPOINT = 'audio/disappointed.mp3', BOO_REAL = COLD_SND.boo2[0], BOOS = [BOO_REAL, BOO_REAL + '#b'];
-const pickBoo = () => BOOS.find(c => sfxCtl[c] && !sfxCtl[c].a.paused && !sfxCtl[c].a.ended) || pickOf(BOOS);
+const DISAPPOINT = 'audio/disappointed.mp3', BOO_REAL = COLD_SND.boo2[0], BOOS = [BOO_REAL, BOO_REAL + '#b', COLD_SND.jeer[0]];   // (v0.70: the jeer joins the boos; built once at load)
+const pickBoo = () => BOOS.find(c => sfxCtl[c] && !sfxCtl[c].a.paused && !sfxCtl[c].a.ended) || crowdPick(BOOS, 'boo');
 const CROWD_SWAP_MS = 700;   // a cheer / boo / groan still going fades out over this when the other one starts
 function fadeGroan() { fadeSfx(DISAPPOINT, CROWD_SWAP_MS); fadeSfx(DISAPPOINT + '#road', CROWD_SWAP_MS); fadeSfx(SFX.boo, CROWD_SWAP_MS); }
 let groanAt = -1e9;
@@ -3698,7 +3702,7 @@ const CELEB_SFX = {
   register: v => sndRec('register', v, { fade: 120 }),
   scream:  v => sndRec('yell', v, { ms: 1250, fade: 300, tag: 'y' }),   // (the scream move's beat had no sound until now)
   jeer:    (v, fav) => { if (crowdQuiet()) return; if (fav && fav !== MATCH.home) { if (booGate(Math.min(1, v * gameImpact()), false)) sndRec('jeer', v, { ms: 4800, fade: 900, in: 150 }); } else crowdCheer(Math.min(1, 0.6 * v), fav, false, true); },   // (a taunt at the stand: the home crowd boos a road player; a home player's own fans cheer it)
-  gasp:    v => { if (!crowdQuiet()) sndRec('gasp', v, { fade: 500 }); },
+  gasp:    v => { if (!crowdQuiet()) sndRec('gasp', v, { fade: 500, in: CROWD_IMPACT.popIn }); },
   swell:   (v, fav) => { crowdCheer(Math.min(1, v), fav, false, true); if (v >= 1) crowdChant(2); },   // (v0.51: the home crowd turned up, louder each time)
   pop:     (v, fav) => crowdPop(v, fav),
   post:    (v, fav) => postShake(v, fav),
@@ -3731,14 +3735,14 @@ function crowdPop(k = 1, fav) {   // a short burst on top of whatever is going (
   if (crowdQuiet()) return;
   const lv = Math.min(1, k * CELEB.crowdK);
   if (fav && fav !== MATCH.home) { oohSfx(0.35 + 0.3 * lv); return; }
-  playSfx(CHEERS[1] + '#pop', Math.min(1, 0.35 + 0.65 * lv), 900 + 900 * lv, 600, 60, crowdStart(CHEERS[1], 3000));
+  { const c = crowdPick(CHEERS, 'pop'); playSfx(c + '#pop', Math.min(1, 0.35 + 0.65 * lv), 900 + 900 * lv, 600, CROWD_IMPACT.popIn, crowdStart(c, 3000)); }
   crowdFx.level = Math.max(crowdFx.level, lv); crowdFx.until = Math.max(crowdFx.until, animNow() + 900 + 1200 * lv);
   crowdDuckUntil = performance.now() + CELEB.crowd.duckMs;
 }
 function crowdOhh(v = 1) {   // a sack: the deep "OHHH"
   if (crowdQuiet()) return;
   if (performance.now() - oohAt < 2500) return; oohAt = performance.now();   // (shares the ooh's gap so the two never stack)
-  sndRec('gasp', 0.6 + 0.4 * v, { ms: 3200, fade: 700 });   // (the recorded stadium gasp)
+  sndRec('gasp', 0.6 + 0.4 * v, { ms: 3200, fade: 700, in: CROWD_IMPACT.popIn });   // (the recorded stadium gasp)
 }
 function crowdChant(bars) {   // the recorded rhythmic chant, bars x 4 beats of the stadium pulse (PULSE.beat) long, fading out (stomp, stomp, clap synthesized if it can't play)
   const C = CELEB.crowd, now = performance.now(), beat = PULSE.beat, ms = bars * beat * 4;
@@ -3794,7 +3798,7 @@ function crowdGroan(level, hush = true) {
   // (a cheer or boo still going fades out under the home crowd's groan; the road fans' groan goes under the home cheer)
   if (hush) { for (const c of [...CHEERS, ...BOOS]) fadeSfx(c, CROWD_SWAP_MS); }
   playSfx(key, vol, ms, CROWD_IMPACT.fadeOut, 500, crowdStart(key, ms + 1500));
-  if (hush) playSfx(SFX.boo, vol * 0.8, 3000, 900, 80);   // (the home crowd's "aww" on top)
+  if (hush) playSfx(SFX.boo, vol * 0.8, 3000, 900, CROWD_IMPACT.popIn);   // (the home crowd's "aww" on top)
 }
 const BIG_PLAY = 15, CROWD_OK_GAIN = 4;   // a big play is a gain over BIG_PLAY yards; a gain of CROWD_OK_GAIN+ yards never disappoints the crowd
 let playHype = 0, playCheered = false, hushUntil = 0;  // this play's peak hype / whether the crowd's reacted yet
@@ -3843,6 +3847,11 @@ function crowdAnticipate() {
     playAnt.sackAt = now;
     if (MATCH.home === 'you' && th > 0.3) oohSfx(0.5);   // (a gasp only: pressure on the QB never gets a cheer)
   }
+  { const tc = turnCarrier(); if (tc) {   // (v0.70: a pick / fumble return: on its feet from the pick to the whistle, each cheer stacking on the last)
+    playAnt.big = true;
+    if (now - (playAnt.at || 0) > ANTICIPATE.every) { playAnt.at = now; crowdCheer(Math.min(1, turnHype(tc) + 0.1), 'opp', false, true, !playAnt.turn); playAnt.turn = true; }
+    return;
+  } }
   if (flying && depth >= ANTICIPATE.deep && ball.p >= ANTICIPATE.airAt) playAnt.big = true;
   // (a kick return doesn't count as a big play until the returner crosses midfield)
   if (running && gain >= ANTICIPATE.bigRun && kickBigOk(runner)) playAnt.big = true;
@@ -3900,7 +3909,14 @@ const AMBIENTS = [SFX.crowd, 'audio/crowd2.mp3'], ambUrl = {};   // (each time t
 // rises over `ramp` s up to `max`, then the crowd cheers (home) or boos (away) once
 const CROWD_LONG = { at: 4, ramp: 8, max: 0.65, burst: 0.55 };
 const longPlayHype = () => ['pocket', 'run', 'flight', 'loose', 'fumble', 'picked'].includes(state) && !kickoffPlay && patMode === null ? CROWD_LONG.max * Math.max(0, Math.min(1, (clock - CROWD_LONG.at) / CROWD_LONG.ramp)) : 0;
+// v0.70: a turnover being returned (a pick, a scooped fumble): the defense carries it, so the moment is the OTHER side's ('opp' in MATCH's terms). It builds
+// from the instant he has it and is held to the whistle, louder the nearer he gets (CROWD_SFX.turn = where it starts, turnClose = yd out it starts rising)
+const turnCarrier = () => patMode === null && !kickoffPlay && ['picked', 'run', 'loose', 'fumble'].includes(state) ? allPlayers().find(p => p.hasBall && p.team === 'def') || null : null;
+const turnHype = c => Math.min(1, CROWD_SFX.turn + (1 - CROWD_SFX.turn) * Math.max(0, Math.min(1, 1 - c.x / (CROWD_SFX.turnClose * YL))));
+let liveFav = 'you';   // whose moment the live swell is (read by updateCrowd)
 function liveHype() {
+  const tc = turnCarrier(); liveFav = tc ? 'opp' : 'you';
+  if (tc) return turnHype(tc);
   const long = longPlayHype();
   return Math.max(long, liveHype0());
 }
@@ -3924,7 +3940,7 @@ function updateCrowd(dt) {
     // leaving the game for a menu: any cheer or boo still going stops with it
     if (!results !== updateCrowd.inGame) {
       updateCrowd.inGame = !results;
-      if (results) { for (const c of [...CHEERS, ...BOOS]) { sfxPlaying[c]?.pause(); sfxPlaying[c + '#big']?.pause(); } cheerUntil = 0; crowdFx.until = 0; }
+      if (results) { for (const c of [...CHEERS, ...BOOS, DISAPPOINT, SFX.boo]) for (const k of ['', '#big', '#road', '#pop']) fadeSfx(c + k, CROWD_IMPACT.menuFade); cheerUntil = 0; crowdFx.until = 0; }   // (v0.70: faded, never cut)
     }
     if (!crowdAmb) {
       if (!on) return;
@@ -3938,7 +3954,7 @@ function updateCrowd(dt) {
       for (const s of AMBIENTS.slice(1)) fetch(s).then(r => r.blob()).then(bl => { ambUrl[s] = URL.createObjectURL(bl); }).catch(() => {});
     }
     const youHome = MATCH.home === 'you', fx = animNow() < crowdFx.until ? crowdFx.level : 0;
-    const live = inGame ? liveHype() : 0, h = live * (youHome ? 1 : -1);
+    const live = inGame ? liveHype() : 0, h = live * ((liveFav === 'you') === youHome ? 1 : -1);
     if (state === 'pre') { playHype = 0; playCheered = false; playReact = false; for (const k in playAnt) delete playAnt[k]; }
     else { playHype = Math.max(playHype, live); if (inGame && !(ONL.guest && ONL.on)) crowdAnticipate(); }   // (online guest: the host's crowd cheers arrive as events)
     // (the road team's big play still gets the place buzzing, just road x as loud)

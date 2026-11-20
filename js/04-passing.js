@@ -298,7 +298,7 @@ function endPlay(text, next, kind) {
   let pen = !wasKickoff && (rbpPenalty(kind, next) || flagPenalty(kind, next) || kproPenalty());   // (run-block holding: the play comes back, replay the down; v0.68 pass-pro holding / pass interference / roughing (flagPenalty); a kick rusher offside: 5 yards, kick it again)
   if (pen && !pen.dead && !pq && penAsk(text, next, kind, pen)) return;   // (v0.68 a live-ball foul: parked on game.penQ until the fouled side chooses)
   if (pq) { pen = pick === 'accept' ? pq.pen : null; game.penDeclined = pick !== 'accept'; game.penPick = null; game.penQ = null; if (!pen) text += '  -  flag declined'; }
-  if (pen) { text = pen.text; next = los; kind = ''; }
+  if (pen) { text = pen.text; next = los; kind = ''; if (pen.dead) try { penBanner(pen); } catch (e) {} }   // (v0.70: a dead-ball flag says what and on whom too)
   else celebWhistle(text, kind);   // (celebrations: a blocked kick, a pick, a recovery, a sack)
   if (!pen && !kind && /SACKED/.test(text) && state !== 'done') sackCall();   // (whatever path ended it: the banner is up at the whistle)
   for (const p of allPlayers()) if (!p.hasBall) { p.tipArms = false; p.tipK = 0; p.reach = false; p.overShoulder = false; }   // (the pass is dead: nobody keeps his hands up for a catch / tip that didn't happen)

@@ -241,7 +241,7 @@ function openResults() {
   }
   results = { record, screen: 'result', fin: { blue: game.blue, red: game.red }, injAlert: !exhibition && SETTINGS.injuries && LEAGUE.injNotes.length ? [...LEAGUE.injNotes] : null };
   hsEndReel();   // (the game's best plays run behind the result screen)
-  if (!exhibition && !tut) { try { results.pay = payOverlayInfo(); } catch (e) { results.pay = null; } }
+  results.pay = null;   // (v0.69: no CREDITS EARNED screen after a game; the pay and goal credits are still in payToFly and fly into the box on the next screen with one)
   if (!exhibition && !tut && season) { try { if (curSlot === null) autoAssignSlot(); else saveToSlot(curSlot, true); } catch (e) {} }   // (every finished game autosaves to the franchise's slot; one without a slot yet gets the first free one)
 }
 
@@ -1881,7 +1881,7 @@ function drawCardShows() {
 const COIN_FLY = { time: 0.9, gap: 0.2, delay: 0.4, to: [128, 40], from: [W / 2, H / 2 + 60] };
 const COIN_TO = { home: [1085, 44], other: [1225, 37], right: [1228, 40] };   // right = the box top right on the result / end of week screens   // the credits box sits beside the year on the home screen, top left elsewhere
 const HOME_COIN = { x: 1010, y: 22, w: 130, h: 42 }, ROSTER_COIN = { x: 240, y: 22 }, CARD_COIN = { x: 54, y: 16 }, STAFF_COIN = { x: 26, y: 22 };   // the credits / XP box on the home screen, the roster list, a player's card and the staff pages
-let payToFly = 0, coinPending = 0, coinFly = [], payFrom = null;   // payFrom = [x, y] where the credits come from (callers set it; default mid-screen)
+let payToFly = 0, coinPending = 0, coinFly = [], payFrom = null, loadQuiet = false;   // loadQuiet = a save was just opened from the load screen: what it holds is banked at once, nothing flies   // payFrom = [x, y] where the credits come from (callers set it; default mid-screen)
 function flyCoins(n, pre, from) {   // pre = the box was already holding them back (the post-game credits screen)
   const now = performance.now(), src = from || payFrom || COIN_FLY.from;
   payFrom = null;

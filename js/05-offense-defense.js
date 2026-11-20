@@ -2206,12 +2206,23 @@ function penHuman(fouled) {   // does a person pick for the fouled side?
   if (typeof pvpOn === 'function' && pvpOn()) return true;
   return fouled === 'off' ? !aiOff() : aiOff();
 }
+function penWho(pen) {   // (v0.70) the foul and who it was on, for the banners / card / top bar: { name: 'HOLDING', on: 'Dallas #72 J. Smith' }
+  const T = String(pen.text || ''), head = T.split(':')[0], side = /defense/i.test(head) ? 'def' : 'off';
+  let tm = ''; try { tm = teamName((side === 'off') === !aiOff() ? 'BLUE' : 'RED'); } catch (e) {}
+  const pl = pen.num ? allPlayers().find(p => String(p.num) === String(pen.num) && p.team === side) : null, nm = pl && ((pl.src && pl.src.name) || pl.name);
+  return { name: head.split(',')[0].trim().toUpperCase() || 'PENALTY', on: `${tm}${pen.num ? ' #' + pen.num : ''}${nm ? ' ' + nm : ''}`.trim() };
+}
+function penBanner(pen, head) {   // (v0.70) every flag, for or against you, announcers on or off
+  const w = penWho(pen), yd = pen.first ? 'automatic first down' : (pen.yds || 0) + ' yards';
+  showBanner((head || 'FLAG') + ': ' + w.name, '#ffd23f', '#3a2a00', (w.on ? 'on ' + w.on + '  -  ' : '') + yd, true);
+  return w;
+}
 function penAsk(text, next, kind, pen) {   // (endPlay) park a live-ball foul; false = settle it at once (as before)
   if (tut || (rec && rec.replaying) || patMode !== null || !pen.fouled) return false;
   const play = { text, next, kind }, rec0 = penChoose(pen.fouled, play, pen);
   game.penQ = { text, next, kind, pen, st: state, t0: performance.now(), ph: 'call', mine: penHuman(pen.fouled) ? 'card' : 'cpu', rec: rec0, sel: rec0, play: penOut(play), acc: penOut({ pen }) };
   state = 'done'; doneAt = performance.now(); aim = null;
-  msg = 'FLAG ON THE PLAY';
+  game.penQ.who = penBanner(pen); msg = 'FLAG: ' + game.penQ.who.name + (game.penQ.who.on ? ' on ' + game.penQ.who.on : '');
   setTimeout(whistle, 150);
   try { refPenCall(pen); } catch (e) {}
   try { annSay(pen.key || 'flag', { pri: 3, vars: { yd: pen.yds || 0, num: pen.num || null } }); } catch (e) {}
@@ -2220,12 +2231,12 @@ function penAsk(text, next, kind, pen) {   // (endPlay) park a live-ball foul; f
 function penTick() {   // (update, while game.penQ) the call, then the choice
   const q = game.penQ; if (!q || state !== 'done' || game.penPick) return;
   const C = REF.choose, e = (performance.now() - q.t0) / 1000;
-  if (q.ph === 'call' && e >= C.callS) { q.ph = 'pick'; q.tp = performance.now(); msg = q.mine === 'card' ? 'FLAG: accept or decline?' : 'FLAG ON THE PLAY'; }
+  if (q.ph === 'call' && e >= C.callS) { q.ph = 'pick'; q.tp = performance.now(); const w = q.who || penWho(q.pen); msg = 'FLAG: ' + w.name + (w.on ? ' on ' + w.on : '') + (q.mine === 'card' ? '  -  accept or decline?' : ''); }
   if (q.ph === 'pick' && q.mine !== 'card' && (performance.now() - q.tp) / 1000 >= C.cpuS) penResolve(q.rec);
 }
 function penResolve(pick) {
   const q = game.penQ; if (!q || game.penPick) return;
-  showBanner(pick === 'accept' ? 'PENALTY ACCEPTED' : 'PENALTY DECLINED', '#ffd23f', '#3a2a00', pick === 'accept' ? (q.pen.first ? 'automatic first down' : (q.pen.yds || 0) + ' yards') : 'the play stands', true);
+  { const w = q.who || penWho(q.pen); showBanner((pick === 'accept' ? 'ACCEPTED: ' : 'DECLINED: ') + w.name, '#ffd23f', '#3a2a00', (w.on ? 'on ' + w.on + '  -  ' : '') + (pick === 'accept' ? (q.pen.first ? 'automatic first down' : (q.pen.yds || 0) + ' yards') : 'the play stands'), true); }
   game.penPick = pick;
   try { endPlay(q.text, q.next, q.kind); } catch (e) { console.warn(e); game.penPick = null; game.penQ = null; state = 'done'; }
 }
@@ -2248,7 +2259,8 @@ function penDraw() {   // (end of draw(), screen) the card, for a person's pick
   ctx.fillStyle = '#ffd23f'; ctx.fillRect(R.x0 + 18, R.y0 + 16, 34, 26); ctx.strokeRect(R.x0 + 18, R.y0 + 16, 34, 26);   // (the flag)
   ctx.fillStyle = '#2a2a2a'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = 'bold 24px monospace';
   ctx.fillText(String(q.pen.text || 'PENALTY').split(':')[0].toUpperCase().slice(0, 34), R.x0 + 64, R.y0 + 30);
-  ctx.font = '18px monospace'; ctx.fillStyle = '#5a5244'; ctx.fillText('Take the yards or keep the play?', R.x0 + 64, R.y0 + 64);
+  { const w = q.who || penWho(q.pen); if (w.on) { ctx.font = 'bold 17px monospace'; ctx.fillStyle = '#3a3528'; ctx.fillText(('on ' + w.on).slice(0, 44), R.x0 + 64, R.y0 + 58); } }
+  ctx.font = '15px monospace'; ctx.fillStyle = '#5a5244'; ctx.fillText('Take the yards or keep the play?', R.x0 + 64, R.y0 + 84);
   for (const [k, r, lab, o] of [['accept', R.acc, 'ACCEPT', q.acc], ['decline', R.dec, 'DECLINE', q.play]]) {
     const on = q.sel === k;
     ctx.fillStyle = on ? '#fff2a8' : '#ffffff'; ctx.strokeStyle = on ? '#c98f00' : '#3a3528'; ctx.lineWidth = on ? 4 : 2;

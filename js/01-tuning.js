@@ -1211,10 +1211,14 @@ const REF = {
     dodge: 0.6, dodgeR: 3.4, dodgeV: 3.5,      // odds he gets out of the way (once a play), when a man at dodgeV yd/s+ is within dodgeR yd and closing
     help: 30, dust: 0.25,                      // yd an official walks over to help a knocked-down one; s after the pull-up he dusts off
     relay: { toss: 0.55, gap: 0.45, near: 3,   // ball relay: s in the air, s between catch and next throw, yd from the hash = he walks it there himself
-      hand: 1.2, shovel: 6, pTime: 0.45, pDelay: 0.5, upWait: 1.4, far: 25, boyToss: 0.8, boyMax: 18 },   // v0.68 first leg: the man with the ball hands it over within hand yd, shovels it underhand within shovel yd (pTime s in the air, pDelay s after the whistle); an incompletion past far YL = a ball boy tosses a fresh one in (boyToss s; boyMax yd off his sideline he throws from)
+      hand: 1.2, shovel: 6, pTime: 0.45, pDelay: 0.5, upWait: 1.4, far: 25, boyToss: 0.8, boyMax: 18,
+      celebPoll: 0.3, celebMax: 14, boyOut: 0, boyIn: 2, giveRetry: 0.25, giveMax: 8 },   // giveRetry = s between looks while the hand-off waits (official close and up, the man up), giveMax = longest it waits before the official walks to the spot himself   // boyOut = yd past a sideline the loose ball counts as out (ball boy), boyIn = yd inside the line the official takes the boy's toss   // a celebration in progress: the relay looks again every celebPoll s and waits up to celebMax s for it to end (never two balls)
+    skipNear: 3,                              // yd: after a time skip (CONTINUE click / a replay) an official further than this from his new pre-snap spot is put this close to it (refReset)   // v0.68 first leg: the man with the ball hands it over within hand yd, shovels it underhand within shovel yd (pTime s in the air, pDelay s after the whistle); an incompletion past far YL = a ball boy tosses a fresh one in (boyToss s; boyMax yd off his sideline he throws from)
     sig: 0.35, flagFly: 0.5, flagAt: 0.22,     // s after the whistle the signals start; a flag's flight s; s into the throw it leaves the hand
-    stripes: { n: 4, w: 0.75, nFar: 2, wFar: 1.1 },   // an official's vertical shirt stripes: count / width (x sprite unit) close up, and far off (lod 0-1)
-    build: { tall: [0.93, 1.08], wide: [0, 0.9] } },  // each official's seeded height (x his scale) and build width (P.bw 0 lean .. 1 heavy)
+    stripes: { n: 3, nFar: 2 },   // an official's shirt: n black stripes close up (nFar far off, lod 0-1) between white ones, every band the same width
+    shape: { torso: 0.84, shoulder: 1.12 },
+    gait: { acc: 0.35, dec: 0.3, walkV: 1.6, runV: 6.6, cyc: [1.5, 2.9], leg: [0.42, 0.85], kn: [0.08, 0.7], arm: [0.3, 0.95], armFwd: 0.25, el: [0.2, 1.5], lean: [0.04, 0.2], bob: 0.6, backK: 0.6, backLean: 0.1 },   // an official's gait (v0.70): s to speed up / slow down at each end of a walk; walkV..runV yd/s = walk..full run; [walk, run] stride cycle yd, leg / arm swing, knee bend, elbow, lean; bob = run bounce; backpedal = steps x backK, leaning back   // an official's torso width x / shoulders x hips (a slimmer, squarer block like a player's; others use SL_FIG.shoulder)
+    build: { tall: [0.93, 1.08], wide: [0, 0.45] } },  // each official's seeded height (x his scale) and build width (P.bw 0 lean .. 1 heavy)
 };
 const flagsTest = () => !!REF.force;
 const refGate = () => !(typeof tut !== 'undefined' && tut) && !(typeof CO !== 'undefined' && CO) && !(typeof oo !== 'undefined' && oo) &&!(exhibition && exhibition.test && !flagsTest()) && !(typeof LG_SAND !== 'undefined' && LG_SAND);
@@ -1270,8 +1274,8 @@ const XPC = {
 const TUI_Q = new URLSearchParams(location.search).get('touch');
 const IS_MOBILE = TUI_Q === '1' || (TUI_Q !== '0' && (/Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) || (matchMedia('(pointer: coarse)').matches && matchMedia('(hover: none)').matches)));
-const TOP_BAR_MOBILE_K = 1;   // the top bar's height x TOP_BAR_FULL on a phone (a bigger pause button and scoreboard to hit)
-const TOP_BAR_FULL = 64, TOP_BAR_K = IS_MOBILE ? TOP_BAR_MOBILE_K : 0.7, TOP_BAR = Math.round(TOP_BAR_FULL * TOP_BAR_K), HUD_K = TOP_BAR / TOP_BAR_FULL, TOP_PAD = 4, FIELD_BOT = 0;
+const TOP_BAR_MOBILE_K = 0.7;   // the top bar's height x TOP_BAR_FULL on a phone (a bigger pause button and scoreboard to hit)
+const TOP_BAR_FULL = 64, TOP_BAR_K = IS_MOBILE ? TOP_BAR_MOBILE_K : 0.49, TOP_BAR = Math.round(TOP_BAR_FULL * TOP_BAR_K), HUD_K = TOP_BAR / TOP_BAR_FULL, TOP_PAD = 4, FIELD_BOT = 0;
 const BOT_BAR = (() => { const q = new URLSearchParams(location.search).get('touch'); return q === '1' || (q !== '0' && (/Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent) || (matchMedia('(pointer: coarse)').matches && matchMedia('(hover: none)').matches))) ? 46 : 40; })();   // (phones: was 60, a slimmer bar)
 const BB = BOT_BAR / 40;
 // ANNOUNCERS (v0.68, `// --- announcers` in 02; lines ANN_LINES in 00): the cold open's two booth voices call real games, top left under the pause icon.

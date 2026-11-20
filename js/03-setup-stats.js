@@ -428,9 +428,9 @@ const PST_KEY = 'pocketPasser.pstats', HOF_KEY = 'pocketPasser.hof';
 let PST = {}, HOF = [];   // HOF: [{ team, p: { name, tag, group, stars, face, num, age } }]
 const CHOF_KEY = 'pocketPasser.coachHof';
 let CHOF = [];   // coaching Hall of Fame: [{ team, year, p: { name, group: 'HC', stars, face }, wins, games, po, titles, teams: [], rings: [kind] }] (a snapshot, so he stays after leaving)
-try { CHOF = JSON.parse(localStorage.getItem(CHOF_KEY)) || []; } catch (e) {}
+try { CHOF = lsJson(localStorage.getItem(CHOF_KEY)) || []; } catch (e) {}
 try { PST = lsJson(localStorage.getItem(PST_KEY)) || {}; } catch (e) {}
-try { HOF = JSON.parse(localStorage.getItem(HOF_KEY)) || []; } catch (e) {}
+try { HOF = lsJson(localStorage.getItem(HOF_KEY)) || []; } catch (e) {}
 // Extended counters (see "extended stats" below): gs sn fm fl (starts, snaps, fumbles, lost) | QB lp ay xc sy th pu db sc t3a t3c rzt rzd qc gw
 // | runners lr r20 yc mtf ok on | receivers lc yac sep spn rr dr cc si ss | blockers pbn pbw rbn rbw qa ha | defense qh hu prn prw tfl rs ta ff fr pd bat bk dt mtk
 // ctg crc cyd ctd cs icy rsp bs | kicker fgl a1-a4 m1-m4 ko kot kod kor | punter pn pg pnet pl i20 ptb pfc pry pbk hang | returns kn ky kt kl un uy ut ul fc rf
@@ -442,6 +442,9 @@ let pstGame = null, playPass = null;   // pstGame: this game's id / week / oppon
 // each franchise save keeps its own stats ('pocketPasser.pstats.<slot>', same for the league's simulated lines); an exhibition has none of that: it starts
 // from empty lines, shows only its own game and is never stored (the franchise's stats are put back when it's left)
 const pstKey = base => curSlot == null ? base : `${base}.${curSlot}`;
+// a write that may not fit: true if stored; a failure is noted in storeFails (saveToSlot reports them with the STORAGE FULL note)
+let storeFails = [];
+function lsTry(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { storeFails.push(k); console.warn('storage: not saved', k, e && e.name); return false; } }
 let pstStash = null;
 function pstExhibitionOn() { if (!pstStash) pstStash = { PST, LPST, RECS }; PST = {}; LPST = {}; RECS = recBlank(); }
 function pstExhibitionOff() { if (pstStash) { PST = pstStash.PST; LPST = pstStash.LPST; RECS = pstStash.RECS || recBlank(); pstStash = null; } }
@@ -449,12 +452,17 @@ function pstLoadSlot(i) {
   pstStash = null;
   const rd = (base, legacy) => { let v = null; try { v = localStorage.getItem(`${base}.${i}`); if (v == null && legacy) { v = localStorage.getItem(base); if (v != null) localStorage.removeItem(base); } } catch (e) {} try { return lsJson(v) || {}; } catch (e) { return {}; } };   // (stats from before the slots go to the first save loaded)
   PST = rd(PST_KEY, true); LPST = rd(LPST_KEY, true);
-  RECS = Object.assign(recBlank(), rd(REC_KEY));   // (old saves have none: it fills in from here on)
+  RECS = recBlank();   // (v0.69: the old records book is dead (LEAGUE.rbk is the record book): never read or written; storeTidy deletes the stored copies)
   { const l = rd(LGHL_KEY); LGHL = Array.isArray(l) ? l : []; }
   const h = rd(HOF_KEY, true); HOF = Array.isArray(h) ? h : [];   // (each franchise has its own Hall of Fame)
   const c = rd(CHOF_KEY); CHOF = Array.isArray(c) ? c : [];
 }
-function pstSaveSlot(i) { try { localStorage.setItem(`${CHOF_KEY}.${i}`, JSON.stringify(CHOF)); } catch (e) {} try { localStorage.setItem(`${HOF_KEY}.${i}`, JSON.stringify(HOF)); } catch (e) {} try { localStorage.setItem(`${PST_KEY}.${i}`, lsPacked(PST)); localStorage.setItem(`${LPST_KEY}.${i}`, lsPacked(LPST)); localStorage.setItem(`${REC_KEY}.${i}`, lsPacked(RECS)); } catch (e) {} }
+function pstSaveSlot(i) {   // -> true if every stats key fit
+  let ok = lsTry(`${PST_KEY}.${i}`, lsPacked(PST));
+  ok = lsTry(`${HOF_KEY}.${i}`, lsPacked(HOF)) && ok; ok = lsTry(`${CHOF_KEY}.${i}`, lsPacked(CHOF)) && ok;
+  ok = lsTry(`${LPST_KEY}.${i}`, lsPacked(LPST)) && ok;
+  return ok;
+}
 function pstInit() { if (LG_SAND) return; if (exhibition) pstExhibitionOn(); const fl = twoP && twoP.flipped, a = fl ? MATCH.opp : MATCH.you, b = fl ? MATCH.you : MATCH.opp; pstGame = { id: Date.now(), yr: exhibition || !season ? 0 : LEAGUE.year, wk: exhibition || !season ? 0 : MATCH.playoff ? 'PO' : season.week, rd: !exhibition && season && MATCH.playoff && po ? po.round : null, opp: b, a, b }; }
 // this game's stat line for a roster player (null in the tutorial or for a nobody)
 function pstRec(s) {
@@ -580,7 +588,7 @@ function pstFinish() {
       const g = e.games[e.games.length - 1];
       if (g && g.id === pstGame.id) { g.res = mine.has(name) ? res : resO; for (const k in PST_ZERO) if (!g[k]) delete g[k]; else if (g[k] % 1) g[k] = Math.round(g[k] * 100) / 100; }   // (zeros aren't stored: lines stay small)
     }
-    if (!pstStash) localStorage.setItem(pstKey(PST_KEY), lsPacked(PST));   // (an exhibition's lines aren't kept)
+    if (!pstStash) lsTry(pstKey(PST_KEY), lsPacked(PST));   // (an exhibition's lines aren't kept; a write that doesn't fit no longer skips recFinal)
     recFinal();
   } catch (err) {}
 }
@@ -1050,7 +1058,7 @@ function rbHolds(name) {
   RB_HOLD.set(name, { ver: RB_VER, B, r });
   return r;
 }
-function recSave() { try { if (!pstStash) { localStorage.setItem(pstKey(REC_KEY), lsPacked(RECS)); localStorage.setItem(pstKey(LGHL_KEY), lsPacked(LGHL)); } } catch (e) {} }
+function recSave() { if (pstStash) return true; return lsTry(pstKey(LGHL_KEY), lsPacked(LGHL)); }   // (v0.69: the dead RECS book is no longer stored)
 
 // --- extended stats: the same lines carry ~100 more counters. Hot path = plain adds on the cached line (px); nothing is built per frame, lines drop their
 // zeros when saved (pstFinish), and every derived number (ratings, rates, AV, grades) is only computed when the stats page draws it.
@@ -1286,7 +1294,7 @@ function lpstSave() {
     for (const g of old) { const po = g.wk === 'PO', key = `${g.yr}|${g.tm || ''}|${po ? 'P' : ''}`, s = by[key] || (by[key] = Object.assign({ yr: g.yr, gp: 0 }, g.tm ? { tm: g.tm } : {}, po ? { wk: 'PO' } : {})); s.gp += g.gp || 1; for (const k in g) if (typeof g[k] === 'number' && k !== 'yr' && k !== 'rd' && k !== 'gp') s[k] = PST_MAX.has(k) ? Math.max(s[k] || 0, g[k]) : (s[k] || 0) + g[k]; }
     e.games = [...Object.values(by), ...e.games.filter(g => g.gp || g.yr >= yr)];
   }
-  try { if (!pstStash) localStorage.setItem(pstKey(LPST_KEY), lsPacked(LPST)); } catch (e) {}
+  return pstStash ? true : lsTry(pstKey(LPST_KEY), lsPacked(LPST));
 }
 function pstSimGame(g, wk) {
   if (!season || exhibition || tut || !LEAGUE || g.hs == null) return;

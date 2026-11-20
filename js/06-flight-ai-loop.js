@@ -1750,23 +1750,33 @@ function formPersonnel(team, f, show = false) {
 // o.ps = the players per slot (names under the marks), o.hits = an array to collect click boxes
 const FORM_COL = { on: '#24406e', off: '#d9822b', field: '#dfe9cf', line: 'rgba(80,110,70,0.5)' };
 function drawFormation(f, x, y, w, h, o = {}) {
-  const big = !!o.ps, los = y + h * (big ? 0.27 : 0.22), sx = w / 41, sy = (h - (los - y) - (big ? 72 : 12)) / 7.2, INK = '#3b3320';
+  const big = !!o.ps, los = o.los != null ? o.los : y + h * (big ? 0.27 : 0.22), sx = w / 41, sy = o.sy != null ? o.sy : (h - (los - y) - (big ? 72 : 12)) / 7.2, INK = '#3b3320', hand = !!o.hand;   // (o.los / o.sy: the binder's fitted layout; o.hand: pencil X-and-O look, v0.70)
   const lat = v => Math.sign(v) * (Math.min(Math.abs(v), 5) * 2 + Math.max(0, Math.abs(v) - 5) * 0.85);   // (the line is spread out so the names fit; wide men pulled in)
   ctx.save();
+  if (hand) { ctx.fillStyle = '#fffdf4'; ctx.fillRect(x, y, w, h); ctx.strokeStyle = 'rgba(90,140,210,0.28)'; ctx.lineWidth = 1; ctx.beginPath(); for (let k = 1; k < 9; k++) penLine(x + 6, y + k * h / 9, x + w - 6, y + k * h / 9, 300 + k, 0.7); ctx.stroke(); penOutline(x, y, w, h, 41, INK, 2.2); ctx.strokeStyle = INK; ctx.lineWidth = 2; }   // (a ruled notebook square, pencil edge)
+  else {
   ctx.fillStyle = FORM_COL.field; ctx.fillRect(x, y, w, h); ctx.strokeStyle = FORM_COL.line; ctx.lineWidth = 1;
   for (let k = 1; k < 6; k++) { ctx.beginPath(); ctx.moveTo(x, y + k * h / 6); ctx.lineTo(x + w, y + k * h / 6); ctx.stroke(); }
-  ctx.strokeStyle = INK; ctx.lineWidth = 2.5; ctx.strokeRect(x, y, w, h);
+  ctx.strokeStyle = INK; ctx.lineWidth = 2.5; ctx.strokeRect(x, y, w, h); }
   ctx.beginPath(); penDashLine(x + 4, los, x + w - 4, los, 77, 8, 5, 0.8); ctx.stroke();   // (the line of scrimmage: pencil dashes)
   ctx.fillStyle = 'rgba(59,51,32,0.55)'; ctx.font = `bold ${big ? 13 : 10}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('DEFENSE', x + w / 2, y + (big ? 14 : 9)); ctx.textAlign = 'right'; if (big) ctx.fillText('LINE OF SCRIMMAGE (dashed)', x + w - 8, y + 14);
   const cx = x + w / 2, r = big ? 15 : 7;
   f.slots.forEach((s, i) => {
     const px = cx + lat(s.w) * sx, py = los + (s.on ? r + 2 : r + 2 + s.d * sy), fill = s.on ? FORM_COL.on : FORM_COL.off;
+    if (hand) {   // (a marker O, a pencil box for a lineman; the label in pencil)
+      const sd = i * 13 + 7, mk = '#2a62b0'; ctx.fillStyle = '#fffdf4'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      if (s.role === 'OL') { ctx.beginPath(); penPoly([[px - r, py - r], [px + r, py - r], [px + r, py + r], [px - r, py + r], [px - r, py - r]], sd, 1.1); ctx.fill(); ctx.strokeStyle = mk; ctx.lineWidth = 2.6; ctx.stroke(); }
+      else { penEllipse(px, py, r, r, sd); ctx.fill(); ctx.strokeStyle = mk; ctx.lineWidth = 2.6; ctx.stroke(); penEllipse(px + 0.8, py - 0.6, r - 1.5, r - 1.2, sd + 3); ctx.lineWidth = 1; ctx.stroke(); }
+      if (s.k === 'C') { ctx.fillStyle = '#8a5a2b'; penEllipse(px, py - r - 5, 6, 3.5, sd + 5); ctx.fill(); }   // (the ball)
+      ctx.fillStyle = INK; ctx.font = `bold ${s.k.length > 2 ? 10 : 12}px monospace`; ctx.textAlign = 'center'; ctx.fillText(s.k, px, py + 1);
+      if (o.pts) o.pts.push([px - r, py - r], [px + r, py + r]);
+    } else {
     ctx.fillStyle = fill; ctx.strokeStyle = INK; ctx.lineWidth = 1.5;
     if (s.role === 'OL') { ctx.fillRect(px - r, py - r, r * 2, r * 2); ctx.strokeRect(px - r, py - r, r * 2, r * 2); }
     else { ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
     if (s.k === 'C') { ctx.fillStyle = '#8a5a2b'; ctx.beginPath(); ctx.ellipse(px, py - r - 4, big ? 6 : 4, big ? 3.5 : 2.5, 0, 0, Math.PI * 2); ctx.fill(); }   // (the ball)
-    ctx.fillStyle = '#fff'; ctx.font = `bold ${big ? (s.k.length > 2 ? 10 : 12) : 7}px monospace`; ctx.textAlign = 'center'; ctx.fillText(s.k, px, py + 1);
+    ctx.fillStyle = '#fff'; ctx.font = `bold ${big ? (s.k.length > 2 ? 10 : 12) : 7}px monospace`; ctx.textAlign = 'center'; ctx.fillText(s.k, px, py + 1); }
     if (!big) return;
     // (on-the-line men: name above the mark, staggered so neighbours don't overlap; off the ball: below it)
     const p = o.ps[i], nm = p ? p.name.split(' ').filter(w => !/^(JR|SR|II|III|IV|V)\.?$/i.test(w)).slice(-1)[0].toUpperCase() : 'UNNAMED', up = s.on, stag = up && (s.k === 'LG' || s.k === 'RG' || s.role === 'TE' || s.role === 'WING') ? 26 : 0;
@@ -1774,6 +1784,7 @@ function drawFormation(f, x, y, w, h, o = {}) {
     ctx.fillStyle = p ? INK : 'rgba(59,51,32,0.5)'; ctx.font = 'bold 11px monospace'; ctx.fillText(nm, px, ly, 72);
     ctx.fillStyle = '#b07a10'; ctx.font = 'bold 10px monospace'; ctx.fillText(p ? `${p.group}${s.tag && s.tag !== p.group ? '/' + s.tag : ''} ${p.stars || 0}★` : 'WALK-ON', px, up ? ly - 12 : ly + 12, 72);
     const top = up ? ly - 19 : py - r, bot = up ? py + r : ly + 18;
+    if (o.pts) o.pts.push([px, top], [px, bot]);
     if (o.hits && p) o.hits.push({ p, b: { x: px - 36, y: top, w: 72, h: bot - top } });
   });
   if (big) {   // legend
