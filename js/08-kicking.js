@@ -78,7 +78,7 @@ function startFieldGoal(prev) {   // prev = where everyone stood before the line
   state = 'kick';
   clock = 0;
   aim = null;
-  keepHighlight(rec); if (rec && !rec.st && rec.frames && rec.frames.length > 5 && !rec.replaying) lastRec = rec; rec = { frames: [], t: 0, doneT: 0, replaying: false, st: true, pat: patMode === 'kick' };
+  keepHighlight(rec); if (rec && rec.frames && rec.frames.length > 5 && !rec.replaying) lastRec = rec;   /* (kick tapes too: the pause menu's replay) */ rec = { frames: [], t: 0, doneT: 0, replaying: false, st: true, pat: patMode === 'kick' };
   // (their kick: where everyone stood, so the field-goal unit can run on and the offense off)
   const swap = !tut ? prev || [qb, rb, ...ols, ...recs, ...dl, ...back7].map(p => ({ p, x: p.x, y: p.y })) : null;
   const unitMen = [recs[0], recs[1], recs[2], recs[3]].filter(Boolean);   // (the wings: receivers already on the field who are on the unit too just walk to their spot; no clone jogs off while he runs on)
@@ -1432,7 +1432,12 @@ function kproPuntBlocked(k, q, at) {   // off his hands: a live ball where he me
   Object.assign(ball, { x: at.x, y: at.y, z: at.z, loose: true, live: true, fumble: true, blocked: true, inAir: false,
                         vx: (1 + Math.random() * 5) * YD * (Math.random() < 0.7 ? 1 : -1), vy: (Math.random() - 0.5) * 7 * YD, vz: 90 * S, spin: (Math.random() - 0.5) * 24 });
   kicker.kickSwing = false; kicker.followV = 0;
-  ball.puntBlk = { ltg: k.punt && k.punt.ltg != null ? k.punt.ltg : (k.punt ? k.punt.los : at.x) - 10 * YL };   // (the punt team's line to gain, in this frame: they go down-field toward x 0; read by puntBlkEnd)
+  kproPuntLoose(k);
+}
+// every blocked punt's live ball starts here (the kp engine's and the old path's)
+function kproPuntLoose(k) {
+  ball.puntBlk = { ltg: k.punt && k.punt.ltg != null ? k.punt.ltg : (k.punt ? k.punt.los : ball.x) - 10 * YL };   // (the punt team's line to gain, in this frame: they go down-field toward x 0; read by puntBlkEnd)
+  for (const p of allPlayers()) { p.go = null; p.assign = null; p.retWall = null; if (!p.action) { p.svx = p.vx || 0; p.svy = p.vy || 0; } }   // (one owner from here: the punt jobs are dropped and the punt engine's speed (vx / vy) is handed to steer's (svx / svy), like kproPuntAfter; left stale, steer restarted everyone from a stop: the stutter)
   state = 'fumble'; fumbleT = clock; runner = null; kickoff = null; msg = 'PUNT BLOCKED!  -  live ball'; kproLetGo();
 }
 // the punt is away: everyone heads for his lane
@@ -1501,7 +1506,7 @@ const PVP_KICK = { wait: 1.2, power: [0.75, 1], aim: 0.35 };   // two players: t
 function startKickoffKick(preface = []) {
   state = 'kick'; clock = 0; aim = null; fourthPending = false; patMode = null; isRunPlay = false; sackPlay = false; fgExit = [];
   noPlayLines = true;   // (no line of scrimmage / first-down line through a kickoff from the tee, the onside kick's scramble and whistle included; reset() brings them back)
-  keepHighlight(rec); if (rec && !rec.st && rec.frames && rec.frames.length > 5 && !rec.replaying) lastRec = rec; rec = { frames: [], t: 0, doneT: 0, replaying: false, st: true };
+  keepHighlight(rec); if (rec && rec.frames && rec.frames.length > 5 && !rec.replaying) lastRec = rec;   /* (kick tapes too: the pause menu's replay) */ rec = { frames: [], t: 0, doneT: 0, replaying: false, st: true };
   const tee = 35 * YL, clean = { action: null, act: null, route: null, path: [], teBlock: false, hasBall: false, engaged: false, cradle: false,
                                  svx: 0, svy: 0, vx: 0, vy: 0, moving: false, assign: null, holding: false, kickSwing: false, kickWind: 0, kickK: 0 };
   los = tee;
@@ -2013,7 +2018,7 @@ function startPunt(prev) {
   state = 'kick';
   clock = 0;
   aim = null;
-  keepHighlight(rec); if (rec && !rec.st && rec.frames && rec.frames.length > 5 && !rec.replaying) lastRec = rec; rec = { frames: [], t: 0, doneT: 0, replaying: false, st: true, punt: true };
+  keepHighlight(rec); if (rec && rec.frames && rec.frames.length > 5 && !rec.replaying) lastRec = rec;   /* (kick tapes too: the pause menu's replay) */ rec = { frames: [], t: 0, doneT: 0, replaying: false, st: true, punt: true };
   // (where everyone stood: the punt unit runs on from the sideline, the skill players come off)
   const swap = !tut ? prev || unitSnapshot() : null;
   const sky = [qb, rb, ...recs.filter(r => !r.isTE)];
@@ -3332,6 +3337,7 @@ function proceed() {
   if (game.fastRunoff) return;   // the clock is spinning down: the next play comes when it's done
   if (REV || revWait) return;   // (v0.68: a booth review / challenge is on: the next play waits for its stamp)
   if (game.penQ) return;   // (v0.68: a flag waiting for its accept / decline)
+  if (SL.xt && SL.cast && !(ONL.on && ONL.guest)) slExitFinish();   // (click to continue during an injury exit: everyone of it is at his end spot at once, the cart away; through slEvent, p.slOut stays)
   if (flushQBanner()) return;    // (the end-of-quarter banner was held back for the replay: it shows now)
   fadeAnnouncements();
   if (twoP && twoP.koOnly && twoP.flipped && state === 'done' && !game.over) {   // SIM DEFENSE: your kick's return is over
@@ -3631,7 +3637,7 @@ function startKickoff(punt = null, user = false) {
   kickoffNext = false;
   isRunPlay = false;
   fourthPending = false;
-  keepHighlight(rec); if (rec && !rec.st && rec.frames && rec.frames.length > 5 && !rec.replaying) lastRec = rec; rec = { frames: [], t: 0, doneT: 0, replaying: false, st: true };
+  keepHighlight(rec); if (rec && rec.frames && rec.frames.length > 5 && !rec.replaying) lastRec = rec;   /* (kick tapes too: the pause menu's replay) */ rec = { frames: [], t: 0, doneT: 0, replaying: false, st: true };
   aim = null; popups = []; impacts = []; resetPylons();
   clock = 0; ballFar = -Infinity; downPend = null; runner = null; tgt = null; runStart = -100;
   userZoom = 1;
@@ -4020,7 +4026,7 @@ function updateKickoff(dt) {
           Object.assign(ball, { x: K.x - 1.5 * YD, y: K.y, z: 14 * S, loose: true, live: true, fumble: true, blocked: true, inAir: false,
                                 vx: -(1 + Math.random() * 6) * YD, vy: (Math.random() - 0.5) * 6 * YD, vz: 100 * S, spin: (Math.random() - 0.5) * 24 });
           K.kickSwing = false; K.followV = 0;
-          state = 'fumble'; fumbleT = clock; runner = null; kickoff = null; msg = 'PUNT BLOCKED!  -  live ball'; kproLetGo();
+          kproPuntLoose(k);
           return;
         }
         shortPunt = { x: bx, y: K.y + (Math.random() - 0.5) * 8 * YD };   // past the line: it still goes, just short

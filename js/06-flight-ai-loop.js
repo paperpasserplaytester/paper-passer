@@ -820,6 +820,7 @@ function updateFumble(dt) {
     }
     const px = p.x, py = p.y;
     if (dist(p, ball) < LOOSE_DIVE.range * YD) { const lv = p === rb ? rbVis(RB_VISION.loose) : 1; steer(p, ball.x, ball.y, (p.top || 8 * YD) * lv, (p.accel || 12 * YD) * lv * LOOSE_DIVE.accel, dt); }   // (flat out for it; the back's vision: first to the loose ball)
+    else steer(p, ball.x, ball.y, (p.top || 8 * YD) * LOOSE_DIVE.far, p.accel || 12 * YD, dt);   // (out of range: eases down into a jog toward it, never a dead stop)
     clampField(p);
     setVelocity(p, px, py, dt);
     // close to it on the ground: dive on it (traffic) or run through and scoop it (open field). Chosen for him, once a fumble.
@@ -946,12 +947,19 @@ const inStands = () => ball.y < -CROWD.wall || ball.y > FW + CROWD.wall || ball.
 const WALL_BALL = { keep: 0.4 };
 function ballWall(x0, y0) {
   if (ball.rollOut || ball.z >= CROWD.wallH) return;
-  const yT = -CROWD.wall, yB = FW + CROWD.wall, xL = -ENDZONE - CROWD.endGap - CROWD.wall, xR = FIELD + ENDZONE + CROWD.endGap + CROWD.wall;
+  const W = wallLim(OOB_ROOM.ball), yT = W.yt, yB = W.yb, xL = W.xl, xR = W.xr;   // (the players' wall, 04's wallLim: bowlGeo's faces + its rounded corners)
   let hit = false;
   if (y0 >= yT && ball.y < yT) { ball.y = yT; ball.vy = Math.abs(ball.vy) * WALL_BALL.keep; hit = true; }
   else if (y0 <= yB && ball.y > yB) { ball.y = yB; ball.vy = -Math.abs(ball.vy) * WALL_BALL.keep; hit = true; }
   if (x0 >= xL && ball.x < xL) { ball.x = xL; ball.vx = Math.abs(ball.vx) * WALL_BALL.keep; hit = true; }
   else if (x0 <= xR && ball.x > xR) { ball.x = xR; ball.vx = -Math.abs(ball.vx) * WALL_BALL.keep; hit = true; }
+  const k = wallCorner(ball.x, ball.y, W), k0 = wallCorner(x0, y0, W);
+  if (k && k.r > k.max && (!k0 || k0.r <= k0.max + YD)) {   // (a rounded corner: back off the curve, its outward speed reflected)
+    ball.x = k.cx + k.ux * k.max; ball.y = k.cy + k.uy * k.max;
+    const vn = ball.vx * k.ux + ball.vy * k.uy;
+    if (vn > 0) { ball.vx -= (1 + WALL_BALL.keep) * vn * k.ux; ball.vy -= (1 + WALL_BALL.keep) * vn * k.uy; }
+    hit = true;
+  }
   if (hit) { ball.spin = -(ball.spin || 0) * 0.6; bounceSfx(Math.hypot(ball.vx, ball.vy) * 0.5); }
 }
 function updateBall(dt) {
@@ -2384,6 +2392,13 @@ function aiThrowAway() {
 // CPU QB feeling the rush: radius x (1 + per x awareness steps) within min..max; engaged linemen are only felt above feelEng unless winning
 // (shed due within winT s: felt from winR yd, weighted winW). He slides away or steps up, whichever puts more room between him and them.
 const AI_POCKET = { per: 0.18, min: 0.55, max: 1.5, feelEng: 0.85, winT: 0.6, winR: 6.5, winW: 1.6 };
+// the computer's stiff arm (KeyQ) only while a defender on his feet is in stiff-arm reach (STIFF_RANGE) or will be within AI_STIFF.lead s at both men's speeds
+const AI_STIFF = { lead: 0.35 };
+function aiStiffNear(c) {
+  if (!c) return false;
+  const L = AI_STIFF.lead, cx = c.x + (c.vx || 0) * L, cy = c.y + (c.vy || 0) * L;
+  return [...dl, ...back7].some(d => d && !grounded(d) && d.action !== 'down' && (dist(d, c) <= STIFF_RANGE || Math.hypot(d.x + (d.vx || 0) * L - cx, d.y + (d.vy || 0) * L - cy) <= STIFF_RANGE));
+}
 function aiPocket() {
   const hold = tut && tutStep() && tutStep().hold;   // (the tutorial's rush steps: no throwing early, whatever the pressure)
   const e = cpuEdge();
@@ -2425,6 +2440,7 @@ function aiPocket() {
       else ai.flush = true;
     }
   }
+  if (clock < (ai.stiffUntil || 0) && !aiStiffNear(qb)) ai.stiffUntil = 0;   // (nobody on his feet within stiff-arm reach any more: the arm comes in)
   if (clock < (ai.stiffUntil || 0) || (qb.stiffLock && clock < qb.stiffLock.until)) keys.KeyQ = true;
   if (!hold && !tut && qb.x < los + YD && toSideline(qb) < 4 * YD) { const out = qb.y < MID ? 'KeyW' : 'KeyS', inn = qb.y < MID ? 'KeyS' : 'KeyW'; keys[out] = false; keys[inn] = true; }   // (behind the line he never runs out of bounds: that's a sack)
   // the line's getting close, even through a block: he gives ground (a little, not out of the pocket)
@@ -2522,6 +2538,7 @@ function aiRun(dt) {
   const c = runner;
   ai.mv -= dt;
   if (clock < ai.truckUntil) keys.KeyC = true;
+  if (clock < (ai.stiffUntil || 0) && !aiStiffNear(c)) ai.stiffUntil = 0;   // (broken free / the man is gone: no arm out at nobody)
   if (clock < (ai.stiffUntil || 0) || (c && c.stiffLock && clock < c.stiffLock.until)) keys.KeyQ = true;   // (and he keeps the arm out for the whole hold, like a player would: letting go early gave it the worse "early" odds every time)
   if (tut && c && !c.awaiting) c.speed = Math.min(c.speed || 0, DEF.tutRun * YD);   // (the tutorial's runner is catchable)
   if (!c || c.awaiting || c.action || c === passer) return;

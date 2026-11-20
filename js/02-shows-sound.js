@@ -79,7 +79,7 @@ const REPLAY_TAIL = 2.2;
 const REPLAY_PRE = 0.25;   // a play's tape opens with this many seconds of the pre-snap look (everyone in his stance) before the ball is snapped
 // the replays setting: every play, big plays (rec.big: a highlight callout, a 20+ yard gain, a big first down, a score
 // or a turnover), touchdowns only (rec.td) or none (the game's last play still gets its replay)
-const replayWanted = () => !!rec && !rec.pat && !tut && !ONL.on && SETTINGS.replays !== 'NONE' && (SETTINGS.replays === 'EVERY PLAY' || !!rec.td || !!rec.int || (SETTINGS.replays === 'BIG PLAYS' && !!rec.big));
+const replayWanted = () => !!rec && !tut && !ONL.on && SETTINGS.replays !== 'NONE' && (SETTINGS.replays === 'EVERY PLAY' || !!rec.td || !!rec.int || (SETTINGS.replays === 'BIG PLAYS' && !!rec.big));
 function recordFrame(dt) {
   if (!rec || rec.replaying) return;
   rec.t += dt;
@@ -3800,6 +3800,7 @@ function crowdGroan(level, hush = true) {
   playSfx(key, vol, ms, CROWD_IMPACT.fadeOut, 500, crowdStart(key, ms + 1500));
   if (hush) playSfx(SFX.boo, vol * 0.8, 3000, 900, CROWD_IMPACT.popIn);   // (the home crowd's "aww" on top)
 }
+const ST_BIG = { ret: 30, fgYd: 48 };   // special teams on the BIG PLAYS replays setting: a return of ret+ yd, a field goal from fgYd+ yd (blocks, turnovers, return TDs, clutch kicks always)
 const BIG_PLAY = 15, CROWD_OK_GAIN = 4;   // a big play is a gain over BIG_PLAY yards; a gain of CROWD_OK_GAIN+ yards never disappoints the crowd
 let playHype = 0, playCheered = false, hushUntil = 0;  // this play's peak hype / whether the crowd's reacted yet
 let playReact = false;   // the crowd already reacted mid-play (the catch, the drop): the whistle doesn't repeat it

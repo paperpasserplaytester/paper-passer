@@ -824,6 +824,16 @@ const DRAFT_SCHOOLS = ['BAYOU STATE', 'GREAT LAKES TECH', 'NORTH PRAIRIE', 'COAS
   'MAGNOLIA', 'SILVER LAKE', 'FORT ASH', 'PALMETTO BAY', 'BIG SKY NORTH', 'CAPITAL CITY', 'THREE RIVERS', 'SAGEBRUSH', 'MAPLE GROVE', 'SOUTH RIDGE', 'TIDEWATER', 'ELK RAPIDS', 'SUNCOAST', 'BLACK HILLS TECH', 'WINDWARD'];
 const CHANGELOG = [
   { v: "v0.70", secs: [
+    ["KICKS, REPLAYS AND THE SIDELINE", [
+      "Blocked punts follow the rules: the punting team keeps it only past the line to gain, otherwise it's the other team's ball.",
+      "No more stutter after a blocked punt: everyone carries his speed into the scramble.",
+      "Kickoffs, punts, field goals, extra points and blocks get instant replays, and the pause menu can replay them.",
+      "Click to continue during an injury cart-off and the sideline jumps ahead.",
+      "A pick caught out of bounds is incomplete.",
+      "The crowd wall is solid all the way round, corners too, for players and the ball.",
+      "The computer QB only stiff arms someone who is actually there.",
+      "Celebration gloves keep their team's colour.",
+    ]],
     ["REFS, BENCHES AND PLAYBOOKS", [
       "The ball waits for the celebration to end before a ref takes it: never two balls.",
       "A ball in the stands or on the sideline comes back through a ball boy, tossed to the nearest ref.",

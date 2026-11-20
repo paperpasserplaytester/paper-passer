@@ -288,6 +288,13 @@ function snapPath(cen, q, k, gun) {
 let snapFly = null;      // { dur } while the ball is on its way from the center
 let playWho = '';        //"Caught by X (from Y)" / "X ran the ball" for the line under the scoreboard
 let stopClock = false;   // set by incomplete(): no runoff after this play
+// a kick play worth a replay on BIG PLAYS: a block, a turnover / muff / onside recovery, a return touchdown, a long return, a long or clutch field goal (ST_BIG)
+function stBigPlay(text, next, kind, clutch, ret) {
+  if (kind === 'td' || kind === 'turnover' || /BLOCK|FUMBLE|MUFF|ONSIDE|RETURN TD/i.test(text)) return true;
+  if (kind === 'fg') return !!clutch || (patMode !== 'kick' && kickDistance() >= ST_BIG.fgYd);
+  if (ret && rb && rb.retFromPid === runPid && rb.retFrom != null && Number.isFinite(next) && next > 0) return (next - rb.retFrom) / YL >= ST_BIG.ret;
+  return false;
+}
 function endPlay(text, next, kind) {
   perfNote('endPlay');   // (FRAME TIMES spike tag)
   const pick = game.penPick, pq = pick && game.penQ;   // (v0.68 the second pass, after the flag's accept / decline: penTick)
@@ -322,9 +329,11 @@ function endPlay(text, next, kind) {
       if (/PICK SIX|SCOOP AND SCORE/.test(text)) goalEvent('dtd');
     }
   }
+  const kickPlay = wasKickoff || patMode === 'kick' || kind === 'fg' || kind === 'fgmiss' || kind === 'punt';   // (special teams: their own big-play rule, stBigPlay)
+  if (rec && kickPlay && stBigPlay(text, next, kind, clutch, wasKickoff)) rec.big = true;
   if (wasKickoff && rb) rb.retFromPid = null;
   if (rec && (kind === 'td' || /TOUCHDOWN|PICK SIX|PUNT RETURN TD/.test(text))) rec.td = rec.big = true;   // (for the replays setting)
-  if (rec && (kind || /INTERCEPT|FUMBLE|TURNOVER|PICK SIX/i.test(text))) rec.big = true;   // (turnovers are big plays)
+  if (rec && !kickPlay && (kind || /INTERCEPT|FUMBLE|TURNOVER|PICK SIX/i.test(text))) rec.big = true;   // (turnovers are big plays)
   // consecutive runs (the line tires, the defense keys on it); a pass, a kick or a new drive resets it
   runStreak = !wasKickoff && isRunPlay && patMode === null && !tut ? runStreak + 1 : 0;   // (not in the tutorial)
   if (!wasKickoff && patMode === null && !tut) passStreak = isRunPlay ? 0 : passStreak + 1;
@@ -533,6 +542,7 @@ function settle(p, dt) {
     return;
   }
   if (p.celWalk) return celebWalkStep(p, dt);   // (jogging out of the crowd to celebrate in the open: 07-drawing)
+  if (p.fetchBall) return fetchStep(p, dt);   // (v0.71 bringing a far dead ball to an official: 07-drawing officials)
   if (p.helpTarget) {   // walking over to pull the man on the ground up: a hand out, a tug, then both are on their feet
     const t = p.helpTarget, px = p.x, py = p.y, gx = t.x - 0.9 * YD * (t.face || 1), gy = t.y + 0.6 * YD;
     if (!doneLying(t) || t.action === 'getup' || p.helpT > HELP_UP.max) { p.helpTarget = null; p.reach = false; }
@@ -1109,6 +1119,13 @@ function intercept(d, diving = false) {
     if (d.act) d.act.one = Math.random() < 0.6;   // (one arm stretched up for it, or both)
     if (Math.random() < (ball.bullet ? 0.5 : BAT_DOWN)) batDown(d); else { popLoose(d, 'Tipped!', 100 * S, 3.5 * YD); knockAway(d); }
     return;
+  }
+  if (patMode === null && (!feetInBounds(d) || !feetInBounds(landingSpot(d))) && !awrFeetIn(d)) {   // (the receivers' own feet-in test, catchBall: caught out of bounds = incomplete, no turnover / pick stat / pick celebration; the sideline official sells it via refEnd's inc + sell)
+    catchSfx(); d.catchFrom = { x: ball.x, y: ball.y, z: ball.z, t: clock };
+    if (d.action !== 'dive' && edgeClose(d)) toeDown(d, d.action === 'jump' || ball.z > 16 * S);
+    ball.inAir = ball.loose = ball.live = false; ball.x = d.x; ball.y = d.y;
+    popup(d, 'OUT OF BOUNDS', '#7dff8a'); stopClock = true;
+    return endPlay('Caught out of bounds by the defense  -  incomplete', los);
   }
   d.pickSafe =clock + CATCH_GLIDE + 0.03; d.pickSafePid = runPid;   // (nobody can tackle him until the ball has reached his hands)
   d.hasBall = true;
@@ -1826,17 +1843,17 @@ function steer(p, tx, ty, top, accel, dt) {
 // (the AI's targets stay in bounds: oobAim in steer). The old clamp walled defenders 0.2 yd INSIDE the line (more in the red zone)
 // but let carriers / receivers 1.5 yd out: a tackler riding a carrier down over the sideline was yanked back in the moment he let go
 // (the post-play teleport), and anyone whose role or the state changed snapped to the new wall.
-const OOB_ROOM = { body: 0.5 };   // body = yd of a player's feet kept off the stands' wall. The wall is the one bowlGeo() draws (07): its field-side faces + rounded corners (wallLim). (It used to be a plain rectangle measured past Y_MIN, which is 0.8 yd outside the paint: feet went into the top / bottom walls and through the corners)
-let WALL_LIM = null;
-function wallLim() {   // the rounded rectangle players' feet stay inside: the bowl's field-side wall faces, a body in (corners follow the drawn curve)
-  if (WALL_LIM) return WALL_LIM;
-  const G = bowlGeo(), b = OOB_ROOM.body * YD, cx0 = G.X0 + G.ri, cx1 = G.X1 - G.ri, cy0 = G.Y0 + G.ri, cy1 = G.Y1 - G.ri;
-  return WALL_LIM = { xl: G.X0 + G.tE + b, xr: G.X1 - G.tE - b, yt: G.Y0 + G.tT + b, yb: G.Y1 - G.tB - b, G, b,
+const OOB_ROOM = { body: 0.9, ball: 0.15 };   // body = yd of a player's feet kept off the stands' wall (was 0.5: sprites stood in it), ball = the loose ball's radius off it (ballWall, 06: same geometry, corners too). The wall is the one bowlGeo() draws (07): its field-side faces + rounded corners (wallLim). (It used to be a plain rectangle measured past Y_MIN, which is 0.8 yd outside the paint: feet went into the top / bottom walls and through the corners)
+const WALL_LIM = {};
+function wallLim(r = OOB_ROOM.body) {   // the rounded rectangle players' feet (r = OOB_ROOM.body) or the ball (OOB_ROOM.ball) stay inside: the bowl's field-side wall faces, r yd in (corners follow the drawn curve)
+  if (WALL_LIM[r]) return WALL_LIM[r];
+  const G = bowlGeo(), b = r * YD, cx0 = G.X0 + G.ri, cx1 = G.X1 - G.ri, cy0 = G.Y0 + G.ri, cy1 = G.Y1 - G.ri;
+  return WALL_LIM[r] = { xl: G.X0 + G.tE + b, xr: G.X1 - G.tE - b, yt: G.Y0 + G.tT + b, yb: G.Y1 - G.tB - b, G, b,
     C: [[cx0, cy0, -1, -1, G.tT], [cx1, cy0, 1, -1, G.tT], [cx0, cy1, -1, 1, G.tB], [cx1, cy1, 1, 1, G.tB]] };   // (centre, outward signs, side wall's thickness)
 }
 // a point in a rounded corner: { centre, r = his distance from it, max = the room there, ux / uy = out from the centre }, or null off the corners
-function wallCorner(x, y) {
-  const W = wallLim(), G = W.G;
+function wallCorner(x, y, W = wallLim()) {
+  const G = W.G;
   for (const [cx, cy, sx, sy, ts] of W.C) {
     const dx = (x - cx) * sx, dy = (y - cy) * sy;
     if (dx <= 0 || dy <= 0) continue;

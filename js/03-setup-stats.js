@@ -1478,7 +1478,7 @@ function reset() {
   popups = []; yardsTag = null;
   impacts = [];
   if (rec && !rec.replaying) keepHighlight(rec);   // (a big play: into this game's highlights)
-  if (rec && (!rec.st || rec.punt) && !rec.replaying && rec.frames && rec.frames.length > 5) lastRec = rec;   // (a punt's tape is kept too) (the pause menu's REPLAY button)
+  if (rec && !rec.replaying && rec.frames && rec.frames.length > 5) lastRec = rec;   // (a punt's tape is kept too) (the pause menu's REPLAY button)
   rec = null;
   userZoom = 1;
   isRunPlay = impatient = false;
