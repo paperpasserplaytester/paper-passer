@@ -2860,6 +2860,8 @@ function update(dt) {
   if (revWait) revTick();   // (v0.68 a booth review waiting for the play to end)
   if (SL.on) slTick(dt);   // (sideline people: their clock; hides the chain crew for kicks)
   if (REF.force) flagForceTick();   // (v0.68 TEST ONLY: a forced penalty happens on this play)
+  penLookTick(dt);   // (v0.70 the foul looks run out)
+  flagRoute();   // (v0.70 defensive holding on a route)
   showTick();   // (v0.51: a showboating carrier: looks, finishes, when it ends)
   injKneelTick();   // (an injury timeout's kneel, then the clap: 07)
   wxTick(dt);
@@ -2909,7 +2911,7 @@ function update(dt) {
       spaceReceivers(dt);
       if (ut) ut = perfMark('u.off', ut);
       for (const d of back7) if (!d.blitz) zoneDefend(d, dt);   // blitzers rush with the line
-      if (ut) ut = perfMark('u.def', ut);
+      if (ut) ut = perfMark('u.def.zone', ut);   // (v0.70: u.def split by what ran, so a spike names it)
     } else if (state === 'run' && runner === qb) {
       // he just crossed the line this frame: everyone switches to the run right now (skipping a frame froze the line and the
       // blitzers for a beat and cost them their speed)
@@ -2947,17 +2949,20 @@ function update(dt) {
     if (ut) ut = perfMark('u.off', ut);
     // the defense triggers on the screen; the few who stayed home keep playing their zones while he's set to throw
     for (const d of back7) if (state === 'run') { if (settingUp && d.screenStay) zoneDefend(d, dt); else pursue(d, runner, dt); }
-    if (ut) ut = perfMark('u.def', ut);
+    if (ut) ut = perfMark('u.def.pursue', ut);
     if (kickoffPlay && state === 'run' && runner !== qb) kickoffBlock(qb, dt, WR_BLOCK_SPEED);
     else if (runner !== qb) { if (isRunPlay && !kickoffPlay && !qb.action && !(tut && (tutStep() || {}).still) && clock < RUN_DROP.time && !ball.pitch && !meshOn()) runDrop(dt); else if (ball.pitch && isRunPlay && !qb.action) { qb.pvx = qb.pvy = 0; setVelocity(qb, qb.x, qb.y, dt); qb.face = pitchFace(); }   /* (the toss: a reverse pivot, his back to the line until it goes; meshOn: a handoff's footwork starts at the snap, meshQB) */ else if (passCaught() && !qb.action) updateBlocker(qb, dt, QB_SPEED); else if (!meshQB(dt) && !rbpQB(dt)) idleQB(qb, dt); }   // (a caught pass: the QB goes downfield to block too)
   } else if (state === 'flight') {
     for (const p of [qb, ...ols, ...recs.filter(r => r.teBlock)]) { if (p.action || p.coast || p.hitBy) idleQB(p, dt); else afterThrow(p, dt, p === qb ? QB_SPEED : OL_RUN); }   // (no freezing once it's thrown: they keep working / follow the ball like they do once it's caught)
+    if (ut) ut = perfMark('u.off', ut);
     for (const d of dl) d.dropZone ? defendBall(d, dt) : lineToBall(d, dt);
+    if (ut) ut = perfMark('u.def.dl', ut);
     if (!catchers().includes(rb)) idleQB(rb, dt);
     for (const r of catchers()) updateReceiver(r, dt);
+    if (ut) ut = perfMark('u.off', ut);
     // (no route spacing once it's thrown: everyone who can get to it goes for it)
     for (const d of back7) defendBall(d, dt);
-    if (ut) ut = perfMark('u.def', ut);
+    if (ut) ut = perfMark('u.def.ball', ut);
     updateFlight(dt);
     if (ut) ut = perfMark('u.ball', ut);
   } else if (state === 'loose') {

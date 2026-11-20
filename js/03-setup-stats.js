@@ -1438,7 +1438,7 @@ function reset() {
   annReset();   // (the announcers: a finished line goes, one still being written runs into the pre-snap)
   flagPen = null;   // (v0.68: no flag carries into the next play)
   if (kitHold) { kitHold = false; applyKits(); }   // (the kick's bodies kept their kits behind the sim box: the real ones come back with the new play)
-  if (Array.isArray(ols) && qb) for (const p of allPlayers()) { if (!p) continue; p.armsUp = false; p.refToss = 0; p.refTossK = 0; p.coast = null; p.crease = null; p.flat = null; }   // (crease / flat: the paper reactions, one play only)   // (not on the very first reset at load: nobody exists yet)
+  if (Array.isArray(ols) && qb) for (const p of allPlayers()) { if (!p) continue; p.armsUp = false; p.refToss = 0; p.refTossK = 0; p.penK = 0; p.penL = 0; p.penJump = 0; p.coast = null; p.crease = null; p.flat = null; }   // (crease / flat: the paper reactions, one play only)   // (not on the very first reset at load: nobody exists yet)
   //   // (a kick rusher's raised arms never carry into the next play; nor an old scorer's end-zone coast: the camera panned to him, by then an unrelated man, at every later whistle until the next kickoff)
   if (tut && tut.koUnflip) { tut.koUnflip = false; if (twoP && twoP.koOnly) { flipSides(); twoP = null; } }   // (the tutorial's kickoff return is over: the sides go back now, not while the players are still on the field in their kits)
   if (tut && !(tutStep() || {}).kick) { kick = null; kickoff = null; kickoffPlay = false; puntPlay = null; puntRet = puntRetPlay = false; game.kickPending = null; }   // (nothing of a kicking lesson lingers into the next play)
@@ -1462,7 +1462,7 @@ function reset() {
   if (!tut && !exhibition && !game.over) preSnap = { yl: YL, fl: !!(twoP && twoP.flipped && twoP.ai), game: JSON.parse(JSON.stringify(game)), los, down, ltg: lineToGain, patMode, stats: JSON.parse(JSON.stringify(STATS)) };
   noPlayLines = false; kickoffPlay = false;   // (a fresh snap setup: a kickoff's flags must not outlive it, or the lines stayed hidden for the whole next play when it was advanced quickly)
   ballFar = -Infinity; downPend = null;
-  fourthPending = patMode === 'choose' || ((down === 4 || fgOption()) && !preKickLive());   // (v0.68: your own offense lines up and picks with the corner buttons, preKickBtns; the dim stays for the computer / online / tutorial)
+  fourthPending = patMode === 'choose' || down === 4 || (fgOption() && !preKickLive());   // (v0.70: 4th down = the centre choice for everyone again; after it the corner buttons (preKickBtns) keep the other option. A field goal on another down: your offense = corner only)
   preKickBack = null;
   if (aiOff() && down === 4 && patMode === null && !tut) showBanner('4TH DOWN', '#ffffff', '#3a1b1b', downAndDistance());   // (their 4th down, on defense: you see it coming)
   clock = 0;

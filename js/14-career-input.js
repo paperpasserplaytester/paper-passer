@@ -895,6 +895,7 @@ const pageKey = () => (results ? results.screen + (teamPick ? ':pick' : '') : tu
 // the snapshot's size (snapK) when the fold starts (drawCrumple). (crumpleHi is freed right after.)
 const crumpleHi = document.createElement('canvas');
 function startCrumple(rect, hi = false) {   // rect: crumple only that part of the screen (a popup's card), not the whole page
+  if (PHONE_TEST.turn === 'OFF') return;   // (v0.70 phone test switch: pages cut)
   perfNote('crumple');   // (FRAME TIMES spike tag)
   // (just the 16:9 middle. Phones: a half-size snapshot, a quarter of the pixels to copy and to draw through every facet: the copy was the hitch at a page change)
   // (the whole canvas, the widened sides of a phone screen included: the page is DW logical px wide, from -PAD to W + PAD)
@@ -1067,7 +1068,7 @@ function crumpleClamp(c, now) {   // (v0.70) a hitch mid-fold: the fold holds fo
   if (gap > (c.maxGap || 0) && now > c.t0) c.maxGap = gap;   // (test readout)
 }
 function cglStart(src) {   // the picture into the texture (src = the canvas itself, or crumpleHi); false = use the 2D path
-  if (!CRUMPLE.gl) return false;
+  if (!CRUMPLE.gl || PHONE_TEST.turn === '2D') return false;
   const gl = cglInit(); if (!gl || gl.isContextLost() || src.width > CGL.max || src.height > CGL.max) return false;
   try {
     if (!CGL.tex) CGL.tex = gl.createTexture();
@@ -1253,7 +1254,7 @@ canvas.addEventListener('pointerdown', e => {
   }
   if (results) {   // CONTINUE / PLAY (and SIM GAME on the matchup screen)
     if (homeLeave) {   // the ARE YOU SURE box on the franchise home screen
-      if (e.button === 0) { const q = pointerPos(e); if (inBtn(q, LEAVE_YES)) { homeLeave = false; if (season && !exhibition && !tut && !ONL.on) { try { if (curSlot === null) autoAssignSlot(); else saveToSlot(curSlot, true); } catch (e) {} } results.screen = 'start'; try { setTimeout(syncOnLeave, 200); } catch (e2) {} } else if (inBtn(q, LEAVE_NO)) homeLeave = false; }
+      if (e.button === 0) { const q = pointerPos(e); if (inBtn(q, LEAVE_YES)) { homeLeave = false; results.screen = 'start'; if (season && !exhibition && !tut && !ONL.on) saveSoon(); else syncSoon(); } else if (inBtn(q, LEAVE_NO)) homeLeave = false; }
       return;
     }
     if (tour && !(e.button === 0 && tourClick(pointerPos(e)) === 'pass')) return;   // (a `do` step's lit rects take the click: it falls through to the screen below)
@@ -1388,7 +1389,8 @@ canvas.addEventListener('pointerdown', e => {
   if (((state === 'pre' && fourthPending) || patMode === 'choose') && e.button === 0 && !(rec && rec.replaying)) {   // (the decision dim is up: FIRST, before any on-field picker, and it swallows the click hit or miss)
     const p = pointerPos(e);
     const hit = decisionButtons().find(b => inBtn(p, b));
-    if (hit && hit.id === 'punt') { if (simSTOn()) doPunt(); else startMyPunt(); }   // (SIM SPECIAL TEAMS: the punt is simulated)
+    if (hit && (hit.id === 'punt' || hit.id === 'fg') && preKickLive()) { fourthPending = false; preKickDo(hit.id); }   // (v0.70 your offense: the kick unit comes on with GO FOR IT left in the corner)
+    else if (hit && hit.id === 'punt') { if (simSTOn()) doPunt(); else startMyPunt(); }   // (SIM SPECIAL TEAMS: the punt is simulated)
     else if (hit && hit.id === 'fg') startFieldGoal();
     else if (hit && hit.id === 'pat') { patMode = 'kick'; los = 85 * YL; startFieldGoal(); }   // from the 15
     else if (hit && hit.id === 'two') { patMode = 'two'; fourthPending = false; }          // one play from the 2
@@ -1963,7 +1965,7 @@ function perfSpike(gap) {   // frame(), first thing: was the frame before a spik
 }
 const perfLine = s => `${s.ms.toFixed(0)}ms (gap ${s.gap.toFixed(0)}, upd ${s.u.toFixed(0)}) ${s.st}${s.tags.length ? ' [' + s.tags.join(',') + ']' : ''}${s.parts.length ? '  ' + s.parts.map(([k, v]) => k + ' ' + v.toFixed(0)).join(' ') : ''}`;
 function perfCopy() {   // the spike ring as text, onto the clipboard (pointerup: phones only allow it from a finger's release)
-  const P = perfS, txt = `Paper Passer spikes  ${gfxMode()} L${liteLevel()}  ${canvas.width}x${canvas.height} x${RK.toFixed(2)}  ${navigator.userAgent}\n` + (P.l1 ? P.l1 + '\n' + P.l2 + '\n' + P.l3 + '\n' : '') + P.spikes.map(s => `t${s.t}s  ` + perfLine(s)).join('\n');
+  const P = perfS, txt = `Paper Passer spikes  ${gfxMode()} L${liteLevel()}  ${canvas.width}x${canvas.height} x${RK.toFixed(2)}  ${phoneTestTxt()}  ${navigator.userAgent}\n` + (P.l1 ? P.l1 + '\n' + P.l2 + '\n' + P.l3 + '\n' : '') + P.spikes.map(s => `t${s.t}s  ` + perfLine(s)).join('\n');
   let ok = false;
   try { if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(txt); ok = true; } } catch (e) {}
   if (!ok) try { const ta = document.createElement('textarea'); ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); } catch (e) {}
@@ -1972,6 +1974,7 @@ function perfCopy() {   // the spike ring as text, onto the clipboard (pointerup
 let perfTap = null;
 window.addEventListener('pointerdown', e => { perfTap = null; if (!SETTINGS.perfHud || !perfS.box) return; const p = pointerPos(e); if (inBtn(p, perfS.box)) { perfTap = e.pointerId; e.stopImmediatePropagation(); e.preventDefault(); } }, true);
 window.addEventListener('pointerup', e => { if (perfTap == null || perfTap !== e.pointerId) return; perfTap = null; e.stopImmediatePropagation(); perfCopy(); }, true);
+for (const t of ['pointerdown', 'pointerup', 'keydown']) window.addEventListener(t, perfEvOff);   // (v0.70: end of a timed pointer / key event, 01's perfEvOn)
 // v0.62: rough MB of canvas backing stores alive (w x h x 4 of every canvas the game keeps: the screen, stands, field cache, desks, button / face / sideline
 // sprites, replay snaps, kick bars). Only for the FRAME TIMES line; a canvas freed with freeCanvas counts 0
 function canvasMB() {
@@ -1988,7 +1991,7 @@ function perfDraw(ms, now) {
   const f = n => n.toFixed(1), lv = liteLevel();
   P.l1 = `${Math.round(P.dN * 1000 / Math.max(1, now - P.t0))} FPS   UPD ${f(P.uS / Math.max(1, P.uN))} / ${f(P.uM)}   DRAW ${f(P.dS / Math.max(1, P.dN))} / ${f(P.dM)} ms`;
   P.l2 = `avg / worst   ${gfxMode()}${lv ? ' L' + lv : ''}   ${canvas.width}x${canvas.height} (x${RK.toFixed(2)})  HI${RK_HI}  DM ${dmOn ? 'on' : 'off'}  BTN ${P.btn}`;
-  P.l2 += `  CANVAS ~${canvasMB()} MB`;   // (v0.62: rough canvas memory alive: Safari drops backing stores past its budget = black frames)
+  P.l2 += `  CANVAS ~${canvasMB()} MB  ${phoneTestTxt()}`;   // (v0.70: the phone test switches)   // (v0.62: rough canvas memory alive: Safari drops backing stores past its budget = black frames)
   const top = Object.keys(P.parts).map(k => [k, P.parts[k] / Math.max(1, P.dN)]).sort((a, b) => b[1] - a[1]).slice(0, 2);
   P.l3 = `${Math.round(P.pN * 1000 / Math.max(1, now - P.t0))} paints/s   ` + (top.length ? top.map(([k, v]) => `${k} ${f(v)}`).join('   ') + ' ms' : '');
   P.t0 = now; P.uS = P.uM = P.uN = P.dS = P.dM = P.dN = P.pN = 0; P.parts = {};
@@ -2046,6 +2049,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   if (pstStash && !exhibition) pstExhibitionOff();   // (left the exhibition: the franchise's stats come back)
   if (!bg) requestAnimationFrame(frame);   // (first, so a bug thrown below shows up in the console but can't stop the loop and freeze the whole game)
   perfSpike(now - last);   // (FRAME TIMES: the frame before, a spike?)
+  if (SETTINGS.perfHud && !perfWrapped) perfWrapAll();   // (v0.70: the save / sync / click timers go on the first time FRAME TIMES is)
   const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));   // (never negative: a timestamp older than the last one would stall the game step)
   if (!bg) liteTick(now - last);   // (performance mode: are the frames still slow?)
   last = now;
@@ -2137,6 +2141,23 @@ function deskSkip(now, gate, stepped) {
   if (now - lastPaint >= STEP_MIN * 1000) return false;
   paintHold(); return true;
 }
+// v0.70: the stands and the field cache are built and drawn once while the matchup screen / pregame show is still up, a step a painted frame,
+// so the kickoff's first frame only draws them (it was a ~100 ms build + a ~430 ms first draw). The page paints over the warm-up's picture.
+// Same checks drawCrowd / fieldCacheDraw make (home team, bench kits, stand size, lighting, drive direction, scale): nothing builds twice.
+const WARM = { on: true };
+let warmSt = null;
+const crowdStale = () => !crowdImg || crowdImg.home !== homeKey() || crowdImg.kit !== benchKit() || crowdImg.k !== crowdK() || crowdImg.lit !== crowdLit();
+function gameWarm() {
+  if (!WARM.on || settingsOpen || crumple || PHOTO_SHOOT || CO || ONL.on) return;
+  const mir = mirrorFor(), sig = [homeKey(), benchKit(), crowdK(), crowdLit(), mir, RK, TUI.on].join('/');   // (mirrorFor = the direction draw() will use: the pregame show runs after the kickoff's sides are set, so a flipped field is rebuilt under it)
+  if (!warmSt || warmSt.sig !== sig) warmSt = { sig, step: crowdStale() || !fieldImg || fieldImg.hk !== homeKey() || fieldImg.mir !== mir ? 0 : 3 };
+  const S = warmSt; if (S.step >= 3) return;
+  menuMoving = true;   // (keeps the menu painting until the warm-up is through)
+  if (S.step === 0) { if (!lightGfx() && crowdStale()) buildCrowd(); }
+  else if (S.step === 1) { if (crowdImg) for (const v of crowdCanvases(crowdImg)) if (v.width) ctx.drawImage(v, 0, 0, 2, 2, -PAD - 9, -9, 1, 1); }   // (each stand piece drawn once, off the page)
+  else { ctx.save(); try { draw(); } catch (e) {} ctx.restore(); perfNote('warm'); }   // (the field cache + one whole game frame, painted over below)
+  S.step++;
+}
 function paintFrame(paintT0, pm, now) {
   let pt = paintT0;
   // (touch: the canvas has RK x the pixels, drawn through a scale; the 16:9 game sits in the middle of a wider canvas, PAD logical px in)
@@ -2145,7 +2166,7 @@ function paintFrame(paintT0, pm, now) {
   ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0);
   if (pm) pt = perfMark('clear', pt);
   if (hl && hl.bg) { if (results.screen === 'result') { reelBgDraw(); if (pm) pt = perfMark('reel', pt); } drawMenus(); if (pm) pt = perfMark('menus', pt); }   // (the end-of-game reel: the plays, then the result screen over them)
-  else if (hl) { draw(); if (hl) drawHlBar(); hlDelStep(); if (hl) drawHlDel(); if (pm) pt = perfMark('hl', pt); } else if (HT) { drawHalfShow(); if (pm) pt = perfMark('half', pt); } else if (results) { if (!settingsOpen || MENU_PACE.underSettings) { drawMenus(); if (pm) pt = perfMark(crumple ? (crumple.painted ? 'menusUC' : 'menusUC1') : 'menus', pt); } } else { draw(); if (pm) pt = perfMark('draw', pt); }   // (v0.55: settings starts with a full-screen desk: the menu under it isn't drawn)
+  else if (hl) { draw(); if (hl) drawHlBar(); hlDelStep(); if (hl) drawHlDel(); if (pm) pt = perfMark('hl', pt); } else if (HT) { gameWarm(); drawHalfShow(); if (pm) pt = perfMark('half', pt); } else if (results) { if (results.screen === 'matchup') gameWarm(); if (!settingsOpen || MENU_PACE.underSettings) { drawMenus(); if (pm) pt = perfMark(crumple ? (crumple.painted ? 'menusUC' : 'menusUC1') : 'menus', pt); } } else { draw(); if (pm) pt = perfMark('draw', pt); }   // (v0.55: settings starts with a full-screen desk: the menu under it isn't drawn)
   if (settingsOpen) { drawSettings(); if (pm) pt = perfMark('settings', pt); }
   if (slotUI) { drawSlots(); if (pm) pt = perfMark('slots', pt); }
   if (crumple) { drawCrumple(); if (crumple) crumple.painted = true; if (pm) pt = perfMark('crumple', pt); }
@@ -2199,7 +2220,7 @@ function fpsCapTick(dtS, now) {   // (after each paint: is 60 being held? Paint 
   if (fpsCap.lock || (SETTINGS.fps || 'AUTO') !== 'AUTO' || paused) return;
   const slow = paintAvg > FPS_CAP.slowMs || (fpsInterval() < 20 && fpsCap.gap > FPS_CAP.slowMs);
   fpsCap.over = slow ? fpsCap.over + dtS : Math.max(0, fpsCap.over - dtS * 0.5);
-  if (fpsCap.over > FPS_CAP.holdS) { fpsCap.lock = true; perfNote('fps 30 (locked)'); }
+  if (fpsCap.over > FPS_CAP.holdS && !(dynResOn() && dynRes.k != null && dynRes.k > DYN_RES.min)) { fpsCap.lock = true; perfNote('fps 30 (locked)'); }   // (v0.70: the resolution drops first, the 30 lock is the last resort)
 }
 // the screen stays on in touch mode, even with no touches for a long stretch (the Wake Lock API; asked for on the first touch, taken again when the page comes back)
 let wakeLock = null;
@@ -2303,9 +2324,10 @@ function fitScreen() {
   PAD = Math.round((asp * H - W) / 2);
   RK = TUI.on ? RENDER_K : 1;
   if (liteLvl) RK = Math.min(RK, LITE.rk) * (liteLvl > 1 ? LITE.slowRk : 1);   // (performance mode: a phone's canvas at 1x; frames still slow: fewer pixels on every device)
-  if (dynResOn()) { if (dynRes.k == null) { const r = layRect(canvas); dynRes.k = Math.max(DYN_RES.min, Math.min(DYN_RES.max, GAME_RES.touchMax, (window.devicePixelRatio || 1) * Math.max(1, r.width) / (W + 2 * PAD))); } RK = dynRes.k; }   // (v0.60 AUTO phones: the scale dynResTick settled on)
+  if (dynResOn()) { if (dynRes.k == null) { const r = layRect(canvas); dynRes.k = Math.max(DYN_RES.min, Math.min(DYN_RES.max, DYN_RES.start, GAME_RES.touchMax, (window.devicePixelRatio || 1) * Math.max(1, r.width) / (W + 2 * PAD))); } RK = dynRes.k; }   // (v0.60 AUTO phones: the scale dynResTick settled on)
   if (dynRes.on === 2) RK = Math.min(RK, DYN_RES.min);   // (v0.62: the cold open on a phone (AUTO) runs at the lowest dynamic-resolution tier from its first frame)
   if (RK_HI && dynRes.on !== 2) { const r = layRect(canvas); RK = Math.max(RK, Math.min(RK_HI === 1 ? (TUI.on ? GAME_RES.touchMax : GAME_RES.max) : FV.resMax, (window.devicePixelRatio || 1) * Math.max(1, r.width) / (W + 2 * PAD))); }   // (formation view: sharp at every zoom; in a game: sharper text, GAME_RES)
+  if (TUI.on && PHONE_TEST.res !== 'AUTO') RK = +PHONE_TEST.res;   // (v0.70 phone test switch: a pinned scale)
   const cw = Math.round((W + 2 * PAD) * RK), ch = Math.round(H * RK);
   if (RK !== fitRK) { fitRK = RK; btnSprClear(); perfNote('RK ' + RK.toFixed(2)); }   // (v0.55: button sprites are made at the canvas's pixel scale)
   if (canvas.width !== cw || canvas.height !== ch) { menuInputAt = PERF_NOW(); fitForce = true; }   // (a resize clears the canvas: paint again, this frame)
@@ -2320,7 +2342,8 @@ const dynRes = { k: null, over: 0, under: 0, want: 0, on: 0 };
 const dynResOn = () => DYN_RES.on && TUI.on && gfxMode() === 'AUTO' && !liteOn() && !results;
 function dynResTick(dtS) {
   if (!dynResOn() || dynRes.k == null || paused || fxShowing()) { dynRes.over = dynRes.under = 0; return; }   // (v0.62: never a resolution step while a celebration or a reel is on screen)
-  if (paintAvg > DYN_RES.budget) { dynRes.over += dtS; dynRes.under = 0; } else if (paintAvg < DYN_RES.upMs) { dynRes.under += dtS; dynRes.over = 0; } else dynRes.over = dynRes.under = 0;
+  const iv = fpsInterval(), slowGap = fpsCap.gap > iv * DYN_RES.gapSlow, room = fpsCap.gap < iv * DYN_RES.gapOk && paintAvg < DYN_RES.upMs && !fpsCap.lock;   // (v0.70: the real time between paints, not only the JS paint: a phone can paint in 5 ms and still miss frames)
+  if (paintAvg > DYN_RES.budget || slowGap) { dynRes.over += dtS; dynRes.under = 0; } else if (room) { dynRes.under += dtS; dynRes.over = 0; } else dynRes.over = dynRes.under = 0;
   const want = dynRes.over > DYN_RES.down ? -1 : dynRes.under > DYN_RES.up ? 1 : 0;
   if (!want || !(state === 'pre' || state === 'done')) return;
   const k = Math.max(DYN_RES.min, Math.min(DYN_RES.max, GAME_RES.touchMax, Math.round((dynRes.k + want * DYN_RES.step) * 100) / 100));

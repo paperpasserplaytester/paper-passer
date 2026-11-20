@@ -223,6 +223,13 @@ function startReplay() {
   rec.rt = 0; rec.idx = 0;
   msg = msg.replace('  -  click', '') + '\nREPLAY  -  click to skip  -  hold the mouse for slow motion  -  right-drag to look around';
 }
+function flagCam() {   // v0.70 (stepReplay) a pure function of the tape clock: eases in on rec.flag's spot from `lead` s before it, holds, eases back out to the play's own camera
+  const F = REF.flagCam, sm = x => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
+  let W = 0, ws = 0, fx = 0, fy = 0;   // (several fouls: the camera goes to each in time; overlapping windows blend between them)
+  for (const f of rec.flags) { const u = rec.rt - f.t, w = u < 0 ? sm(1 + u / F.lead) : u < F.hold ? 1 : sm(1 - (u - F.hold) / F.fall); if (w <= 0) continue; W = Math.max(W, w); ws += w; fx += f.x * w; fy += f.y * w; }
+  if (W <= 0) return; fx /= ws; fy /= ws;
+  camX += (fx - camX) * W * F.pan; camY += (fy - camY) * W * F.pan; zoom *= 1 + (F.push - 1) * W;
+}
 function stepReplay(dt, scrub = 0) {
   const fr = rec.frames, slow = pressAt && performance.now() - pressAt > 200;
   rec.slow = slow;
@@ -297,6 +304,7 @@ function stepReplay(dt, scrub = 0) {
   replayPanClamp();
   camX = rec.camBase[0] + replayPan.x; camY = rec.camBase[1] + replayPan.y; zoom = replayZoom() * replayUserZoom / userZoom; passPull = 1;
   if (revOn() && !hl) revCam(dt, a, b, last);   // (v0.68 the booth's camera: follows the ball, then pushes in on it at the line)
+  else if (rec.flags && rec.flags.length && !hl && replayPan.lockX == null) flagCam();   // (v0.70 a flagged play: pushed in on each foul around its time)
   if (hl && hl.mode === 'half') {   // the halftime reel's director: tighter than a replay, on the ball (or the blocker at a big block), leading the runner, pushing in at each moment
     const C = HLREEL.cam, apx = (hl.list[hl.i] || {}).apex || [];
     const kk = last ? 0 : Math.min(1, Math.max(0, (rec.rt - a.t) / (b.t - a.t))), bx = last ? a.ball.x : a.ball.x + (b.ball.x - a.ball.x) * kk, by = last ? a.ball.y : a.ball.y + (b.ball.y - a.ball.y) * kk;
@@ -515,6 +523,7 @@ function hlYard(c) {
 }
 const hsShownOut = c => !hl.bg && hl.mode === 'half' && (c.shows || 0) >= HLREEL.maxShows;   // (v0.52: no play is shown a third time by any path of the halftime show; an instant replay counts as one)
 function hlPlay(i, dir = 1) {
+  perfNote('hlPlay ' + i + (hl ? ' ' + hl.mode : ''));   // (v0.70 FRAME TIMES: which clip started, to find clips started frame after frame)
   hlKitsBack();   // (the last tape's teams off first)
   if (i < 0) i = 0;
   if (!hl.bg && hl.mode === 'half') { while (i >= 0 && i < hl.list.length && hsShownOut(hl.list[i])) i += dir < 0 ? -1 : 1; if (i < 0) i = 0; }
@@ -2303,14 +2312,14 @@ function annPut(key, o = {}) {
   for (const l of lines) { l.pri = pri; l.v = v; l.hold = !!o.hold && l.who === 'A'; }
   const c = S.cur;
   if (c && c.hold) { c.hold = false; c.end = Math.max(c.end, now); if (pri >= c.pri || now >= c.end) { S.q = lines.slice(1); return annStart(lines[0], now); } }   // (the held line's result replaces it)
-  const busy = c && now < c.end + ANN.gap;
-  if (!busy || pri > c.pri) { S.q = lines.slice(1); return annStart(lines[0], now); }
+  const busy = c && now < annDone(c) + ANN.gap;
+  if (!busy || (pri > c.pri && !o.wait)) { S.q = lines.slice(1); return annStart(lines[0], now); }   // (o.wait: never cut the line that is up, queue behind it or drop)
   if (!o.add) return;
   S.q = S.q.filter(q => q.who === 'A' && q.pri >= pri).concat(lines).slice(0, ANN.maxQ);
 }
 function annStart(l, now) {
   const S = ANN_S, set = (ANN_LINES[l.key] || {})[l.who]; if (!set || set[l.i] == null) return;
-  l.text = annFill(set[l.i], l.v); l.at = now; l.end = now + (annLite() ? 0 : l.text.length / ANN.cps); l.big = l.pri >= ANN.crazy; l.bub = null;
+  l.text = annFill(set[l.i], l.v); l.at = now; l.end = now + (annLite() ? 0 : l.text.length / (annReelOn() ? ANN.reelCps : ANN.cps)); l.read = annReelOn() ? now + l.text.split(' ').length * ANN.reelWord : 0; l.big = l.pri >= ANN.crazy; l.bub = null;
   const old = S.cur;
   if (!old || annGone(old, now)) { S.popAt = now; S.sw = -9; S.was = null; }
   else if (old.who !== l.who) { S.sw = now; S.was = old.who; }
@@ -2319,11 +2328,12 @@ function annStart(l, now) {
   if (ONL.on && ONL.host) { try { NET.send({ t: 'ann', w: l.who, k: l.key, i: l.i, v: l.v || 0, p: l.pri, h: l.hold ? 1 : 0 }); } catch (e) {} }
 }
 const annLite = () => liteOn() || touchLite();
-const annGone = (c, now) => !c.hold && now > c.end + ANN.hold + ANN.fade;
+const annDone = c => Math.max(c.end, c.read || 0);   // (the line is written AND read: a reel line's minimum time up)
+const annGone = (c, now) => !c.hold && now > annDone(c) + ANN.hold + ANN.fade;
 function annTick() {   // the queue (from update(), only while a line is up, and from annDraw)
   const S = ANN_S, c = S.cur; if (!c) return; const now = annNow();
   if (c.hold) { if (now > c.at + ANN.holdMax) { c.hold = false; c.end = Math.max(c.end, now); } else return; }
-  if (S.q.length) { if (now >= c.end + ANN.gap) annStart(S.q.shift(), now); }
+  if (S.q.length) { if (now >= annDone(c) + ANN.gap) annStart(S.q.shift(), now); }
   else if (annGone(c, now)) { annFreeLine(c); S.cur = null; }
 }
 function annFreeLine(c) { if (c && c.bub) { freeCanvas(c.bub.b); freeCanvas(c.bub.t); c.bub = null; } }
@@ -2366,6 +2376,7 @@ function annMiss(c, kind, ico) {   // (missReel: a tackler beaten by a move; ico
 }
 function annThrow(P, t) {   // (throwBall: the release)
   if (!annGate() || !P || !t) return;
+  ANN_S.pl.thr = { x: P.x, y: P.y };   // (where it was thrown from: an incompletion is judged along this line)
   if ((t.x - P.x) / YL >= ANN.deepYd) { ANN_S.pl.deep = true; annSay('deep', { pri: 1.5, hold: true, who: 'A' }); }
   else annSay('throw', { pri: 0, who: 'A', odds: 0.45 });
 }
@@ -2401,28 +2412,53 @@ function annPlayEnd(text, next, kind, ko, pen) {   // (endPlay: the result line,
   if (ko) return annSay('retDown', { ...o, pri: 1 });
   if (/SACKED/.test(T)) return;   // (sackCall said it)
   if (Number.isFinite(next) && next <= 0) return annSay('safety', { ...o, pri: 4 });
-  if (/incomplete/i.test(T)) return annSay('inc', { ...o, pri: 1 });
+  if (/incomplete/i.test(T)) return annSay(annIncKey(T), { ...o, pri: 1 });
   if (next > los && next + BALL_TIP >= lineToGain) return annSay(g >= 15 ? 'bigGain' : 'first', { ...o, pri: 1.5 });
   if (down >= 4) return annSay('downs', { ...o, pri: 3 });
   annSay(g >= 15 ? 'bigGain' : g >= 4 ? 'gain' : g >= 1 ? 'short' : g === 0 ? 'noGain' : 'loss', { ...o, pri: 1 });
+}
+function annIncKey(T) {   // over / under / wide: the ball's landing spot vs the intended man, along the throw's own line (world coords, so a mirrored or flipped drive reads the same)
+  const P = ANN_S.pl, r = tgt, A = ANN;
+  if (!P.thr || !r || ball.tipped || ball.pbu || /batted|broken|tipped|drop|deflect|thrown away/i.test(T) || r.hasBall) return 'inc';
+  const dx = ball.x - P.thr.x, dy = ball.y - P.thr.y, L = Math.hypot(dx, dy); if (L < YD) return 'inc';
+  const ux = dx / L, uy = dy / L, ex = ball.x - r.x, ey = ball.y - r.y, along = (ex * ux + ey * uy) / YD, across = Math.abs(ex * uy - ey * ux) / YD;
+  if (across > A.wideYd && across > Math.abs(along)) return 'incWide';
+  return along > A.overYd ? 'incOver' : along < -A.overYd ? 'incShort' : 'inc';
+}
+function annInjury(p, s, out) {   // (slExit / a mild one kept in: one line per injury, neutral, never a joke; waits for the play's call, never cuts it)
+  if (!annGate() || !s || !s.inj) return;
+  const k = !out ? 'injStay' : s.inj.season ? 'injSeason' : s.inj.re || s.inj.sev >= 2 ? 'injCart' : s.inj.sev === 1 ? 'injHelp' : 'injWalk';
+  annSay(k, { pri: 2, add: true, wait: true, vars: { name: s.short || s.name || (p && p.num ? '#' + p.num : 'he') } });
 }
 // --- announcers: the halftime reel (hl.mode 'half', never the end-of-game reel behind the result screen, hl.bg): A sets each clip up (hlPlay), reacts
 // to each apex moment as its tape time goes by (beside hsPops), B comments at the clip's end or on its second run (hl.again). Skipping = a new clip clears it.
 const annReelOn = () => !!hl && hl.mode === 'half' && !hl.bg && SETTINGS.announcers !== false && !tut && !CO;
 const ANN_REEL_K = { pick: 'pick', pickTd: 'pick', fumble: 'fumble', fg: 'fg', hit: 'hit', iconic: 'run', move: 'run', broken: 'run', spectacular: 'catch', moss: 'catch', tipcatch: 'catch', pbu: 'def', block: 'def' };
+function annReelColor(c) {   // B's colour line from what the clip's record really holds: air time, men beaten, the pancake that sprang it, the defense, his name
+  const A = ANN, ap = c.apex || [], n = ap.filter(e => e.k === 'move' || e.k === 'broken').length, air = c.air ? c.air[1] - c.air[0] : 0, opts = [];
+  if (air > 0 && air <= A.reelAirQuick) opts.push({ k: 'reel_quick', v: { t: air.toFixed(1) } });
+  if (air >= A.reelAirHang) opts.push({ k: 'reel_hang', v: { t: air.toFixed(1) } });
+  if (n >= 2) opts.push({ k: 'reel_shed', v: { n } }); else if (n === 1) opts.push({ k: 'reel_shed1' });
+  if (ap.some(e => e.k === 'block')) opts.push({ k: 'reel_block' });
+  if (c.def) opts.push({ k: 'reel_dfx' });
+  if (c.who) opts.push({ k: 'reel_who', v: { who: String(c.who).split(' ').slice(-1)[0] } });
+  return opts.length && Math.random() < 0.8 ? opts[Math.floor(Math.random() * opts.length)] : null;   // (now and then the old general line, so the mix stays fresh)
+}
 function annReelClip(c) {
   if (!annReelOn() || !c) return;
-  annClear();
-  if (hl.again) return annPut('reel_again', { who: 'B', pri: 1 });
+  const S = ANN_S, cur = S.cur, wait = cur && !cur.hold && annNow() < annDone(cur);   // (a line still being read finishes first: the new clip's line waits behind it)
+  S.q = []; if (!wait) annClear();
+  const o = { pri: 1, add: true, wait: true };
+  if (hl.again) return annPut('reel_again', { ...o, who: 'B' });
   const k = c.lg ? 'lg' : /TOUCHDOWN|PICK SIX|SCOOP|RETURN TD/.test(c.title || '') ? 'td' : ANN_REEL_K[c.kind] || 'gain';
-  annPut('reel_' + k, { who: 'A', pri: 1 });
+  annPut('reel_' + k, { ...o, who: 'A' });
 }
 function annReelTick(t0, t1, fr) {
   if (!annReelOn() || !rec || rec.paused) return;
   const c = hl.list[hl.i]; if (!c || !fr || !fr.length) return;
-  for (const e of c.apex || []) if (e.t > t0 && e.t <= t1 && ANN_LINES['rx_' + e.k]) annPut('rx_' + e.k, { who: 'A', pri: 3 });
+  for (const e of c.apex || []) if (e.t > t0 && e.t <= t1 && ANN_LINES['rx_' + e.k]) annPut('rx_' + e.k, { who: 'A', pri: 3, wait: true });   // (a reaction never talks over a line: dropped if one is up)
   const last = (c.apex || []).reduce((a, e) => Math.max(a, e.t), -1e9), fe = fr[fr.length - 1].t, end = Math.min(fe - 0.3, Math.max(last + ANN.reelGap, fe - ANN.reelEnd));   // (B's comment ends the clip with time to read it)
-  if (!hl.again && t0 < end && t1 >= end) annPut(c.lg ? 'reel_lgEnd' : 'reel_end', { who: 'B', pri: 2, add: true });
+  if (!hl.again && t0 < end && t1 >= end) { const cl = c.lg ? null : annReelColor(c); annPut(cl ? cl.k : c.lg ? 'reel_lgEnd' : 'reel_end', { who: 'B', pri: 2, add: true, wait: true, vars: cl && cl.v }); }
 }
 // --- announcers: drawing (screen space, top left under PAUSE_BTN). The face card, the speaker's face (swaps with a slide), the bubble with its tail at him.
 function annFace(i) {

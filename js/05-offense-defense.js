@@ -2008,7 +2008,8 @@ function rbpBeaten(r, eng) {
     if (!rbpOL(b)) continue;
     b.stunUntil = clock + 0.12;
     const grab = Math.random() < RBP.ride.grab * (1 - (b.rbl ?? 0.5));
-    b.rbpRide = { d: r, until: clock + (grab ? RBP.ride.grabTime : RBP.ride.time), grab };
+    b.rbpRide = { d: r, until: clock + (grab ? RBP.ride.grabTime : RBP.ride.time), grab, s: grab ? flagSev('hold') : 0 };
+    if (grab && flagsOn()) penLook(b, 'hold', r, b.rbpRide.s);   // (v0.70 the grab shows, flagged or not)
   }
 }
 function rbpRide(b, dt, speed) {
@@ -2019,10 +2020,7 @@ function rbpRide(b, dt, speed) {
   const px = b.x, py = b.y;
   moveToward(b, d.x - 0.3 * YD, d.y + (Math.sign(b.y - d.y) || 1) * 0.7 * YD, speed * 1.1 * dt);
   d.slow = Math.max(d.slow || 0, w.grab ? RBP.ride.grabSlow : RBP.ride.slow);
-  if (w.grab && !rbpPen && !flagPen && runner && runner.x > b.x + RBP.ride.past * YL && (REF.force === 'hold' || Math.random() < RBP.ride.flag * dt * flagK('flHold'))) {   // (v0.68: only with penalties on, x the HOLDING / PENALTIES sliders; an official who can see it throws the flag)
-    const forced = REF.force === 'hold'; if (forced) REF.force = null;
-    if (forced || (Math.random() >= REF.miss && !(SL.cast && SL.cast.rf && refNearest(b.x, b.y) < 0))) { rbpPen = { num: b.num || '' }; popup(b, 'HOLDING', '#ffd23f'); try { refFlag(b.x, b.y); } catch (e) {} }
-  }
+  if (w.grab && !w.seen && runner && runner.x > b.x + RBP.ride.past * YL) { w.seen = true; if (flagsOn()) rbpFlag(b, d); }   // (v0.70 the grab is the foul; called once the runner is past him, by REF.call)
   clampField(b); setVelocity(b, px, py, dt); b.face = d.x >= b.x ? 1 : -1; b.moving = true;
   return true;
 }
@@ -2038,36 +2036,88 @@ function rbpPenalty(kind, next) {
 // knocked down = no flag), and the result goes through endPlay's one `pen` line (flagPenalty -> { spot, text, first?, sig }). Accept / decline: v0.68
 // `// --- penalty choice` below (the fouled side picks: a card for a person, penChoose for the CPU). Sims never run this code. Offside / false start on plays from scrimmage: not built (no pre-snap movement exists).
 let flagPen = null;   // the flag waiting for the whistle: { type, num, x, y, ghost }
-const FLAG_NAME = { pphold: 'HOLDING', dpi: 'PASS INTERFERENCE', opi: 'PASS INTERFERENCE', rough: 'ROUGHING THE PASSER', false: 'FALSE START', offside: 'OFFSIDE' };
-const PEN_KEY = { pphold: 'penPpHold', dpi: 'penDpi', opi: 'penOpi', rough: 'penRough', false: 'penFalse', offside: 'penOffside' };   // (v0.68 announcer line set per foul, ANN_LINES)
-const FLAG_SIG = { pphold: 'rfHold', dpi: 'rfPI', opi: 'rfPI', rough: 'rfRough', false: 'rfFalse', offside: 'rfOffside' };
-function flagCall(type, p, x, y, odds, o) {   // a foul (or a contact that could be called): true = flagged
-  if (!flagsOn() || flagPen || rbpPen || (rec && rec.replaying)) return false;
+const FLAG_NAME = { pphold: 'HOLDING', hold: 'HOLDING', dhold: 'DEFENSIVE HOLDING', dpi: 'PASS INTERFERENCE', opi: 'PASS INTERFERENCE', rough: 'ROUGHING THE PASSER', false: 'FALSE START', offside: 'OFFSIDE', encroach: 'ENCROACHMENT' };
+const PEN_KEY = { pphold: 'penPpHold', hold: 'penHold', dhold: 'flag', dpi: 'penDpi', opi: 'penOpi', rough: 'penRough', false: 'penFalse', offside: 'penOffside', encroach: 'penOffside' };   // (v0.68 announcer line set per foul, ANN_LINES)
+const FLAG_SIG = { pphold: 'rfHold', hold: 'rfHold', dhold: 'rfHold', dpi: 'rfPI', opi: 'rfPI', rough: 'rfRough', false: 'rfFalse', offside: 'rfOffside', encroach: 'rfOffside' };
+const FLAG_SLIDER = { pphold: 'flHold', hold: 'flHold', dpi: 'flDpi', dhold: 'flDpi', opi: 'flOpi', rough: 'flRough', false: 'flFalse', offside: 'flOff', encroach: 'flOff' };
+function flagSev(kind) { const r = REF.call.sev[kind] || [0.3, 1]; return r[0] + (r[1] - r[0]) * Math.random(); }
+function flagSeen(type, s, x, y) {   // v0.70 the chance a foul of severity s at (x, y) is called: obvious + close to an official = likely; never certain (REF.call)
+  const C = REF.call; if (!(typeof SL !== 'undefined' && SL.cast && SL.cast.rf)) return Math.min(C.max, (C.k[type] || 0.5) * (C.s0 + (1 - C.s0) * s)) * flagK(FLAG_SLIDER[type] || 'flHold');
+  const i = refNearest(x, y); if (i < 0) return 0;   // (everyone who could see it is on the turf)
+  const a = refAt(i), d = Math.hypot(a.x - x, a.y - y) / YD, dk = d <= C.near ? 1 : d >= C.far ? C.farK : 1 - (1 - C.farK) * (d - C.near) / (C.far - C.near);
+  return Math.min(C.max, (C.k[type] || 0.5) * (C.s0 + (1 - C.s0) * s) * dk) * flagK(FLAG_SLIDER[type] || 'flHold');
+}
+function flagCount() { return flagPen ? 1 + (flagPen.more ? flagPen.more.length : 0) : 0; }
+function flagNote(e) { if (!flagPen) flagPen = e; else (flagPen.more || (flagPen.more = [])).push(e); }
+// a foul (or a contact that could be called): o = { odds (chance it happens), foul (it already happened), s (severity), v (his man), contact (ghost flags only here), looked, look (look kind) }; true = flagged
+function flagCall(type, p, x, y, o = {}) {
+  if (!flagsOn() || (rec && rec.replaying) || flagCount() >= REF.call.most || (p && p.flagPid === runPid)) return false;
   const forced = REF.force === type || (REF.force === 'hold' && type === 'pphold');
-  let foul = forced || Math.random() < odds, ghost = false;
-  if (!foul && o && o.contact && Math.random() < REF.ghost * diffX('flags')) foul = ghost = true;   // (a flag with no foul: only where there was contact)
+  let foul = forced || o.foul || Math.random() < (o.odds || 0), ghost = false;
+  if (!foul && o.contact && Math.random() < REF.ghost * diffX('flags')) foul = ghost = true;   // (a flag with no foul: very, very rare, and only where there was contact)
   if (!foul) return false;
+  const s = forced ? 1 : o.s != null ? o.s : flagSev(o.look || type);
+  if (!ghost && !o.looked) penLook(p, o.look || type, o.v, s);   // (the foul you can see comes first; the official reacts to it)
   if (forced) REF.force = null;
-  else if (!ghost && Math.random() < REF.miss) return false;   // (a real foul nobody flagged)
-  if (typeof SL !== 'undefined' && SL.cast && SL.cast.rf && !forced && refNearest(x, y) < 0) return false;   // (everyone who could see it is on the turf)
-  flagPen = { type, num: (p && p.num) || '', x, y, ghost };
-  try { refFlag(x, y, !!(o && o.late)); } catch (e) {}
+  else if (!ghost && Math.random() >= flagSeen(type, s, x, y)) return false;   // (it happened, nobody flagged it)
+  if (p) p.flagPid = runPid;
+  flagNote({ type, num: (p && p.num) || '', x, y, ghost, ev: !ghost, s, side: p ? p.team : '' });
+  try { refFlag(x, y, !!o.late); } catch (e) {}
   popup(p, 'FLAG', '#ffd23f');
+  penTape(x, y);
   return true;
 }
-// pass protection (the line's beaten moment, updateLine): a sloppy blocker grabs his man instead of letting him go (he loses a step); the grab may be flagged
+// pass protection (the line's beaten moment, updateLine): a sloppy blocker grabs his man instead of letting him go (he loses a step): beaten and still reaching for him
 function ppHold(r, b) {
-  const H = REF.pphold; if (!flagsOn() || flagPen || !b) return;
+  const H = REF.pphold; if (!flagsOn() || !b) return;
   const skill = Math.max(0, Math.min(1, 0.5 + 0.22 * zc(rz(b, 'blk'))));
   const grab = REF.force === 'pphold' || REF.force === 'hold' || Math.random() < H.grab * (1.4 - skill);
-  if (!grab) { flagCall('pphold', b, b.x, b.y, 0, { contact: true }); return; }
+  if (!grab) { flagCall('pphold', b, b.x, b.y, { contact: true }); return; }   // (no grab: only the very rare ghost)
   r.slow = Math.max(r.slow || 0, H.slow);
-  flagCall('pphold', b, b.x, b.y, H.flag * flagK('flHold'), { contact: true });
+  flagCall('pphold', b, (b.x + r.x) / 2, (b.y + r.y) / 2, { foul: true, v: r });
+}
+// v0.70 defensive holding on a route (update, while the QB has it): a cover man on a receiver past REF.dhold.past YL gets one roll a play: a jersey grab or an early tackle
+function flagRoute() {
+  if (!flagsOn() || (state !== 'drop' && state !== 'pocket') || (rec && rec.replaying) || !Array.isArray(recs)) return;
+  const D = REF.dhold, fd = REF.force === 'dhold';
+  for (const r of recs) {
+    if (!r || r.team !== 'off' || r.action || r === rb || r.x - los < D.past * YL) continue;
+    for (const d of back7) {
+      if (d.action || d.dhPid === runPid || dist(d, r) > D.r * YD * (fd ? 2 : 1)) continue;
+      d.dhPid = runPid;
+      if (!fd && Math.random() >= D.odds) continue;
+      const tk = fd || Math.random() < D.tackle, s = flagSev(tk ? 'tackle' : 'grab');
+      r.slow = Math.max(r.slow || 0, tk ? D.slow[1] : D.slow[0]);   // (held: he loses a step)
+      penLook(d, tk ? 'tackle' : 'grab', r, s);
+      flagCall('dhold', d, (d.x + r.x) / 2, (d.y + r.y) / 2, { foul: true, s, v: r, looked: true });
+      if (fd) return;
+    }
+  }
+}
+// v0.70 a foul's look (looks only). Plain per-frame props, taped and sent like refToss: p.penK kind (1 holding: beaten, arms still reaching for him, 2 DPI arm bar, 3 OPI push-off,
+// 4 roughing shove, 5 a jump early / into his man, 6 an early tackle on a route, 7 a jersey grab on a route; his man: 8 held (ripping an arm free), 9 shoved / grabbed (arms flung out)),
+// p.penS severity 0-1 (how big the look is), p.penL s left of p.penD, p.penDx / penDy = world offset to his man (kept up to date by penLookTick from PEN_V, never stored on him)
+function penTape(x, y) { if (rec && !rec.replaying) { rec.big = true; (rec.flags || (rec.flags = [])).push({ x, y, t: rec.t || 0 }); } }   // v0.70 a flagged play is a BIG PLAY: its replay pushes in on each foul (flagCam, 02)
+const PEN_LK = { pphold: 1, hold: 1, dpi: 2, opi: 3, rough: 4, false: 5, offside: 5, encroach: 5, tackle: 6, grab: 7 }, PEN_VK = { pphold: 8, hold: 8, opi: 9, encroach: 9, tackle: 9, dpi: 9 }, PEN_V = new Map();
+function penLook(p, kind, v, s = 0.6) {
+  if (!p || !REF.look.on || !PEN_LK[kind]) return;
+  const one = (q, k, w) => { q.penK = k; q.penS = s; q.penD = q.penL = (REF.look.dur[kind] || 0.7) * (0.7 + 0.6 * s); q.penDx = w ? w.x - q.x : (q.face || 1) * YD; q.penDy = w ? w.y - q.y : 0; if (w) PEN_V.set(q, w); else PEN_V.delete(q); };
+  one(p, PEN_LK[kind], v);
+  if (v && PEN_VK[kind] && !(v.penL > 0) && !v.action) one(v, PEN_VK[kind], p);   // (his man reacts)
+}
+function penLookTick(dt) {   // (update) the looks run out; his hand stays on his man; a jump early carries him over the line (p.penJump: yd left, taped as his x)
+  for (const p of allPlayers()) {
+    if (!p) continue;
+    if (p.penJump) { const st = Math.sign(p.penJump) * Math.min(Math.abs(p.penJump), REF.pre.jumpV * YL * dt); p.x += st; p.penJump -= st; if (Math.abs(p.penJump) < 0.01) p.penJump = 0; }
+    if (!(p.penL > 0)) continue;
+    p.penL -= dt; const v = PEN_V.get(p);
+    if (p.penL <= 0 || (p.action && p.penK !== 5)) { p.penL = 0; p.penK = 0; PEN_V.delete(p); } else if (v) { p.penDx = v.x - p.x; p.penDy = v.y - p.y; }
+  }
 }
 // the pass in the air (updateFlight): a defender running into the target before the ball gets there (DPI), the target shoving off at the catch (OPI),
 // a rusher who gets to the QB well after the ball is gone and finishes the hit (roughing; he can pull up instead)
 function flagFlight(rem) {
-  if (!flagsOn() || flagPen || rbpPen || !tgt || (rec && rec.replaying)) return;
+  if (!flagsOn() || !tgt || (rec && rec.replaying)) return;
   const D = REF.dpi, O = REF.opi, R = REF.rough, fd = REF.force;
   for (const d of back7) {
     if (d.dpiPid === runPid || d.action) continue;
@@ -2077,13 +2127,13 @@ function flagFlight(rem) {
     const closing = (((d.vx || 0) - (tgt.vx || 0)) * (tgt.x - d.x) + ((d.vy || 0) - (tgt.vy || 0)) * (tgt.y - d.y)) / (g || 1);
     if (closing < D.v * YD && fd !== 'dpi') continue;   // (running stride for stride is not contact)
     const watch = d.eyes === 'ball' || (typeof watchingBall === 'function' && watchingBall(d));
-    if (flagCall('dpi', d, tgt.x, tgt.y, D.odds * flagK('flDpi') * (watch ? D.watch : 1), { contact: true })) return;
+    if (flagCall('dpi', d, (d.x + tgt.x) / 2, (d.y + tgt.y) / 2, { odds: D.odds * (watch ? D.watch : 1), contact: true, v: tgt })) break;
   }
   if ((rem < O.window || fd === 'opi') && tgt.opiPid !== runPid) for (const d of back7) {
     const g = dist(d, tgt); if (g > O.r * YD * (fd === 'opi' ? 1.6 : 1)) continue;
     tgt.opiPid = runPid;
     const closing = (((tgt.vx || 0) - (d.vx || 0)) * (d.x - tgt.x) + ((tgt.vy || 0) - (d.vy || 0)) * (d.y - tgt.y)) / (g || 1);
-    if (closing >= O.v * YD || fd === 'opi') flagCall('opi', tgt, tgt.x, tgt.y, O.odds * flagK('flOpi'), { contact: true });
+    if (closing >= O.v * YD || fd === 'opi') flagCall('opi', tgt, (d.x + tgt.x) / 2, (d.y + tgt.y) / 2, { odds: O.odds, contact: true, v: d });
     break;
   }
   if (qb && (!qb.action || qb.action === 'throw') && ball.age > PRESSURE_THROW.window + R.late && ball.age < R.max) for (const r of [...dl, ...back7]) {
@@ -2092,68 +2142,99 @@ function flagFlight(rem) {
     r.roughPid = runPid;
     if (fd !== 'rough' && (Math.hypot(r.vx || 0, r.vy || 0) < R.v * YD || Math.random() >= R.hit)) continue;   // (slow, or he pulls up)
     lateHit(r);
-    flagCall('rough', r, qb.x, qb.y, R.flag * flagK('flRough'));
+    flagCall('rough', r, qb.x, qb.y, { foul: true, v: qb });
     break;
   }
 }
 // TEST ONLY (REF.force, from update()): makes the forced foul happen on this play even when no natural chance comes: a blocker in a block for holding,
-// the nearest defender to the target / the nearest rusher to the QB during the flight
+// the nearest defender to the target / the nearest rusher to the QB during the flight, the nearest cover man for defensive holding
 function flagForceTick() {
-  const fd = REF.force; if (!fd || !flagsOn() || flagPen || rbpPen) return;
+  const fd = REF.force; if (!fd || !flagsOn()) return;
   const blk = () => [...ols, ...recs].filter(b => b.team === 'off' && (b.engaged || b.lockedTo)).sort((a, b) => dist(a, qb) - dist(b, qb))[0] || ols[0];
-  if (fd === 'hold' && state === 'run' && runner && clock > 0.4) { const b = blk(); if (b) { REF.force = null; rbpPen = { num: b.num || '' }; popup(b, 'HOLDING', '#ffd23f'); try { refFlag(b.x, b.y); } catch (e) {} } }
-  else if ((fd === 'pphold' || fd === 'hold') && (state === 'pocket' || state === 'drop') && clock > 0.5) { const b = blk(); if (b) flagCall('pphold', b, b.x, b.y, 1, { contact: true }); }
-  else if (fd === 'dpi' && state === 'flight' && tgt) { const d = back7.slice().sort((a, b) => dist(a, tgt) - dist(b, tgt))[0]; if (d) flagCall('dpi', d, tgt.x, tgt.y, 1, { contact: true }); }
-  else if (fd === 'opi' && state === 'flight' && tgt) flagCall('opi', tgt, tgt.x, tgt.y, 1, { contact: true });
-  else if (fd === 'rough' && state === 'flight' && qb && (!qb.action || qb.action === 'throw')) { const r = [...dl, ...back7].filter(d => !d.action).sort((a, b) => dist(a, qb) - dist(b, qb))[0]; if (r) { lateHit(r); flagCall('rough', r, qb.x, qb.y, 1); } }
+  if (fd === 'hold' && state === 'run' && runner && clock > 0.4) { const b = blk(), d = dl.slice().sort((a, c) => dist(a, b) - dist(c, b))[0]; if (b) { REF.force = null; rbpFlag(b, d || runner, true); } }
+  else if ((fd === 'pphold' || fd === 'hold') && (state === 'pocket' || state === 'drop') && clock > 0.5) { const b = blk(), r = dl.slice().sort((a, c) => dist(a, b) - dist(c, b))[0]; if (b) flagCall('pphold', b, b.x, b.y, { foul: true, v: r }); }
+  else if (fd === 'dhold' && (state === 'pocket' || state === 'drop') && clock > 0.6) flagRoute();
+  else if (fd === 'dpi' && state === 'flight' && tgt) { const d = back7.slice().sort((a, b) => dist(a, tgt) - dist(b, tgt))[0]; if (d) flagCall('dpi', d, tgt.x, tgt.y, { foul: true, contact: true, v: tgt }); }
+  else if (fd === 'opi' && state === 'flight' && tgt) { const d = back7.slice().sort((a, b) => dist(a, tgt) - dist(b, tgt))[0]; flagCall('opi', tgt, tgt.x, tgt.y, { foul: true, contact: true, v: d }); }
+  else if (fd === 'rough' && state === 'flight' && qb && (!qb.action || qb.action === 'throw')) { const r = [...dl, ...back7].filter(d => !d.action).sort((a, b) => dist(a, qb) - dist(b, qb))[0]; if (r) { lateHit(r); flagCall('rough', r, qb.x, qb.y, { foul: true, v: qb }); } }
 }
-// at the snap (snap(), plays from scrimmage only): a lineman jumps early. A dice roll (nothing moves before the snap in this game): false start = an offensive
-// lineman (more often on the road in a loud stadium, PULSE), offside = a defensive lineman. Dead ball: the flag, the whistle, no play (flagPenalty, dead)
+// run-block holding (rbpRide): the grab is the foul (its look plays); flagged with REF.call's odds, read once the runner is past him (the moment it shows)
+function rbpFlag(b, d, forced) {
+  if (b.flagPid === runPid || flagCount() >= REF.call.most) return;
+  const s = (b.rbpRide && b.rbpRide.s) || flagSev('hold');
+  if (!(b.penL > 0)) penLook(b, 'hold', d, s);
+  if (!forced && Math.random() >= flagSeen('hold', s, (b.x + d.x) / 2, (b.y + d.y) / 2)) { b.flagPid = runPid; return; }
+  b.flagPid = runPid; flagNote({ type: 'hold', num: b.num || '', x: (b.x + d.x) / 2, y: (b.y + d.y) / 2, ghost: false, ev: true, s, side: 'off' });
+  popup(b, 'HOLDING', '#ffd23f'); try { refFlag((b.x + d.x) / 2, (b.y + d.y) / 2); } catch (e) {} penTape((b.x + d.x) / 2, (b.y + d.y) / 2);
+}
+// at the snap (snap(), plays from scrimmage only): a lineman jumps early. False start = an offensive lineman (more often on the road in a loud stadium, PULSE);
+// offside = a defensive lineman across the line, encroachment = into his man (obvious). The jump always shows; it is called by REF.call (a small flinch can go unseen:
+// then the play goes on). Called = dead ball, no play: he lurches over (penJump), the tape gets a short clip of it, the flag, the whistle (flagPenalty, dead)
 function flagPreSnap() {
-  if (!flagsOn() || flagPen || rbpPen || (rec && rec.replaying) || !ols || !dl || !ols.length || !dl.length) return false;
+  if (!flagsOn() || flagPen || (rec && rec.replaying) || !ols || !dl || !ols.length || !dl.length) return false;
   const P = REF.pre, fd = REF.force, loud = typeof roadOff === 'function' && roadOff() ? 1 + P.road * (pulseLvl() || 0) : 1;
-  let type = fd === 'false' ? 'false' : fd === 'offside' && state === 'pre' ? 'offside' : null;
-  if (!type) { if (Math.random() < P.fs * loud * flagK('flFalse')) type = 'false'; else if (Math.random() < P.off * flagK('flOff')) type = 'offside'; }
+  let type = fd === 'false' ? 'false' : (fd === 'offside' || fd === 'encroach') && state === 'pre' ? fd : null;
+  if (!type) { if (Math.random() < P.fs * loud * flagK('flFalse')) type = 'false'; else if (Math.random() < P.off * flagK('flOff')) type = Math.random() < P.enc ? 'encroach' : 'offside'; }
   if (!type) return false;
-  if (fd === type) REF.force = null;
-  const g = type === 'false' ? ols : dl, p = g[Math.floor(Math.random() * g.length)], dir = type === 'false' ? 1 : -1;
-  p.x += dir * P.jump * YL; p.vx = 0; p.vy = 0;   // (he is across: one lurch, then everyone stops)
-  flagPen = { type, num: p.num || '', x: los, y: p.y, ghost: false };
+  const forced = fd === type; if (forced) REF.force = null;
+  const g = type === 'false' ? ols : dl, p = g[Math.floor(Math.random() * g.length)], dir = type === 'false' ? 1 : -1, s = forced ? 1 : flagSev(type);
+  const v = type === 'encroach' ? ols.slice().sort((a, b) => Math.abs(a.y - p.y) - Math.abs(b.y - p.y))[0] : null;
+  if (!forced && Math.random() >= flagSeen(type, s, los, p.y) / flagK(FLAG_SLIDER[type])) { penLook(p, type, v, s * 0.5); return false; }   // (a flinch nobody flagged: the play goes on; the slider already scaled the roll above)
+  keepHighlight(rec); if (rec && rec.frames && rec.frames.length > 5 && !rec.replaying) lastRec = rec; rec = { frames: [], t: 0, doneT: 0, replaying: false };   // (the jump gets its own short tape)
+  try { rec.frames.push(captureFrame()); rec.t = REPLAY_PRE; } catch (e) {}
+  p.vx = 0; p.vy = 0; p.penJump = type === 'encroach' && v ? (v.x + 0.5 * YL) - p.x : dir * P.jump * YL * (0.6 + 0.8 * s);   // (he is across: one lurch, then everyone stops)
+  penLook(p, type, v, s);
+  flagNote({ type, num: p.num || '', x: los, y: p.y, ghost: false, ev: true, s, side: p.team });
   try { refFlag(los, p.y); } catch (e) {}
-  popup(p, type === 'false' ? 'FALSE START' : 'OFFSIDE', '#ffd23f');
+  penTape(los, p.y);
+  popup(p, type === 'false' ? 'FALSE START' : type === 'encroach' ? 'ENCROACHMENT' : 'OFFSIDE', '#ffd23f');
   state = 'done';   // (no play: wear, star factors and stats skip it)
-  endPlay(type === 'false' ? 'False start' : 'Offside', los, '');
+  endPlay(type === 'false' ? 'False start' : type === 'encroach' ? 'Encroachment' : 'Offside', los, '');
   return true;
 }
 function lateHit(r) {   // a hit on the QB after the ball is gone (only with penalties on: flagFlight)
   const hx = qb.x - r.x, hy = qb.y - r.y, hl = Math.hypot(hx, hy) || 1;
   tackleLunge(r, qb.x, qb.y, 0.2, 0.95 * YD); r.recoverUntil = clock + 1;
+  if (r.action === 'dive' && r.act && REF.look.on && DIVE_ST.spear) r.act.look = 'spear';   // (v0.70 the late hit reads: a spear, helmet first; looks only)
   qb.action = 'down';
   qb.act = { t: 0, fall: true, back: hx * qb.face < 0, side: Math.abs(hy) > 1.5 * Math.abs(hx) ? Math.sign(hy) : 0, launch: false, vx: hx / hl * 3 * YD, vy: hy / hl * 3 * YD, angle: Math.atan2(hy, hx) };
   tackleSfx(false); try { injuryHit(qb, 'sack'); } catch (e) {}
 }
 // at the whistle (endPlay): the flag's result, or null (declined / none). Offense fouls: from the line, replay the down; DPI: the spot of the foul, first down;
 // roughing: 15 from the line (or the end of a completed gain), first down. Half the distance to the goal when closer
-function flagPenalty(kind, next) {
-  const f = flagPen; flagPen = null;
-  if (!f || patMode !== null || kind === 'fg' || kind === 'fgmiss' || kind === 'punt') return null;
+function flagPenalty(kind, next) {   // v0.70 every flag of the play: fouls on both teams offset (replay the down, no yards); several on one team = the worst one is enforced
+  const f0 = flagPen; flagPen = null;
+  if (!f0 || patMode !== null || kind === 'fg' || kind === 'fgmiss' || kind === 'punt') return null;
+  const res = [f0, ...(f0.more || [])].map(f => flagOne(f, kind, next)).filter(Boolean);
+  if (!res.length) return null;
+  const dn = ['1st', '2nd', '3rd', '4th'][down - 1] || 'the';
+  if (res.some(r => r.fouled === 'off') && res.some(r => r.fouled === 'def')) return { spot: los, dead: true, off2: true, sig: 'rfWaveOff', key: 'flag', num: '', fouled: '', yds: 0, text: `OFFSETTING PENALTIES (${res.map(r => r.name).join(' + ')}): replay ${dn} down` };
+  const w = r => (r.yds || 0) + (r.first ? 10 : 0), best = res.sort((a, b) => w(b) - w(a))[0];
+  if (res.length > 1) best.text += `  (${res.length} flags: the worst one)`;
+  return best;
+}
+function flagOne(f, kind, next) {   // one flag's result, or null
   const dn = ['1st', '2nd', '3rd', '4th'][down - 1] || 'the', who = f.num ? ' #' + f.num : '', name = FLAG_NAME[f.type] || 'PENALTY', sig = FLAG_SIG[f.type];
-  const P = (o) => ({ sig, num: f.num, key: PEN_KEY[f.type], ...o });   // (v0.68: never declined here: the fouled side chooses, penChoose / the card; dead-ball fouls have no choice)
-  if (f.type === 'pphold' || f.type === 'opi') {   // (against the offense: from the line, replay the down)
-    const spot = Math.max(los - REF[f.type].yds * YL, los / 2);
+  const P = (o) => ({ sig, num: f.num, key: PEN_KEY[f.type], name, ...o });   // (v0.68: never declined here: the fouled side chooses, penChoose / the card; dead-ball fouls have no choice)
+  if (f.type === 'pphold' || f.type === 'opi' || f.type === 'hold') {   // (against the offense: from the line, replay the down)
+    const spot = Math.max(los - (f.type === 'hold' ? RBP.ride.yds : REF[f.type].yds) * YL, los / 2);
     return P({ spot, fouled: 'def', yds: Math.round((los - spot) / YL), text: `${name}, offense${who}: ${Math.round((los - spot) / YL)} yards, replay ${dn} down` });
   }
   if (f.type === 'dpi') {   // (against the defense: the spot of the foul, first down)
     const spot = Math.max(los + YL, Math.min(FIELD - YL, f.x));
     return P({ spot, first: true, fouled: 'off', yds: Math.round((spot - los) / YL), text: `${name}, defense${who}: ${Math.round((spot - los) / YL)} yards, FIRST DOWN` });
   }
+  if (f.type === 'dhold') {   // (v0.70 against the defense: 5 from the line, first down)
+    const spot = Math.min(los + REF.dhold.yds * YL, (los + FIELD) / 2);
+    return P({ spot, first: true, fouled: 'off', yds: Math.round((spot - los) / YL), text: `${name}, defense${who}: ${Math.round((spot - los) / YL)} yards, FIRST DOWN` });
+  }
   if (f.type === 'false') {   // (dead ball: 5 back, replay the down)
     const spot = Math.max(los - REF.pre.yds * YL, los / 2);
     return P({ spot, dead: true, fouled: 'def', yds: Math.round((los - spot) / YL), text: `FALSE START, offense${who}: ${Math.round((los - spot) / YL)} yards, replay ${dn} down` });
   }
-  if (f.type === 'offside') {   // (dead ball: 5 ahead, a first down if that reaches the sticks)
+  if (f.type === 'offside' || f.type === 'encroach') {   // (dead ball: 5 ahead, a first down if that reaches the sticks)
     const spot = Math.min(los + REF.pre.yds * YL, (los + FIELD) / 2), first = spot + BALL_TIP >= lineToGain;
-    return P({ spot, dead: true, first, fouled: 'off', yds: Math.round((spot - los) / YL), text: `OFFSIDE, defense${who}: ${Math.round((spot - los) / YL)} yards, ${first ? 'FIRST DOWN' : 'replay ' + dn + ' down'}` });
+    return P({ spot, dead: true, first, fouled: 'off', yds: Math.round((spot - los) / YL), text: `${name}, defense${who}: ${Math.round((spot - los) / YL)} yards, ${first ? 'FIRST DOWN' : 'replay ' + dn + ' down'}` });
   }
   if (f.type === 'rough') {   // (15 from the end of a completed gain, else the line; first down)
     const base = kind !== 'turnover' && kind !== 'td' && Number.isFinite(next) && next > los ? next : los, spot = Math.min(FIELD - YL, base + Math.min(REF.rough.yds * YL, (FIELD - base) / 2));
@@ -2207,13 +2288,14 @@ function penHuman(fouled) {   // does a person pick for the fouled side?
   return fouled === 'off' ? !aiOff() : aiOff();
 }
 function penWho(pen) {   // (v0.70) the foul and who it was on, for the banners / card / top bar: { name: 'HOLDING', on: 'Dallas #72 J. Smith' }
+  if (pen.off2) return { name: 'OFFSETTING PENALTIES', on: '' };
   const T = String(pen.text || ''), head = T.split(':')[0], side = /defense/i.test(head) ? 'def' : 'off';
   let tm = ''; try { tm = teamName((side === 'off') === !aiOff() ? 'BLUE' : 'RED'); } catch (e) {}
   const pl = pen.num ? allPlayers().find(p => String(p.num) === String(pen.num) && p.team === side) : null, nm = pl && ((pl.src && pl.src.name) || pl.name);
   return { name: head.split(',')[0].trim().toUpperCase() || 'PENALTY', on: `${tm}${pen.num ? ' #' + pen.num : ''}${nm ? ' ' + nm : ''}`.trim() };
 }
 function penBanner(pen, head) {   // (v0.70) every flag, for or against you, announcers on or off
-  const w = penWho(pen), yd = pen.first ? 'automatic first down' : (pen.yds || 0) + ' yards';
+  const w = penWho(pen), yd = pen.off2 ? 'replay the down' : pen.first ? 'automatic first down' : (pen.yds || 0) + ' yards';
   showBanner((head || 'FLAG') + ': ' + w.name, '#ffd23f', '#3a2a00', (w.on ? 'on ' + w.on + '  -  ' : '') + yd, true);
   return w;
 }

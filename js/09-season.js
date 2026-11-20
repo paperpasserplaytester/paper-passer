@@ -466,7 +466,7 @@ function drawHomeAwards() {
   ctx.fillText(`${t}${w.mine ? `  +${AWARD.pay} Credits` : ''}`, A.x + A.w / 2, cy + ch + label / 2 + 2, A.w - 20);
   const by = cy + ch / 2 - 30, prev = Object.assign(AWH.btns.prev || (AWH.btns.prev = {}), { x: A.x + 8, y: by, w: ar, h: 60 }), next = Object.assign(AWH.btns.next || (AWH.btns.next = {}), { x: A.x + A.w - 8 - ar, y: by, w: ar, h: 60 });   // (kept between frames so hover / press ease)
   if (list.length > 1) { menuBtn(prev, '◂', RES.bright, 26); menuBtn(next, '▸', RES.bright, 26); }
-  AWH.hit = { prev: list.length > 1 ? prev : null, next: list.length > 1 ? next : null, card: p ? { x: cx, y: cy, w: cw, h: ch } : null, p, team: w.team, n: list.length };
+  AWH.hit = { prev: list.length > 1 ? prev : null, next: list.length > 1 ? next : null, card: p && w.team !== meK() ? { x: cx, y: cy, w: cw, h: ch } : null, p, team: w.team, n: list.length };
 }
 function awhClick(pt) {   // home screen: the arrows step through the winners, the card opens his trade page
   const H = AWH.hit; if (!H) return false;
@@ -1537,8 +1537,11 @@ const OFF_ROSTER_BTN = { x: 700, y: 640, w: 310, h: 58 };
 // over the cap on the re-sign screen: ROSTER shrinks and a TRADES button sits beside it (trades from there ignore the salary cap for both teams: TR.capFree)
 const RS_TRADE_BTN = { x: 860, y: 640, w: 150, h: 58 };
 const rsOverCap = () => !!(OFF && season && OFF.expiring.some(p => p.ask && resignRoom(season.team, p) < 0));
-const OFF_TRADE_BTN = { x: 860, y: 640, w: 150, h: 58 };   // (draft screen: ROSTER shrinks to make room for TRADES)
-const offCapBar = () => { OFF_ROSTER_BTN.w = results.screen === 'resign' || results.screen === 'draft' ? 150 : 310; if (results.screen === 'draft') menuBtn(OFF_TRADE_BTN, 'TRADES', RES.bright, 22); drawCapBar(season.team, 150, 636, 520, results.screen === 'resign' && OFF ? OFF.expiring : [], false, results.screen === 'resign' && OFF && OFF.rs.plus ? OFF.rs.plus : []); menuBtn(OFF_ROSTER_BTN, 'ROSTER', RES.bright, 22); };
+const OFF_TRADE_BTN = { x: 860, y: 640, w: 150, h: 58 };
+const DRAFT_REP_BTN = { x: 540, y: 640, w: 150, h: 58 };   // (draft screen, scouts on: the scouts' notepad; the cap bar shortens to make room)
+const draftRepOn = () => results.screen === 'draft' && scoutsOn() && !!OFF && !!OFF.draft;
+function draftReports() { dboardOpen('draft'); DB.tab = 2; DB.rp = 0; }   // (the draft board's REPORTS tab for the class on the clock; its BACK returns to the draft untouched)   // (draft screen: ROSTER shrinks to make room for TRADES)
+const offCapBar = () => { OFF_ROSTER_BTN.w = results.screen === 'resign' || results.screen === 'draft' ? 150 : 310; const rep = draftRepOn(); if (results.screen === 'draft') menuBtn(OFF_TRADE_BTN, 'TRADES', RES.bright, 22); if (rep) menuBtn(DRAFT_REP_BTN, 'REPORTS', RES.bright, 20); drawCapBar(season.team, 150, 636, rep ? DRAFT_REP_BTN.x - 170 : 520, results.screen === 'resign' && OFF ? OFF.expiring : [], false, results.screen === 'resign' && OFF && OFF.rs.plus ? OFF.rs.plus : []); menuBtn(OFF_ROSTER_BTN, 'ROSTER', RES.bright, 22); };
 let rosterReturn = null;   // the offseason screen the roster was opened from (BACK goes there)
 function offOpenRoster() { rosterReturn = results.screen; rosterView.team = null; rosterView.sel = null; rosterView.page = 0; if (rosterView.side === 'upg') rosterView.side = rosterUI.side; results.screen = 'roster'; }
 
@@ -2213,6 +2216,14 @@ function draftFix(D) {   // a save from before the board, made while you were on
   D.plans[D.round] = plan; D.pi = 0; draftTurnOn(!!(plan[0] && plan[0].me));
 }
 // v0.55: the draft reaching your pick rings the bell, once each time D.turn goes false -> true (never on a skip-all draft, never on redraws)
+function draftReown() {   // a trade made mid-draft: the slots still to come show their new owner in place, and the pick on the clock follows its owner (view / page / round untouched)
+  const D = OFF && OFF.draft; if (!D || D.done || !season) return;
+  const me = season.team, cur = draftCur();
+  for (let i = D.pi; i < cur.length; i++) { const e = cur[i]; if (e.x || e.p || e.skip) continue; e.k = pickOwner(D.year, D.round, e.o); e.me = e.k === me ? 1 : 0; }
+  const e = cur[D.pi]; if (!e || e.p || e.skip) return;
+  if (D.turn && !e.me) { D.turn = false; D.sel = null; if (D.view === 'pool') D.view = 'board'; }   // (you traded the pick on the clock away: the board shows who has it now)
+  else if (!D.turn && e.me && !D.skipAll && D.passR !== D.round) draftTurnOn(true);   // (you traded for the pick on the clock)
+}
 function draftTurnOn(v) { const D = OFF.draft; if (v && !D.turn && !D.skipAll) try { sndRec('bell', 0.8, { ms: 1400, fade: 500, tag: 'dr' }); } catch (e) {} D.turn = v; }
 function draftTake(p) {   // you pick him
   const D = OFF.draft, me = season.team, R = ROSTER[me], e = draftCur()[D.pi];
@@ -2311,6 +2322,7 @@ function draftBoardClick(pt) {
   if (!D.turn && inBtn(pt, DRAFT_SIM_BTN)) { draftSim(); return; }
   if (inBtn(pt, OFF_ROSTER_BTN)) { offOpenRoster(); return; }
   if (inBtn(pt, OFF_TRADE_BTN)) { tradeOpen('draft'); return; }
+  if (draftRepOn() && inBtn(pt, DRAFT_REP_BTN)) { draftReports(); return; }
   if (inBtn(pt, MENU_NEXT)) { if (D.turn) { D.view = 'pool'; D.page = 0; dTip('list'); } else draftStep(); return; }
   if (D.round > 1 && inBtn(pt, DRAFT_ARROWS[0])) { if (D.viewR > 1) D.viewR--; return; }
   if (D.round > 1 && inBtn(pt, DRAFT_ARROWS[1])) { if (D.viewR < D.round) D.viewR++; return; }
@@ -2397,6 +2409,7 @@ function draftClick(pt) {
   }
   if (inBtn(pt, OFF_ROSTER_BTN)) { offOpenRoster(); return; }
   if (inBtn(pt, OFF_TRADE_BTN)) { tradeOpen('draft'); return; }
+  if (draftRepOn() && inBtn(pt, DRAFT_REP_BTN)) { draftReports(); return; }
   const a = ROSTER_ARROWS.findIndex(b => inBtn(pt, b));
   if (a >= 0 && pages > 1) { D.page = (D.page + (a ? 1 : -1) + pages) % pages; return; }
   const i = ROSTER_CARDS.findIndex(b => inBtn(pt, b)), p = i >= 0 ? list[D.page * OFFSEASON.perPage + i] : null;

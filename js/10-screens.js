@@ -205,7 +205,7 @@ function approvalAfterGame(margin) {
   const mult = creditMult();   // (difficulty scales the game credits; EXTREME / UNFAIR give no bonus for a loss)
   let pay = Math.max(1, Math.round(approvalTier() * (r > 0 ? 2 : 1) * (po && po.playing ? 2 : 1) * (mult > 1 && r <= 0 ? 1 : mult)));   // (playoff games pay double; a loss pays half of a win)
   if (rivalGame()) pay = r < 0 ? 0 : r > 0 ? pay * RIVAL.pay : pay;   // (a rival: a win pays double, a loss nothing)
-  L.coins += pay; L.lastPay = pay;
+  L.coins += pay; L.lastPay = pay; L.lastRes = r;   // (the result is decided once, here, with the pay: anything that labels the pay reads lastRes)
   payToFly = pay;   // (the credits fly to the credits box when the first screen with one shows)
 }
 function openResults() {
@@ -737,6 +737,7 @@ function menuBtn(b, label, bg, size = 24, face, on = true) {
 // directly (the off-screen context isn't wrapped), and the paper is noted as a background so face text / icons drawn on it are still fixed.
 const BTN_SPR = new Map(), BTN_SPR_MAX = 360, BTN_SPR_PAD = 8;
 let BTN_SPR_ON = true;   // (false = every button drawn live, as before v0.55)
+const BTN_BAKE = { at: 0, ms: 0, n: 0, skip: 0 };   // (v0.70: this paint's sprite baking: ms spent, how many, how many left for later frames; budget BTN_FX.bakeMs)
 function btnSprClear() { for (const c of BTN_SPR.values()) freeCanvas(c); BTN_SPR.clear(); if (typeof btnMatClear === 'function') btnMatClear(); }
 function btnSprite(b, label, paper, size, face, on) {
   const T = tornPts(b), m = DM_P.getTransform.call(ctx), s = Math.round(Math.hypot(m.a, m.b) * 8) / 8;
@@ -752,6 +753,9 @@ function btnSprite(b, label, paper, size, face, on) {
   const key = `${b.x},${b.y},${b.w},${b.h}|${label}|${paper}|${size}|${on ? 1 : 0}|${s}|${grey || ''}|${stroke}|${ink}`;
   let c = BTN_SPR.get(key);
   if (!c) {
+    if (BTN_BAKE.at !== UI_LAST) { BTN_BAKE.at = UI_LAST; BTN_BAKE.ms = BTN_BAKE.n = BTN_BAKE.skip = 0; }
+    if (BTN_BAKE.ms > BTN_FX.bakeMs) { BTN_BAKE.skip++; menuMoving = true; ctx.restore(); return false; }   // (v0.70: over this paint's budget: drawn the plain way, baked on a later frame)
+    const bt0 = PERF_NOW();
     perfNote('btnSprite'); if (BTN_SPR.size >= BTN_SPR_MAX) btnSprClear();
     const P = BTN_SPR_PAD, x0 = b.x - P, y0 = b.y - P;
     c = document.createElement('canvas'); c.width = Math.ceil((b.w + 2 * P) * s); c.height = Math.ceil((b.h + 2 * P) * s);
@@ -769,6 +773,7 @@ function btnSprite(b, label, paper, size, face, on) {
     lines.forEach((l, i) => g.fillText(l.includes('*') || /star/i.test(l) ? l.replace(/(\d(?:\.\d)?)(?:\s*\*|\s+stars?\b)/gi, '$1★') : l, cx, cy + 2 + (i - (lines.length - 1) / 2) * (size + 6)));
     c._x = x0; c._y = y0; c._w = b.w + 2 * P; c._h = b.h + 2 * P;
     BTN_SPR.set(key, c);
+    BTN_BAKE.ms += PERF_NOW() - bt0; BTN_BAKE.n++;
   }
   ctx.drawImage(c, c._x, c._y, c._w, c._h);
   if (dmOn) { const o = dmRgb(paper); if (o) dmNote(dmBox(b.x, b.y, b.x + b.w, b.y + b.h), o, grey ? dmRgb(grey) : o); }   // (face text / icons on the paper are fixed for it)
@@ -797,7 +802,8 @@ function ctxBake(x0, y0, w, h, draw) {
 // with a coloured-pencil stripe by job, BTN_JOB), utility (no material: menuBtn as before). Same shared motion for all: hover lifts (longer shadow),
 // press squashes toward the desk, release springs back (BTN_PRESS). Looks / sound only: click areas (inBtn) never change.
 // Sprites: per material + label + size + pixel scale + dark mode, BTN_FX.frames boil frames (different ddSeed wobble); only the hovered one cycles.
-const BTN_FX = { lift: 3, squash: 0.04, boilFps: 8, idleWiggle: [8, 10], wiggleS: 0.35, sndVol: 0.55, frames: 3, pad: 16, ico: 0.3, glow: 0.18, quietPage: 0.6,
+const BTN_FX = { bakeMs: 6,   // v0.70: ms of button-sprite baking a paint may spend (the rest are drawn the plain way and baked on the next frames)
+  lift: 3, squash: 0.04, boilFps: 8, idleWiggle: [8, 10], wiggleS: 0.35, sndVol: 0.55, frames: 3, pad: 16, ico: 0.3, glow: 0.18, quietPage: 0.6,
   gagEvery: [180, 420], gagS: { ant: 5, ring: 6 }, tiredCond: 75 };   // (v0.66) rare idle gags: one every gagEvery s (random in range), lasting gagS s; tiredCond = PRACTICE sweats under this average roster condition
 const BTN_JOB = { go: '#2f5fa8', gold: '#c99a1b', danger: '#c0392b', ok: '#2f8a46' };   // category stripe: blue = go somewhere, gold = credits / XP, red = danger, green = confirm
 const BTN_JOB_LIGHT = { go: '#a9c6ff', gold: '#ffe08a', danger: '#ffb3a8', ok: '#b8f0c4' };   // (the same stripe on dark construction paper)
@@ -1240,7 +1246,7 @@ const MENU_TRIM = { blur: 0.3 };
 const menuTrim = () => !!(TOUCH && results && gfxMode() === 'AUTO');
 (function () {
   const D = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'shadowBlur'); if (!D || !D.set) return;
-  try { Object.defineProperty(ctx, 'shadowBlur', { configurable: true, enumerable: true, get() { return D.get.call(this); }, set(v) { D.set.call(this, v > 0 && menuTrim() ? v * MENU_TRIM.blur : v); } }); } catch (e) {}
+  try { Object.defineProperty(ctx, 'shadowBlur', { configurable: true, enumerable: true, get() { return D.get.call(this); }, set(v) { D.set.call(this, v > 0 && PHONE_TEST.shadow === 'OFF' ? 0 : v > 0 && menuTrim() ? v * MENU_TRIM.blur : v); } }); } catch (e) {}
 })();
 // the idle wiggle: one hero button at a time, every BTN_FX.idleWiggle s (random in that range), for BTN_FX.wiggleS s
 const BTN_WIG = { next: 0, key: null, t0: 0, frame: -1, n: 0, seen: 0, pick: -1 };
@@ -1747,7 +1753,7 @@ function drawResultsNow() {
 // which fly into the credits box. Click / Space skips the animation, then closes it.
 const PAY_ANIM = { start: 600, row: 1300, fill: 1000, end: 900 };   // ms
 function payOverlayInfo() {
-  const L = LEAGUE, r = game.blue > game.red ? 1 : game.blue < game.red ? -1 : 0, rows = [];
+  const L = LEAGUE, r = L.lastRes != null ? L.lastRes : game.blue > game.red ? 1 : game.blue < game.red ? -1 : 0, rows = [];
   rows.push({ label: r > 0 ? 'WIN' : r < 0 ? 'LOSS' : 'TIE', cr: L.lastPay || 0, done: (L.lastPay || 0) > 0, bar: false });
   const g = career.goals;
   if (g && g.list) for (const q of g.list) {
@@ -1826,6 +1832,24 @@ function drawMenus() {
 const CARD_SHOW = { pop: 0.22, hold: 0.85, crumple: 0.32, fly: 0.5, scale: 1.3, ball: 24, dim: 0.45, arc: 150 };   // seconds per phase, card scale, ball radius, backdrop, toss height
 let cardShows = [];   // queue of { p, team, tag, t0 }
 function cardShowAdd(p, team, tag) { if (p && season && !exhibition && !tut && team === season.team) cardShows.push({ p, team, tag, t0: null, bb: { x: -135, y: -124, w: 270, h: 248 } }); }
+function cardShowStaff(st, role, tag) {   // a coordinator / trainer / scout you signed (tag HIRED) or poached (POACHED): the same show as a new player, his personnel folder instead of a card
+  if (st && !st.interim && season && !exhibition && !tut) cardShows.push({ st, role, p: { name: st.name }, team: MATCH.you, tag, t0: null, bb: { x: -135, y: -124, w: 270, h: 248 } });
+}
+function staffShowCard(c) {   // the folder drawn by the show (looks only): role tab, photo, name, stars, trait
+  const b = c.bb, st = c.st, R = HIRE_ROLE[c.role] || {}, col = c.role === 'oc' || (c.role !== 'dc' && R.side === 'off') ? FOLDER.role.oc : FOLDER.role.dc;
+  ctx.fillStyle = FOLDER.manila; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.strokeStyle = RES.line; ctx.lineWidth = 3; ctx.strokeRect(b.x, b.y, b.w, b.h);
+  ctx.fillStyle = col; ctx.fillRect(b.x + 12, b.y + 10, b.w - 24, 34); ctx.lineWidth = 2.5; ctx.strokeRect(b.x + 12, b.y + 10, b.w - 24, 34);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(R.label || R.short || st.role || 'STAFF', b.x + b.w / 2, b.y + 27, b.w - 36);
+  ctx.fillStyle = '#e8eef6'; ctx.fillRect(b.x + 16, b.y + 56, 96, 110); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(b.x + 16, b.y + 56, 96, 110);
+  if (st.face) try { drawAvatar(st.face, b.x + 64, b.y + 111, 40); } catch (e) {}
+  ctx.fillStyle = RES.line; ctx.textAlign = 'left'; ctx.font = 'bold 18px monospace';
+  const nm = String(st.name || '').split(' '); ctx.fillText(nm[0] || '', b.x + 122, b.y + 74, b.w - 132); ctx.fillText(nm.slice(1).join(' '), b.x + 122, b.y + 96, b.w - 132);
+  starsRow(b.x + 130, b.y + 128, st.stars || 0, 9);
+  ctx.strokeStyle = FOLDER.rule; ctx.lineWidth = 1.5; for (let y = b.y + 186; y < b.y + b.h - 8; y += 24) { ctx.beginPath(); ctx.moveTo(b.x + 14, y); ctx.lineTo(b.x + b.w - 14, y); ctx.stroke(); }
+  ctx.fillStyle = '#2a3f8f'; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center';
+  if (st.trait) ctx.fillText(String(st.trait).toUpperCase(), b.x + b.w / 2, b.y + 198, b.w - 28);
+  if (st.trait2) ctx.fillText(String(st.trait2).toUpperCase(), b.x + b.w / 2, b.y + 222, b.w - 28);
+}
 function cardShowSkip() {   // a click: on to the toss (true = the click is taken)
   const c = cardShows[0]; if (!c || c.t0 == null) return false;
   const S = CARD_SHOW, at = S.pop + S.hold;
@@ -1854,7 +1878,7 @@ function drawCardShows() {
   if (c.t0 == null) c.t0 = now;
   const t = (now - c.t0) / 1000, T1 = S.pop + S.hold, T2 = T1 + S.crumple, T3 = T2 + S.fly, cx = W / 2, cy = H / 2 - 10;
   if (t >= T3) { cardShows.shift(); if (cardShows.length) drawCardShows(); return; }
-  const col = mixHex(sideKit(c.team, c.p).main, 0.5, 255), seed = deskHash(c.p.name) % 97;
+  const col = c.st ? FOLDER.manila : mixHex(sideKit(c.team, c.p).main, 0.5, 255), seed = deskHash(c.p.name) % 97;
   ctx.save();
   ctx.fillStyle = `rgba(30,25,10,${S.dim * Math.min(1, t / S.pop) * (t > T2 ? 1 - (t - T2) / S.fly : 1)})`; ctx.fillRect(0, 0, W, H);
   if (t < T2) {
@@ -1863,7 +1887,7 @@ function drawCardShows() {
     if (q < 0.7) {
       ctx.save(); ctx.translate(cx, cy); ctx.rotate(q * q * 1.4 + (t < T1 ? (1 - pk) * -0.12 : 0)); ctx.scale(sc * (1 - 0.25 * Math.sin(q * 9) * q), sc * (1 - 0.2 * Math.cos(q * 11) * q));
       ctx.globalAlpha = q < 0.4 ? 1 : 1 - (q - 0.4) / 0.3;
-      try { rosterCard(c.p, c.bb, c.team, null, null); } catch (e) {}
+      try { if (c.st) staffShowCard(c); else rosterCard(c.p, c.bb, c.team, null, null); } catch (e) {}
       ctx.restore();
     }
     if (q > 0.35) { ctx.globalAlpha = Math.min(1, (q - 0.35) / 0.3); paperBall(cx, cy, S.ball + (1 - q) * 60, col, q * 3, seed); ctx.globalAlpha = 1; }
@@ -3347,8 +3371,9 @@ function rosterCard(p, bb, team, kr, extra) {
     }
     // full name (shrunk to fit), then his stars
     let fs = 22; ctx.font = `bold ${fs}px monospace`;
-    while (fs > 12 && ctx.measureText(p.name).width > b.w - 20) ctx.font = `bold ${--fs}px monospace`;
-    ctx.fillStyle = RES.line; ctx.fillText(p.name, b.x + b.w / 2, b.y + 185);
+    const nm = p.name + (p.rep && results.screen === 'draft' && scoutsOn() && !p.drafted ? ' ✓' : '');   // (draft pool: ✓ = a scout's report is filed on him)
+    while (fs > 12 && ctx.measureText(nm).width > b.w - 20) ctx.font = `bold ${--fs}px monospace`;
+    ctx.fillStyle = RES.line; ctx.fillText(nm, b.x + b.w / 2, b.y + 185);
     starsRow(b.x + b.w / 2 - 4.4 * 13, b.y + 220, p.stars, 13);
     if (!extra && p.raw && ATTRS[p.group]) {   // his best attribute, so cards compare without opening them
       let ba = null; for (const a of ATTRS[p.group]) if (ba == null || p.raw[a] > p.raw[ba]) ba = a;

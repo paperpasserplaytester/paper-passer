@@ -542,7 +542,7 @@ function settle(p, dt) {
     return;
   }
   if (p.celWalk) return celebWalkStep(p, dt);   // (jogging out of the crowd to celebrate in the open: 07-drawing)
-  if (p.fetchBall) return fetchStep(p, dt);   // (v0.71 bringing a far dead ball to an official: 07-drawing officials)
+  if (p.fetchBall) return fetchStep(p, dt);   // (v0.70 bringing a far dead ball to an official: 07-drawing officials)
   if (p.helpTarget) {   // walking over to pull the man on the ground up: a hand out, a tug, then both are on their feet
     const t = p.helpTarget, px = p.x, py = p.y, gx = t.x - 0.9 * YD * (t.face || 1), gy = t.y + 0.6 * YD;
     if (!doneLying(t) || t.action === 'getup' || p.helpT > HELP_UP.max) { p.helpTarget = null; p.reach = false; }

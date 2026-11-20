@@ -323,6 +323,7 @@ function extraEntries() {
     ['DIVE: CHEST SKID', dive('skid')], ['DIVE: ROLL OVER', dive('roll')], ['DIVE: ONTO HIS SIDE', dive('side')],
     ['DIVE LOOK: LAYOUT', diveLk('layout')], ['DIVE LOOK: SUPERMAN', diveLk('superman')], ['DIVE LOOK: SCISSOR', diveLk('scissor')],
     ['DIVE LOOK: SPEAR', diveLk('spear')], ['DIVE LOOK: ONE-ARM REACH', diveLk('reach')], ['DIVE LOOK: TUCK AND ROLL', diveLk('tuck')],
+    ...[['FOUL: CLEAR HOLDING', 'pphold', 2.2], ['FOUL: PASS INTERFERENCE', 'dpi', 1.1], ['FOUL: PUSH-OFF', 'opi', 1.1], ['FOUL: ROUGHING', 'rough', 1.1], ['FOUL: EARLY TACKLE ON A ROUTE', 'tackle', 0.9], ['FOUL: HOLDING ON A ROUTE', 'grab', 0.9], ['FOUL: FALSE START', 'false', 0], ['FOUL: ENCROACHMENT', 'encroach', 1.4]].map(([n, k, gap]) => [n, (A, B) => { B.x = A.x + (gap || 9) * YD; B.y = A.y; const go = () => { penLook(A, k, gap ? B : null, 1); A.penL = A.penD; }; go(); A.tick = (tt, dt) => { if (!(A.penL > 0)) go(); A.penL -= dt || 1 / 60; if (B.penL > 0) B.penL -= dt || 1 / 60; A.penDx = B.x - A.x; A.penDy = B.y - A.y; B.penDx = -A.penDx; B.penDy = 0; }; }]),   // (v0.70 the foul looks, looped at full size; his man reacts)
     ['KICK BLOCK: LAYOUT ACROSS', diveLk('kickLay', 6)], ['KICK BLOCK: SMOTHER', diveLk('kickSmother', 6)], ['KICK BLOCK: HANDS-UP WALL', A => { A.armsUp = true; A.tick = () => { A.armsUp = true; }; }],
     ['KICK BLOCK: HOLDER FLINCH', (A, B) => { B.x = A.x + 1.5 * YD; animAct(A, 'kneel', { dur: 0.4 }); A.later = () => { reelQuiet = true; startReel(A, 'truckStagger', B, 1.3, 0.7); reelQuiet = false; }; A.catchAt = 0.4; }],
     ['DIVE: STANDING START', diveLk('layout', 0)], ['DIVE: FULL SPEED', diveLk('superman', 10)],
@@ -2205,7 +2206,7 @@ function injuryHit(p, kind, how) {
 function injuryAuto() {
   const c = injuryCall;
   if (!c || !aiOff()) return;
-  if (!c.re && c.s.inj.sev === 0 && keepAllowed(c.s)) c.s.inj.kept = true; else { c.s.outGame = true; slExit(c.p, c.s); }   // (he leaves the field: sideline people, 07-drawing)
+  if (!c.re && c.s.inj.sev === 0 && keepAllowed(c.s)) { c.s.inj.kept = true; annInjury(c.p, c.s, false); } else { c.s.outGame = true; slExit(c.p, c.s); }   // (he leaves the field: sideline people, 07-drawing)
   injuryCall = null; recalcTeamStars();
 }
 // a game starts: who's available
@@ -2858,7 +2859,7 @@ function hireOffer(c, role, sal, yrs, warned) {
   if (after > staffBudget()) { HB.msg = { t: performance.now(), text: `OVER BUDGET: ${after}M OF ${staffBudget()}M` }; return; }
   if (LEAGUE.coins < cost) { HB.msg = { t: performance.now(), text: `BUYING OUT ${cur.name}: ${cost} ¤` }; return; }
   if (Math.random() < acceptP(c, sal, yrs)) {
-    LEAGUE.coins -= cost; if (cost) spendFx(BN.offer, cost); hireSet(role, hirePerson(c, sal, yrs));
+    LEAGUE.coins -= cost; if (cost) spendFx(BN.offer, cost); hireSet(role, hirePerson(c, sal, yrs)); cardShowStaff(hireGet(role), role, 'HIRED');
     { const R = HIRE_ROLE[role], off = R.side === 'off'; postNote('coachHire', { team: pTeam(MATCH.you), name: c.name, role: R.label || R.short, stars: c.stars, side: off ? 'Offense' : 'Defense', sideL: off ? 'offense' : 'defense' }, { w: 9, team: MATCH.you }); }
     const pool = hirePool(); pool[role] = pool[role].filter(x => x !== c); HB.sel = null;
     HB.msg = { t: performance.now(), text: `${c.name} SIGNED` }; autosaveSoon();
@@ -3943,7 +3944,7 @@ const keepAllowed = s => !(exhibition && s.inj.sev > 0) && !s.inj.season;   // (
 function injuryClick(pt) {
   const c = injuryCall, keep = !c.re && keepAllowed(c.s) && inBtn(pt, INJ_BTNS.keep);
   if (!(c.re ? inBtn(pt, INJ_BTNS.ok) : keep || inBtn(pt, INJ_BTNS.bench))) return;   // (a refused KEEP click does nothing)
-  if (keep) c.s.inj.kept = true; else { c.s.outGame = true; slExit(c.p, c.s); }   // (he leaves the field: limps off, is helped to the tent, or the cart comes out)
+  if (keep) { c.s.inj.kept = true; annInjury(c.p, c.s, false); } else { c.s.outGame = true; slExit(c.p, c.s); }   // (he leaves the field: limps off, is helped to the tent, or the cart comes out)
   injuryCall = null; recalcTeamStars();   // (a player who is out changes the team's star rating)
   game.runoff = game.runoffTotal = 0;   // the injury timeout stops the clock
   msg = msg.replace(/  -  click$/, '') + `  -  ${c.s.short} ${keep ? 'stays in' : 'is out for the game'}  -  click`;
@@ -4178,7 +4179,7 @@ const TOUCH_HELP = [
 // the debug page: goes over the settings screen (DEBUG, bottom of the settings panel)
 let dbgUI = false;
 const DBG_PANEL = { x: 330, y: 70, w: 620, h: 560 };
-const DBG_BTNS = { hit: { x: 370, y: 140, w: 540, h: 54 }, mobile: { x: 370, y: 204, w: 540, h: 54 }, tools: { x: 370, y: 268, w: 540, h: 54 }, perf: { x: 370, y: 332, w: 540, h: 54 }, net: { x: 370, y: 396, w: 540, h: 54 }, dyn: { x: 370, y: 460, w: 265, h: 54 }, store: { x: 645, y: 460, w: 265, h: 54 }, back: { x: 370, y: 556, w: 540, h: 56 } };   // (dyn = ADAPTIVE: LAST GAME readout)   // (perf = the frame-time readout, see PERF_HUD; net = FAKE LAG for testing online, see NET_SIM)
+const DBG_BTNS = { hit: { x: 370, y: 140, w: 540, h: 54 }, mobile: { x: 370, y: 204, w: 540, h: 54 }, tools: { x: 370, y: 268, w: 540, h: 54 }, perf: { x: 370, y: 332, w: 540, h: 54 }, net: { x: 370, y: 396, w: 540, h: 54 }, dyn: { x: 370, y: 460, w: 265, h: 54 }, store: { x: 645, y: 460, w: 265, h: 54 }, turn: { x: 370, y: 522, w: 174, h: 48 }, shadow: { x: 553, y: 522, w: 174, h: 48 }, res: { x: 736, y: 522, w: 174, h: 48 }, back: { x: 370, y: 578, w: 540, h: 46 } };   // (v0.70: turn / shadow / res = PHONE_TEST)   // (dyn = ADAPTIVE: LAST GAME readout)   // (perf = the frame-time readout, see PERF_HUD; net = FAKE LAG for testing online, see NET_SIM)
 function drawDebug() {
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
   if (dbgUI === 'dyn') return drawDynDebug();
@@ -4192,6 +4193,7 @@ function drawDebug() {
   menuBtn(DBG_BTNS.tools, `HIDE EXTRA TOOLS: ${SETTINGS.hideTools ? 'ON' : 'OFF'}`, Y, 24);   // (the start screen's ANIMATION LIBRARY + TEST MODE)
   menuBtn(DBG_BTNS.perf, `FRAME TIMES: ${SETTINGS.perfHud ? 'ON' : 'OFF'}`, Y, 24);   // (fps + update / draw ms in a corner of every screen)
   menuBtn(DBG_BTNS.net, `FAKE LAG: ${SETTINGS.netSim || 'OFF'}`, Y, 24);   // (online test bench: delays / drops what this device receives)
+  menuBtn(DBG_BTNS.turn, 'TURN: ' + PHONE_TEST.turn, Y, 20); menuBtn(DBG_BTNS.shadow, 'SHADOW: ' + PHONE_TEST.shadow, Y, 20); menuBtn(DBG_BTNS.res, 'RES: ' + PHONE_TEST.res, Y, 20);   // (v0.70 phone test switches, not saved)
   menuBtn(DBG_BTNS.back, 'DONE', Y, 24);
 }
 function drawStoreDebug() {   // DEBUG > STORAGE: storeReport, per slot and the biggest keys
@@ -4228,6 +4230,11 @@ function drawDynDebug() {   // the last judged game, per adaptive master (tuning
   }
   menuBtn({ x: 515, y: 556, w: 250, h: 56 }, 'BACK', IN_GAME_PAPER.yellow, 22);
 }
+function phoneTestNext(k) {   // (v0.70: the DEBUG page's phone test cyclers; the console can set PHONE_TEST.* the same way, then call this with no key to apply)
+  const T = PHONE_TEST, L = { turn: T.turns, shadow: T.shadows, res: T.ress }[k];
+  if (L) T[k] = L[(L.indexOf(T[k]) + 1) % L.length];
+  btnSprClear(); fitScreen();   // (baked buttons keep the old blur; a pinned scale applies at once)
+}
 function debugClick(p) {
   if (dbgUI === 'dyn' || dbgUI === 'store') { if (inBtn(p, { x: 515, y: 556, w: 250, h: 56 }) || !inBtn(p, { x: 150, y: 70, w: 980, h: 560 })) dbgUI = true; return; }
   if (inBtn(p, DBG_BTNS.dyn)) { dbgUI = 'dyn'; return; }
@@ -4236,6 +4243,7 @@ function debugClick(p) {
   else if (inBtn(p, DBG_BTNS.tools)) SETTINGS.hideTools = !SETTINGS.hideTools;
   else if (inBtn(p, DBG_BTNS.perf)) SETTINGS.perfHud = !SETTINGS.perfHud;
   else if (inBtn(p, DBG_BTNS.net)) netSimNext();
+  else if (inBtn(p, DBG_BTNS.turn) || inBtn(p, DBG_BTNS.shadow) || inBtn(p, DBG_BTNS.res)) phoneTestNext(inBtn(p, DBG_BTNS.turn) ? 'turn' : inBtn(p, DBG_BTNS.shadow) ? 'shadow' : 'res');
   else if (inBtn(p, DBG_BTNS.mobile)) { DEVICE.mobile = !TUI.on; saveDevice(); tuiSet(DEVICE.mobile); }   // (touch controls: on by default on a phone / tablet, off on a PC; this overrides that)
   else if (inBtn(p, DBG_BTNS.back) || !inBtn(p, DBG_PANEL)) dbgUI = false;
   saveSettings();
@@ -4799,6 +4807,14 @@ const SYNC = { owner: 'paperpasserplaytester', repo: 'paper-passer-saves', branc
   user: /^[a-z0-9_]{3,16}$/, minPass: 6,
   light: ['pocketPasser.settings', 'pocketPasser.koTipSeen', 'pocketPasser.offTut', 'pocketPasser.draftTut', 'pocketPasser.coach', 'pocketPasser.coldDone'] };   // keys that don't count as "this device has data" when signing in
 const SYNC_KEY = 'pocketPasser.account';   // this device's sign-in (never synced)
+// v0.70: syncDirty = a pocketPasser.* key (other than the sign-in) was written or removed since syncNow last bundled; a clean check skips the bundle + hash and only asks the cloud.
+// Set by a hook on localStorage's setItem / removeItem, so no write can be missed. Starts true: the first check after a load always bundles
+let syncDirty = true;
+(function () {
+  const P = Storage.prototype, set0 = P.setItem, rem0 = P.removeItem, mark = (s, k) => { if (s === window.localStorage && typeof k === 'string' && k.startsWith('pocketPasser.') && k !== SYNC_KEY) syncDirty = true; };
+  P.setItem = function (k, v) { mark(this, k); return set0.call(this, k, v); };
+  P.removeItem = function (k) { mark(this, k); return rem0.call(this, k); };
+})();
 let acct = null;    // { user, key (raw AES key, base64: the password itself is never stored), sha (cloud file sha last seen), hash (this device's data hash then), at (last sync) }
 let acctUI = null;  // the DOM popup (real inputs, so phones get their keyboard and password managers work)
 const sync = { busy: false, err: '', wait: null, etag: null, offline: false, snooze: null, taking: false, busyNote: '' };   // taking = syncTake is wiping + reloading (the popup can't close); busyNote = what a background sign-in is doing (shown if the popup is reopened)   // snooze = a cloud / device choice put off with DECIDE LATER: no auto sync until the next launch, SYNC NOW or ACCOUNT   // offline = no internet (navigator / a failed fetch): no sync tries until the 'online' event
@@ -4916,7 +4932,8 @@ async function syncNow(manual) {   // the auto / SYNC NOW step
   if (!manual && !results) return;   // (never mid-game: bundling + sealing every save is heavy; it runs again back in the menus)
   sync.busy = true; sync.err = ''; acctRender();
   try {
-    const path = await acctPath(acct.user), local = syncBundle(), h = await bundleHash(local);
+    const path = await acctPath(acct.user); let local = null, h = acct.hash;
+    if (syncDirty || !acct.hash) { syncDirty = false; local = syncBundle(); h = await bundleHash(local); }   // (v0.70: nothing written since the last check = unchanged here, no bundle)
     if (h !== acct.hash) {   // changed here: push (refused if another device wrote since)
       try { await syncUpload(acct.sha); }
       catch (e) {
@@ -4935,7 +4952,7 @@ async function syncNow(manual) {   // the auto / SYNC NOW step
         else { acct.at = Date.now(); acctStore(); }
       }
     }
-  } catch (e) { sync.err = syncErrText(e); if (!(e && e.message) || e instanceof TypeError || navigator.onLine === false) { sync.offline = true; sync.err = 'OFFLINE: WILL SYNC WHEN THE INTERNET IS BACK'; } }
+  } catch (e) { syncDirty = true; sync.err = syncErrText(e); if (!(e && e.message) || e instanceof TypeError || navigator.onLine === false) { sync.offline = true; sync.err = 'OFFLINE: WILL SYNC WHEN THE INTERNET IS BACK'; } }
   sync.busy = false; syncGate(); acctRender();
 }
 async function syncGate() {   // a pull / choice waits for the main menu (never mid-game)
@@ -5106,10 +5123,24 @@ document.addEventListener('visibilitychange', () => syncNow());
 addEventListener('offline', () => { sync.offline = true; });
 addEventListener('online', () => { sync.offline = false; sync.err = ''; setTimeout(() => syncNow(), 1500); });
 // a player leaving (closing the tab, switching away, backing out to the menu) pushes the franchise to the cloud right then, not at the next 60 s tick
-function syncOnLeave() {
-  try { if (results && season && !exhibition && !tut && !ONL.on) { if (curSlot === null) autoAssignSlot(); else saveToSlot(curSlot, true); } } catch (e) {}
+function syncOnLeave() {   // (the tab hidden / closed: save + sync right away)
+  try { if (results && inSave() && !tut && !ONL.on) { if (curSlot === null) autoAssignSlot(); else saveToSlot(curSlot, true); } } catch (e) {}   // (v0.70: inSave = the franchise's own screens. On the start screen SETTINGS already hold the defaults again, and the leave saved it)
   try { if (typeof syncNow === 'function' && acct) syncNow(); } catch (e) {}
 }
+// v0.70: leaving a franchise = ONE save (it used to be the leave's own + syncOnLeave's), never inside the click: saveSoon waits until the new page has painted
+// (LEAVE_WAIT frames; a hidden tab saves at once, rAF doesn't run there), then syncSoon pushes on a later task (never the save's frame)
+const LEAVE_WAIT = { frames: 2, syncMs: 200, maxMs: 1000 };   // frames painted before the save; ms after it to the sync; ms at most before saving anyway
+function saveSoon() {
+  const i = curSlot;
+  if (i === null) { try { autoAssignSlot(); } catch (e) {} return syncSoon(); }   // (no slot yet: the picker may open, as before)
+  // (the data is taken now, in the click: once the start screen is up, frame() puts the default settings back into SETTINGS, which the save holds by reference)
+  let pre = null; try { pre = buildSave(); pre.world = { ...pre.world, settings: JSON.parse(JSON.stringify(SETTINGS)) }; } catch (e) {}
+  let done = false; const go = () => { if (done) return; done = true; try { if (curSlot === i) saveToSlot(i, true, undefined, pre || undefined); } catch (e) {} syncSoon(); };
+  if (document.hidden) return go();
+  let n = LEAVE_WAIT.frames; const step = () => { if (--n > 0 && !document.hidden) requestAnimationFrame(step); else go(); }; requestAnimationFrame(step);
+  setTimeout(go, LEAVE_WAIT.maxMs);   // (frames held back by the browser: the save still happens)
+}
+function syncSoon() { setTimeout(() => { try { if (acct) syncNow(); } catch (e) {} }, LEAVE_WAIT.syncMs); }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') syncOnLeave(); });
 window.addEventListener('pagehide', syncOnLeave);
 
@@ -5189,10 +5220,10 @@ function storeTidy(keepBase) {
   }
 }
 try { storeTidy(true); } catch (e) {}   // (once at load: packs old saves' league stats, frees space before anything tries to save)
-function saveToSlot(i, auto, imported) {   // imported: a save file's data (written as it is; the current franchise and its slot stay as they were)
+function saveToSlot(i, auto, imported, pre) {   // imported: a save file's data (written as it is; the current franchise and its slot stay as they were); pre = buildSave() taken earlier (saveSoon)
   if (ONL.on) { console.warn('online: saving is disabled'); return; }
   try {
-    const data = imported || buildSave(), m = slotMetas().slice(), txt = lsPacked(data);   // (packed: ~6x smaller)
+    const data = imported || pre || buildSave(), m = slotMetas().slice(), txt = perfTime('lsPacked', lsPacked, null, [data]);   // (packed: ~6x smaller; perfTime = FRAME TIMES' timer, a plain call when it's off)
     try { localStorage.setItem(SLOT_KEY(i), txt); }
     catch (e) {
       storeTidy(curSlot === null);   // (full: clear the leftovers and try once more)

@@ -187,7 +187,7 @@ const kickBtnLabel = t => TOUCH ? t.replace(/\s*\((Space|\d)\)\s*$/, '') : t;
 // down, in range); 4th down = PUNT + FIELD GOAL side by side; the punt / field goal unit lined up = GO FOR IT (back to the play you had: preKickBack).
 // Your offense only: off in the tutorial, the cold open, online, 1v1, and for the computer's offense (aiOff). They reuse the old 4th-down choice's
 // calls (startMyPunt / doPunt, startFieldGoal); that dim (fourthPending) now only shows where these buttons don't. Keys: B = field goal / go for it, P = punt.
-const PRE_KICK = { w: 262, h: 54, fs: 19, gap: 12, right: 20, bot: 18, maxFg: 66, touch: { w: 300, h: 76, fs: 26 } };   // maxFg = longest field goal (yd) the button offers
+const PRE_KICK = { w: 262, h: 54, fs: 19, gap: 12, right: 20, bot: 18, band: 1, maxFg: 66, touch: { w: 300, h: 76, fs: 26, stack: true } };   // (touch: stack = one above the other in the centre, clear of the names tip (left) and the action buttons (right)); maxFg = longest field goal (yd) the button offers; v0.70 bot = px kept above the down-and-distance band (BOT_BAR x band), on every device: nothing else is drawn there
 let preKickBack = null;   // { los, down, ltg, punt } the play you lined up before the kick unit came on
 const preKickBase = () => !tut && !(typeof CO !== 'undefined' && CO) && !ONL.on && !oo && !simGame && !simFast && !(exhibition && exhibition.ov);
 const preKickLive = () => preKickBase() && !aiOff();   // (your offense has the ball; a mirrored punt runs flipped, so GO FOR IT only checks preKickBase + preKickBack)
@@ -205,8 +205,8 @@ function preKickBtns() {
   }
   const T = TOUCH ? PRE_KICK.touch : PRE_KICK, n = L.length, tot = n * T.w + (n - 1) * PRE_KICK.gap;
   return L.map((o, i) => {
-    const x = TOUCH ? W / 2 - tot / 2 + i * (T.w + PRE_KICK.gap) : W - PRE_KICK.right - tot + i * (T.w + PRE_KICK.gap), y = H - FIELD_BOT - PRE_KICK.bot - T.h - (TOUCH ? BOT_BAR : 0);
-    const k = `${o.id}:${o.label}:${x}:${TOUCH ? 1 : 0}`, b = PRE_KICK_BTNS.get(k) || PRE_KICK_BTNS.set(k, { ...o, x, y, w: T.w, h: T.h }).get(k);   // (the same object frame to frame: menuBtn's hover easing sticks)
+    const stk = TOUCH && T.stack, x = stk ? W / 2 - T.w / 2 : TOUCH ? W / 2 - tot / 2 + i * (T.w + PRE_KICK.gap) : W - PRE_KICK.right - tot + i * (T.w + PRE_KICK.gap), y = H - FIELD_BOT - BOT_BAR * PRE_KICK.band - PRE_KICK.bot - T.h - (stk ? (n - 1 - i) * (T.h + PRE_KICK.gap) : 0);
+    const k = `${o.id}:${o.label}:${x}:${y}:${TOUCH ? 1 : 0}`, b = PRE_KICK_BTNS.get(k) || PRE_KICK_BTNS.set(k, { ...o, x, y, w: T.w, h: T.h }).get(k);   // (the same object frame to frame: menuBtn's hover easing sticks)
     return b;
   });
 }
@@ -226,7 +226,7 @@ function preKickDo(id) {
   if (B.punt) { kick = null; kickoff = null; flipSides(); if (twoP && twoP.koOnly) twoP = null; kickoffPlay = false; puntRetPlay = false; }   // (undo mirrorFlip, as the onside switch does)
   else kick = null;
   nextLos = B.los; nextDown = B.down; nextLtg = B.ltg;
-  reset();
+  reset(); fourthPending = false;   // (v0.70 the choice was made: GO FOR IT never asks again)
 }
 function preKickClick(pt) { const b = preKickBtns().find(b => inBtn(pt, b)); if (!b) return false; preKickDo(b.id); return true; }
 function preKickKey(code) {
@@ -4483,7 +4483,7 @@ function leaveGame() {
   if (season && !exhibition && !tut && MATCH.you !== season.team) { Object.assign(MATCH, matchFixed({ ...MATCH })); applyKits(); }   // (whatever happened above, the franchise screens are always your own team)
   state = 'pre'; game.over = true;   // (so PLAY (reset) clears the menus and starts a fresh game)
   results = { record, screen: exhibition ? exHome() : 'matchup' };
-  try { if (typeof syncOnLeave === 'function') setTimeout(syncOnLeave, 200); } catch (e) {}   // (leaving a game: the cloud gets the save)
+  try { syncSoon(); } catch (e) {}   // (leaving a game: the cloud gets the save made above; v0.70: no second save)
 }
 // a decision screen (punt / FG / go for it, kick or go for two, the halftime card): no pausing until you pick (resuming is always allowed)
 const noPause = () => !paused && !(rec && rec.replaying) && (halfShown() || (state === 'pre' && fourthPending) || patMode === 'choose') || (!paused && !!(rec && (rec.rewind || rec.intro)));   // (no pausing during the rewind / lead-in into a replay)

@@ -76,6 +76,7 @@ const CROWD_LOW = 0.5;   // touch devices (mobile Safari runs out of canvas memo
 const crowdK = () => { try { return Math.min(IS_MOBILE ? (gfxHi() ? GFX.crowdTouch : CROWD_LOW) : 1, liteOn() ? LITE.crowdK : 1); } catch (err) { return 1; } };   // (IS_MOBILE is defined far below; performance mode: smaller still, see LITE)
 function buildCrowd() {
   perfNote('buildCrowd');   // (FRAME TIMES spike tag)
+  if (SETTINGS.perfHud) { const I = crowdImg; perfNote('crowd:' + (I ? [I.home !== homeKey() && 'home', I.kit !== benchKit() && 'kit', I.k !== crowdK() && 'k', I.lit !== crowdLit() && 'lit'].filter(Boolean).join('+') || 'same' : 'none')); }   // (v0.70: why it was rebuilt)
   if (crowdImg) { for (const c of crowdCanvases(crowdImg)) freeCanvas(c); crowdImg = null; }
   const K = crowdK(), G = bowlGeo(), O = CROWD.oval, LT = CROWD.light, lit = crowdLit(), LS = LT[lit] || LT.cl;
   const mkCanvas = (cw, chh) => { const c = document.createElement('canvas'); c.width = Math.max(1, Math.ceil(cw * K)); c.height = Math.max(1, Math.ceil(chh * K)); if (K !== 1) c.getContext('2d').scale(K, K); return c; };   // (the scale stays on its one context: the drawing keeps full-size coordinates)
@@ -851,7 +852,7 @@ const slWanted = () => !tut && !oo && !(exhibition && (exhibition.test || exhibi
 const slCold = () => { const w = game && game.wx; return !!(w && w.on && !w.roof && (w.snow > 0 || w.month === 11 || w.month === 0 || w.month === 1)); };
 const slKeyNow = () => homeKey() + '|' + benchKit() + '|' + (slCold() ? 1 : 0);
 const slClampX = x => Math.max(0, Math.min(FIELD, x));
-const slClampXA = x => Math.max(-ENDZONE, Math.min(FIELD + ENDZONE, x));   // (v0.71 the whole playing area, end zones in: where a dead ball is picked up)
+const slClampXA = x => Math.max(-ENDZONE, Math.min(FIELD + ENDZONE, x));   // (v0.70 the whole playing area, end zones in: where a dead ball is picked up)
 const slWalkT = L => Math.min(SIDELINE.walkMax, 1.5 * L / (SIDELINE.walkSpeed * YD));   // (eased walk: its top speed is 1.5x the average)
 function slSample(r, tt, Q) {   // one baked routine at time tt -> Q (one lookup + one lerp a channel)
   const n = r.n, B = r.b; let f = tt * SIDELINE.bake;
@@ -915,7 +916,7 @@ function slTrap(u, w) {   // (an official's walk, v0.70) share of the way covere
   return s < 0 ? 0 : s > 1 ? 1 : s;
 }
 function slTrapV(u, w) { const T = w.T, a0 = w.a0, a1 = w.a1, vm = w.L / YD / (T - a0 / 2 - a1 / 2); return u < a0 ? vm * u / a0 : u < T - a1 ? vm : a1 ? vm * Math.max(0, T - u) / a1 : vm; }   // (yd/s u s into the walk)
-function slRefPh(w, u, G, back) {   // v0.71 stride cycles done u s into the walk = the integral of speed / stride length (stride grows with speed), so the feet never slide while he speeds up or slows down
+function slRefPh(w, u, G, back) {   // v0.70 stride cycles done u s into the walk = the integral of speed / stride length (stride grows with speed), so the feet never slide while he speeds up or slows down
   const N = 10, du = Math.max(0, Math.min(u, w.T)) / N; let c = 0;
   for (let n = 0; n < N; n++) { const v = slTrapV((n + 0.5) * du, w), k = Math.max(0, Math.min(1, (v - G.walkV) / (G.runV - G.walkV))); c += v * du / (G.cyc[0] + (G.cyc[1] - G.cyc[0]) * k); }
   return SL_PI2 * c / (back ? G.backK : 1);
@@ -924,7 +925,7 @@ function slRefGait(Q, P, w, wd, arms) {   // (v0.70) an official's own jog / run
   const G = REF.crew.gait, v = SL_P.gv >= 0 ? SL_P.gv : w.L / w.T / YD, k = Math.max(0, Math.min(1, (v - G.walkV) / (G.runV - G.walkV))), m = (a) => a[0] + (a[1] - a[0]) * k;
   const back = w.ff && Math.sign(w.tx - w.fx) === -w.ff && Math.abs(w.tx - w.fx) > YD;
   const tr = w.a0 !== undefined && SL_P.gv >= 0, ph = tr ? slRefPh(w, SL_P.gu, G, back) : SL_PI2 * wd / (YD * m(G.cyc) * (back ? G.backK : 1)), sn = Math.sin(ph);
-  const z = Math.min(1, v / G.walkV), st = z * z * (3 - 2 * z), leg = m(G.leg) * (back ? G.backK : 1) * st;   // (v0.71 stand -> walk: the swing grows from nothing over the first steps and dies away as he stops)
+  const z = Math.min(1, v / G.walkV), st = z * z * (3 - 2 * z), leg = m(G.leg) * (back ? G.backK : 1) * st;   // (v0.70 stand -> walk: the swing grows from nothing over the first steps and dies away as he stops)
   Q[6] = leg * sn; Q[7] = -leg * sn;
   Q[8] = m(G.kn) * (0.55 + 0.45 * Math.abs(Math.cos(ph))) * st;
   Q[1] = (back ? -G.backLean : m(G.lean)) * st;
@@ -2256,13 +2257,14 @@ function refTick() {   // (slTick, host) each official's look, on his own beat; 
     refLeg(i, p, g);
   }
 }
-function refLeg(i, p, g) {   // v0.71 a leg away from the ball he watches: a short one is a backpedal (no faster than backMax yd/s); a long one = he turns and runs, then turns back to the ball when he gets there
+function refLeg(i, p, g) {   // v0.70 a leg away from the ball he watches: a short one is a backpedal (no faster than backMax yd/s); a long one = he turns and runs, then turns back to the ball when he gets there
   const Rc = REF.crew, ff = g.ff, L = Math.hypot(g.x - p.x, g.y - p.y), away = ff && (g.x - p.x) * ff < -0.3 * L;
   if (!away) return refGo(i, g.x, g.y, g.v, ff);
-  if (L <= Rc.backYd * YD) return refGo(i, g.x, g.y, Math.min(g.v, Rc.backMax), ff);
+  const w = SL.W[i], running = w && !w.pa && !w.ff && w.T > 0 && SL.now < w.t0 + w.T;   // (already turned and running: he keeps running, no flip back to a backpedal on a re-aim)
+  if (L <= Rc.backYd * YD && !running) return refGo(i, g.x, g.y, Math.min(g.v, Rc.backMax), ff);
   const te = refGo(i, g.x, g.y, g.v, 0);
   refQ(te, () => { const w = SL.W[i]; if (!refBusy(i) && w && !w.pa && Math.abs(w.tx - g.x) < 0.5 && Math.abs(w.ty - g.y) < 0.5 && SL.now >= w.t0 + w.T - 0.05) refFace(i, ff, SL.now); });
-  if (SL.rfLog) SL.rfLog.push('turnRun:' + i + ':' + (L / YD).toFixed(1));
+  if (SL.rfLog && !running) SL.rfLog.push('turnRun:' + i + ':' + (L / YD).toFixed(1));
   return te;
 }
 // collisions (slCollide, host; players never slowed): a dodge once a play, a bump, or a knockdown when a fast man runs straight into him; a knockdown is always helped up
@@ -2295,7 +2297,7 @@ function refColP(p) {
 }
 function refKnock(i, P, ux, uy, p) {
   const now = SL.now, Rc = REF.crew, at = refAt(i), sp = p ? Math.hypot(p.vx || 0, p.vy || 0) / YD : Rc.knockV, L = Math.min(Rc.kSlideMax, Rc.kSlide * sp) * YD, hr = { t0: now, dx: ux * L, dy: uy * L, k: 1, r: ux * P.f > 0 ? -1 : 1, L };
-  refFace(i, at.f, now);   // (v0.71 the fall ends his walk where he was hit: he no longer travels on along his leg while on the turf)
+  refFace(i, at.f, now);   // (v0.70 the fall ends his walk where he was hit: he no longer travels on along his leg while on the turf)
   if (SL.rfLog) SL.rfLog.push('knock:' + (L / YD).toFixed(2));
   refHelpUp(i, hr, p);
   slEvent(i, 2, hr); slThud();
@@ -2349,13 +2351,13 @@ function refEnd(o) {
   }
   if (o.period) sig(R, 'rfPeriod', 0, 2.6);   // (the quarter is over)
   SL.rfFlg = null;
-  if (o.relay && !o.penQ) { const X2 = o.pen ? o.pen.spot : X; refAfterCeleb(X2, now + REF.crew.relay.celebMax, o.far); }   // (v0.71 always one look first: the play's celebrations are asked before refEnd, but wait for get-up / settle / your click)
+  if (o.relay && !o.penQ) { const X2 = o.pen ? o.pen.spot : X; refAfterCeleb(X2, now + REF.crew.relay.celebMax, o.far); }   // (v0.70 always one look first: the play's celebrations are asked before refEnd, but wait for get-up / settle / your click)
 }
 // v0.68 the first leg: the man who ended with the ball hands it (within relay.hand yd) or shovels it underhand (within relay.shovel) to the nearest official, who then spots it
 // and the relay goes on as before. His arm = p.refToss (0-1, set every frame by refTick from SL.rfPl, taped like armsUp) + p.refTossK (1 hand / 2 shovel), cleared in reset().
 // Never while he celebrates, is hurt, or is down past relay.upMax s. Far away (a long incompletion) = a ball boy tosses a fresh ball in to the official at the hash (refBallBoy).
 function refGiveOK(c) { return !!(c && c.hasBall && !c.cel && !c.slOut && !c.celWalk && !celebHasBall() && !(c.inj || c.hurt) && !(celebQ && celebQ.hero === c) && !celebSides.some(q => q && q.hero === c)); }
-function refCelebWait(c) { return !!(celebHasBall() || celebQ || celebSides.length || celebLive.length || allPlayers().some(p => p && (p.cel || p.celWalk)) || (c && (c.cel || c.celWalk))); }   // (v0.71 one ball, ever: no relay while any celebration or reaction is queued, waiting for your click, walking out or playing, for anyone)
+function refCelebWait(c) { return !!(celebHasBall() || celebQ || celebSides.length || celebLive.length || allPlayers().some(p => p && (p.cel || p.celWalk)) || (c && (c.cel || c.celWalk))); }   // (v0.70 one ball, ever: no relay while any celebration or reaction is queued, waiting for your click, walking out or playing, for anyone)
 function refAfterCeleb(X2, until, far) {   // a celebration has the ball: look again later; when it is over, the relay starts from wherever the ball is now (his hands, or where the move set it down)
   refQ(SL.now + REF.crew.relay.celebPoll, () => {
     if (state !== 'done') return;
@@ -2369,12 +2371,12 @@ function refRelayStart(X, Y, X2, far, again, again2) {   // (refEnd) who starts 
   if (!again && refCelebWait(c)) return refAfterCeleb(X2, now + rl.celebMax);   // (never two balls: a celebration keeps it until it is over)
   const out = !(c && c.hasBall) && (ball.y < Y_MIN - rl.boyOut * YD || ball.y > Y_MAX + rl.boyOut * YD || ball.x < -ENDZONE || ball.x > FIELD + ENDZONE);   // (loose on the sideline / in the stands)
   if ((far || out) && refBallBoy(far ? X2 : slClampXA(ball.x), ball.y, X2)) return;
-  if (!c && !again2 && refFetch(X, Y, X2)) return;   // (v0.71 far from every official: a player near it brings it)
+  if (!c && !again2 && refFetch(X, Y, X2)) return;   // (v0.70 far from every official: a player near it brings it)
   if (!refGiveOK(c)) return refRelay(X, Y, X2);
   const A = refNearest(c.x, c.y); if (A < 0) return refRelay(X, Y, X2);
   const a = refAt(A), d = Math.hypot(a.x - c.x, a.y - c.y);
   const pDown = () => c.action === 'down' || c.action === 'getup';
-  const reach = c.fetched ? rl.over : rl.shovel;   // (v0.71 a man who fetched it throws it overhand from farther)
+  const reach = c.fetched ? rl.over : rl.shovel;   // (v0.70 a man who fetched it throws it overhand from farther)
   const come = (u) => {   // (he comes over until he's close enough for a toss, aimed at where the man is now)
     const p = refAt(A), dd = Math.hypot(p.x - c.x, p.y - c.y), vx = (p.x - c.x) / (dd || 1), vy = (p.y - c.y) / (dd || 1), gx = c.x + vx * reach * 0.6 * YD, gy = c.y + vy * reach * 0.6 * YD, w = SL.W[A];
     if (w && !w.pa && Math.hypot(w.tx - gx, w.ty - gy) < 1.5 * YD && u < w.t0 + w.T) return w.t0 + w.T;
@@ -2409,7 +2411,7 @@ function refRelayStart(X, Y, X2, far, again, again2) {   // (refEnd) who starts 
   });
   give(Math.max(now + rl.pDelay, ta + 0.1), now + rl.giveMax);
 }
-function refFetch(X, Y, X2) {   // v0.71 (refRelayStart) a dead ball no one holds, far from every official: the nearest player on his feet close to it goes and gets it (fetchStep in settle), then gives it like a carrier
+function refFetch(X, Y, X2) {   // v0.70 (refRelayStart) a dead ball no one holds, far from every official: the nearest player on his feet close to it goes and gets it (fetchStep in settle), then gives it like a carrier
   const rl = REF.crew.relay, A = refNearest(ball.x, ball.y); if (A < 0 || ball.inAir) return false;
   const a = refAt(A); if (Math.hypot(a.x - ball.x, a.y - ball.y) <= rl.fetch * YD) return false;
   let best = null, bd = rl.fetchNear * YD;
@@ -2449,7 +2451,7 @@ function refBallBoy(X, Y, X2) {   // a fresh ball from the nearest ball boy (the
 }
 function refRelay(X, Y, X2, give) {   // spot the ball: the nearest man runs to it (X, Y) and marks it with his foot, then it goes official to official to the hash at X2 (the next spot) and is set down (give = he already has it from the carrier)
   const Rc = REF.crew, now = SL.now, hy = Math.max(HASH_IN, Math.min(FW - HASH_IN, Y)), hz = 20 * S;
-  const X0 = slClampXA(X); X = slClampX(Number.isFinite(X2) ? X2 : X);   // (v0.71 picked up where the ball really is, end zones too; only the spot it is carried to is on the field)
+  const X0 = slClampXA(X); X = slClampX(Number.isFinite(X2) ? X2 : X);   // (v0.70 picked up where the ball really is, end zones too; only the spot it is carried to is on the field)
   const A = give ? give.A : refNearest(X0, Y); if (A < 0) return;
   const t1 = refGo(A, X0 - 0.5 * YD, Y, give ? Rc.jog : Rc.run, 1, give ? give.t : now + 0.15) + 0.1;
   const rb = give ? give.rb : [t1, X0, Y, 0, 0];
@@ -2479,7 +2481,8 @@ function refRelay(X, Y, X2, give) {   // spot the ball: the nearest man runs to 
 // a flag (penalties, phase 3): thrown at the foul's spot (x, y) by the official who saw it (watcher = the nearest on his feet unless given); late = pulled from the belt
 function refFlag(x, y, late, watcher) {
   if (!refHost()) return -1;
-  const Rc = REF.crew, now = SL.now, i = watcher != null && watcher >= 0 ? watcher : refNearest(x, y); if (i < 0) return -1;
+  const Rc = REF.crew, now = SL.now, held = SL.cast.rf.filter(j => SL.A[j] && SL.A[j].fl && !SL.A[j].fl.pk);   // (v0.70 several flags a play: each from a different official, so none loses his)
+  let i = watcher != null && watcher >= 0 ? watcher : refNearest(x, y, held); if (i < 0) i = refNearest(x, y); if (i < 0) return -1;
   const p = refAt(i), react = late ? 0.8 : 0.2 + Math.random() * 0.25, id = late ? 'rfFlagPull' : Math.hypot(p.x - x, p.y - y) > 9 * YD ? 'rfFlagOver' : 'rfFlagUnder';
   const t0 = now + react + (late ? 0.5 : Rc.flagAt);
   refAnim(i, { id: SLRI[id], t0: now + react, fl: { x, y, sx: p.x + p.f * 0.4 * YD, sy: p.y, t0, pk: 0 } });
@@ -3024,7 +3027,7 @@ const slSevere = () => { const c = typeof injuryCall !== 'undefined' && injuryCa
 function slExit(p, s) {   // the call is made (he is out): hide the on-field player, start his exit
   if (!p || p.slOut || tut || (ONL.on && ONL.guest) || (rec && rec.replaying) || typeof game === 'undefined' || !game || game.over) return;
   const kind = s && s.inj ? (s.inj.re || s.inj.sev >= 2 ? 2 : s.inj.sev) : 0, C0 = SL.cast, lvl = liteLevel();
-  p.slOut = 1;
+  p.slOut = 1; try { annInjury(p, s, true); } catch (e) {}   // (the booth: walks off / helped off / carted / season over)
   if (!SL.on || !C0 || lvl >= 2 || (SETTINGS.sideline || 'ALL') !== 'ALL' || !C0.xs) { p.slFade = performance.now(); injKneel(p, kind, null); return; }   // (not shown: he just fades out where he is)
   const side = homeKey() === MATCH.you ? 0 : 1, E = INJURY_EXIT, now = SL.now, tr = [], T = TEAMS[p.team] || homeKit();   // (your team's sideline: home = the top one)
   for (let i = 0; i < C0.people.length; i++) if (C0.people[i].k === SLK.TRAINER && C0.people[i].s === side) tr.push(i);
@@ -10078,6 +10081,21 @@ function drawPlayer(p) {
     const k = p.kaE ?? 1, H = Math.PI / 2;
     drawArm(t, skin, 2 * k + 0.5 * (1 - k), -10 * k - 9.5 * (1 - k) + bob, H + (-0.6 - H) * k, 2.5 + 2 * k, -0.15 + 0.4 * k, 3.5 + 1.5 * k);
     drawArm(t, skin, -2 * k + 0.5 * (1 - k), -10.5 * k - 9.5 * (1 - k) + bob, H + (2.5 - H) * k, 2.5 + 2 * k, -0.15 - 0.1 * k, 3.5 + 1.5 * k);
+  } else if (p.penK && p.penL > 0 && (!p.action || p.penK === 5)) {
+    // v0.70 a foul's look (looks only; penLook / penLookTick in 05), sized by p.penS (0 subtle .. 1 obvious): 1 holding = beaten, both arms still stretched out latched on his man's back;
+    // 2 DPI arm bar; 3 OPI straight-arm shove; 4 roughing shove; 5 jumping early (hands thrust out, into his man on encroachment); 6 an early tackle on a route (both arms wrapped
+    // round him); 7 a jersey grab on a route (one hand at his hip, a tug); his man: 8 held (an arm ripping back to get free), 9 shoved / grabbed (arms flung out)
+    const K = p.penK, sv = p.penS ?? 0.6, e = (p.penD || 0.7) - p.penL, sx = 2, sy = -10.5 + bob, rx = p.penDx * p.face / bk, ry = p.penDy / bkY, dd = Math.hypot(rx, ry) || 1;
+    const reach = (r, up) => { const k = Math.min(1, r / dd); return [sx + Math.max(2, rx * k), sy + ry * k + up]; }, rise = smooth01(Math.min(1, e / 0.15));
+    if (K === 1) { const tug = Math.sin(e * 20) * (0.8 + 1.4 * sv), L = 10.5 + 2.5 * sv, g = reach(L - 1 - tug, 1.5 - sv), h = reach(L - tug, -1 - sv); drawArmTo(t, skin, -1, -10 + bob, g[0], g[1], 6.3, 7.3, -1, 5); drawArmTo(t, skin, sx, sy, h[0], h[1], 6.5, 7.5, -1, 5.2); }
+    else if (K === 2) { const g = reach(8, 3), h = reach(10 + 2 * sv, -1); drawArmTo(t, skin, -1, -10 + bob, g[0], g[1], 6, 7, 1, 4.5); drawArmTo(t, skin, sx, sy, h[0], h[1], 6.5, 7.5, -1, 5); }
+    else if (K === 3) { const h = reach(4 + (7 + 3 * sv) * rise, -1.5 - sv); drawArm(t, skin, -1, -9.5 + bob, 2.5, 3.5, 0.4, 4, 3.5); drawArmTo(t, skin, sx, sy, h[0], h[1], 6.5, 7.5, -1, 5.5); }
+    else if (K === 4) { const h = reach(5 + 8 * rise, -3); drawArmTo(t, skin, -1, -10 + bob, h[0] - 1.5, h[1] + 2, 6.5, 7.5, -1, 5.5); drawArmTo(t, skin, sx, sy, h[0], h[1], 6.5, 7.5, -1, 5.5); }
+    else if (K === 5) { const to = Math.abs(p.penDy) + Math.abs(p.penDx) < 2.5 * YD && p.penDx * p.face > 0, h = to ? reach(5 + 7 * rise, -1) : [sx + (4 + 6 * sv) * rise, sy + 2 - 2 * rise]; drawArmTo(t, skin, -1, -10 + bob, h[0] - 1.5, h[1] + 1.5, 6, 7, -1, 5); drawArmTo(t, skin, sx, sy, h[0], h[1], 6, 7, -1, 5); }
+    else if (K === 6) { const g = reach(Math.min(13, dd + 2), 0.5), h = reach(Math.min(13, dd + 3), -1.5); drawArmTo(t, skin, -1, -10 + bob, g[0], g[1], 6.5, 7.5, 1, 5); drawArmTo(t, skin, sx, sy, h[0], h[1], 6.5, 7.5, 1, 5); }
+    else if (K === 7) { const tug = Math.sin(e * 16) * (0.5 + 1.5 * sv), h = reach(Math.min(11, dd) - tug, 3); drawArm(t, skin, -1, -9.5 + bob, Math.PI / 2 + s * pump, 2.5, -1 - s * 0.3, 3.5, 3); drawArmTo(t, skin, sx, sy, h[0], h[1], 6, 7, -1, 4.6); }
+    else if (K === 8) { const w = Math.sin(e * 14); drawArm(t, skin, -1, -9.5 + bob, 1.1, 3.5, 0.6, 4.5, 3.8); drawArm(t, skin, sx, sy, 2.2 + 0.5 * w * (0.5 + sv), 4.5, -0.6, 5.5, 4.5); }
+    else { const k = rise * (0.6 + 0.6 * sv); drawArm(t, skin, -1, -10 + bob, 1.6 - 3.6 * k, 4.5, 0.3, 5.5, 4.2); drawArm(t, skin, sx, sy, 1.4 - 2.9 * k, 4.5, 0.3, 5.5, 4.5); }
   } else if (p.action === 'wrap') {
     // a wrap-up tackle: both arms reach around the runner and lock behind him, driving him down
     // (upper arms reach out wide around him, then the forearms curl in and the hands lock behind his back)
@@ -10249,7 +10267,7 @@ function drawPlayer(p) {
   } else if (p.action === 'swat' && p.act && TIP_ST[p.act.tipSt] && TIP_ST[p.act.tipSt].back) {
     drawArm(t, skin, -1, -10 + bob, 2.6, 4.5, 0.4, 5, 3.6);   // lunging tip: the free arm flung back for balance
   } else if (p.refToss > 0 && p.refToss < 1 && !armsUp && (!p.action || p.action === 'getup')) {   // (v0.68 giving the ball to an official: a hand-off reaches forward, a shovel swings up underhand)
-    const k = p.refToss, e = k < 0.5 ? k * 2 : 1, ez = e * e * (3 - 2 * e), a = p.refTossK === 1 ? 1.25 - 1.05 * ez : p.refTossK === 3 ? -2.4 + 2.1 * ez : 2.3 - 1.95 * ez;   // (v0.71 k 3 = overhand: cocked up behind his head, over the top)
+    const k = p.refToss, e = k < 0.5 ? k * 2 : 1, ez = e * e * (3 - 2 * e), a = p.refTossK === 1 ? 1.25 - 1.05 * ez : p.refTossK === 3 ? -2.4 + 2.1 * ez : 2.3 - 1.95 * ez;   // (v0.70 k 3 = overhand: cocked up behind his head, over the top)
     drawArm(t, skin, 0.5, -10 + bob, a, 5.5, p.refTossK === 1 ? -0.2 : -0.1, 6.5, 4.5);
   } else if (fairWave) {
     drawArm(t, skin, 0.5, -10.5 + bob, -Math.PI / 2 + Math.sin(clock * 16) * 0.5, 6.5, 0, 7.5, 5.5);   // (straight up, swinging side to side)

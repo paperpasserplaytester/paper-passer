@@ -2,6 +2,31 @@ const canvas = document.getElementById('game');
 // FRAME TIMES spike tags (14's perfSpike): perfNote('tag') marks this frame as having done something heavy; a no-op unless SETTINGS.perfHud. Here so every file can call it
 const PERF_TAGS = [];
 function perfNote(tag) { if (typeof SETTINGS === 'undefined' || !SETTINGS.perfHud) return; if (PERF_TAGS.length < 12 && !PERF_TAGS.includes(tag)) PERF_TAGS.push(tag); }
+// v0.70: timers on the work outside the frame's timed parts (saves, sync, clicks, league tapes). perfTime(tag, f) runs f; with FRAME TIMES on, a run over PERF_SLOW.tag ms
+// tags the spike 'tag ms'. perfWrapAll() (14's frame, the first frame FRAME TIMES is on: nothing is wrapped before) swaps the PERF_WRAP functions for timed ones.
+// A pointer event is timed as a whole (perfEvOn / perfEvOff in 14): over PERF_SLOW.ev ms it is tagged with the wrapped calls it made.
+const PERF_SLOW = { tag: 16, ev: 30, sub: 2 };   // ms: a timed call worth a tag / a pointer event worth a tag / a call inside an event worth naming
+const PERF_EV = { on: 0, t0: 0, type: '', sub: [] };
+const PERF_WRAP = ['saveToSlot', 'loadFromSlot', 'buildSave', 'storeTidy', 'storeReport', 'autoAssignSlot', 'syncNow', 'syncOnLeave', 'syncBundle',
+  'newGame', 'openResults', 'leagueReset', 'careerReset', 'startCrumple', 'cglStart', 'btnSprClear', 'offToDraft', 'startExhibition', 'lgTapeTick', 'hsEndReel', 'seasonGameDone', 'pgTry'];
+function perfTime(tag, f, self, args) {
+  if (typeof SETTINGS === 'undefined' || !SETTINGS.perfHud) return f.apply(self, args);
+  const t0 = performance.now();
+  try { return f.apply(self, args); }
+  finally { const ms = performance.now() - t0; if (PERF_EV.on && ms > PERF_SLOW.sub) PERF_EV.sub.push([tag, ms]); if (ms > PERF_SLOW.tag) perfNote(tag + ' ' + Math.round(ms)); }
+}
+let perfWrapped = false;
+function perfWrapAll() {
+  perfWrapped = true;
+  for (const n of PERF_WRAP) { const f = window[n]; if (typeof f !== 'function' || f.__pw) continue; const w = function () { return perfTime(n, f, this, arguments); }; w.__pw = f; window[n] = w; }
+  try { if (window.PerformanceObserver && (PerformanceObserver.supportedEntryTypes || []).includes('longtask')) new PerformanceObserver(l => { for (const e of l.getEntries()) perfNote('longtask ' + Math.round(e.duration)); }).observe({ entryTypes: ['longtask'] }); else perfNote('no longtask API'); } catch (e) {}
+}
+function perfEvOn(e) { if (typeof SETTINGS === 'undefined' || !SETTINGS.perfHud) return; PERF_EV.on = 1; PERF_EV.t0 = performance.now(); PERF_EV.type = e.type; PERF_EV.sub.length = 0; setTimeout(perfEvOff, 0); }   // (window capture, the first listener of all; the end = a window bubble listener in 14, or this timer when something stopped the event)
+function perfEvOff() {
+  if (!PERF_EV.on) return; PERF_EV.on = 0; const ms = performance.now() - PERF_EV.t0;
+  if (ms > PERF_SLOW.ev) perfNote(`${PERF_EV.type} ${Math.round(ms)}${PERF_EV.sub.length ? ': ' + PERF_EV.sub.sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => k + ' ' + Math.round(v)).join(', ') : ''}`);
+}
+for (const t of ['pointerdown', 'pointerup', 'keydown']) window.addEventListener(t, perfEvOn, true);
 let ctx = canvas.getContext('2d', { alpha: false, desynchronized: /Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent) });   // (let:fieldCacheDraw points it at its own canvas while the static field is pre-drawn, nothing else ever changes it)   // (an opaque canvas: cheaper to composite on phones; not desynchronized, which tore / flickered on PC)
 // a rating written in words ("3.5 stars", "4*") is drawn with the star icon instead
 {
@@ -35,7 +60,11 @@ const RENDER_K = 1.1;   // (phones: was 0.75; the crowd has its own canvases and
 // rest of that game (back to 60 only between games); SETTINGS.fps '30' / '60' pins it. cold = the cold open on a phone runs at 30 from its first frame.
 // menuTouch = MENU_PACE.fps on a phone. slack = share of a refresh a paint may come early (vsync jitter)
 const FPS_CAP = { on: true, hi: 60, lo: 30, slowMs: 19, holdS: 2, menuTouch: 30, cold: true, slack: 0.5, deskSkip: true };   // deskSkip: laptops skip the paint on refreshes where the game did not step (deskSkip in 14)
-const DYN_RES = { on: true, min: 0.75, max: 2, step: 0.15, budget: 13, upMs: 8, down: 2, up: 6 };
+// v0.70 phone test switches (DEBUG page, not saved; also from the console: PHONE_TEST.turn = '2D'). Defaults = the normal game.
+// turn: page change GL (overlay) / 2D (old path) / OFF (pages cut); shadow ON / OFF (OFF = every shadowBlur on the main canvas is 0); res AUTO / a pinned render scale on touch
+const PHONE_TEST = { turn: 'GL', shadow: 'ON', res: 'AUTO', turns: ['GL', '2D', 'OFF'], shadows: ['ON', 'OFF'], ress: ['AUTO', '0.75', '1', '1.5'] };
+const phoneTestTxt = () => `TURN ${PHONE_TEST.turn} SHAD ${PHONE_TEST.shadow} RES ${PHONE_TEST.res}`;
+const DYN_RES = { on: true, min: 0.75, max: 2, step: 0.15, budget: 13, upMs: 8, down: 2, up: 6, start: 1.25, gapSlow: 1.25, gapOk: 1.08 };   // v0.70: start = first scale (was the max); the real gap between paints (fpsCap.gap) counts too: over gapSlow x the frame interval = too slow, under gapOk x (+ paint under upMs, cap not locked) = room to go up. The 30 FPS lock waits until the scale is down at min
 // v0.55 menu pacing (frame() in 14): menus paint at most fps, idleFps after idleMs with no input, and not at all while nothing on them can change
 // (a slow beatMs repaint covers anything that changes without a clock or input: a late image, a cloud sync note)
 const MENU_PACE = { fps: 60, idleFps: 30, idleMs: 400, beatMs: 2000, on: true, underSettings: false };   // underSettings = still draw the menu hidden under the settings page
@@ -1180,8 +1209,18 @@ function thirdDownOn() {   // Third Down Specialist: this down counts (3rd and l
 const REF = {
   force: null,   // TEST ONLY: 'hold' | 'pphold' | 'dpi' | 'opi' | 'rough' | 'false' | 'spot' | 'spotGoal' | 'knock' = make it happen on the next chance (null = off)
   miss: 0.02,    // a real foul that no official flags (very rare)
-  ghost: 0.0015, // a flag with no foul (DPI / OPI / holding only, and only where there was contact) per contact
-  pre: { fs: 0.012, off: 0.008, road: 1.5, jump: 0.6, yds: 5 },   // at the snap (a dice roll): false start / offside odds per snap, road offense x (1 + road x stadium pulse), YL the man lurches across, yards
+  ghost: 0.0002, // a flag with no foul (DPI / OPI / holding only, and only where there was contact) per contact (v0.70: very, very rare; every other flag follows a foul you can see, REF.look)
+  flagCam: { lead: 0.7, hold: 1.3, fall: 0.9, push: 1.9, pan: 0.85 },   // v0.70 a flagged play's replay (always a BIG PLAY): s before the foul the camera starts pushing in on it, s held, s easing back to the play; zoom x push, share of the way panned to the foul
+  look: { on: true, dur: { pphold: 0.85, hold: 0.85, dpi: 0.65, opi: 0.55, rough: 0.6, grab: 0.8, tackle: 0.75, false: 0.5, offside: 0.5, encroach: 0.6 } },   // (x 0.7 + 0.6 x his severity)
+  // v0.70 two rolls a foul: it HAPPENS (its look always plays, severity s rolled in sev[kind]), then it is CALLED with k[kind] x (s0 + (1 - s0) x s) x the nearest official's
+  // distance (1 within near yd, falling to farK at far yd) x the slider, at most max (refs aren't perfect); at most `most` flags a play
+  call: { near: 8, far: 32, farK: 0.3, s0: 0.25, max: 0.95, most: 3,
+    k: { pphold: 0.32, hold: 1, dpi: 0.95, opi: 0.6, rough: 0.95, dhold: 0.75, false: 1, offside: 1, encroach: 1 },
+    sev: { pphold: [0.15, 1], hold: [0.2, 1], dpi: [0.3, 1], opi: [0.2, 1], rough: [0.5, 1], grab: [0.05, 0.45], tackle: [0.65, 1], false: [0.1, 1], offside: [0.1, 0.7], encroach: [0.7, 1] } },
+  // v0.70 defensive holding on a route (flagRoute, from update): a cover man within r yd of a receiver who is `past` YL beyond the line gets one roll a play (odds);
+  // tackle = share that are an early tackle (obvious), else a jersey grab (subtle); the receiver is slowed slow[grab, tackle]; 5 yards and a first down
+  dhold: { past: 5, r: 1, odds: 0.1, tackle: 0.22, slow: [0.3, 0.65], yds: 5 },   // v0.70 the foul's look (penLook, 05; drawn in drawPlayer's arm chain): s it shows; started by the same roll that can be flagged, before the official reacts
+  pre: { jumpV: 5, enc: 0.4, fs: 0.009, off: 0.012, road: 1.5, jump: 0.6, yds: 5 },   // at the snap (a dice roll): false start / offside odds per snap, road offense x (1 + road x stadium pulse), YL the man lurches across, yards
   // booth review (boothOn): a bad spot only near the sticks (near YL) or a goal-line score with a defender within tdNear yd; never on 4th down
   spot: { near: 0.8, odds: 0.08, blindK: 3, over: [0.1, 0.45], max: 1.1, tdNear: 1.6, tdOdds: 0.04, tdShort: 0.4, look: 0.12, tdLook: 0.35, tdMargin: 0.6, pylon: 1.2 },   // v0.68 a touchdown may only be looked at / ruled short when the ball is within tdMargin YL of the goal line, a defender within tdNear yd, and he dives / falls / reaches, is within pylon yd of a sideline, or caught it there (refTdClose)   // odds x blindK when the nearest official is down / screened; over = YL it lands past the line the wrong way; max = biggest error YL; tdShort = YL short of the goal line; look / tdLook = a right call the booth looks at anyway (STANDS)
   // v0.68 accept / decline (penChoose, `// --- penalty choice` in 05): s of the referee's call before the choice (announce at annAt, the foul's signal at sigAt); s the CPU takes;
@@ -1192,9 +1231,9 @@ const REF = {
   chal: 2,            // challenges a game (a lost one also costs a timeout)
   rev: { still: 1.6, stamp: 1.8,   // s: the still frame when replays are off; the stamp
     wait: 1.2, slate: 1.8, look: 1.3, slowK: 0.3, rockSpan: 0.6, rockK: 0.35, rockN: 2, hold: 0.45, push: 2.2, base: 1.15, zoomE: 2.2, border: 6 },   // v0.68 booth mode: s after the whistle it may start; slate s; the last `look` s of the tape played x slowK, then rockN rocks over rockSpan s at rockK x, held `hold` s at each end; zoom x push while looking (base before), eased zoomE /s; border px
-  pphold: { grab: 0.16, slow: 0.45, flag: 0.5, yds: 10 },   // pass pro: a beaten blocker grabs (x 1.4 - his blocking 0-1), the rusher slowed like a run grab; flag odds on a grab; yards
-  dpi: { r: 0.8, early: 0.3, v: 1.2, odds: 0.35, watch: 0.4 },   // contact = a defender within r yd of the target, closing at v yd/s+, with more than `early` s before the ball gets there; flag odds (x watch when he is looking at the ball)
-  opi: { r: 0.9, window: 0.35, v: 1.6, odds: 0.25, yds: 10 },     // the target closing on a defender within r yd in the last `window` s; flag odds; yards (replay the down)
+  pphold: { grab: 0.16, slow: 0.45, flag: 0.25, yds: 10 },   // (v0.70 later: flag unused, the call is REF.call)   // (v0.70 flag 0.5 -> 0.25, opi 0.25 -> 0.12, dpi 0.35 -> 0.33, false start 0.012 -> 0.007, offside 0.008 -> 0.01: offense and defense fouls about as likely per play)   // pass pro: a beaten blocker grabs (x 1.4 - his blocking 0-1), the rusher slowed like a run grab; flag odds on a grab; yards
+  dpi: { r: 0.8, early: 0.3, v: 1.2, odds: 0.6, watch: 0.4 },   // contact = a defender within r yd of the target, closing at v yd/s+, with more than `early` s before the ball gets there; flag odds (x watch when he is looking at the ball)
+  opi: { r: 0.9, window: 0.35, v: 1.6, odds: 0.3, yds: 10 },     // the target closing on a defender within r yd in the last `window` s; flag odds; yards (replay the down)
   rough: { r: 1.2, late: 0.35, max: 1.4, v: 3, hit: 0.3, flag: 0.85, yds: 15 },   // a rusher reaching the QB `late` s past PRESSURE_THROW.window (until max s after the throw) at v yd/s+: hit odds (else he pulls up), flag odds on the hit
   // the crew on the field (`// --- officials`, 07; looks only, always on): home = [role, yd line, yd off the middle] at setup; distances: along the field YL, across YD
   crew: { home: [['R', 40, 5], ['U', 54, -1], ['L', 50, 0], ['B', 70, 3]],
@@ -1213,9 +1252,9 @@ const REF = {
     relay: { toss: 0.55, gap: 0.45, near: 3,   // ball relay: s in the air, s between catch and next throw, yd from the hash = he walks it there himself
       hand: 1.2, shovel: 6, pTime: 0.45, pDelay: 0.5, upWait: 1.4, far: 25, boyToss: 0.8, boyMax: 18,
       celebPoll: 0.3, celebMax: 14, boyOut: 0, boyIn: 2, giveRetry: 0.25, giveMax: 8,
-      fetch: 12, fetchNear: 9, fetchV: 4.2, fetchMax: 6, over: 16, overT: 0.7 },   // v0.71 a dead ball no one holds with the nearest official over fetch yd away: a player on his feet within fetchNear yd jogs (fetchV yd/s, gives up after fetchMax s) to it and gives it; an overhand toss (refTossK 3, overT s in the air) out to `over` yd
-    backMax: 2.2, backYd: 3.5,                 // v0.71 fastest backpedal (yd/s) / longest backpedal leg (yd): past either he turns and runs, then turns back to the ball
-    kSlide: 0.07, kSlideMax: 0.7,              // v0.71 knockdown slide: yd per yd/s of the hit, at most kSlideMax yd (his walk ends where he was hit)   // giveRetry = s between looks while the hand-off waits (official close and up, the man up), giveMax = longest it waits before the official walks to the spot himself   // boyOut = yd past a sideline the loose ball counts as out (ball boy), boyIn = yd inside the line the official takes the boy's toss   // a celebration in progress: the relay looks again every celebPoll s and waits up to celebMax s for it to end (never two balls)
+      fetch: 12, fetchNear: 9, fetchV: 4.2, fetchMax: 6, over: 16, overT: 0.7 },   // v0.70 a dead ball no one holds with the nearest official over fetch yd away: a player on his feet within fetchNear yd jogs (fetchV yd/s, gives up after fetchMax s) to it and gives it; an overhand toss (refTossK 3, overT s in the air) out to `over` yd
+    backMax: 2.2, backYd: 3.5,                 // v0.70 fastest backpedal (yd/s) / longest backpedal leg (yd): past either he turns and runs, then turns back to the ball
+    kSlide: 0.07, kSlideMax: 0.7,              // v0.70 knockdown slide: yd per yd/s of the hit, at most kSlideMax yd (his walk ends where he was hit)   // giveRetry = s between looks while the hand-off waits (official close and up, the man up), giveMax = longest it waits before the official walks to the spot himself   // boyOut = yd past a sideline the loose ball counts as out (ball boy), boyIn = yd inside the line the official takes the boy's toss   // a celebration in progress: the relay looks again every celebPoll s and waits up to celebMax s for it to end (never two balls)
     skipNear: 3,                              // yd: after a time skip (CONTINUE click / a replay) an official further than this from his new pre-snap spot is put this close to it (refReset)   // v0.68 first leg: the man with the ball hands it over within hand yd, shovels it underhand within shovel yd (pTime s in the air, pDelay s after the whistle); an incompletion past far YL = a ball boy tosses a fresh one in (boyToss s; boyMax yd off his sideline he throws from)
     sig: 0.35, flagFly: 0.5, flagAt: 0.22,     // s after the whistle the signals start; a flag's flight s; s into the throw it leaves the hand
     stripes: { n: 3, nFar: 2 },   // an official's shirt: n black stripes close up (nFar far off, lod 0-1) between white ones, every band the same width
@@ -1290,7 +1329,9 @@ const BB = BOT_BAR / 40;
 const ANN = { cps: 30, gap: 0.55, hold: 2.1, fade: 0.45, holdMax: 3.2, maxQ: 2, recent: 24, minLines: 12, slide: 0.32, pop: 0.22,
   colorOdds: { 0: 0.15, 1: 0.3, 2: 0.55, 3: 0.75 }, crazy: 5, longTd: 50, deepYd: 25,
   pad: 8, touchY: 34, card: 64, face: 21, size: 17, bigSize: 22, maxW: 300, shake: 1.6,
-  reelEnd: 1.9, reelGap: 0.9 };   // halftime reel: B's comment comes reelEnd s before a clip's last frame, never sooner than reelGap s after its last moment
+  reelEnd: 3.4, reelGap: 0.9,
+  reelCps: 15, reelWord: 0.45, reelAirQuick: 1.0, reelAirHang: 1.9,   // halftime reel only: slower handwriting, a line stays up at least reelWord s a word before the next one, air time (s) for the quick / hang colour lines
+  overYd: 1.5, wideYd: 2.5 };   // incompletions: past / short of the target by more than overYd along the throw = over / underthrown, more than wideYd across it (and more across than along) = wide   // halftime reel: B's comment comes reelEnd s before a clip's last frame, never sooner than reelGap s after its last moment
 
 // Routes, in yards: [downfield, toward the middle]. stop = sits down at the end
 // (hitches, curls, sticks and comebacks; everything else keeps running after its last break).

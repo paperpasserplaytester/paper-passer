@@ -1380,7 +1380,7 @@ function poachOffer() {
   foSet(team, role, hirePerson(rep, rep.ask, rep.want));   // (they fill the job from the hiring pool)
   if (!cur.interim) pool.push({ role, name: cur.name, stars: cur.stars, spec: cur.spec, trait: cur.trait, trait2: cur.trait2 || null, age: cur.age, ask: r1(cur.sal), want: Math.max(1, cur.years || 1), lo: cur.stars, hi: cur.stars, scouted: true, refused: false, face: cur.face });   // (your old man: on the hiring board)
   const mine = { ...t, sal, years: POACH.years }; delete mine.lock; delete mine.lines; delete mine.asg;
-  hireSet(role, mine);
+  hireSet(role, mine); cardShowStaff(mine, role, 'POACHED');
   (LEAGUE.coachNews = LEAGUE.coachNews || []).push(`You hired ${t.name} (${short}, ${t.stars} stars) away from the ${teamFull(team)} for $${sal.toFixed(1)}M a year. ${rep.name} takes over there${cur.interim ? '' : `, and ${cur.name} is on the hiring board`}.`);
   say(`${t.name} JOINS YOU`); upgradeSfx(); autosaveSoon();
 }
@@ -3268,7 +3268,8 @@ function catPopCtl(o) {
       if (rt) { S.view = { p: rt.d.p, team: rt.d.team }; return; }   // (a retirement card: his page)
       if (!inBtn(pt, V) || o.noOpen) return;
       const it = L.items.find(i => i.kind === 'card' && i.d.p && inBtn(pt, { x: V.x + i.x, y: V.y + i.y - S.scroll, w: i.w, h: i.h }));
-      if (it && season && !exhibition) { offPopClose(); tradeOpen(results.screen); TR.sel = { p: it.d.p, k: it.d.team }; TR.awSel = TR.sel; }
+      if (it && season && !exhibition && it.d.team !== meK()) { offPopClose();   // (your own man: no trade page)
+        tradeOpen(results.screen); TR.sel = { p: it.d.p, k: it.d.team }; TR.awSel = TR.sel; }
     },
     wheel(dy) { S.scroll += dy; },
     arrows(d) { const n = cats().length; if (n > 1 && !S.view) { S.cat = (S.cat + d + n) % n; S.scroll = 0; S.t0 = performance.now(); } },
@@ -3972,6 +3973,7 @@ function tradePropose() {
     const gp = TR.give.slice(), tp = TR.get.slice(), names = l => l.map(assetName).join(', ');
     LEAGUE.coins -= cost;
     tradeMove(gp, me, k); tradeMove(tp, k, me);
+    if (TR.ret === 'draft') draftReown();   // (a trade made during the draft: picks that changed hands update on the board in place)
     postNote('myTrade', { team: pTeam(me), give: names(gp), get: names(tp) }, { w: 12, team: me });
     if (capCuts && capCuts.length) { for (const p of capCuts) { const R = ROSTER[k], i = R.indexOf(p); if (i >= 0) { faRelease(p, k); vacate(k, p); } } recalcTeamStars(); }   // (to fit under their cap)
     gp.forEach(a => { if (a.kind === 'player') moveMood(a.p, -1); }); tp.forEach(a => { if (a.kind === 'player') moveMood(a.p, 1); });
