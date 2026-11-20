@@ -1946,8 +1946,9 @@ function snapUnbright(c) {   // a copy of the canvas, taken back to the picture 
 const PERF_HUD = { win: 1000, x: 8, y: 150, font: 15, fontTouch: 20, alpha: 0.78,   // win = ms a reading covers; x / y = its corner (from the left / up from the bottom); font px (touch = phones)
   spikeMs: 33, spikeGap: 50, keep: 12, show: 4, parts: 3, chars: 96 };   // spikes: a frame whose update + paint is over spikeMs (or whose gap since the last frame is over spikeGap ms) goes into a ring of `keep`; the HUD shows the last `show` (top `parts` parts each, cut at `chars`). Tap / click the readout = copy them all as text
 const perfS = { t0: 0, uS: 0, uM: 0, uN: 0, dS: 0, dM: 0, dN: 0, pN: 0, l1: '', l2: '', l3: '', parts: {}, btn: 0,   // (pN = frames really painted; parts = ms per paint-block part; btn = menuBtn calls last frame)
-  fu: 0, fd: 0, fp: {}, spikes: [], box: null, copied: 0 };   // (this frame: update ms, paint ms, parts; the spike ring; the readout's box (game px); when it was last copied)
-function perfUpd(ms) { if (!SETTINGS.perfHud) return; perfS.uS += ms; perfS.uN++; if (ms > perfS.uM) perfS.uM = ms; perfS.fu = ms; }
+  fu: 0, fd: 0, fp: {}, spikes: [], box: null, copied: 0,
+  all: {}, aP: 0, aUS: 0, aUM: 0, aUN: 0, aDS: 0, aDM: 0 };   // (perfDump: the same, summed since the last perfDump(true))   // (this frame: update ms, paint ms, parts; the spike ring; the readout's box (game px); when it was last copied)
+function perfUpd(ms) { if (!SETTINGS.perfHud) return; perfS.uS += ms; perfS.uN++; if (ms > perfS.uM) perfS.uM = ms; perfS.fu = ms; perfS.aUS += ms; perfS.aUN++; if (ms > perfS.aUM) perfS.aUM = ms; }
 function perfSpike(gap) {   // frame(), first thing: was the frame before a spike? (covers frames that returned before painting too)
   const P = perfS;
   if (SETTINGS.perfHud && !document.hidden && gap < 1000) {
@@ -1982,7 +1983,7 @@ function canvasMB() {
 }
 function perfDraw(ms, now) {
   if (!SETTINGS.perfHud) return;
-  const P = perfS; P.dS += ms; P.dN++; if (ms > P.dM) P.dM = ms; P.fd = ms;
+  const P = perfS; P.dS += ms; P.dN++; if (ms > P.dM) P.dM = ms; P.fd = ms; P.aP++; P.aDS += ms; if (ms > P.aDM) P.aDM = ms;
   if (now - P.t0 < PERF_HUD.win) return;
   const f = n => n.toFixed(1), lv = liteLevel();
   P.l1 = `${Math.round(P.dN * 1000 / Math.max(1, now - P.t0))} FPS   UPD ${f(P.uS / Math.max(1, P.uN))} / ${f(P.uM)}   DRAW ${f(P.dS / Math.max(1, P.dN))} / ${f(P.dM)} ms`;
@@ -1993,7 +1994,16 @@ function perfDraw(ms, now) {
   P.t0 = now; P.uS = P.uM = P.uN = P.dS = P.dM = P.dN = P.pN = 0; P.parts = {};
 }
 // v0.55: per-part timing of the paint block (only while FRAME TIMES is on): t = perfMark('name', t) adds the ms since t to that part and returns now
-function perfMark(name, t) { const n = PERF_NOW(), d = n - t; perfS.parts[name] = (perfS.parts[name] || 0) + d; perfS.fp[name] = (perfS.fp[name] || 0) + d; return n; }
+function perfMark(name, t) { const n = PERF_NOW(), d = n - t; perfS.parts[name] = (perfS.parts[name] || 0) + d; perfS.fp[name] = (perfS.fp[name] || 0) + d; perfS.all[name] = (perfS.all[name] || 0) + d; return n; }
+// console: perfDump() = every part (paint d.* + step u.* / cam) as ms per painted frame, sorted, + the step's average / max (FRAME TIMES must be on); perfDump(true) also starts a new sum
+function perfDump(reset) {
+  const P = perfS, n = Math.max(1, P.aP), f = v => v.toFixed(2);
+  const rows = Object.keys(P.all).map(k => [k, P.all[k] / n]).sort((a, b) => b[1] - a[1]);
+  const out = [`${P.aP} paints, ${P.aUN} steps   STEP avg ${f(P.aUS / Math.max(1, P.aUN))} max ${f(P.aUM)} ms   PAINT avg ${f(P.aDS / n)} max ${f(P.aDM)} ms`].concat(rows.map(([k, v]) => `${k.padEnd(12)} ${f(v)}`)).join('\n');
+  console.log(out);
+  if (reset) { P.all = {}; P.aP = P.aUS = P.aUM = P.aUN = P.aDS = P.aDM = 0; }
+  return out;
+}
 // the end-of-game reel under the result screen's paper: every HLREEL.bgEvery-th frame, into a canvas HLREEL.bgK x the size (the global ctx points at it
 // while draw() runs, with the main ctx's own hooks copied on), blitted under the result screen every frame
 let REEL_BG = null, reelBgN = 0;
@@ -2047,11 +2057,12 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   if (hl && hl.bg && (!results || (results.screen !== 'result' && results.screen !== 'pgx'))) hlClose();   // (the end-of-game reel ends once the result screen is left for good)
   if (HSK.at) hsHoldTick();   // (holding to skip the pregame / halftime show)
   const perfU0 = performance.now();
+  let deskGate = false, deskStepped = false;   // (deskSkip: the live game could step this frame / it did)
   if (hl) { if (!settingsOpen && !(hl.bg && results.screen !== 'result')) hlStep(dt); }   // (the result screen's highlights: tapes only, the game itself stays stopped)
   else if (HT) { if (!settingsOpen) hsTick(); }   // (the halftime show's cards: the game stays stopped)
   else if (!showKeys && !paused && !results && !settingsOpen && !injuryShowing() && !ONL.guest && !(ONL.on && (ONL.away || ONL.lost))) {    // (online guest: the host steps the game, onlGuestStep below draws its snapshots)   // the keybinds page, the pause button, settings, an injury timeout and the result screen stop the game
     if (rec && rec.replaying) replayTick(dt);
-    else { stepAcc += dt; if (stepAcc >= STEP_MIN) { GRAV_K = 1; speedStep(Math.min(stepAcc * SPEED_BASE * celTSpeed(), 0.07)); stepAcc = 0; } }   // (the game steps about 60 times a second whatever the screen's refresh rate: a 120 / 144 Hz monitor ran every per-frame roll, reaction and AI decision twice as often)
+    else { deskGate = true; stepAcc += dt; if (stepAcc >= STEP_MIN) { deskStepped = true; GRAV_K = 1; speedStep(Math.min(stepAcc * SPEED_BASE * celTSpeed(), 0.07)); stepAcc = 0; } }   // (the game steps about 60 times a second whatever the screen's refresh rate: a 120 / 144 Hz monitor ran every per-frame roll, reaction and AI decision twice as often)
   }
   try { if (ONL.host && !results) onlHostTick(); if (ONL.guest && !results) onlGuestStep(); }
   catch (err) { console.warn('online: snapshot dropped', err); }   // (a bad snapshot never crashes the game loop)
@@ -2086,6 +2097,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   cglTick();   // (v0.66: the GPU crumple overlay: every frame, even ones the menu below doesn't paint)
   const force = fitForce; fitForce = false;   // (v0.62: the canvas was resized = cleared: paint this frame whatever the caps say, or a black frame shows)
   if (!force && TUI.on && now - lastPaint < fpsInterval() - rafDt * FPS_CAP.slack) return;   // (phones: at most 60 a second even on a 90 / 120 Hz screen, 30 once locked (fpsInterval); the game steps above are unaffected)
+  if (!force && deskSkip(now, deskGate, deskStepped)) return;   // (laptops / high-refresh screens: no step ran = the same picture, keep the last one)
   if (!force && menuSkip(now)) return;   // (v0.55: menus: paced, and nothing painted while nothing on them can change; the canvas keeps its last picture)
   lastPaint = now;
   const paintT0 = performance.now(), pm = SETTINGS.perfHud;
@@ -2114,8 +2126,16 @@ function menuSkip(now) {
   const idle = now - menuInputAt > MENU_PACE.idleMs, since = now - lastPaint;
   const skip = since < 1000 / (idle ? MENU_PACE.idleFps : TUI.on && FPS_CAP.on ? FPS_CAP.menuTouch : MENU_PACE.fps) - rafDt * 0.5   // (the cap, allowing for the refresh's own step: 144 Hz -> every 2nd refresh)
     || (idle && since < MENU_PACE.beatMs && !menuDirty());
-  if (skip) { UI_BTNS = UI_BTNS_PREV; UI_MODAL.now = UI_MODAL.was; UI_MODAL.idx = UI_MODAL.idxWas; spendFrame--; }   // (an unpainted frame: last painted frame's buttons, popup state and frame count stay current)
+  if (skip) paintHold();
   return skip;
+}
+function paintHold() { UI_BTNS = UI_BTNS_PREV; UI_MODAL.now = UI_MODAL.was; UI_MODAL.idx = UI_MODAL.idxWas; spendFrame--; }   // (an unpainted frame: last painted frame's buttons, popup state and frame count stay current)
+// v0.70: not touch, a live game stepping on its own clock, and no step ran this refresh = nothing moved: skip the paint (120 / 144 Hz screens painted
+// every refresh while the game steps ~60 a second). Never skips past the step rate, so a game stopped for any other reason paints as before
+function deskSkip(now, gate, stepped) {
+  if (!FPS_CAP.deskSkip || TUI.on || !gate || stepped || CO || results || hl || HT || paused || showKeys || settingsOpen || ONL.guest) return false;
+  if (now - lastPaint >= STEP_MIN * 1000) return false;
+  paintHold(); return true;
 }
 function paintFrame(paintT0, pm, now) {
   let pt = paintT0;

@@ -642,7 +642,7 @@ function startTest(id) {
     nextLos = 25 * YL; nextDown = 1; nextLtg = 35 * YL; reset();
     showBanner('PUNT RETURN', '#ffffff', '#1b2a3a', teamName('BLUE'));
     const los0 = FIELD - 35 * YL;
-    startKickoff({ los: los0, punterX: Math.min(FIELD + ENDZONE - YL, los0 + PUNT.depth * YL), land: FIELD - 80 * YL });
+    startKickoff({ los: los0, punterX: Math.min(FIELD + ENDZONE - YL, los0 + PUNT.depth * YL), land: FIELD - 80 * YL, ltg: los0 - 10 * YL });
   }
   else if (id === 'fg') { spot(72, 4, 10); reset(); startFieldGoal(); }
   else if (id === 'xp') { patMode = 'choose'; spot(98, 1, 99); nextLtg = FIELD; reset(); patMode = 'kick'; fourthPending = false; los = 85 * YL; startFieldGoal(); }

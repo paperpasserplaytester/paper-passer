@@ -852,6 +852,7 @@ const CHANGELOG = [
       "The page crumple no longer stops halfway: it waits a beat flat, then folds smoothly.",
       "Opening a save no longer flies credits and XP to the box.",
       "Online: players no longer slip back and forth when the host is on a phone or the connection hiccups.",
+      "Laptops with fast screens no longer draw the same picture twice in a game: less work for the same look.",
     ]],
   ] },
   { v: "v0.69", secs: [

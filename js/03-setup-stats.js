@@ -1645,7 +1645,7 @@ function twoPlayerBall(startYd, preface) {
     reset();
     showBanner('PUNT RETURN', '#ffffff', '#1b2a3a', teamName('BLUE'));
     const los0 = FIELD - pn.from * YL;
-    startKickoff({ los: los0, punterX: Math.min(FIELD + ENDZONE - YL, los0 + PUNT.depth * YL), land: FIELD - pn.land * YL });
+    startKickoff({ los: los0, punterX: Math.min(FIELD + ENDZONE - YL, los0 + PUNT.depth * YL), land: FIELD - pn.land * YL, ltg: los0 - (pn.togo || 10) * YL });   // (ltg = the punt team's line to gain: a blocked punt they keep, puntBlkEnd)
     return;
   }
   const wasLive = liveKicked; liveKicked = false;

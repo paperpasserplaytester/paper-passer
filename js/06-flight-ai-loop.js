@@ -614,6 +614,7 @@ function cpuReturnMove(d) {
 function pickEnd(d, text) {
   const tb = patMode === null && !tut && d.x >= FIELD;
   if (tb) { popup(d, 'TOUCHBACK', '#7fe3ff'); text = `${ball.scoopReturn ? 'TURNOVER' : 'INTERCEPTED'} by ${who(d)} in the end zone  -  TOUCHBACK`; }
+  if (!tb && puntBlkEnd(d)) return;
   endPlay(text, 0, 'turnover');
   if (tb && pendingSim) pendingSim = { startYd: INT_TB.yard };
 }
@@ -881,6 +882,7 @@ function fallOnBall(near, laid = false) {
       lineToGain = Math.min(lineToGain, near.x);   // counts as a first down at the spot
       return endPlay(`INTERCEPTED... then FUMBLED!  Offense recovers  ${who(near)}`, Math.max(YL, near.x));
     }
+    if (puntBlkEnd(near, fall)) return;
     pstRecover(near);
     if (!ball.blocked) popup(near, 'RECOVERED', near.team === 'def' ? '#ff6b6b' : '#7dff8a');   // (RECOVERED! banner naming the team; a blocked kick keeps its BLOCKED KICK! banner)
     // falls on it and cradles it: drawn tucked away between his arms (a diver keeps his dive)
@@ -892,6 +894,19 @@ function fallOnBall(near, laid = false) {
     else if (wasBlock) endPlay('Blocked kick, offense recovers  -  no gain', kickoffPlay ? Math.max(YL, near.x) : los);   // (a blocked punt you're returning: where you fell on it)
     else endPlay(`Fumble, offense recovers  ${yardsFrom(near.x)} yds`, near.x);
   }
+}
+
+// A blocked punt (ball.puntBlk, set in kproPuntBlocked) that ends in the punt team's hands: the punt team is always the def side (yours mirrored
+// or theirs), so ONE rule for both: short of their line to gain (it was 4th down) = the other team's ball at that spot (turnover on downs);
+// past it = their first down (the normal turnover path). The receiving team's recoveries keep the kick-return rules (their ball, 1st and 10).
+function puntBlkEnd(d, fall) {
+  const pb = ball.puntBlk; ball.puntBlk = null;
+  if (!pb || !kickoffPlay || d.team !== 'def' || d.x <= pb.ltg) return false;
+  pstRecover(d); if (fall) fall();
+  ball.blocked = false; ball.scoopReturn = false;
+  showBanner('TURNOVER ON DOWNS');
+  endPlay(`Blocked punt, ${who(d)} has it short of the line to gain  -  TURNOVER ON DOWNS`, Math.max(YL, Math.min(FIELD - YL, d.x)));
+  return true;
 }
 
 // Picked up clean on the run: the offense keeps playing (you run it), the defense returns it like a pick.
@@ -2818,6 +2833,7 @@ function hipHands(dt) {
 }
 function update(dt) {
   if (dt <= 0) return;
+  let ut = SETTINGS.perfHud ? PERF_NOW() : 0;   // (FRAME TIMES: u.* parts of the game step, perfDump(); 0 = off, every mark below is skipped)
   DIFF_FRAME++;   // (a new game step: diffLvl's kept row is rebuilt)
   if (tut && tut.defAsk) return;   // (the tutorial's "play defense or sim it?" card: nothing moves until you pick)
   if (wxDelayUp()) return;   // (the lightning delay card: everything waits)
@@ -2864,14 +2880,19 @@ function update(dt) {
   // a simmed game ticks itself along
   // (fast while simming ahead)
   if (state === 'sim' && simGame && sim && !halfHold && (sim.timer -= dt) <= 0) { simAdvance(); if (sim) sim.timer = simFast ? SIM_FAST : sim.quick ? SIM_QUICK : SIM_AUTO; }
+  if (ut) ut = perfMark('u.misc', ut);
 
   if (state === 'drop' || state === 'pocket') {
     updateQB(dt);
     if (state === 'drop' || state === 'pocket') {
+      if (ut) ut = perfMark('u.off', ut);
       updateLine(dt);
+      if (ut) ut = perfMark('u.line', ut);
       for (const r of catchers()) if (r !== runner) updateReceiver(r, dt);
       spaceReceivers(dt);
+      if (ut) ut = perfMark('u.off', ut);
       for (const d of back7) if (!d.blitz) zoneDefend(d, dt);   // blitzers rush with the line
+      if (ut) ut = perfMark('u.def', ut);
     } else if (state === 'run' && runner === qb) {
       // he just crossed the line this frame: everyone switches to the run right now (skipping a frame froze the line and the
       // blitzers for a beat and cost them their speed)
@@ -2888,13 +2909,17 @@ function update(dt) {
     const moveKeys = keys.KeyW || keys.KeyS || keys.KeyD || keys.ArrowUp || keys.ArrowDown || keys.ArrowLeft || keys.ArrowRight;
     const holding = runner === passer && (passerMode || aim) && !moveKeys;
     const top = holding ? 0.01 * YD : passerMode && runner === passer ? (runner === qb ? QB_RUN * qbTire(true) : QB_SPEED) : runner === qb ? QB_RUN * qbTire() : runner === rb ? RB_RUN : runner.topBase || WR_TOP;
+    if (ut) ut = perfMark('u.misc', ut);
     updateCarrier(runner, top, dt);
+    if (ut) ut = perfMark('u.off', ut);
     if (state === 'run') updateLine(dt);
+    if (ut) ut = perfMark('u.line', ut);
     // a screen catcher can throw it on until he crosses the line (or goes down)
     if (passer && (runner !== passer || passer.x >= los || passer.action === 'down')) { passer = null; passerMode = false; aim = null; }
     // whoever has the ball (QB, RB, or a receiver after the catch), everyone else blocks for him
     // (they block by default; as soon as the screen catcher draws the ball back to set up, they go back into their routes)
     const settingUp = screenPasserView();
+    if (ut) ut = perfMark('u.misc', ut);
     for (const p of [...recs, rb]) {
       if (p === runner || state !== 'run') continue;
       if (kickoffPlay) kickoffBlock(p, dt, WR_BLOCK_SPEED);
@@ -2902,8 +2927,10 @@ function update(dt) {
       else if (settingUp && p.route && p.path && p.path.length && !p.teBlock && !p.isPasser) updateReceiver(p, dt);
       else updateBlocker(p, dt, WR_BLOCK_SPEED);
     }
+    if (ut) ut = perfMark('u.off', ut);
     // the defense triggers on the screen; the few who stayed home keep playing their zones while he's set to throw
     for (const d of back7) if (state === 'run') { if (settingUp && d.screenStay) zoneDefend(d, dt); else pursue(d, runner, dt); }
+    if (ut) ut = perfMark('u.def', ut);
     if (kickoffPlay && state === 'run' && runner !== qb) kickoffBlock(qb, dt, WR_BLOCK_SPEED);
     else if (runner !== qb) { if (isRunPlay && !kickoffPlay && !qb.action && !(tut && (tutStep() || {}).still) && clock < RUN_DROP.time && !ball.pitch && !meshOn()) runDrop(dt); else if (ball.pitch && isRunPlay && !qb.action) { qb.pvx = qb.pvy = 0; setVelocity(qb, qb.x, qb.y, dt); qb.face = pitchFace(); }   /* (the toss: a reverse pivot, his back to the line until it goes; meshOn: a handoff's footwork starts at the snap, meshQB) */ else if (passCaught() && !qb.action) updateBlocker(qb, dt, QB_SPEED); else if (!meshQB(dt) && !rbpQB(dt)) idleQB(qb, dt); }   // (a caught pass: the QB goes downfield to block too)
   } else if (state === 'flight') {
@@ -2913,7 +2940,9 @@ function update(dt) {
     for (const r of catchers()) updateReceiver(r, dt);
     // (no route spacing once it's thrown: everyone who can get to it goes for it)
     for (const d of back7) defendBall(d, dt);
+    if (ut) ut = perfMark('u.def', ut);
     updateFlight(dt);
+    if (ut) ut = perfMark('u.ball', ut);
   } else if (state === 'loose') {
     for (const p of [qb, ...ols, ...recs.filter(r => r.teBlock)]) { if (p.action || p.coast || p.hitBy) idleQB(p, dt); else afterThrow(p, dt, p === qb ? QB_SPEED : OL_RUN); }
     for (const d of dl) lineToBall(d, dt);
@@ -2957,14 +2986,19 @@ function update(dt) {
       if (runQ) { const q = runQ; runQ = 0; if (performance.now() - q < RUN_QUEUE * 1000 && !fourthPending && !paused && patMode !== 'choose' && !(rec && rec.replaying)) handoff(); }   // (the hand-off clicked during the jog: everyone is set now)
     }
   } else fmWait = 0;
+  if (ut) ut = perfMark('u.play', ut);   // (whatever the state branch did that no mark above took)
   separatePlayers(dt);
+  if (ut) ut = perfMark('u.sep', ut);
   faceOffPairs();
   sideLock();
   for (const p of allPlayers()) postBump(p);   // (the goal posts' pads are solid for everyone, however he was moved this frame)
+  if (ut) ut = perfMark('u.sep', ut);
   if (SL.on) slCollide(dt);   // (sideline people are solid too: after celebrations / coasts have moved everyone; slides out, never back in bounds)
+  if (ut) ut = perfMark('u.slc', ut);
   updateBall(dt);
   if (state !== 'flight') ball.nose = null;  // the spiral look is only for a pass in the air
   if (state === 'loose') updateLoose(dt);
+  if (ut) ut = perfMark('u.ball', ut);
 
   const holder = allPlayers().find(p => p.hasBall) ||
     (!ball.inAir && !ball.loose && !ball.pitch && (state !== 'done' || runner === qb || (sackPlay && qb.action === 'down')) ? qb : null);   // (sacked: he keeps it, tucked)
@@ -3187,6 +3221,7 @@ function update(dt) {
   if (yardsTag && (yardsTag.t += dt) > YARDS_TAG_LIFE) yardsTag = null;
   if (tut) tutFrame();
   if (oo) ooPark();
+  if (ut) ut = perfMark('u.rest', ut);
   { const pt = SETTINGS.perfHud ? PERF_NOW() : 0; updateCamera(dt); if (pt) perfMark('cam', pt); }   // (FRAME TIMES: the camera's own cost)
   recordFrame(dt);
 }

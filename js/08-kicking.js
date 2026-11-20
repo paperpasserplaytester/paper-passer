@@ -1432,6 +1432,7 @@ function kproPuntBlocked(k, q, at) {   // off his hands: a live ball where he me
   Object.assign(ball, { x: at.x, y: at.y, z: at.z, loose: true, live: true, fumble: true, blocked: true, inAir: false,
                         vx: (1 + Math.random() * 5) * YD * (Math.random() < 0.7 ? 1 : -1), vy: (Math.random() - 0.5) * 7 * YD, vz: 90 * S, spin: (Math.random() - 0.5) * 24 });
   kicker.kickSwing = false; kicker.followV = 0;
+  ball.puntBlk = { ltg: k.punt && k.punt.ltg != null ? k.punt.ltg : (k.punt ? k.punt.los : at.x) - 10 * YL };   // (the punt team's line to gain, in this frame: they go down-field toward x 0; read by puntBlkEnd)
   state = 'fumble'; fumbleT = clock; runner = null; kickoff = null; msg = 'PUNT BLOCKED!  -  live ball'; kproLetGo();
 }
 // the punt is away: everyone heads for his lane
@@ -3491,7 +3492,7 @@ function doPunt() {
   const p = puntPreface('BLUE', los / YL);
   pendingSim = null;
   // their punt on defense (you play their drives): you field it live, from where it comes down (twoPlayerBall starts the return)
-  puntNext = aiOff() && !tut && p.land ? { from: los / YL, land: p.land } : null;
+  puntNext = aiOff() && !tut && p.land ? { from: los / YL, land: p.land, togo: (lineToGain - los) / YL } : null;
   setTimeout(whistle, 100);
   startSim(p.yd, p.lines);
   if (!aiOff()) stBanner('PUNT', p.lines);   // (SIM SPECIAL TEAMS: your punt, announced)
@@ -3591,11 +3592,11 @@ function startMyKickoff(preface = []) {
 }
 function startMyPunt() {
   if (!mirrorKickOK()) return startPunt();
-  const fromYd = los / YL;
+  const fromYd = los / YL, togo = (lineToGain - los) / YL;
   mirrorFlip();
   reset();
   const los0 = FIELD - fromYd * YL;   // (your line, seen from their side)
-  startKickoff({ los: los0, punterX: Math.min(FIELD + ENDZONE - YL, los0 + PUNT.depth * YL), land: los0 - (PUNT.min + PUNT.span * 0.6) * YL }, true);
+  startKickoff({ los: los0, punterX: Math.min(FIELD + ENDZONE - YL, los0 + PUNT.depth * YL), land: los0 - (PUNT.min + PUNT.span * 0.6) * YL, ltg: los0 - togo * YL }, true);
 }
 // SIM DEFENSE: your kick's return is over (their ball, their score or yours on a fumble): back to your side, and their drive is simulated
 function mirrorDone() {

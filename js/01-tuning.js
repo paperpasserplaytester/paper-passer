@@ -34,7 +34,7 @@ const RENDER_K = 1.1;   // (phones: was 0.75; the crowd has its own canvases and
 // v0.62 phones: the in-game frame cap (paint only; the game still steps on real dt). AUTO = 60 until frames stay over slowMs for holdS s, then 30 for the
 // rest of that game (back to 60 only between games); SETTINGS.fps '30' / '60' pins it. cold = the cold open on a phone runs at 30 from its first frame.
 // menuTouch = MENU_PACE.fps on a phone. slack = share of a refresh a paint may come early (vsync jitter)
-const FPS_CAP = { on: true, hi: 60, lo: 30, slowMs: 19, holdS: 2, menuTouch: 30, cold: true, slack: 0.5 };
+const FPS_CAP = { on: true, hi: 60, lo: 30, slowMs: 19, holdS: 2, menuTouch: 30, cold: true, slack: 0.5, deskSkip: true };   // deskSkip: laptops skip the paint on refreshes where the game did not step (deskSkip in 14)
 const DYN_RES = { on: true, min: 0.75, max: 2, step: 0.15, budget: 13, upMs: 8, down: 2, up: 6 };
 // v0.55 menu pacing (frame() in 14): menus paint at most fps, idleFps after idleMs with no input, and not at all while nothing on them can change
 // (a slow beatMs repaint covers anything that changes without a clock or input: a late image, a cloud sync note)
