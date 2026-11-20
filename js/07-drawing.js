@@ -1420,7 +1420,7 @@ function slFrame() {   // once a frame (draw()'s far pass): the source (live or 
   } else {
     C = SL.cast; if (!C) return false;
     SL.w = SL.W; SL.a = SL.A; SL.h = SL.H; SL.r = SL.R; SL.f = SL.F; SL.u = SL.U; on = SL.crewOn;
-    if (ONL.on && ONL.guest) { const pn = performance.now(); SL.now += Math.min(0.1, Math.max(0, (pn - (SL.pn || pn)) / 1000)); SL.pn = pn; t = SL.now - SNAP_DELAY / 1000; }
+    if (ONL.on && ONL.guest) t = slGuestT();
     else t = SL.now;
   }
   SL.c = C; slCap(C.people.length);
@@ -1428,7 +1428,7 @@ function slFrame() {   // once a frame (draw()'s far pass): the source (live or 
   const zc = camZ(), lvl = liteLevel(), vis = slVis(C, lvl), ppl = C.people;
   SL.ve = SL_VM.get(C); SL.t = t; SL.lvl = lvl; SL.m0 = SL.m1 = 0;
   const hpx = 41 * S * FIGURE.grow * FIGURE.tall * zc * SL.cssK, lk = (TOUCH ? SIDELINE.lodTouch : 1) * (lvl ? SIDELINE.liteLod : 1);
-  SL.lod = hpx < SIDELINE.lodLo * lk ? 0 : hpx < SIDELINE.lodHi * lk ? 1 : 2;
+  SL.lod = gfxHi() ? 2 : hpx < SIDELINE.lodLo * lk ? 0 : hpx < SIDELINE.lodHi * lk ? 1 : 2;   // (GRAPHICS QUALITY: every sideline person at full detail, however far out the camera is)
   if (SL.lod > CELEB_TOUCH.slLod && touchLite() && celebBusy()) SL.lod = CELEB_TOUCH.slLod;   // (v0.62: the camera zooms in on a celebration: the sideline doesn't get its full detail on a phone)
   const vc = viewCenterY(), vTop = camY - (vc - TOP_BAR) / zc, vBot = camY + (H - FIELD_BOT - vc) / zc, half = (W / 2 + PAD) / zc + 3 * YD;
   const vL = camX - half, vR = camX + half, sv0 = vTop < YD, sv1 = vBot > FW - 3 * YD, M = SL_MARGIN;
@@ -3154,12 +3154,23 @@ function slLibExit(kind) {   // the library: an exit on the stage (kind 0-2), or
 function slPack() { return SL.on && SL.cast ? { p: SL.cast.people, cs: SL.cast.cs, pr: SL.cast.props, jd: SL.cast.jd, xs: SL.cast.xs, ez: SL.cast.ez, tv: SL.cast.tv, rf: SL.cast.rf, W: SL.W, A: SL.A, H: SL.H, R: SL.R, F: SL.F, U: SL.U, c: SL.crewOn, n: Math.round(SL.now * 1000) / 1000 } : null; }
 function slUnpack(d) {
   if (!d || !d.p) { SL.cast = null; SL.on = false; return; }
-  SL.cast = { people: d.p, cs: d.cs, props: d.pr || [], jd: d.jd | 0, xs: d.xs || null, ez: d.ez || null, tv: d.tv == null ? -1 : d.tv, rf: d.rf || null }; SL.W = d.W; SL.A = d.A; SL.H = d.H; SL.R = d.R || []; SL.F = d.F || null; SL.U = d.U || 0; SL.crewOn = d.c; SL.now = d.n; SL.pn = performance.now();
+  SL.cast = { people: d.p, cs: d.cs, props: d.pr || [], jd: d.jd | 0, xs: d.xs || null, ez: d.ez || null, tv: d.tv == null ? -1 : d.tv, rf: d.rf || null }; SL.W = d.W; SL.A = d.A; SL.H = d.H; SL.R = d.R || []; SL.F = d.F || null; SL.U = d.U || 0; SL.crewOn = d.c; SL.now = d.n; SL.pn = performance.now(); slAnchor(d.n, true);
   SL.on = true; slCap(d.p.length);   // (v0.68: SIDELINE OFF still has a cast: the officials, slOffMode)
+}
+// online guest: the sideline is drawn on the players' playback clock (ONL.pt), eased toward the host's value (never backwards); a host value is anchored at the
+// time it was (about) sent, so the message's trip no longer shifts it. SL.now keeps the newest host value run on in real time.
+const SL_NET = { cut: 1, ease: 4, slow: 0.5 };   // cut: s off = jump; ease: share of the error taken a second; slow: the clock may run this much slower to fall back
+function slAnchor(n, cut) { SL.anc = { n, at: performance.now() - (NET.ping || 0) / 2 }; if (cut) SL.dn = null; }
+function slGuestT() {
+  const pn = performance.now(), d0 = Math.min(0.1, Math.max(0, (pn - (SL.pn || pn)) / 1000)), dt = Math.min(0.1, Math.max(0, (pn - (SL.dpn || pn)) / 1000)); SL.pn = SL.dpn = pn; SL.now += d0;
+  const A = SL.anc, tg = A ? A.n + ((ONL.pt != null ? ONL.pt : pn - SNAP_DELAY) - A.at) / 1000 : SL.now - SNAP_DELAY / 1000;
+  let v = SL.dn == null ? tg : SL.dn + dt; const e = tg - v, k = Math.min(1, dt * SL_NET.ease);
+  if (Math.abs(e) > SL_NET.cut) v = tg; else if (e > 0) v += e * k; else v += Math.max(e * k, -dt * SL_NET.slow);
+  return SL.dn = v;
 }
 function slNet(d) {
   if (!SL.cast) return;
-  SL.now = d.n; SL.pn = performance.now();
+  SL.now = d.n; SL.pn = performance.now(); slAnchor(d.n);
   const k = d.k, o = d.o;
   if (k === 0) SL.W[d.i] = o; else if (k === 1) SL.A[d.i] = o; else if (k === 2) { SL.H[d.i] = o; if (o && o.k === 1) slThud(); } else if (k === 3) SL.crewOn = o; else if (k === 4) SL.R[d.i] = o; else if (k === 5) SL.F = o; else SL.U = o;
 }

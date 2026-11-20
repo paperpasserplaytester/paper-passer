@@ -2493,7 +2493,7 @@ function annDraw() {
   const now = annNow(), lite = annLite(), n = ANN.card, dk = darkOn();
   if (S.fcDark !== dk) { for (let j = 0; j < 2; j++) { freeCanvas(S.fc[j]); S.fc[j] = null; } if (S.card) { freeCanvas(S.card.b); freeCanvas(S.card.f); S.card = null; } annFreeLine(c); S.fcDark = dk; }   // (dark mode flipped: everything is baked again)
   const out = c.hold ? 1 : 1 - cClamp((now - (c.end + ANN.hold)) / ANN.fade); if (out <= 0) { S.rect = null; return; }
-  const x = PAUSE_BTN.x, y = TOP_BAR + ANN.pad + (TOUCH ? ANN.touchY : 0), pc = lite ? 1 : cBack((now - S.popAt) / ANN.pop);
+  const x = PAUSE_BTN.x, y = (pvpOn() ? LEFT_TO_BTN.y + LEFT_TO_BTN.h + ANN.pvpGap : TOP_BAR + ANN.pad) + (TOUCH ? ANN.touchY : 0),   /* (two players: under the left timeout / audible buttons) */ pc = lite ? 1 : cBack((now - S.popAt) / ANN.pop);
   // bake the faces / card / bubble HERE, at the screen's own scale: baked inside the pop-in's scale (tiny on its first frames) they came out blurry and stayed so
   { const m = DM_P.getTransform.call(ctx), s0 = Math.round(Math.hypot(m.a, m.b) * 8) / 8 || 1, stale = cv => cv && cv._s < s0 - 0.01;
     for (let j = 0; j < 2; j++) if (stale(S.fc[j])) { freeCanvas(S.fc[j]); S.fc[j] = null; }

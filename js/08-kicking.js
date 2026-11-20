@@ -189,11 +189,15 @@ const kickBtnLabel = t => TOUCH ? t.replace(/\s*\((Space|\d)\)\s*$/, '') : t;
 // calls (startMyPunt / doPunt, startFieldGoal); that dim (fourthPending) now only shows where these buttons don't. Keys: B = field goal / go for it, P = punt.
 const PRE_KICK = { w: 262, h: 54, fs: 19, gap: 12, right: 20, bot: 18, band: 1, maxFg: 66, touch: { w: 300, h: 76, fs: 26, stack: true } };   // (touch: stack = one above the other in the centre, clear of the names tip (left) and the action buttons (right)); maxFg = longest field goal (yd) the button offers; v0.70 bot = px kept above the down-and-distance band (BOT_BAR x band), on every device: nothing else is drawn there
 let preKickBack = null;   // { los, down, ltg, punt } the play you lined up before the kick unit came on
-const preKickBase = () => !tut && !(typeof CO !== 'undefined' && CO) && !ONL.on && !oo && !simGame && !simFast && !(exhibition && exhibition.ov);
+const preKickBase = () => !tut && !(typeof CO !== 'undefined' && CO) && !oo && !simGame && !simFast && !(exhibition && exhibition.ov);
 const preKickLive = () => preKickBase() && !aiOff();   // (your offense has the ball; a mirrored punt runs flipped, so GO FOR IT only checks preKickBase + preKickBack)
 const PRE_KICK_BTNS = new Map();
-function preKickBtns() {
-  if (!preKickBase() || paused || game.over || (rec && rec.replaying) || results || settingsOpen) return [];
+// online (v0.70): the buttons belong to one player: before the snap the offense, once the kick unit is on whoever called it (preKickBack.who 'h' host / 'g' guest).
+// The host runs every press; the guest's tap / key travels as the button's id (k 'pk', preKickNet), never as a screen spot (the layouts differ by device)
+const pkMe = () => ONL.on && (ONL.guest || ONL.fromGuest) ? 'g' : 'h';
+const pkMine = who => !ONL.on || (state === 'pre' && !preKickBack ? (who === 'g' ? !onlHostIsOff() : onlHostIsOff()) : !!preKickBack && preKickBack.who === who);
+function preKickBtns(who = pkMe()) {
+  if (!preKickBase() || paused || game.over || (rec && rec.replaying) || results || settingsOpen || !pkMine(who)) return [];
   const L = [];
   if (state === 'pre' && !aiOff() && patMode === null && !fourthPending && !bannerUp()) {
     const d = Math.round(kickDistance()), fg = d <= PRE_KICK.maxFg;
@@ -214,9 +218,11 @@ function drawPreKick() {
   const T = TOUCH ? PRE_KICK.touch : PRE_KICK;
   for (const b of preKickBtns()) menuBtn(b, TOUCH ? b.label.replace(/\s*\((B|P)\)$/, '') : b.label, b.fill, T.fs);   // (touch: no key hints)
 }
-function preKickDo(id) {
+function preKickDo(id, who = pkMe()) {
+  if (ONL.on && ONL.guest) return;   // (the host runs it)
   if (id === 'punt' || id === 'fg') {
-    const B = { los, down, ltg: lineToGain, punt: id === 'punt' };   // (kept AFTER the kick starts: startMyPunt resets)
+    if (ONL.on) who = onlHostIsOff() ? 'h' : 'g';   // (the offense called it, whichever path the press came by)
+    const B = { los, down, ltg: lineToGain, punt: id === 'punt', who };   // (kept AFTER the kick starts: startMyPunt resets)
     if (id === 'fg') { startFieldGoal(); preKickBack = B; return; }
     if (simSTOn()) doPunt(); else { startMyPunt(); preKickBack = B; }   // (SIM SPECIAL TEAMS: the punt is simulated, nothing to go back from)
     return;
@@ -234,6 +240,12 @@ function preKickKey(code) {
   const L = preKickBtns(), b = L.find(o => code === 'KeyP' ? o.id === 'punt' : o.id !== 'punt');
   if (!b) return false; preKickDo(b.id); return true;
 }
+function onlPreKickTap(p) {   // the guest's tap on one of his corner buttons: sent as its id (true = taken)
+  if (!ONL.on || !ONL.guest) return false;
+  const b = preKickBtns('g').find(b => inBtn(p, b)); if (!b) return false;
+  NET.send({ t: 'in', k: 'pk', id: b.id }); return true;
+}
+function preKickNet(id) { if (ONL.host && preKickBtns('g').some(b => b.id === id)) preKickDo(id, 'g'); }   // (the host: only a button the guest really has right now)
 let koTipSeen = null;   // (the reticle tip's localStorage flag, read once instead of every frame)
 const reticleOn = () => state === 'kickoff' && !!(kick && kick.userKo && kick.target && kick.phase === 'target' && !kick.onside);
 // the power (0-1 of the leg's reach) a kick needs to come down at the reticle: the power bar's marker (kick.need = the meter value that gives it)
@@ -4836,7 +4848,7 @@ function draw() {
   if (!aiOff() && state === 'pre' && !fourthPending && patMode !== 'choose' && !(rec && rec.replaying) && (!ONL.on || onlIAmOff())) {   // (online: only the offense sees its own routes)   // (no art while you choose punt / kick / go for it; on defense you don't see their play; the art is gone the moment the ball's snapped; nor does the next play's art show over a replay)
     catchers().filter(r => !(r === rb && rb.passBlock)).forEach(drawRoute);
     // pass blockers: a short stem ending in a T
-    if (rb.passBlock && !rb.split) drawBlockArt(rb, rb.x + 1.2 * YD, rb.y + (Math.sign(rb.y - MID) || rb.side || 1) * 2 * YD);
+    if (rb.passBlock && !rb.split) drawBlockArt(rb, rb.x + 1.2 * YD, rb.y + (Math.abs(rb.y - MID) > 0.5 * YD ? Math.sign(rb.y - MID) : (Math.sign(rb.runSide || 0) || rb.side || 1)) * 2 * YD);   // (a back right behind the QB sits on MID: a dead band, or the T flipped side to side with every sub-pixel wobble, worst on the online guest)
     for (const te of recs.filter(r => r.teBlock)) { const sd = Math.sign(te.y - MID) || 1; drawBlockArt(te, te.x - 1.6 * YD, te.y + sd * 0.9 * YD); }
   }   // (no play art once the ball is snapped, a back who stays in to block included)
   if (!(rec && rec.replaying)) drawRushArt();   // (special teams: your rushers' lanes at the kicker / punter before the snap)

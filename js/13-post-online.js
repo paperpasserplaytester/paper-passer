@@ -1911,9 +1911,9 @@ const NET = {
     const ch = NET.fast;
     if (ch && NET.fastOk && ch.readyState === 'open') {
       let s;
-      try { s = JSON.stringify(msg); if (s.length <= NET_CFG.fastMax) { ch.send(s); NET._bytes += s.length; return true; } } catch (e) {}
+      try { s = JSON.stringify(msg); if (s.length <= NET_CFG.fastMax) { ch.send(s); NET._bytes += s.length; if (msg.t === 'snap' && onlLogOn()) onlLogTag('snap', 0, s.length + ' ch'); return true; } } catch (e) {}
       if (s !== undefined) {   // too big for the fast channel: the reliable one (the text is reused, not made again)
-        if (msg.t === 'snap') NET._bigSnap(msg, s.length);
+        if (msg.t === 'snap') { NET._bigSnap(msg, s.length); if (onlLogOn()) onlLogTag('snap', 0, s.length + ' ch RELIABLE'); }
         NET.send(msg, s); return false;
       }
     }
@@ -2184,6 +2184,9 @@ function olAutoJoin() {   // ?join=CODE opens JOIN with the code filled in
 const ONL_BACKLOG = 48000;   // bytes waiting in the data channel above which the host skips snapshots
 // online tuning: the host's send rate, the guest's smoothing, and the head start its own player gets. Looks and timing only: the host still decides every play.
 const ONL_NET = {
+  logMs: 25, logGapMs: 150, logN: 8,   // online event log (FRAME TIMES only): a host frame whose game step + snapshot work runs this long, a guest stretch with no new picture this long; the worst logN are kept
+  camEase: 0.07,       // s: the guest's camera eases toward the snapshot camera (a cut = a SNAP_JUMP move or a big zoom change still cuts)
+  kmHold: 1.5,         // s: after the guest taps a kick meter it stays on the tapped value until the host's phase change lands (or this long)
   castKeep: 0.6,       // a line-up change where at least this share of the new list was already on the field goes as a partial cast (only the new men whole)
   hz: 20, hzFast: 30,   // snapshots a second, host -> guest (hzFast: while a kick meter or the aiming reticle is up)
   hzSlow: 10,           // ... while the link is backed up
@@ -2328,7 +2331,7 @@ function onlGlobals(ps, pm) {
     gm: { blue: game.blue, red: game.red, quarter: game.quarter, secs: Math.round(game.secs * 10) / 10, timeouts: game.timeouts, over: game.over, runoff: game.runoff, pendingQuarter: game.pendingQuarter, qs: game.qs, ot: game.ot ? slim(game.ot) : null, kickPending: game.kickPending, recvFirst: game.recvFirst },
     tp: twoP ? { fl: twoP.flipped, to: twoP.to } : null,
     mt: { you: MATCH.you, opp: MATCH.opp, yk: MATCH.youKit, ok: MATCH.oppKit, home: MATCH.home },
-    bm: bulletMode, pm: patMode, fp: fourthPending, hh: halfHold, pz: paused, ko: !!kickoffPlay, cw: celebWaitBits(), npl: !!noPlayLines, pr: puntRet, prp: puntRetPlay,
+    bm: bulletMode, pm: patMode, fp: fourthPending, hh: halfHold, pz: paused, pkb: preKickBack ? preKickBack.down * 2 + (preKickBack.who === 'g' ? 1 : 0) : 0, ko: !!kickoffPlay, cw: celebWaitBits(), npl: !!noPlayLines, pr: puntRet, prp: puntRetPlay,
     vz: Math.round(userZoom * (TOUCH ? TOUCH_ZOOM : 1) * 1000) / 1000, vc: Math.round(viewCenterY()),   // (the host's own view: his wheel zoom / phone zoom and the field's middle on his screen, see onlPtOut)
     ud: ix(ud), tg: ix(tgt), rn: ix(runner), mi: MIRROR,   // (mi: the host's screen direction: the guest translates his taps / keys when his own differs)
     nm: { cbT: ix(cbT), cbB: ix(cbB), sT: ix(sT), sB: ix(sB), lbW: ix(lbW), lbM: ix(lbM), lbS: ix(lbS) },
@@ -2343,7 +2346,9 @@ function onlGlobals(ps, pm) {
 }
 function onlHostCast(ps, pm, key) {   // (always on the reliable channel: everything after it builds on it)
   const seq = ++ONL.seq;
-  { const old = ONL.castKey && ONL.castPs, om = old && new Map(old.map((p, i) => [p, i])), map = om && ps.map(p => { const j = om.get(p); return j === undefined ? -1 : j; });
+  { const old = ONL.castKey && ONL.castPs, om = old && new Map(), on = old && new Map();   // (old index by object, and by the man: reset() builds new player objects every play, so the same 22 men never matched and every play went whole)
+    if (old) old.forEach((p, i) => { om.set(p, i); const k = onlManKey(p); if (k && !on.has(k)) on.set(k, i); });
+    const used = new Set(), map = om && ps.map(p => { let j = om.get(p); if (j === undefined) { const k = onlManKey(p); j = k ? on.get(k) : undefined; } if (j === undefined || used.has(j)) return -1; used.add(j); return j; });
     if (map && map.filter(j => j >= 0).length >= Math.max(1, ps.length * ONL_NET.castKeep)) return onlHostCastPart(ps, pm, key, seq, map); }
   ONL.castPs = ps.slice();
   ONL.castKey = key; ONL.epoch = (ONL.epoch || 0) + 1; ONL.castSeq = ONL.relSeq = ONL.ack = seq;
@@ -2358,6 +2363,7 @@ function onlHostCast(ps, pm, key) {   // (always on the reliable channel: everyt
   ONL.castN = ONL.castN || { full: 0, part: 0, fullC: [], partC: [] }; ONL.castN.full++; ONL.castN.fullC.push(len);
   if (NET_CFG.logCast) console.log('net: cast ' + len + ' chars' + (m.sl !== undefined ? ' (with the sideline pack: ' + JSON.stringify(m.sl).length + ')' : '') + ', ' + ps.length + ' players, src ' + full.reduce((t, f) => t + (f.src ? JSON.stringify(f.src).length : 0), 0));
 }
+const onlManKey = p => p.src && p.src.name ? p.src.name : null;   // (a partial cast's match for a man in a new player object: his roster entry's name)
 function onlCastSl(m) {
   const slc = SL.on && SL.cast ? SL.cast : null;
   if (slc !== ONL.slRef) { ONL.slRef = slc; ONL.slV = (ONL.slV | 0) + 1; m.sl = slPack(); }
@@ -2467,7 +2473,7 @@ function onlGotCast(m) {
 function onlCastSlIn(m) {
   if ('sl' in m) { slUnpack(m.sl); ONL.slGot = m.sv; }
   else if (ONL.slGot !== m.sv || (m.sn != null && !SL.cast)) { const now = performance.now(); if (!ONL.slqAt || now - ONL.slqAt > 1500) { ONL.slqAt = now; NET.send({ t: 'slq' }); } }
-  else if (m.sn != null) { SL.now = m.sn; SL.pn = performance.now(); }
+  else if (m.sn != null) { SL.now = m.sn; SL.pn = performance.now(); slAnchor(m.sn); }
 }
 // guest: a partial cast (onlHostCastPart). Kept men keep their objects (and their __rx / __ex corrections); the picture's clock (ONL.pt) runs on. The buffered
 // snapshots' property changes go onto the players first (they name players by the old indices), then their positions are re-indexed for playback.
@@ -2644,7 +2650,7 @@ function onlGuestStep() {
   if (g.tp) { if (!twoP) twoP = { flipped: false, to: 3, def: true }; twoP.flipped = g.tp.fl; twoP.to = g.tp.to; twoP.def = true; }
   const mt = g.mt;
   if (MATCH.you !== mt.you || MATCH.opp !== mt.opp || MATCH.youKit !== mt.yk || MATCH.oppKit !== mt.ok || MATCH.home !== mt.home) { Object.assign(MATCH, { you: mt.you, opp: mt.opp, youKit: mt.yk, oppKit: mt.ok, home: mt.home }); applyKits(); }
-  bulletMode = g.bm; patMode = g.pm; fourthPending = g.fp; halfHold = g.hh; paused = g.pz; kickoffPlay = g.ko; ONL.cw = g.cw || 0; if (g.npl !== undefined) noPlayLines = g.npl; puntRet = g.pr; puntRetPlay = g.prp;
+  bulletMode = g.bm; patMode = g.pm; fourthPending = g.fp; halfHold = g.hh; paused = g.pz; preKickBack = g.pkb ? { down: g.pkb >> 1, who: g.pkb & 1 ? 'g' : 'h' } : null; kickoffPlay = g.ko; ONL.cw = g.cw || 0; if (g.npl !== undefined) noPlayLines = g.npl; puntRet = g.pr; puntRetPlay = g.prp;
   ud = ps[g.ud] || null; tgt = ps[g.tg] || null; runner = ps[g.rn] || null;
   cbT = ps[g.nm.cbT]; cbB = ps[g.nm.cbB]; sT = ps[g.nm.sT]; sB = ps[g.nm.sB]; lbW = ps[g.nm.lbW]; lbM = ps[g.nm.lbM]; lbS = ps[g.nm.lbS];
   ONL.view = g.ob || {};
@@ -2661,7 +2667,7 @@ function onlGuestStep() {
     if (hi >= 0 && !ball.inAir && !(bd && bd[hi] && bd[hi].hasBall === false)) { const h = hi * 3; ball.x = ps[hi].x + L(bl.x - A[h], bb.x - B[h], t); ball.y = ps[hi].y + L(bl.y - A[h + 1], bb.y - B[h + 1], t); }
   }
   const c = g.cam, c2 = b ? b.g.cam : c, cp = past && dc > 0 ? past / dc : 0;
-  camX = L(c[0], c2[0], t + cp); camY = L(c[1], c2[1], t + cp); zoom = L(c[2], c2[2], t); passPull = 1;
+  camX = L(c[0], c2[0], t + cp); camY = L(c[1], c2[1], t + cp); zoom = L(c[2], c2[2], t); passPull = 1; onlCamEase(now);
   clock = clk; shake = g.sh;
   game.wx = g.wx; Object.assign(WXI, g.wxi);
   popups = a.u.po; impacts = a.u.im;
@@ -2674,7 +2680,10 @@ function onlGuestStep() {
   if (aim) {   // (the host's aim is in the host's screen frame: into this one. Mirrored drive, another zoom)
     const k = 1 / onlViewK(), f = onlFlip() ? -1 : 1, vc = viewCenterY(), hv = ONL.hostVc || vc;
     if (f < 0 || Math.abs(k - 1) > 0.001 || hv !== vc) for (const [a, b] of [['sx', 'sy'], ['cx', 'cy']]) { aim[a] = W / 2 + f * (aim[a] - W / 2) * k; aim[b] = vc + (aim[b] - hv) * k; }
+    if (ONL.gPid != null && ONL.gLoc && !ONL.gUi && onlIAmOff() && qb && qb.hasBall) { aim.cx = ONL.gLoc.x; aim.cy = ONL.gLoc.y; }   // (your own throw: the moving end is your own finger, this frame, not the host's echo of it)
   }
+  { const P = ONL.gPress, Q = ONL.gLoc;   // (your snap drag: the reticle is up under your finger the moment the drag snaps it here, not a round trip later when the host's aim comes back)
+    if (!aim && P && P.bf && Q && ONL.gPid != null && !ONL.gUi && onlIAmOff() && qb && ['pre', 'drop', 'pocket'].includes(state) && Math.hypot(Q.x - P.x, Q.y - P.y) >= BACKFIELD_DRAG) aim = { sx: P.x, sy: P.y, cx: Q.x, cy: Q.y }; }
   onlKickAnchor(); { const L = onlKickLocal(); if (L) { if (L.ph === 'power') kick.meter = L.v; else kick.pos = L.v; } }
   onlPredict(now);
   if (S) {   // the readout (drawNetBadge): counted per frame, shown per second
@@ -2685,6 +2694,12 @@ function onlGuestStep() {
       Object.assign(S, { t0: now, f: 0, ex: 0, sn: 0, sl: 0, gSum: 0, gN: 0, gMax: 0, bSum: 0, bN: 0 });
     }
   }
+}
+// the guest's camera: the snapshot camera eased (exponential, ONL_NET.camEase), so a late or early snapshot never steps it. A cut still cuts.
+function onlCamEase(now) {
+  const E = ONL.camE || (ONL.camE = { x: camX, y: camY, z: zoom, at: now }), dt = Math.min(0.1, Math.max(0, (now - E.at) / 1000));
+  if (Math.hypot(camX - E.x, camY - E.y) < SNAP_JUMP && Math.abs(Math.log(zoom / (E.z || zoom))) < 0.2) { const k = Math.exp(-dt / ONL_NET.camEase); camX += (E.x - camX) * k; camY += (E.y - camY) * k; zoom += (E.z - zoom) * k; }
+  E.x = camX; E.y = camY; E.z = zoom; E.at = now;
 }
 const onlStNew = () => ({ t0: performance.now(), f: 0, ex: 0, sn: 0, sl: 0, gSum: 0, gN: 0, gMax: 0, bSum: 0, bN: 0, ahead: 0, show: null });   // ONL.st: the guest's smoothness counters
 // The guest's own player answers his keys at once: he is drawn ahead of the host's (late) picture by where the held keys take him in the time the picture is
@@ -2739,17 +2754,18 @@ const ONL_K = { ph: '', t: 0, at: 0, ht: 0 };
 function onlKickAnchor() {
   if (!kick || (kick.phase !== 'power' && kick.phase !== 'aim')) { ONL_K.ph = ''; return; }
   const now = performance.now(), ht = kick.t || 0;
-  if (ONL_K.ph !== kick.phase || ht < ONL_K.ht - 0.05) { ONL_K.ph = kick.phase; ONL_K.t = ht; ONL_K.at = now; }
+  if (ONL_K.ph !== kick.phase || ht < ONL_K.ht - 0.05) { ONL_K.ph = kick.phase; ONL_K.t = ht; ONL_K.at = now; ONL_K.fz = null; }
   else if (Math.abs(ht - (ONL_K.t + (now - ONL_K.at) / 1000)) > 0.4) { ONL_K.t = ht; ONL_K.at = now; }   // (far off: the host's clock moved, e.g. a hitch: follow it)
   ONL_K.ht = ht;
 }
 function onlKickLocal() {   // { ph, v }: the meter value this guest is showing right now
   if (!ONL.guest || !kick || !ONL_K.ph || ONL_K.ph !== kick.phase) return null;
+  const fz = ONL_K.fz; if (fz && fz.ph === kick.phase && performance.now() - fz.at < ONL_NET.kmHold * 1000) return fz;   // (tapped: held on what you stopped it on)
   const t = ONL_K.t + (performance.now() - ONL_K.at) / 1000;
   if (kick.phase === 'power') return { ph: 'power', v: tri(t / (FG.powerPeriod * fgSpeedK() * (kick.powSlow || 1))) };
   return { ph: 'aim', v: Math.sin(t / (FG.aimPeriod * fgSpeedK() * (kick.aimSlow || 1) * (kick.onside ? ONSIDE_K.meter : 1) / (kick.userKo ? 1 : aimPowK(kick))) * Math.PI * 2) };
 }
-function onlSendKm() { const L = onlKickLocal(); if (L) NET.send({ t: 'in', k: 'km', ph: L.ph, v: Math.round(L.v * 10000) / 10000 }); }
+function onlSendKm() { const L = onlKickLocal(); if (L) { NET.send({ t: 'in', k: 'km', ph: L.ph, v: Math.round(L.v * 10000) / 10000 }); if (!ONL_K.fz) ONL_K.fz = { ph: L.ph, v: L.v, at: performance.now() }; } }
 // one-shot events: the host forwards these calls (outermost call only), the guest plays them through the original functions
 for (const name of ['showBanner', 'playSfx', 'clipSfx', 'impactSfx', 'throwSfx', 'crowdCheer', 'endWhistle']) {
   const orig = window[name]; if (typeof orig !== 'function') continue;
@@ -2844,6 +2860,7 @@ function onlHandleInput(m) {
   if (m.k === 'kd' || m.k === 'ku') onlGuestKey(m.c, m.k === 'kd');
   else if (m.k === 'cm') { if (!results) { const r = layRect(canvas); touchLong = false; canvas.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 10, clientY: r.top + 10 })); } }
   else if (m.k === 'cl') { for (const c of Object.keys(ONL.hold)) onlGuestKey(c, false); }
+  else if (m.k === 'pk') { if (!results && !ONL.pz) preKickNet(m.id); }   // (v0.70: the guest's PUNT / FIELD GOAL / GO FOR IT corner button)
   else if (m.k === 'km') ONL.km = { ph: m.ph, v: m.v, at: performance.now() };   // (the guest's meter value, used by the very next kick click)
   else onlGuestPtr(m);
 }
@@ -3136,7 +3153,7 @@ function drawOnlineOverlay() {
   if (!ONL.on || results) return;
   const v = ONL.view || {}, me = onlMe();
   ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  if (v.pz) {
+  if (v.pz && !settingsOpen) {   // (settings opened from this pause is drawn under the overlay: the tracing paper would cover it)
     drawTrace(); drawPauseIcons(false); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';   // (the tracing paper, as the offline pause; v0.58: the pause icon on top of it)
     const ink = traceInk(), soft = traceInk(true);
     if (v.pz.by === me && !(ONL.guest && settingsOpen) && !settingsOpen) {
@@ -3171,7 +3188,7 @@ function onlOverlayPointer(e, p) {   // true: handled here (the event must not r
   if (ONL.lost) { if (ONL.lost.expired && inBtn(p, OPM.menu)) onlEnd('CONNECTION LOST'); return true; }
   if (onlLocalUi()) return false;
   const v = ONL.view || {}, me = onlMe();
-  if (v.pz) {
+  if (v.pz && !settingsOpen) {   // (settings opened from this pause is drawn under the overlay: the tracing paper would cover it)
     if (v.pz.by !== me) return true;   // (the other player's pause: nothing to press)
     const a = onlPauseHit(p, v.pz.conf);
     if (a === 'settings') { settingsOpen = true; return true; }
@@ -3227,6 +3244,34 @@ function drawOnline() {
     const lines = ol.err.split('\n'); olText(lines[0], W / 2, ey + 15, 20, '#c0392b'); if (lines[1]) olText(lines[1], W / 2, ey + 37, 14, '#c0392b');
   }
 }
+// --- online event log (DEBUG > FRAME TIMES only): host frames whose game step + onlHostTick ran over ONL_NET.logMs and guest stretches with no new picture over
+// ONL_NET.logGapMs, each with what happened in it (casts and their characters, the snapshot's size / reliable, plays, scores, sides, celebrations, sounds, tape work).
+// The worst ONL_NET.logN of the match are kept in ONL.log: on the readout while paused, and onlLogDump() in the console. Off = one check per wrapped call.
+const onlLogOn = () => ONL.on && SETTINGS.perfHud;
+const ONL_LT = [];   // this frame's notes: [name, ms, count, extra]
+function onlLogTag(n, ms, x) { for (const e of ONL_LT) if (e[0] === n) { e[1] += ms; e[2]++; if (x) e[3] = x; return; } ONL_LT.push([n, ms, 1, x || '']); }
+for (const name of ['endPlay', 'touchdown', 'flipSides', 'celebBegin', 'recordFrame', 'hsScoreRec', 'hsTape', 'keepHighlight', 'playSfx', 'clipSfx', 'crowdCheer', 'showBanner',
+  'onlHostCast', 'onlHostCastPart', 'onlGotCast', 'onlGotCastP', 'applyKits', 'onlEvRun', 'slUnpack', 'update', 'reset', 'snap', 'startKickoff', 'startKickoffKick', 'kickoffLineup',
+  'startMyKickoff', 'startMyPunt', 'startFieldGoal', 'catchBall', 'tackleCarrier', 'intercept', 'fumble', 'celebAsk', 'slReset', 'assignRoutes', 'alignDefense', 'buildCrowd', 'startReplay']) {
+  const f = window[name]; if (typeof f !== 'function') continue;
+  window[name] = function (...a) {
+    if (!onlLogOn()) return f.apply(this, a);
+    const t = performance.now(), C = ONL.castN, c0 = C ? C.full + C.part : 0;
+    try { return f.apply(this, a); } finally {
+      const D = ONL.castN, c1 = D ? D.full + D.part : 0, x = c1 !== c0 ? (name === 'onlHostCast' ? D.fullC : D.partC).slice(-1)[0] + ' ch' : '';
+      if (name !== 'onlEvRun' || performance.now() - t > 0.5) onlLogTag(name, performance.now() - t, x);
+    }
+  };
+}
+function onlLogFrame(ms, kind) {   // frame(): once a frame
+  if (!onlLogOn()) { ONL_LT.length = 0; return; }
+  if (ms >= (kind === 'gap' ? ONL_NET.logGapMs : ONL_NET.logMs)) {
+    const L = ONL.log || (ONL.log = []), what = ONL_LT.map(e => e[0] + (e[2] > 1 ? ' x' + e[2] : '') + ' ' + e[1].toFixed(1) + (e[3] ? ' (' + e[3] + ')' : '')).join(', ');
+    L.push({ ms: Math.round(ms), kind, st: state, what: what || '-' }); L.sort((a, b) => b.ms - a.ms); if (L.length > ONL_NET.logN) L.length = ONL_NET.logN;
+  }
+  ONL_LT.length = 0;
+}
+function onlLogDump() { const L = ONL.log || []; console.table(L); return L; }
 function drawNetBadge() {   // the connection readout in a corner of an online game: ping and whether the link is direct or relayed; while paused, the detail too
   const now = PERF_NOW();   // (v0.55: its own frame timer, not an animation: hidden from the menu clock probe)
   if (NET._fpsAt && now - NET._fpsAt < 500) NET.fms = NET.fms ? NET.fms * 0.95 + (now - NET._fpsAt) * 0.05 : now - NET._fpsAt;   // (this device's own frame time, smoothed)
@@ -3255,6 +3300,10 @@ function drawNetBadge() {   // the connection readout in a corner of an online g
     const w3 = ctx.measureText(t3).width + 16, y3 = pz ? y - 24 : y + 20;
     ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(x - w3, y3, w3, pz ? 22 : 18);
     ctx.fillStyle = now - G.at > 5000 ? '#8a8a8a' : '#cfe8ff'; ctx.fillText(t3, x - 8, y3 + (pz ? 11 : 9));
+  }
+  if (pz && SETTINGS.perfHud && ONL.log && ONL.log.length) {   // the online event log's worst frames (onlLogFrame), while paused
+    let yy = y - 50;
+    for (const e of ONL.log) { const t4 = `${e.kind === 'gap' ? 'NO PICTURE' : 'HOST'} ${e.ms}ms ${e.st}: ${e.what}`.slice(0, 140), w4 = ctx.measureText(t4).width + 16; ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(x - w4, yy, w4, 20); ctx.fillStyle = '#ffd9a8'; ctx.fillText(t4, x - 8, yy + 10); yy -= 22; }
   }
   ctx.restore();
 }

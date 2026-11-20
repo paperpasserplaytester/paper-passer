@@ -1316,8 +1316,8 @@ const XPC = {
 const TUI_Q = new URLSearchParams(location.search).get('touch');
 const IS_MOBILE = TUI_Q === '1' || (TUI_Q !== '0' && (/Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) || (matchMedia('(pointer: coarse)').matches && matchMedia('(hover: none)').matches)));
-const TOP_BAR_MOBILE_K = 0.7;   // the top bar's height x TOP_BAR_FULL on a phone (a bigger pause button and scoreboard to hit)
-const TOP_BAR_FULL = 64, TOP_BAR_K = IS_MOBILE ? TOP_BAR_MOBILE_K : 0.49, TOP_BAR = Math.round(TOP_BAR_FULL * TOP_BAR_K), HUD_K = TOP_BAR / TOP_BAR_FULL, TOP_PAD = 4, FIELD_BOT = 0;
+const TOP_BAR_MOBILE_K = 0.82;   // the top bar's height x TOP_BAR_FULL on a phone (a bigger pause button and scoreboard to hit)
+const TOP_BAR_FULL = 64, TOP_BAR_K = IS_MOBILE ? TOP_BAR_MOBILE_K : 0.64, TOP_BAR = Math.round(TOP_BAR_FULL * TOP_BAR_K), HUD_K = TOP_BAR / TOP_BAR_FULL, TOP_PAD = 4, FIELD_BOT = 0;
 const BOT_BAR = (() => { const q = new URLSearchParams(location.search).get('touch'); return q === '1' || (q !== '0' && (/Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent) || (matchMedia('(pointer: coarse)').matches && matchMedia('(hover: none)').matches))) ? 46 : 40; })();   // (phones: was 60, a slimmer bar)
 const BB = BOT_BAR / 40;
 // ANNOUNCERS (v0.68, `// --- announcers` in 02; lines ANN_LINES in 00): the cold open's two booth voices call real games, top left under the pause icon.
@@ -1325,10 +1325,10 @@ const BB = BOT_BAR / 40;
 // cps = letters written a second; gap = s after a line is written before the next queued one starts; hold = s a last line stays up once written; fade = s to fade;
 // holdMax = most a held line ("going deep...") waits for its result; maxQ = lines that may wait; recent = last lines said this game never picked again;
 // colorOdds = chance B answers, by priority (always at crazy+); crazy = priority of the crazy plays (big shaky text);
-// pad = px under the top bar, touchY = extra px down on touch (clear of the stick), card = face card px, face = face radius px, size / bigSize = text px, maxW = widest bubble
+// pad = px under the top bar (two players: pvpGap = px under the left timeout / audible buttons), touchY = extra px down on touch (clear of the stick), card = face card px, face = face radius px, size / bigSize = text px, maxW = widest bubble
 const ANN = { cps: 30, gap: 0.55, hold: 2.1, fade: 0.45, holdMax: 3.2, maxQ: 2, recent: 24, minLines: 12, slide: 0.32, pop: 0.22,
   colorOdds: { 0: 0.15, 1: 0.3, 2: 0.55, 3: 0.75 }, crazy: 5, longTd: 50, deepYd: 25,
-  pad: 8, touchY: 34, card: 64, face: 21, size: 17, bigSize: 22, maxW: 300, shake: 1.6,
+  pad: 8, pvpGap: 10, touchY: 34, card: 64, face: 21, size: 17, bigSize: 22, maxW: 300, shake: 1.6,
   reelEnd: 3.4, reelGap: 0.9,
   reelCps: 15, reelWord: 0.45, reelAirQuick: 1.0, reelAirHang: 1.9,   // halftime reel only: slower handwriting, a line stays up at least reelWord s a word before the next one, air time (s) for the quick / hang colour lines
   overYd: 1.5, wideYd: 2.5 };   // incompletions: past / short of the target by more than overYd along the throw = over / underthrown, more than wideYd across it (and more across than along) = wide   // halftime reel: B's comment comes reelEnd s before a clip's last frame, never sooner than reelGap s after its last moment

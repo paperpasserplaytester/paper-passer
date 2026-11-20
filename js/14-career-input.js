@@ -2070,6 +2070,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   }
   try { if (ONL.host && !results) onlHostTick(); if (ONL.guest && !results) onlGuestStep(); }
   catch (err) { console.warn('online: snapshot dropped', err); }   // (a bad snapshot never crashes the game loop)
+  if (ONL.on) { if (ONL.host) onlLogFrame(performance.now() - perfU0, 'host'); else { const a = ONL.lastArr || 0, g = ONL.lgArr ? a - ONL.lgArr : 0; ONL.lgArr = a; onlLogFrame(g, 'gap'); } }   // (the online event log: FRAME TIMES only)
   if (!ONL.guest) { tallyScores(); otWatch(); }
   perfUpd(performance.now() - perfU0);
   // pausing (or the keybinds page) fades every sound out; resuming fades them back in
@@ -2741,10 +2742,13 @@ for (const [type, k] of [['pointerdown', 'pd'], ['pointermove', 'pm'], ['pointer
     if (onlOverlayPointer(e, p)) { e.stopImmediatePropagation(); return; }   // (the online pause menu / connection overlay)
     if (mouse && e.button !== 0) return;
     if (ONL.gPid != null && ONL.gPid !== e.pointerId && performance.now() - ONL.gPidAt < 1500) return;   // (a second finger: not forwarded)
-    ONL.gPid = e.pointerId; ONL.gPidAt = performance.now();
+    if (onlPreKickTap(p)) { e.stopImmediatePropagation(); return; }   // (v0.70: a corner kick button goes as its id)
+    ONL.gPid = e.pointerId; ONL.gPidAt = performance.now(); ONL.gLoc = { x: p.x, y: p.y };
+    { let bf = false; try { const w = screenToWorld(p); bf = state === 'pre' && !!qb && onlIAmOff() && w.x < los && Math.hypot(w.x - qb.x, w.y - qb.y) < 8 * YD; } catch (err) {} ONL.gPress = { x: p.x, y: p.y, bf }; }   // (a press in your own backfield: the snap drag, onlGuestStep shows its reticle at once)
   } else {
     if (ONL.gPid !== e.pointerId) { if (mouse && k === 'pm') e.stopImmediatePropagation(); return; }
     if (k === 'pm') {
+      ONL.gLoc = { x: p.x, y: p.y };   // (every move, before the send throttle: the guest's own reticle is drawn from it, onlGuestStep)
       const now = performance.now(); if (now - ONL.ptrAt < 33) { if (mouse) e.stopImmediatePropagation(); return; } ONL.ptrAt = now;   // (~30 a second)
       if (!e.buttons && mouse) { e.stopImmediatePropagation(); return; }
       ONL.gPidAt = now;
