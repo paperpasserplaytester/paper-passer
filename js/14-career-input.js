@@ -1973,7 +1973,7 @@ function snapUnbright(c) {   // a copy of the canvas, taken back to the picture 
 // --- frame-time readout (settings > DEBUG > FRAME TIMES; SETTINGS.perfHud, off by default, kept per device) ---
 // fps + the average / worst ms of the game step (update) and of the painting (draw), over the last PERF_HUD.win ms. Costs two clock reads a frame when off.
 const PERF_HUD = { win: 1000, x: 8, y: 150, font: 15, fontTouch: 20, alpha: 0.78,   // win = ms a reading covers; x / y = its corner (from the left / up from the bottom); font px (touch = phones)
-  spikeMs: 33, spikeGap: 50, keep: 12, show: 4, parts: 3, chars: 96 };   // spikes: a frame whose update + paint is over spikeMs (or whose gap since the last frame is over spikeGap ms) goes into a ring of `keep`; the HUD shows the last `show` (top `parts` parts each, cut at `chars`). Tap / click the readout = copy them all as text
+  spikeMs: 33, spikeGap: 50, keep: 12, show: 4, parts: 3, chars: 96, holdMs: 500 };   // spikes: a frame whose update + paint is over spikeMs (or whose gap since the last frame is over spikeGap ms) goes into a ring of `keep`; the HUD shows the last `show` (top `parts` parts each, cut at `chars`). Hold the readout holdMs = copy them all as text (a tap passes through to whatever is under it)
 const perfS = { t0: 0, uS: 0, uM: 0, uN: 0, dS: 0, dM: 0, dN: 0, pN: 0, l1: '', l2: '', l3: '', parts: {}, btn: 0,   // (pN = frames really painted; parts = ms per paint-block part; btn = menuBtn calls last frame)
   fu: 0, fd: 0, fp: {}, spikes: [], box: null, copied: 0,
   all: {}, aP: 0, aUS: 0, aUM: 0, aUN: 0, aDS: 0, aDM: 0 };   // (perfDump: the same, summed since the last perfDump(true))   // (this frame: update ms, paint ms, parts; the spike ring; the readout's box (game px); when it was last copied)
@@ -2001,8 +2001,10 @@ function perfCopy() {   // the spike ring as text, onto the clipboard (pointerup
   P.copied = PERF_NOW(); console.log(txt);
 }
 let perfTap = null;
-window.addEventListener('pointerdown', e => { perfTap = null; if (!SETTINGS.perfHud || !perfS.box) return; const p = pointerPos(e); if (inBtn(p, perfS.box)) { perfTap = e.pointerId; e.stopImmediatePropagation(); e.preventDefault(); } }, true);
-window.addEventListener('pointerup', e => { if (perfTap == null || perfTap !== e.pointerId) return; perfTap = null; e.stopImmediatePropagation(); perfCopy(); }, true);
+// (the press is never swallowed: a tap reaches the buttons under the readout; a press held PERF_HUD.holdMs copies on release, and only that release is kept from the game)
+window.addEventListener('pointerdown', e => { perfTap = null; if (!SETTINGS.perfHud || !perfS.box) return; const p = pointerPos(e); if (inBtn(p, perfS.box)) perfTap = { id: e.pointerId, t: PERF_NOW() }; }, true);
+window.addEventListener('pointerup', e => { const T = perfTap; if (!T || T.id !== e.pointerId) return; perfTap = null; if (PERF_NOW() - T.t < PERF_HUD.holdMs) return; e.stopImmediatePropagation(); perfCopy(); }, true);
+window.addEventListener('pointercancel', e => { if (perfTap && perfTap.id === e.pointerId) perfTap = null; }, true);
 for (const t of ['pointerdown', 'pointerup', 'keydown']) window.addEventListener(t, perfEvOff);   // (v0.70: end of a timed pointer / key event, 01's perfEvOn)
 // v0.62: rough MB of canvas backing stores alive (w x h x 4 of every canvas the game keeps: the screen, stands, field cache, desks, button / face / sideline
 // sprites, replay snaps, kick bars). Only for the FRAME TIMES line; a canvas freed with freeCanvas counts 0
@@ -2059,7 +2061,7 @@ function drawPerfHud() {
   if (!SETTINGS.perfHud || !perfS.l1) { perfS.box = null; return; }
   const P = perfS, fs = TUI.on ? PERF_HUD.fontTouch : PERF_HUD.font;
   const sp = P.spikes.slice(-PERF_HUD.show).reverse().map(s => { const l = perfLine(s); return l.length > PERF_HUD.chars ? l.slice(0, PERF_HUD.chars - 1) + '…' : l; });
-  const head = P.spikes.length ? (PERF_NOW() - P.copied < 1500 ? 'COPIED ✓' : `SPIKES (${P.spikes.length})  newest first  - tap to copy`) : 'no spikes yet';
+  const head = P.spikes.length ? (PERF_NOW() - P.copied < 1500 ? 'COPIED ✓' : `SPIKES (${P.spikes.length})  newest first  - ${perfTap && PERF_NOW() - perfTap.t >= PERF_HUD.holdMs ? 'let go to copy' : 'hold to copy'}`) : 'no spikes yet';
   const lines = [P.l1, P.l2, P.l3, head, ...sp], hgt = fs * (lines.length * 1.2 + 0.3), y = Math.max(TOP_BAR + 4, H - PERF_HUD.y - (lines.length - 3) * fs * 1.2);
   ctx.save(); ctx.font = `bold ${fs}px monospace`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   const w = Math.min(W - PERF_HUD.x, Math.max(...lines.map(l => ctx.measureText(l).width)) + 16);
