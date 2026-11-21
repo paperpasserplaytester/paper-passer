@@ -1441,7 +1441,7 @@ function reset() { choreFlush('reset');
   annReset();   // (the announcers: a finished line goes, one still being written runs into the pre-snap)
   flagPen = null;   // (v0.68: no flag carries into the next play)
   if (kitHold) { kitHold = false; applyKits(); }   // (the kick's bodies kept their kits behind the sim box: the real ones come back with the new play)
-  if (Array.isArray(ols) && qb) for (const p of allPlayers()) { if (!p) continue; p.armsUp = false; p.refToss = 0; p.refTossK = 0; p.penK = 0; p.penL = 0; p.penJump = 0; p.coast = null; p.crease = null; p.flat = null; }   // (crease / flat: the paper reactions, one play only)   // (not on the very first reset at load: nobody exists yet)
+  if (Array.isArray(ols) && qb) for (const p of allPlayers()) { if (!p) continue; p.armsUp = false; p.refToss = 0; p.refTossK = 0; p.penK = 0; p.penL = 0; p.penJump = 0; p.penAf = 0; p.penV = ''; p.coast = null; p.crease = null; p.flat = null; }   // (crease / flat: the paper reactions, one play only)   // (not on the very first reset at load: nobody exists yet)
   //   // (a kick rusher's raised arms never carry into the next play; nor an old scorer's end-zone coast: the camera panned to him, by then an unrelated man, at every later whistle until the next kickoff)
   if (tut && tut.koUnflip) { tut.koUnflip = false; if (twoP && twoP.koOnly) { flipSides(); twoP = null; } }   // (the tutorial's kickoff return is over: the sides go back now, not while the players are still on the field in their kits)
   if (tut && !(tutStep() || {}).kick) { kick = null; kickoff = null; kickoffPlay = false; puntPlay = null; puntRet = puntRetPlay = false; game.kickPending = null; }   // (nothing of a kicking lesson lingers into the next play)

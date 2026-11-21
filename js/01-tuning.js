@@ -1274,20 +1274,24 @@ function thirdDownOn() {   // Third Down Specialist: this down counts (3rd and l
 // online game reads its own exPenalties / exBooth (default off; online = the host's). Off in the tutorial, the cold open, 1v1 and test mode (unless REF.force).
 // Odds below are x diffX('flags') x the penalty's own slider (flHold / flDpi / flOpi / flRough / flOff / flFalse, GAME RULES sliders in DIFF_SLIDERS).
 const REF = {
-  force: null,   // TEST ONLY: 'hold' | 'pphold' | 'dpi' | 'opi' | 'rough' | 'false' | 'spot' | 'spotGoal' | 'knock' = make it happen on the next chance (null = off)
+  force: null,   // TEST ONLY: 'hold' | 'pphold' | 'dpi' | 'edge' | 'opi' | 'rough' | 'false' | 'offside' | 'encroach' | 'dhold' | 'spot' | 'spotGoal' | 'knock' = make it happen on the next chance (null = off)
   miss: 0.02,    // a real foul that no official flags (very rare)
-  ghost: 0.0002, // a flag with no foul (DPI / OPI / holding only, and only where there was contact) per contact (v0.70: very, very rare; every other flag follows a foul you can see, REF.look)
+  // v0.73 bad calls are fringe cases, never dice: a clear foul (severity >= clear) is always called by an official who can see it; a subtle one (below clear) is missed
+  // miss[0] (beside an official) .. miss[1] (far away) of the time, more the subtler it is. Only a BORDERLINE play (just under a foul's line, flagEdge in 05) can be flagged
+  // wrongly: wrong x (1 + (farK - 1) x how far the nearest official is) x the flags slider. Borderline bands: dpi = s before REF.dpi.early, opi = yd/s under REF.opi.v,
+  // rough = s before REF.rough.late, hold = share of run-block pancakes that look like a takedown; s = the borderline look's severity range (soft looks). force 'edge' = TEST a borderline DPI flag
+  edge: { clear: 0.4, miss: [0.04, 0.35], wrong: 0.012, farK: 3, dpi: 0.12, opi: 0.35, rough: 0.12, hold: 0.35, s: [0.05, 0.3] },
   flagCam: { lead: 0.7, hold: 1.3, fall: 0.9, push: 1.9, pan: 0.85 },   // v0.70 a flagged play's replay (always a BIG PLAY): s before the foul the camera starts pushing in on it, s held, s easing back to the play; zoom x push, share of the way panned to the foul
-  look: { on: true, dur: { pphold: 0.85, hold: 0.85, dpi: 0.65, opi: 0.55, rough: 0.6, grab: 0.8, tackle: 0.75, false: 0.5, offside: 0.5, encroach: 0.6 } },   // (x 0.7 + 0.6 x his severity)
-  // v0.70 two rolls a foul: it HAPPENS (its look always plays, severity s rolled in sev[kind]), then it is CALLED with k[kind] x (s0 + (1 - s0) x s) x the nearest official's
-  // distance (1 within near yd, falling to farK at far yd) x the slider, at most max (refs aren't perfect); at most `most` flags a play
+  look: { on: true, dur: { pphold: 0.85, hold: 0.85, dpi: 0.65, opi: 0.55, rough: 0.6, grab: 0.8, tackle: 0.75, false: 0.5, offside: 0.5, encroach: 0.6, guilty: 1.1, point: 0.9, slow: 1.6 } },   // (x 0.7 + 0.6 x his severity)
+  // v0.70 two rolls a foul: it HAPPENS (its look always plays, severity s rolled in sev[kind]), then it is CALLED (v0.73: REF.edge decides; near / far = the official's
+  // distance band it uses; k / s0 / farK / max are only read when no officials are on the field); at most `most` flags a play
   call: { near: 8, far: 32, farK: 0.3, s0: 0.25, max: 0.95, most: 3,
     k: { pphold: 0.32, hold: 1, dpi: 0.95, opi: 0.6, rough: 0.95, dhold: 0.75, false: 1, offside: 1, encroach: 1 },
-    sev: { pphold: [0.15, 1], hold: [0.2, 1], dpi: [0.3, 1], opi: [0.2, 1], rough: [0.5, 1], grab: [0.05, 0.45], tackle: [0.65, 1], false: [0.1, 1], offside: [0.1, 0.7], encroach: [0.7, 1] } },
+    sev: { pphold: [0.15, 1], hold: [0.2, 1], dpi: [0.3, 1], opi: [0.2, 1], rough: [0.5, 1], grab: [0.05, 0.45], tackle: [0.65, 1], false: [0.1, 1], offside: [0.1, 1], encroach: [0.7, 1] } },
   // v0.70 defensive holding on a route (flagRoute, from update): a cover man within r yd of a receiver who is `past` YL beyond the line gets one roll a play (odds);
   // tackle = share that are an early tackle (obvious), else a jersey grab (subtle); the receiver is slowed slow[grab, tackle]; 5 yards and a first down
-  dhold: { past: 5, r: 1, odds: 0.1, tackle: 0.22, slow: [0.3, 0.65], yds: 5 },   // v0.70 the foul's look (penLook, 05; drawn in drawPlayer's arm chain): s it shows; started by the same roll that can be flagged, before the official reacts
-  pre: { jumpV: 5, enc: 0.4, fs: 0.009, off: 0.012, road: 1.5, jump: 0.6, yds: 5 },   // at the snap (a dice roll): false start / offside odds per snap, road offense x (1 + road x stadium pulse), YL the man lurches across, yards
+  dhold: { past: 5, r: 1, odds: 0.027, tackle: 0.22, slow: [0.3, 0.65], yds: 5 },   // v0.70 the foul's look (penLook, 05; drawn in drawPlayer's arm chain): s it shows; started by the same roll that can be flagged, before the official reacts
+  pre: { jumpV: 5, enc: 0.4, fs: 0.0075, off: 0.006, road: 1.5, jump: 0.6, yds: 5 },   // at the snap (a dice roll): false start / offside odds per snap, road offense x (1 + road x stadium pulse), YL the man lurches across, yards
   // booth review (boothOn): a bad spot only near the sticks (near YL) or a goal-line score with a defender within tdNear yd; never on 4th down
   spot: { near: 0.8, odds: 0.08, blindK: 3, over: [0.1, 0.45], max: 1.1, tdNear: 1.6, tdOdds: 0.04, tdShort: 0.4, look: 0.12, tdLook: 0.35, tdMargin: 0.6, pylon: 1.2 },   // v0.68 a touchdown may only be looked at / ruled short when the ball is within tdMargin YL of the goal line, a defender within tdNear yd, and he dives / falls / reaches, is within pylon yd of a sideline, or caught it there (refTdClose)   // odds x blindK when the nearest official is down / screened; over = YL it lands past the line the wrong way; max = biggest error YL; tdShort = YL short of the goal line; look / tdLook = a right call the booth looks at anyway (STANDS)
   // v0.68 accept / decline (penChoose, `// --- penalty choice` in 05): s of the referee's call before the choice (announce at annAt, the foul's signal at sigAt); s the CPU takes;
@@ -1300,10 +1304,10 @@ const REF = {
   rev: { still: 1.1, stamp: 1.8,   // s: the still frame when replays are off; the stamp
     wait: 0.6, slate: 1.8, look: 0.9, slowK: 0.35, rockSpan: 0.45, rockK: 0.5, rockN: 1, hold: 0.25, push: 2.2, base: 1.15, zoomE: 2.2, border: 6,
     pre: 0.9, near: 4, max: 6.5, tk: 1.6 },   // v0.71 the tape starts `pre` s before the ball first came within `near` YL of the line (searched back from the end), the whole tape capped at `max` s; tk = yd a defender must be from the ball for a spot to be "a tackle there"   // v0.68 booth mode: s after the whistle it may start; slate s; the last `look` s of the tape played x slowK, then rockN rocks over rockSpan s at rockK x, held `hold` s at each end; zoom x push while looking (base before), eased zoomE /s; border px
-  pphold: { grab: 0.16, slow: 0.45, flag: 0.25, yds: 10 },   // (v0.70 later: flag unused, the call is REF.call)   // (v0.70 flag 0.5 -> 0.25, opi 0.25 -> 0.12, dpi 0.35 -> 0.33, false start 0.012 -> 0.007, offside 0.008 -> 0.01: offense and defense fouls about as likely per play)   // pass pro: a beaten blocker grabs (x 1.4 - his blocking 0-1), the rusher slowed like a run grab; flag odds on a grab; yards
-  dpi: { r: 0.8, early: 0.3, v: 1.2, odds: 0.6, watch: 0.4 },   // contact = a defender within r yd of the target, closing at v yd/s+, with more than `early` s before the ball gets there; flag odds (x watch when he is looking at the ball)
-  opi: { r: 0.9, window: 0.35, v: 1.6, odds: 0.3, yds: 10 },     // the target closing on a defender within r yd in the last `window` s; flag odds; yards (replay the down)
-  rough: { r: 1.2, late: 0.35, max: 1.4, v: 3, hit: 0.3, flag: 0.85, yds: 15 },   // a rusher reaching the QB `late` s past PRESSURE_THROW.window (until max s after the throw) at v yd/s+: hit odds (else he pulls up), flag odds on the hit
+  pphold: { grab: 0.024, slow: 0.45, flag: 0.25, yds: 10 },   // (v0.70 later: flag unused, the call is REF.call)   // (v0.70 flag 0.5 -> 0.25, opi 0.25 -> 0.12, dpi 0.35 -> 0.33, false start 0.012 -> 0.007, offside 0.008 -> 0.01: offense and defense fouls about as likely per play)   // pass pro: a beaten blocker grabs (x 1.4 - his blocking 0-1), the rusher slowed like a run grab; flag odds on a grab; yards
+  dpi: { r: 0.8, early: 0.3, v: 1.2, odds: 0.24, watch: 0.4 },   // contact = a defender within r yd of the target, closing at v yd/s+, with more than `early` s before the ball gets there; flag odds (x watch when he is looking at the ball)
+  opi: { r: 0.9, window: 0.35, v: 1.6, odds: 0.16, yds: 10 },     // the target closing on a defender within r yd in the last `window` s; flag odds; yards (replay the down)
+  rough: { r: 1.2, late: 0.35, max: 1.4, v: 3, hit: 0.27, flag: 0.85, yds: 15 },   // a rusher reaching the QB `late` s past PRESSURE_THROW.window (until max s after the throw) at v yd/s+: hit odds (else he pulls up), flag odds on the hit
   // the crew on the field (`// --- officials`, 07; looks only, always on): home = [role, yd line, yd off the middle] at setup; distances: along the field YL, across YD
   crew: { home: [['R', 40, 5], ['U', 54, -1], ['L', 50, 0], ['B', 70, 3]],
     think: 0.25, jog: 4.2, run: 6.6,          // s between each man's looks; yd/s jogging between plays / running in a live play

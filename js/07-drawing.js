@@ -4482,8 +4482,26 @@ function tkTackle(c, d, style) {
 }
 
 // this frame's pose (reel, tackle or catch), null if none; ac = animation clock
+// v0.73 a foul look's body (looks only; PEN_VARS in 05): penV -> (u = 0..1 through the look, s = severity) -> { R lean (+ = forward), tw turn, legs }
+const penBr = k => [[-3.5, 0.45 * k, 0.35], [3.5, -0.3 * k, 0.2]], penBk = k => [[-3, -0.35 * k, 0.3], [3, 0.4 * k, 0.25]], penIn = (u, a) => smooth01(Math.min(1, u / a));
+const PEN_POSE = {
+  tug: (u, s) => ({ R: -0.06 * s, legs: penBk(0.4) }), hook: (u, s) => ({ R: 0.12 * s, legs: penBr(0.6) }), hug: (u, s) => ({ R: 0.18 + 0.1 * s, legs: penBr(1) }),
+  takedown: u => ({ R: 0.45 * penIn(u, 0.6), legs: penBr(1) }), fall: u => ({ R: -0.45 * penIn(u, 0.6), legs: penBk(penIn(u, 0.6)) }),
+  spin: u => ({ R: 0.25 * penIn(u, 0.5), legs: penBr(0.8) }), edge: (u, s) => ({ R: -0.12 * s, legs: penBk(0.6) }),
+  spun: u => ({ tw: Math.cos(Math.PI * penIn(u, 0.7)), legs: penBk(0.5) }), dragged: u => ({ R: 0.5 * penIn(u, 0.6), legs: penBr(penIn(u, 0.6)) }),
+  rip: u => ({ R: -0.1, legs: penBk(0.5) }),
+  early: () => ({ R: 0.28, legs: penBr(1) }), back: () => ({ R: 0.32, legs: penBr(1) }), hookturn: u => ({ R: 0.1, tw: 1 - 0.5 * Math.sin(Math.PI * u), legs: penBr(0.6) }),
+  pick: () => ({ R: 0.22, legs: penBr(0.8) }), pull: u => ({ R: -0.18 * penIn(u, 0.4), legs: penBk(0.6) }),
+  stagger: u => { const k = Math.sin(Math.PI * Math.min(1, u * 1.4)); return { R: -0.3 * k, legs: penBk(k) }; },
+  floored: u => ({ R: -0.55 * penIn(u, 0.5), legs: penBk(1) }),
+  stumble: u => { const k = Math.sin(Math.PI * u); return { R: 0.38 * k, legs: [[-3.5, 0.6 * k, 0.5], [3.5, -0.2 * k, 0.1]] }; },
+  drive: () => ({ R: 0.42, legs: penBr(1) }), low: u => ({ R: 0.62 * penIn(u, 0.4), legs: penBr(1) }),
+  lurch: (u, s) => ({ R: 0.3 * s * Math.sin(Math.PI * Math.min(1, u * 1.5)), legs: penBr(0.8) }), over: () => ({ R: 0.35, legs: penBr(1) }),
+  helmet: () => ({ R: -0.12, legs: penBk(0.3) }), slow: () => ({ R: 0.42, legs: penBr(0.9) }),
+};
 function poseFx(p, ac) {
   const ak = p.act && p.act.dur ? Math.min(1, Math.max(0, p.act.t / p.act.dur)) : 0;
+  if (p.penK && p.penL > 0 && !p.action && PEN_POSE[p.penV]) return PEN_POSE[p.penV](Math.max(0, Math.min(1, 1 - p.penL / (p.penD || 1))), p.penS ?? 0.6);
   if (p.saLoss && (p.action === 'wrap' || p.action === 'down' || p.action === 'dive') && ac - p.saLoss.t >= 0 && ac - p.saLoss.t < SA_LOSS[0] && SA_LOSS[1][p.saLoss.k]) return SA_LOSS[1][p.saLoss.k](Math.min(1, (ac - p.saLoss.t) / SA_LOSS[0]));   // (he beat a stiff arm: how he got through it, then his tackle; v0.46)
   if (p.action === 'swat' && p.act && TIP_ST[p.act.tipSt]) return TIP_ST[p.act.tipSt].pose(ak);
   if (p.action === 'hurdle' && p.act && HURDLE_ST[p.act.style]) return HURDLE_ST[p.act.style](ak);
@@ -10280,14 +10298,38 @@ function drawPlayer(p) {
     // round him); 7 a jersey grab on a route (one hand at his hip, a tug); his man: 8 held (an arm ripping back to get free), 9 shoved / grabbed (arms flung out)
     const K = p.penK, sv = p.penS ?? 0.6, e = (p.penD || 0.7) - p.penL, sx = 2, sy = -10.5 + bob, rx = p.penDx * p.face / bk, ry = p.penDy / bkY, dd = Math.hypot(rx, ry) || 1;
     const reach = (r, up) => { const k = Math.min(1, r / dd); return [sx + Math.max(2, rx * k), sy + ry * k + up]; }, rise = smooth01(Math.min(1, e / 0.15));
-    if (K === 1) { const tug = Math.sin(e * 20) * (0.8 + 1.4 * sv), L = 10.5 + 2.5 * sv, g = reach(L - 1 - tug, 1.5 - sv), h = reach(L - tug, -1 - sv); drawArmTo(t, skin, -1, -10 + bob, g[0], g[1], 6.3, 7.3, -1, 5); drawArmTo(t, skin, sx, sy, h[0], h[1], 6.5, 7.5, -1, 5.2); }
+    const V = p.penV || '', A2 = (g, h, bg = -1, bh = -1) => { drawArmTo(t, skin, -1, -10 + bob, g[0], g[1], 6.3, 7.3, bg, 5); drawArmTo(t, skin, sx, sy, h[0], h[1], 6.5, 7.5, bh, 5.2); };   // (v0.73 variants: far hand g, near hand h)
+    const tuck = () => drawArm(t, skin, -1, -9.5 + bob, 2.5, 3.5, 0.4, 4, 3.5), L = 10.5 + 2.5 * sv;
+    if (K === 1 && V === 'hook') A2(reach(L - 1, 2), reach(L + 0.5, -5 - sv), -1, 1);
+    else if (K === 1 && V === 'hug') A2(reach(Math.min(13, dd + 3), -2), reach(Math.min(13, dd + 3), 1), 1, 1);
+    else if (K === 1 && (V === 'takedown' || V === 'fall')) { const dn = 3 + 4 * rise; A2(reach(L - 1, dn), reach(L, dn + 1)); }
+    else if (K === 1 && V === 'edge') A2(reach(L - 2, -1), reach(L + 1, -4.5));
+    else if (K === 1 && V === 'spin') A2(reach(L - 1, -2 + 6 * rise), reach(L, -3 + 7 * rise));
+    else if (K === 1) { const tug = Math.sin(e * 20) * (0.8 + 1.4 * sv), g = reach(L - 1 - tug, 1.5 - sv), h = reach(L - tug, -1 - sv); drawArmTo(t, skin, -1, -10 + bob, g[0], g[1], 6.3, 7.3, -1, 5); drawArmTo(t, skin, sx, sy, h[0], h[1], 6.5, 7.5, -1, 5.2); }
+    else if (K === 2 && V === 'early') { const h = reach(5 + 8 * rise, -2); A2([h[0] - 1.5, h[1] + 2], h); }
+    else if (K === 2 && V === 'hookturn') A2(reach(8, 4), reach(Math.min(13, dd + 2), 2), -1, 1);
+    else if (K === 2 && V === 'pin') { tuck(); const h = reach(10, -2.5); drawArmTo(t, skin, sx, sy, h[0], h[1], 6.5, 7.5, -1, 5); }
+    else if (K === 2 && V === 'back') A2(reach(Math.min(12, dd + 1), -3.5), reach(Math.min(12, dd + 1.5), -2.5));
     else if (K === 2) { const g = reach(8, 3), h = reach(10 + 2 * sv, -1); drawArmTo(t, skin, -1, -10 + bob, g[0], g[1], 6, 7, 1, 4.5); drawArmTo(t, skin, sx, sy, h[0], h[1], 6.5, 7.5, -1, 5); }
-    else if (K === 3) { const h = reach(4 + (7 + 3 * sv) * rise, -1.5 - sv); drawArm(t, skin, -1, -9.5 + bob, 2.5, 3.5, 0.4, 4, 3.5); drawArmTo(t, skin, sx, sy, h[0], h[1], 6.5, 7.5, -1, 5.5); }
+    else if (K === 3 && V === 'pick') A2([3, -7 + bob], [sx + 5, sy + 1.5]);
+    else if (K === 3 && V === 'pull') A2(reach(9, -7 + 9 * rise), reach(10, -8 + 9 * rise));
+    else if (K === 3) { const h = reach(4 + (7 + 3 * sv) * rise, -1.5 - sv); tuck(); drawArmTo(t, skin, sx, sy, h[0], h[1], 6.5, 7.5, -1, 5.5); }
+    else if (K === 4 && V === 'drive') A2(reach(Math.min(12, dd + 2), 0), reach(Math.min(12, dd + 2.5), -1), 1, 1);
+    else if (K === 4 && V === 'low') A2(reach(Math.min(13, dd + 2), 6 + 2 * rise), reach(Math.min(13, dd + 2), 7 + 2 * rise));
     else if (K === 4) { const h = reach(5 + 8 * rise, -3); drawArmTo(t, skin, -1, -10 + bob, h[0] - 1.5, h[1] + 2, 6.5, 7.5, -1, 5.5); drawArmTo(t, skin, sx, sy, h[0], h[1], 6.5, 7.5, -1, 5.5); }
+    else if (K === 5 && V === 'flinch') A2([1 + 1.5 * rise, -4 + bob], [sx + 2 * rise, sy + 6 - 2 * rise]);
+    else if (K === 5 && V === 'over') A2([4, 1 + bob], [sx + 5, sy + 11]);
     else if (K === 5) { const to = Math.abs(p.penDy) + Math.abs(p.penDx) < 2.5 * YD && p.penDx * p.face > 0, h = to ? reach(5 + 7 * rise, -1) : [sx + (4 + 6 * sv) * rise, sy + 2 - 2 * rise]; drawArmTo(t, skin, -1, -10 + bob, h[0] - 1.5, h[1] + 1.5, 6, 7, -1, 5); drawArmTo(t, skin, sx, sy, h[0], h[1], 6, 7, -1, 5); }
     else if (K === 6) { const g = reach(Math.min(13, dd + 2), 0.5), h = reach(Math.min(13, dd + 3), -1.5); drawArmTo(t, skin, -1, -10 + bob, g[0], g[1], 6.5, 7.5, 1, 5); drawArmTo(t, skin, sx, sy, h[0], h[1], 6.5, 7.5, 1, 5); }
-    else if (K === 7) { const tug = Math.sin(e * 16) * (0.5 + 1.5 * sv), h = reach(Math.min(11, dd) - tug, 3); drawArm(t, skin, -1, -9.5 + bob, Math.PI / 2 + s * pump, 2.5, -1 - s * 0.3, 3.5, 3); drawArmTo(t, skin, sx, sy, h[0], h[1], 6, 7, -1, 4.6); }
-    else if (K === 8) { const w = Math.sin(e * 14); drawArm(t, skin, -1, -9.5 + bob, 1.1, 3.5, 0.6, 4.5, 3.8); drawArm(t, skin, sx, sy, 2.2 + 0.5 * w * (0.5 + sv), 4.5, -0.6, 5.5, 4.5); }
+    else if (K === 7 && V === 'arm') A2(reach(Math.min(10, dd - 1), 0), reach(Math.min(11, dd), -2));
+    else if (K === 7) { const tug = Math.sin(e * 16) * (0.5 + 1.5 * sv) * (V === 'jersey' ? 1.8 : 1), h = reach(Math.min(11, dd) - tug, 3); drawArm(t, skin, -1, -9.5 + bob, Math.PI / 2 + s * pump, 2.5, -1 - s * 0.3, 3.5, 3); drawArmTo(t, skin, sx, sy, h[0], h[1], 6, 7, -1, 4.6); }
+    else if (K === 8 && V === 'dragged') A2([7, -2 + bob], [sx + 7, sy + 7.5]);
+    else if (K === 8 && V !== 'spun') { const w = Math.sin(e * 14); drawArm(t, skin, -1, -9.5 + bob, 1.1, 3.5, 0.6, 4.5, 3.8); drawArm(t, skin, sx, sy, 2.2 + 0.5 * w * (0.5 + sv), 4.5, -0.6, 5.5, 4.5); }
+    else if (K === 9 && V === 'stumble') A2([6, -3 + bob], [sx + 6, sy + 6.5]);
+    else if (K === 10 && V === 'helmet') A2([-5, -25 + bob], [7.5, -24 + bob]);
+    else if (K === 10) { const sh = Math.sin(Math.PI * Math.min(1, e / 0.5)); A2([6, -5 - sh + bob], [sx + 7, sy + 4.5 - 1.5 * sh]); }
+    else if (K === 11) { drawArmTo(t, skin, -1, -10 + bob, 0, -1 + bob, 6.3, 7.3, -1, 5); const h = reach(13, -3); drawArmTo(t, skin, sx, sy, h[0], h[1], 6.5, 7.5, -1, 5.2); }
+    else if (K === 12) A2([5, 2 + bob], [sx + 5, sy + 12.5]);
     else { const k = rise * (0.6 + 0.6 * sv); drawArm(t, skin, -1, -10 + bob, 1.6 - 3.6 * k, 4.5, 0.3, 5.5, 4.2); drawArm(t, skin, sx, sy, 1.4 - 2.9 * k, 4.5, 0.3, 5.5, 4.5); }
   } else if (p.action === 'wrap') {
     // a wrap-up tackle: both arms reach around the runner and lock behind him, driving him down

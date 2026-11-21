@@ -850,6 +850,19 @@ const DRAFT_SCHOOLS = ['BAYOU STATE', 'GREAT LAKES TECH', 'NORTH PRAIRIE', 'COAS
   'CEDAR FALLS STATE', 'GULF SHORE', 'HIGH PLAINS', 'MILL CREEK', 'CANYON STATE', 'LAKESHORE', 'EAST TIMBER', 'COPPER MOUNTAIN', 'RIVERBEND', 'STONE HARBOR', 'BLUE MESA', 'WEST DELTA', 'GRANITE STATE TECH',
   'MAGNOLIA', 'SILVER LAKE', 'FORT ASH', 'PALMETTO BAY', 'BIG SKY NORTH', 'CAPITAL CITY', 'THREE RIVERS', 'SAGEBRUSH', 'MAPLE GROVE', 'SOUTH RIDGE', 'TIDEWATER', 'ELK RAPIDS', 'SUNCOAST', 'BLACK HILLS TECH', 'WINDWARD'];
 const CHANGELOG = [
+  { v: "v0.73", secs: [
+    ["FAIRER FLAGS", [
+      "Every flag now follows something you can see. A clear foul is always called by an official who sees it.",
+      "Only close calls can go wrong: contact a hair early, an arm out, a block finished to the ground, a hit right at the whistle. Very rare, and more likely far from an official.",
+      "Both teams follow the same rules. Your team and the computer now draw about as many flags for the same plays.",
+    ]],
+    ["NEW FOUL LOOKS", [
+      "Each foul has a few looks now: jersey tugs, bear hugs, takedowns, arm bars, push offs, pull downs, late shoves, flinches and more. The man fouled reacts too.",
+      "After the flag the guilty player grabs his helmet or shrugs, and his man points at the flag.",
+      "Fixed: foul looks were missing from replays. The flag replay now shows the contact.",
+      "Every look is in the animation library's EXTRAS tab.",
+    ]],
+  ]},
   { v: "v0.72", secs: [
     ["YEARLY GOALS", [
       "Every season brings 5 yearly goals: passing yards, rushing yards, wins, points and more. Finish one for credits and bank XP.",
