@@ -7,6 +7,37 @@ function perfNote(tag) { if (typeof SETTINGS === 'undefined' || !SETTINGS.perfHu
 // A pointer event is timed as a whole (perfEvOn / perfEvOff in 14): over PERF_SLOW.ev ms it is tagged with the wrapped calls it made.
 const PERF_SLOW = { tag: 16, ev: 30, sub: 2 };   // ms: a timed call worth a tag / a pointer event worth a tag / a call inside an event worth naming
 const PERF_EV = { on: 0, t0: 0, type: '', sub: [] };
+// v0.71 chore queue: heavy after-the-whistle work (the highlight copies, the halftime reel's cut) waits for a dead ball and runs a few ms a frame (choreTick from 14's frame,
+// after the paint and on every early return). chore(name, fn, { key }) queues; fn(until) returns true = more to do (it is called again next frame). choreFlush(why) runs
+// everything left at once: called wherever the results are read or the play's objects reused (reset, startKickoff, saves, reels, results, hidden tab).
+// Run at once, never queued (jobs already queued keep their budget): CHORE.on false, the cold open, the tutorial, sims, the league-tape sandbox, a replay playing. warnMs = the FRAME TIMES tripwire ('LIVE name ms').
+const CHORE = { on: true, budgetMs: 4, budgetTouch: 3, warnMs: 4, noteMs: 1 };
+const CHORE_Q = [];
+const LIVE_PLAY = /^(drop|pocket|run|flight|loose|fumble|picked|kick|punt|kickoff)$/;   // (a play is live: no chore runs, the sound decoder waits)
+function liveNow() { return typeof state !== 'undefined' && LIVE_PLAY.test(state) && !(typeof game !== 'undefined' && game && game.over); }
+function choreNow() {
+  return !CHORE.on || (typeof CO !== 'undefined' && !!CO) || (typeof tut !== 'undefined' && !!tut) || (typeof game !== 'undefined' && !!game && !!game.simAll)
+    || (typeof state !== 'undefined' && state === 'sim') || (typeof LG_SAND !== 'undefined' && LG_SAND) || (typeof rec !== 'undefined' && !!rec && !!rec.replaying);
+}
+function choreRun(j, until) {
+  const t = performance.now(); let more = false;
+  try { more = !!perfOutRun('chore ' + j.name, j.fn, null, [until]); } catch (e) { console.warn('chore ' + j.name, e); }
+  if (perfHudOn()) { const ms = performance.now() - t; if (ms >= CHORE.noteMs) perfNote('chore ' + j.name + ' ' + ms.toFixed(1)); if (ms > CHORE.warnMs && liveNow()) perfNote('LIVE chore ' + j.name + ' ' + Math.round(ms)); }
+  return more;
+}
+function chore(name, fn, o) {
+  const j = { name, fn, key: o && o.key };
+  if (choreNow()) { while (choreRun(j, Infinity)); return; }
+  if (j.key) { const i = CHORE_Q.findIndex(q => q.key === j.key); if (i >= 0) CHORE_Q.splice(i, 1); }
+  CHORE_Q.push(j);
+}
+function choreTick() {
+  if (!CHORE_Q.length || liveNow()) return;
+  const until = performance.now() + (typeof TUI !== 'undefined' && TUI.on ? CHORE.budgetTouch : CHORE.budgetMs);
+  while (CHORE_Q.length && performance.now() < until) { const j = CHORE_Q.shift(); if (choreRun(j, until)) { CHORE_Q.unshift(j); break; } }
+}
+function choreFlush(why) { while (CHORE_Q.length) { const j = CHORE_Q.shift(); let n = 0; while (choreRun(j, Infinity) && ++n < 1e4); } }
+document.addEventListener('visibilitychange', () => { if (document.hidden) choreFlush('hidden'); });
 const PERF_WRAP = ['saveToSlot', 'loadFromSlot', 'buildSave', 'storeTidy', 'storeReport', 'autoAssignSlot', 'syncNow', 'syncOnLeave', 'syncBundle',
   'newGame', 'openResults', 'leagueReset', 'careerReset', 'startCrumple', 'cglStart', 'btnSprClear', 'offToDraft', 'startExhibition', 'lgTapeTick', 'hsEndReel', 'seasonGameDone', 'pgTry'];
 // v0.70: calls timed as spike parts of their own ('f.name', nested: they also stay inside the u.* part that called them): the score / celebration frames
@@ -15,7 +46,7 @@ function perfTime(tag, f, self, args) {
   if (typeof SETTINGS === 'undefined' || !SETTINGS.perfHud) return f.apply(self, args);
   const t0 = performance.now();
   try { return f.apply(self, args); }
-  finally { const ms = performance.now() - t0; if (PERF_EV.on && ms > PERF_SLOW.sub) PERF_EV.sub.push([tag, ms]); if (ms > PERF_SLOW.tag) perfNote(tag + ' ' + Math.round(ms)); if (!perfIn && !PERF_EV.on) perfOut(tag, ms); }
+  finally { const ms = performance.now() - t0; if (PERF_EV.on && ms > PERF_SLOW.sub) PERF_EV.sub.push([tag, ms]); if (ms > PERF_SLOW.tag) perfNote(tag + ' ' + Math.round(ms)); if (ms > CHORE.warnMs && liveNow()) perfNote('LIVE ' + tag + ' ' + Math.round(ms)); if (!perfIn && !PERF_EV.on) perfOut(tag, ms); }
 }
 let perfWrapped = false;
 function perfWrapAll() {
@@ -50,7 +81,7 @@ function perfBeatOn() { if (!perfBlk.on && !document.hidden) { perfBlk.on = 1; p
 function perfOut(name, ms, noLog) { if (!perfHudOn()) return; PERF_OUT[name] = (PERF_OUT[name] || 0) + ms; if (!noLog && typeof onlLogOn === 'function' && onlLogOn()) onlLogTag(name, ms); }
 function perfOutRun(name, f, self, args, always) {
   if (!perfHudOn() || (perfIn && !always)) return f.apply(self, args);
-  const t = performance.now(); try { return f.apply(self, args); } finally { const ms = performance.now() - t; perfOut(name, ms, always === 2); if (always && ms > PERF_SLOW.tag) perfNote(name + ' ' + Math.round(ms)); }
+  const t = performance.now(); try { return f.apply(self, args); } finally { const ms = performance.now() - t; perfOut(name, ms, always === 2); if (ms > CHORE.warnMs && liveNow()) perfNote('LIVE ' + name + ' ' + Math.round(ms)); if (always && ms > PERF_SLOW.tag) perfNote(name + ' ' + Math.round(ms)); }
 }
 function perfWho() {   // (the code that set a timer: function name, or file:line for an arrow)
   try { const L = (new Error().stack || '').split('\n'); for (const s of L) { if (/perfWho|perfTimer|^Error/.test(s) || !/\d+-[a-z0-9-]+\.js/.test(s)) continue; const fn = s.match(/at ([\w$.]+) \(/) || s.match(/^([\w$.]+)@/), fl = s.match(/(\d+-[a-z0-9-]+)\.js:(\d+)/); return fn ? fn[1] : fl ? fl[1] + ':' + fl[2] : 'anon'; } } catch (e) {}
@@ -1654,7 +1685,11 @@ const PURSUIT = { step: 0.05, horizon: 3.5, edge: 0.6 * YD, smooth: 0.2, passAng
                   // lev = yd to his own side of the meeting point a man in front of the carrier comes in at (his near hip: never across his face, so the cutback behind
                   // him stays shut), from levAhead yd in front; late / lateT = a kick-coverage man's lane / contain / vise shade is dropped for the plain meeting point once
                   // getting to it would take more than late x the carrier's time + lateT s (he has lost that angle)
-                  lag: 0.85, leadMax: 22, lev: 0.5, levAhead: 2, late: 1.1, lateT: 0.15 };   // boost = x speed chasing a ball carrier (after a catch / on a run), accel = x their accel (sharper angles)   // DBs: look-ahead s, and how much of the usual angle error they make (0.15 = 15%: they take sharp angles)
+                  lag: 0.85, leadMax: 22, lev: 0.5, levAhead: 2, late: 1.1, lateT: 0.15,
+                  readT: 1, readMax: 2, readRate: 0.4, readOver: false,   // the angle error as a read: gone over the last readT s before the meeting, never more than readMax s of lead; x (1 + readRate x (1 - 2 x btSkill)) by his reads
+                  hold: true, cutDeg: 12, replanYd: 0.6, holdNear: 3,   // he commits to his angle: re-plans on a cut over cutDeg, a meeting point moved over replanYd yd, or inside holdNear yd
+                  ramp: 1, bend: 0.8,   // the carrier's predicted run: x his accel getting up to his top; s over which his heading bends toward the end zone
+                  debug: false };   // debug = dev only: aim points + the carrier's predicted path (test mode) and the 'came out behind %' count in the console (pdbNote)   // boost = x speed chasing a ball carrier (after a catch / on a run), accel = x their accel (sharper angles)   // DBs: look-ahead s, and how much of the usual angle error they make (0.15 = 15%: they take sharp angles)
 const BREAKDOWN = { range: 4.5 * YD, k: 0.72 };   // special-teams coverage: inside range yd of the returner, a man slows to k x his speed (breaks down to tackle)
 // wrap-up tackles: he falls along runner x his velocity + tackler x the tackler's; met head-on he goes over
 // backwards unless his own forward momentum beats backBias x his speed; falls take fast..slow seconds (harder = faster)

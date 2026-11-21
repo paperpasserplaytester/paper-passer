@@ -850,7 +850,34 @@ const DRAFT_SCHOOLS = ['BAYOU STATE', 'GREAT LAKES TECH', 'NORTH PRAIRIE', 'COAS
   'CEDAR FALLS STATE', 'GULF SHORE', 'HIGH PLAINS', 'MILL CREEK', 'CANYON STATE', 'LAKESHORE', 'EAST TIMBER', 'COPPER MOUNTAIN', 'RIVERBEND', 'STONE HARBOR', 'BLUE MESA', 'WEST DELTA', 'GRANITE STATE TECH',
   'MAGNOLIA', 'SILVER LAKE', 'FORT ASH', 'PALMETTO BAY', 'BIG SKY NORTH', 'CAPITAL CITY', 'THREE RIVERS', 'SAGEBRUSH', 'MAPLE GROVE', 'SOUTH RIDGE', 'TIDEWATER', 'ELK RAPIDS', 'SUNCOAST', 'BLACK HILLS TECH', 'WINDWARD'];
 const CHANGELOG = [
+  { v: "v0.72", secs: [
+    ["YEARLY GOALS", [
+      "Every season brings 5 yearly goals: passing yards, rushing yards, wins, points and more. Finish one for credits and bank XP.",
+      "Check them any time with the YEARLY GOALS button in the front office. After the playoffs a popup shows how you did.",
+    ]],
+    ["KEY TIPS", [
+      "A small key list sits under the pause button in games and changes with the play: before the snap, in the pocket, ball in the air, running, defense and kicks.",
+      "Click or tap it to show or hide it. SETTINGS > SHOWS > KEY TIPS turns it off.",
+    ]],
+    ["PAPER POPUPS", [
+      "Popup cards now uncrumple open, the same crinkle as closing played backwards.",
+    ]],
+    ["TREASURE MAP SCHEDULE", [
+      "The home schedule is now a hand-drawn treasure map: each week is a stop on a winding dashed trail.",
+      "Games you played get an X under them, green for a win and red for a loss. This week's stop has a treasure chest that pops open.",
+    ]],
+    ["LEAGUE SCREEN", [
+      "New SCHEDULE button over the map opens the league screen.",
+      "AFC and NFC show every division with records, SCHEDULE shows every game week by week with scores and byes, PLAYOFFS shows both conferences' seeds and the bracket once it starts.",
+    ]],
+  ] },
   { v: "v0.71", secs: [
+    ["PURSUIT ANGLES", [
+      "Defenders read where the ball carrier is going, not just where he is: a back who just took the ball or made a catch is played to speed up and turn upfield.",
+      "No more chasing a spot nobody can reach: a man who can't catch him takes the cutoff angle toward the pylon instead.",
+      "Angle mistakes are reads now: better-reading defenders miss by less, and a short angle gets corrected in the last second.",
+      "Defenders commit to their angle instead of weaving with every wiggle. The same angles at 30 and 60 frames a second.",
+    ]],
     ["REFS AND REPLAYS", [
       "Booth reviews are quicker: the tape starts just before the moment in question, with one slow look and one rock back.",
       "No more reviews of obvious plays: a walk-in touchdown or a spot with nobody making the tackle is never looked at.",
@@ -858,6 +885,7 @@ const CHANGELOG = [
       "Penalty clip: after a flag, a short clip of the foul plays before you accept or decline. Click to skip it.",
       "Refs move more smoothly: no stop-start when they change course, and the backpedal blends into a run.",
       "Sideline people walk and run with the players' own stride.",
+      "Smoother plays on phones: saving a big play's highlight and its reel clip now happens a little at a time between plays, never as one hitch.",
     ]],
     ["DIVES", [
       "One dive rule for both sides: speed carried plus a push from his own speed and weight. Standing dives are slower, heavy men push less.",

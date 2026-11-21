@@ -3655,7 +3655,7 @@ function mirrorDone() {
   startSim(Math.max(1, Math.min(99, yd)));
 }
 let safetyKick = false;   // the kickoff about to start follows a safety: the kicker lines up KICKOFF.safetyBack yd further back (cleared when it starts)
-function startKickoff(punt = null, user = false) {
+function startKickoff(punt = null, user = false) { choreFlush('startKickoff');
   if (!user && simSTOn() && !(twoP && twoP.koOnly)) return simReturn(punt);   // (SIM SPECIAL TEAMS: their kick is returned in the sim, no live return)
   const koSafety = safetyKick; safetyKick = false;
   if (pvpOn() && !punt) user = true;   // (two players: the kicking player always sets the power and aim, the other returns it: no computer kickoff)
@@ -4851,7 +4851,7 @@ let DEF_SCR = null;
 const defOverlayOn = () => defLive() && !paused && !(rec && rec.replaying) && !(pvpDef() && fourthPending) && (!ONL.on || !onlIAmOff());
 const DRAW_ORDER = [], byDrawY = (a, b) => a.y - b.y;   // (draw(): the players back to front, one reused list)
 function draw() {
-  NAMES_RECT = STAR_RECT = null;   // (v0.62: a tip not drawn this frame has no box: a stale one used to eat taps)
+  NAMES_RECT = STAR_RECT = KEY_TIPS_RECT = null;   // (v0.62: a tip not drawn this frame has no box: a stale one used to eat taps)
   ringSeen.clear();
   ctx.fillStyle = '#3f5f39';
   ctx.fillRect(0, 0, W, H);
@@ -4956,6 +4956,7 @@ function draw() {
   if (Math.abs(POST_X - camX) < cullX) drawGoalPostTop(POST_X, 1);   // (the posts' poles over the players: running under one passes behind it)
   if (Math.abs(-ENDZONE - camX) < cullX) drawGoalPostTop(-ENDZONE, -1);
   if (COLLIDE.show) drawHitboxes();
+  if (PURSUIT.debug) pdbDraw();
   drawImpacts();
   const cine = cinemaOn() || reelOn() || coldHud() || pclipOn();   // (CINEMATIC highlights and the halftime / end-of-game reel: nothing drawn over the field or the players)
   if ((state === 'pre' || (rec && rec.replaying)) && !tossing() && tipHeld('names') && (!cine || (reelOn() && hlFront()))) drawNameTags();   // (v0.62: a held names tip shows them over a reel too)   // (Y hides / shows them in a replay too)
@@ -5069,6 +5070,7 @@ function draw() {
   ctx.strokeText(ddTxt, W / 2, H - BOT_BAR * 0.33); ctx.fillText(ddTxt, W / 2, H - BOT_BAR * 0.33);
   if (!cine && !inRp && celebPromptHere()) { const t = `${TOUCH ? 'DOUBLE TAP' : 'RIGHT CLICK'}  -  CELEBRATE`; ctx.save(); ctx.fillStyle = '#ffffff'; ctx.strokeText(t, W / 2, H - BOT_BAR - 14); ctx.fillText(t, W / 2, H - BOT_BAR - 14); ctx.restore(); }   // (one of your players has a celebration ready)
   if (!tut && state !== 'sim' && state !== 'kick' && !lightGfx() && !cine) { drawStarHud(); drawNamesTip(); }
+  if (!cine && state !== 'sim') drawKeyTips();   // (key tips, top left)
   if (!inRp && (state === 'kick' || (state === 'kickoff' && kick && kick.userKo))) drawKickMeters();
   if (state === 'sim' && !halfHold) drawSim();   // (the halftime banner shows over the plain field, the sim panel hides)
   // the game's over: FINAL with the score, and FINISH GAME, once the last play's replay is rolling
@@ -5215,13 +5217,14 @@ function draw() {
 // Star Factor panel (H toggles it): every star on the field with a Star Factor, whether he's in the zone, what turns it on
 // (with progress) and, while it's on, what takes it away (with progress)
 // (the ON / OFF text is each star's ABIL_DEFS onT / offT; progress = xfProg)
-let NAMES_RECT = null, STAR_RECT = null;   // the two little tips' boxes (set as they're drawn): a click on one toggles it
+let NAMES_RECT = null, STAR_RECT = null, KEY_TIPS_RECT = null;   // the two little tips' boxes (set as they're drawn): a click on one toggles it
 // the tips are MOMENTARY: names / star tips show only while the tip is held, letting go hides them again (no toggle, nothing saved); a press on them never snaps or aims
 const TIP_HOLD = { slop: 60, cur: null };   // slop = px the finger may wander before the hold drops (a scrolling star list never drops it)
 const tipHeld = k => !!(TIP_HOLD.cur && TIP_HOLD.cur.k === k);
-const tipRectAt = p => [NAMES_RECT, STAR_RECT].some(r => r && p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h);   // (v0.62: a press here is the tip's on touch too: never deferred, skipped, scrubbed or a stick)
+const tipRectAt = p => [NAMES_RECT, STAR_RECT, KEY_TIPS_RECT].some(r => r && p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h);   // (v0.62: a press here is the tip's on touch too: never deferred, skipped, scrubbed or a stick)
 function tipClick(p) {
   const hit = r => r && p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+  if (hit(KEY_TIPS_RECT)) { SETTINGS.keyTipsShut = !SETTINGS.keyTipsShut; saveSettings(); return true; }   // (key tips: a click toggles, remembered)
   if (hit(NAMES_RECT)) { TIP_HOLD.cur = { k: 'names', t0: performance.now(), x: p.x, y: p.y }; return true; }
   if (hit(STAR_RECT)) {
     if (TOUCH && STAR_SCROLL.max > 0) STAR_SCROLL.drag = { y: p.y, off: STAR_SCROLL.off, moved: false };   // (a long list scrolls with a finger)
@@ -5257,6 +5260,48 @@ function drawContHint() {
   ctx.lineWidth = Math.max(3, fs / 6); ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.lineJoin = 'round';
   const t = TOUCH ? 'TAP TO CONTINUE' : 'CLICK TO CONTINUE', y = H - FIELD_BOT - CONT_HINT.y;
   ctx.strokeText(t, W / 2, y); ctx.fillStyle = '#fff6c8'; ctx.fillText(t, W / 2, y); ctx.restore();
+}
+// --- key tips (top left, under the pause button: what to press right now; click / tap to show or hide, remembered in SETTINGS.keyTipsShut; SETTINGS.hideKeyTips = never drawn) ---
+const KEY_TIPS = { bg: 'rgba(8,12,10,0.75)', gap: 8, row: 22, rowTouch: 30, font: 14, fontTouch: 19, pad: 8, w: 210, wTouch: 270 };
+const KEY_TIP_ROWS = {   // situation -> [desktop rows, touch rows]: [key, a few words]
+  pre: [[['Drag QB', 'pass play'], ['Click RB', 'run play'], ['Q', 'audible'], ['B / P', 'kick or punt']], [['Drag QB', 'pass play'], ['Tap RB', 'run play'], ['AUDIBLE', 'new routes']]],
+  pocket: [[['WASD', 'move'], ['R', 'spin away'], ['Let go', 'throw'], ['V', 'lob / bullet']], [['Joystick', 'move'], ['SPIN', 'spin away'], ['Lift finger', 'throw']]],
+  flight: [[['W', 'leap for it'], ['S', 'secure it'], ['A', 'catch and run'], ['D', 'one hand']], [['Swipe up', 'leap for it'], ['Swipe down', 'dive for it'], ['Swipe fwd', 'catch and run']]],
+  run: [[['WASD', 'run'], ['Hold A', 'sprint'], ['R', 'spin'], ['Hold Q', 'stiff arm'], ['E', 'hurdle'], ['V', 'dive']], [['Joystick', 'run'], ['SPIN', 'spin'], ['HURDLE', 'leap over'], ['DIVE', 'dive ahead']]],
+  loose: [[['WASD', 'get to the ball']], [['Joystick', 'get to the ball']]],
+  defPre: [[['WASD', 'move'], ['E', 'switch man'], ['Q', 'new look']], [['Joystick', 'move'], ['SWITCH', 'switch man']]],
+  def: [[['WASD', 'chase'], ['E', 'switch man'], ['C', 'big hit'], ['F', 'dive tackle']], [['Joystick', 'chase'], ['SWITCH', 'switch man'], ['HIT STICK', 'big hit'], ['DIVE', 'dive tackle']]],
+  defAir: [[['R', 'jump for it'], ['E', 'switch man'], ['C', 'knock it out']], [['JUMP', 'jump for it'], ['SWITCH', 'switch man']]],
+  kick: [[['Click', 'power'], ['Click', 'aim and kick']], [['Tap', 'power'], ['Tap', 'aim and kick']]],
+  ko: [[['Click', 'power, then aim'], ['WASD', 'run it back'], ['Back key', 'take a knee']], [['Tap', 'power, then aim'], ['Joystick', 'run it back'], ['KNEEL / FAIR', 'take a knee']]],
+  cover: [[['WASD', 'steer your man'], ['E', 'switch man']], [['Joystick', 'steer your man'], ['SWITCH', 'switch man']]],
+};
+function keyTipsSit() {
+  let cov = false; try { cov = typeof kcuOn === 'function' ? !!kcuOn() : !!kcuOn; } catch (e) {}
+  if (state === 'kick') return 'kick';
+  if (state === 'kickoff' || state === 'punt') return cov ? 'cover' : 'ko';
+  if (aiOff()) return state === 'pre' ? 'defPre' : state === 'flight' ? 'defAir' : 'def';
+  if (state === 'drop' || state === 'pocket') return 'pocket';
+  return { pre: 'pre', flight: 'flight', run: 'run', loose: 'loose', fumble: 'loose', picked: 'run' }[state] || null;
+}
+function drawKeyTips() {
+  KEY_TIPS_RECT = null;
+  if (SETTINGS.hideKeyTips || tut || paused || results || game.over || (rec && rec.replaying) || reelOn() || hl || (typeof CO !== 'undefined' && CO)) return;
+  const sit = keyTipsSit(); if (!sit) return;
+  const T = KEY_TIPS, tch = !!TOUCH, rows = KEY_TIP_ROWS[sit][tch ? 1 : 0], shut = !!SETTINGS.keyTipsShut;
+  const rh = tch ? T.rowTouch : T.row, fs = tch ? T.fontTouch : T.font, w = tch ? T.wTouch : T.w;
+  const x = PAUSE_BTN.x, y = PAUSE_BTN.y + PAUSE_BTN.h + T.gap, h = rh + (shut ? 0 : rows.length * rh) + T.pad;
+  ctx.save(); ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  ctx.fillStyle = T.bg; ctx.fillRect(x, y, w, h);
+  ctx.font = 'bold ' + fs + 'px monospace'; ctx.fillStyle = '#ffd23f';
+  ctx.fillText(shut ? (tch ? 'KEYS  -  tap to show' : 'KEYS  -  click to show') : (tch ? 'KEYS  -  tap to hide' : 'KEYS  -  click to hide'), x + T.pad, y + T.pad / 2 + rh / 2, w - 2 * T.pad);
+  if (!shut) rows.forEach(([k, t], i) => {
+    const ry = y + T.pad / 2 + rh * (i + 1.5);
+    ctx.font = 'bold ' + fs + 'px monospace'; ctx.fillStyle = '#fff6c8'; ctx.fillText(k, x + T.pad, ry, w * 0.42);
+    ctx.font = fs + 'px monospace'; ctx.fillStyle = '#d8e4dc'; ctx.fillText(t, x + w * 0.45, ry, w * 0.55 - T.pad);
+  });
+  ctx.restore();
+  KEY_TIPS_RECT = { x, y, w, h };
 }
 function drawNamesTip() {   // a small tip: click it to hide / show the player names before the snap (and in a replay)
   NAMES_RECT = null;

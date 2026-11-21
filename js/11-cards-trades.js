@@ -1205,6 +1205,7 @@ function drawStaff() {
   const tw = ctx.measureText(title).width / 2;
   drawLogo(team, W / 2 - tw - 40, 44, 50); drawLogo(team, W / 2 + tw + 40, 44, 50);
   if (xpcOn()) coinBox(STAFF_COIN.x, STAFF_COIN.y, LEAGUE.coins, RES.bright);   // (credits / XP bank: click to flip)
+  if (staffView.sel == null && ygOn()) menuBtn(YGOALS_BTN, 'YEARLY\nGOALS', RES.bright, 15);   // (this season's 5 yearly goals)
   if (staffView.sel == null) {
     if (foOn()) { ctx.save(); ctx.fillStyle = 'rgba(214,190,140,0.75)'; for (const [x, r] of [[FO_TITLE_BTN.x + 30, -0.5], [FO_TITLE_BTN.x + FO_TITLE_BTN.w - 30, 0.5]]) { ctx.save(); ctx.translate(x, FO_TITLE_BTN.y + 6); ctx.rotate(r); ctx.fillRect(-26, -9, 52, 18); ctx.restore(); } ctx.restore(); }   // (the title is a label strip taped to the drawer front)
     drawFoDrawer(FOT.tab === 'staff' || !contractsOn());
@@ -2343,6 +2344,7 @@ function staffClick(pt) {
   if (NG) { ngClick(pt); return; }   // (the NEGOTIATE popup takes every click)
   if (staffView.team && (staffView.team === MATCH.you || !foOn() || !STAFF[staffView.team])) staffView.team = null;
   if (staffView.team) { foClick(pt); return; }
+  if (staffView.sel == null && !redUI.on && ygOn() && inBtn(pt, YGOALS_BTN)) { ygShow(); return; }
   if (staffView.sel == null && foOn() && !redUI.on && inBtn(pt, FO_TITLE_BTN)) { teamPick = 'front'; pickConf = NFL[MATCH.you].conf.slice(0, 3); return; }   // (the title: look at any team's front office)
   staffNameOn = false;
   if (staffView.sel == null && !redUI.on && conFoClick(pt)) return;   // (the drawer's tabs, EXTEND stickers, MY CONTRACT / PLAYER DEALS)
@@ -2418,6 +2420,7 @@ const meK = () => twoP && twoP.flipped ? MATCH.opp : MATCH.you;   // your team, 
 const goalHoldVal = h => { if (h === 'pts') return twoP && twoP.flipped ? game.blue : game.red; const t = game.ty && game.ty.opp; return t ? Math.max(0, t[h]) : 0; };
 // a goal's bar (0-1) and its numbers; a hold goal's bar is what's left of the allowance
 function goalProg(q) {
+  if (q.yr) return { prog: q.done ? 1 : Math.min(1, q.p / q.n), txt: `${Math.min(q.p, q.n)} / ${q.n}` };   // (a yearly goal)
   const d = GOAL_BY[q.id], need = d.n[q.lv - 1];
   if (d.hold) { const v = q.done ? q.p : goalHoldVal(d.hold); return { prog: q.done ? 1 : Math.max(0, 1 - v / need), txt: `${v} / ${need}` }; }
   return { prog: Math.min(1, q.p / need), txt: `${Math.min(q.p, need)} / ${need}` };
@@ -2442,11 +2445,12 @@ const HC_ABIL = [   // head coach abilities, unlocked at star milestones
 ];
 const hcAbil = name => hcStars(meK()) >= HC_ABIL.find(a => a.name === name).at;
 const traitLv = (c, name) => traitOn(c, TRAIT_OLD[name] || name);   // (a coordinator's trait: level 1, 2 once upgraded at 3 stars; a second trait equipped at 5)
-const goalLabel = q => { const d = GOAL_BY[q.id]; return d.text(d.min ? d.min[q.lv - 1] : 0, d.n[q.lv - 1]); };
+const goalLabel = q => { if (q.yr) return YGOAL_BY[q.id].text(q.n); const d = GOAL_BY[q.id]; return d.text(d.min ? d.min[q.lv - 1] : 0, d.n[q.lv - 1]); };
 const goalCount = () => GOAL.base + (hcStars(meK()) >= 3.5 ? 1 : 0) + (hcStars(meK()) >= 5 ? 1 : 0);
 function goalsEnsure() {   // this week's goals (made the first time they're needed)
   if (!season || exhibition || tut || !LEAGUE) return null;
   const key = `${LEAGUE.year}:${season.week}`;
+  try { ygEnsure(); } catch (e) {}   // (this season's yearly goals, made with the first weekly ones)
   if (career.goals && career.goals.key === key) return career.goals;
   const hasX = (ROSTER[meK()] || []).some(p => p.tier === 'X' && !isOut(p));
   const pool = GOAL_DEFS.filter(d => (d.id !== 'xf' || hasX) && (d.side !== 'def' || !SETTINGS.simDefense) && (!d.rare || Math.random() < GOAL_RARE)), list = [], per = {};
@@ -2508,6 +2512,66 @@ function goalBoost() {   // x on every player's XP from a game in which a goal w
   if (!g || !g.list.some(q => q.done)) return 1 * (hcAbil('MENTOR') ? COACH.mentor : 1);
   const t = Math.max(0, Math.min(1, (hcStars(MATCH.you) - 0.5) / 4.5));
   return (GOAL.boost + (GOAL.boostMax - GOAL.boost) * t) * (hcAbil('MENTOR') ? COACH.mentor : 1);
+}
+// --- yearly goals (5 a season, your franchise only; team season totals: live + simmed games, regular season) ---
+// (targets = about 10% over the league's per-game average, measured on a simmed year 1)
+// per def: k = PST counter(s) summed over your roster's lines this season, wins / pts = from seasonTable; pg = target per game played; cr = credits (bank XP via goalXpBank)
+const YGOAL = { n: 5, spread: 0.12, round: [[200, 50], [40, 5], [0, 1]] };   // spread = random +- share on each target; round = [above, to the nearest]
+const YGOAL_DEFS = [
+  { id: 'pyd', k: ['py'], pg: 210, cr: 8, text: n => `${n} passing yards` },
+  { id: 'cyd', k: ['cy'], pg: 120, cr: 8, text: n => `${n} rushing yards` },
+  { id: 'tyd', k: ['py', 'cy'], pg: 330, cr: 9, text: n => `${n} total yards` },
+  { id: 'ptd', k: ['pt'], pg: 1.5, cr: 7, text: n => `${n} passing TDs` },
+  { id: 'ctd', k: ['ct'], pg: 1.3, cr: 6, text: n => `${n} rushing TDs` },
+  { id: 'rc', k: ['rc'], pg: 21, cr: 5, text: n => `${n} catches` },
+  { id: 'pts', pts: true, pg: 22, cr: 7, text: n => `Score ${n} points` },
+  { id: 'win', wins: true, pg: 0.6, cr: 10, text: n => `Win ${n} games` },
+  { id: 'sk', k: ['sk'], pg: 2.3, cr: 6, def: true, text: n => `${n} sacks` },
+  { id: 'ic', k: ['ic'], pg: 0.9, cr: 6, def: true, text: n => `${n} interceptions` },
+];
+const YGOAL_BY = Object.fromEntries(YGOAL_DEFS.map(d => [d.id, d]));
+const YGOALS_BTN = { x: 1028, y: 14, w: 86, h: 52 };   // (front office: just left of the coin box at COIN_SPOT, right of the title)
+const ygOn = () => !!(season && !exhibition && !tut && LEAGUE && career && xpcOn());
+function ygGames() { const me = season.team; return season.sched.filter(wk => wk.some(g => g.h === me || g.a === me)).length || 17; }
+function ygEnsure() {
+  if (!ygOn()) return null;
+  const yr = LEAGUE.year, Y = career.ygoals;
+  if (Y && Y.yr === yr) return Y;
+  const pool = YGOAL_DEFS.slice(), list = [], gp = ygGames();
+  while (list.length < YGOAL.n && pool.length) {
+    const d = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
+    let n = d.pg * gp * (1 + (Math.random() * 2 - 1) * YGOAL.spread);
+    const r = YGOAL.round.find(x => n >= x[0]); n = Math.max(1, Math.round(n / r[1]) * r[1]);
+    list.push({ yr: true, id: d.id, n, lv: d.cr, p: 0, done: false });
+  }
+  return career.ygoals = { yr, list, told: false };
+}
+function ygVal(d) {
+  const me = season.team;
+  if (d.wins || d.pts) { const T = seasonTable()[me] || {}; return d.wins ? T.w || 0 : T.pf || 0; }
+  let v = 0;
+  for (const p of ROSTER[me] || []) for (const g of pstGames(p.name)) if (g.yr === LEAGUE.year && g.wk !== 'PO' && (g.tm == null || g.tm === me)) for (const k of d.k) v += g[k] || 0;
+  return v;
+}
+function ygUpdate() {   // progress from the stored totals; a goal past its target pays once (credits + bank XP)
+  const Y = ygEnsure(); if (!Y) return null;
+  for (const q of Y.list) {
+    if (q.done) continue;
+    q.p = ygVal(YGOAL_BY[q.id]);
+    if (q.p >= q.n) { q.done = true; LEAGUE.coins += q.lv; payToFly += q.lv; q.bx = goalXpBank(q.lv); autosaveSoon(); }
+  }
+  return Y;
+}
+function ygShow(title = 'YEARLY GOALS') {
+  const Y = ygUpdate(); if (!Y) return;
+  offPopShow({ title, goals: Y, lines: [], note: 'Season totals, live and simmed. Finish one: ¤ and bank XP.' });
+}
+function ygSeasonEnd() {   // awards day, once a season (after the Paper Bowl, playoffs or not)
+  const Y = ygOn() && career.ygoals && career.ygoals.yr === LEAGUE.year ? career.ygoals : null;
+  if (!Y || Y.told) return;
+  Y.told = true; ygUpdate();
+  const n = Y.list.filter(q => q.done).length;
+  ygShow(`YEARLY GOALS: ${n} / ${Y.list.length}`);
 }
 function goalsShow(title, hide = false) {
   const g = goalsEnsure();

@@ -422,6 +422,11 @@ const HOME_TEAM = { x: 800, y: 396, w: 460, h: 212 };          // home: the TEAM
 const SCHED_BOX = { x: 20, y: 90, w: 290, h: 518 };
 const SCHED = { first: 64.75, gap: 129.5, scroll: 0, at: null, drag: null, bar: { x: 296, y: 100, w: 8, h: 498 } };
 const SCHED_HELMET_R = 28;
+// v0.72 treasure map: the stops sit on a winding dashed path (x = lx + swing * sin(row * wave)); text sits `text` px right of the stop;
+// X = the mark under a played stop; chest = this week's chest (opens over `ms` once per week); btn = SCHEDULE (league screen) over the box top
+Object.assign(SCHED, { lx: 66, swing: 20, wave: 1.1, text: 48, dash: [9, 7], ink: '#8a5a2b', X: 11, chest: { w: 34, h: 20, ms: 900, y: 26 },
+  btn: { x: 166, y: 96, w: 124, h: 36 } });
+const schedX = i => SCHED.lx + SCHED.swing * Math.sin(i * SCHED.wave);   // i = row index (a fraction = a point on the path between stops)
 // the rows: one per week (the bye week included, shown as BYE WEEK) plus the playoffs; the list scrolls in whole rows (the box shows exactly 4)
 const schedRows = () => { const r = []; for (let w = 1; w <= SEASON_WEEKS; w++) r.push(w); r.push(SEASON_WEEKS + 1); return r; };
 const schedY = i => SCHED_BOX.y + SCHED.first + (i - SCHED.scroll) * SCHED.gap;   // i = row index
@@ -848,7 +853,7 @@ function offPopClick(pt) {
   if (!b) {   // (a suggestion's player card opens his page)
     const P = offPop, c = P.card;
     if (P.player && P.player.open && c && inBtn(pt, { x: c.x + 30, y: c.y + 70, w: 270, h: 248 })) { const o = P.player.open; offPopClose(); o(); }
-    else if (c && !P.log && !P.goals && (P.btns || []).length <= 1 && !inBtn(pt, c)) { startCrumple(c); const ob = (P.btns || [])[0]; offPopClose(); if (ob && ob.on) ob.on(); }   // (a click off a one-button popup: just the card crumples away)
+    else if (c && !P.log && !P.goals && (P.btns || []).length <= 1 && !inBtn(pt, c)) { if (!(crumple && crumple.rev === P)) startCrumple(c); const ob = (P.btns || [])[0]; offPopClose(); if (ob && ob.on) ob.on(); }   // (a click off a one-button popup: just the card crumples away)
     return;
   }
   if (b.keep) { b.on(); return; }   // (a paging arrow: the popup stays)
@@ -1119,6 +1124,7 @@ function offAwards() {
   const pb = season.pb;
   if (pb && !season.rings) {
     tenureTally();
+    try { ygSeasonEnd(); } catch (e) { console.warn('yearly goals', e); }   // (the season's yearly goals popup)
     for (const p of ROSTER[pb.win]) honorOf(p.name).r++;   // everyone on the champions gets a ring
     if (pb.win === season.team && STAFF[pb.win]) for (const n of [[career.first, career.last].filter(Boolean).join(' ') || 'Coach', STAFF[pb.win].oc.name, STAFF[pb.win].dc.name]) if (n) honorOf(n).r++;   // (your head coach and coordinators too, by name in the same HONORS table: shown on their cards / pages, nothing new in the save)
     season.rings = true;

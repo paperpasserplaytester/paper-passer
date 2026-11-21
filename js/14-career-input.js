@@ -885,7 +885,7 @@ function tutPromptClick(p) {
 // Any page change (menu screens, the team picker, into and out of a game): the old page, snapshotted from the
 // last frame, crumples into a paper ball (a grid of triangles folding in on itself, creases shading in) and
 // gets tossed off the bottom of the screen, uncovering the new one.
-const CRUMPLE = { ms: 720, fold: 0.55, gx: 8, gy: 5, ball: 95, snapK: 0.6, snapKTouch: 0.3, shades: 16, gl: true, glPaintMs: 0, goGapMs: 26, goMaxMs: 450, maxGapMs: 34, gapFrames: 2.2 };   // (v0.70: glPaintMs 60 -> 0 = nothing but the mesh runs once the fold starts; the fold waits, held flat, until a frame comes in under goGapMs after the new page's first paint (at most goMaxMs); a later frame gap over maxGapMs holds the fold instead of jumping it)   // (v0.66: gl = the GPU overlay (full resolution, every device); snapK / snapKTouch / shades are only the 2D fallback's now; glPaintMs = the page under the overlay keeps painting this long into the fold)   // (v0.62: snapKTouch 0.4 -> 0.3)   // fold = share of the time spent crumpling; snapK = the snapshot's size vs the canvas (desktop / phones); shades = crease colours kept (v0.55)
+const CRUMPLE = { unc: true, revMs: 460, revFrom: 0.62, ms: 720, fold: 0.55, gx: 8, gy: 5, ball: 95, snapK: 0.6, snapKTouch: 0.3, shades: 16, gl: true, glPaintMs: 0, goGapMs: 26, goMaxMs: 450, maxGapMs: 34, gapFrames: 2.2 };   // (v0.70: glPaintMs 60 -> 0 = nothing but the mesh runs once the fold starts; the fold waits, held flat, until a frame comes in under goGapMs after the new page's first paint (at most goMaxMs); a later frame gap over maxGapMs holds the fold instead of jumping it)   // (v0.66: gl = the GPU overlay (full resolution, every device); snapK / snapKTouch / shades are only the 2D fallback's now; glPaintMs = the page under the overlay keeps painting this long into the fold)   // (v0.62: snapKTouch 0.4 -> 0.3)   // fold = share of the time spent crumpling; snapK = the snapshot's size vs the canvas (desktop / phones); shades = crease colours kept (v0.55)
 const CRUMPLE_SH = Array.from({ length: CRUMPLE.shades * 2 + 1 }, (_, i) => { const k = (i - CRUMPLE.shades) / CRUMPLE.shades * 0.35; return k > 0 ? `rgba(40,30,10,${k.toFixed(3)})` : `rgba(255,255,255,${(-k * 0.8).toFixed(3)})`; });   // (crease shade k in -0.35..0.35, quantised)
 const crumpleSnap = document.createElement('canvas');
 crumpleSnap.width = W; crumpleSnap.height = H;
@@ -894,7 +894,7 @@ const pageKey = () => (results ? results.screen + (teamPick ? ':pick' : '') : tu
 // v0.58: a page held while something still animates on it (hi = true) is copied at full canvas resolution into crumpleHi and shown sharp; it is only shrunk to
 // the snapshot's size (snapK) when the fold starts (drawCrumple). (crumpleHi is freed right after.)
 const crumpleHi = document.createElement('canvas');
-function startCrumple(rect, hi = false) {   // rect: crumple only that part of the screen (a popup's card), not the whole page
+function startCrumple(rect, hi = false, rev = null) {   // (rev = an offPop card opening: the same fold run backwards, uncrumpling; taken mid-frame, so the copy is not brightened yet)   // rect: crumple only that part of the screen (a popup's card), not the whole page
   if (PHONE_TEST.turn === 'OFF') return;   // (v0.70 phone test switch: pages cut)
   perfNote('crumple');   // (FRAME TIMES spike tag)
   // (just the 16:9 middle. Phones: a half-size snapshot, a quarter of the pixels to copy and to draw through every facet: the copy was the hitch at a page change)
@@ -913,7 +913,7 @@ function startCrumple(rect, hi = false) {   // rect: crumple only that part of t
     if (hi) { const hw = Math.max(2, Math.round(R.w * RK)), hh = Math.max(2, Math.round(R.h * RK)); if (crumpleHi.width !== hw || crumpleHi.height !== hh) { crumpleHi.width = hw; crumpleHi.height = hh; } else crumpleHi.getContext('2d').clearRect(0, 0, hw, hh); }   // (v0.66: re-sized only when the size changes)
     cp.getContext('2d').drawImage(canvas, (R.x + PAD) * RK, R.y * RK, R.w * RK, R.h * RK, 0, 0, cp.width, cp.height);
     if (pm) pt = perfMark('crCopy', pt);
-    snapUnbright(cp);
+    if (!rev) snapUnbright(cp);
     if (pm) pt = perfMark('crUnbright', pt);
     if (held) gl = hi ? (cglStart(crumpleHi) ? 'h' : false) : (cglStart(canvas) ? 'c' : false);   // (held: the hold uses the 2D copy, the fold the texture)
     if (pm && gl) pt = perfMark('crUpload', pt);
@@ -921,6 +921,7 @@ function startCrumple(rect, hi = false) {   // rect: crumple only that part of t
   const r = seeded(Math.floor(Math.random() * 1e6) + 1), pts = [];
   const G = TOUCH && !gl ? { ...CRUMPLE, gx: Math.max(5, Math.round(5 * DW / W)), gy: 3, ms: 600 } : { ...CRUMPLE, gx: Math.max(8, Math.round(8 * DW / W)) };   // (phones on the 2D fallback: fewer, bigger facets, a shorter toss: each facet is a clipped draw, a lot of them at once was a stutter)
   if (rect) Object.assign(G, { gx: 6, gy: 4, ball: 70 });
+  if (rev) G.ms = CRUMPLE.revMs;
   crumpleG = G;
   for (let j = 0; j <= G.gy; j++) for (let i = 0; i <= G.gx; i++) {
     const u = i / G.gx * 2 - 1, v = j / G.gy * 2 - 1;
@@ -946,7 +947,7 @@ function startCrumple(rect, hi = false) {   // rect: crumple only that part of t
   });
   if (gl) for (const v of pts) { if (gl === 'h') { v.tu = (v.sx - R.x) / R.w; v.tv = (v.sy - R.y) / R.h; } else { v.tu = (v.sx + PAD) / DW; v.tv = v.sy / H; } }   // (texture spots: the whole canvas, or just R's copy)
   crumple = { hiPend: hi, R, cx0: R.x + R.w / 2, cy0: R.y + R.h / 2, t0: performance.now(), made: performance.now(), seen: false, pts, tris: T, P: pts.map(() => [0, 0]), spin: (r() < 0.5 ? -1 : 1) * (4 + 3 * r()), dir: r() < 0.5 ? -1 : 1,
-    gl, glB: gl === 'h' && brightOn() ? brightK() : 1, painted: false, go: false };   // (gl: drawn by the overlay; glB = brightness the shader puts back on an un-brightened copy; painted / go = v0.66's still first frame, see cglTick)
+    gl, glB: (gl === 'h' || rev && gl) && brightOn() ? brightK() : 1, painted: false, go: false, rev };   // (gl: drawn by the overlay; glB = brightness the shader puts back on an un-brightened copy; painted / go = v0.66's still first frame, see cglTick)
   paperSfx();
 }
 // a short crinkle: filtered noise bursts
@@ -1015,6 +1016,7 @@ function drawCrumple() {
 }
 // the mesh at progress p (0..1): fills crumple.P (logical px), returns the fold f (both drawing paths)
 function crumplePts(p) {
+  if (crumple.rev) p = CRUMPLE.revFrom * (1 - p);   // (uncrumple: from the ball, a little into its toss, back to the flat card)
   const G = crumpleG, ease = t => t * t * (3 - 2 * t);
   const f = ease(Math.min(1, p / G.fold)), wob = Math.sin(Math.PI * f);
   // after the fold: tossed in an arc off the bottom, spinning
@@ -1027,6 +1029,25 @@ function crumplePts(p) {
   }
   return f;
 }
+// --- uncrumple (popup cards open the way they close, backwards) ---
+// the card's first paint is copied, then the screen is put back to just the dim (pre-copy + dim again) so the card only shows through the unfolding mesh
+const uncPre = document.createElement('canvas');
+function uncDraw(f0) {
+  const P = offPop;
+  if (!P || P.custom || P.log || !CRUMPLE.unc || P.unc === 0) return f0();
+  const dim = () => { ctx.save(); ctx.fillStyle = 'rgba(30,25,10,0.5)'; ctx.fillRect(0, 0, W, H); uiModal(); ctx.restore(); };
+  if (P.unc === 1) { if (crumple && crumple.rev === P) { dim(); return; } return f0(); }
+  P.unc = 1;
+  if (uncPre.width !== canvas.width || uncPre.height !== canvas.height) { uncPre.width = canvas.width; uncPre.height = canvas.height; }
+  const u = uncPre.getContext('2d'); u.clearRect(0, 0, uncPre.width, uncPre.height); u.drawImage(canvas, 0, 0);
+  f0();
+  const c = P.card;
+  if (offPop !== P || !c) { P.unc = 0; return; }
+  startCrumple(c, false, P);
+  if (!crumple || crumple.rev !== P) return;   // (phone test switch off: the card just shows)
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(uncPre, 0, 0); ctx.restore(); dim();
+}
+{ const f0 = drawOffPop; drawOffPop = function () { return uncDraw(f0); }; }
 // --- v0.66: the page crumple on the GPU ---
 // A second canvas stacked exactly over the game canvas (made here, pointer-events none, hidden while no crumple) with a raw WebGL context. The old page is
 // uploaded ONCE at full canvas resolution as a texture (cglStart), then each frame is one draw call of the same folding mesh (cglTick, run from frame() even
@@ -1272,6 +1293,7 @@ canvas.addEventListener('pointerdown', e => {
     if (results.screen === 'coach') { if (e.button === 0) coachClick(pointerPos(e)); return; }
     if (results.screen === 'online') { if (e.button === 0) olClick(pointerPos(e)); return; }
     if (results.screen === 'onresult') { if (e.button === 0) onResultClick(pointerPos(e)); return; }
+    if (e.button === 0 && results.screen === 'home' && !tutPrompt && !teamPick && season && inBtn(pointerPos(e), SCHED.btn)) { lgvOpen(); return; }   // (v0.72 SCHEDULE: the league screen)
     if (e.button === 0 && results.screen === 'home' && !tutPrompt && !teamPick && awhClick(pointerPos(e))) return;
     if (e.button === 0 && results.screen === 'home' && !tutPrompt && !teamPick) { const pp = pointerPos(e); if (pp.x >= 1150 && pp.x <= 1260 && pp.y >= 22 && pp.y <= 64) { yearCal = !yearCal; try { localStorage.setItem('pocketPasser.yearCal', yearCal ? '1' : '0'); } catch (err) {} return; } }
     if (e.button === 0 && results.screen === 'home' && postOn() && inBtn(pointerPos(e), HOME_POST)) { postOpen(); return; }
@@ -1301,6 +1323,7 @@ canvas.addEventListener('pointerdown', e => {
     if (results.screen === 'dboard') { if (e.button === 0) dboardClick(pointerPos(e)); return; }
     if (results.screen === 'book') { if (e.button === 0) bookClick(pointerPos(e)); return; }
     if (results.screen === 'records') { if (e.button === 0) recClick(pointerPos(e)); return; }
+    if (results.screen === 'league') { if (e.button === 0) lgvClick(pointerPos(e)); return; }
     if (results.screen === 'chof') { if (e.button === 0) chofClick(pointerPos(e)); return; }
     if (results.screen === 'result' && results.pay && !results.injAlert) { if (e.button === 0) payClick(); return; }
     if (e.button === 0 && exhibition && results.screen === 'result' && inBtn(pointerPos(e), EX_STATS_BTN)) { gsOpen('result'); results.screen = 'exstats'; return; }
@@ -1518,6 +1541,7 @@ canvas.addEventListener('pointercancel', e => { if (backfieldPress && backfieldP
 canvas.addEventListener('pointerdown', e => {
   if (e.button !== 0 || !results || results.screen !== 'home' || teamPick || tutPrompt || settingsOpen) return;
   const p = pointerPos(e), B = SCHED.bar, S = SCHED_BOX, A = AWH_BOX;
+  if (inBtn(p, SCHED.btn)) return;   // (v0.72 the SCHEDULE button over the list: never a drag / row click)
   if (p.x >= B.x - 6 && p.x <= B.x + B.w + 6 && p.y >= B.y && p.y <= B.y + B.h) { SCHED.drag = { bar: true }; schedBarTo(p.y); }
   else if (p.x >= S.x && p.x <= S.x + S.w && p.y >= S.y && p.y <= S.y + S.h) SCHED.drag = { sy: p.y, s0: SCHED.scroll };
 });
@@ -2002,7 +2026,7 @@ function perfDraw(ms, now) {
   P.t0 = now; P.uS = P.uM = P.uN = P.dS = P.dM = P.dN = P.pN = 0; P.parts = {};
 }
 // v0.55: per-part timing of the paint block (only while FRAME TIMES is on): t = perfMark('name', t) adds the ms since t to that part and returns now
-function perfMark(name, t) { const n = PERF_NOW(), d = n - t; perfS.parts[name] = (perfS.parts[name] || 0) + d; perfS.fp[name] = (perfS.fp[name] || 0) + d; perfS.all[name] = (perfS.all[name] || 0) + d; return n; }
+function perfMark(name, t) { const n = PERF_NOW(), d = n - t; perfS.parts[name] = (perfS.parts[name] || 0) + d; perfS.fp[name] = (perfS.fp[name] || 0) + d; perfS.all[name] = (perfS.all[name] || 0) + d; if (d > CHORE.warnMs && (name[0] === 'u' || name[0] === 'f') && name[1] === '.' && liveNow()) perfNote('LIVE ' + name + ' ' + Math.round(d)); return n; }
 // console: perfDump() = every part (paint d.* + step u.* / cam) as ms per painted frame, sorted, + the step's average / max (FRAME TIMES must be on); perfDump(true) also starts a new sum
 function perfDump(reset) {
   const P = perfS, n = Math.max(1, P.aP), f = v => v.toFixed(2);
@@ -2106,9 +2130,9 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   if (fitWant) { fitWant = false; fitScreen(); }   // (v0.62: a window resize is applied here, right before a paint, never in the event itself)
   cglTick();   // (v0.66: the GPU crumple overlay: every frame, even ones the menu below doesn't paint)
   const force = fitForce; fitForce = false;   // (v0.62: the canvas was resized = cleared: paint this frame whatever the caps say, or a black frame shows)
-  if (!force && TUI.on && now - lastPaint < fpsInterval() - rafDt * FPS_CAP.slack) return;   // (phones: at most 60 a second even on a 90 / 120 Hz screen, 30 once locked (fpsInterval); the game steps above are unaffected)
-  if (!force && deskSkip(now, deskGate, deskStepped)) return;   // (laptops / high-refresh screens: no step ran = the same picture, keep the last one)
-  if (!force && menuSkip(now)) return;   // (v0.55: menus: paced, and nothing painted while nothing on them can change; the canvas keeps its last picture)
+  if (!force && TUI.on && now - lastPaint < fpsInterval() - rafDt * FPS_CAP.slack) { choreTick(); return; }   // (phones: at most 60 a second even on a 90 / 120 Hz screen, 30 once locked (fpsInterval); the game steps above are unaffected)
+  if (!force && deskSkip(now, deskGate, deskStepped)) { choreTick(); return; }   // (laptops / high-refresh screens: no step ran = the same picture, keep the last one)
+  if (!force && menuSkip(now)) { choreTick(); return; }   // (v0.55: menus: paced, and nothing painted while nothing on them can change; the canvas keeps its last picture)
   lastPaint = now;
   const paintT0 = performance.now(), pm = SETTINGS.perfHud;
   UI_NOW = UI_LAST = paintT0; menuMoving = false; menuProbeN = 0; performance.now = menuProbe;
@@ -2117,6 +2141,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
     paintAvg += (performance.now() - paintT0 - paintAvg) * 0.1;
     fpsCapTick(Math.min(0.1, rafDt / 1000), now);
   }
+  choreTick();   // (v0.71: after the paint: dead-ball chores, a few ms a frame)
 }
 // --- menu pacing (v0.55; tunables MENU_PACE in 01-tuning) ---
 // A paint that reads the page clock (performance.now) is animating something; menu buttons read UI_NOW instead, so a still menu reads none.

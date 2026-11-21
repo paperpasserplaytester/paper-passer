@@ -3936,37 +3936,54 @@ function shoveOff(c, d, win) {
 // runs up it, since he can't run out) and pick the first spot a chaser at `speed` can reach in time.
 // dir = which way he's heading for the end zone (+1 offense, -1 a defensive return). err scales the lead
 // (1 = a perfect angle). Uses everybody's real reach so he aims to arrive, not to trail.
+const PP_BUF = new Float64Array(2 * 400);   // (his predicted path, reused: no per-frame arrays)
 function pursuitPoint(d, c, speed, dir, err = 1) {
-  if (c.velAt !== clock) {
-    const k = c.vsx === undefined ? 1 : PURSUIT.smooth;
+  if (c.velAt !== clock) {   // (smoothed on the clock, not per frame: the same read of a cut at 30 fps as at 60)
+    const dt = c.vsx === undefined || c.velAt === undefined ? 1 : clock - c.velAt;
+    const k = dt <= 0 || dt > 0.5 ? 1 : 1 - (1 - PURSUIT.smooth) ** (dt * 60);
     c.vsx = (c.vsx ?? 0) + ((c.vx || 0) - (c.vsx ?? 0)) * k; c.vsy = (c.vsy ?? 0) + ((c.vy || 0) - (c.vsy ?? 0)) * k;
     c.velAt = clock;
   }
   speed = steerTop(d, speed);   // (the speed steer will really give him: his attribute cap and the yards he has already run this play. It used to plan on the asked-for
                                 //  speed, boosts and all: a tired coverage man aimed at a spot he could not reach in time and came out behind the returner)
-  const path = [];   // his predicted spot every step
-  let px = c.x, py = c.y, vx = c.vsx, vy = c.vsy, best = -1;
-  const s = Math.hypot(vx, vy), lo = Y_MIN + PURSUIT.edge, hi = Y_MAX - PURSUIT.edge, reach = LUNGE_RANGE * 0.6;
+  const P = PURSUIT, buf = PP_BUF, N = buf.length / 2;
+  let px = c.x, py = c.y, s = Math.hypot(c.vsx, c.vsy), ux = dir, uy = 0, best = -1, far = -1, n = 0, run = 0, side = false, end = 0;
+  if (s > 0.5 * YD) { ux = c.vsx / s; uy = c.vsy / s; }
+  const lo = Y_MIN + P.edge, hi = Y_MAX - P.edge, reach = LUNGE_RANGE * 0.6, goal = dir > 0 ? FIELD : 0;
+  // his run, predicted: he speeds up to his real top at his real accel (a man who just took the ball, caught it or came out of a cut is still slow) and bends
+  // toward the end zone over P.bend s; at the sideline he turns and runs up it (he can't run out)
+  const ct = ownTop(c), top = Math.max(s, isFinite(ct) && ct > 0 ? ct : (c.top || 7 * YD)), cacc = Math.max(4 * YD, c.accel || 12 * YD) * P.ramp, bendK = 1 - Math.exp(-P.step / P.bend);
   // DBs read it better: they look further ahead
-  const db = d.role === 'CB' || d.role === 'S', horizon = db ? PURSUIT.dbHorizon : PURSUIT.horizon;
+  const db = d.role === 'CB' || d.role === 'S', horizon = db ? P.dbHorizon : P.horizon;
   // everyone allows for the ground he loses getting up to speed toward the spot (the most when he is running the other way: a coverage man coming downfield)
-  const svx = d.svx || 0, svy = d.svy || 0, acc = Math.max(4 * YD, d.accel || 12 * YD), lagK = (db ? Math.max(1, PURSUIT.lag) : PURSUIT.lag) * (abilOn(d, 'sidelineToSideline') ? ABIL_FX.sideline : 1) * (xfOn(d, 'heatSeeker') ? 0 : 1);   // (Sideline to Sideline: better angles; Heat Seeker: perfect ones)
-  const maxI = s > YD ? Math.ceil(PURSUIT.leadMax * YD / (s * PURSUIT.step)) : Infinity;   // (the lead is capped)
-  for (let i = 0; i * PURSUIT.step <= horizon && i <= maxI; i++) {
-    path.push([px, py]);
+  const svx = d.svx || 0, svy = d.svy || 0, acc = Math.max(4 * YD, d.accel || 12 * YD), lagK = (db ? Math.max(1, P.lag) : P.lag) * (abilOn(d, 'sidelineToSideline') ? ABIL_FX.sideline : 1) * (xfOn(d, 'heatSeeker') ? 0 : 1);   // (Sideline to Sideline: better angles; Heat Seeker: perfect ones)
+  for (let i = 0; i < N; i++) {
+    buf[2 * i] = px; buf[2 * i + 1] = py; n = i + 1;
+    const t = i * P.step, win = t <= horizon && run <= P.leadMax * YD;   // (inside the window = a real meeting; the lead is capped)
     if (best < 0) {
       const gx = px - d.x, gy = py - d.y, g = Math.hypot(gx, gy) || 1, along = (svx * gx + svy * gy) / g;
       const lag = lagK * Math.max(0, speed - along) ** 2 / (2 * acc);
-      if (g <= Math.max(0, speed * i * PURSUIT.step - lag) + reach) { best = i; if (err <= 1) break; }
+      if (g <= Math.max(0, speed * t - lag) + reach) {
+        if (!win) { far = i; break; }
+        // the angle error is a READ: a lead off by (err - 1) x the meeting time (capped at P.readMax s); a short read (he'd trail) fades to nothing over the last
+        // P.readT s before the meeting (P.readOver: an overrun too; off: the overrun is a cutoff cushion and fading it slid the aim back every frame)
+        best = i; end = Math.max(0, i + Math.round((err - 1) * Math.min(t, P.readMax) * (err < 1 || P.readOver ? Math.min(1, t / P.readT) : 1) / P.step));
+        if (end <= i) break;
+      }
     }
-    if (best >= 0 && i >= best * err) break;
-    px += vx * PURSUIT.step; py += vy * PURSUIT.step;
-    if (py < lo || py > hi) { py = Math.max(lo, Math.min(hi, py)); vx = (Math.sign(vx) || dir) * s; vy = 0; }   // up the sideline
+    if (best >= 0 && (i >= end || !win)) break;
+    if (!win && (px - goal) * dir >= 0) break;   // (no crossing before the goal line)
+    if (s < top) s = Math.min(top, s + cacc * P.step);
+    if (!side) { ux += (dir - ux) * bendK; uy -= uy * bendK; const l = Math.hypot(ux, uy) || 1; ux /= l; uy /= l; }
+    px += ux * s * P.step; py += uy * s * P.step; run += s * P.step;
+    if (py < lo || py > hi) { py = Math.max(lo, Math.min(hi, py)); ux = Math.sign(ux) || dir; uy = 0; side = true; }   // up the sideline
     px = Math.max(-ENDZONE, Math.min(FIELD + ENDZONE, px));
   }
-  // an imperfect read aims at where he'd be after err x the meeting time (short = too flat, long = overruns it)
-  const i = best < 0 ? path.length - 1 : Math.min(path.length - 1, Math.round(best * err));
-  return { x: path[i][0], y: path[i][1], t: i * PURSUIT.step, met: best >= 0 };   // (t = seconds until the carrier is there; met = he can get there in time)
+  // an imperfect read aims at where he'd be after err x the meeting time (short = too flat, long = overruns it). No meeting in the window: the crossing
+  // further on (met stays false), or with none before the goal line, the deepest cutoff (where his run gets there) so he is there if the carrier slows or cuts
+  const i = best >= 0 ? Math.min(n - 1, end) : far >= 0 ? far : n - 1;
+  if (PURSUIT.debug && c === runner) { PDB.pathN = 2 * n; for (let j = 0; j < 2 * n; j++) PDB.path[j] = buf[j]; }
+  return { x: buf[2 * i], y: buf[2 * i + 1], t: i * P.step, met: best >= 0 };   // (t = seconds until the carrier is there; met = he can get there in time)
 }
 // the man most likely to tackle carrier c: the soonest pursuit meeting he can make (men who can't get there come last, nearest first). ONE rule for every
 // switch: defense (E / O once it's run), your cover man on a return, the chaser on a pick / scoop return of your turnover
@@ -3987,6 +4004,38 @@ function likelyTackler(pool, c, skip = null) {
 function pursuitLate(d, aim, base, speed) {
   if (!base.met) return true;
   return Math.hypot(aim.x - d.x, aim.y - d.y) / Math.max(YD, steerTop(d, speed)) > base.t * PURSUIT.late + PURSUIT.lateT;
+}
+
+// --- pursuit debug (PURSUIT.debug, dev only): each chase of a man who started in front of the carrier ends either in lunge range in front of him or behind him
+// (the carrier got past). Counted per game on scrimmage plays (not kicks); pdbLog() prints it, a new game prints the last one
+const PDB = { aims: [], path: [], pathN: 0, game: null, front: 0, behind: 0, tf: 0, tb: 0, cf: 0, cb: 0, jit: 0, jn: 0, ang: 0, an: 0, flip: 0 };
+function pdbLog() { const n = PDB.front + PDB.behind; if (n) console.log('pursuit: came out behind ' + (100 * PDB.behind / n).toFixed(1) + '% (' + PDB.behind + ' / ' + n + ' chases)'); }
+function pdbNote(d, c, aim) {
+  if (game !== PDB.game) { pdbLog(); PDB.game = game; PDB.front = PDB.behind = 0; }
+  if (PDB.at !== clock) { PDB.at = clock; PDB.aims.length = 0; }   // (the overlay shows the last update's aims)
+  if (PDB.aims.length < 48) PDB.aims.push(d.x, d.y, aim.x, aim.y);
+  if (kickoffPlay) return;
+  const ck = runPid + '|' + runStart + '|' + c.num, ahead = (d.x - c.x) * (c.team === 'off' ? 1 : -1), gap = d.pdbK === ck && clock - (d.pdbT ?? clock) > 0.1;
+  if (d.pdbK === ck && d.pdbAx !== undefined) { PDB.jit += Math.hypot(aim.x - d.pdbAx, aim.y - d.pdbAy) / YD; PDB.jn++; }   // (aim jitter: yd the aim moves a frame)
+  const an = Math.atan2(aim.y - d.y, aim.x - d.x);
+  if (d.pdbK === ck && d.pdbAa !== undefined && dist(d, c) > 2 * YD) { let da = Math.abs(an - d.pdbAa); if (da > Math.PI) da = 2 * Math.PI - da; PDB.ang += da * 57.3; PDB.an++; if (da > 0.05) PDB.flip++; }   // (heading to his aim: degrees it turns a frame)
+  d.pdbAa = an;
+  d.pdbAx = aim.x; d.pdbAy = aim.y; d.pdbT = clock;
+  if (d.pdbK !== ck) { d.pdbK = ck; d.pdbS = ahead > LUNGE_RANGE ? 0 : -1; d.pdbV = false; }
+  if (d.pdbS) return;
+  if (gap || d.engaged || d.action) d.pdbV = true;   // (blocked, knocked down, a move or a missed tackle on the way: counted raw, not as a clean angle)
+  const r = dist(d, c) <= LUNGE_RANGE * 1.2 ? (ahead > -0.3 * YD ? 1 : 2) : ahead < -LUNGE_RANGE ? 2 : 0;
+  if (!r) return;
+  d.pdbS = 1;
+  if (r === 1) { PDB.front++; PDB.tf++; if (!d.pdbV) PDB.cf++; } else { PDB.behind++; PDB.tb++; if (!d.pdbV) PDB.cb++; }
+}
+function pdbDraw() {
+  if (!(exhibition && exhibition.test)) return;
+  ctx.save(); ctx.lineWidth = 4; ctx.strokeStyle = '#ffd34d'; ctx.beginPath();
+  for (let i = 0; i < PDB.pathN; i += 2) i ? ctx.lineTo(PDB.path[i], PDB.path[i + 1]) : ctx.moveTo(PDB.path[i], PDB.path[i + 1]);
+  ctx.stroke(); ctx.strokeStyle = '#ff4d4d'; ctx.fillStyle = '#ff4d4d';
+  for (let i = 0; i < PDB.aims.length; i += 4) { ctx.beginPath(); ctx.moveTo(PDB.aims[i], PDB.aims[i + 1]); ctx.lineTo(PDB.aims[i + 2], PDB.aims[i + 3]); ctx.stroke(); ctx.beginPath(); ctx.arc(PDB.aims[i + 2], PDB.aims[i + 3], 5, 0, 7); ctx.fill(); }
+  ctx.restore();
 }
 
 // Once the ball is caught or run, every defender has his eyes on the ball carrier.
@@ -4292,7 +4341,7 @@ function pursueMove(d, c, dt) {
   const [elo, ehi] = isRunPlay ? RUN_REACT.angle : PURSUIT.passAngle;
   // (run after run, they've seen it: angles closer to perfect)
   const err = kickoffPlay ? 1 : d.angleErr || (d.angleErr = 1 + (elo + Math.random() * (ehi - elo) - 1) * (isRunPlay ? 1 - runHeat() * RUN_STREAK.angle : 1)
-    * (d.role === 'CB' || d.role === 'S' ? PURSUIT.dbErr : 1));
+    * (d.role === 'CB' || d.role === 'S' ? PURSUIT.dbErr : 1) * Math.max(0, 1 + PURSUIT.readRate * (1 - 2 * btSkill(d))));   // (his read: sized by his ball skills / awareness, like btSkill's ball reads)
   const lastLine = d.x < c.x && !back7.some(o => o !== d && !o.action && o.x > c.x);
   // special teams: closing on the returner, a coverage man breaks down (slows and squares up) instead of flying past him, and takes the sharp angle
   // (gang tackling: only the first KICK_COVER.gear men gear down; the rest keep flying so the 2nd and 3rd are already on him if the first misses)
@@ -4308,6 +4357,14 @@ function pursueMove(d, c, dt) {
   const chase = d.top * (lastLine ? PURSUIT.lastLine : PURSUIT.chase) * (1 + 0.08 * (d.mom || 0)) * (closing ? BREAKDOWN.k : 1) * PURSUIT.boost * (koCov ? diffRetCov(c) * (kickoff && kickoff.punt ? PUNT.chaseK * PUNT_COVER.speed : KICK_COVER.speed) : 1) * plantK * (koCov && d.koBust ? KO_V56.bustK : 1);   // (their punt = the same coverage speed as yours)
   const errP = d.team === 'def' && !aiOff() ? 1 + (err - 1) / diffX('pursuit') : err;   // (CPU PURSUIT ANGLES: a smaller angle error)
   const aimAt = pursuitPoint(d, c, chase, c.team === 'off' ? 1 : -1, closing ? Math.min(errP, 1) : errP), base = { ...aimAt }, cdir = c.team === 'off' ? 1 : -1;
+  // he commits to his angle: the planned meeting point is held, re-planned only on a real cut (the carrier's smoothed heading turns over P.cutDeg) or when the
+  // meeting point has moved over P.replanYd; inside P.holdNear yd he tracks it live (scrimmage chases only: kick coverage keeps its own lanes)
+  if (!kickoffPlay && PURSUIT.hold) {
+    const hd = Math.atan2(c.vsy || 0, c.vsx || 0);
+    let da = Math.abs(hd - (d.pHd ?? hd)); if (da > Math.PI) da = 2 * Math.PI - da;
+    if (d.pPid !== runPid || d.pC !== c || dist(d, c) < PURSUIT.holdNear * YD || da > PURSUIT.cutDeg / 57.3 || Math.hypot(aimAt.x - d.pAx, aimAt.y - d.pAy) > PURSUIT.replanYd * YD) { d.pPid = runPid; d.pC = c; d.pAx = aimAt.x; d.pAy = aimAt.y; d.pHd = hd; }
+    else { aimAt.x = base.x = d.pAx; aimAt.y = base.y = d.pAy; }
+  }
   // kickoff coverage keeps its lanes: stays fanned out (tightening as it closes), the outside men contain, so nobody bunches up and gets cut back on
   // roles: the outside two a side CONTAIN (stay outside the returner, force him back in), the next men FILL their lanes (hold them
   // until the returner is close), and the middle two RUSH straight at the ball
@@ -4355,6 +4412,7 @@ function pursueMove(d, c, dt) {
     const ax = aimAt.x - d.x, ay = aimAt.y - d.y, L = Math.hypot(ax, ay), need = chase * PURSUIT.through;
     if (L > 1 && L < need) { aimAt.x = d.x + ax / L * need; aimAt.y = d.y + ay / L * need; }
   }
+  if (PURSUIT.debug) pdbNote(d, c, aimAt);
   steer(d, aimAt.x, aimAt.y, chase * (gunP ? PUNT_GUN.speed : 1), d.accel * (koCov ? (kickoff && kickoff.punt ? PURSUIT.accel * PUNT_COVER.accel : KICK_COVER.accel) : PURSUIT.accel), dt);
   clampField(d);
   setVelocity(d, px, py, dt);

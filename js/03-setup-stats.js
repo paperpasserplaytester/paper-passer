@@ -380,7 +380,7 @@ function halfOK() {
 }   // (from the sim panel: straight on to the second half, not back to the same sim screen)
 function announceHalf() { endWhistle(true); if (simGame || simFast) return; halfHold = true; halfGo = false; halfT0 = halfLeave = 0; }   // (drawTurnoverBanner shows HALFTIME once the other banners are done)
 // the final whistle: the horn sounds; a live game then shows the last play's replay with FINISH GAME over it
-function endGame() { game.over = true; endWhistle(true); crowdFinal(); celebGameEnd(); setTimeout(() => { if (game.over && !(hl && hl.mode === 'half' && !hl.bg)) annClear(true); }, 4000); }   // (the announcers' baked canvases go once the last line has had its say)   // (the winners celebrate before the result screen: see celebrations)
+function endGame() { choreFlush('endGame'); game.over = true; endWhistle(true); crowdFinal(); celebGameEnd(); setTimeout(() => { if (game.over && !(hl && hl.mode === 'half' && !hl.bg)) annClear(true); }, 4000); }   // (the announcers' baked canvases go once the last line has had its say)   // (the winners celebrate before the result screen: see celebrations)
 const finalReplay = () => game.over && !results && state === 'done' && !ONL.on;
 let tossWinner = null;   // who receives the opening kickoff ('BLUE' = you, 'RED' = them): rolled when the matchup screen comes up, so it's known before the game starts
 let tossUntil = 0;   // performance.now() ms until the opening coin toss is decided: nobody is drawn on the field before that
@@ -573,7 +573,7 @@ function pstInt(d) {
   if (playPass) playPass.int = true;
 }
 // the game is over (openResults): everyone who started gets a line (games played), the stars' simulated defense / kicking lines are added, then it's saved
-function pstFinish() {
+function pstFinish() { choreFlush('pstFinish');
   if (tut || (pstGame && pstGame.done)) return;
   try {
     if (!pstGame) pstInit();
@@ -1436,7 +1436,7 @@ const catchers = () => {
   return rb.route && !rb.protect ? [...rs, rb] : rs;
 };
 
-function reset() {
+function reset() { choreFlush('reset');
   runPid++;   // (a new play: everyone's yards run start over)
   annReset();   // (the announcers: a finished line goes, one still being written runs into the pre-snap)
   flagPen = null;   // (v0.68: no flag carries into the next play)

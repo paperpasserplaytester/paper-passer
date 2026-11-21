@@ -4033,7 +4033,7 @@ const SET_CAT_ROWS = {
   rules: ['qtr', 'inj', 'pinj', 'wx', 'morale', 'flags', 'booth', 'dir'],
   franchise: ['scouts', 'deals', 'simDef', 'spd', 'setup'],
   sound: ['vol', 'ann'],   // (vol = volDn + the bar + volUp)
-  shows: ['ht', 'pg', 'rep', 'recPop', 'batPop', 'taunt', 'post'],
+  shows: ['ht', 'pg', 'rep', 'recPop', 'batPop', 'taunt', 'post', 'ktips'],
   graphics: ['bri', 'lite', 'fps', 'dark', 'side', 'flash'] };   // (bri = briDn + the brightness bar + briUp)
 const SET_BARS = { vol: 'volume', bri: 'brightness' };   // bar rows: row id -> SETTINGS key (0-1, shown 0-100%; - / + = 10, a click or drag on the bar = any value)
 const SET_ROW_KEYS = [...new Set(Object.values(SET_CAT_ROWS).flat().flatMap(k => SET_BARS[k] ? [k + 'Dn', k + 'Up'] : [k]))];
@@ -4052,7 +4052,7 @@ let setResetAt = 0;   // (when the first click armed it)
 const SET_RESET_MAP = {   // row key -> the SETTINGS keys it puts back to SETTINGS_FACTORY (missing there = deleted); difficulty keeps its own page and RESET
   autoSw: ['autoSwitch'], zoom: ['camZoom'], swap: ['swapSides'], inj: ['injuries'], pinj: ['pracInjuries'], wx: ['weather'], morale: ['morale'],
   flags: ['penalties', 'exPenalties'], booth: ['booth', 'exBooth'], dir: ['driveDir'], qtr: ['quarterMin'], scouts: ['scouts'], deals: ['contracts'],
-  simDef: ['simDefense'], spd: ['simST'], ann: ['announcers'], rep: ['replays'], recPop: ['hideRecPop'], batPop: ['hideBattlePop'], taunt: ['taunts'],
+  simDef: ['simDefense'], spd: ['simST'], ann: ['announcers'], rep: ['replays'], recPop: ['hideRecPop'], ktips: ['hideKeyTips'], batPop: ['hideBattlePop'], taunt: ['taunts'],
   post: ['post'], lite: ['liteMode'], fps: ['fps'], dark: ['darkMode'], side: ['sideline'], flash: ['flashes'], volDn: ['volume'], briDn: ['brightness'],
   ht: ['halftime', 'ht'], pg: ['pregame', 'pg'], keys: ['binds'] };
 function setResetAll() {   // every setting on the settings pages back to its default (in a game: the locked ones stay)
@@ -4088,7 +4088,7 @@ const SET_ROW_TEXT = {   // each row's NAME: VALUE (the old button labels on one
   simDef: () => `SIMULATE DEFENSE: ${SETTINGS.simDefense ? 'ON' : 'OFF'}`, spd: () => `SIMULATE KICKS: ${SETTINGS.simST ? 'ON' : 'OFF'}`, setup: () => 'SETUP QUESTIONS',
   ann: () => `ANNOUNCERS: ${SETTINGS.announcers === false ? 'OFF' : 'ON'}`,
   ht: () => 'HALFTIME SHOW', pg: () => 'PREGAME SHOW', rep: () => `REPLAYS: ${SETTINGS.replays}`,
-  recPop: () => `RECORD POPUPS: ${SETTINGS.hideRecPop ? 'OFF' : 'ON'}`, batPop: () => `BATTLE POPUPS: ${SETTINGS.hideBattlePop ? 'OFF' : 'ON'}`,
+  recPop: () => `RECORD POPUPS: ${SETTINGS.hideRecPop ? 'OFF' : 'ON'}`, ktips: () => `KEY TIPS: ${SETTINGS.hideKeyTips ? 'OFF' : 'ON'}`, batPop: () => `BATTLE POPUPS: ${SETTINGS.hideBattlePop ? 'OFF' : 'ON'}`,
   taunt: () => `TAUNTS: ${SETTINGS.taunts || 'NORMAL'}`, post: () => `THE POST: ${SETTINGS.post !== false ? 'ON' : 'OFF'}`,
   lite: () => `GRAPHICS: ${gfxMode()}`, fps: () => `FRAME RATE: ${SETTINGS.fps || 'AUTO'}`, dark: () => `DARK MODE: ${SETTINGS.darkMode ? 'ON' : 'OFF'}`,
   side: () => `SIDELINE: ${SETTINGS.sideline || 'ALL'}`, flash: () => `LIGHTNING FLASHES: ${SETTINGS.flashes === false ? 'OFF' : 'ON'}` };
@@ -4123,6 +4123,7 @@ const SET_GAME_LOCK = ['setup', 'flags', 'booth', 'inj', 'pinj', 'wx', 'diff', '
 const setInGame = () => !results && typeof game !== 'undefined' && !!game && !game.over;
 const SET_TIP_Y = 598;   // the main page's one-line tip / note (popups: SET_POP.tipY)
 const SET_TIPS = {   // hover tips: ONE short line each, copy rules (plain, no parentheses / semicolons); functions = different text on / off
+  ktips: () => SETTINGS.hideKeyTips ? 'KEY TIPS: off. No key list in games.' : 'KEY TIPS: what to press, top left in games.',
   recPop: () => SETTINGS.hideRecPop ? 'RECORD POPUPS: off. The Post still reports them.' : 'RECORD POPUPS: a popup when a record falls.',
   ann: () => SETTINGS.announcers === false ? 'ANNOUNCERS: off. A quiet broadcast.' : 'ANNOUNCERS: two voices call the action.',
   flash: () => SETTINGS.flashes === false ? 'LIGHTNING FLASHES: off. Thunder still rolls.' : 'LIGHTNING FLASHES: lightning lights up the screen.',
@@ -4706,6 +4707,7 @@ function settingsClick(p) {
   else if (inBtn(p, B.fps)) { SETTINGS.fps = FPS_MODES[(FPS_MODES.indexOf(SETTINGS.fps || 'AUTO') + 1) % FPS_MODES.length]; fpsCap.lock = false; fpsCap.over = 0; }   // (v0.62 FRAME RATE: phones only, see FPS_CAP)
   else if (inBtn(p, B.side)) { SETTINGS.sideline = SL_MODES[(SL_MODES.indexOf(SETTINGS.sideline || 'ALL') + 1) % SL_MODES.length]; slSetting(); }
   else if (inBtn(p, B.post)) SETTINGS.post = SETTINGS.post === false;   // (the Paper Passer Post: newspaper, story arcs and midweek events; franchise only)
+  else if (inBtn(p, B.ktips)) SETTINGS.hideKeyTips = !SETTINGS.hideKeyTips;   // (the in-game key tips, top left)
   else if (inBtn(p, B.recPop)) SETTINGS.hideRecPop = !SETTINGS.hideRecPop;   // (v0.52: the home screen's RECORD BOOK popup; the Post still reports every record)
   else if (inBtn(p, B.batPop)) SETTINGS.hideBattlePop = !SETTINGS.hideBattlePop;
   else if (inBtn(p, B.ann)) { SETTINGS.announcers = SETTINGS.announcers === false; if (SETTINGS.announcers === false) annClear(true); }   // (ANNOUNCERS: off = annSay returns at once)
@@ -4735,7 +4737,7 @@ function leagueReset() {
 }
 const CAREER_KEEP = ['first', 'last', 'face', 'team', 'fav', 'hire', 'origin', 'focus', 'roll', 'sel', 'dd', 'nameErr', 'sig', 'react'];
 function careerReset() { for (const k of Object.keys(career)) if (!CAREER_KEEP.includes(k)) delete career[k]; career.tut = career.tut || {}; }
-function buildSave() {
+function buildSave() { choreFlush('buildSave');
   syncPre();
   const stars = {}, mt = matchFixed({ ...MATCH });
   (ROSTER[mt.you] || []).forEach((s, i) => { stars[i] = { cond: s.cond, morale: s.morale, rehab: s.rehab, limited: s.limited, inj: s.inj, benchNext: s.benchNext, outGame: s.outGame, missed: s.missed }; });
@@ -5133,7 +5135,7 @@ function syncOnLeave() {   // (the tab hidden / closed: save + sync right away)
 // v0.70: leaving a franchise = ONE save (it used to be the leave's own + syncOnLeave's), never inside the click: saveSoon waits until the new page has painted
 // (LEAVE_WAIT frames; a hidden tab saves at once, rAF doesn't run there), then syncSoon pushes on a later task (never the save's frame)
 const LEAVE_WAIT = { frames: 2, syncMs: 200, maxMs: 1000 };   // frames painted before the save; ms after it to the sync; ms at most before saving anyway
-function saveSoon() {
+function saveSoon() { choreFlush('saveSoon');
   const i = curSlot;
   if (i === null) { try { autoAssignSlot(); } catch (e) {} return syncSoon(); }   // (no slot yet: the picker may open, as before)
   // (the data is taken now, in the click: once the start screen is up, frame() puts the default settings back into SETTINGS, which the save holds by reference)
@@ -5223,7 +5225,7 @@ function storeTidy(keepBase) {
   }
 }
 try { storeTidy(true); } catch (e) {}   // (once at load: packs old saves' league stats, frees space before anything tries to save)
-function saveToSlot(i, auto, imported, pre) {   // imported: a save file's data (written as it is; the current franchise and its slot stay as they were); pre = buildSave() taken earlier (saveSoon)
+function saveToSlot(i, auto, imported, pre) { choreFlush('saveToSlot');   // imported: a save file's data (written as it is; the current franchise and its slot stay as they were); pre = buildSave() taken earlier (saveSoon)
   if (ONL.on) { console.warn('online: saving is disabled'); return; }
   try {
     const data = imported || pre || buildSave(), m = slotMetas().slice(), txt = perfTime('lsPacked', lsPacked, null, [data]);   // (packed: ~6x smaller; perfTime = FRAME TIMES' timer, a plain call when it's off)

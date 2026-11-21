@@ -94,7 +94,7 @@ function recordFrame(dt) {
   if (rec.frames.length > 2400) rec.frames.shift();
   if (state === 'done') {
     rec.doneT += dt;
-    if (rec.hs && !rec.hs.done && rec.doneT >= tail) hsCollect(rec);   // (the tape is complete: the halftime reel keeps its best window)
+    if (rec.doneT >= tail && !rec.choreQ) { const r = rec; r.choreQ = 1; if (r.hs && !r.hs.done) { if (!choreNow()) chore('hsPrep', u => hsPrep(r, u)); chore('hsCollect', () => { hsCollect(r); }); } if (!choreNow()) chore('hlCopy', u => hlPrep(r, u)); }   // (the tape is complete: the halftime reel keeps its best window, a big play's copy is made; v0.71: on the chore queue, over the next dead-ball frames)
     if (!rec.played && !game.penQ && rec.doneT >= Math.max(RUNOFF_SECS, tail) && !(game.runoff > 0) && !bannerUp() && (replayWanted() || finalReplay())) startReplay();   // (v0.69: a flag is accepted / declined first)
   }
 }
@@ -390,21 +390,36 @@ function sbApply(s) {
   Object.assign(game, g);
   if (twoP && to != null) twoP.to = to;
 }
+// the tape's own copy of the frames (the live replay keeps using the originals), with every reference to a live player
+// (the copies' own, and the moves aimed at a man) pointed at the copies instead. v0.71: made in steps (r.hlJob: frames copied so far, by index; a tape that grew
+// is continued, one shifted at the front is started again); keepHighlight finishes it and pushes the clip at the same moment as before.
+function hlFix(o, map) { if (o && typeof o === 'object') for (const k in o) if (map.has(o[k])) o[k] = map.get(o[k]); return o; }
+function hlCopy(r, until) {
+  const fr = r.frames; let J = r.hlJob;
+  if (!J || J.f0 !== fr[0]) { J = r.hlJob = tapeCopyInit(r); J.f0 = fr[0]; }
+  return tapeCopyStep(J, fr, until);
+}
+function tapeCopyInit(r) { const cast = r.cast.map(o => ({ ...o })), map = new Map(r.castLive.map((p, i) => [p, cast[i]])); cast.forEach(o => hlFix(o, map)); return { cast, map, out: [] }; }
+function tapeCopyStep(J, src, until) {   // (copies src[J.out.length ..] into J.out until the clock passes until; true = all copied)
+  const own = o => o && typeof o === 'object' ? hlFix({ ...o }, J.map) : o;
+  let i = J.out.length;
+  while (i < src.length) { const f = src[i++]; J.out.push({ ...f, players: f.players.map(q => ({ ...tapeFlat(q), act: own(q.act), fightOn: own(q.fightOn) })) }); if (!(i & 1) && performance.now() > until) break; }
+  return i >= src.length;
+}
+function hlPrep(r, until) {   // (the hlCopy chore: only a tape keepHighlight will keep without force; true = more to copy)
+  if (!r || r.hlKept || r.hl || !r.big || !r.cast || !r.castLive || tut || !r.frames || r.frames.length < 10) return false;
+  if (!r.hlJob && r.frames.some(f => f.players.length !== r.cast.length)) return false;
+  return !hlCopy(r, until);
+}
 // force = saved by hand (SAVE during a replay): kept whether or not it was a big play, and never dropped for room. true = it's in.
 function keepHighlight(r, force) {
   perfNote('keepHighlight');   // (FRAME TIMES spike tag)
   hsCollect(r);   // (the play is being replaced: the halftime reel takes its window now if it hasn't)
-  if (!r || r.hlKept || r.hl || !(r.big || force) || !r.cast || !r.castLive || tut || !r.frames || r.frames.length < 10) return !!(r && r.hlKept);
+  if (!r || r.hlKept || r.hl || !(r.big || force) || !r.cast || !r.castLive || tut || !r.frames || r.frames.length < 10) { if (r) r.hlJob = null; return !!(r && r.hlKept); }
   const n = r.cast.length;
   if (r.frames.some(f => f.players.length !== n)) return false;   // (the unit changed mid-play: can't be put back exactly)
   r.hlKept = true;
-  // the tape's own copy of the frames (the live replay keeps using the originals), with every reference to a live player
-  // (the copies' own, and the moves aimed at a man) pointed at the copies instead
-  const cast = r.cast.map(o => ({ ...o })), map = new Map(r.castLive.map((p, i) => [p, cast[i]]));
-  const fix = o => { if (o && typeof o === 'object') for (const k in o) if (map.has(o[k])) o[k] = map.get(o[k]); return o; };
-  const own = o => o && typeof o === 'object' ? fix({ ...o }) : o;
-  cast.forEach(fix);
-  const frames = r.frames.map(f => ({ ...f, players: f.players.map(q => ({ ...tapeFlat(q), act: own(q.act), fightOn: own(q.fightOn) })) }));
+  hlCopy(r, Infinity); const J = r.hlJob; r.hlJob = null; const cast = J.cast, frames = J.out;   // (v0.71: most of it is usually copied already by the hlCopy chore)
   const now = sbSnap();
   highlights.push({ frames, kits: r.kits, sl: r.sl, cast, shape: r.castShape, field: r.field, sb: r.sb && { ...r.sb, blue: now.blue, red: now.red }, td: !!r.td, mine: !!force, label: r.label || '' });   // (the clock, timeouts and down from the snap; the score once the play was over, so a touchdown shows)
   if (highlights.length > HIGHLIGHTS.max) { const i = highlights.findIndex(c => !c.td && !c.mine); if (i >= 0) highlights.splice(i, 1); }
@@ -659,7 +674,7 @@ function drawReelFx() {   // the short cross-fade a new clip (or a far-away part
   if (al > 0.004) { ctx.save(); ctx.fillStyle = `rgba(8,12,9,${al})`; ctx.fillRect(-PAD, 0, W + 2 * PAD, H); ctx.restore(); }
 }
 // the end of the game: the whole game's best plays (HTS.game, kept while it was played) run behind the result screen, the same reel as halftime, looping
-function hsEndReel() {
+function hsEndReel() { choreFlush('hsEndReel');
   try {
     if (!hsOn() || tut || liteLevel() > 0 || SETTINGS.replays === 'NONE' || !htOn('highlights')) { HTS.game = []; return; }
     hsCollect(rec);
@@ -794,23 +809,38 @@ function hsCollect(r) {
   const m = r && r.hs;
   if (!m || m.done || r.replaying || r.hl) return;
   m.done = true;
-  { const c = r.cel, W = HLREEL; if (c && (c.hy >= W.celebHype || c.n > 1 || W.celebEv.includes(c.ev))) { m.cel = c; m.score += W.ev.celeb; m.apex = [...(m.apex || []), { t: c.t, k: 'celeb', i: -1 }]; } }   // (a big celebration: noted by celebBegin, after the whistle that scored the play)
-  if (m.score < HLREEL.minScore || !htOn('highlights') || !hsOn()) return;
-  // a full pool drops its weakest clip for a better one (never one of the last defMin defensive clips): the pools are the cap on what is kept in memory
-  const lowOf = (L, cap) => { if (L.length < cap) return null; const nd = L.filter(c => c.def).length, C = L.filter(c => !c.def || nd > HLREEL.defMin); return (C.length ? C : L).reduce((a, c) => (c.score < a.score ? c : a)); };
-  const half = (m.q || 1) <= 2, lowH = half ? lowOf(HTS.clips, HLREEL.pool) : null, lowG = lowOf(HTS.game, HLREEL.gamePool);
-  const inH = half && !(lowH && m.score <= lowH.score), inG = liteLevel() === 0 && !(lowG && m.score <= lowG.score);
-  if (!inH && !inG) return;
+  { const c = hsCelOf(r), W = HLREEL; if (c) { m.cel = c; m.score += W.ev.celeb; m.apex = [...(m.apex || []), { t: c.t, k: 'celeb', i: -1 }]; } }   // (a big celebration: noted by celebBegin, after the whistle that scored the play)
+  if (m.score < HLREEL.minScore || !htOn('highlights') || !hsOn()) { r.hsJob = null; return; }
+  const { lowH, lowG, inH, inG } = hsWhere(m, m.score);
+  if (!inH && !inG) { r.hsJob = null; return; }
   const e = { score: m.score, title: m.title, label: r.label || '', kind: m.kind, who: m.who, stat: m.stat, fav: m.fav, apex: m.apex || [], def: !!m.def, shows: r.played ? 1 : 0, air: m.air, ci: m.ci, type: m.type };   // (air / ci / type: the Post's photos pick their frame from them)   // (shows: the live instant replay already showed it once; one that plays after this is counted in startReplay via r.hsClip)
   r.hsClip = e;
   if (SETTINGS.replays !== 'NONE' && r.cast && r.castLive && r.frames && r.frames.length >= 10) { try { Object.assign(e, hsTape(r, m)); } catch (err) {} }
   if (e.frames && e.frames.length < 10) delete e.frames;   // (nothing usable on the tape: a title card at most, never a clip)
   if (inH) { HTS.clips.push(e); if (lowH) HTS.clips.splice(HTS.clips.indexOf(lowH), 1); }
   if (inG && e.frames) { HTS.game.push(e); if (lowG) HTS.game.splice(HTS.game.indexOf(lowG), 1); }   // (the whole game's reel: tapes only)
+  r.hsJob = null;
+}
+function hsCelOf(r) { const c = r.cel, W = HLREEL; return c && (c.hy >= W.celebHype || c.n > 1 || W.celebEv.includes(c.ev)) ? c : null; }   // (a big celebration: noted by celebBegin, after the whistle that scored the play)
+// a full pool drops its weakest clip for a better one (never one of the last defMin defensive clips): the pools are the cap on what is kept in memory
+function hsLow(L, cap) { if (L.length < cap) return null; const nd = L.filter(c => c.def).length, C = L.filter(c => !c.def || nd > HLREEL.defMin); return (C.length ? C : L).reduce((a, c) => (c.score < a.score ? c : a)); }
+function hsWhere(m, score) { const half = (m.q || 1) <= 2, lowH = half ? hsLow(HTS.clips, HLREEL.pool) : null, lowG = hsLow(HTS.game, HLREEL.gamePool); return { lowH, lowG, inH: half && !(lowH && score <= lowH.score), inG: liteLevel() === 0 && !(lowG && score <= lowG.score) }; }
+// v0.71 the hsPrep chore (queued before the hsCollect one): copies the frames hsTape will cut, a few ms a frame, onto r.hsJob; hsTape uses them only if its cut is the same frames
+function hsPrep(r, until) {
+  const m = r && r.hs;
+  if (!m || m.done || r.replaying || r.hl || SETTINGS.replays === 'NONE' || !r.cast || !r.castLive || !r.frames || r.frames.length < 10) return false;
+  if (!r.hsJob) {
+    const c = hsCelOf(r), score = m.score + (c ? HLREEL.ev.celeb : 0);
+    if (score < HLREEL.minScore || !htOn('highlights') || !hsOn()) return false;
+    const w = hsWhere(m, score); if (!w.inH && !w.inG) return false;
+    const S = hsTapeSel(r, m, c || m.cel); if (!S) return false;
+    r.hsJob = tapeCopyInit(r); r.hsJob.sel = S.sel;
+  }
+  return !tapeCopyStep(r.hsJob, r.hsJob.sel, until);
 }
 // the reel's pick: the defense's best first (defMin), then by score until it is budget s or maxClips long, with some variety (kinds, players); shown in the
 // order they happened. Fewer plays that qualify = a shorter reel, never padded. The best one is the play of the half, the 3 best get slow motion.
-function hsPick(pool, budget, maxClips) {
+function hsPick(pool, budget, maxClips) { choreFlush('hsPick');
   const R = HLREEL, byScore = [...pool].sort((a, b) => b.score - a.score), best = new Set(), nKind = {}, nMan = {}, all = {};
   for (const c of pool) if (c.who) all[c.who] = (all[c.who] || 0) + 1;
   let secs = 0;
@@ -826,12 +856,23 @@ function hsPick(pool, budget, maxClips) {
   return pool.filter(c => best.has(c));
 }
 function hsTape(r, m) {
+  const S = hsTapeSel(r, m, m.cel); if (!S) return null;
+  const { sel, wins } = S, len = ws => ws.reduce((s, w) => s + Math.max(0, w.b - w.a), 0);
+  let J = r.hsJob; r.hsJob = null;
+  if (!J || J.sel.length !== sel.length || J.sel.some((f, i) => f !== sel[i])) { J = tapeCopyInit(r); J.sel = sel; }   // (v0.71: hsPrep's copy, when it is of the same frames)
+  tapeCopyStep(J, sel, Infinity);
+  const cast = J.cast, frames = J.out;
+  for (let i = 1; i < frames.length; i++) if (frames[i].t - frames[i - 1].t > 0.25) frames[i].cut = true;   // (a gap between two windows: stepReplay jumps it)
+  const t0 = frames.length ? frames[0].t : 0;
+  return { secs: len(wins), apex: (m.apex || []).filter(e => e.t >= t0 && wins.some(w => e.t >= w.a && e.t <= w.b)).map(e => ({ ...e })), frames, kits: r.kits, sl: r.sl, cast, shape: r.castShape, field: r.field, sb: r.sb && { ...r.sb, blue: game.blue, red: game.red }, td: m.type === 'td' || m.type === 'pickTd', mine: false };
+}
+function hsTapeSel(r, m, cel) {   // (hsTape's cut: which frames, cheap; cel = the big celebration whose tail it keeps)
   const W = HLREEL, fr = r.frames, n = r.cast.length, end = r.doneAt != null ? r.doneAt : fr[fr.length - 1].t;
   if (fr.some(f => f.players.length !== n)) return null;
   // the cut: one window per moment, plus the finish of a score (the last yards and the goal-line cross); no moment at all = one window up to the whistle.
   // Nothing after end + out: no pile, no celebration.
   const stop = end + W.out, wOf = e => W.ev[e.k] || W.turnover;
-  const stopC = m.cel && m.cel.t < fr[fr.length - 1].t ? Math.max(stop, Math.min(fr[fr.length - 1].t, end + W.celebTail)) : stop;   // (a big celebration: its tail is kept, capped)
+  const stopC = cel && cel.t < fr[fr.length - 1].t ? Math.max(stop, Math.min(fr[fr.length - 1].t, end + W.celebTail)) : stop;   // (a big celebration: its tail is kept, capped)
   const raw = (m.apex || []).filter(e => e.k !== 'celeb').map(e => { const [pre, post] = W.cut[e.k] || W.cut.def; return { a: e.t - pre, b: Math.min(stop, e.t + post), w: wOf(e) }; }).filter(w => w.b > w.a);
   if (!raw.length) raw.push({ a: end - (W.win[m.type] || W.win.gain)[0], b: stop, w: Infinity });
   if (m.air) raw.push({ a: m.air[0] - W.air.pre, b: Math.min(stop, m.air[1] + W.air.post), w: W.air.w });   // (the throw: the ball followed from the release into his hands)
@@ -839,7 +880,6 @@ function hsTape(r, m) {
   if (fin) raw.push(fin);
   // ONE unbroken window per play (no jump cuts inside it: a pick is shown with its whole return, a catch with the run after it, a sack to the whistle): from the
   // earliest moment's lead-in to the whistle. A long one loses its front first, but never its biggest moment.
-  const len = ws => ws.reduce((s, w) => s + Math.max(0, w.b - w.a), 0);
   const topE = (m.apex || []).reduce((a, e) => (!a || wOf(e) > wOf(a) ? e : a), null), keyT = topE ? topE.t : m.air ? m.air[0] : end;
   let a = Math.max(fr[0].t, Math.min(...raw.map(w => w.a)));
   if (stop - a > W.maxSecs) a = Math.min(stop - W.maxSecs, keyT - W.keyPre);
@@ -848,14 +888,7 @@ function hsTape(r, m) {
   let sel = fr.filter(f => f.t >= a && f.t <= stopC);
   if (sel.length < 10) { sel = fr.filter(f => f.t <= stop).slice(-60); wins = sel.length ? [{ a: sel[0].t, b: sel[sel.length - 1].t }] : []; }
   sel = sel.filter((f, i) => i % W.skip === 0 || i === sel.length - 1).slice(-W.maxFrames);
-  const cast = r.cast.map(o => ({ ...o })), map = new Map(r.castLive.map((p, i) => [p, cast[i]]));
-  const fix = o => { if (o && typeof o === 'object') for (const k in o) if (map.has(o[k])) o[k] = map.get(o[k]); return o; };
-  const own = o => o && typeof o === 'object' ? fix({ ...o }) : o;
-  cast.forEach(fix);
-  const frames = sel.map(f => ({ ...f, players: f.players.map(q => ({ ...tapeFlat(q), act: own(q.act), fightOn: own(q.fightOn) })) }));
-  for (let i = 1; i < frames.length; i++) if (frames[i].t - frames[i - 1].t > 0.25) frames[i].cut = true;   // (a gap between two windows: stepReplay jumps it)
-  const t0 = frames.length ? frames[0].t : 0;
-  return { secs: len(wins), apex: (m.apex || []).filter(e => e.t >= t0 && wins.some(w => e.t >= w.a && e.t <= w.b)).map(e => ({ ...e })), frames, kits: r.kits, sl: r.sl, cast, shape: r.castShape, field: r.field, sb: r.sb && { ...r.sb, blue: game.blue, red: game.red }, td: m.type === 'td' || m.type === 'pickTd', mine: false };
+  return { sel, wins };
 }
 // a simulated play of the other team's drive (simAdvance): no frames, so only a stat card, scored the same way
 function hsSimPlay(l) {
@@ -2642,7 +2675,7 @@ if (!REPLAY_MODES.includes(SETTINGS.replays)) SETTINGS.replays = 'BIG PLAYS';   
 if (SETTINGS.liteMode === 'ON') SETTINGS.liteMode = 'PERFORMANCE'; else if (SETTINGS.liteMode === 'OFF') SETTINGS.liteMode = 'QUALITY';   // (the old performance-mode values; see gfxMode)
 // Settings scopes: SETTINGS_DEF = the defaults (main menu / exhibitions / a new franchise, kept in localStorage); SETTINGS = the working copy.
 // Inside a franchise save (inSave) the working copy is that save's own (stored in its world.settings); only GLOBAL_SET (volume, replays) is shared by all.
-const GLOBAL_SET = ['volume', 'replays', 'hideTools', 'darkMode', 'cinema', 'liteMode', 'fps', 'sideline', 'taunts', 'perfHud', 'netSim', 'flashes', 'announcers'];
+const GLOBAL_SET = ['volume', 'replays', 'hideTools', 'darkMode', 'cinema', 'liteMode', 'fps', 'sideline', 'taunts', 'perfHud', 'netSim', 'flashes', 'announcers', 'hideKeyTips', 'keyTipsShut'];
 // per-device settings: their own key, never in SETTINGS / franchise saves, and cloud sync skips it. mobile = the MOBILE MODE override (unset = on for phones / tablets, off for PCs)
 const DEVICE_KEY = 'pocketPasser.device';
 const DEVICE = (() => { try { return JSON.parse(localStorage.getItem(DEVICE_KEY) || '{}') || {}; } catch (e) { return {}; } })();
@@ -3379,11 +3412,10 @@ const SBUF = { on: 'auto', sr: 32000, hi: /\/(cheer|boo|ooh|whistle|upgrade)\.mp
     'clang', 'highfive', 'smack', 'shush', 'shush2', 'stamp', 'register', 'yell', 'splash', 'crumple', 'click', 'upgrade'] };
 const sbuf = {}, sbufSz = {}, sbufQ = []; let sbufBusy = false;
 const sbufOn = () => SBUF.on === 'auto' ? !!(TOUCH || sfxIOS()) : !!SBUF.on;
-const SBUF_LIVE = /^(drop|pocket|run|flight|loose|fumble|picked|kick|punt|kickoff)$/;
 function sbufWant(f) { if (sbuf[f] !== undefined || SBUF.skip.test(f)) return; sbuf[f] = 0; sbufQ.push(f); sbufPump(); }
 function sbufWarm() { if (!sbufOn()) return; for (const n of SBUF.warm) sbufWant('audio/' + (n.includes('.') ? n : n + '.mp3')); }
 function sbufPump() {
-  if (sbufBusy || !sbufQ.length || !actx || (typeof state !== 'undefined' && SBUF_LIVE.test(state) && !(typeof game !== 'undefined' && game && game.over))) return;
+  if (sbufBusy || !sbufQ.length || !actx || liveNow()) return;
   sbufBusy = true; const f = sbufQ.shift();
   const done = () => { sbufBusy = false; sbufPump(); };
   fetch(f).then(r => r.ok ? r.arrayBuffer() : Promise.reject(r.status)).then(ab => sbufDecode(ab, f)).then(b => { sbuf[f] = sbufShape(b, f); done(); }, () => { sbuf[f] = null; done(); });

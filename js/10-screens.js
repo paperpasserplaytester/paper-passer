@@ -208,7 +208,7 @@ function approvalAfterGame(margin) {
   L.coins += pay; L.lastPay = pay; L.lastRes = r;   // (the result is decided once, here, with the pay: anything that labels the pay reads lastRes)
   payToFly = pay;   // (the credits fly to the credits box when the first screen with one shows)
 }
-function openResults() {
+function openResults() { choreFlush('openResults');
   SC_SCROLL.off = 0; SC_SCROLL.drag = null;   // (the scoring list starts at the latest score)
   koTipSeen = true; try { localStorage.setItem(KO_TIP_KEY, '1'); } catch (e) {}   // (one game finished: the kickoff reticle tip is gone for good)
   suspended = null; simMode = 'none';   // (a finished game's SIM menu pick must not carry into the next game / tutorial)
@@ -1815,7 +1815,7 @@ function drawPayOverlay() {
 function drawMenus() {
   ({ start: drawStart, franchise: drawCareer, qsetup: drawQs, result: drawResults, pgx: drawPgx, home: drawHome, matchup: drawMatchup, roster: drawRoster, staff: drawStaff, playoffs: drawPlayoffs,
      awards: drawAwards, pbowl: drawPbowl, resign: drawResign, draft: drawDraft, fa: drawFA, offers: drawOffers, trade: drawTrade, tradeb: drawTradeB, toffers: drawTOffers,
-     exhibition: () => drawMatchup(true), exstats: drawExStats, hof: drawHof, trophy: drawTrophyRoom, scrap: drawScrap, post: drawPost, pawards: drawPAwards, dboard: drawDBoard, book: drawBook, records: drawRecords, chof: drawCoachHof, practice: drawPractice, hire: drawHire, board: drawBoard, test: drawTest, onevone: drawOneVOne, oopick: drawOvPick, anims: drawAnims, coach: drawCoachEd, online: drawOnline, onresult: drawOnResult })[results.screen]();
+     exhibition: () => drawMatchup(true), exstats: drawExStats, hof: drawHof, trophy: drawTrophyRoom, scrap: drawScrap, post: drawPost, pawards: drawPAwards, dboard: drawDBoard, book: drawBook, records: drawRecords, league: drawLeague, chof: drawCoachHof, practice: drawPractice, hire: drawHire, board: drawBoard, test: drawTest, onevone: drawOneVOne, oopick: drawOvPick, anims: drawAnims, coach: drawCoachEd, online: drawOnline, onresult: drawOnResult })[results.screen]();
   if (teamPick) drawTeamPicker();
   drawTutPrompt();
   tourWatch(); drawTour();
@@ -2398,6 +2398,119 @@ function boxSummary(p, g) {
   if (p.group === 'K') o.push(`FG ${g.fg || 0}/${g.fa || 0} XP ${g.xp || 0}/${g.xa || 0}`);
   return o.join('  ') || '-';
 }
+// --- schedule treasure map (v0.72): this week's chest + the playoffs flag (drawHome's schedule); the chest opens once per week, read on uiNow()
+function schedChest(x, y, wk) {
+  const C = SCHED.chest, key = `${wk}|${season && season.team}|${season && season.year}`;
+  if (!C.at || C.at.key !== key) C.at = { key, t: uiNow() };
+  const k = Math.min(1, (uiNow() - C.at.t) / C.ms), e = 1 - Math.pow(1 - k, 3);
+  if (k < 1) menuMoving = true;
+  const w = C.w, h = C.h, x0 = x - w / 2, top = y - h / 2;
+  if (e > 0.25) {   // the glow out of the open chest
+    ctx.save(); ctx.globalAlpha = (e - 0.25) / 0.75; ctx.strokeStyle = '#f2c230'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    for (let i = -2; i <= 2; i++) { const a = -Math.PI / 2 + i * 0.38; ctx.beginPath(); ctx.moveTo(x + Math.cos(a) * 10, top + Math.sin(a) * 6); ctx.lineTo(x + Math.cos(a) * 24, top + Math.sin(a) * 20); ctx.stroke(); }
+    ctx.fillStyle = '#f2c230'; ctx.beginPath(); ctx.ellipse(x, top + 1, w / 2 - 4, 4, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+  }
+  ctx.fillStyle = '#9a6332'; ctx.strokeStyle = '#4a2c12'; ctx.lineWidth = 2;   // the box
+  ctx.fillRect(x0, top, w, h); ctx.strokeRect(x0, top, w, h);
+  ctx.fillStyle = '#f2c230'; ctx.fillRect(x - 3, top + 3, 6, 7);   // (the lock)
+  ctx.save(); ctx.translate(x0, top); ctx.rotate(-e * 1.25);   // the lid swings up about its hinge (side view: the left corner)
+  ctx.fillStyle = '#b5773e'; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -h * 0.55); ctx.quadraticCurveTo(w / 2, -h * 1.05, w, -h * 0.55); ctx.lineTo(w, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+function schedFlag(x, y) {   // the map's end: a little pennant on a pole
+  ctx.strokeStyle = SCHED.ink; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x - 8, y + 30); ctx.lineTo(x - 8, y - 22); ctx.stroke();
+  ctx.fillStyle = '#e01b1b'; ctx.beginPath(); ctx.moveTo(x - 7, y - 22); ctx.lineTo(x + 20, y - 13); ctx.lineTo(x - 7, y - 4); ctx.closePath(); ctx.fill();
+}
+// --- league screen (v0.72): SCHEDULE over the home schedule -> AFC / NFC standings, every game week by week, the playoff picture (screen 'league')
+const LGV = { tab: 'AFC', wk: 1 };
+const LGV_TABS = [['AFC', 'AFC'], ['NFC', 'NFC'], ['SCHED', 'SCHEDULE'], ['PO', 'PLAYOFFS']].map(([t, l], i) => ({ t, l, x: 330 + i * 200, y: 14, w: 186, h: 56 }));
+const LGV_ARROWS = [{ x: 470, y: 96, w: 56, h: 48 }, { x: 754, y: 96, w: 56, h: 48 }];
+const LGV_ME = 'rgba(255,226,90,0.55)';   // (your team's row)
+function lgvOpen() { LGV.wk = Math.min(SEASON_WEEKS, Math.max(1, season.week)); results.screen = 'league'; }
+const lgvGames = w => w >= 1 && w <= SEASON_WEEKS ? season.sched[w - 1] : [];
+function lgvByes(w) { const on = new Set(); lgvGames(w).forEach(g => { on.add(g.h); on.add(g.a); }); return Object.keys(NFL).filter(k => !on.has(k)); }
+const lgvDivs = (conf, T) => DIVS.map((d, i) => ({ d, list: divTeams(conf, i).map(k => T[k]).sort(byRecord) }));
+const lgvSeeds = (conf, T) => po && po.seeds ? po.seeds[conf].map(k => (po.T || T)[k] || T[k]) : playoffSeeds(conf, T);   // (the bracket's seeds once it exists: never a second rule)
+function drawLeague() {
+  if (!season) { results.screen = 'home'; return; }
+  paperBg();
+  const T = seasonTable(), me = season.team;
+  ctx.fillStyle = RES.line; ctx.font = 'bold 38px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText('LEAGUE', 60, 42, 250);
+  LGV_TABS.forEach(b => menuBtn(b, b.l, LGV.tab === b.t ? SEL : RES.bright, 22));
+  ctx.textBaseline = 'middle';
+  if (LGV.tab === 'AFC' || LGV.tab === 'NFC') lgvStandings(LGV.tab, T, me);
+  else if (LGV.tab === 'SCHED') lgvSchedule(me);
+  else lgvPlayoffs(T, me);
+  menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
+}
+function lgvStandings(conf, T, me) {   // the conference's 4 divisions, 2 x 2, each team with its record
+  lgvDivs(conf, T).forEach(({ d, list }, i) => {
+    const x = 60 + (i % 2) * 600, y = 96 + Math.floor(i / 2) * 262, w = 560, ry = openSection(x, y, w, `${conf} ${d}`);
+    ctx.fillStyle = RES.line; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center';
+    ['W', 'L', 'T'].forEach((h, j) => ctx.fillText(h, x + 430 + j * 50, y + 12));
+    list.forEach((t, j) => {
+      const ty = ry + 30 + j * 48;
+      if (t.k === me) { ctx.fillStyle = LGV_ME; ctx.fillRect(x - 6, ty - 22, w + 12, 44); }
+      drawLogo(t.k, x + 22, ty, 36);
+      ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'left';
+      ctx.fillText(`${NFL[t.k].city} ${NFL[t.k].nick}`.toUpperCase(), x + 50, ty, 340);
+      ctx.textAlign = 'center'; [t.w, t.l, t.t].forEach((v, k) => ctx.fillText(String(v), x + 430 + k * 50, ty));
+    });
+  });
+}
+function lgvSchedule(me) {   // one week's games (scores once played) + who is on a bye
+  const w = LGV.wk, games = lgvGames(w);
+  LGV_ARROWS.forEach((b, i) => menuBtn(b, i ? '▸' : '◂', RES.bright, 28, null, i ? w < SEASON_WEEKS : w > 1));
+  ctx.fillStyle = RES.line; ctx.font = 'bold 32px monospace'; ctx.textAlign = 'center'; ctx.fillText(`WEEK ${w}`, 640, 121);
+  games.forEach((g, i) => {
+    const x = 80 + Math.floor(i / 8) * 600, y = 182 + (i % 8) * 52, wd = 520, played = g.hs != null;
+    if (g.h === me || g.a === me) { ctx.fillStyle = LGV_ME; ctx.fillRect(x - 6, y - 23, wd + 12, 46); }
+    drawLogo(g.a, x + 20, y, 34); drawLogo(g.h, x + wd - 20, y, 34);
+    const ink = (mine, theirs) => played && mine < theirs ? RES.dim : RES.line;
+    ctx.font = 'bold 20px monospace'; ctx.textAlign = 'left'; ctx.fillStyle = ink(g.as, g.hs); ctx.fillText(shortName(g.a).toUpperCase(), x + 46, y, 170);
+    ctx.textAlign = 'right'; ctx.fillStyle = ink(g.hs, g.as); ctx.fillText(shortName(g.h).toUpperCase(), x + wd - 46, y, 170);
+    ctx.textAlign = 'center'; ctx.fillStyle = played ? RES.line : RES.dim; ctx.font = played ? 'bold 22px monospace' : 'bold 18px monospace';
+    ctx.fillText(played ? `${g.as} - ${g.hs}` : 'at', x + wd / 2, y);
+  });
+  const bye = lgvByes(w);
+  ctx.fillStyle = RES.dim; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center';
+  if (bye.length) ctx.fillText(`BYE: ${bye.map(k => shortName(k).toUpperCase()).join(', ')}`, 680, 610, 1080);
+}
+function lgvPlayoffs(T, me) {   // both conferences' seeds (today's, or the bracket's) + the bracket's games once it exists
+  ['AFC', 'NFC'].forEach((conf, c) => {
+    const x = 60 + c * 600, w = 560, ry = openSection(x, 96, w, po ? `${conf} BRACKET` : `${conf} SEEDS`);
+    ctx.fillStyle = RES.dim; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'right';
+    ctx.fillText(po ? '' : 'IF THE SEASON ENDED TODAY', x + w, 108);
+    lgvSeeds(conf, T).forEach((t, i) => {
+      const y = ry + 18 + i * 30;
+      if (t.k === me) { ctx.fillStyle = LGV_ME; ctx.fillRect(x - 6, y - 14, w + 12, 28); }
+      ctx.fillStyle = RES.line; ctx.font = 'bold 19px monospace'; ctx.textAlign = 'left';
+      ctx.fillText(`${i + 1}  ${NFL[t.k].city} ${NFL[t.k].nick}${i < 4 ? '' : '  (WC)'}`.toUpperCase(), x + 6, y, 420);
+      ctx.textAlign = 'right'; ctx.fillText(recStr(t), x + w - 6, y);
+    });
+    if (!po) return;
+    let y = ry + 18 + 7 * 30 + 16;
+    po.rounds.slice(0, 3).forEach((games, r) => {
+      const gs = games.filter(g => g.conf === conf); if (!gs.length) return;
+      ctx.fillStyle = RES.gold; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'left'; ctx.fillText(PO_ROUNDS[r], x + 6, y); y += 24;
+      gs.forEach(g => {
+        ctx.fillStyle = poHas(g, me) ? RES.gold : RES.line; ctx.font = 'bold 17px monospace';
+        const sd = k => po.seed[k] ? `${po.seed[k]} ` : '';
+        ctx.fillText(`${sd(g.a)}${shortName(g.a).toUpperCase()} ${g.hs != null ? g.as : ''}  at  ${sd(g.h)}${shortName(g.h).toUpperCase()} ${g.hs != null ? g.hs : ''}`, x + 24, y, w - 30); y += 22;
+      });
+      y += 4;
+    });
+  });
+  const pb = po && po.rounds[3] && po.rounds[3][0];
+  if (pb) { ctx.fillStyle = RES.gold; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(`${pbName()}: ${shortName(pb.a).toUpperCase()} ${pb.hs != null ? pb.as : ''}  vs  ${shortName(pb.h).toUpperCase()} ${pb.hs != null ? pb.hs : ''}`, 680, 650, 1000); }
+}
+function lgvClick(pt) {
+  const t = LGV_TABS.find(b => inBtn(pt, b)); if (t) { LGV.tab = t.t; return; }
+  if (inBtn(pt, BACK_BTN)) { results.screen = 'home'; return; }
+  if (LGV.tab === 'SCHED') { const a = LGV_ARROWS.findIndex(b => inBtn(pt, b)); if (a >= 0) LGV.wk = Math.max(1, Math.min(SEASON_WEEKS, LGV.wk + (a ? 1 : -1))); }
+}
 // the schedule's click (home screen): a played game's result (what is saved: the final score + every player's stat line) with a STATS button
 // that opens the game stats screen on that week. Unplayed games do nothing new.
 function schedGameClick(w) {
@@ -2567,35 +2680,40 @@ function drawHome() {
   if (!SCHED.drag) { const sn = Math.round(SCHED.scroll) - SCHED.scroll; SCHED.scroll += Math.abs(sn) < 0.01 ? sn : sn * 0.3; }   // (snaps to whole rows when let go)
   SCHED.scroll = Math.max(0, Math.min(schedMax(), SCHED.scroll));
   const weeks = [];
-  rows.forEach((w, i) => { const y = schedY(i); if (y > SB.y - SCHED.gap && y < SB.y + SB.h + SCHED.gap) weeks.push([y, slot(w), w]); });
-  const LX = 62;   // x of the line / pedestals
+  rows.forEach((w, i) => { const y = schedY(i); if (y > SB.y - SCHED.gap && y < SB.y + SB.h + SCHED.gap) weeks.push([y, slot(w), w, schedX(i)]); });
   ctx.save(); ctx.beginPath(); ctx.rect(SB.x + 2, SB.y + 2, SB.w - 4, SB.h - 4); ctx.clip();
-  ctx.fillStyle = '#4a4a4a'; ctx.fillRect(LX - 4, SB.y, 8, SB.h);
-  for (const [y, s] of weeks) {   // played weeks: the line runs from the result's colour toward the next week
-    if (!s || !s.score) continue;
-    const grad = ctx.createLinearGradient(0, y + 22, 0, y + 22 + SCHED.gap);
-    grad.addColorStop(0, s.col); grad.addColorStop(1, '#fff3c0');
-    ctx.fillStyle = grad; ctx.fillRect(LX - 4, y + 22, 8, SCHED.gap);
+  { // v0.72 treasure map: one winding dashed trail through every stop (sampled along the row index, only the visible stretch)
+    const t0 = Math.max(-1, SCHED.scroll - 1.2), t1 = Math.min(N - 1 + 0.6, SCHED.scroll + schedVis() + 1.2);
+    ctx.strokeStyle = SCHED.ink; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.setLineDash(SCHED.dash); ctx.beginPath();
+    for (let t = t0; t <= t1 + 1e-6; t += 0.08) { const px = schedX(t), py = schedY(t) + 22; t === t0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py); }
+    ctx.stroke(); ctx.setLineDash([]); ctx.lineCap = 'butt';
   }
-  for (const [y, s, w] of weeks) {
+  for (const [y, s, w, sx] of weeks) {
     if (!s) continue;
-    if (w === wk && !done) { ctx.fillStyle = 'rgba(255,226,90,0.28)'; ctx.fillRect(SB.x + 8, y - 60, SB.w - 28, 120); }
-    // one entry per week: the opponent's helmet (their home kit, logo on the side) sitting on the circle, the week, "vs / at" + the team and the result beside it
+    const cur = w === wk && !done, by = y + 22;
+    // the stop: an X under a played week (W green / L red / T grey), this week's chest, else a small inked spot
+    if (s.score) {
+      const r = SCHED.X; ctx.strokeStyle = s.col; ctx.lineWidth = 5; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(sx - r, by - r * 0.6); ctx.lineTo(sx + r, by + r * 0.6); ctx.moveTo(sx + r, by - r * 0.6); ctx.lineTo(sx - r, by + r * 0.6); ctx.stroke(); ctx.lineCap = 'butt';
+    } else if (!cur) { ctx.fillStyle = RES.bright; ctx.strokeStyle = SCHED.ink; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.ellipse(sx, by, 9, 5, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+    // one entry per week: the opponent's helmet (their home kit, logo on the side) on the stop, the week, "vs / at" + the team and the result beside it
     ctx.save(); if (s.score) ctx.globalAlpha = 0.5;   // (played games recede)
-    ctx.fillStyle = '#333'; ctx.beginPath(); ctx.ellipse(LX, y + 28, 36, 14, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = s.col; ctx.beginPath(); ctx.ellipse(LX, y + 22, 36, 14, 0, 0, Math.PI * 2); ctx.fill();
-    if (s.opp) drawBigHelmet(LX - 3, y - 10, SCHED_HELMET_R, makeKit(s.opp, 'home'), false, s.opp);
-    else if (s.bye) { ctx.fillStyle = '#4a4a4a'; ctx.font = 'bold 26px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('Zz', LX, y - 6); }
+    if (s.opp) drawBigHelmet(sx - 3, y - 10, SCHED_HELMET_R, makeKit(s.opp, 'home'), false, s.opp);
+    else if (s.bye) { ctx.fillStyle = '#4a4a4a'; ctx.font = 'bold 26px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('Zz', sx, y - 6); }
+    else schedFlag(sx, y - 8);   // (PLAYOFFS: the map's end flag)
     ctx.restore();
+    if (cur) schedChest(sx, y + SCHED.chest.y, wk);
+    const tx = sx + SCHED.text, tw = SB.x + SB.w - 22 - tx;
     ctx.fillStyle = RES.line; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     if (s.score) ctx.fillStyle = RES.dim;   // (played weeks recede; the result stays dark)
-    ctx.font = 'bold 22px monospace'; ctx.fillText(s.wk, 112, y - 20, 180);
-    ctx.font = 'bold 20px monospace'; ctx.fillText(s.vs, 112, y + 8, 180);
+    ctx.font = 'bold 22px monospace'; ctx.fillText(s.wk, tx, y - 20, tw);
+    ctx.font = 'bold 20px monospace'; ctx.fillText(s.vs, tx, y + 8, tw);
     ctx.fillStyle = RES.line;
-    if (s.score) ctx.fillText(s.score, 112, y + 34, 180);
-    if (s.opp && isRival(s.opp)) { ctx.fillStyle = '#e01b1b'; ctx.font = 'bold 16px monospace'; ctx.fillText('RIVAL', 112, y + 56); }
+    if (s.score) ctx.fillText(s.score, tx, y + 34, tw);
+    if (s.opp && isRival(s.opp)) { ctx.fillStyle = '#e01b1b'; ctx.font = 'bold 16px monospace'; ctx.fillText('RIVAL', tx, y + 56); }
   }
   ctx.restore();
+  menuBtn(SCHED.btn, 'SCHEDULE', RES.bright, 18);   // (over the list's top: opens the league screen; the list scrolls under it)
   // the scroll bar
   const B = SCHED.bar, vis = schedVis(), thumbH = Math.max(40, B.h * Math.min(1, vis / N));
   const thumbY = B.y + (B.h - thumbH) * (schedMax() ? SCHED.scroll / schedMax() : 0);
