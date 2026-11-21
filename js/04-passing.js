@@ -1640,7 +1640,8 @@ function homeLunge(d, c, dt, fooled) {
 // launch speed allows it (he gathers first if the ball is still a while off), then lands and slides on past it.
 // push / vMin / vMax = yd/s; friction = yd/s^2 on the turf; slideMax = most of an untimed dive's length spent sliding; over = s he lands after the catch
 // point of a timed dive; minT = shortest dive (s)
-const DIVE = { push: 3, vMin: 6.5, vMax: 14, plant: 0.7, friction: 40, slideMax: 0.3, over: 0.05, minT: 0.12 };
+const DIVE = { push: 3, vMin: 4.5, vMax: 14, plant: 0.7, friction: 40, slideMax: 0.3, over: 0.05, minT: 0.12,
+  topRef: 8.5, topK: [0.8, 1.15], wtRef: 200, wtExp: 0.5, wtK: [0.8, 1.12], gather: 0.12 };   // v0.71 one rule for both sides: push x (his own top yd/s / topRef) x (wtRef lb / his weight)^wtExp, each clamped; vMin = a standing man's floor; gather = most s a timed dive spends on his feet (at the pace he had, never braking below it)
 const DIVE_FEEL = { min: 0.55, fullSpeed: 8 * YD };   // reach: x the lunge standing still .. the full lunge at fullSpeed or faster
 // a dive for the ball is never longer than lunge yd and never aims more than oob yd past a sideline (balls sailing out of bounds made players "teleport" after them)
 const DIVE_CAP = { lunge: 4.5, oob: 1.2 };
@@ -1649,7 +1650,9 @@ const REV_DIVE = { cut: 0.45 };   // diving back against his own momentum: up to
 function diveLaunch(p, ux, uy) {
   const vx = p.vx || 0, vy = p.vy || 0, sp = Math.hypot(vx, vy), cos = sp > 0.3 * YD ? (vx * ux + vy * uy) / sp : 0;
   const carry = sp * (cos >= 0 ? DIVE.plant + (1 - DIVE.plant) * cos : DIVE.plant * (1 + cos));
-  return Math.max(DIVE.vMin, Math.min(DIVE.vMax, carry / YD + DIVE.push)) * YD;
+  const top = ownTop(p), tk = Number.isFinite(top) && top > 0 ? Math.max(DIVE.topK[0], Math.min(DIVE.topK[1], top / YD / DIVE.topRef)) : 1;
+  const wk = p.wt > 0 ? Math.max(DIVE.wtK[0], Math.min(DIVE.wtK[1], Math.pow(DIVE.wtRef / p.wt, DIVE.wtExp))) : 1;
+  return Math.max(DIVE.vMin, Math.min(DIVE.vMax, carry / YD + DIVE.push * tk * wk)) * YD;
 }
 // s until a dive launched now gets to that spot (for leading a tackle: where the runner will be when the dive lands)
 const diveEta = (p, tx, ty) => { const dx = tx - p.x, dy = ty - p.y, d = Math.hypot(dx, dy) || 1; return Math.min(0.35, d / diveLaunch(p, dx / d, dy / d)); };
@@ -1664,10 +1667,12 @@ function diveKin(L, v, arrive, z0, v0 = 0) {
     const ta = Math.max(0.05, arrive), flyMax = airCap - DIVE.over;
     if (L / ta >= v) air = Math.min(ta, flyMax) + DIVE.over;   // (it needs more speed than he can launch with: he goes now, flat out, and lands short of it)
     else {
-      // the ball is still a moment off: he gathers on his feet first (never faster than he was already going), then lays out at his launch speed and is there with it
-      vg = Math.max(0, Math.min(v0, 0.8 * L / ta));
-      tw = (v * ta - L) / (v - vg);
-      if (ta - tw > flyMax) { tw = ta - flyMax; vg = Math.max(0, (L - v * flyMax) / tw); }   // (too far to fly in one dive: he closes more of it on his feet)
+      // the ball is still a moment off: v0.71 he keeps the pace he had (never faster than the ball needs) for at most DIVE.gather s, then lays out at the speed
+      // that has him there with it (never above his launch speed): no braking on his feet first
+      vg = Math.max(0, Math.min(v0, L / ta));
+      tw = Math.max(0, Math.min(DIVE.gather, (v * ta - L) / (v - vg)));
+      if (ta - tw > flyMax) { tw = ta - flyMax; vg = Math.max(0, Math.min(v0 || L / ta, (L - v * flyMax) / tw)); }   // (too far to fly in one dive: he closes more of it on his feet)
+      vv = Math.max(vg, Math.min(v, (L - vg * tw) / Math.max(0.05, ta - tw))); Ls = vv * vv / (2 * mu);
       air = ta - tw + DIVE.over;
     }
   } else {
@@ -1927,7 +1932,7 @@ function setVelocity(p, px, py, dt) {
   const turnV = p.team === 'def' && state === 'run' && runner && runner.team === 'off' && runner.vx < 0 && !(p === ud && defLive()) ? 5 * YD : 3;
   // (a passer in his follow-through / post-release drift keeps facing where he threw (throwBall set it): drifting back a
   //  hair as he threw downfield used to spin him round to face his own end zone)
-  if (!(p.coast || p.action === 'throw')) { if (p.vx > turnV) p.face = 1; else if (p.vx < -3) p.face = -1; }
+  if (!(p.coast || p.action === 'throw')) { const lat = FACE_TURN.lat * Math.hypot(p.vx, p.vy); if (p.vx > Math.max(turnV, lat)) p.face = 1; else if (p.vx < -Math.max(3, lat)) p.face = -1; }
   if (p.team === 'def' && p.role && p.role !== 'DE' && p.role !== 'DT') noteDefCut(p, dt);
 }
 // a DB / linebacker changing direction: chop his feet on a sharp turn, plant and go on a milder one

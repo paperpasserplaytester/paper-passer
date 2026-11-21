@@ -68,7 +68,7 @@ function tensionTick(dt) {
     if (kick.hb >= 1) { kick.hb -= 1; sndRec('heartbeat', T.vol, { fade: 120, tag: 'kh' }); }
   }
 }
-function startFieldGoal(prev) {   // prev = where everyone stood before the lineup (their kick decided before they set: the unit runs on from there)
+function startFieldGoal(prev, set) {   // set (v0.70, from proceed) = the unit is simply placed: no run-on   // prev = where everyone stood before the lineup (their kick decided before they set: the unit runs on from there)
   if (patMode === 'kick' && Math.abs(los - 85 * YL) > 1) patMode = null;   // (only the real extra point, from the 15, is a 1-point kick; any other field goal is 3)
   if (game.secs <= 0 && patMode === null && !tut && !game.over) { checkQuarterEnd(); if (game.pendingQuarter || game.over) return; }
   fourthPending = false;
@@ -80,7 +80,7 @@ function startFieldGoal(prev) {   // prev = where everyone stood before the line
   aim = null;
   keepHighlight(rec); if (rec && rec.frames && rec.frames.length > 5 && !rec.replaying) lastRec = rec;   /* (kick tapes too: the pause menu's replay) */ rec = { frames: [], t: 0, doneT: 0, replaying: false, st: true, pat: patMode === 'kick' };
   // (their kick: where everyone stood, so the field-goal unit can run on and the offense off)
-  const swap = !tut ? prev || [qb, rb, ...ols, ...recs, ...dl, ...back7].map(p => ({ p, x: p.x, y: p.y })) : null;
+  const swap = !tut && !set ? prev || [qb, rb, ...ols, ...recs, ...dl, ...back7].map(p => ({ p, x: p.x, y: p.y })) : null;
   const unitMen = [recs[0], recs[1], recs[2], recs[3]].filter(Boolean);   // (the wings: receivers already on the field who are on the unit too just walk to their spot; no clone jogs off while he runs on)
   const gone = swap ? [qb, rb, ...recs.filter(r => !r.isTE && !unitMen.includes(r))].map(p => { const o = swap.find(s => s.p === p) || p; return Object.assign({}, p, { x: o.x, y: o.y, hasBall: false }); }) : [];
   for (const p of [qb, rb, ...ols, ...recs]) {
@@ -2929,7 +2929,7 @@ function simAhead(id) {
     simFast = { endQ: simTargetQ(id), keep: simGame }; simGame = true;
     paused = false; rec = null; aim = null; fourthPending = false;
     pendingSim = null; kickoffNext = false; kickoffPlay = false; patNext = false; patMode = null; game.kickPending = null;
-    startSim(pf.yd, pf.lines, pf.keep ? (mine ? 'BLUE' : 'RED') : (mine ? 'RED' : 'BLUE')); sim.timer = 0;   // (an onside kick recovered: the kicking side keeps it)
+    startSim(pf.yd, pf.lines, pf.keep ? (mine ? 'BLUE' : 'RED') : (mine ? 'RED' : 'BLUE')); sim.timer = 0; simFastCut();   // (an onside kick recovered: the kicking side keeps it)
     return;
   }
   if (aiOff()) { const yd0 = Math.round(los / YL); flipSides(); rec = null; pendingSim = { startYd: yd0 }; }   // (on defense: their drive in progress is simmed first)
@@ -2937,7 +2937,7 @@ function simAhead(id) {
   simGame = true;
   if (id === 'offdrive') simStop = true;   // next drive: sim on until the ball's yours again (the same hand-back as STOP SIM)
   paused = false; rec = null; aim = null; fourthPending = false;
-  if (state === 'sim' && sim) { sim.timer = 0; sim.readyAt = 0; return; }   // already in the box: just speed it up
+  if (state === 'sim' && sim) { sim.timer = 0; sim.readyAt = 0; simFastCut(); return; }   // already in the box: just speed it up
   // otherwise start from where things stand: Red's drive if it's up, else Blue's ball from the current spot
   let team = 'BLUE', yd = Math.round(Math.max(1, Math.min(99, (state === 'pre' ? los : nextLos) / YL))), preface = [];
   if (pendingSim && pendingSim.how === 'kickoff') { const k = kickoffPreface('BLUE', true); yd = k.yd; preface = k.lines; team = k.keep ? 'BLUE' : 'RED'; pendingSim = null; }   // (after a score: red takes the kickoff back)
@@ -2951,7 +2951,8 @@ function simAhead(id) {
   }
   game.kickPending = null;
   startSim(yd, preface, team);
-  sim.timer = 0;
+  if (sim) sim.timer = 0;
+  simFastCut();
 }
 // the fast-forward has reached its quarter break: hand the ball back (or carry on with the simmed game)
 function endSimFast(team, yd, preface) {
@@ -2961,9 +2962,29 @@ function endSimFast(team, yd, preface) {
   const where = f.endQ === 2 ? 'HALFTIME' : `END OF Q${f.endQ}`;
   showBanner(where, '#ffffff', '#1b2a3a');
   if (simGame) return startSim(yd, preface, team);
-  if (team === 'RED') return startSim(yd, preface, 'RED');   // their drive plays out in the box as usual
+  if (team === 'RED' && twoP && !SETTINGS.simDefense) twoP.simD = false;   // (playable defense: their drive is played, never a stale sim flag's box)
+  if (team === 'RED') return startSim(yd, preface, 'RED');   // their drive plays out in the box as usual (live when you play defense)
   nextLos = yd * YL; nextDown = 1; nextLtg = Math.min(FIELD, nextLos + 10 * YL);
   reset();
+}
+// a fast-forward to a quarter break (not the half / the end) whose drive runs past that break: cut it at the first snap of the next
+// quarter (its checkpoint) and hand over there: your ball = you play it; theirs = live defense (SIM DEFENSE off) or the box as before
+function simFastCut() {
+  const f = simFast;
+  if (!f || f.keep || simStop || !sim || !sim.cps || f.endQ === 2 || f.endQ >= 4) return false;
+  if (sim.team === 'RED' && (SETTINGS.simDefense || !twoP)) return false;   // (their drive stays in the box)
+  const cp = sim.cps.find(c => c.q > f.endQ);
+  if (!cp) return false;
+  const team = sim.team;
+  simFast = null; simGame = false; sim = null; game.pendingQuarter = false;
+  while (game.quarter < cp.q) nextPeriod();
+  game.secs = Math.max(1, Math.round(cp.clk));
+  showBanner(`END OF Q${f.endQ}`, '#ffffff', '#1b2a3a');
+  const pos = Math.max(1, Math.min(99, cp.pos));
+  if (team === 'RED') { twoP.simD = false; twoPlayerBall(pos, []); if (state !== 'pre') return true; }
+  nextLos = pos * YL; nextDown = cp.down; nextLtg = Math.min(FIELD, nextLos + cp.togo * YL);
+  reset();
+  return true;
 }
 // STOP SIM (under the sim box while simulating): the current drive plays out fast, then you take over
 // from wherever things stand (Red's drive, if it's theirs next, plays out in the box as usual)
@@ -3118,6 +3139,7 @@ function simAdvance() {
     } else if (simFast && !simStop && game.quarter > simFast.endQ) return endSimFast(team, yd, preface);   // (the quarter turned mid-drive)
     if (simStop) return stopSimNow(team, yd, preface);
     startSim(yd, preface, team);
+    simFastCut();   // (this drive runs past the quarter break you simmed to: stop at its first snap after it)
     return;
   }
   if (!sim.applied) {
@@ -3347,6 +3369,7 @@ const SIM_BOX_BTNS = [{ id: 'offdrive', label: 'NEXT OFF DRIVE', w: 160, h: 48 }
 
 function proceed() {
   if (game.fastRunoff) return;   // the clock is spinning down: the next play comes when it's done
+  if (state === 'kickoff') return;   // (a kickoff is lined up / in the air: a stray continue must not fall through to their drive and skip it)
   if (REV || revWait) return;   // (v0.68: a booth review / challenge is on: the next play waits for its stamp)
   if (game.penQ) return;   // (v0.68: a flag waiting for its accept / decline)
   if (SL.xt && SL.cast && !(ONL.on && ONL.guest)) slExitFinish();   // (click to continue during an injury exit: everyone of it is at his end spot at once, the cart away; through slEvent, p.slOut stays)
@@ -3397,7 +3420,7 @@ function proceed() {
     camJump = true;   // (the try starts on its own shot: no long pan from the replay / touchdown hold)
     if (twoP && twoP.ai && twoP.flipped && !tut) {   // their try is decided before they line up: the goal-line unit, or their kicker (no choose menu)
       if (aiGoTwo()) { patMode = 'two'; fourthPending = false; }
-      else { patMode = 'kick'; fourthPending = false; los = 85 * YL; startFieldGoal(prevAt); }   // (the kicking unit runs on from where the touchdown play ended)
+      else { patMode = 'kick'; fourthPending = false; los = 85 * YL; startFieldGoal(null, true); }   // (the kicking unit runs on from where the touchdown play ended)
     } else if (!tut && !aiOff() && !(twoP && twoP.ai)) { /* (your try: the same kick / go-for-two choice as a 4th down; reset() raised it with patMode 'choose') */ }
     return;
   }
@@ -3419,7 +3442,7 @@ function proceed() {
   const prevAt = unitSnapshot();
   reset();
   // their 4th down / late field goal is decided before the unit lines up: the kicking team runs on straight from where the last play ended
-  if (fourthPending && aiOff() && !tut && patMode === null && !game.over && state === 'pre') aiDecide(prevAt);
+  if (fourthPending && aiOff() && !tut && patMode === null && !game.over && state === 'pre') aiDecide('set');
 }
 const unitSnapshot = () => [qb, rb, ...ols, ...recs, ...dl, ...back7].map(p => ({ p, x: p.x, y: p.y }));
 
@@ -4905,9 +4928,13 @@ function draw() {
   DRAW_ORDER.length = 0; if (!tossing()) { const ap = allPlayers(); for (let i = 0; i < ap.length; i++) DRAW_ORDER.push(ap[i]); }   // (its own list: allPlayers' array is shared, never sorted in place)
   DRAW_ORDER.sort(byDrawY);
   plLod = plLodNow(); plGame = true;   // (small on screen: the tiniest details are skipped, see PLAYER_LOD; off again right after the loop. plGame: see DOODLE_PL)
+  const gpY = goalPostBaseY(), gpF = Math.abs(POST_X - camX) < cullX, gpN = Math.abs(-ENDZONE - camX) < cullX;
+  let gpDone = !gpF && !gpN;
+  const gpBase = () => { gpDone = true; if (gpF) drawGoalPost(POST_X, 1, 'base'); if (gpN) drawGoalPost(-ENDZONE, -1, 'base'); };   // (the posts' pads + goosenecks, in y order with the players)
   for (const p of DRAW_ORDER) {
     if (Math.abs(p.x - camX) > cullX && p !== holder) continue;
     if (SL.exN) slExUpTo(p.y);
+    if (!gpDone && p.y + FOOT > gpY) gpBase();
     if (p.slOut) {   // (hurt and leaving the field: the sideline people's copy of him is the one drawn; with those off he just fades out)
       const al = p.slFade ? 1 - (performance.now() - p.slFade) / (INJURY_EXIT.fade * 1000) : 0;
       if (al > 0) { ctx.globalAlpha = al; drawPlayer(p); ctx.globalAlpha = 1; }
@@ -4919,6 +4946,7 @@ function draw() {
     if (p === holder && !ballDrawn && ball.z < 20 * S) { drawBall(); ballDrawn = true; }
   }
   plLod = false; plGame = false;
+  if (!gpDone) gpBase();
   if (!ballDrawn) drawBall();
   if (pt) pt = perfMark('d.players', pt);
   if (SL.exN) slExUpTo(1e9);
@@ -4929,7 +4957,7 @@ function draw() {
   if (Math.abs(-ENDZONE - camX) < cullX) drawGoalPostTop(-ENDZONE, -1);
   if (COLLIDE.show) drawHitboxes();
   drawImpacts();
-  const cine = cinemaOn() || reelOn() || coldHud();   // (CINEMATIC highlights and the halftime / end-of-game reel: nothing drawn over the field or the players)
+  const cine = cinemaOn() || reelOn() || coldHud() || pclipOn();   // (CINEMATIC highlights and the halftime / end-of-game reel: nothing drawn over the field or the players)
   if ((state === 'pre' || (rec && rec.replaying)) && !tossing() && tipHeld('names') && (!cine || (reelOn() && hlFront()))) drawNameTags();   // (v0.62: a held names tip shows them over a reel too)   // (Y hides / shows them in a replay too)
   if (!tossing() && !cine) drawStarMarks();
   if (!cine) drawPopups();
@@ -4942,6 +4970,7 @@ function draw() {
   dmHold = Math.max(0, dmHold - 1);
   if (CAM.debug) camDebugDraw();   // (dev only: the camera's safe zone / must-fit box / centres / zooms)
   if (coldHud()) return;   // (the cold open's dream: the field and nothing else)
+  if (pclipOn()) { ctx.fillStyle = '#16211a'; ctx.fillRect(0, 0, W, TOP_BAR); return; }   // (v0.71 the penalty clip: the play and nothing else, like a reel)
   if (reelOn()) { ctx.fillStyle = '#16211a'; ctx.fillRect(0, 0, W, TOP_BAR); if (hlFront()) { drawPauseIcons(); drawNamesTip(); } return; }   // (v0.62: the exit door + the names tip sit in the top bar strip, nothing over the play; v0.68: the halftime reel's announcers are drawn after this, in drawHsClipUI)   // (a reel: the play and nothing else. No scoreboard, buttons, down and distance or text)
   if (rec && rec.replaying && !rec.intro && !rec.rewind && !(hl && hl.mode === 'half') && !cine && !revOn()) {   // (v0.68 none in a booth review) (the badge waits for the rewind to finish; none on the halftime reel): a torn red paper scrap, and SAVE beside it
     ctx.save();
@@ -5104,7 +5133,9 @@ function draw() {
       paperCard(b, IN_GAME_PAPER.green, () => {
         ctx.fillStyle = '#ffe680'; ctx.globalAlpha = a * 0.85; ctx.fillRect(W / 2 - 40, y - 9, 80, 18); ctx.globalAlpha = a;   // (a strip of tape holding it up)
         ctx.fillStyle = '#fffdf4'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.font = 'bold 26px monospace'; ctx.fillText(`GOAL COMPLETE!  +${goalToast.cr} ¤`, W / 2, y + 28);
+        ctx.font = 'bold 26px monospace';
+        if (goalToast.xp > 0) { const s = `GOAL COMPLETE!  +${goalToast.cr} ¤  +${Math.round(goalToast.xp)}`, w = ctx.measureText(s).width; ctx.fillText(s, W / 2 - 12, y + 28); xpIcon(W / 2 - 12 + w / 2 + 16, y + 27, 10); }   // (+ the bank XP it paid, with the XP token)
+        else ctx.fillText(`GOAL COMPLETE!  +${goalToast.cr} ¤`, W / 2, y + 28);
         ctx.font = 'bold 17px monospace'; ctx.fillText(goalToast.text, W / 2, y + 56, b.w - 20);
       });
       ctx.restore();
@@ -5399,3 +5430,6 @@ function runHelpKeys(s) {
     .replace(/\bV (dive|slide)/, `${k('dive')} $1`).replace('R spin', `${k('spin')} spin`).replace('hold Q stiff arm', `hold ${k('stiff')} stiff arm`)
     .replace('hold C truck', `hold ${k('truck')} truck`).replace('hold G protect', `hold ${k('protect')} protect`);
 }
+
+// --- officials set at kicks (v0.70): kicks don't go through reset(), so the officials are put on their kick spots when a kick is set up
+for (const n of ['startKickoff', 'startMyKickoff', 'startMyPunt', 'startFieldGoal']) { const f = window[n]; if (typeof f === 'function') window[n] = function (...a) { const r = f.apply(this, a); if (SL.cast && SL.on) { slSetAll(); refPlace(); slCamSet(); } return r; }; }

@@ -2097,7 +2097,7 @@ function flagRoute() {
 // v0.70 a foul's look (looks only). Plain per-frame props, taped and sent like refToss: p.penK kind (1 holding: beaten, arms still reaching for him, 2 DPI arm bar, 3 OPI push-off,
 // 4 roughing shove, 5 a jump early / into his man, 6 an early tackle on a route, 7 a jersey grab on a route; his man: 8 held (ripping an arm free), 9 shoved / grabbed (arms flung out)),
 // p.penS severity 0-1 (how big the look is), p.penL s left of p.penD, p.penDx / penDy = world offset to his man (kept up to date by penLookTick from PEN_V, never stored on him)
-function penTape(x, y) { if (rec && !rec.replaying) { rec.big = true; (rec.flags || (rec.flags = [])).push({ x, y, t: rec.t || 0 }); } }   // v0.70 a flagged play is a BIG PLAY: its replay pushes in on each foul (flagCam, 02)
+function penTape(x, y) { if (rec && !rec.replaying) { rec.flagBig = true; (rec.flags || (rec.flags = [])).push({ x, y, t: rec.t || 0 }); } }   // v0.70 a flagged play is a BIG PLAY: its replay pushes in on each foul (flagCam, 02)
 const PEN_LK = { pphold: 1, hold: 1, dpi: 2, opi: 3, rough: 4, false: 5, offside: 5, encroach: 5, tackle: 6, grab: 7 }, PEN_VK = { pphold: 8, hold: 8, opi: 9, encroach: 9, tackle: 9, dpi: 9 }, PEN_V = new Map();
 function penLook(p, kind, v, s = 0.6) {
   if (!p || !REF.look.on || !PEN_LK[kind]) return;
@@ -2313,6 +2313,8 @@ function penAsk(text, next, kind, pen) {   // (endPlay) park a live-ball foul; f
 function penTick() {   // (update, while game.penQ) the call, then the choice
   const q = game.penQ; if (!q || state !== 'done' || game.penPick) return;
   const C = REF.choose, e = (performance.now() - q.t0) / 1000;
+  if (q.ph === 'call' && e >= C.callS && pclipStart()) { q.ph = 'clip'; return; }   // (v0.71 the foul's own clip first)
+  if (q.ph === 'clip') { if (PCLIP || (rec && rec.replaying)) return; q.ph = 'call'; q.t0 = performance.now() - C.callS * 1000; }
   if (q.ph === 'call' && e >= C.callS) { q.ph = 'pick'; q.tp = performance.now(); const w = q.who || penWho(q.pen); msg = 'FLAG: ' + w.name + (w.on ? ' on ' + w.on : '') + (q.mine === 'card' ? '  -  accept or decline?' : ''); }
   if (q.ph === 'pick' && q.mine !== 'card' && (performance.now() - q.tp) / 1000 >= C.cpuS) penResolve(q.rec);
 }
@@ -2359,6 +2361,36 @@ function penClick(pt) {   // (pointerdown while game.penQ) true = used
   const R = penRects(), inR = r => pt.x >= r.x && pt.x <= r.x + r.w && pt.y >= r.y && pt.y <= r.y + r.h;
   if (inR(R.acc)) penResolve('accept'); else if (inR(R.dec)) penResolve('decline');
   return true;
+}
+// v0.71 penalty clip: after the referee's call, before the choice, the tape plays only the foul (REF.flagCam.lead s before each rec.flags[i].t to REF.clip.hold s
+// after it, camera on the flag's spot). Plays itself like the booth's tape (no scrub / pan / slow motion / save), nothing drawn over it (draw()), a click / tap / key
+// skips it. rec.clipShown: the regular replay afterwards skips flagCam, and a flag alone no longer makes it a big play (replayWanted). Off with replays NONE / online.
+let PCLIP = null;   // { fl (flags by time), i, rt (its own clock), msg, end }
+const pclipOn = () => !!(PCLIP && rec && rec.replaying);
+function pclipStart() {
+  const q = game && game.penQ; if (!q || q.clipped) return false;
+  q.clipped = true;
+  if (SETTINGS.replays === 'NONE' || ONL.on || tut || !rec || rec.replaying || !rec.frames || rec.frames.length < 2 || !rec.flags || !rec.flags.length) return false;
+  const fl = rec.flags.slice().sort((a, b) => a.t - b.t);
+  PCLIP = { fl, i: 0, rt: Math.max(rec.frames[0].t, fl[0].t - REF.flagCam.lead), msg: msg };
+  startReplay(); rec.fromClick = true; rec.intro = null; rec.rewind = null; rec.rt = PCLIP.rt; rec.idx = 0;
+  return true;
+}
+function pclipTape(dt, fr) {   // (stepReplay while pclipOn) the clip's clock
+  const P = PCLIP, f = P.fl[P.i], t0 = fr[0].t, endT = fr[fr.length - 1].t;
+  P.rt += dt;
+  if (P.rt >= Math.min(endT, f.t) + REF.clip.hold) {
+    if (P.i + 1 < P.fl.length) { P.i++; P.rt = Math.max(t0, P.fl[P.i].t - REF.flagCam.lead); if (typeof reelSnap === 'function' && hl) hl.fx = { t0: performance.now(), snap: reelSnap() }; }
+    else P.end = true;
+  }
+  return Math.max(t0, Math.min(endT, P.rt));
+}
+function pclipEnd() {   // (replayTick once it ran out, or a skip) back to the dead ball: the card comes next (penTick)
+  const P = PCLIP; if (!P) return;
+  PCLIP = null;
+  if (rec && rec.replaying) endReplay();
+  if (rec) { rec.played = false; rec.clipShown = true; rec.fromClick = false; }
+  msg = P.msg; pressAt = 0;
 }
 function penKey(code) {   // (keydown while game.penQ) arrows / A D pick a side, Enter / Space takes it; true = used
   const q = game && game.penQ; if (!q) return false;

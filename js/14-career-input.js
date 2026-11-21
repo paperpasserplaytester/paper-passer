@@ -1431,7 +1431,7 @@ canvas.addEventListener('pointerdown', e => {
     callTimeout();
     return;
   }
-  if (revOn()) return;   // (v0.68 a booth review: hands off, it plays itself)
+  if (revOn() || pclipOn()) return;   // (v0.68 a booth review: hands off, it plays itself; v0.71 the penalty clip too)
   if (e.button === 2 && rec && rec.replaying) {
     // right drag pans the replay camera (left: a tap skips, a hold slows it down)
     const p = pointerPos(e);
@@ -1570,6 +1570,7 @@ canvas.addEventListener('pointerup', e => {
   if (!(e.buttons & 2)) replayDrag = null;
   if (e.button === 2) { replayDrag = null; return; }   // (end of a replay pan)
   if (e.button !== 0) return;
+  if (pclipOn()) { replayLeft = null; pclipEnd(); return; }   // (v0.71 a click skips the penalty clip, and only it)
   if (revOn()) { pressAt = 0; replayLeft = null; return; }   // (v0.68 a booth review can't be skipped)
   if (rec && rec.replaying && !(hl && hl.bg)) {
     if (rec.hl) {   // a highlight loops until you move on: a quick left click goes to the next one (a hold is slow motion, a drag looks around)
@@ -1631,7 +1632,7 @@ canvas.addEventListener('wheel', e => {
     return;
   }
   const k = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-  if (revOn()) return;   // (v0.68 a booth review: no zoom)
+  if (revOn() || pclipOn()) return;   // (v0.68 a booth review: no zoom; v0.71 nor the penalty clip)
   if (rec && rec.replaying && !(hl && hl.bg)) { replayZoomT =Math.max(0.7, Math.min(4, replayZoomT * k)); return; }   // replays: in or out freely
   // live: only before the snap, and never out past the default; the snap puts it back to default
   if (state !== 'pre') return;
@@ -1717,6 +1718,7 @@ function onKeyDown(e) {
   if (settingsOpen) { if (diffUI) { diffKey(e); return; } if (e.code === 'Escape') { e.preventDefault(); if (dbgUI) dbgUI = false; else if (spdUI) spdUI = false; else if (htUI) htUI = false; else if (setCat) { setCat = null; rebinding = null; } else settingsOpen = false; } return; }
   if (injuryShowing() && !paused && e.code !== 'Escape') return;   // (answer the injury timeout first)
   if (state === 'done' && game && game.penQ && !paused && e.code !== 'Escape' && !(rec && rec.replaying)) { e.preventDefault(); if (!e.repeat) penKey(e.code); return; }   // (v0.68 the flag's accept / decline card)
+  if (pclipOn()) { e.preventDefault(); if (!e.repeat) pclipEnd(); return; }   // (v0.71 any key / Esc skips the penalty clip)
   if (revOn() && e.code !== 'Escape') { e.preventDefault(); return; }   // (v0.68 a booth review plays itself: no scrub, skip, save or finish)
   if (HT && !hl) { if (e.code === 'Escape' || e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); if (!e.repeat) { if (e.code === 'Escape') HSK.at = performance.now(); else hsNext(); } } return; }   // (a halftime card: Enter / Space next segment, HOLD Esc skips the show)
   if (hl && hl.mode === 'half' && !hl.bg) {   // a halftime clip: Enter next clip, Backspace previous clip, Esc skips the show, Space pauses
@@ -1827,14 +1829,15 @@ document.addEventListener('visibilitychange', () => {
     silenceLoops();
     try { for (const k in sfxPlaying) sfxPlaying[k].pause(); if (crowdAmb) crowdAmb.forEach(a => a.pause()); if (actx) actx.suspend(); } catch (e) {}
     if (!results && !game.over && !(ONL.on && !TOUCH)) { paused = true; aim = null; for (const k in keys) keys[k] = false; }   // (an online game on a laptop keeps running off the tab: see the background ticker)
-  } else { try { if (actx) actx.resume(); } catch (e) {} }
+  } else { try { if (actx && !hushed) actx.resume(); } catch (e) {} }   // (back on the tab with the pause sheet up: stays quiet until unpaused)
 });   // (switching tabs pauses a game in progress)
 
 let last = performance.now(), stepAcc = 0;
 const STEP_MIN = 1 / 65;   // shortest game step (s); frames that come sooner wait and add up
 function replayTick(dt) {   // one frame of a replay or highlight
+  if (PCLIP && PCLIP.end) { pclipEnd(); return; }   // (v0.71 the penalty clip ran out)
   // A = forward in time (fast), D = back; the arrow keys move the camera around (like a right-drag)
-  const reel = reelOn() || revOn();   // (v0.68 a booth review too) (a reel plays straight through: no scrubbing or looking around, and a key still held from the game can't stall it)
+  const reel = reelOn() || revOn() || pclipOn();   // (v0.68 a booth review too) (a reel plays straight through: no scrubbing or looking around, and a key still held from the game can't stall it)
   const scrub = reel ? 0 : keys.KeyA ? REPLAY_FAST : keys.KeyD ? -REPLAY_FAST : touchScrub * REPLAY_FAST;   // (touch: swipe left and hold = fast forward, right = rewind)
   const ax = reel ? 0 : (keys.ArrowRight ? 1 : 0) - (keys.ArrowLeft ? 1 : 0), ay = reel ? 0 : (keys.ArrowDown ? 1 : 0) - (keys.ArrowUp ? 1 : 0);
   if ((ax || ay) && rec.camBase) {
@@ -1957,13 +1960,15 @@ function perfSpike(gap) {   // frame(), first thing: was the frame before a spik
     const work = P.fu + P.fd;
     if (work > PERF_HUD.spikeMs || gap > PERF_HUD.spikeGap) {
       const parts = Object.keys(P.fp).map(k => [k, P.fp[k]]).sort((a, b) => b[1] - a[1]).slice(0, PERF_HUD.parts).filter(a => a[1] >= 1);
-      P.spikes.push({ ms: work, gap, u: P.fu, d: P.fd, parts, st: results ? 'menu:' + results.screen : state + (rec && rec.replaying ? '/replay' : '') + (hl ? '/hl' : ''), tags: PERF_TAGS.slice(), t: Math.round(PERF_NOW() / 100) / 10 });
+      const out = Object.keys(PERF_OUT).map(k => [k, PERF_OUT[k]]).sort((a, b) => b[1] - a[1]).slice(0, 2).filter(a => a[1] >= PERF_BLK.outMin);
+      P.spikes.push({ ms: work, gap, u: P.fu, d: P.fd, parts, blk: perfBlk.on ? perfBlk.max : -1, out, st: results ? 'menu:' + results.screen : state + (rec && rec.replaying ? '/replay' : '') + (hl ? '/hl' : ''), tags: PERF_TAGS.slice(), t: Math.round(PERF_NOW() / 100) / 10 });
       if (P.spikes.length > PERF_HUD.keep) P.spikes.shift();
     }
   }
   P.fu = P.fd = 0; P.fp = {}; PERF_TAGS.length = 0;
+  for (const k in PERF_OUT) delete PERF_OUT[k]; perfBlk.max = 0; if (SETTINGS.perfHud) perfBeatOn();   // (v0.70 blocked-time probe, 01)
 }
-const perfLine = s => `${s.ms.toFixed(0)}ms (gap ${s.gap.toFixed(0)}, upd ${s.u.toFixed(0)}) ${s.st}${s.tags.length ? ' [' + s.tags.join(',') + ']' : ''}${s.parts.length ? '  ' + s.parts.map(([k, v]) => k + ' ' + v.toFixed(0)).join(' ') : ''}`;
+const perfLine = s => `${s.ms.toFixed(0)}ms (gap ${s.gap.toFixed(0)}, upd ${s.u.toFixed(0)}${s.blk >= 0 ? ', blocked ' + s.blk.toFixed(0) : ''})${s.out && s.out.length ? ' out: ' + s.out.map(([k, v]) => k + ' ' + v.toFixed(1)).join(', ') : ''} ${s.st}${s.tags.length ? ' [' + s.tags.join(',') + ']' : ''}${s.parts.length ? '  ' + s.parts.map(([k, v]) => k + ' ' + v.toFixed(0)).join(' ') : ''}`;
 function perfCopy() {   // the spike ring as text, onto the clipboard (pointerup: phones only allow it from a finger's release)
   const P = perfS, txt = `Paper Passer spikes  ${gfxMode()} L${liteLevel()}  ${canvas.width}x${canvas.height} x${RK.toFixed(2)}  ${phoneTestTxt()}  ${navigator.userAgent}\n` + (P.l1 ? P.l1 + '\n' + P.l2 + '\n' + P.l3 + '\n' : '') + P.spikes.map(s => `t${s.t}s  ` + perfLine(s)).join('\n');
   let ok = false;
@@ -2198,13 +2203,19 @@ function hushCheck(quiet) {
   if (quiet === hushed) return;
   hushed = quiet;
   const els = [...Object.values(sfxPlaying), ...(crowdAmb || []), wxRainEl, ...stepEls];
-  for (const el of els) {
-    if (!el || !el.pause) continue;
-    if (quiet) { if (!el.paused) { el._hushed = true; el.pause(); } }
-    else if (el._hushed) { el._hushed = false; el.play().catch(() => {}); }
+  // (v0.70 fix: decoded-buffer one-shots have pause() but no play(): they are faded out and never restarted. The context is suspended only
+  // once their fade has run (suspending mid-fade froze the tails and let them burst out on resume, iOS), and resumed BEFORE any element plays)
+  if (quiet) {
+    for (const el of els) if (el && el.pause && !el.paused) { if (typeof el.play === 'function') el._hushed = true; try { el.pause(); } catch (err) {} }
+    const T = HUSH.suspendMs;
+    setTimeout(() => { try { if (hushed && actx && actx.state === 'running') actx.suspend(); } catch (err) {} }, T);
+    return;
   }
-  try { if (actx) { if (quiet) { if (actx.state === 'running') actx.suspend(); } else if (actx.state === 'suspended') actx.resume(); } } catch (err) {}
+  const replay = () => { if (hushed) return; for (const el of els) if (el && el._hushed) { el._hushed = false; try { const r = el.play(); if (r && r.catch) r.catch(() => {}); } catch (err) {} } };
+  try { if (actx && actx.state === 'suspended') { const r = actx.resume(); if (r && r.then) { r.then(replay, replay); return; } } } catch (err) {}
+  replay();
 }
+const HUSH = { suspendMs: 90 };   // ms after a pause before the audio context is suspended (lets the one-shots' fade-out finish first)
 let lastPaint = 0, paintAvg = 0, fitWant = false, fitForce = false;
 // v0.62 the phone frame cap (FPS_CAP): lock = 30 for the rest of this game (AUTO), over = s the frames have been slow, gap = real ms between the last two paints
 const fpsCap = { lock: false, over: 0, gap: 16.7, lastAt: 0 };

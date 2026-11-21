@@ -2189,6 +2189,7 @@ const ONL_NET = {
   kmHold: 1.5,         // s: after the guest taps a kick meter it stays on the tapped value until the host's phase change lands (or this long)
   castKeep: 0.6,       // a line-up change where at least this share of the new list was already on the field goes as a partial cast (only the new men whole)
   hz: 20, hzFast: 30,   // snapshots a second, host -> guest (hzFast: while a kick meter or the aiming reticle is up)
+  pressSnap: true, pressMin: 12,   // v0.70: a guest press / release sends the next snapshot at once (after the host's frame acted on it) instead of waiting for the hz tick; pressMin = ms since the last snapshot it needs (no flood from key repeats)
   hzSlow: 10,           // ... while the link is backed up
   slowMs: 1500,         // ms the slow rate holds after a backed-up tick
   // the guest's playback clock (ONL.pt, see onlGuestStep): it stays the travel time + a margin behind the host, the margin = 1.6 snapshot gaps + 2.5 x the jitter,
@@ -2436,8 +2437,11 @@ function onlHostTick() {
   try { const dc = NET.conn && NET.conn.dataChannel, fc = NET.fast; backed = !!((dc && dc.bufferedAmount > ONL_BACKLOG) || (fc && fc.bufferedAmount > ONL_BACKLOG)); } catch (e) {}
   if (backed) ONL.slowUntil = now + ONL_NET.slowMs;
   const gap = 1000 / (onlKickerSets() || aim || onlRunLive() ? ONL_NET.hzFast : now < (ONL.slowUntil || 0) ? ONL_NET.hzSlow : ONL_NET.hz);   // (a kick meter / aim in progress: faster, so it stays smooth)
-  if (now - ONL.snapAt < gap - 2) return;
-  { const fr = prevTick ? Math.min(gap, now - prevTick) : 1000 / 60, left = now - (ONL.snapAt + gap);   // (the leftover carries only while it is under one of the host's frames:
+  const press = ONL.pressNow && now - ONL.snapAt >= ONL_NET.pressMin;   // (a guest press since the last snapshot: this frame already acted on it, send now)
+  if (now - ONL.snapAt < gap - 2 && !press) return;
+  ONL.pressNow = false;
+  if (press && now - ONL.snapAt < gap - 2) ONL.snapAt = now;   // (early: the hz clock restarts from here)
+  else { const fr = prevTick ? Math.min(gap, now - prevTick) : 1000 / 60, left = now - (ONL.snapAt + gap);   // (the leftover carries only while it is under one of the host's frames:
     ONL.snapAt = left < fr ? ONL.snapAt + gap : now; }                                                           //  a late send is no longer followed at once by another, a burst)
   if (backed) return;
   const ps = allPlayers(), key = ps.map(p => p.__id || (p.__id = ++ONL.nid)).join(',');
@@ -2857,6 +2861,7 @@ function onlHandleInput(m) {
   if (m.k === 'kd' || m.k === 'pd') ONL.inputAt.guest = performance.now();   // (AFK: the guest is there)
   if ((m.k === 'kd' || m.k === 'pd') && m.l != null) ONL.gLag = Math.max(0, Math.min(ONL_NET.lagMax, +m.l || 0));   // (how late the guest's picture was when he pressed: lag compensation)
   if (m.k === 'st') { ONL.gStat = { ...m, at: performance.now() }; return; }   // (the guest's readout numbers, shown on the host's FRAME TIMES)
+  if (ONL_NET.pressSnap && (m.k === 'kd' || m.k === 'ku' || m.k === 'pd' || m.k === 'pu')) ONL.pressNow = true;   // (onlHostTick: the next snapshot goes at once)
   if (m.k === 'kd' || m.k === 'ku') onlGuestKey(m.c, m.k === 'kd');
   else if (m.k === 'cm') { if (!results) { const r = layRect(canvas); touchLong = false; canvas.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 10, clientY: r.top + 10 })); } }
   else if (m.k === 'cl') { for (const c of Object.keys(ONL.hold)) onlGuestKey(c, false); }

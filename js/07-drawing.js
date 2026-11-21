@@ -486,7 +486,7 @@ function drawFieldLogo(cx, cy, r) {
 
 // The goal post: a long yellow pole with joints (the crossbar and uprights read as one upright line from
 // this angle), a curved gooseneck, and a padded base on the field side of it. Drawn with a shadow.
-function drawGoalPost(px = POST_X, s = 1) {   // (one stands at the back of each end zone: s = 1 at the far one, -1 at the near one)
+function drawGoalPost(px = POST_X, s = 1, part = 'all') {   // (one stands at the back of each end zone: s = 1 at the far one, -1 at the near one)   // part: 'shadow' = the turf shadow (drawFieldRest), 'base' = pad + gooseneck (draw()'s y-sorted player loop, goalPostBaseY)
   const y0 = MID - GOAL_HALF, y1 = MID + GOAL_HALF;   // right on the end line, centered across the field
   const pole = (ox, oy, outline, fill, w) => {
     ctx.lineCap = 'round';
@@ -496,10 +496,11 @@ function drawGoalPost(px = POST_X, s = 1) {   // (one stands at the back of each
     ctx.beginPath(); ctx.moveTo(px + ox, y0 + oy); ctx.lineTo(px + ox, y1 + oy); ctx.stroke();
   };
   // shadow
-  ctx.save();
+  if (part !== 'base') { ctx.save();
   ctx.globalAlpha = 0.22;
   pole(0.45 * YL * s, 0.2 * YD, '#000', '#000', 8);
-  ctx.restore();
+  ctx.restore(); }
+  if (part === 'shadow') return;
   // padded base behind the end line, with the gooseneck curving up to the pole
   const sq = celebPadSquish(px), bw0 = POST_PAD.deep * YL, bw = bw0 * (1 - CELEB.post.squish * sq), bh = POST_PAD.wide * YD * (1 + 0.4 * CELEB.post.squish * sq);   // (sq: a man hugging it squashes the side he hit and bulges it)
   const bx = s > 0 ? px + POST_PAD.back * YL + (bw0 - bw) : px - POST_PAD.back * YL - bw0, by = MID + POST_PAD.y * YD - (bh - POST_PAD.wide * YD) / 2;   // (POST_PAD: the same box players bump into)
@@ -517,6 +518,8 @@ function drawGoalPost(px = POST_X, s = 1) {   // (one stands at the back of each
   ctx.strokeStyle = '#6d6d12'; ctx.lineWidth = 15; neck(); ctx.stroke();
   ctx.strokeStyle = '#e6e83c'; ctx.lineWidth = 9; neck(); ctx.stroke();
 }
+// the pad's front edge (world y): draw() slots the pad + gooseneck in among the players there, so a man nearer the camera covers it and one behind is covered
+const goalPostBaseY = () => MID + POST_PAD.y * YD + POST_PAD.wide * YD;
 // the pole and uprights are drawn after the players (drawGoalPostTop, from the world draw) so a man running under the post passes behind them
 function drawGoalPostTop(px = POST_X, s = 1) {
   const wob = postShakeAt(px), tip = wob * CELEB.post.tip;   // (a goalpost celebration: the crossbar shakes, the uprights' tops whip further)
@@ -880,6 +883,7 @@ function slWhere(P, w, h, t) {   // where he is at time t (home / walk / hit off
         SL_P.md = m; SL_P.lt = t - ta; SL_P.lq = q;
         if (fa) f = fa; else if (dx > 1) f = 1; else if (dx < -1) f = -1;
         if (m >= 1 && m <= 4 || m === 11) SL_P.wd = dist + Math.hypot(dx, dy) * q;
+        if (tb > ta) SL_P.gv = Math.hypot(dx, dy) / (tb - ta) / YD;   // (v0.71 his speed on this leg, yd/s: the players' stride cycle reads it)
         if (m >= 6 && m !== 9 && m !== 10 && m !== 11) { const ck = SIDELINE.cartK * S * FIGURE.grow, E = INJURY_EXIT; SL_P.up = m === 6 ? E.seatH * ck : m === 7 ? E.bedH * ck - 5 * S * FIGURE.grow : m === 8 ? E.bedH * ck * slSmooth(q) : E.bedH * ck; }   // (on the cart: the driver's seat, sitting on the bed, being lifted onto it, lying on it)
       } else if (w.fe) f = w.fe;
     }
@@ -888,7 +892,7 @@ function slWhere(P, w, h, t) {   // where he is at time t (home / walk / hit off
     if (w.rt && t >= w.rt) { fx = w.tx; fy = w.ty; tx = w.fx; ty = w.fy; t0 = w.rt; back = true; }
     if (t >= t0 + w.T) { x = tx; y = ty; f = back ? w.fs : w.fe; dig = w.d1; }
     else if (t <= t0) { x = fx; y = fy; f = w.fs; dig = w.d0; }
-    else { const s = w.a0 !== undefined ? slTrap(t - t0, w) : w.ln ? (t - t0) / w.T : slSmooth((t - t0) / w.T); x = fx + (tx - fx) * s; y = fy + (ty - fy) * s; SL_P.wd = s * w.L; if (w.ff) f = w.ff; else if (tx - fx > 1) f = 1; else if (tx - fx < -1) f = -1; dig = back ? w.d1 : w.d0; }   // (ln = steady pace: an official re-aimed mid-run; ff = keeps facing that way: a backpedal)
+    else { const s = w.a0 !== undefined ? slTrap(t - t0, w) : w.ln ? (t - t0) / w.T : slSmooth((t - t0) / w.T); x = fx + (tx - fx) * s; y = fy + (ty - fy) * s; SL_P.wd = s * w.L; if (w.a0 === undefined && w.T > 0) { const q = (t - t0) / w.T; SL_P.gv = (w.ln ? 1 : 6 * q * (1 - q)) * w.L / w.T / YD; } if (w.ff) f = w.ff; else if (tx - fx > 1) f = 1; else if (tx - fx < -1) f = -1; dig = back ? w.d1 : w.d0; }   // (ln = steady pace: an official re-aimed mid-run; ff = keeps facing that way: a backpedal)
   }
   if (h && t >= h.t0) {
     const ht = t - h.t0, k = h.k; let e = 0, len, wd = -1;
@@ -906,29 +910,31 @@ function slWhere(P, w, h, t) {   // where he is at time t (home / walk / hit off
   }
   SL_P.x = x; SL_P.y = y; SL_P.f = f; SL_P.dig = dig;
 }
-function slTrap(u, w) {   // (an official's walk, v0.70) share of the way covered u s in: speed ramps up over w.a0 s and down over w.a1 s, steady between (same arrival time); SL_P.gv = speed now, yd/s
-  const T = w.T, a0 = w.a0, a1 = w.a1, vm = 1 / (T - a0 / 2 - a1 / 2);
+function slTrap(u, w) {   // (an official's walk, v0.70) share of the way covered u s in: speed ramps from w.v0 (yd/s he already had, v0.71) up over w.a0 s and down over w.a1 s, steady between (same arrival time); SL_P.gv = speed now, yd/s
+  const T = w.T, a0 = w.a0, a1 = w.a1, v0 = (w.v0 || 0) * YD / (w.L || 1), vm = (1 - v0 * a0 / 2) / (T - a0 / 2 - a1 / 2);
   let s, v;
-  if (u < a0) { s = 0.5 * vm * u * u / a0; v = vm * u / a0; }
-  else if (u < T - a1) { s = vm * (u - a0 / 2); v = vm; }
+  if (u < a0) { s = v0 * u + 0.5 * (vm - v0) * u * u / a0; v = v0 + (vm - v0) * u / a0; }
+  else if (u < T - a1) { s = vm * (u - a0 / 2) + v0 * a0 / 2; v = vm; }
   else { const r = T - u; s = 1 - 0.5 * vm * r * r / (a1 || 1); v = a1 ? vm * r / a1 : vm; }
   SL_P.gv = v * w.L / YD; SL_P.gu = u;
   return s < 0 ? 0 : s > 1 ? 1 : s;
 }
-function slTrapV(u, w) { const T = w.T, a0 = w.a0, a1 = w.a1, vm = w.L / YD / (T - a0 / 2 - a1 / 2); return u < a0 ? vm * u / a0 : u < T - a1 ? vm : a1 ? vm * Math.max(0, T - u) / a1 : vm; }   // (yd/s u s into the walk)
-function slRefPh(w, u, G, back) {   // v0.70 stride cycles done u s into the walk = the integral of speed / stride length (stride grows with speed), so the feet never slide while he speeds up or slows down
+function slTrapV(u, w) { const T = w.T, a0 = w.a0, a1 = w.a1, v0 = w.v0 || 0, vm = (w.L / YD - v0 * a0 / 2) / (T - a0 / 2 - a1 / 2); return u < a0 ? v0 + (vm - v0) * u / a0 : u < T - a1 ? vm : a1 ? vm * Math.max(0, T - u) / a1 : vm; }   // (yd/s u s into the walk)
+const slRefBackT = w => w.ff && Math.sign(w.tx - w.fx) === -w.ff && Math.abs(w.tx - w.fx) > YD ? 1 : 0;   // (this leg is a backpedal)
+function slRefBack(w, u) { const b = slRefBackT(w); if (w.pb === undefined) return b; const e = Math.max(0, Math.min(1, u / REF.crew.gait.blend)); return w.pb + (b - w.pb) * e * e * (3 - 2 * e); }   // (v0.71 backpedal share, eased from the last leg's)
+function slRefPh(w, u, G, back) {   // v0.70 stride cycles done u s into the walk = the integral of speed / stride length (stride grows with speed), so the feet never slide while he speeds up or slows down; v0.71 + w.ph0 = the phase the last leg had, so a re-aim never restarts the step
   const N = 10, du = Math.max(0, Math.min(u, w.T)) / N; let c = 0;
   for (let n = 0; n < N; n++) { const v = slTrapV((n + 0.5) * du, w), k = Math.max(0, Math.min(1, (v - G.walkV) / (G.runV - G.walkV))); c += v * du / (G.cyc[0] + (G.cyc[1] - G.cyc[0]) * k); }
-  return SL_PI2 * c / (back ? G.backK : 1);
+  return (w.ph0 || 0) + SL_PI2 * c / (1 + (G.backK - 1) * back);
 }
 function slRefGait(Q, P, w, wd, arms) {   // (v0.70) an official's own jog / run: stride length, leg and arm swing, knee lift, lean and bob all grow with his speed now; a backpedal (facing kept against the way he goes) leans back on short steps
   const G = REF.crew.gait, v = SL_P.gv >= 0 ? SL_P.gv : w.L / w.T / YD, k = Math.max(0, Math.min(1, (v - G.walkV) / (G.runV - G.walkV))), m = (a) => a[0] + (a[1] - a[0]) * k;
-  const back = w.ff && Math.sign(w.tx - w.fx) === -w.ff && Math.abs(w.tx - w.fx) > YD;
-  const tr = w.a0 !== undefined && SL_P.gv >= 0, ph = tr ? slRefPh(w, SL_P.gu, G, back) : SL_PI2 * wd / (YD * m(G.cyc) * (back ? G.backK : 1)), sn = Math.sin(ph);
-  const z = Math.min(1, v / G.walkV), st = z * z * (3 - 2 * z), leg = m(G.leg) * (back ? G.backK : 1) * st;   // (v0.70 stand -> walk: the swing grows from nothing over the first steps and dies away as he stops)
+  const tr = w.a0 !== undefined && SL_P.gv >= 0, back = tr ? slRefBack(w, SL_P.gu) : slRefBackT(w), bK = 1 + (G.backK - 1) * back;   // (v0.71 backpedal <-> run blended, not flipped)
+  const ph = tr ? slRefPh(w, SL_P.gu, G, back) : SL_PI2 * wd / (YD * m(G.cyc) * bK), sn = Math.sin(ph);
+  const z = Math.min(1, v / G.walkV), st = z * z * (3 - 2 * z), leg = m(G.leg) * bK * st;   // (v0.70 stand -> walk: the swing grows from nothing over the first steps and dies away as he stops)
   Q[6] = leg * sn; Q[7] = -leg * sn;
   Q[8] = m(G.kn) * (0.55 + 0.45 * Math.abs(Math.cos(ph))) * st;
-  Q[1] = (back ? -G.backLean : m(G.lean)) * st;
+  Q[1] = (m(G.lean) + (-G.backLean - m(G.lean)) * back) * st;
   Q[0] = G.bob * k * (0.5 + 0.5 * Math.cos(2 * ph));
   if (arms) { const a = m(G.arm) * st, f = G.armFwd * k, e = m(G.el) * (0.4 + 0.6 * st); Q[2] = -a * sn + f; Q[3] = a * sn + f; Q[4] = e; Q[5] = e; }
 }
@@ -966,10 +972,17 @@ function slPose(P, w, a, h, t) {   // position + pose at time t -> SL_P / SL_Q (
     SL_P.wd = -1;
   }
   if (SL_P.wd >= 0 && !down && P.k === SLK.REF && w && w.T > 0 && !w.pa) { slRefGait(Q, P, w, SL_P.wd, !rOn); SL_P.wd = -1; }   // (an official: his own gait; a routine he is doing keeps its arms)
-  if (SL_P.wd >= 0 && !down) {   // walking: legs (and a free arm) from the stride table, by the distance covered
+  if (SL_P.wd >= 0 && !down && SL.lod >= SL_GAIT.lod && SL_P.gv >= 0) {   // v0.71 walking / running: the players' own leg cycle (STRIDE: phase = distance covered, swing by speed)
+    const v = SL_P.gv, amp = Math.max(STRIDE.ampMin, Math.min(1, v * YD / STRIDE.full)), z = Math.min(1, v / SL_GAIT.still), on = z * z * (3 - 2 * z), A = amp * on;
+    const ph = STRIDE.rate * SL_P.wd / YD, sn = Math.sin(ph), cs = Math.abs(Math.cos(ph));
+    Q[6] = LEG_SWING * A * sn; Q[7] = -LEG_SWING * A * sn; Q[8] = LEG_KNEE * SL_GAIT.knee * A * (0.55 + 0.45 * cs);
+    Q[0] = SL_GAIT.bob * amp * on * (0.5 + 0.5 * Math.cos(2 * ph)); Q[1] = Q[1] + SL_GAIT.lean * amp * on;
+    Q[2] = -SL_GAIT.arm * A * sn; Q[4] = SL_GAIT.el * (0.4 + 0.6 * amp) * on;
+    if (P.k > SLK.BOX && !P.hp && P.k !== SLK.CAM && !(w && w.pump)) { Q[3] = SL_GAIT.arm * A * sn; Q[5] = Q[4]; }   // (the crew keeps the pole up; a hand holding something stays put; pump = his arm pumping overhead as he runs along, v0.51)
+  } else if (SL_P.wd >= 0 && !down) {   // walking at low detail: legs (and a free arm) from the stride table, by the distance covered
     slSample(SL_WALK, SL_P.wd / (SL_STRIDE * YD) * SL_WALK.secs, SL_QW);
     Q[0] = 0; Q[2] = SL_QW[2]; Q[6] = SL_QW[6]; Q[7] = SL_QW[7]; Q[8] = SL_QW[8];
-    if (P.k > SLK.BOX && !P.hp && P.k !== SLK.CAM && !(w && w.pump)) Q[3] = SL_QW[3];   // (the crew keeps the pole up; a hand holding something stays put; pump = his arm pumping overhead as he runs along, v0.51)
+    if (P.k > SLK.BOX && !P.hp && P.k !== SLK.CAM && !(w && w.pump)) Q[3] = SL_QW[3];
   }
   if (P.k === SLK.CAM) {   // his shoulders and head turn with the camera (never by which way he walks)
     const am = slAim(P, a, t), c = Math.cos(am); SL_P.dig = am; SL_P.f = 1; Q[12] = c >= 0 ? (c < 0.35 ? 0.35 : c) : (c > -0.35 ? -0.35 : c);
@@ -987,7 +1000,7 @@ function slPutN(o, j, sx, sy, nx, ny) {   // an axis point (turned) plus an offs
   SL.PT[o + j * 2] = slX0 + (rx * slTw + qx) * slUx; SL.PT[o + j * 2 + 1] = slYf + (ry + qy) * slUy;
 }
 function slPrep(k, P) {   // SL_P / SL_Q -> slot k of SL.PT (the points the paint passes read)
-  const Q = SL_Q, T = SL.PT, o = k * SL_STR, u = S * FIGURE.grow * P.z, tw = Q[12];
+  const Q = SL_Q, T = SL.PT, o = k * SL_STR, u = S * FIGURE.grow * P.z, tw = Q[12]; SLB.m[k] = 0;
   slX0 = SL_P.x; slYf = SL_P.y + FOOT - (P.up || 0) - SL_P.up; slUx = SL_P.f * u; slUy = u * FIGURE.tall; T[o + 48] = 0; T[o + 49] = SL_P.hk === 1 ? SL_P.ht : -1;   // (49: s into a knockdown, -1 none)
   slTw = tw > -0.25 && tw < 0.25 ? (tw < 0 ? -0.25 : 0.25) : tw;
   slRot = Q[10]; if (slRot) { slCr = Math.cos(slRot); slSr = Math.sin(slRot); }
@@ -999,6 +1012,7 @@ function slPrep(k, P) {   // SL_P / SL_Q -> slot k of SL.PT (the points the pain
   const ef = cTf + cSf, en = cTn + cSn, hy = 14 - LG * (ef > en ? ef : en) + Q[0] - Q[9];   // (the lower foot stays on the turf)
   const sl = Math.sin(Q[1]), cl = Math.cos(Q[1]), shx = sl * TS, shy = hy - cl * TS;
   slPut(o, 0, 0, hy); slPut(o, 1, shx, shy); slPut(o, 2, shx + sl * HD, shy - cl * HD);
+  if ((P.k === SLK.BENCH || P.k === SLK.KICKER) && SL.lod > 0 && SIDELINE.benchFig.on) slbNote(k, P);   // (v0.70: drawn with the players' figure; LOD 0 = the colour block)
   if (SL.lod === 0) return;
   const kfx = sTf * LG, kfy = hy + cTf * LG, knx = sTn * LG, kny = hy + cTn * LG;
   slPut(o, 3, kfx, kfy); slPut(o, 4, kfx + sSf * LG, kfy + cSf * LG); slPut(o, 5, knx, kny); slPut(o, 6, knx + sSn * LG, kny + cSn * LG);
@@ -1064,7 +1078,13 @@ function slPaintCam(L, n) {   // the cameras (on a shoulder; the dolly's on a tr
 const SL_INK = { x: 0, y: 0 };   // (slPaint's doodle edge offset this frame)
 function slInkA(w, cap) { ctx.save(); ctx.translate(SL_INK.x, SL_INK.y); ctx.strokeStyle = DOODLE_PL.inkS; ctx.lineWidth = w; ctx.lineCap = cap; ctx.beginPath(); }
 function slInkB() { ctx.stroke(); ctx.restore(); }
-function slPaint(L, n) {   // the posed slots L[0..n), in colour-batched passes (back to front: shadow, far arm, legs, body, near arm, head, props)
+function slPaint(L, n) {   // v0.70: bench men noted by slbNote (SLB.m) go to slbDraw (the players' figure), the rest to the colour-batched rig
+  if (!n) return;
+  let m = 0, nb = 0; const B = SLB.tmp;
+  for (let j = 0; j < n; j++) { const k = L[j]; if (SLB.m[k]) B[nb++] = k; else L[m++] = k; }
+  slPaint0(L, m); if (nb) slbDraw(B, nb);
+}
+function slPaint0(L, n) {   // the posed slots L[0..n), in colour-batched passes (back to front: shadow, far arm, legs, body, near arm, head, props)
   if (!n) return;
   const T = SL.PT, sp = SL.sp, lod = SL.lod, u0 = S * FIGURE.grow;
   for (let j = 0; j < n; j++) { const k = L[j], P = sp[k]; if (!P.rail || !SL.spr) continue; const o = k * SL_STR, m = SL.spr.railcart; ctx.drawImage(m.c, T[o + 40] - m.ax, T[o + 41] + P.up - m.ay, m.w, m.h); }   // (the camera's rail cart, under him)
@@ -1688,7 +1708,7 @@ function slSetup() {
       const seat = res.concat(G.slice(0, Math.max(0, N - res.length))).sort((a, b) => a.num - b.num), stand = G.slice(Math.max(0, N - res.length));
       for (let j = 0; j < seat.length; j++) {
         const e = seat[j], P = at(SLK.BENCH, s, c + (j - (seat.length - 1) / 2) * pitch, 3.22, T, { num: String(e.num), un: e.un, dp: 1, tier: 0, coat: 0, bn, z: e.b.z * SIDELINE.scale, bw: e.b.bw, ...slLk(e.lk) });
-        P.idle = rnd() < 0.25 ? SLRI.sitDrink : SLRI.sit;
+        P.idle = rnd() < SIDELINE.benchFig.drink ? SLRI.sitDrink : SLRI.sit;
         slGameKit(P, T, rnd() < SIDELINE.kitLook.helmSit, true, rnd);
       }
       for (let j = 0; j < stand.length; j++) { const e = stand[j], sg = j % 2 ? -1 : 1; const P = at(SLK.BENCH, s, c + sg * (SIDELINE.benchLen / 2 + 0.9 + (j >> 1) * 0.95), 2.85, T, { num: String(e.num), un: e.un, dp: 1, tier: j < 2 ? 1 : 2, z: e.b.z * SIDELINE.scale, bw: e.b.bw, ...slLk(e.lk) }); slGameKit(P, T, rnd() < SIDELINE.kitLook.helmStand, false, rnd); }
@@ -1757,10 +1777,11 @@ function slReset() {
   for (let j = 0; j < SL.R.length; j++) { const r = SL.R[j]; if (r && r.k === 1) slEvent(j, 4, null); }   // (anything knocked over is stood back up between plays)
   if (SL.sprK !== benchKit()) slSprites();
   SL.subSeat = {};
+  slSetAll();   // (v0.70: everyone off his spot is put on it in the same instant the players are)
   { const un = slUnits(); if (un !== SL.U) { for (let i = 3; i < SL.W.length; i++) { const w = SL.W[i]; if (w && w.sub) slEvent(i, 0, null); }   // (the units changed: seated subs are plain bench men again, hidden or shown with their unit)
     slEvent(-1, 6, keepPic && slSubOff(un) ? un | SL.U : un); } }   // (units jogging off keep their bench empty until they get there)
   if (SL.tin.length) slTentCheck();   // (a change of possession: the other unit comes off the bench)
-  slCrewGo(snap, cut);
+  slCrewGo(true, true);   // (v0.70: always put on the new spots at the click)
   refReset(snap, cut);   // (v0.68 officials: flags picked up, the umpire counts, everyone to his spot)
 }
 // --- subs jogging off (before the snap; looks only). slSubTo = where a man jogging off aims: a gap by his unit's bench (SIDELINE.sub), never farther than the old run off
@@ -1884,7 +1905,7 @@ function slCrewGo(snap, cut) {
       slEvent(i, 0, { fx: ex, fy: ty, tx, ty, t0: now, T: slCrewT(L), L, d0: d1, d1, fs: tx > ex ? 1 : -1, fe, rt: 0 });
       continue;
     }
-    if (tp) { slEvent(i, 0, { fx: tx, fy: ty, tx, ty, t0: now, T: 0, L: 0, d0: d1, d1, fs: fe, fe, rt: 0, tp: 1 }); continue; }
+    if (tp) { slEvent(i, 0, { fx: tx, fy: ty, tx, ty, t0: now, T: 0, L: 0, d0: d1, d1, fs: fe, fe, rt: 0, tp: 1 }); if (q === 3 && down === 1 && Math.abs(tx - SL_P.x) > 2 * YL) slEvent(i, 1, { id: SLRI.judgeSig, t0: now }); continue; }
     const fx = SL_P.x, fy = SL_P.y, d0 = SL_P.dig, L = Math.hypot(tx - fx, ty - fy);
     if (L < 0.05 * YD && d0 === d1) continue;
     const T = L < 0.05 * YD ? 0 : slCrewT(L);
@@ -1909,17 +1930,13 @@ function slRemap() {   // the world was mirrored under them (a change of possess
 }
 function slFreeze() {   // the snap: any walk still under way stops where it is (finished after the play)
   if (!SL.cast || (ONL.on && ONL.guest)) return;
-  if (SL.xt) slExitFinish();   // (an injury exit still under way at the snap is over at once: nobody of it walks through the next play)
   refSnap();   // (v0.68: a ball relay still going is over)
   const ppl = SL.cast.people, now = SL.now;
   SL.hp = [];   // (no player steers once the ball is live)
-  for (let i = 0; i < ppl.length; i++) { const h = SL.H[i]; if (h && h.k === 1 && now - h.t0 < slHitLen(h)) { slWhere(ppl[i], SL.W[i], h, now); if (slOffView(SL_P.x, SL_P.y)) slEvent(i, 2, null); } }   // (a knockdown nobody can see is simply over)
   for (let i = 0; i < ppl.length; i++) {
     const w = SL.W[i]; if (!w || w.pa || ppl[i].k === SLK.CAM || ppl[i].k === SLK.REF || now >= (w.rt ? w.rt + w.T : w.t0 + w.T)) continue;   // (an injury exit keeps going: see slExitTick; the cameramen and the officials work through the play)
     slWhere(ppl[i], w, null, now); const d = SL_P.dig, f = SL_P.f;
-    if (ppl[i].k === SLK.TVOFF) { slTvHome(i, ppl[i]); continue; }   // (the TV official never stays out on the field for a snap)
     if (w.sub) { const pad = SIDELINE.sub.inPad * YD; if (SL_P.y > -pad && SL_P.y < FW + pad) { slEvent(i, 0, { fx: w.tx, fy: w.ty, tx: w.tx, ty: w.ty, t0: now, T: 0, L: 0, d0: d, d1: d, fs: w.fe, fe: w.fe, rt: 0, sub: 1, tp: 1 }); slEvent(i, 1, { id: SLRI.sitDown, t0: now }); } continue; }   // (v0.52: a sub walking to his seat finishes on the sideline (his sit-down is timed to the walk's end); one somehow on the field is seated at once)
-    if (w.hlp) { if (slOffView(SL_P.x, SL_P.y) && slOffView(w.fx, w.fy)) slEvent(i, 0, { fx: w.fx, fy: w.fy, tx: w.fx, ty: w.fy, t0: now, T: 0, L: 0, d0: d, d1: d, fs: w.fs, fe: w.fs, rt: 0, tp: 1 }); continue; }   // (a help-up walker: home at once off camera, else he finishes)
     slEvent(i, 0, { fx: SL_P.x, fy: SL_P.y, tx: SL_P.x, ty: SL_P.y, t0: now, T: 0, L: 0, d0: d, d1: d, fs: f, fe: f, rt: 0 });
   }
 }
@@ -2105,9 +2122,9 @@ function slTvWalk() {
   slEvent(i, 0, { fx: P.hx, fy: P.hy, tx: P.hx, ty, t0, T, L, d0: 0, d1: 0, fs: P.f, fe: P.f, rt: t0 + T + SIDELINE.tvHold });
   slEvent(i, 1, { id: SLRI.tvSignal, t0: t0 + T });
 }
-function slTvHome(i, P) {   // (SL_P = where he is now)
+function slTvHome(i, P, put) {   // (SL_P = where he is now; put = v0.70's set: just placed)
   const now = SL.now, x = SL_P.x, y = SL_P.y, L = Math.hypot(P.hx - x, P.hy - y);
-  if (slOffView(x, y) && slOffView(P.hx, P.hy)) { slEvent(i, 0, { fx: P.hx, fy: P.hy, tx: P.hx, ty: P.hy, t0: now, T: 0, L: 0, d0: 0, d1: 0, fs: P.f, fe: P.f, rt: 0, tp: 1 }); return; }
+  if (put || (slOffView(x, y) && slOffView(P.hx, P.hy))) { slEvent(i, 0, { fx: P.hx, fy: P.hy, tx: P.hx, ty: P.hy, t0: now, T: 0, L: 0, d0: 0, d1: 0, fs: P.f, fe: P.f, rt: 0, tp: 1 }); return; }
   slEvent(i, 0, { fx: x, fy: y, tx: P.hx, ty: P.hy, t0: now, T: slWalkT(L) * 0.6, L, d0: 0, d1: 0, fs: P.f, fe: P.f, rt: 0 });
   slEvent(i, 1, null);
 }
@@ -2149,9 +2166,12 @@ function refAnim(i, o) {   // a new anim record; a flag he threw stays on it unt
 }
 function refGo(i, tx, ty, v, ff, t0 = SL.now) {   // a steady-pace walk from where he is now to (tx, ty); returns when he gets there
   const p = refAt(i), L = Math.hypot(tx - p.x, ty - p.y); if (L < 1) return t0;
-  const T = L / (v * YD), G = REF.crew.gait, w0 = SL.W[i], moving = w0 && !w0.pa && w0.T > 0 && t0 > w0.t0 && t0 < w0.t0 + w0.T;   // (already on the move: no ramp up, v0.70)
-  let a0 = moving ? 0 : G.acc, a1 = G.dec; const sq = Math.min(1, T * 0.8 / (a0 + a1 || 1)); a0 *= sq; a1 *= sq;
-  slEvent(i, 0, { fx: p.x, fy: p.y, tx, ty, t0, T, L, d0: 0, d1: 0, fs: ff || p.f, fe: ff || (tx >= p.x ? 1 : -1), rt: 0, ln: 1, ff: ff || 0, a0, a1 });
+  const T = L / (v * YD), G = REF.crew.gait, w0 = SL.W[i], moving = w0 && !w0.pa && w0.T > 0 && t0 > w0.t0 && t0 < w0.t0 + w0.T;
+  let v0 = 0, ph0 = 0, pb;   // (v0.71 already on the move: the new leg starts at the speed, stride phase and backpedal share he has now, eased to the new pace over carry x acc)
+  if (moving && w0.a0 !== undefined) { const u = t0 - w0.t0; v0 = slTrapV(u, w0); pb = slRefBack(w0, u); ph0 = slRefPh(w0, u, G, pb) % SL_PI2; }
+  let a0 = moving ? G.acc * G.carry : G.acc, a1 = G.dec; const sq = Math.min(1, T * 0.8 / (a0 + a1 || 1)); a0 *= sq; a1 *= sq;
+  if (v0 > 0) a0 = Math.min(a0, 0.9 * L / (v0 * YD));   // (never a leg so short the carried speed overshoots it)
+  slEvent(i, 0, { fx: p.x, fy: p.y, tx, ty, t0, T, L, d0: 0, d1: 0, fs: ff || p.f, fe: ff || (tx >= p.x ? 1 : -1), rt: 0, ln: 1, ff: ff || 0, a0, a1, v0, ph0, pb });
   return t0 + T;
 }
 function refFace(i, f, t0) { const p = refAt(i); slEvent(i, 0, { fx: p.x, fy: p.y, tx: p.x, ty: p.y, t0, T: 0, L: 0, d0: 0, d1: 0, fs: f, fe: f, rt: 0 }); }
@@ -2233,7 +2253,7 @@ function refSpotFor(P, i) {   // where this official wants to be right now -> { 
   // keep clear of every player, and off the middle of the picture
   const G = Rc.gap * YD; let px = x, py = y;
   for (let n = 0; n < 2; n++) slPlayers(p => { if (!p) return; const dx = px - p.x, dy = py - p.y, d = Math.hypot(dx, dy); if (d < G) { const u = d > 1 ? 1 / d : 0; px = p.x + (u ? dx * u : 0) * G; py = p.y + (u ? dy * u : 1) * G; } });
-  const cr = Rc.camR * YD, cdy = py - camY; if (Math.abs(px - camX) < cr && Math.abs(cdy) < cr) py = camY + (cdy >= 0 ? cr : -cr);
+  const cr = Rc.camR * YD, cdy = py - camY; if (state !== 'pre' && Math.abs(px - camX) < cr && Math.abs(cdy) < cr) py = camY + (cdy >= 0 ? cr : -cr);
   if (P.rr !== 'L') py = Math.max(Y_MIN + 0.3 * YD, Math.min(Y_MAX - 0.3 * YD, py));
   return { x: px, y: py, ff, v: live ? Rc.run : Rc.jog };
 }
@@ -2505,19 +2525,18 @@ function refTp(i, x, y, f) { slEvent(i, 0, { fx: x, fy: y, tx: x, ty: y, t0: SL.
 function refReset(snap, cut) {   // (slReset, host) a new play: flags picked up, jobs over, the umpire counts; each man heads for his pre-snap spot (put there when the view cut or nobody can see him)
   if (!refHost()) return;
   const now = SL.now, C = SL.cast; SL.rfQ = []; SL.rfJb = {}; SL.rfFlg = null; SL.rfHome = {}; SL.rfPl = []; refFetchOff();
-  for (const i of C.rf) { const a = SL.A[i]; if (a && a.fl && !a.fl.pk) refAnim(i, { id: SLRI.rfPickFlag, t0: now, fl: { ...a.fl, pk: now + 0.5 } }); else if (a && (a.rb || !a.fl)) slEvent(i, 1, null); }
-  if (typeof ball !== 'undefined' && ball && qb) for (const i of C.rf) {   // (not at load: nobody exists yet)
-    const P = C.people[i], g = state === 'pre' || state === 'kick' || state === 'kickoff' ? refSpotFor(P, i) : null; if (!g) continue;
-    SL.rfHome[i] = g; const p = refAt(i), f = g.ff || p.f;
-    if (refBusy(i)) continue;
-    if (snap || cut || (slOffView(p.x, p.y) && slOffView(g.x, g.y))) refTp(i, g.x, g.y, f);
-    else {   // (v0.69: the click on / the replay is a time skip, like the players being put in their set: a man far off is put close, so the snap never has to jump him)
-      const d = Math.hypot(g.x - p.x, g.y - p.y), near = REF.crew.skipNear * YD;
-      if (d > near) { const k = 1 - near / d; refTp(i, p.x + (g.x - p.x) * k, p.y + (g.y - p.y) * k, f); }
-      refGo(i, g.x, g.y, REF.crew.run, g.ff, now + 0.1);
-    }
-  }
+  for (const i of C.rf) { if (SL.A[i]) slEvent(i, 1, null); if (refBusy(i)) slEvent(i, 2, null); }   // (v0.70: flags and relays simply cleared; placed by refPlace once the line-up exists)
   const U = refRole('U'); if (U >= 0) refQ(now + 1.2, () => refAnim(U, { id: SLRI.rfCount, t0: SL.now }));
+}
+function refPlace() {   // (v0.70: end of reset() and the kick entries) every official put on his spot for the new line-up, one tp record each
+  if (!SL.on || !SL.cast || !SL.cast.rf || !refHost() || typeof ball === 'undefined' || !ball || !qb) return;
+  if (state !== 'pre' && state !== 'kick' && state !== 'kickoff') return;
+  for (const i of SL.cast.rf) {
+    const g = refSpotFor(SL.cast.people[i], i); if (!g) continue;
+    SL.rfHome[i] = g; if (refBusy(i)) slEvent(i, 2, null);
+    const w = SL.W[i], p = refAt(i); if (w && w.tp && Math.hypot(p.x - g.x, p.y - g.y) < 0.05 * YD) continue;
+    refTp(i, g.x, g.y, g.ff || p.f);
+  }
 }
 function refSkip(gap) {   // (slSkipCheck: a time skip) an official still walking who would be there by now, or is off camera, is put on his spot
   if (!refHost()) return;
@@ -2526,15 +2545,11 @@ function refSkip(gap) {   // (slSkipCheck: a time skip) an official still walkin
     const p = refAt(i); if (w.t0 + w.T - SL.now <= gap || slOffView(p.x, p.y)) refTp(i, w.tx, w.ty, w.fe);
   }
 }
-function refSnap() {   // (slFreeze, host) the snap never waits: a relay still going is over; a man not yet on his pre-snap spot runs on to it (put on it only off camera, v0.70)
+function refSnap() {   // (slFreeze, host) the snap never waits: a relay still going is over; everyone is already on his spot (put there at the click, v0.70)
   if (!refHost()) return;
   SL.rfQ = []; SL.rfJb = {}; for (const g of SL.rfPl || []) { g.p.refToss = 0; g.p.refTossK = 0; } SL.rfPl = []; refFetchOff();
   for (const i of SL.cast.rf) {
     const a = SL.A[i]; if (a && a.rb) slEvent(i, 1, null);
-    const g = SL.rfHome && SL.rfHome[i]; if (!g || refBusy(i)) continue;
-    const p = refAt(i); if (Math.hypot(p.x - g.x, p.y - g.y) <= REF.crew.snapTp * YD) continue;
-    if (slOffView(p.x, p.y) && slOffView(g.x, g.y)) { refTp(i, g.x, g.y, g.ff || p.f); continue; }   // (v0.70: put there only when nobody can see it)
-    const w = SL.W[i]; if (!(w && !w.tp && SL.now < w.t0 + w.T && Math.hypot(w.tx - g.x, w.ty - g.y) < YD)) refGo(i, g.x, g.y, REF.crew.run, g.ff);   // (on camera: he hustles there and works the play from wherever he gets to)
   }
 }
 // drawing: the real ball is hidden while a relay has it (dead ball only; never in a replay); flags on the turf under the players (layer 0), in the air over them (1)
@@ -2596,9 +2611,10 @@ let REV = null;   // { kind 'spot' | 'td', line, x (true), y, rx (ruled), res 'S
 const revBlind = () => { if (!SL.cast || !SL.cast.rf) return false; let n = refNearest(ball.x, ball.y); return n < 0 || SL.cast.rf.some(i => refBlind(i) && Math.hypot(refAt(i).x - ball.x, refAt(i).y - ball.y) < 8 * YD); };   // (the nearest official is down, or screened)
 function refBadSpot(next, kind, pen) {   // endPlay: the spot the officials give (the truth kept on game.truth)
   if (game.revNoSpot) return next;   // (refTdShort's own whistle: its truth is already set)
-  game.truth = { spot: next, td: kind === 'td', bad: false, line: lineToGain, y: ball.y, close: kind === 'td' && !!game.tdClose };   // (close: v0.68, refTdClose)
+  const tk = dl.concat(back7).some(d => Math.hypot(d.x - ball.x, d.y - ball.y) < REF.rev.tk * YD);   // (v0.71 a defender at the ball = a tackle there)
+  game.truth = { spot: next, td: kind === 'td', bad: false, line: lineToGain, y: ball.y, close: kind === 'td' && !!game.tdClose, tk };   // (close: v0.68, refTdClose)
   game.tdClose = false;
-  if (!boothOn() || game.revRedo || pen || kind || patMode !== null || down >= 4 || !Number.isFinite(next) || next <= los || next >= FIELD) return next;
+  if (!boothOn() || game.revRedo || pen || kind || !tk || patMode !== null || down >= 4 || !Number.isFinite(next) || next <= los || next >= FIELD) return next;
   const S2 = REF.spot, gap = next - lineToGain, forced = REF.force === 'spot';
   if (!forced && Math.abs(gap) > S2.near * YL) return next;
   if (!forced && Math.random() >= S2.odds * (revBlind() ? S2.blindK : 1)) return next;
@@ -2624,8 +2640,8 @@ function refTdShort() {   // touchdown(): a goal-line score with a defender on h
 function refReviewAfter() {   // endPlay's end: the booth (automatic) or an open ruling (challenge)
   game.revOK = null;
   const T = game.truth; if (!T || !boothOn() || game.revRedo || REV || (ONL.on && ONL.guest)) return;
-  const S2 = REF.spot, near = Math.abs(T.spot - T.line) < S2.near * YL && T.line < FIELD, goal = T.td || (T.bad && T.line >= FIELD - YL);
-  if (!near && !(goal && T.close) && !T.bad) return;   // (v0.68: a touchdown he walked into is never looked at, nor challengeable)
+  const S2 = REF.spot, near = Math.abs(T.spot - T.line) < S2.near * YL && T.line < FIELD && !!T.tk, goal = T.td || (T.bad && T.line >= FIELD - YL);
+  if (goal ? !T.close : !near) return;   // (v0.71 every review needs real doubt: a score needs refTdClose, a spot the ball down near the line with a tackle there; a walk-in is never looked at, nor challengeable)
   const kind = goal ? 'td' : 'spot', line = goal ? FIELD : T.line, rx = T.bad ? T.rx : T.spot;
   if (T.bad && Math.random() < REF.boothCatch) return revQueue({ kind, line, x: T.spot, y: T.y, rx, res: 'REVERSED' });
   if (!T.bad && (goal ? T.close : near) && Math.random() < (goal ? S2.tdLook : S2.look)) return revQueue({ kind, line, x: T.spot, y: T.y, rx, res: 'STANDS' });
@@ -2661,7 +2677,14 @@ function revTick() {   // (update) a queued review starts once the play has real
   revWait = null; refRevStart(w.o);
 }
 function revTape(dt, fr, rt) {   // (stepReplay while revOn) the booth's playback
-  const RV = REF.rev, endT = fr[fr.length - 1].t, T = REV.tp || (REV.tp = { ph: 'run', n: 0, dir: 1, hold: 0 }), a0 = Math.max(fr[0].t, endT - RV.look);
+  const RV = REF.rev, endT = fr[fr.length - 1].t, a0 = Math.max(fr[0].t, endT - RV.look);
+  let T = REV.tp;
+  if (!T) {   // (v0.71 start at the moment under review: the ball's last arrival near the line, less a lead-in, the whole tape capped at RV.max)
+    let i = fr.length - 1; while (i > 0 && fr[i - 1].ball && Math.abs(fr[i - 1].ball.x - REV.line) < RV.near * YL) i--;
+    const rock = RV.rockN * (2 * RV.rockSpan / RV.rockK + 2 * RV.hold), room = Math.max(0, RV.max - (endT - a0) / RV.slowK - rock);
+    T = REV.tp = { ph: 'run', n: 0, dir: 1, hold: 0 }; rt = Math.min(a0, Math.max(fr[0].t, fr[i].t - RV.pre, a0 - room)); REV.t1 = rt;
+    return rt;
+  }
   if (T.ph === 'run') { rt += dt; if (rt >= a0) T.ph = 'slow'; }
   else if (T.ph === 'slow') { rt += dt * RV.slowK; if (rt >= endT) { rt = endT; T.ph = 'rock'; T.dir = -1; T.hold = RV.hold; } }
   else if (T.ph === 'rock') {
@@ -2717,7 +2740,7 @@ function refRevWorld() {   // (draw(), world coords) the pencil ruler at the lin
   ctx.strokeStyle = 'rgba(70,50,20,0.9)'; ctx.lineWidth = 2;
   ctx.strokeRect(x - 0.35 * YD, y0, 0.7 * YD, y1 - y0);
   for (let yy = y0, n = 0; yy < y1; yy += 0.5 * YD, n++) { ctx.beginPath(); ctx.moveTo(x - 0.35 * YD, yy); ctx.lineTo(x - 0.35 * YD + (n % 4 ? 0.18 : 0.32) * YD, yy); ctx.stroke(); }
-  if (r.ph === 'stamp' || r.ph === 'still' || !(rec && rec.replaying) || (rec.rt >= (rec.frames[rec.frames.length - 1] || {}).t - 0.6)) {   // (the true spot shows at the end of the tape)
+  if (r.ph === 'stamp' || r.ph === 'still' || !(rec && rec.replaying) || (r.tp && (r.tp.ph === 'rock' || r.tp.ph === 'end'))) {   // (the true spot shows once the slow pass reached the end: v0.71 follows revTape's window)
     ctx.strokeStyle = '#2a62b0'; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(r.x, r.y, 0.9 * YD, 0.55 * YD, 0, 0, Math.PI * 2); ctx.stroke();
     ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 3; const q = 0.4 * YD; ctx.beginPath(); ctx.moveTo(r.rx - q, r.y - q); ctx.lineTo(r.rx + q, r.y + q); ctx.moveTo(r.rx + q, r.y - q); ctx.lineTo(r.rx - q, r.y + q); ctx.stroke();   // (the ruled spot)
   }
@@ -2725,7 +2748,8 @@ function refRevWorld() {   // (draw(), world coords) the pencil ruler at the lin
 }
 function refRevDraw() {   // (end of draw(), screen) the stamp; moves the review along and applies it
   const r = REV; if (!r) return;
-  const now = performance.now(), RV = REF.rev;
+  let now = performance.now(); const RV = REF.rev;
+  if (paused) { if (!r.pa) r.pa = now; now = r.pa; } else if (r.pa) { const d = now - r.pa; r.t0 += d; r.ts += d; r.pa = 0; }   // (v0.71 paused in the booth: its clocks stand still)
   if (r.ph === 'tape' && r.tapeDone && rec && rec.replaying) endReplay();   // (v0.68 the booth's tape ends itself)
   if (r.ph === 'tape' && !(rec && rec.replaying)) { r.ph = 'stamp'; r.ts = now; }
   if (r.ph === 'still' && now - r.t0 > RV.still * 1000) { r.ph = 'stamp'; r.ts = now; }
@@ -3099,8 +3123,12 @@ function slExitFinish() {   // the injury exit in one step: every record of it m
 // performance mode's heaviest level (liteLevel 2) freezes the sideline (poses at t = 0, no ticks): whatever was moving when it switched on is finished in one
 // step first (walks to where they end, subs seated, the injury exit, knockdowns, the TV official home, helpers sent home), one slEvent each, so nobody is left
 // standing on the field as a ghost (and replays / the online guest see the same). From slTick when the level changes.
-function slLevelFlush() {
+function slLevelFlush() { slSetAll(); }
+// v0.70: the set (slReset at every level, the kick entries, performance mode's freeze): knockdowns / help-ups over, the injury exit done, every walker on his
+// destination in one tp record, the TV official home, subs walking off seated. Someone standing on his own spot keeps his routine (SL.A untouched)
+function slSetAll() {
   const C = SL.cast; if (!C || (ONL.on && ONL.guest)) return;
+  slSubFlush(true);
   const ppl = C.people, now = SL.now;
   SL.hp = [];
   if (SL.xt) slExitFinish();
@@ -3108,10 +3136,29 @@ function slLevelFlush() {
   for (let i = 0; i < ppl.length; i++) {
     const w = SL.W[i], P = ppl[i]; if (!w || w.pa || w.fx == null || P.k === SLK.CAM) continue;
     if (now >= (w.rt ? w.rt + w.T : w.t0 + w.T) && w.fx === w.tx && w.fy === w.ty) continue;   // (standing still already)
-    if (P.k === SLK.TVOFF) { slTvHome(i, P); continue; }
+    if (P.k === SLK.TVOFF) { slTvHome(i, P, true); continue; }
     const back = !!w.rt, x = back ? w.fx : w.tx, y = back ? w.fy : w.ty, d = back ? w.d0 : w.d1, f = back ? w.fs : w.fe;
     slEvent(i, 0, { fx: x, fy: y, tx: x, ty: y, t0: now, T: 0, L: 0, d0: d, d1: d, fs: f, fe: f, rt: 0, tp: 1, sub: w.sub ? 1 : 0 });
     if (w.sub) slEvent(i, 1, { id: SLRI.sitDown, t0: now });
+  }
+  for (let i = 0; i < ppl.length; i++) {   // (v0.70: cameramen: a dolly walk finished; slCamSet aims them once the new ball exists)
+    const P = ppl[i]; if (P.k !== SLK.CAM) continue;
+    const w = SL.W[i]; if (w && !w.pa && !w.tp && now < (w.rt ? w.rt + w.T : w.t0 + w.T)) { const x = w.rt ? w.fx : w.tx, y = w.rt ? w.fy : w.ty, f = w.rt ? w.fs : w.fe; slEvent(i, 0, { fx: x, fy: y, tx: x, ty: y, t0: now, T: 0, L: 0, d0: w.d0, d1: w.d1, fs: f, fe: f, rt: 0, tp: 1 }); }
+  }
+}
+// v0.70 (end of reset() and the kick entries, after the new ball exists): each cameraman put within his arc of the ball (slCamTick's rule) and already aimed at it;
+// end-zone crews straight at the field. Nobody walks or turns once the picture is up
+function slCamSet() {
+  if (!SL.on || !SL.cast || !SL.cm || !SL.cm.length || (ONL.on && ONL.guest) || typeof ball === 'undefined' || !ball) return;
+  const now = SL.now, M = CAM_MAN, ppl = SL.cast.people, bx = slClampX(ball.x);
+  for (let j = 0; j < SL.cm.length; j++) {
+    const i = SL.cm[j], P = ppl[i]; SL.cmT[j] = now + M.think;
+    slWhere(P, SL.W[i], null, now); let x = SL_P.x, y = SL_P.y;
+    if (P.ez) { const off = ball.y - y; if (off > M.ez.arc * YD || off < -M.ez.arc * YD) { let ty = ball.y - (off > 0 ? 1 : -1) * M.ez.arc * 0.5 * YD; y = ty < P.x0 ? P.x0 : ty > P.x1 ? P.x1 : ty; } }
+    else { const off = bx - x; if (off > M.arc * YL || off < -M.arc * YL) { const tx = bx - (off > 0 ? 1 : -1) * P.co * YL; x = tx < P.x0 ? P.x0 : tx > P.x1 ? P.x1 : tx; } y = P.hy; }
+    const w = SL.W[i]; if (!(w && w.tp && w.tx === x && w.ty === y)) slEvent(i, 0, { fx: x, fy: y, tx: x, ty: y, t0: now, T: 0, L: 0, d0: 0, d1: 0, fs: 1, fe: 1, rt: 0, tp: 1 });
+    const a1 = P.ez ? slAim0(P) : Math.atan2(ball.y - (ball.z || 0) - (y - (P.up || 0) - 16 * S), ball.x - x) + (P.ke || 0);
+    slEvent(i, 1, { t0: now - 1, a0: a1, a1, T: 1e-3 });   // (already turned: T ~0)
   }
 }
 const slOnField = () => SL_P.y > Y_MIN && SL_P.y < Y_MAX && SL_P.x > -ENDZONE && SL_P.x < FIELD + ENDZONE;   // (level 2: nobody frozen is ever drawn inside the field lines)
@@ -3129,7 +3176,7 @@ function slTentCheck() {   // (slReset) anyone in the tent who has been cleared 
   for (let j = SL.tin.length - 1; j >= 0; j--) {
     const o = SL.tin[j], s = o.s; if (!s || s.outGame || s.benchNext || isOut(s) || SL.xt) continue;
     SL.tin.splice(j, 1);
-    const tx = SL.cast.props[o.tj].x, I = [tx, slSide(o.side, E.inD)], D = [tx, slSide(o.side, E.door)], B = [E.benchYd * YL, slSide(o.side, E.benchD)], t1 = now + 1.2, t2 = t1 + 0.7, t3 = t2 + Math.hypot(B[0] - D[0], B[1] - D[1]) / (E.walk * YD);
+    const tx = SL.cast.props[o.tj].x, I = [tx, slSide(o.side, E.inD)], D = [tx, slSide(o.side, E.door)], B = [E.benchYd * YL, slSide(o.side, E.benchD)], wk = Math.hypot(B[0] - D[0], B[1] - D[1]) / (E.walk * YD), t1 = now - 0.92 - wk, t2 = t1 + 0.7, t3 = t2 + wk;   // (v0.70: already back on the bench at the click: the walk is over)
     slEvent(o.i, 0, { pa: [t1, I[0], I[1], t2, D[0], D[1], t3, B[0], B[1]], md: [11, 1], fa: [-1, 0], fe: 1 });
     slEvent(o.tj, 4, { t0: t1 + 0.2, k: 2, occ: SL.tin.some(q => q.tj === o.tj) ? 1 : 0, was: 1 });
   }
@@ -3525,7 +3572,7 @@ function drawFieldRest() {   // (the live part of drawField, over the weather's 
     ctx.restore();
   }
 
-  drawGoalPost(POST_X, 1); drawGoalPost(-ENDZONE, -1);
+  drawGoalPost(POST_X, 1, 'shadow'); drawGoalPost(-ENDZONE, -1, 'shadow');   // (the pad + gooseneck go in draw()'s player loop: goalPostBaseY)
   drawPlayLines();
 }
 // the yard numbers (drawField; before the snow, so it covers them)
@@ -3841,6 +3888,21 @@ const DIVE_ST = {
     hands: (r, bl, near) => { const hx = near ? bl.x : 2.5 * r, hy = near ? bl.y : -9 - 27 * r; return [[-1, -10.5, hx - 1.6, hy - 0.6, 1, 'open', 8, 8.5], [2, -9, hx + 1.6, hy + 0.6, -1, 'open', 8, 8.5]]; } },
   kickSmother: { arch: 0.03, legs: [[-2, 0.1, 0.1], [2, 0.05, 0.12]],      sp: 0,    len: 1,    lead: 0,    land: { belly: 2, skid: 2 },
     hands: (r, bl, near) => { const hx = near ? bl.x : 1.5 + 2 * r, hy = near ? bl.y : -8 - 20 * r; return [[-1, -10.5, hx - 1.8, hy + 1.2, 1, 'open', 8, 8.5], [2, -9, hx + 1.8, hy - 1.2, -1, 'open', 8, 8.5]]; } },
+  // v0.71 over-the-shoulder catch dives (DIVE_POOL.over, diveOverPick: a pass going his way, from behind him): he keeps facing downfield (act.over), hd = helmet tipped back to it
+  basket:    { arch: 0.12, legs: [[-1.2, 0.04, 0.02], [1.2, 0.02, 0.04]],  sp: 0, len: 1.05, lead: 0, land: { belly: 3, skid: 2 }, hd: -0.35, over: true,   // full layout, both arms straight ahead, palms up, pinkies together under it
+    hands: (r, bl, near) => { const hx = near ? bl.x : -1.5 * r, hy = near ? bl.y : -8 - 25 * r; return [[-1, -10.5, hx - 1.1, hy + 0.6, 1, 'open', 8, 8.5], [2, -9, hx + 1.1, hy + 0.6, -1, 'open', 8, 8.5]]; } },
+  fingertip: { arch: 0.1,  legs: [[-2.5, 0.25, 0.3], [2.5, 0.08, 0.12]],   sp: 0, len: 1.15, lead: 1, land: { side: 3, roll: 1.5 }, hd: -0.25, over: true,    // one arm at full stretch, palm up, the other trailing at his hip
+    hands: (r, bl, near) => [[-1, -10.5, near ? bl.x : -1 * r, near ? bl.y : -8 - 27 * r, 1, near ? 'tips' : 'open', 8, 8.5], [2, -9, 4.5, -2, -1, null, 7, 8]] },
+  lookBack:  { arch: 0.06, legs: [[-3, 0.6, 0.95], [3, -0.2, 0.1]],       sp: 0, len: 1, lead: 0, land: { side: 3, skid: 1 }, tw: 0.35, hd: -0.3, over: true,   // twisted a third toward the throw, back knee driving, hands low until it is near, then up beside the helmet
+    hands: (r, bl, near) => near ? [[-1, -10.5, bl.x - 1, bl.y - 1, 1, 'open', 8, 8.5], [2, -9, bl.x + 1, bl.y + 1, -1, 'open', 8, 8.5]] : [[-1, -10.5, 2.5, -6, 1, null, 7, 8], [2, -9, 4, -4, -1, null, 7, 8]] },
+  lateHands: { arch: 0.16, legs: [[-3, 0.32, 0.12], [3, 0.2, 0.28]],      sp: 0, len: 1.1, lead: 0, land: { skid: 3, belly: 1 }, hd: -0.2, over: true,     // superman arch, heels high, arms tucked at his chest until the ball is there, then out in a diamond
+    hands: (r, bl, near) => near ? [[-1, -10.5, bl.x - 1.4, bl.y - 0.4, 1, null, 8, 8.5], [2, -9, bl.x + 1.4, bl.y + 0.4, -1, null, 8, 8.5]] : [[-1, -10.5, 2, -12, 1, null, 7, 8], [2, -9, 3, -11, -1, null, 7, 8]] },
+  pinned:    { arch: 0.04, legs: [[-2.5, 0.3, 0.5], [2.5, 0.05, 0.2]],    sp: 0, len: 1, lead: 0, land: { back: 2, rollOut: 2 }, tw: -0.6, hd: -0.15, over: true,   // one hand pins it to the back of his shoulder pad, the other arm out for the fall, rolling in the air
+    hands: (r, bl, near) => [[-1, -10.5, near ? bl.x : -4.5, near ? bl.y : -14 - 4 * r, 1, 'open', 7, 8], [2, -9, 7.5, -4 - 4 * r, -1, 'open', 8, 8.5]] },
+  shoelace:  { arch: -0.2, legs: [[-3, -0.5, 1.2], [3, -0.4, 1.05]],      sp: 0, len: 1, lead: 0, land: { belly: 4 }, hd: 0.1, over: true,                     // a ball dying short: nose down, arms scooping under it at shin height, palms up, feet up behind
+    hands: (r, bl, near) => { const hx = near ? bl.x : 3.5 * r, hy = near ? bl.y : -6 - 18 * r; return [[-1, -10.5, hx - 1.2, hy, 1, 'open', 8, 8.5], [2, -9, hx + 1.2, hy, -1, 'open', 8, 8.5]]; } },
+  dragOver:  { arch: 0.05, legs: [[-3, 0.6, 0.9], [3, -0.35, 0.15]],      sp: 0, len: 1, lead: 0, land: { side: 3 }, tw: 0.55, hd: -0.3, over: true,          // the sideline one: laid out along the line, arms over his outside shoulder, toes dragging behind
+    hands: (r, bl, near) => { const hx = near ? bl.x : -5 * r, hy = near ? bl.y : -6 - 20 * r; return [[-1, -10.5, hx - 1, hy - 0.8, 1, 'open', 8, 8.5], [2, -9, hx + 1, hy + 0.8, -1, 'open', 8, 8.5]]; } },
 };
 const DIVE_POOL = {   // which looks each kind of dive may get (weights)
   run:    { layout: 2, superman: 2, reach: 1 },            // a ball carrier's dive for yards
@@ -3850,7 +3912,8 @@ const DIVE_POOL = {   // which looks each kind of dive may get (weights)
   loose:  { layout: 2, tuck: 2, scissor: 1 },              // a ball on the turf
   short:  { spear: 1, layout: 1 },                         // barely off the ground (under DIVE_SHORT s in the air)
   goal:   { goalLeap: 1 },                                 // a carrier's dive at the goal line with a body in front of him (mlGoalLeap)
-  kick:   { kickSmother: 1 },                              // v0.56: a kick rusher's dive at the ball (across the path: kickLay, diveLookPick)
+  kick:   { kickSmother: 1 },
+  over:   { basket: 3, lookBack: 2, fingertip: 2, lateHands: 2, pinned: 0.5 },   // v0.71 a pass going his way from behind him (shoelace by ball height, dragOver by the sideline: diveOverPick)                              // v0.56: a kick rusher's dive at the ball (across the path: kickLay, diveLookPick)
 };
 const DIVE_SHORT = 0.1;
 const pickW = w => { let sum = 0; const ks = Object.keys(w), ws = ks.map(k => sum += w[k]), r = Math.random() * sum; return ks[ws.findIndex(x => r < x)] || ks[0]; };
@@ -3862,10 +3925,23 @@ function diveLookPick(p, a) {
   if (p.diveKick && (state === 'kick' || state === 'kickoff')) return Math.abs(Math.sin(a.angle || 0)) > MOVE_LOOK.sideSin ? 'kickLay' : pickW(DIVE_POOL.kick);   // (a block try: laid out across the path, or smothering it head on)
   const kind = a.pylon ? 'pylon' : (p.hasBall || p.runDive) && mlGoalLeap(p) ? 'goal' : p.hasBall || p.runDive ? 'run' : p.tackling ? 'tackle' : a.kin && a.kin.airT < DIVE_SHORT ? 'short' : state === 'fumble' || ball.loose ? 'loose' : 'ball';
   if (kind === 'ball' && ball.inAir) {   // (a pass: one from behind him / over his head is reached for back over; a dive straight across his run rolls him onto his side)
+    { const o = diveOverPick(p, a); if (o) return o; }   // (v0.71 over the shoulder: still facing downfield)
     if ((ball.x - p.x) * p.face < -MOVE_LOOK.backYd * YD) return 'backOver';
     if (Math.abs(Math.sin(a.angle || 0)) > MOVE_LOOK.sideSin && Math.random() < MOVE_LOOK.sideOdds) return 'sideDive';
   }
   return pickW(DIVE_POOL[kind]);
+}
+function diveOverPick(p, a) {   // v0.71 the ball travelling roughly the way he runs and coming from behind him: an over-the-shoulder look (null = not one)
+  const M = MOVE_LOOK.over, vx = p.vx || 0, vy = p.vy || 0, sp = Math.hypot(vx, vy), bv = Math.hypot(ball.vx || 0, ball.vy || 0);
+  if (p.team === 'def' || sp < M.minV * YD || bv < 1) return null;
+  if (((ball.vx || 0) * vx + (ball.vy || 0) * vy) / (sp * bv) < M.dot) return null;
+  if (((ball.x - p.x) * vx + (ball.y - p.y) * vy) / sp > M.ahead * YD) return null;   // (well out in front of him: a plain dive)
+  const fx = Math.sign(vx) || p.face; p.face = a.face = fx; a.over = true;
+  if (p.catchMode === 'diveOne') return 'fingertip';
+  if (toSideline(p) < M.sideYd * YD) return 'dragOver';
+  if ((ball.z || 0) < M.lowZ * YD && (ball.vz || 0) < 0) return 'shoelace';
+  const w = { ...DIVE_POOL.over }; if (dl.concat(back7).some(d => d.team !== p.team && Math.hypot(d.x - p.x, d.y - p.y) < M.tightYd * YD)) w.pinned *= M.tightK;
+  return pickW(w);
 }
 const diveLook = p => p.action === 'dive' && p.act && !p.act.lowHit ? DIVE_ST[p.act.look] || null : null;
 function diveTilt(p) {
@@ -4481,7 +4557,8 @@ const CELEB = {
           // v0.59: which way the open spot leans per event (fwd = score): +1 = celebEnv(h).away, the way the hero's team attacks (offense: downfield on a first down / long gain /
           // catch; a defender: into the backfield on a sack / loss / stop, toward the end zone his team now attacks on a turnover); events not listed: no lean (touchdowns keep the end zone)
           dirEv: { first: 1, long: 1, catch: 1, miss: 1, stiff: 1, sack: 1, tfl: 1, stop: 1, hit: 1, pbu: 1, pick: 1, fumRec: 1, fumForce: 1, block: 1 },
-          clear: 3.6, max: 9, step: 1.5, dirs: 12, edge: 1.5, far: 0.16, gain: 0.8, walk: 3.4, run: 6.8, runFrom: 3.5, accel: 13, lie: 0.75, hops: 2, beat: 0.15 },
+          clear: 3.6, max: 9, step: 1.5, dirs: 12, edge: 1.5, far: 0.16, gain: 0.8, walk: 3.4, run: 6.8, runFrom: 3.5, accel: 13, lie: 0.75, hops: 2, beat: 0.15,
+          reClear: 1.4, reGain: 1 },   // a second hop only if someone has come within reClear yd of him since (not because a roomier spot exists), and it must gain reGain yd
   upWait: 2.5, upMax: 9,                      // getting up first: s the ask is kept alive past each moment he is still down / rising, for at most upMax s after the whistle
   front: { on: true, w: 7.5, y: -10, spread: 1, touch: [2.5, 6], rest: [1, 4], head: [8, 11], margin: 0.4, stretch: 0.25, fwd: [0.45, 0.8, 0.35], gas: [[-4, 4], [4.5, 4]] },   // front-on arms (looks only, celebrations only): shoulders at -w / +w, y (sprite units); authored hands move by (front - old shoulder) x spread (x a move / role's `front`), held together when within touch [d0, d1] of each other (unless both hands are within rest [d0, d1] (summed) of the standing pose's), held still within head [in, out] of the helmet centre, then kept inside the arm's reach minus margin (arms up to stretch longer first: al); fwd = [far, near, held pair] share of a reach toward his facing kept (it points at the camera: foreshortened; a held pair about his middle; null = off); gas = hands-on-knees spots
   // side-view celebrations (looks only): a move with `side: 1` / `sideKeys` plays side-on half the time (odds; CELEB.forceView pins it). near / far = the
@@ -7728,13 +7805,13 @@ function celebPatMate(c, m, span) {
   celebLive.push(Object.assign(x, { ev: 'rx', dur: CELEB_MOVES.poPatMate.secs + 0.4, side: true, rx: true, hy: 0 }));
 }
 // the open spot he jogs to first (null = he is already in the clear, or nowhere near is any better)
-function celebOpenSpot(h, ev) {
+function celebOpenSpot(h, ev, again) {   // again = he already hopped once: only a body that has come into his space moves him again
   const O = CELEB.open, others = allPlayers().filter(p => p !== h);
   // (a man on the turf is a body to step clear of too, and wider than one standing: `lie` x his distance counts; a man in FRONT of the spot on screen
   //  (larger y, about the same x) hides him most: `front` x closer)
   const room = (x, y) => { let m = 99; for (const p of others) { const fr = p.y > y && Math.abs(p.x - x) < O.frontX * YD ? O.front : 1; m = Math.min(m, Math.hypot(p.x - x, p.y - y) / YD * (lyingDown(p) ? O.lie : 1) / fr); } if (SL.on) m = Math.min(m, slRoom(x, y)); return m; };   // (sideline people count as bodies too)
   const here = room(h.x, h.y);
-  if (here >= O.clear) return null;
+  if (here >= (again ? O.reClear : O.clear)) return null;
   // (a scorer stays in the end zone he scored in: the move belongs there, not back out on the field)
   const ez = h.x > FIELD ? 1 : h.x < 0 ? -1 : 0, xLo = ez > 0 ? FIELD + 0.5 * YD : -ENDZONE + O.edge * YD, xHi = ez < 0 ? -0.5 * YD : FIELD + ENDZONE - O.edge * YD;
   let best = null;
@@ -7745,7 +7822,7 @@ function celebOpenSpot(h, ev) {
     const rm = Math.min(O.clear, room(x, y)), sc = rm - r * O.far + (dir ? O.fwd * Math.max(-1, Math.min(1, (x - h.x) * dir / (O.max * YD))) : 0);
     if (!best || sc > best.sc) best = { x, y, sc, r, rm };
   }
-  return best && best.rm >= here + O.minGain ? best : null;   // (v0.52: under `clear`, any roomier spot beats celebrating covered)
+  return best && best.rm >= here + (again ? O.reGain : O.minGain) ? best : null;   // (v0.52: under `clear`, any roomier spot beats celebrating covered)
 }
 // v0.59: after the whistle, men not in a celebration drift apart: a slow walk to a comfortable gap from each other and well out of the celebrating cast's
 // space, eased in and out (from settle, 04: a real move, taped and sent online). gap / castGap = yd wanted from a man / a celebrating one; walk = yd/s top;
@@ -7809,7 +7886,7 @@ function celebTry(q) {
   }
   const preM = q.pre && CELEB_MOVES[q.pre], crowdMove = !!(preM && (preM.needs || preM.marks || preM.gen || celebCastN(preM).pop() > 1));
   if (!crowdMove && (q.hops || 0) < CELEB.open.hops) {   // out of the crowd, into open space where the move can be seen
-    const O = CELEB.open, s = celebOpenSpot(h, q.ev);
+    const O = CELEB.open, s = celebOpenSpot(h, q.ev, (q.hops || 0) > 0);
     if (s) {
       const v = s.r >= O.runFrom ? O.run : O.walk;
       q.hops = (q.hops || 0) + 1; q.stillT = null;
@@ -8575,6 +8652,105 @@ function celebBareHead(look, skin, hy, cap) {
     ctx.beginPath(); ctx.moveTo(-0.6, hy + 1.2); ctx.lineTo(4.4, hy + 3.4); ctx.stroke();
   } else if (st > 0) { ctx.fillStyle = hair; ctx.beginPath(); ctx.ellipse(-0.2, hy - 1.2, 5.9, st === 2 ? 7.4 : 5.6, 0, Math.PI * 0.95, Math.PI * 1.98); ctx.fill(); ctx.fillRect(-5.4, hy - 1.4, 2.4, 3.2); }
 }
+// --- bench players (v0.70; tunables SIDELINE.benchFig) ---------------------------------------------------------------------------------------------------
+// Roster men on the benches (SLK.BENCH, the reserves too) and the kicker at the net are drawn with drawPlayer itself (a proxy object per man, like
+// celebDrawCoach's), side-on toward the ball. At rest = one of three pose sprites (sit / stand / arms up, picked from his SL_Q channels each frame by
+// slbNote) baked lazily into ONE atlas canvas (SLB; freed and rebuilt when the kits, dark mode, the performance level or the cast change).
+// Live through drawPlayer: walks (subs, run-alongs), knockdowns, the drink, the kicker's net kicks. Poses = static celebration moves (slb*, tag R, never
+// in a pool; c.sv = side view). Nothing new on the cast (online): build from P.z / P.bw, his full look from ROSTER by number (reserves: P.cs / P.ch).
+const SLB_POSE = { sit: { sink: 6, R: 0.06, l0: [-1.5, -1.4, 1.4], l1: [1.5, -1.5, 1.5], nh: [6, 3], fh: [4.5, 2.5] },
+                   stand: { nh: [2.5, 3], fh: [-1, 2.5] },
+                   up: { k: 1.04, nh: [5, -27], fh: [-3, -26], al: 1.25, hd: -0.15 } };
+SLB_POSE.drink = Object.assign({}, SLB_POSE.sit, { nh: [7.5, -19.5], hd: -0.3, R: -0.04 });
+const SLB_IDS = ['sit', 'stand', 'up'];   // sprite poses (SLB.m 1-3)
+function slbHelm(q, T, h) { const s = q.nh; q.nh = h; q.bare = true; celebHelmetProp(q, 0.6, T); q.nh = s; }   // (a held helmet: resting in that hand)
+for (const id of ['sit', 'stand', 'up', 'drink']) for (const v of ['', 'B', 'H']) {   // '' helmet on, B bare head, H bare + holding it
+  if (v === 'H' && (id === 'stand' || id === 'up')) continue;
+  const P = SLB_POSE[id], keys = id === 'drink' ? [[0, 'lin', SLB_POSE.sit], [1, 'lin', P]] : [[0, 'lin', P], [1, 'lin', {}]];
+  CELEB_MOVES['slb' + id + v] = { tag: 'R', secs: 1, cast: 1, needs: null, keys, fx: v ? q => { q.bare = true; } : null, props: v === 'H' ? (q, t, T) => slbHelm(q, T, id === 'drink' ? q.fh : q.nh) : null };
+}
+const SLB = { atlas: null, g: null, cells: new Map(), n: 0, cols: 0, rows: 0, cw: 0, ch: 0, key: '', cast: null, px: new Map(), fc: new Map(),
+              m: [], lf: [], d: [], wd: [], kk: [], tmp: [], x0: 0, y0: 0, W: 0, H: 0, on: true };
+const slbVar = P => P.hm ? '' : P.hh ? 'H' : 'B';
+function slbNote(k, P) {   // slPrep: what this slot is this frame (SLB.m: 1-3 sprite pose, 4 walk, 5 kicker, 6 down, 7 drink; lf = lift in sprite units)
+  const Q = SL_Q; let m;
+  SLB.lf[k] = Q[9] > 0.6 ? Q[9] : 0; SLB.wd[k] = SL_P.wd; SLB.kk[k] = Q[7];
+  if (P.k === SLK.KICKER) m = SL_P.wd >= 0 ? 4 : 5;
+  else if (SL_P.hk === 1 && (Q[10] > 0.9 || Q[10] < -0.9)) m = 6;
+  else if (SL_P.wd >= 0) m = 4;
+  else { const sit = Q[6] > 0.45 && Q[8] > 0.4, up = Math.max(Q[2], Q[3]) > 2; if (sit && !up && Q[3] > 1.05) { m = 7; SLB.d[k] = Math.min(1, (Q[3] - 0.8) / 0.7); } else m = sit ? 1 : up ? 3 : 2; }
+  SLB.m[k] = m;
+}
+function slbProxy(P) {   // his drawPlayer stand-in (kept per cast person: drawPlayer eases a few things on it, e.g. the facing)
+  let q = SLB.px.get(P); if (q) return q;
+  const e = P.num ? (ROSTER[slSideKey(P.s)] || []).find(r => r && r.name && String(r.num) === P.num) : null, B = SL_BUILD;
+  const z = (P.z || SIDELINE.scale) / SIDELINE.scale;
+  q = { num: P.num || '', size: 1, z: 0, vx: 0, vy: 0, action: null, act: null, hasBall: false, face: 1, faceShow: 1, x: 0, y: 0,
+        look: e && e.look ? e.look : { skin: P.cs || '#c58c5c', hair: P.ch || '#16120e', style: 1 },
+        ht: e && e.ht ? e.ht : B.htAvg + (z - 1) / B.htK, wt: e && e.wt ? e.wt : B.wtLo + (P.bw || 0) * B.wtSpan, big: !!(e && /^(OL|DL|TE)$/.test(e.group)) };
+  SLB.px.set(P, q); return q;
+}
+const slbTeam = P => (P.s === 0) === (MATCH.home === 'you') ? 'off' : 'def';   // (sideline 0 = home; TEAMS.off / def follow the ball, the kit does not)
+function slbReset() { if (SLB.atlas) freeCanvas(SLB.atlas); SLB.atlas = SLB.g = null; SLB.cells.clear(); SLB.n = SLB.rows = 0; SLB.px.clear(); SLB.fc.clear(); }
+function slbCheck() {   // the atlas still fits the kits / dark mode / performance level / cast?
+  const key = benchKit() + '|' + liteLevel() + '|' + (darkOn() ? 1 : 0);
+  if (key === SLB.key && SLB.cast === SL.cast) return;
+  slbReset(); SLB.key = key; SLB.cast = SL.cast;
+  const u = S * FIGURE.grow, q = liteLevel() ? SIDELINE.benchFig.qLite : SIDELINE.benchFig.q;
+  SLB.x0 = -18 * u; SLB.W = 36 * u; SLB.y0 = FOOT - 47 * u * FIGURE.tall; SLB.H = FOOT + 7 * u - SLB.y0; SLB.q = q;
+  SLB.cw = Math.ceil(SLB.W * q); SLB.ch = Math.ceil(SLB.H * q); SLB.cols = SIDELINE.benchFig.cols;
+}
+function slbGrow() {   // room for more cells: a taller atlas (the old cells copied over)
+  const rows = SLB.rows ? SLB.rows * 2 : 4, c = document.createElement('canvas');
+  c.width = SLB.cols * SLB.cw; c.height = rows * SLB.ch;
+  const g = c.getContext('2d'); if (SLB.atlas) { g.drawImage(SLB.atlas, 0, 0); freeCanvas(SLB.atlas); }
+  SLB.atlas = c; SLB.g = g; SLB.rows = rows;
+}
+function slbPose(q, id, ac, t) { const c = q.cel && q.cel.id === id ? q.cel : (q.cel = { id, i: 0, n: 1, t0: 0, keep: 1, sv: 1, rate: 1 }); c.t0 = ac - t; }
+function slbCell(P, m) {   // his baked pose m (1-3): the cell index, baked the first time it is asked for
+  const id = 'slb' + SLB_IDS[m - 1] + (m > 1 && P.hh ? 'B' : slbVar(P)), key = id;
+  let L = SLB.cells.get(P); if (!L) SLB.cells.set(P, L = {});
+  if (L[key] != null) return L[key];
+  if (SLB.n >= SLB.cols * SLB.rows) slbGrow();
+  const i = SLB.n++, cx = (i % SLB.cols) * SLB.cw, cy = Math.floor(i / SLB.cols) * SLB.ch, q = slbProxy(P), main = ctx, lod = plLod, pg = plGame;
+  const ac = rec && rec.replaying ? rec.rt : clock;
+  Object.assign(q, { team: slbTeam(P), x: 0, y: 0, face: 1, faceShow: 1, action: null, act: null, moving: false, vx: 0, kickSwing: false, kickWind: 0 }); slbPose(q, id, ac, 5);
+  ctx = SLB.g; plLod = false; plGame = true;
+  try { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(cx, cy, SLB.cw, SLB.ch); ctx.setTransform(SLB.q, 0, 0, SLB.q, cx - SLB.x0 * SLB.q, cy - SLB.y0 * SLB.q); drawPlayer(q); }
+  finally { ctx = main; plLod = lod; plGame = pg; q.cel = null; }
+  return (L[key] = i);
+}
+function slbFace(P, x, k) {   // side-on toward the ball, turning only once it is SIDELINE.benchFig.faceYd the other way (a walker faces his way)
+  if (SLB.m[k] === 4) { const f = SL.PT[k * SL_STR + 42] < 0 ? -1 : 1; SLB.fc.set(P, f); return f; }
+  let f = SLB.fc.get(P) || 1; const bx = ball ? ball.x : x, d = SIDELINE.benchFig.faceYd * YL;
+  if (bx > x + d) f = 1; else if (bx < x - d) f = -1;
+  SLB.fc.set(P, f); return f;
+}
+function slbDraw(B, n) {   // slPaint: the noted bench men, back to front
+  slbCheck();
+  const T = SL.PT, sp = SL.sp, lod = plLod, pg = plGame, ac = rec && rec.replaying ? rec.rt : clock, u = S * FIGURE.grow;
+  for (let i = 1; i < n; i++) { const k = B[i], y = T[k * SL_STR + 41]; let j = i - 1; while (j >= 0 && T[B[j] * SL_STR + 41] > y) { B[j + 1] = B[j]; j--; } B[j + 1] = k; }
+  plLod = false; plGame = true;
+  try {
+    for (let j = 0; j < n; j++) {
+      const k = B[j], o = k * SL_STR, P = sp[k], m = SLB.m[k], x = T[o + 40], y = T[o + 41] - FOOT, f = slbFace(P, x, k);
+      if (m <= 3) {
+        const i = slbCell(P, m), cx = (i % SLB.cols) * SLB.cw, cy = Math.floor(i / SLB.cols) * SLB.ch;
+        ctx.save(); ctx.translate(x, y - SLB.lf[k] * u); if (f < 0) ctx.scale(-1, 1);
+        ctx.drawImage(SLB.atlas, cx, cy, SLB.cw, SLB.ch, SLB.x0, SLB.y0, SLB.W, SLB.H); ctx.restore();
+        continue;
+      }
+      const q = slbProxy(P); q.team = slbTeam(P); q.x = x; q.y = y - SLB.lf[k] * u; q.face = f; q.z = 0;
+      q.moving = false; q.vx = 0; q.cel = null; q.kickSwing = false; q.kickWind = 0;
+      if (m === 6) { if (q.action !== 'down') { q.action = 'down'; q.act = { t: 9, angle: 0, fall: true, fallTime: 0.4, back: true }; } }
+      else { q.action = null; q.act = null; }
+      if (m === 4) { q.moving = true; q.vx = f * INJURY_EXIT.walk * YD; q.run = STRIDE.rate * Math.max(0, SLB.wd[k]) / YD; q.stride = INJURY_EXIT.walkStride; }
+      else if (m === 5) { const g = SLB.kk[k]; q.kickSwing = g > 0.8; q.kickWind = g < -0.2 ? 1 : 0; }
+      else if (m === 7) slbPose(q, 'slbdrink' + slbVar(P), ac, SLB.d[k]);
+      drawPlayer(q); q.cel = null;
+    }
+  } finally { plLod = lod; plGame = pg; }
+}
 // --- the scripted ball t seconds in: { hand: 'n' / 'f', rot } while he holds it, else { x, y, h, rot } in sprite units from his feet (x = the way he faces,
 // y = toward the camera, h = up off the turf; top = spinning upright on its point, fall = tipping over)
 function celebBallAt(mv, t, q, c) {
@@ -8940,6 +9116,7 @@ const MOVE_LOOK = {
   skinBias: 0.75,                     // chance a beaten man's reaction is one that goes with the runner's look (else any skin of the game's own reaction)
   goalYd: 2, goalBody: 2.5,           // goal-line leap: a runner's dive inside this many yd of the goal line with a defender within goalBody yd in front
   reachYd: 1.5, reachIn: 0.2,         // ball reach: tackled within this many yd short of the goal line / the line to gain; s the arm takes to lock out
+  over: { dot: 0.5, minV: 2.5, ahead: 1.5, sideYd: 1.6, lowZ: 0.45, tightYd: 1, tightK: 4 },   // v0.71 over-the-shoulder dives (diveOverPick): ball velocity . his (cos) above dot, he runs minV yd/s+, the ball no more than `ahead` yd in front of him; dragOver within sideYd of a sideline, shoelace under lowZ yd and dropping, pinned x tightK with a defender within tightYd
   backYd: 0.6, sideSin: 0.75, sideOdds: 0.6,   // catch dives: a pass this many yd behind his facing = backOver; a dive this square across his facing (|sin|) = sideDive at sideOdds
   outYd: 0.4,                         // a dive that lands within this many yd of the sideline (or past it) ends sitting up
   oneFootV: 4.5, catchHit: 0.3,       // landings: a catch coming down faster than this (yd/s) lands on one foot; hit this many s after the catch = at the catch point (spinAir)
@@ -9502,7 +9679,7 @@ const STANCE_ANIM = { into: 0.5, out: 0.25, arms: 0.25 };
 const STANCE_HANDS = { qbUC: [9.5, -0.5, 10, 1, -1], qbGL: [10, 0.5, 10.5, 2, -1], qbVic: [9.5, -0.5, 10, 1, -1],   // reaching forward under the center
   qbGun: [7.5, -4.5, 8, -2, -1], qbHurry: [8, -7.5, 8.5, -5, -1],                                               // open, belt to chest / already up
   rb2: [5.5, 4, 6.5, 4.6, -1], rbLow: [6, 4.4, 7, 5, -1], rbGun: [4.6, 4, 5.6, 4.6, -1] };                      // on the thigh pads
-const TUCK_BALL = { scale: 0.74, in: 0.6, tilt: 0.7, hideX: -0.4, qb: 0.72 };   // qb = the QB's two-hand chest ball (drop / pocket) vs the ball in the air   // hideX = sprite x (body-relative, + = the way he faces) behind which a near-arm tucked ball is hidden by the arm   // tucked ball size vs the ball in the air (7 x 4.5); in = px it sits closer to the body; tilt = radians its nose is turned down toward the hand
+const TUCK_BALL = { scale: 0.74, in: 0.6, tilt: 0.7, hideX: -0.4, qb: 0.72, nose: 0.85 };   // nose = how far toward the ball's nose (share of its half length) the near carrying hand sits   // qb = the QB's two-hand chest ball (drop / pocket) vs the ball in the air   // hideX = sprite x (body-relative, + = the way he faces) behind which a near-arm tucked ball is hidden by the arm   // tucked ball size vs the ball in the air (7 x 4.5); in = px it sits closer to the body; tilt = radians its nose is turned down toward the hand
 function stanceOf(p) {   // 'two' | 'three' | 'four' | 'wr' | 'cb' | 's' | 'lb' | null
   if (p.action || p.moving || p.hasBall || p.fgTo || p.fmTo || (rec && rec.replaying)) return null;
   if (state === 'pre') {
@@ -10068,6 +10245,11 @@ function drawPlayer(p) {
     // both forearms folded across the chest over the tucked ball
     drawArmTo(t, skin, -1, -10.5 + bob, 4.5, -8.4 + bob, 3, 4, 1, 3.4);   // top forearm lies over the ball
     drawArmTo(t, skin, 2, -9.5 + bob, 4.5, -4.2 + bob, 3, 4, 1, 3.4);     // bottom hand cups it from below
+  } else if (tucked && !stiff && nearTuck) {
+    // carrying arm (near side): the hand on the ball's nose, the forearm across it, its tail in the crook (same spot / tilt drawTuck uses;
+    // the old fixed arm put the hand ~5 units out past the nose, under the ball)
+    const ti = TUCK_BALL.in, kx = 0.4 + 0.6 * tw / FIGURE.torso, cx = (2 - ti) * kx, cy = -7 + bob, hl = 3.5 * BALL_HELD * TUCK_BALL.nose;
+    drawArmTo(t, skin, 1, -10 + bob, cx + hl * Math.cos(TUCK_BALL.tilt), cy + hl * Math.sin(TUCK_BALL.tilt), 3, 4, 1, 3.5);
   } else if (tucked && !stiff) {
     // carrying arm: elbow down at his side, forearm wrapped forward over the ball
     drawArm(t, skin, 1, -10 + bob, 1.35, 3, -1.5, 5, 3.5);
@@ -10387,7 +10569,8 @@ function drawPlayer(p) {
   let yaw = lying ? 0 : rec && rec.replaying && p.yawRec != null ? p.yawRec : headYaw(p, watchB);   // (a replay turns the head as it was in the play, not from the live state)
   ctx.save();
   ctx.translate(0, hy); ctx.scale(cq ? cq.k : 1, 1 / (FIGURE.tall * (cq ? cq.k : 1))); ctx.translate(0, -hy);   // (the helmet stays round: undoes the body's FIGURE.tall stretch, and a celebration's squash / stretch, around its centre)
-  if (st && (st.up || p.snapArm != null)) { ctx.translate(0, hy + 3); ctx.rotate(-st.lean * (st.up || SNAP_LOOK.headUp)); ctx.translate(0, -hy - 3); }   // (the center over the ball: head up too)   // (QB / back stances: head up, eyes on the defense, however far the back is tipped)
+  if (st && (st.up || p.snapArm != null)) { ctx.translate(0, hy + 3); ctx.rotate(-st.lean * (st.up || SNAP_LOOK.headUp)); ctx.translate(0, -hy - 3); }
+  { const dv = diveLook(p); if (dv && dv.hd) { ctx.translate(0, hy + 3); ctx.rotate(dv.hd * (diveTilt(p) || { e: 1 }).e); ctx.translate(0, -hy - 3); } }   // (v0.71 over-the-shoulder dives: the helmet tipped back to the ball)   // (the center over the ball: head up too)   // (QB / back stances: head up, eyes on the defense, however far the back is tipped)
   const fakeLook = !!(p.relFx && p.relFx.kind === 'shoulder' && !p.action && !p.hasBall && (ac - p.relFx.t) / p.relFx.dur <= 1);   // (a head fake turns side to side: never tipped down at the ground)
   // (no tipping at the ground the moment a pass is thrown, and a receiver merely near the landing spot only turns his head: just the target / a man reaching or leaping tips up / down, once the ball has left the QB)
   const pitchOK = !(state === 'flight' && !p.hasBall && p.team !== 'def' && (ball.p ?? 1) < LOOK_BALL.tiltAfter);

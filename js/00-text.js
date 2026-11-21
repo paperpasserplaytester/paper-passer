@@ -27,6 +27,10 @@ const NEWS = {
             body: ['{p} put up {val} {what}, a new {book} {scope} record. The old mark of {was} belonged to {old}.', 'The {book} {scope} record for {what} now reads {val}, and it belongs to {p}. {old} held it before.', 'Nobody in {book} history had done it: {val} {what}. Sorry, {old}.'] },
   recordOwn: { head: ['{p} Breaks His Own Record', 'Topping Himself: {p} Raises the Bar to {val}', '{p} vs. {p}: The New Mark Is {val}', 'Nobody Else Comes Close: {p} Betters His Own {Book} Record', 'Second Time Around: {p} Resets the {Book} {Scope} Mark'],
                body: ['The only name on the {book} {scope} record for {what} is still {p}, but the number moved: {val}, up from his own {was}.', '{p} already owned the {book} {scope} mark for {what} at {was}. Now it reads {val}.', 'Chasing his own ghost, {p} put up {val} {what} and beat the {was} he set himself.'] },
+  recordTeam: { head: ['{p} Rewrite the Record Book', 'History! {p} Break the {Book} {Scope} Mark', 'New {Book} Record: {val} {What}', '{p} Erase {old} From the Books', 'Move Over, {old}: {p} Set a New Standard'],
+                body: ['{p} put up {val} {what}, a new {book} {scope} record. The old mark of {was} belonged to {old}.', 'The {book} {scope} record for {what} now reads {val}, and it belongs to {p}. {old} held it before.', 'No team in {book} history had done it: {val} {what}. Sorry, {old}.'] },
+  recordTeamOwn: { head: ['{p} Break Their Own Record', 'Topping Themselves: {p} Raise the Bar to {val}', 'Nobody Else Comes Close: {p} Better Their Own {Book} Record', 'Second Time Around: {p} Reset the {Book} {Scope} Mark'],
+                   body: ['The only name on the {book} {scope} record for {what} is still {p}, but the number moved: {val}, up from their own {was}.', '{p} already owned the {book} {scope} mark for {what} at {was}. Now it reads {val}.', 'Chasing their own ghost, {p} put up {val} {what} and beat the {was} they set themselves.'] },
   milestone: { head:['{p} Passes {what}', 'Milestone: {p} Reaches {what}', '{p} Hits {what} for the Season'],
                body: ['The {team} {pos} crossed {what} this week, {left}.', '{p} keeps climbing: {what} and counting.'] },
   newTeam: { big: true, head: ['{coach} Takes Over the {team}', 'New Era: {team} Hand the Keys to {coach}', '{team} Hire {coach} as Head Coach'],
@@ -846,7 +850,34 @@ const DRAFT_SCHOOLS = ['BAYOU STATE', 'GREAT LAKES TECH', 'NORTH PRAIRIE', 'COAS
   'CEDAR FALLS STATE', 'GULF SHORE', 'HIGH PLAINS', 'MILL CREEK', 'CANYON STATE', 'LAKESHORE', 'EAST TIMBER', 'COPPER MOUNTAIN', 'RIVERBEND', 'STONE HARBOR', 'BLUE MESA', 'WEST DELTA', 'GRANITE STATE TECH',
   'MAGNOLIA', 'SILVER LAKE', 'FORT ASH', 'PALMETTO BAY', 'BIG SKY NORTH', 'CAPITAL CITY', 'THREE RIVERS', 'SAGEBRUSH', 'MAPLE GROVE', 'SOUTH RIDGE', 'TIDEWATER', 'ELK RAPIDS', 'SUNCOAST', 'BLACK HILLS TECH', 'WINDWARD'];
 const CHANGELOG = [
+  { v: "v0.71", secs: [
+    ["REFS AND REPLAYS", [
+      "Booth reviews are quicker: the tape starts just before the moment in question, with one slow look and one rock back.",
+      "No more reviews of obvious plays: a walk-in touchdown or a spot with nobody making the tackle is never looked at.",
+      "You can pause during a booth review.",
+      "Penalty clip: after a flag, a short clip of the foul plays before you accept or decline. Click to skip it.",
+      "Refs move more smoothly: no stop-start when they change course, and the backpedal blends into a run.",
+      "Sideline people walk and run with the players' own stride.",
+    ]],
+    ["DIVES", [
+      "One dive rule for both sides: speed carried plus a push from his own speed and weight. Standing dives are slower, heavy men push less.",
+      "Receivers no longer slow down on their feet before a timed dive.",
+      "New over-the-shoulder diving catches: basket, fingertip, look back, late hands, pinned, shoelace and the sideline drag. He keeps facing downfield.",
+    ]],
+    ["HISTORIC STATS", [
+      "Only players chasing a real record show up, one line each with a pencil bar to the mark. Nobody chasing, no segment.",
+    ]],
+  ] },
   { v: "v0.70", secs: [
+    ["FIXES AND SMALL CHANGES", [
+      "Coaching goals now pay bank XP too: 10 XP for every credit, shown on the GOAL COMPLETE note.",
+      "Simming to the end of a quarter stops at the next quarter's first snap, mid-drive. With SIM DEFENSE off, their ball means you play the defense.",
+      "Team records in the Post read like a team: The Bears break their own mark.",
+      "Goal post pads: a player in front of the pad covers it, one behind it is covered.",
+      "Pausing on a phone no longer leaves the sound stuck or bursts old sound tails on resume.",
+      "The ball carrier's hand now holds the nose of a tucked ball instead of floating out in front.",
+      "Celebrating players hop to open space once, and only move again if someone crowds them.",
+      "Smaller fixes: the skip ring reads hold or Esc to skip, no credit animation when a save loads, a stray click can no longer skip a kickoff, a runner going sideways no longer flips back and forth."]],
     ["FRONT OFFICE AND THE BOOTH", [
       "Sign or poach a coordinator, trainer or scout and his folder pops up like a new player's card.",
       "The draft has a REPORTS button for your scouts' notepad, and reported prospects get a check mark.",
@@ -856,6 +887,8 @@ const CHANGELOG = [
       "Halftime commentary slows down, never talks over itself, and talks about the throw, the moves and the blocks.",
     ]],
     ["KICKS, REPLAYS AND THE SIDELINE", [
+      "The players on the benches and the kicker at the net now look just like the players on the field: same body, kit and helmet.",
+      "Click to the next play and the whole sideline is set at once: refs, chain crew, cameramen, subs and the hurt man's ride are already in place, nobody walks into the snap.",
       "Blocked punts follow the rules: the punting team keeps it only past the line to gain, otherwise it's the other team's ball.",
       "No more stutter after a blocked punt: everyone carries his speed into the scramble.",
       "Kickoffs, punts, field goals, extra points and blocks get instant replays, and the pause menu can replay them.",
@@ -928,6 +961,9 @@ const CHANGELOG = [
       "No more CREDITS EARNED screen after a game: your credits fly straight into the box.",
     ]],
     ["ONLINE", [
+      "Phones play the crowd, whistle and hit recordings from memory, so a touchdown no longer freezes the game for a third of a second.",
+      "The guest's presses reach his screen sooner: the host answers each one right away instead of waiting for the next update.",
+      "For testing: FRAME TIMES spikes now say how long the page was blocked and the two biggest costs outside the frame.",
       "Holding the aim still no longer lets a second finger throw the ball away.",
       "A lost or cancelled touch now drops the aim instead of throwing it.",
       "Smoother picture for the guest when players come and go: only the new players are sent, not everyone again.",

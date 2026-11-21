@@ -2464,7 +2464,14 @@ function goalsEnsure() {   // this week's goals (made the first time they're nee
 function goalsReset() {   // the game was reset: this week's goals start over (credits for finished ones are taken back, so they can't be farmed)
   const g = career.goals;
   if (!g || exhibition || tut || !season) return;
-  for (const q of g.list) { if (q.done) LEAGUE.coins = Math.max(0, LEAGUE.coins - (q.lv + (hcAbil('TASKMASTER') ? 1 : 0))); q.p = 0; q.done = false; }
+  for (const q of g.list) { if (q.done) { LEAGUE.coins = Math.max(0, LEAGUE.coins - (q.lv + (hcAbil('TASKMASTER') ? 1 : 0))); if (q.bx > 0) { career.xpBank = Math.max(0, xpBank() - q.bx); LEAGUE.xpNew = Math.max(0, (LEAGUE.xpNew || 0) - q.bx); } } q.p = 0; q.done = false; q.bx = 0; }   // (its bank XP back too)
+}
+// a finished goal's bank XP (XPC.goalXp per credit, your franchise only, under XPC.cap): straight into career.xpBank, shown by homeNews' xpNew flight; returns what went in
+function goalXpBank(cr) {
+  if (!xpcOn() || !(cr > 0)) return 0;
+  const add = Math.max(0, Math.min(cr * XPC.goalXp, (XPC.cap || Infinity) - xpBank()));
+  career.xpBank = xpBank() + add; LEAGUE.xpNew = (LEAGUE.xpNew || 0) + add;
+  return add;
 }
 function goalEvent(ev, val = 1) {
   if (LG_SAND) return;   // (a league tape being made)
@@ -2489,9 +2496,11 @@ function goalDone(q) {
   q.done = true;
   const cr = q.lv + (hcAbil('TASKMASTER') ? 1 : 0), xp = GOAL.xp * q.lv;
   LEAGUE.coins += cr; payToFly += cr;
+  const bx = goalXpBank(cr);   // (+ bank XP, your franchise only: flies to the box on the next home screen like the credits)
+  q.bx = bx;
   coachXP({ hc: xp, oc: xp, dc: xp });
   career.goalsDone = (career.goalsDone || 0) + 1;
-  goalToast = { text: goalLabel(q), cr, t0: performance.now() };
+  goalToast = { text: goalLabel(q), cr, xp: bx, t0: performance.now() };
   autosaveSoon();
 }
 function goalBoost() {   // x on every player's XP from a game in which a goal was finished
@@ -2810,7 +2819,7 @@ function celFineNews() {
 }
 function homeNews() {
   const up = LEAGUE.upgNew || [], tr = LEAGUE.tradeNews || [];
-  if (loadQuiet) { loadQuiet = false; LEAGUE.upgCoins = 0; LEAGUE.xpNew = 0; LEAGUE.xpSim = 0; coinFly = []; coinPending = 0; xpPending = 0; }   // (v0.70: opened from the load screen: already banked, no tokens fly)
+  if (loadQuiet) { loadQuiet = false; LEAGUE.upgCoins = 0; LEAGUE.xpNew = 0; LEAGUE.xpSim = 0; coinFly = []; coinPending = 0; xpPending = 0; payToFly = 0; payFrom = null; }   // (v0.70: opened from the load screen: already banked, no tokens fly)
   try { celFineNews(); } catch (e) { console.warn('fines', e); }   // (v0.51: celebration fines from the last game)
   if (LEAGUE.upgCoins) {   // maxed-out players paid credits: explained the first time only, then they just fly from the ROSTER button to the credits box
     const n = LEAGUE.upgCoins; LEAGUE.upgCoins = 0;

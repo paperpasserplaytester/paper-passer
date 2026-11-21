@@ -881,7 +881,10 @@ function rbNote(c, book, res, e) {
   if (!lg && e.t !== me) return;
   const old = res.old, sw = rbScopeWord(c), who = rbTeamCat(c) ? teamFull(e.t) : `${rbShort(e.n)} (${e.t})`, oldWho = old ? rbHolder(c, old) : '';
   const what = /^LONGEST /.test(c.l) ? `a ${rbFmt(c, e.v)}-yard ${c.l.slice(8).toLowerCase()}` : `${rbFmt(c, e.v)} ${c.l.toLowerCase()}`;
-  const txt = `${who}: ${what}, ${res.broke ? 'breaks' : 'ties'} ${old ? oldWho + "'s " : 'the '}${lg ? 'league' : 'franchise'} ${sw} record${old ? ` (${rbFmt(c, old.v)})` : ''}.`;
+  const tm = rbTeamCat(c), nick = k => NFL[k] ? `the ${NFL[k].nick}` : String(k), up = t => t.charAt(0).toUpperCase() + t.slice(1);   // (team marks: "the Bears" = they / their)
+  const tWho = tm ? up(nick(e.t)) : who, tOld = tm && old ? nick(old.n) : oldWho, poss = t => /s$/.test(t) ? t + "' " : t + "'s ";
+  const txt = tm ? `${tWho} ${res.broke ? 'break' : 'tie'} ${old && !res.own ? poss(tOld) : res.own ? 'their own ' : 'the '}${lg ? 'league' : 'franchise'} ${sw} record: ${what}${old ? ` (was ${rbFmt(c, old.v)})` : ''}.`
+    : `${who}: ${what}, ${res.broke ? 'breaks' : 'ties'} ${old ? oldWho + "'s " : 'the '}${lg ? 'league' : 'franchise'} ${sw} record${old ? ` (${rbFmt(c, old.v)})` : ''}.`;
   if (!S.news.includes(txt)) { S.news.push(txt); if (S.news.length > RB.newsMax) S.news.shift(); }
   if (res.broke && res.rank === 1) {   // (v0.52: the home popup's card: a mark that really fell, kept structured)
     const X = S.newsX || (S.newsX = []), key = `${book}|${c.id}|${e.n}|${e.y}|${e.w}`;
@@ -890,7 +893,7 @@ function rbNote(c, book, res, e) {
     X.push(it); if (X.length > RB.newsMax) X.shift();
   }
   if (lg && e.t === me && !rbTeamCat(c)) try { trophyAdd('record', rbShort(e.n)); } catch (err) {}   // (one of your players set a league record: the trophy room's shelf, once a season)
-  try { const P = postS(); (P.notes || (P.notes = [])).push({ k: res.own ? 'recordOwn' : 'record', w: lg ? 9 : 6, team: NFL[e.t] ? e.t : null, big: lg, sl: { p: who, team: NFL[e.t] ? pTeam(e.t) : '', what: c.l.toLowerCase(), val: rbFmt(c, e.v), old: old ? oldWho : 'the old mark', was: old ? rbFmt(c, old.v) : '', book: lg ? 'league' : 'franchise', scope: sw,
+  try { const P = postS(); (P.notes || (P.notes = [])).push({ k: (tm ? 'recordTeam' : 'record') + (res.own ? 'Own' : ''), w: lg ? 9 : 6, team: NFL[e.t] ? e.t : null, big: lg, sl: { p: tWho, team: NFL[e.t] ? pTeam(e.t) : '', what: c.l.toLowerCase(), val: rbFmt(c, e.v), old: old ? (tm ? up(tOld) : oldWho) : 'the old mark', was: old ? rbFmt(c, old.v) : '', book: lg ? 'league' : 'franchise', scope: sw,
     Book: lg ? 'League' : 'Franchise', Scope: sw.replace(/(^|-)([a-z])/g, (m, a, b) => a + b.toUpperCase()), What: c.l.toLowerCase().replace(/\b[a-z]/g, m => m.toUpperCase()) } }); } catch (err) {}
 }
 // ---- live tracking (Phase 4) ----
@@ -1597,6 +1600,7 @@ function reset() {
   aim = null;
   resetPylons();   // (the grounds crew stands them back up)
   preSnapMsg();
+  refPlace(); if (typeof slCamSet === 'function') slCamSet();   // (v0.70: the cameramen and the officials on their spots for this line-up, the same instant as the players)
   xfAnnounce();   // (a Star Factor that switched on / off last play is announced now, before the next snap)
   if (tut) tutSetup();
   if (oo) ooSetup();

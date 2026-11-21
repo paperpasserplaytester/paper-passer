@@ -9,24 +9,56 @@ const PERF_SLOW = { tag: 16, ev: 30, sub: 2 };   // ms: a timed call worth a tag
 const PERF_EV = { on: 0, t0: 0, type: '', sub: [] };
 const PERF_WRAP = ['saveToSlot', 'loadFromSlot', 'buildSave', 'storeTidy', 'storeReport', 'autoAssignSlot', 'syncNow', 'syncOnLeave', 'syncBundle',
   'newGame', 'openResults', 'leagueReset', 'careerReset', 'startCrumple', 'cglStart', 'btnSprClear', 'offToDraft', 'startExhibition', 'lgTapeTick', 'hsEndReel', 'seasonGameDone', 'pgTry'];
+// v0.70: calls timed as spike parts of their own ('f.name', nested: they also stay inside the u.* part that called them): the score / celebration frames
+const PERF_PARTS = ['touchdown', 'endPlay', 'recLive', 'hsScoreRec', 'hsTape', 'keepHighlight', 'celebBegin', 'celebMake', 'celebPick', 'celebAsk', 'showBanner', 'crowdCheer', 'pstPlay', 'recordFrame', 'slReact'];
 function perfTime(tag, f, self, args) {
   if (typeof SETTINGS === 'undefined' || !SETTINGS.perfHud) return f.apply(self, args);
   const t0 = performance.now();
   try { return f.apply(self, args); }
-  finally { const ms = performance.now() - t0; if (PERF_EV.on && ms > PERF_SLOW.sub) PERF_EV.sub.push([tag, ms]); if (ms > PERF_SLOW.tag) perfNote(tag + ' ' + Math.round(ms)); }
+  finally { const ms = performance.now() - t0; if (PERF_EV.on && ms > PERF_SLOW.sub) PERF_EV.sub.push([tag, ms]); if (ms > PERF_SLOW.tag) perfNote(tag + ' ' + Math.round(ms)); if (!perfIn && !PERF_EV.on) perfOut(tag, ms); }
 }
 let perfWrapped = false;
 function perfWrapAll() {
   perfWrapped = true;
+  try { const fr = window.frame; if (typeof fr === 'function' && !fr.__pw) { const w = function () { perfIn = 1; try { return fr.apply(this, arguments); } finally { perfIn = 0; } }; w.__pw = fr; window.frame = w; } } catch (e) {}
+  try { for (const n of ['playSfx', 'clipSfx']) { const f = window[n]; if (typeof f !== 'function' || f.__pw) continue; const w = function (s) { return perfOutRun('sfx ' + (n === 'clipSfx' ? 'clip' : String(s).replace(/^audio\//, '')), f, this, arguments, 2); }; w.__pw = f; window[n] = w; } } catch (e) {}
+  try { if (typeof NET !== 'undefined' && NET._simIn && !NET._simIn.__pw) { const si = NET._simIn; NET._simIn = function (fast, fn, ...a) { return si.call(this, fast, function () { return perfOutRun(fast ? 'net fast' : 'net rel', fn, this, arguments); }, ...a); }; NET._simIn.__pw = si; } } catch (e) {}
+  for (const n of PERF_PARTS) { const f = window[n]; if (typeof f !== 'function' || f.__pw) continue; const w = function () { const t = performance.now(); try { return f.apply(this, arguments); } finally { perfMark('f.' + n, t); } }; w.__pw = f; window[n] = w; }
   for (const n of PERF_WRAP) { const f = window[n]; if (typeof f !== 'function' || f.__pw) continue; const w = function () { return perfTime(n, f, this, arguments); }; w.__pw = f; window[n] = w; }
   try { if (window.PerformanceObserver && (PerformanceObserver.supportedEntryTypes || []).includes('longtask')) new PerformanceObserver(l => { for (const e of l.getEntries()) perfNote('longtask ' + Math.round(e.duration)); }).observe({ entryTypes: ['longtask'] }); else perfNote('no longtask API'); } catch (e) {}
 }
 function perfEvOn(e) { if (typeof SETTINGS === 'undefined' || !SETTINGS.perfHud) return; PERF_EV.on = 1; PERF_EV.t0 = performance.now(); PERF_EV.type = e.type; PERF_EV.sub.length = 0; setTimeout(perfEvOff, 0); }   // (window capture, the first listener of all; the end = a window bubble listener in 14, or this timer when something stopped the event)
 function perfEvOff() {
   if (!PERF_EV.on) return; PERF_EV.on = 0; const ms = performance.now() - PERF_EV.t0;
+  perfOut(PERF_EV.type, ms);
   if (ms > PERF_SLOW.ev) perfNote(`${PERF_EV.type} ${Math.round(ms)}${PERF_EV.sub.length ? ': ' + PERF_EV.sub.sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => k + ' ' + Math.round(v)).join(', ') : ''}`);
 }
 for (const t of ['pointerdown', 'pointerup', 'keydown']) window.addEventListener(t, perfEvOn, true);
+// v0.70 blocked-time probe (FRAME TIMES only): a heartbeat every PERF_BLK.ms off the frame loop keeps the longest it was late since the last frame (perfBlk.max:
+// blocked about as long as a spike's gap = main-thread code; not blocked = the browser didn't call the frame). PERF_OUT = ms per entry point outside frame() since
+// the last frame (pointer / key events, net messages, timer callbacks named by who set them, storage writes, sound starts); 14's perfSpike prints the top two and
+// the same names go to the online event log (onlLogTag). perfIn = frame() is running (wrapped in perfWrapAll), so a timed call inside it isn't counted as outside.
+const PERF_BLK = { ms: 10, outMin: 0.3 };   // ms between beats; an outside cost under outMin ms isn't printed
+const perfBlk = { last: 0, max: 0, on: 0 }, PERF_OUT = {}, PERF_ST = window.setTimeout.bind(window), PERF_SI = window.setInterval.bind(window);
+let perfIn = 0;
+const perfHudOn = () => typeof SETTINGS !== 'undefined' && SETTINGS.perfHud;
+function perfBeat() {
+  const n = performance.now(); if (perfBlk.last) { const d = n - perfBlk.last - PERF_BLK.ms; if (d > perfBlk.max) perfBlk.max = d; }
+  perfBlk.last = n; if (perfHudOn() && !document.hidden) PERF_ST(perfBeat, PERF_BLK.ms); else { perfBlk.on = 0; perfBlk.last = 0; }
+}
+function perfBeatOn() { if (!perfBlk.on && !document.hidden) { perfBlk.on = 1; perfBlk.last = 0; perfBlk.max = 0; PERF_ST(perfBeat, PERF_BLK.ms); } }
+function perfOut(name, ms, noLog) { if (!perfHudOn()) return; PERF_OUT[name] = (PERF_OUT[name] || 0) + ms; if (!noLog && typeof onlLogOn === 'function' && onlLogOn()) onlLogTag(name, ms); }
+function perfOutRun(name, f, self, args, always) {
+  if (!perfHudOn() || (perfIn && !always)) return f.apply(self, args);
+  const t = performance.now(); try { return f.apply(self, args); } finally { const ms = performance.now() - t; perfOut(name, ms, always === 2); if (always && ms > PERF_SLOW.tag) perfNote(name + ' ' + Math.round(ms)); }
+}
+function perfWho() {   // (the code that set a timer: function name, or file:line for an arrow)
+  try { const L = (new Error().stack || '').split('\n'); for (const s of L) { if (/perfWho|perfTimer|^Error/.test(s) || !/\d+-[a-z0-9-]+\.js/.test(s)) continue; const fn = s.match(/at ([\w$.]+) \(/) || s.match(/^([\w$.]+)@/), fl = s.match(/(\d+-[a-z0-9-]+)\.js:(\d+)/); return fn ? fn[1] : fl ? fl[1] + ':' + fl[2] : 'anon'; } } catch (e) {}
+  return 'anon';
+}
+function perfTimer(orig) { return function (f, ms, ...a) { if (typeof f !== 'function' || !perfHudOn()) return orig(f, ms, ...a); const n = 'timer ' + (f.name || perfWho()); return orig(function () { return perfOutRun(n, f, this, arguments); }, ms, ...a); }; }
+window.setTimeout = perfTimer(PERF_ST); window.setInterval = perfTimer(PERF_SI);
+try { const SI = Storage.prototype.setItem; Storage.prototype.setItem = function (k, v) { return perfOutRun('setItem ' + String(k).replace('pocketPasser.', '') + ' ' + Math.round(String(v).length / 1024) + 'k', SI, this, arguments, 1); }; } catch (e) {}
 let ctx = canvas.getContext('2d', { alpha: false, desynchronized: /Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent) });   // (let:fieldCacheDraw points it at its own canvas while the static field is pre-drawn, nothing else ever changes it)   // (an opaque canvas: cheaper to composite on phones; not desynchronized, which tore / flickered on PC)
 // a rating written in words ("3.5 stars", "4*") is drawn with the star icon instead
 {
@@ -214,7 +246,10 @@ const SIDELINE = {
   // from it that counts as there (gone: the bench man shows); a kick's clones only use it when it is no farther than the old run off the screen (the kick never waits longer).
   // turnover = after a change of possession / a kick the old units jog off from where they stood (only when the view keeps its picture; the snap never waits)
   kitLook: { helmSit: 0.45, helmHold: 0.75, helmStand: 0.8 },   // v0.52: roster bench men (both teams) in the on-field kit: share of seated men wearing the helmet, of the rest holding it (on a knee), of standing men wearing it
-  sub: { d: 2.1, spread: 0.85, arrive: 1.3, turnover: true, maxN: 22, skip: 0.5, v: 7.5, inPad: 0.5, fast: 3, head: [0.15, 0.55], headFar: 0.6 },   // v0.57: v = a believable jog (was 11); head = share of the way to his sideline a stand-in starts at, nearest .. farthest man (farthest = headFar x the field's width away), so they still clear before the snap   // v0.52: v = yd/s a man leaving the field sprints at (was FM.speed 8); inPad = yd past a sideline that still counts as inside the field (a sub there is seated at once, never walks or sits on the field); fast = x speed while a banner / the 4th-down or PAT choice covers the field   // skip = s of real time without a tick (a replay, banner, sim box, pause) that counts as a time skip: subs / crew move on by it (slSkipCheck)
+  // v0.70: roster bench men + the kicker drawn with the players' own figure (07 `// --- bench players`): q / qLite = sprite px per world px (atlas cells),
+  // drink = share of seated men on the drinking idle, faceYd = they turn to the ball only once it is this far (YL) the other way, cols = atlas cells a row
+  benchFig: { on: true, q: 0.8, qLite: 0.5, drink: 0.08, faceYd: 4, cols: 16 },
+  sub: { d: 2.1, spread: 0.85, arrive: 1.3, turnover: false, maxN: 22, skip: 0.5, v: 7.5, inPad: 0.5, fast: 3, head: [0.15, 0.55], headFar: 0.6 },   // v0.57: v = a believable jog (was 11); head = share of the way to his sideline a stand-in starts at, nearest .. farthest man (farthest = headFar x the field's width away), so they still clear before the snap   // v0.52: v = yd/s a man leaving the field sprints at (was FM.speed 8); inPad = yd past a sideline that still counts as inside the field (a sub there is seated at once, never walks or sits on the field); fast = x speed while a banner / the 4th-down or PAT choice covers the field   // skip = s of real time without a tick (a replay, banner, sim box, pause) that counts as a time skip: subs / crew move on by it (slSkipCheck)
   // help-up (host, slHelpPick): a player knocks a sideline person down -> one outcome, weights w (help = he helps him up, sorry = a swerve by without stopping, ignore,
   // other = a nearby staff member / bench man walks over (within otherR yd, there in time), self = up on his own). opp = x help for the other team's people, neutral = x help
   // for crew / cameras / vests; hurry = x ignore in a late close game (lateS(late) s left, within close points) or right after a big play. dwHelp / dwMax = extra s on the turf
@@ -331,6 +366,7 @@ const AFTER_JUMP = { window: 1.0, miss: 0.45 };   // a receiver who caught it le
 // leg cycle: rate = rad/s per yd/s of speed (min / max rad/s); swing x speed / full (never under ampMin)
 const STRIDE = { rate: 2.4, max: 30, ampMin: 0.2, full: 9 * YD, smooth: 14, gsmooth: 25, teleport: 40 * YD, start: 1.5, freeRun: 3.5 };   // (gsmooth = how fast his measured ground speed settles (1/s), teleport = a frame jump above this speed is a reposition, not running, start = the speed (YD) at which a still man is flagged running, freeRun = the speed (YD) above which a man flagged as locked up is really running free)   // rate = leg cycle (rad) per yard of ground, ampMin/full = swing at a crawl / at this speed, smooth = swing easing (1/s)
 const LEG_KNEE = 1.1;          // running: extra knee fold on the forward swing (radians)
+const SL_GAIT = { lod: 1, still: 1.2, knee: 0.5, arm: 0.85, el: 1.2, bob: 0.6, lean: 0.12 };   // v0.71 sideline walkers / runners on the players' leg cycle (STRIDE, LEG_SWING, LEG_KNEE): from this SL.lod up; swing fades in over the first `still` yd/s; knee x LEG_KNEE, arm swing / elbow bend (rad), run bob, lean at full swing
 // kickoff kick: the leg swings through in time s (kickK 0..1), comes back down by done; the kicker carries
 // on past the tee at follow yd/s (or 0.8x his run-up speed), slowing at decel yd/s^2
 const KICK_ANIM = { time: 0.28, done: 1.6, follow: 7 * YD, decel: 5 * YD };
@@ -1229,8 +1265,10 @@ const REF = {
   choose: { callS: 4.2, annAt: 0.6, sigAt: 2.6, cpuS: 1.1, ep0: -0.6, epK: 0.068, downK: [0, 0.35, 0.85], fgYd: 62, fgV: 2.3, punt: 40, goYd: 1.5, goCost: 0.9, kickV: 0.6, lateS: 120, clock: 1.2 },
   boothCatch: 0.65,  // share of bad calls the booth reverses by itself; the rest are what challenges are for
   chal: 2,            // challenges a game (a lost one also costs a timeout)
-  rev: { still: 1.6, stamp: 1.8,   // s: the still frame when replays are off; the stamp
-    wait: 1.2, slate: 1.8, look: 1.3, slowK: 0.3, rockSpan: 0.6, rockK: 0.35, rockN: 2, hold: 0.45, push: 2.2, base: 1.15, zoomE: 2.2, border: 6 },   // v0.68 booth mode: s after the whistle it may start; slate s; the last `look` s of the tape played x slowK, then rockN rocks over rockSpan s at rockK x, held `hold` s at each end; zoom x push while looking (base before), eased zoomE /s; border px
+  clip: { hold: 1.1 },   // v0.71 penalty clip (pclipStart, 05): s the tape runs on past each flag (it starts REF.flagCam.lead s before it)
+  rev: { still: 1.1, stamp: 1.8,   // s: the still frame when replays are off; the stamp
+    wait: 0.6, slate: 1.8, look: 0.9, slowK: 0.35, rockSpan: 0.45, rockK: 0.5, rockN: 1, hold: 0.25, push: 2.2, base: 1.15, zoomE: 2.2, border: 6,
+    pre: 0.9, near: 4, max: 6.5, tk: 1.6 },   // v0.71 the tape starts `pre` s before the ball first came within `near` YL of the line (searched back from the end), the whole tape capped at `max` s; tk = yd a defender must be from the ball for a spot to be "a tackle there"   // v0.68 booth mode: s after the whistle it may start; slate s; the last `look` s of the tape played x slowK, then rockN rocks over rockSpan s at rockK x, held `hold` s at each end; zoom x push while looking (base before), eased zoomE /s; border px
   pphold: { grab: 0.16, slow: 0.45, flag: 0.25, yds: 10 },   // (v0.70 later: flag unused, the call is REF.call)   // (v0.70 flag 0.5 -> 0.25, opi 0.25 -> 0.12, dpi 0.35 -> 0.33, false start 0.012 -> 0.007, offside 0.008 -> 0.01: offense and defense fouls about as likely per play)   // pass pro: a beaten blocker grabs (x 1.4 - his blocking 0-1), the rusher slowed like a run grab; flag odds on a grab; yards
   dpi: { r: 0.8, early: 0.3, v: 1.2, odds: 0.6, watch: 0.4 },   // contact = a defender within r yd of the target, closing at v yd/s+, with more than `early` s before the ball gets there; flag odds (x watch when he is looking at the ball)
   opi: { r: 0.9, window: 0.35, v: 1.6, odds: 0.3, yds: 10 },     // the target closing on a defender within r yd in the last `window` s; flag odds; yards (replay the down)
@@ -1259,7 +1297,7 @@ const REF = {
     sig: 0.35, flagFly: 0.5, flagAt: 0.22,     // s after the whistle the signals start; a flag's flight s; s into the throw it leaves the hand
     stripes: { n: 3, nFar: 2 },   // an official's shirt: n black stripes close up (nFar far off, lod 0-1) between white ones, every band the same width
     shape: { torso: 0.84, shoulder: 1.12 },
-    gait: { acc: 0.35, dec: 0.3, walkV: 1.6, runV: 6.6, cyc: [1.5, 2.9], leg: [0.42, 0.85], kn: [0.08, 0.7], arm: [0.3, 0.95], armFwd: 0.25, el: [0.2, 1.5], lean: [0.04, 0.2], bob: 0.6, backK: 0.6, backLean: 0.1 },   // an official's gait (v0.70): s to speed up / slow down at each end of a walk; walkV..runV yd/s = walk..full run; [walk, run] stride cycle yd, leg / arm swing, knee bend, elbow, lean; bob = run bounce; backpedal = steps x backK, leaning back   // an official's torso width x / shoulders x hips (a slimmer, squarer block like a player's; others use SL_FIG.shoulder)
+    gait: { acc: 0.35, dec: 0.3, walkV: 1.6, runV: 6.6, cyc: [1.5, 2.9], leg: [0.42, 0.85], kn: [0.08, 0.7], arm: [0.3, 0.95], armFwd: 0.25, el: [0.2, 1.5], lean: [0.04, 0.2], bob: 0.6, backK: 0.6, backLean: 0.1, blend: 0.45, carry: 0.6 },   // v0.71 blend = s a backpedal <-> run look eases over on a new leg; carry = share of acc a re-aimed leg takes to go from the speed he had to the new one   // an official's gait (v0.70): s to speed up / slow down at each end of a walk; walkV..runV yd/s = walk..full run; [walk, run] stride cycle yd, leg / arm swing, knee bend, elbow, lean; bob = run bounce; backpedal = steps x backK, leaning back   // an official's torso width x / shoulders x hips (a slimmer, squarer block like a player's; others use SL_FIG.shoulder)
     build: { tall: [0.93, 1.08], wide: [0, 0.45] } },  // each official's seeded height (x his scale) and build width (P.bw 0 lean .. 1 heavy)
 };
 const flagsTest = () => !!REF.force;
@@ -1302,6 +1340,7 @@ const XPC = {
   coach: { chunk: 250, co: 80, hc: 240, grow: 0.1 },   // coach training: coach XP one buy adds (through coachXP), its price for a coordinator / the head coach, + grow x the price per star he has
   tier: { S: 300, X: 900, again: 0.5, needS: 3, needX: 4, perSeason: 1, max: 2 },   // his ability up a tier: price FIT -> ABILITY / ABILITY -> STAR FACTOR, + again x that per Star Factor you ever bought; stars he needs for each; bought Star Factors per season, and the most of them on your roster at once
   confirm: 150,                              // a buy at or above this price asks first
+  goalXp: 10,                                // a finished coaching goal also banks this much XP per credit it pays (straight in: XPC.rate is not applied)
   nudge: 0, nudgeGlow: 6,                    // v0.52: the one-time XP popup shows once the bank reaches this (0 = the cheapest potential boost on your roster, at least pot.base); s the POTENTIAL button glows after it
   flip: 0.35,                                // seconds the credits box takes to flip to XP and back
   hold: 1.1,                                 // seconds the box stays on XP after the last flying token has landed
@@ -1607,6 +1646,7 @@ const REDZONE_D = { yards: 20, man: 8, dc: 0.6, blitz: 0.18, edge: 0.6, middle: 
 const redZone = () => patMode === 'two' || los >= FIELD - REDZONE_D.yards * YL;
 // pursuit-angle prediction: sim step/horizon s, sideline margin, runner-velocity smoothing per frame, angle error on non-runs;
 // chase / lastLine = pursuit speed x top speed (the last man back finds an extra gear)
+const FACE_TURN = { lat: 0.2 };   // setVelocity: a man only turns to face the other way once that share of his speed runs along the field (running almost straight sideways, a tiny x wobble used to flip him back and forth: the run-play jitter)
 const PURSUIT = { step: 0.05, horizon: 3.5, edge: 0.6 * YD, smooth: 0.2, passAngle: [1, 1.06], chase: 1, lastLine: 1.05, through: 0.45, runAngle: [0.97, 1.1],   // through = s of running he aims past the meeting point (never eases up on arrival); runAngle = the angle range on designed runs (>= ~1: they cut him off, never trail)
                   dbHorizon: 5, dbErr: 0.1, boost: 1.05, accel: 1.15,
                   // the angle itself (pursuitPoint): lag = share of the ground he loses getting up to speed TOWARD the meeting point that the math allows for (0 = the old

@@ -79,7 +79,7 @@ const REPLAY_TAIL = 2.2;
 const REPLAY_PRE = 0.25;   // a play's tape opens with this many seconds of the pre-snap look (everyone in his stance) before the ball is snapped
 // the replays setting: every play, big plays (rec.big: a highlight callout, a 20+ yard gain, a big first down, a score
 // or a turnover), touchdowns only (rec.td) or none (the game's last play still gets its replay)
-const replayWanted = () => !!rec && !tut && !ONL.on && SETTINGS.replays !== 'NONE' && (SETTINGS.replays === 'EVERY PLAY' || !!rec.td || !!rec.int || (SETTINGS.replays === 'BIG PLAYS' && !!rec.big));
+const replayWanted = () => !!rec && !tut && !ONL.on && SETTINGS.replays !== 'NONE' && (SETTINGS.replays === 'EVERY PLAY' || !!rec.td || !!rec.int || (SETTINGS.replays === 'BIG PLAYS' && (!!rec.big || (!!rec.flagBig && !rec.clipShown))));   // (v0.71 a flag alone stops counting once its penalty clip showed the foul)
 function recordFrame(dt) {
   if (!rec || rec.replaying) return;
   rec.t += dt;
@@ -260,6 +260,8 @@ function stepReplay(dt, scrub = 0) {
     // arrow keys: scrub through the play (held = moves at REPLAY_SCRUB x speed), stopping at either end
     rec.rt = Math.max(fr[0].t, Math.min(fr[fr.length - 1].t, rec.rt + dt * scrub * REPLAY_SCRUB * (slow ? 0.3 : 1)));
     rec.loopPan = null;
+  } else if (pclipOn() && !hl) {
+    rec.rt = pclipTape(dt, fr);   // (v0.71 the penalty clip: only the foul, each flag in turn)
   } else if (revOn() && !hl) {
     rec.rt = revTape(dt, fr, rec.rt);   // (v0.68 the booth's own playback: at speed, then slow over the deciding frames, rocked back and forth)
   } else if (rec.loopPan && rec.loopPan.t < REPLAY_LOOP_PAN) {
@@ -304,7 +306,8 @@ function stepReplay(dt, scrub = 0) {
   replayPanClamp();
   camX = rec.camBase[0] + replayPan.x; camY = rec.camBase[1] + replayPan.y; zoom = replayZoom() * replayUserZoom / userZoom; passPull = 1;
   if (revOn() && !hl) revCam(dt, a, b, last);   // (v0.68 the booth's camera: follows the ball, then pushes in on it at the line)
-  else if (rec.flags && rec.flags.length && !hl && replayPan.lockX == null) flagCam();   // (v0.70 a flagged play: pushed in on each foul around its time)
+  else if (pclipOn() && !hl) { const f = PCLIP.fl[PCLIP.i], F = REF.flagCam; camX += (f.x - camX) * F.pan; camY += (f.y - camY) * F.pan; zoom *= F.push; }   // (v0.71 the penalty clip: flagCam at full weight on this flag)
+  else if (rec.flags && rec.flags.length && !hl && replayPan.lockX == null && !rec.clipShown) flagCam();   // (v0.71 not again after the penalty clip)   // (v0.70 a flagged play: pushed in on each foul around its time)
   if (hl && hl.mode === 'half') {   // the halftime reel's director: tighter than a replay, on the ball (or the blocker at a big block), leading the runner, pushing in at each moment
     const C = HLREEL.cam, apx = (hl.list[hl.i] || {}).apex || [];
     const kk = last ? 0 : Math.min(1, Math.max(0, (rec.rt - a.t) / (b.t - a.t))), bx = last ? a.ball.x : a.ball.x + (b.ball.x - a.ball.x) * kk, by = last ? a.ball.y : a.ball.y + (b.ball.y - a.ball.y) * kk;
@@ -939,7 +942,7 @@ function hsHoldDraw(onlyHeld) {
   if (onlyHeld && !k) return;
   if (k) menuMoving = true;
   const tk = TOUCH ? COLD.skip.touchK : 1;
-  holdRingDraw({ cx: W + PAD - 34 * tk, cy: H - 40 * tk + (TOUCH ? 0 : 18), R: COLD.skip.r * tk, k, tk, label: TOUCH ? 'hold anywhere to skip' : 'hold here or Esc to skip', ink: RES.line, ptr: HSK.f && !HSK.f.zone ? HSK.ptr : null });
+  holdRingDraw({ cx: W + PAD - 34 * tk, cy: H - 40 * tk + (TOUCH ? 0 : 18), R: COLD.skip.r * tk, k, tk, label: TOUCH ? 'hold anywhere to skip' : 'hold or Esc to skip', ink: RES.line, ptr: HSK.f && !HSK.f.zone ? HSK.ptr : null });
 }
 // the hold-to-skip ring (shared: the cold open's coldSkipDraw and the shows'): a faint pencil circle, filled clockwise in gold as k goes 0 -> 1
 function holdRingDraw(o) {
@@ -1474,30 +1477,35 @@ function hsDoodle(k, col, x, y, r) {
   } catch (e) {}
   ctx.restore();
 }
+// v0.71 HISTORIC STATS = only men really chasing a record-book mark (rbList: the league book, and your franchise's for your men): tonight's game (first half
+// x HALFTIME.pace vs the game record), his season (pace over RB.games, after RB.chaseWk games) or his career (in reach by the end of this season). Rows: name,
+// team, one line, a pencil bar to the mark; HIST_CH.max rows, yours first. Nobody chasing = no segment (null).
+const HIST_CH = { keys: { py: 'pass yds', pt: 'pass TD', cy: 'rush yds', ct: 'rush TD', ry: 'rec yds', rc: 'catches', rt: 'rec TD', sk: 'sacks', ic: 'picks', tk: 'tackles' }, max: 4, minK: 0.6 };
+function histChase(list, half) {   // list = [{ name, team, me, g (tonight's line or null), all (career lines before tonight), seas (this season's before tonight) }]
+  const out = [], P = HALFTIME.pace;
+  for (const m of list) {
+    let best = null;
+    const books = m.me ? ['L', m.team] : ['L'];
+    const top = (id, not) => { const c = RB_BY[id]; if (!c) return null; let t = null; for (const bk of books) { const e = rbList(c, bk).find(x => !not(x)); if (e && (!t || e.v < t.e.v)) t = { e, bk, c }; } return t; };   // (the easiest of the books he can break)
+    const consider = (sc, k, cur, pace, T) => { if (!T || !(cur > 0) || cur >= T.e.v || pace < T.e.v) return; const q = cur / T.e.v; if (q < HIST_CH.minK && sc !== 'GAME') return; const sk = q + (pace / T.e.v - 1) * 0.3; if (!best || sk > best.sk) best = { sk, sc, k, cur, T }; };
+    const sum = l => l.length ? pstSum(l) : null, S = sum(m.seas), A = sum(m.all);
+    for (const k in HIST_CH.keys) {
+      const now = m.g ? m.g[k] || 0 : 0;
+      if (half && now > 0) consider('GAME', k, now, now * P, top('g_' + k, () => false));
+      if (S && S.gp >= RB.chaseWk) { const cur = S[k] + now, gp = S.gp + (m.g ? 1 : 0); consider('SEASON', k, cur, cur / gp * RB.games, top('s_' + k, x => x.n === m.name && x.y === m.yr)); }
+      if (A && A.gp) { const cur = A[k] + now, left = Math.max(0, RB.games - (S ? S.gp : 0) - (m.g ? 1 : 0)); consider('CAREER', k, cur, cur + A[k] / A.gp * left, top('c_' + k, x => x.n === m.name)); }
+    }
+    if (best) out.push({ ...best, name: m.name, team: m.team, me: m.me });
+  }
+  out.sort((a, b) => (b.me - a.me) || b.sk - a.sk);
+  const rows = out.slice(0, HIST_CH.max).map(r => ({ name: r.name, team: r.team, me: r.me, prog: r.cur / r.T.e.v,
+    line: `${rbFmt(r.T.c, r.cur)} ${HIST_CH.keys[r.k]}${r.sc === 'GAME' ? ' at the half' : ''}, record ${rbFmt(r.T.c, r.T.e.v)}`,
+    tag: `${r.sc} RECORD  -  ${r.T.bk === 'L' ? 'LEAGUE' : hsTn(r.T.bk)}` }));
+  return rows.length ? rows : null;
+}
 function hsHistoric() {
   const L = hsLines(); if (!L.length) return null;
-  const rows = [];
-  for (const me of [true, false]) {
-    const T = L.filter(x => x.me === me);
-    const qb = hsBest(T.filter(x => x.p.group === 'QB' && x.g.pa > 0), x => x.g.pa);
-    const sk = hsBest(T.filter(x => ['RB', 'WR', 'TE'].includes(x.p.group) && x.g.cy + x.g.ry > 0), x => x.g.cy + x.g.ry);
-    const df = hsBest(T.filter(x => !OFF_GROUPS.includes(x.p.group) && x.g.tk + x.g.sk + x.g.ic > 0), x => x.g.tk + 3 * x.g.sk + 4 * x.g.ic);
-    if (qb) rows.push({ ...qb, st: [['PASS YDS', 'py'], ['PASS TD', 'pt']] });
-    if (sk) rows.push({ ...sk, st: sk.g.cy >= sk.g.ry ? [['RUSH YDS', 'cy'], ['RUSH TD', 'ct']] : [['REC YDS', 'ry'], ['REC TD', 'rt']] });
-    if (df) rows.push({ ...df, st: [['TACKLES', 'tk'], ['SACKS', 'sk']] });
-  }
-  const single = (l, k) => l.filter(g => !g.gp).reduce((m, g) => Math.max(m, g[k] || 0), -1);   // (-1 = no single-game line to compare with)
-  let any = false;
-  for (const r of rows) {
-    const all = pstGames(r.name).filter(g => g.id !== pstGame.id && g.yr), seas = all.filter(g => g.yr === pstGame.yr), k = r.st[0][1], v = r.g[k], P = HALFTIME.pace;
-    const cm = single(all, k), sm = single(seas, k);
-    r.tonight = r.st.map(([, key]) => r.g[key]);
-    r.season = seas.length ? r.st.map(([, key]) => pstSum(seas)[key]) : null; r.gpS = seas.length ? pstSum(seas).gp : 0;
-    r.career = all.length ? r.st.map(([, key]) => pstSum(all)[key]) : null; r.gpC = all.length ? pstSum(all).gp : 0;
-    r.tag = v > 0 && cm >= 0 && v > cm ? 'CAREER HIGH' : v > 0 && sm >= 0 && v > sm ? 'SEASON BEST' : v > 0 && cm >= 0 && v * P > cm ? 'ON PACE: CAREER HIGH' : v > 0 && sm >= 0 && v * P > sm ? 'ON PACE: SEASON BEST' : '';
-    if (all.length) any = true;
-  }
-  return any ? rows.slice(0, 6) : null;   // (no history at all, a fresh franchise or an exhibition: nothing to compare, nothing invented)
+  return histChase(L.map(x => { const all = pstGames(x.name).filter(g => g.id !== pstGame.id && g.yr); return { name: x.name, team: x.team, me: x.me, g: x.g, yr: pstGame.yr, all, seas: all.filter(g => g.yr === pstGame.yr) }; }), true);
 }
 function hsQB() {
   const L = hsLines(), pick = me => hsBest(L.filter(x => x.me === me && x.p.group === 'QB' && x.g.pa > 0), x => x.g.pa);
@@ -1543,18 +1551,10 @@ function pgStats(p) {   // his stat history: { all, seas } sums (null = none), b
   const yr = LEAGUE && season && !exhibition ? LEAGUE.year : -1, all = pstGames(p.name).filter(g => g.yr), seas = all.filter(g => g.yr === yr);
   return { all: all.length ? pstSum(all) : null, seas: seas.length ? pstSum(seas) : null, best: k => all.filter(g => !g.gp).reduce((m, g) => Math.max(m, g[k] || 0), 0) };
 }
-function pgHist() {
-  const rows = []; let any = false;
-  for (const [me, t] of [[true, MATCH.you], [false, MATCH.opp]]) {
-    for (const [p, st] of [[pgTop(t, ['QB']), [['PASS YDS', 'py'], ['PASS TD', 'pt']]], [pgTop(t, ['RB', 'WR', 'TE']), null], [pgTop(t, ['DL', 'LB', 'CB', 'S']), [['TACKLES', 'tk'], ['SACKS', 'sk']]]]) {
-      if (!p) continue;
-      const S = pgStats(p), sts = st || (p.group === 'RB' ? [['RUSH YDS', 'cy'], ['RUSH TD', 'ct']] : [['REC YDS', 'ry'], ['REC TD', 'rt']]);
-      if (S.all) any = true;
-      // (generic slots: tonight = this season, season = career, career = best game; the headers say which)
-      rows.push({ name: p.name, p, team: t, me, e: { pos: p.tag }, st: sts, tonight: S.seas && sts.map(([, k]) => S.seas[k]), season: S.all && sts.map(([, k]) => S.all[k]), gpS: S.all ? S.all.gp : 0, career: S.all && sts.map(([, k]) => S.best(k)), gpC: 0, tag: '' });
-    }
-  }
-  return any ? rows : null;
+function pgHist() {   // (v0.71 the same chase rows: season pace and career reach, no game line yet)
+  const yr = LEAGUE && season && !exhibition ? LEAGUE.year : -1, list = [];
+  for (const [me, t] of [[true, MATCH.you], [false, MATCH.opp]]) for (const p of startersOf(t)) if (p && p.name) { const all = pstGames(p.name).filter(g => g.yr); list.push({ name: p.name, team: t, me, g: null, yr, all, seas: all.filter(g => g.yr === yr) }); }
+  return histChase(list, false);
 }
 function pgQB() {
   const q = t => { const p = pgTop(t, ['QB']); return p && { p, team: t, S: pgStats(p) }; }, a = q(MATCH.you), b = q(MATCH.opp);
@@ -1630,22 +1630,16 @@ function drawHsLeague(s) {
     const ik = HS_LG_ICON[c.kind]; if (ik) hsDoodle(ik[0], ik[1], x + w / 2, y + 136, 24);   // (last week's line: a doodle icon by its kind)
   });
 }
-function drawHsHist(s) {
-  hsFrame('HISTORIC STATS', HT.pre ? 'KEY PLAYERS: SEASON, CAREER AND BEST GAME' : 'TONIGHT\'S FIRST HALF VS HIS SEASON AND CAREER');
-  const cols = HT.pre ? [[520, 'THIS SEASON'], [740, 'CAREER'], [940, 'BEST GAME']] : [[520, 'TONIGHT (1ST HALF)'], [740, 'THIS SEASON'], [940, 'CAREER']];
-  ctx.textBaseline = 'middle'; ctx.textAlign = 'center'; ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace';
-  for (const [x, l] of cols) ctx.fillText(l, x, 112);
-  const me = MATCH.you;
+function drawHsHist(s) {   // (v0.71 one row per record chase: name, team, one line, a pencil bar to the mark)
+  hsFrame('HISTORIC STATS', 'CHASING THE RECORD BOOK');
   s.data.forEach((r, i) => {
-    const y = 128 + i * 82;
-    hsNote(56, y, 1168, 76, -1, r.me ? '#fff1b8' : '#fffdf4');
-    ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace'; ctx.fillText(r.name, 72, y + 26, 330);
-    ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.fillText(`${hsTn(r.team)}  ${r.e.pos || r.p.tag}`, 72, y + 54, 330);
-    const cell = (x, vals, gp) => { ctx.textAlign = 'center'; if (!vals) { ctx.fillStyle = RES.dim; ctx.font = 'bold 14px monospace'; ctx.fillText('-', x, y + 38); return; }
-      ctx.fillStyle = RES.line; ctx.font = 'bold 17px monospace'; r.st.forEach(([lab], j) => ctx.fillText(`${vals[j]} ${lab}`, x, y + 26 + j * 24, 200));
-      if (gp) { ctx.fillStyle = RES.dim; ctx.font = 'bold 11px monospace'; ctx.fillText(`${gp} G`, x + 90, y + 10); } };
-    cell(520, r.tonight); cell(740, r.season, r.gpS); cell(940, r.career, r.gpC);
-    if (r.tag) { ctx.fillStyle = '#ffd94a'; ctx.fillRect(1052, y + 20, 160, 36); ctx.strokeStyle = '#3a2a00'; ctx.lineWidth = 2; ctx.strokeRect(1052, y + 20, 160, 36); ctx.fillStyle = '#3a2a00'; ctx.textAlign = 'center'; ctx.font = 'bold 13px monospace'; ctx.fillText(r.tag, 1132, y + 38, 150); }
+    const y = 124 + i * 124;
+    hsNote(56, y, 1168, 108, i, r.me ? '#fff1b8' : '#fffdf4');
+    ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.fillStyle = RES.line; ctx.font = 'bold 26px monospace'; ctx.fillText(r.name, 80, y + 32, 380);
+    ctx.fillStyle = RES.dim; ctx.font = 'bold 15px monospace'; ctx.fillText(hsTn(r.team), 80, y + 64, 380);
+    ctx.fillStyle = RES.gold; ctx.font = 'bold 13px monospace'; ctx.fillText(r.tag, 500, y + 22, 680);
+    ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace'; ctx.fillText(r.line, 500, y + 48, 690);
+    pencilBar(500, y + 70, 680, 18, r.prog, r.me ? 'green' : undefined, 24, 7 + i);
   });
 }
 // two columns (yours / theirs) with the better number of each row highlighted: rows = [label, left text, right text, left value, right value, lowerIsBetter]
@@ -3253,6 +3247,7 @@ const SFX_TOUCH = { layers: 2, re: /#(big|road|climax)/ };   // v0.62 phones: at
 const SFX_SLEW = { up: 0.45, down: 0.8 };   // how fast (volume per second) a playing clip's loudness glides to a new level
 function playSfx(src, vol, maxMs, fadeMs, fadeInMs = 0, startAt = 0, rate = 1) {   // startAt: seconds into the clip to begin (a different stretch of it each time); rate: playback speed (pitch follows it)
   if (TOUCH && SFX_TOUCH.re.test(src)) { let n = 0; for (const c of sfxLive) if (c.src && SFX_TOUCH.re.test(c.src) && !c.a.paused) n++; if (n >= SFX_TOUCH.layers) return; }   // (v0.62: phones: many media elements at once stutter on iOS)
+  if (sbufOn()) { const bc = sbufStart(src, vol, maxMs, fadeMs, fadeInMs, startAt, rate); if (bc) return bc; }   // (v0.70: decoded buffer; else the element below)
   try {
     // one audio element per clip, reused (a new Audio every play left hundreds of media players waiting on GC in Chrome); a re-trigger while it still plays
     // takes the clip's second element and fades the old one out over SFX_FIX.retrig ms (a pause() cut it dead: the cheers)
@@ -3278,6 +3273,7 @@ function playSfx(src, vol, maxMs, fadeMs, fadeInMs = 0, startAt = 0, rate = 1) {
 // v0.60: every playing clip's fades / slew in ONE pass a frame (frame() calls sfxTick; it used to be a requestAnimationFrame loop per clip)
 const sfxLive = new Set();
 function sfxTick() {
+  if (sbufQ.length && !sbufBusy) sbufPump();   // (decodes waiting for the dead ball)
   if (!sfxLive.size) return;
   const nowT = performance.now();
   for (const ctl of sfxLive) {
@@ -3321,7 +3317,7 @@ function ac() {
       noiseBuf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate);
       const ch = noiseBuf.getChannelData(0);
       for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
-      loadClips(actx); sndWarm();
+      loadClips(actx); sndWarm(); sbufWarm();
     }
     if (actx.state !== 'running' && actx.state !== 'closed') { const r = actx.resume(); if (r && r.catch) r.catch(() => {}); }   // (iOS also leaves it 'interrupted' after a call / app switch)
     return actx.state === 'running' ? actx : null;
@@ -3371,6 +3367,65 @@ const SFX_GAIN = { tc: 0.012 };   // s: the GainNode's ease toward each new leve
 function sfxGainSet(g, v) { try { const c = g.context; if (Math.abs(g.gain.value - v) < 0.002) return; g.gain.cancelScheduledValues(c.currentTime); g.gain.setTargetAtTime(v, c.currentTime, SFX_GAIN.tc); } catch (e) { g.gain.value = v; } }
 function sfxGain(a, v) { if (!a) return; v = Math.max(0, Math.min(1, +v || 0)); a.volume = v; }   // (the volume setter routes + eases when the shim is on)
 sfxVolCheck();
+// --- sound buffers (v0.70 phones): starting a media element (pause, seek, play, routed through createMediaElementSource) stalled iOS 300+ ms when a touchdown
+// started several. playSfx plays short recordings from AudioBuffers decoded once (a BufferSource per play, like clipSfx); the returned "element" is a stand-in
+// with paused / ended / duration / currentTime / volume / playbackRate / pause(), so sfxTick, the crowd code and hsPitch work unchanged.
+// on: 'auto' = touch + iOS, true / false = forced. sr = decode rate (hi = files kept at 48 kHz), monoS = longer files are mixed to mono, cap = s kept of a long bed
+// (a start past half of it wraps into the first half), skip = loops / beds that stay on media elements, warm = decoded when audio starts (the rest on first use:
+// that play still goes through the element). Decoding never starts during a live play (sbufPump waits). sbufReport() = decoded sizes.
+const SBUF = { on: 'auto', sr: 32000, hi: /\/(cheer|boo|ooh|whistle|upgrade)\.mp3$/, monoS: 5, cap: { 'audio/disappointed.mp3': 16, 'audio/chant.mp3': 16 },
+  skip: /\/(crowd2?|rain|wind|classroom|footsteps|endwhistle)\./, attack: 0.006, stop: 0.008,
+  warm: ['whistle', 'cheer', 'cheer2.wav', 'cheer3', 'boo', 'boo2', 'jeer', 'disappointed', 'ooh', 'gasp', 'chant', 'whoosh1', 'whoosh2', 'thud', 'ground', 'hitcrack', 'boulder',
+    'clang', 'highfive', 'smack', 'shush', 'shush2', 'stamp', 'register', 'yell', 'splash', 'crumple', 'click', 'upgrade'] };
+const sbuf = {}, sbufSz = {}, sbufQ = []; let sbufBusy = false;
+const sbufOn = () => SBUF.on === 'auto' ? !!(TOUCH || sfxIOS()) : !!SBUF.on;
+const SBUF_LIVE = /^(drop|pocket|run|flight|loose|fumble|picked|kick|punt|kickoff)$/;
+function sbufWant(f) { if (sbuf[f] !== undefined || SBUF.skip.test(f)) return; sbuf[f] = 0; sbufQ.push(f); sbufPump(); }
+function sbufWarm() { if (!sbufOn()) return; for (const n of SBUF.warm) sbufWant('audio/' + (n.includes('.') ? n : n + '.mp3')); }
+function sbufPump() {
+  if (sbufBusy || !sbufQ.length || !actx || (typeof state !== 'undefined' && SBUF_LIVE.test(state) && !(typeof game !== 'undefined' && game && game.over))) return;
+  sbufBusy = true; const f = sbufQ.shift();
+  const done = () => { sbufBusy = false; sbufPump(); };
+  fetch(f).then(r => r.ok ? r.arrayBuffer() : Promise.reject(r.status)).then(ab => sbufDecode(ab, f)).then(b => { sbuf[f] = sbufShape(b, f); done(); }, () => { sbuf[f] = null; done(); });
+}
+function sbufDecode(ab, f) {
+  let c = actx; try { const OC = window.OfflineAudioContext || window.webkitOfflineAudioContext; c = new OC(1, 1, SBUF.hi.test(f) ? 48000 : SBUF.sr); } catch (e) {}
+  return new Promise((res, rej) => { const p = c.decodeAudioData(ab, res, rej); if (p && p.then) p.then(res, rej); });
+}
+function sbufShape(b, f) {   // (cap a long bed, mix a long file to mono: done once, right after decoding)
+  const cap = SBUF.cap[f], len = cap ? Math.min(b.length, Math.round(cap * b.sampleRate)) : b.length, mono = b.numberOfChannels > 1 && b.duration > SBUF.monoS;
+  if (len < b.length || mono) {
+    const n = mono ? 1 : b.numberOfChannels, o = actx.createBuffer(n, len, b.sampleRate);
+    for (let ch = 0; ch < n; ch++) { const d = o.getChannelData(ch); if (mono) { const k = 1 / b.numberOfChannels; for (let j = 0; j < b.numberOfChannels; j++) { const s = b.getChannelData(j); for (let i = 0; i < len; i++) d[i] += s[i] * k; } } else d.set(b.getChannelData(ch).subarray(0, len)); }
+    b = o;
+  }
+  sbufSz[f] = b.length * b.numberOfChannels * 4;
+  return b;
+}
+function sbufReport() { let t = 0; const L = Object.keys(sbufSz).sort((a, b) => sbufSz[b] - sbufSz[a]).map(f => { t += sbufSz[f]; return f.slice(6) + ' ' + (sbufSz[f] / 1048576).toFixed(2); }); return { MB: +(t / 1048576).toFixed(2), files: L }; }
+function sbufStart(src, vol, maxMs, fadeMs, fadeInMs, startAt, rate) {   // (null = not decoded yet / no running context: playSfx uses the element)
+  const f = src.split('#')[0], b = sbuf[f];
+  if (!b) { if (b === undefined) sbufWant(f); return null; }
+  const c = ac(); if (!c) return null;
+  const old = sfxCtl[src]; if (old && !old.a.paused && !old.a.ended && !old.fadeAt) { old.fadeAt = performance.now(); old.fadeMs2 = SFX_FIX.retrig; }
+  const D = b.duration; if (SBUF.cap[f] && startAt > D * 0.5) startAt %= D * 0.5;
+  startAt = Math.max(0, Math.min(startAt, D - 0.02));
+  const s = c.createBufferSource(), g = c.createGain(), v0 = fadeInMs ? 0 : Math.min(1, vol * VOL()), t0 = c.currentTime;
+  s.buffer = b; s.playbackRate.value = rate; s.connect(g); g.connect(c.destination);
+  g.gain.setValueAtTime(0, t0); if (v0) g.gain.linearRampToValueAtTime(v0, t0 + SBUF.attack);
+  s.start(t0, startAt);
+  let r = rate, tr = t0, pos = startAt;
+  const a = { duration: D, paused: false, ended: false, _sv: v0, _sb: 1,
+    get currentTime() { return pos + (c.currentTime - tr) * r; },
+    get playbackRate() { return r; }, set playbackRate(v) { pos = this.currentTime; tr = c.currentTime; r = v; try { s.playbackRate.value = v; } catch (e) {} },
+    get volume() { return this._sv; }, set volume(v) { this._sv = v; sfxGainSet(g, v); },
+    pause() { if (this.paused) return; this.paused = true; try { const t = c.currentTime; g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(0, t, SBUF.stop); s.stop(t + SBUF.stop * 4); } catch (e) {} } };
+  s.onended = () => { a.ended = a.paused = true; try { g.disconnect(); } catch (e) {} };
+  sfxPlaying[src] = a;
+  const ctl = sfxCtl[src] = a._ctl = { src, a, vol, maxMs, t0: performance.now(), fadeMs, fadeIn: fadeInMs, startAt, rate };
+  sfxLive.add(ctl);
+  return ctl;
+}
 
 const sfxLast = {};   // the same synthesized sound won't stack on itself: skipped until the last one has rung out
 function impactSfx({ noiseDur, noiseFreq, noiseQ, noiseVol, thumpHz, thumpDur, thumpVol }) {

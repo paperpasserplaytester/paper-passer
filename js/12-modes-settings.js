@@ -168,7 +168,8 @@ const mvX = (() => {
   return {
     throw: { plain: throwC('plain'), cross: throwC('cross'), lane: throwC('lane'), sidearm: throwC('side'), hit: throwC('hit'), hitBack: throwC('hitBack') },
     dive: { layout: dive('layout'), superman: dive('superman'), scissor: dive('scissor'), spear: dive('spear'), reach: dive('reach'), tuck: dive('tuck'),
-            oneHand: dive('oneHand', A => { A.catchMode = 'diveOne'; A.hand = 1; }), twoHand: dive('twoHand'), sideDive: dive('sideDive'), backOver: dive('backOver') },
+            oneHand: dive('oneHand', A => { A.catchMode = 'diveOne'; A.hand = 1; }), twoHand: dive('twoHand'), sideDive: dive('sideDive'), backOver: dive('backOver'),
+            basket: dive('basket'), fingertip: dive('fingertip'), lookBack: dive('lookBack'), lateHands: dive('lateHands'), pinned: dive('pinned'), shoelace: dive('shoelace'), dragOver: dive('dragOver') },   // (v0.71 over the shoulder)
     slide: { skid: slide('skid'), belly: slide('belly'), roll: slide('roll'), rollOut: slide('rollOut'), side: slide('side'), back: slide('back'), out: slide('belly', { out: true }), slap: slide('skid', { slap: true }) },
     land: { landFeet: leap(A => at(A, t0 + 0.62, () => { A.mvFx = { k: 'landFeet', t: clock, o: 0 }; })), landOneFoot: leap(A => at(A, t0 + 0.62, () => { A.mvFx = { k: 'landOneFoot', t: clock, o: 0 }; })),
             back: leap(A => at(A, t0 + 0.6, () => { A.z = 0; landOffFeet(A, 'back', -2 * YD, 0, 0); })), roll: leap(A => at(A, t0 + 0.6, () => { A.z = 0; landOffFeet(A, 'roll', YD, 2 * YD, 0); })),
@@ -230,7 +231,7 @@ function animEntries(cat) {
   if (cat === 'EXTRAS') return extraEntries();
   if (cat === 'SIDELINE') return slLibEntries();   // (sideline people: every routine and reaction, see 07-drawing)
   // every celebration move (see celebrations): he holds the ball for a beat, plays it, and the last frame stays up
-  if (cat === 'CELEBRATE') return Object.keys(CELEB_MOVES).map(id => [id.replace(/([A-Z])/g, ' $1').toUpperCase(), (A, B) => {
+  if (cat === 'CELEBRATE') return Object.keys(CELEB_MOVES).filter(id => !id.startsWith('slb')).map(id => [id.replace(/([A-Z])/g, ' $1').toUpperCase(), (A, B) => {
     const mv = CELEB_MOVES[id], n = celebCastN(mv).pop(), far = [[3, 0.5], [-3, -0.5], [3.6, -0.9], [-3.6, 0.9], [-4.2, 0]];
     B.x = 1e6; A.hasBall = true; ball.tucked = true;   // (B: off the stage)
     if (mv.dx) A.x = -mv.dx(mv.secs, { dist: 1 }) * YD / 2;
@@ -323,6 +324,8 @@ function extraEntries() {
     ['DIVE: CHEST SKID', dive('skid')], ['DIVE: ROLL OVER', dive('roll')], ['DIVE: ONTO HIS SIDE', dive('side')],
     ['DIVE LOOK: LAYOUT', diveLk('layout')], ['DIVE LOOK: SUPERMAN', diveLk('superman')], ['DIVE LOOK: SCISSOR', diveLk('scissor')],
     ['DIVE LOOK: SPEAR', diveLk('spear')], ['DIVE LOOK: ONE-ARM REACH', diveLk('reach')], ['DIVE LOOK: TUCK AND ROLL', diveLk('tuck')],
+    ['DIVE LOOK: BASKET', diveLk('basket')], ['DIVE LOOK: FINGERTIP', diveLk('fingertip')], ['DIVE LOOK: LOOK BACK', diveLk('lookBack')], ['DIVE LOOK: LATE HANDS', diveLk('lateHands')],
+    ['DIVE LOOK: PINNED', diveLk('pinned')], ['DIVE LOOK: SHOELACE', diveLk('shoelace')], ['DIVE LOOK: DRAG OVER', diveLk('dragOver')],
     ...[['FOUL: CLEAR HOLDING', 'pphold', 2.2], ['FOUL: PASS INTERFERENCE', 'dpi', 1.1], ['FOUL: PUSH-OFF', 'opi', 1.1], ['FOUL: ROUGHING', 'rough', 1.1], ['FOUL: EARLY TACKLE ON A ROUTE', 'tackle', 0.9], ['FOUL: HOLDING ON A ROUTE', 'grab', 0.9], ['FOUL: FALSE START', 'false', 0], ['FOUL: ENCROACHMENT', 'encroach', 1.4]].map(([n, k, gap]) => [n, (A, B) => { B.x = A.x + (gap || 9) * YD; B.y = A.y; const go = () => { penLook(A, k, gap ? B : null, 1); A.penL = A.penD; }; go(); A.tick = (tt, dt) => { if (!(A.penL > 0)) go(); A.penL -= dt || 1 / 60; if (B.penL > 0) B.penL -= dt || 1 / 60; A.penDx = B.x - A.x; A.penDy = B.y - A.y; B.penDx = -A.penDx; B.penDy = 0; }; }]),   // (v0.70 the foul looks, looped at full size; his man reacts)
     ['KICK BLOCK: LAYOUT ACROSS', diveLk('kickLay', 6)], ['KICK BLOCK: SMOTHER', diveLk('kickSmother', 6)], ['KICK BLOCK: HANDS-UP WALL', A => { A.armsUp = true; A.tick = () => { A.armsUp = true; }; }],
     ['KICK BLOCK: HOLDER FLINCH', (A, B) => { B.x = A.x + 1.5 * YD; animAct(A, 'kneel', { dur: 0.4 }); A.later = () => { reelQuiet = true; startReel(A, 'truckStagger', B, 1.3, 0.7); reelQuiet = false; }; A.catchAt = 0.4; }],

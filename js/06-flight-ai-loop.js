@@ -2198,7 +2198,7 @@ function aiDecide(prevAt) {
   if (patMode === 'choose') {
     if (aiGoTwo()) { patMode = 'two'; return; }   // (the goal-line team is already out there: they run it)
     patMode = 'kick'; los = 85 * YL;
-    return startFieldGoal(prevAt);   // (their kicker takes it on the field: aiKick works the meters)
+    return startFieldGoal(prevAt === 'set' ? null : prevAt, prevAt === 'set');   // (their kicker takes it on the field: aiKick works the meters)
   }
   // (the sim's 4th down: kick it from their 38 in, go for it when they trail late or it's short near midfield, else punt)
   const togo = (lineToGain - los) / YL, pos = los / YL, fgDist = 100 - pos + 17, trail = game.red - game.blue, q4 = game.quarter >= 4;
@@ -2209,7 +2209,7 @@ function aiDecide(prevAt) {
   const needTD = noHope || (q4 && trail > 3 && (left <= lateS(SIM_CLOCK_MGMT.late) || (togo <= 6 && Math.random() < 0.9)));
   const follows = aiFollows(), sheetGo = down === 4 && follows && Math.random() < sheetGoP(sheetCtx());   // (the decision sheet's 4th down chart, its overrides and the team's 4th down tendency)
   if ((pos >= 117 - 55 * wxXK('kick') * wxFgWind() && !needTD && !sheetGo) || lastKick) {   // (extreme weather: a shorter leg, so a shorter try)
-    return startFieldGoal(prevAt);
+    return startFieldGoal(prevAt === 'set' ? null : prevAt, prevAt === 'set');
   }
   const desperate = (noHope || q4 && trail > 0 && left < lateS(60)) && pos >= 30;
   if (down < 4 || needTD || desperate || sheetGo || (!follows && ((togo <= 2 && pos >= 40 && Math.random() < 0.7 * tendFourth) || (togo <= 4 && pos >= 55 && Math.random() < 0.35 * tendFourth)))) return;   // goes for it
@@ -2990,7 +2990,9 @@ function update(dt) {
     updateKick(dt);
   } else if (state === 'done') {
     for (const p of allPlayers()) settle(p, dt);
+    if (ut) ut = perfMark('u.settle', ut);
     celebTick();   // (celebrations: looks only, see 07-drawing)
+    if (ut) ut = perfMark('u.celeb', ut);
   } else {
     for (const p of allPlayers()) idle(p, dt);
   }
