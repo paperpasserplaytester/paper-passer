@@ -1806,20 +1806,17 @@ const NET_CFG = {
   prefix: 'ppass-',                                 // peer id = prefix + code
   alphabet: 'ABCDEFGHJKMNPQRSTUVWXYZ23456789',      // (no 0 O 1 I L)
   connectMs: 25000,   // a join that hasn't connected by then shows CAN'T CONNECT (a relayed TURN link takes longer than a direct one)
-  // laptop <-> phone is usually across two NATs (home wi-fi vs cellular): direct links fail there, so give both sides STUN plus TURN relays (UDP, TCP and TLS on 443)
+  // laptop <-> phone is usually across two NATs (home wi-fi vs cellular): direct links fail there, so both sides get STUN here plus the TURN relay below
+  // (v0.73: the shared public relays were removed: they were the silent fallback that ran at 165 ms and then failed)
   ice: { iceCandidatePoolSize: 4, iceServers: [
-    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:global.stun.twilio.com:3478'] },
-    { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
-    { urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turn:openrelay.metered.ca:443?transport=tcp', 'turns:openrelay.metered.ca:443?transport=tcp'], username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:global.stun.twilio.com:3478', 'stun:stun.cloudflare.com:3478'] },
   ] },
-  // YOUR OWN TURN RELAY (what makes two different networks work: phone on cellular, laptop on wi-fi). Either fill in `turn` with the servers your provider gives you,
-  // e.g. [{ urls: ['turn:HOST:80', 'turn:HOST:443?transport=tcp', 'turns:HOST:443?transport=tcp'], username: '...', credential: '...' }],
-  // or set `meteredUrl` to the provider's credentials URL (Metered: https://YOURAPP.metered.live/api/v1/turn/credentials?apiKey=YOURKEY), fetched fresh at every connect.
-  turn: [
-    { urls: 'stun:stun.relay.metered.ca:80' },
-    { urls: ['turn:global.relay.metered.ca:80', 'turn:global.relay.metered.ca:80?transport=tcp', 'turn:global.relay.metered.ca:443', 'turns:global.relay.metered.ca:443?transport=tcp'], username: 'a88cb724dd35e4542320d6ee', credential: '6nitypfuwfcvl+IE' },
-  ],
-  meteredUrl: '',
+  // YOUR OWN TURN RELAY (what makes two different networks work: phone on cellular, laptop on wi-fi) = Cloudflare TURN through a Worker: `meteredUrl` returns
+  // a fresh iceServers array (short-lived credentials) and is fetched at every connect, waiting at most `turnWaitMs` (then STUN only).
+  // `turn` = fixed servers instead, e.g. [{ urls: ['turn:HOST:80', 'turns:HOST:443?transport=tcp'], username: '...', credential: '...' }] (empty: the Worker covers it)
+  turn: [],
+  meteredUrl: 'https://pp-turn.brandongaming913.workers.dev',
+  turnWaitMs: 3000,   // ms: a slower answer from the Worker is ignored so the lobby never waits on it
   pingMs: 2000,       // heartbeat: ping / pong this often
   unstableRtt: 250,   // ms: above this the ping badge says "unstable connection"
   chunk: 12000,       // characters: bigger messages are split in parts (the JSON data channel limit is ~16 KB)
@@ -1853,8 +1850,10 @@ const NET = {
     const s = document.createElement('script'); s.src = NET_CFG.peerSrc; s.onload = ok; s.onerror = () => bad('LOAD'); document.head.appendChild(s);
   },
   _ice(cb) {   // the ICE config: the built-in STUN / relays plus your own TURN (NET_CFG.turn / meteredUrl)
-    const done = more => { const m = Array.isArray(more) ? more : []; cb({ ...NET_CFG.ice, iceServers: [...NET_CFG.ice.iceServers, ...NET_CFG.turn, ...m] }); };
+    let sent = false, tm = 0;
+    const done = more => { if (sent) return; sent = true; clearTimeout(tm); const m = Array.isArray(more) ? more : []; cb({ ...NET_CFG.ice, iceServers: [...NET_CFG.ice.iceServers, ...NET_CFG.turn, ...m] }); };
     if (!NET_CFG.meteredUrl) return done([]);
+    tm = setTimeout(() => done([]), NET_CFG.turnWaitMs || 3000);
     try { fetch(NET_CFG.meteredUrl).then(r => r.json()).then(done).catch(() => done([])); } catch (e) { done([]); }
   },
   newCode() { let c = ''; for (let i = 0; i < 4; i++) c += NET_CFG.alphabet[Math.floor(Math.random() * NET_CFG.alphabet.length)]; return c; },

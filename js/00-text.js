@@ -862,6 +862,9 @@ const CHANGELOG = [
       "Fixed: foul looks were missing from replays. The flag replay now shows the contact.",
       "Every look is in the animation library's EXTRAS tab.",
     ]],
+    ["ONLINE RELAY", [
+      "Fixed: online games failing to connect. Play across two networks now goes through a new, faster relay.",
+    ]],
   ]},
   { v: "v0.72", secs: [
     ["YEARLY GOALS", [
