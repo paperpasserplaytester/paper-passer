@@ -3277,7 +3277,9 @@ const CAM = { touch: 0.55,   // phone / tablet: camera pan and zoom speed x this
   plan: { on: true, dead: 1.2, zDead: 0.05, leadT: 0.25, leadDead: 1.2 },   // (with CAM.v2 the committed-point dead zone is skipped: v2's blend + dead band replace it; the smoothed lead stays)
               v2: true,   // the camera rework (CAM2 below): subject + safe zone, out-only passing view, tight runs, timed blends; false = the old framing / smoothing (with CAM.plan)
               debug: false,   // dev overlay (camDebugDraw): safe zone, must-fit box, target vs real centre, wanted vs real zoom. No setting / button
-              bowlMax: 2.2 };   // the stadium-edge limit never zooms in more than x this past the shot's own zoom (the old 20 x 1.04 steps)   // after a play: the pre-snap pan / zoom ease (1/s) for the first preTime s of 'pre' (the tight whistle shot used to snap out wide); zoom speed cap (x zoom per s)   // field goal: steady, slow pan / zoom (1/s)   // loose ball / fumble / pick: x zoom (< 1 = out to show the chase)
+              bowlMax: 2.2,
+              // v0.74 pre-snap on offense: screen px kept clear under the top bar / above the bottom (touch: the button band) / at the sides; world px of sprite above / below a man's feet; px inside the stands' rim
+              preFit: { on: true, top: 26, bot: 16, botTouch: 44, side: 34, head: 56, feet: 22, rim: 40 } };   // the stadium-edge limit never zooms in more than x this past the shot's own zoom (the old 20 x 1.04 steps)   // after a play: the pre-snap pan / zoom ease (1/s) for the first preTime s of 'pre' (the tight whistle shot used to snap out wide); zoom speed cap (x zoom per s)   // field goal: steady, slow pan / zoom (1/s)   // loose ball / fumble / pick: x zoom (< 1 = out to show the chase)
 let camPre = { pid: -1 };   // the computer offense's pre-snap shot, set once a play (its audibles / shifts never move the camera)
 const camS = { vx: 0, vy: 0, vz: 0, x: null, y: null, z: null, st: null, pre: 99 };   // (st / pre: last state seen, seconds into this 'pre')   // the camera spring's velocity, and where it last put the camera
 // one step of a critically damped spring toward `to` (w = stiffness, 1/s); exact for any frame time, speed capped at `cap`
@@ -3433,9 +3435,26 @@ function updateCamera(dt) {
     const ez = userZoom * passPull * (TOUCH ? TOUCH_ZOOM : 1), tcx = (x0 + x1) / 2, tcy = tutWide || (state === 'pre' && wide && !(rec && rec.replaying)) ? MID : (y0 + y1) / 2;
     wantZ = Math.max(wantZ, Math.min(wantZ * CAM.bowlMax, Math.max(camBowlZ(tcx, tcy), camBowlZ(camX, camY)) / ez));
   }
+  // v0.74 pre-snap on offense (CAM.preFit): every eligible receiver fully on screen with room to tap him (clear of the top bar / touch band), centred on the formation,
+  // never wider than the widest view (tutZoomFloor). The end-zone clamp below used to pin the shot to the back of the end zone (30 yd of backfield near the goal line)
+  // and the goal-line zoom x TOUCH_ZOOM cut the outside receivers: here the 16:9 part may run on into the stands up to the rim (the PAD strips may show past it)
+  let preFit = null;
+  const PF = CAM.preFit;
+  if (PF.on && state === 'pre' && wide && !kickoffPlay && !aiOff() && !mine && !tut && !lockPre && SETTINGS.camZoom !== false && !(rec && rec.replaying)) {
+    const ek = userZoom * (TOUCH ? TOUCH_ZOOM : 1), vc = viewCenterY(), fm = catchers();
+    let fx0 = qb.x, fx1 = qb.x, fy0 = qb.y, fy1 = qb.y;
+    for (let i = 0; i < fm.length; i++) { const p = fm[i]; if (p.x < fx0) fx0 = p.x; if (p.x > fx1) fx1 = p.x; if (p.y < fy0) fy0 = p.y; if (p.y > fy1) fy1 = p.y; }
+    const top = TOP_BAR + PF.top, bot = H - FIELD_BOT - (TOUCH ? PF.botTouch : PF.bot), hx = W / 2 + PAD - PF.side;
+    const zt = Math.min(wantZ * ek, (vc - top) / Math.max(1, MID - fy0 + PF.head), (bot - vc) / Math.max(1, fy1 - MID + PF.feet), hx / Math.max(1, (fx1 - fx0) / 2 + PF.feet));
+    wantZ = Math.max(zt / ek, tutZoomFloor());
+    const Z = wantZ * ek, G = bowlGeo(), h16 = W / 2 / Z, lo = G.X0 - G.D + PF.rim + h16, hi = G.X1 + G.D - PF.rim - h16;
+    let fcx = lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, (fx0 + fx1) / 2));
+    for (let i = 0; i < 40 && camBowlZ(fcx, MID, true) > Z; i++) fcx += (fcx > FIELD / 2 ? -1 : 1) * YL;   // (a rounded corner in the 16:9 part: slide back toward the field, never zoom in)
+    preFit = fcx;
+  }
   const halfW = W / 2 / wantZ, halfH = VH / 2 / wantZ;
   const clampTo = (v, lo, hi) => lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, v));
-  const cx = clampTo((x0 + x1) / 2, -ENDZONE - 4 * YD + halfW, FIELD + ENDZONE + 4 * YD - halfW);
+  const cx = preFit != null ? preFit : clampTo((x0 + x1) / 2, -ENDZONE - 4 * YD + halfW, FIELD + ENDZONE + 4 * YD - halfW);
   // (before the snap the view is panned down to the middle of the field, so both sidelines show the same amount; the zoom is the same as before)
   const cy = clampTo(tutWide || (state === 'pre' && wide && !(rec && rec.replaying)) ? MID : (y0 + y1) / 2, -CROWD.depth * 0.9 + halfH, FW + CROWD.depth * 0.9 - halfH);
   // a kickoff: a slow, smooth pan from the kicker, down with the ball, to the returner (and on into the return's first moments)
@@ -3467,7 +3486,7 @@ function updateCamera(dt) {
   if (camJump && !CAM.v2) { camJump = false; camX = pcx; camY = pcy; if (wantZ > 0 && isFinite(wantZ)) zoom = wantZ; camS.x = null; }   // (the try's set-up: straight there)
   if (camS.x !== camX || camS.y !== camY || camS.z !== zoom) camS.vx = camS.vy = camS.vz = 0;   // (a replay / a new game placed the camera itself: from rest)
   const capV = CAM.maxPan * tc;   // (a long trip, e.g. from the extra point out to midfield, pans at a steady speed instead of one lunge)
-  if (CAM.v2) { passPull = 1; return cam2Apply(dt, cx, cy, wantZ, wp, wz, capV, dn ? 'dead' : scorer ? 'td' : state, null); }   // (v2: these shots keep today's framing, only the smoothing is new)
+  if (CAM.v2) { passPull = 1; return cam2Apply(dt, cx, cy, wantZ, wp, wz, capV, dn ? 'dead' : scorer ? 'td' : state, preFit != null ? { fitShot: true } : null); }   // (preFit: the dead band never leaves the zoom tighter than the fit)   // (v2: these shots keep today's framing, only the smoothing is new)
   [camX, camS.vx] = camSpring(camX, pcx, camS.vx, wp, dt, capV);
   [camY, camS.vy] = camSpring(camY, pcy, camS.vy, wp, dt, capV);
   [zoom, camS.vz] = camSpring(zoom, wantZ, camS.vz, wz, dt, zoom > 0.2 && isFinite(zoom) ? CAM.zoomMax * zoom * tc : Infinity);   // (no cap from an unset / zero zoom: it could never grow)
@@ -3488,9 +3507,9 @@ function viewInBowl(cxp, cyp, zc) {
   return inBowlOut(vL, vTop, 10) && inBowlOut(vR, vTop, 10) && inBowlOut(vL, vBot, 10) && inBowlOut(vR, vBot, 10);   // (the stands' rim: bowlGeo, the same curve drawCrowd draws)
 }
 // the widest TOTAL zoom whose view (viewInBowl's rectangle) stays inside the stands' rim at this centre: closed form, so it moves smoothly with the centre
-function camBowlZ(cxp, cyp) {
+function camBowlZ(cxp, cyp, noPad) {   // (noPad: the 16:9 part only, the PAD strips may show past the rim: CAM.preFit)
   const G = bowlGeo(), m = 10, xl = G.X0 - G.D + m, xr = G.X1 + G.D - m, yt = G.Y0 - G.D + m, yb = G.Y1 + G.D - m, r = Math.max(1, G.R - m);
-  const A = W / 2 + PAD, B = (H - TOP_BAR - FIELD_BOT) / 2;   // (view half-size = A / z + 48 by B / z + 24)
+  const A = W / 2 + (noPad ? 0 : PAD), B = (H - TOP_BAR - FIELD_BOT) / 2;   // (view half-size = A / z + 48 by B / z + 24)
   const a = 48 - (Math.min(cxp - xl, xr - cxp) - r), b = 24 - (Math.min(cyp - yt, yb - cyp) - r);   // (u = A s + a, v = B s + b with s = 1 / z: the corner's overhang past the corner circle's centre)
   const s1 = (r - a) / A, s2 = (r - b) / B;   // largest s with max(0, u)^2 + max(0, v)^2 <= r^2
   let s;
