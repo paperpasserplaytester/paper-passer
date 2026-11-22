@@ -1045,6 +1045,7 @@ function pCard(s, x, y, w, h, mini) {   // a player card like the roster's, prin
 // stored OUTSIDE the slot save in PHOTOS (id -> { d, cap }) = its own key PHOTO_KEY.<slot> (packed; photosSave from saveToSlot, photosLoad from loadFromSlot,
 // cleared by leagueReset, removed by deleteSlot; old saves' LEAGUE.post.ph is moved over), only on the issues that keep every panel (POST.full) and clipped stories (photoPrune). League tapes (lgTake) queue
 // PHOTO_LGQ: photoLgTick shoots one a frame on the matchup screen and adds it to the matching story of the newest issue. No photo = the old portrait.
+let PHOTO_NOCROWD = false;   // (v0.72 perf: the photo's crop is inside the bowl's walls: no stands in it, so they are neither drawn nor re-built for the tape's home team)
 let PHOTO_PEND = [], PHOTO_SHOOT = false, PHOTO_MS = 0, PHOTOS = {};
 function photosSave(i) {   // (saveToSlot) this franchise's photos under their own key: the slot save stays small
   const k = `${PHOTO_KEY}.${i}`;
@@ -1113,7 +1114,9 @@ function photoShoot(c, plan) {   // the picture: that frame on screen with the p
     const cw = Math.min(W * 0.9, (H - TOP_BAR - FIELD_BOT) * 0.9 * P.ar, Math.max(P.w / RK, 320)), ch = cw / P.ar;
     const zc = Math.max(cw / wW, camBowlZ(cx, cy));
     camX = cx; camY = cy; passPull = 1; zoom = zc / (userZoom * (TOUCH ? TOUCH_ZOOM : 1) * (1 + celebPunch()));
-    ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0); draw(); ctx.restore();
+    { const C = CROWD, m = 2 * YD, hw2 = cw / zc * 0.6, hh2 = ch / zc * 0.6;   // (the crop's world half sizes, 20% slack: the view scale is zc)
+      PHOTO_NOCROWD = cx - hw2 > -ENDZONE - C.endGap + m && cx + hw2 < FIELD + ENDZONE + C.endGap - m && cy - hh2 > -C.wall + m && cy + hh2 < FW + C.wall - m; }
+    ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0); try { draw(); } finally { PHOTO_NOCROWD = false; } ctx.restore();
     o = document.createElement('canvas'); o.width = P.w; o.height = Math.round(P.w / P.ar);
     const g = o.getContext('2d');
     g.drawImage(canvas, (PAD + W / 2 - cw / 2) * RK, (viewCenterY() - ch / 2) * RK, cw * RK, ch * RK, 0, 0, o.width, o.height);
@@ -1775,7 +1778,7 @@ function drawStartBtns() {
   }
 }
 function titleStamp(cx, cy) { qsStamp(cx, cy - 12, 'PAPER PASSER', '#c0392b', -0.005, 1, 60, { distress: 7 }); }   // (centre of the title sheet, inside its own tilt)
-const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-19 SIDEVIEW-50';
+const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-21 PHONEPERF-51';
 let hlFlash = -1e9;   // when the main menu's HIGHLIGHT button was last clicked
 let quickMenu = false;   // QUICK PLAY (START_BTNS.ex) drop down: EXHIBITION / 1V1 / ONLINE take the place of FRANCHISE / CAREER / TUTORIAL (same buttons, same size)
 function startClick(p) {
@@ -1978,14 +1981,14 @@ const NET = {
     NET._statAt = now; NET._statB = NET._bytes;
     try {
       const pc = NET.conn && NET.conn.peerConnection; if (!pc || !pc.getStats) return;
-      pc.getStats().then(st => {
+      pc.getStats().then(st0 => perfOutRun('net getStats cb', st => {   // (v0.73 mark: the report walk timed on its own)
         let pair = null;
         st.forEach(r => { if (r.type === 'transport' && r.selectedCandidatePairId) pair = st.get(r.selectedCandidatePairId) || pair; });
         if (!pair) st.forEach(r => { if (!pair && r.type === 'candidate-pair' && r.state === 'succeeded' && (r.selected || r.nominated)) pair = r; });
         if (!pair) return;
         const l = st.get(pair.localCandidateId), r = st.get(pair.remoteCandidateId);
         NET.link = (l && l.candidateType === 'relay') || (r && r.candidateType === 'relay') ? 'RELAY' : 'DIRECT';
-      }).catch(() => {});
+      }, null, [st0], 1)).catch(() => {});
     } catch (e) {}
   },
   _parts: {},
@@ -2006,7 +2009,7 @@ const NET = {
         if (d.t === 'ping') { if (d.f) NET.fastOk = true; c.send({ t: 'pong', ts: d.ts, f: NET.fastRx ? 1 : 0, h: performance.now() }); return; }   // (f: "I hear you on the fast channel"; h: our clock, for the other side's clock sync)
         if (d.t === 'pong') { if (d.f) NET.fastOk = true; const now = performance.now(), r = now - d.ts; if (r >= 0 && r < 20000) NET.ping = NET.ping ? NET.ping * 0.6 + r * 0.4 : r; if (typeof d.h === 'number') NET._offSample(d.ts, d.h, now); return; }
         if (d.t === 'full') { NET._fail('FULL'); return; }
-        if (NET.onmsg) NET.onmsg(d);
+        if (NET.onmsg) { if (d0 && d0.t === '_part') perfOutRun('net rel ' + d.t + ' (parts)', NET.onmsg, NET, [d]); else NET.onmsg(d); }   // (v0.73 mark: a message sent in parts is named by its own type too)
       } catch (err) { console.warn('net message dropped', err); }   // (never crashes the game loop)
     }); });
     const gone = why => { if (NET.conn !== c) return; NET.conn = null; NET.fast = null; NET.fastRx = NET.fastOk = false; NET.closeWhy = typeof why === 'string' ? why : 'closed'; clearInterval(NET._tick); NET.ping = 0; if (NET.onclose) NET.onclose(); };   // (closeWhy: shown after OPPONENT DISCONNECTED, to tell a dead link from a closed one)
@@ -2028,6 +2031,7 @@ const NET = {
     const t2 = performance.now();
     NET._stats();
     const t3 = performance.now(), H = NET.hbMs;   // (v0.74: the heartbeat's three parts timed: worst of each since the match began, FRAME TIMES tag over hbWarn)
+    perfOut('net hb send', t1 - t0, true); perfOut('net hb fast', t2 - t1, true); perfOut('net hb stats', t3 - t2, true);   // (v0.73 marks: each part as its own out: cost)
     H.send = Math.max(H.send, t1 - t0); H.fast = Math.max(H.fast, t2 - t1); H.stats = Math.max(H.stats, t3 - t2); H.n++;
     if (t3 - t0 > NET_CFG.hbWarn) perfNote('hb send ' + (t1 - t0).toFixed(1) + ' fast ' + (t2 - t1).toFixed(1) + ' stats ' + (t3 - t2).toFixed(1));
     if (NET.conn && now - NET._rx > NET_CFG.deadMs && NET._gone) { const c = NET.conn; try { c.close(); } catch (e) {} NET._gone(); }
@@ -2218,6 +2222,7 @@ const ONL_NET = {
   predBad: 0.8,         // s of the host moving him AGAINST the keys before the lead is switched off for the game (a key layout this guess doesn't know)
   lagComp: true,        // the guest's defensive presses (hit stick, dive, secure, jump / pick) are judged against the picture he saw: the host rewinds the carrier / ball by his lag
   lagMax: 250,          // ms: the most the host ever rewinds for him (his reported draw delay + half the ping)
+  lagBad: 1000, lagFall: 100,   // ms: a reported delay over lagBad (or not a number) is a wrong reading: use half the ping + lagFall instead (v0.73)
   histS: 0.4,           // s of player / ball spots the host keeps for that (ONL_HIST)
   inDelayMs: 50,        // CONTROL FEEL: DELAY = the host's own keys for his player are held this long, so both players' presses land evenly (no prediction that game)
 };
@@ -2433,6 +2438,7 @@ function lagDist(d, c, ms) {
 function onlHostTick() {
   histPush();
   if (NET._simQ.length) NET.simPump();
+  perfU('u.net.hist');   // (v0.73 marks: the host tick's parts, inside u.net)
   const now = performance.now(), prevTick = ONL.hTickAt; ONL.hTickAt = now;
   // the guest's finger has been "down" but silent: its release got lost (the guest keeps sending its spot while held), so let go for him
   if (ONL.gDown && ONL.gLast && now - (ONL.gAt || 0) > 1500 && aim) onlGuestCancel();   // (guest went quiet mid-aim: cancel, never throw)
@@ -2453,17 +2459,21 @@ function onlHostTick() {
   const ps = allPlayers(), key = ps.map(p => p.__id || (p.__id = ++ONL.nid)).join(',');
   const pm = new Map(); for (let i = 0; i < ps.length; i++) pm.set(ps[i], i);   // (player -> index, once a tick: slim looked each nested object up with indexOf)
   if (key !== ONL.castKey) onlHostCast(ps, pm, key);
+  perfU('u.net.cast');
   const seq = ++ONL.seq, base = Math.max(ONL.ack || 0, ONL.castSeq || 0, ONL.relSeq || 0);   // (what the guest surely has: its last ack, the cast, or the last snapshot that went on the reliable channel)
   const d = [], x = []; let gone = false;
   ps.forEach((p, i) => { onlDelta(p, pm, ONL.sent[i], seq); const r = onlSince(ONL.sent[i], base); d[i] = r[0]; x[i] = r[1]; if (r[1]) gone = true; });
+  perfU('u.net.delta');
   const g = onlGlobals(ps, pm); ONL.view = g.ob;
   // the play's globals go as a delta too: the pylons, score card, weather, names... barely change, and were 1 KB of every snapshot
   const gd = {}, G = ONL.gSt;
   for (const k of Object.keys(g)) { const j = JSON.stringify(g[k]); if (G.v[k] !== j) { G.v[k] = j; G.s[k] = seq; G.o[k] = g[k]; } }
   for (const k in G.s) if (G.s[k] > base) gd[k] = G.o[k];
+  perfU('u.net.glob');
   const m = { t: 'snap', e: ONL.epoch, n: seq, h: Math.round(performance.now()), a: base, c: Math.round(clock * 1000) / 1000, d, g: gd };
   if (gone) m.x = x;
   if (!NET.sendFast(m)) ONL.relSeq = seq;
+  perfU('u.net.send');
 }
 // guest: the cast arrives whole (everyone's properties), after which snapshots are deltas on it
 function onlGotCast(m) {
@@ -2570,7 +2580,10 @@ function onlApply(e, ps) {
 // The guest's picture runs on a playback clock (ONL.pt: the moment the host made a snapshot, on this device's clock), a steady distance behind the newest
 // snapshot: the usual travel time (ONL.tr) + a margin from the host's snapshot spacing and the jitter. The clock never jumps (except a stall / a new cast):
 // it runs a few % fast or slow (ONL_NET.stretch) to drift to that distance.
-const onlDrawLag = () => ONL.pt != null ? performance.now() - ONL.pt : SNAP_DELAY;   // ms the picture is behind (onlPredict, events)
+// ms the picture is behind the host's moment (onlPredict, events, lag compensation, the readout). v0.72: now - pt alone also held any error in the clock offset
+// (NET.off: ONL.tr soaks it up, so pt sat seconds "behind" on a phone with a bad offset sample: GUEST LAG 2293, COMP pinned at lagMax): the margin behind the
+// newest arrival (now - pt - tr) + one way of the ping is the real age whatever the offset is.
+const onlDrawLag = () => ONL.pt != null ? Math.max(0, performance.now() - ONL.pt - (ONL.tr || 0)) + (NET.ping || 0) / 2 : SNAP_DELAY;
 const onlMyLag = () => Math.round(onlDrawLag() + (NET.ping || 0) / 2);   // ms between the host's moment and this guest's press reaching it (sent as `l` on key / pointer downs, lag compensation)
 function onlDelayTarget() {
   const sp = ONL_NET.spreadK * (ONL.hgDev || 0), hi = Math.max(ONL_NET.delayMax, Math.min(ONL_NET.spreadCap, ONL_NET.delayMax + sp));   // (v0.70: an unevenly sending host needs a deeper buffer, or the picture runs out and guesses ahead)
@@ -2865,7 +2878,7 @@ function onlGuestCancel() { ONL.gDown = false; aim = null; }
 function onlHandleInput(m) {
   if (!ONL.host || !ONL.on) return;
   if (m.k === 'kd' || m.k === 'pd') ONL.inputAt.guest = performance.now();   // (AFK: the guest is there)
-  if ((m.k === 'kd' || m.k === 'pd') && m.l != null) ONL.gLag = Math.max(0, Math.min(ONL_NET.lagMax, +m.l || 0));   // (how late the guest's picture was when he pressed: lag compensation)
+  if ((m.k === 'kd' || m.k === 'pd') && m.l != null) { const l = +m.l; ONL.gLag = Math.max(0, Math.min(ONL_NET.lagMax, isFinite(l) && l >= 0 && l <= ONL_NET.lagBad ? l : (NET.ping || 0) / 2 + ONL_NET.lagFall)); }   // (how late the guest's picture was when he pressed: lag compensation)
   if (m.k === 'st') { ONL.gStat = { ...m, at: performance.now() }; return; }   // (the guest's readout numbers, shown on the host's FRAME TIMES)
   if (ONL_NET.pressSnap && (m.k === 'kd' || m.k === 'ku' || m.k === 'pd' || m.k === 'pu')) ONL.pressNow = true;   // (onlHostTick: the next snapshot goes at once)
   if (m.k === 'kd' || m.k === 'ku') onlGuestKey(m.c, m.k === 'kd');

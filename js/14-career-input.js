@@ -885,7 +885,7 @@ function tutPromptClick(p) {
 // Any page change (menu screens, the team picker, into and out of a game): the old page, snapshotted from the
 // last frame, crumples into a paper ball (a grid of triangles folding in on itself, creases shading in) and
 // gets tossed off the bottom of the screen, uncovering the new one.
-const CRUMPLE = { unc: true, revMs: 460, revFrom: 0.62, ms: 720, fold: 0.55, gx: 8, gy: 5, ball: 95, snapK: 0.6, snapKTouch: 0.3, shades: 16, gl: true, glPaintMs: 0, goGapMs: 26, goMaxMs: 450, maxGapMs: 34, gapFrames: 2.2 };   // (v0.70: glPaintMs 60 -> 0 = nothing but the mesh runs once the fold starts; the fold waits, held flat, until a frame comes in under goGapMs after the new page's first paint (at most goMaxMs); a later frame gap over maxGapMs holds the fold instead of jumping it)   // (v0.66: gl = the GPU overlay (full resolution, every device); snapK / snapKTouch / shades are only the 2D fallback's now; glPaintMs = the page under the overlay keeps painting this long into the fold)   // (v0.62: snapKTouch 0.4 -> 0.3)   // fold = share of the time spent crumpling; snapK = the snapshot's size vs the canvas (desktop / phones); shades = crease colours kept (v0.55)
+const CRUMPLE = { unc: true, revMs: 460, revFrom: 0.62, ms: 720, fold: 0.55, gx: 8, gy: 5, ball: 95, snapK: 0.6, snapKTouch: 0.3, shades: 16, gl: true, texMax: 1600, texMaxTouch: 1024, glPaintMs: 0, goGapMs: 26, goMaxMs: 450, maxGapMs: 34, gapFrames: 2.2 };   // (v0.70: glPaintMs 60 -> 0 = nothing but the mesh runs once the fold starts; the fold waits, held flat, until a frame comes in under goGapMs after the new page's first paint (at most goMaxMs); a later frame gap over maxGapMs holds the fold instead of jumping it)   // (v0.66: gl = the GPU overlay (full resolution, every device); snapK / snapKTouch / shades are only the 2D fallback's now; glPaintMs = the page under the overlay keeps painting this long into the fold)   // (v0.62: snapKTouch 0.4 -> 0.3)   // fold = share of the time spent crumpling; snapK = the snapshot's size vs the canvas (desktop / phones); shades = crease colours kept (v0.55)
 const CRUMPLE_SH = Array.from({ length: CRUMPLE.shades * 2 + 1 }, (_, i) => { const k = (i - CRUMPLE.shades) / CRUMPLE.shades * 0.35; return k > 0 ? `rgba(40,30,10,${k.toFixed(3)})` : `rgba(255,255,255,${(-k * 0.8).toFixed(3)})`; });   // (crease shade k in -0.35..0.35, quantised)
 const crumpleSnap = document.createElement('canvas');
 crumpleSnap.width = W; crumpleSnap.height = H;
@@ -1092,6 +1092,10 @@ function cglStart(src) {   // the picture into the texture (src = the canvas its
   if (!CRUMPLE.gl || PHONE_TEST.turn === '2D') return false;
   const gl = cglInit(); if (!gl || gl.isContextLost() || src.width > CGL.max || src.height > CGL.max) return false;
   try {
+    { const cap = TOUCH ? CRUMPLE.texMaxTouch : CRUMPLE.texMax, k = Math.min(1, cap / Math.max(src.width, src.height));   // (v0.72 perf: the upload was the whole pause at a page change and grew with the canvas: a scaled-down copy goes up instead; texture coords are 0-1, so the mesh is unchanged)
+      if (k < 1) { const sw = Math.max(2, Math.round(src.width * k)), sh = Math.max(2, Math.round(src.height * k)), sm = CGL.sm || (CGL.sm = document.createElement('canvas'));
+        if (sm.width !== sw || sm.height !== sh) { sm.width = sw; sm.height = sh; }
+        const sx = sm.getContext('2d'); sx.imageSmoothingEnabled = true; sx.clearRect(0, 0, sw, sh); sx.drawImage(src, 0, 0, sw, sh); src = sm; } }
     if (!CGL.tex) CGL.tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, CGL.tex);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -1972,24 +1976,29 @@ function snapUnbright(c) {   // a copy of the canvas, taken back to the picture 
 }
 // --- frame-time readout (settings > DEBUG > FRAME TIMES; SETTINGS.perfHud, off by default, kept per device) ---
 // fps + the average / worst ms of the game step (update) and of the painting (draw), over the last PERF_HUD.win ms. Costs two clock reads a frame when off.
-const PERF_HUD = { win: 1000, x: 8, y: 150, font: 15, fontTouch: 20, alpha: 0.78,   // win = ms a reading covers; x / y = its corner (from the left / up from the bottom); font px (touch = phones)
-  spikeMs: 33, spikeGap: 50, keep: 12, show: 4, parts: 3, chars: 96, holdMs: 500 };   // spikes: a frame whose update + paint is over spikeMs (or whose gap since the last frame is over spikeGap ms) goes into a ring of `keep`; the HUD shows the last `show` (top `parts` parts each, cut at `chars`). Hold the readout holdMs = copy them all as text (a tap passes through to whatever is under it)
+const PERF_HUD = { bigMs: 200, bigOut: 20, win: 1000, x: 8, y: 150, font: 15, fontTouch: 20, alpha: 0.78,   // win = ms a reading covers; x / y = its corner (from the left / up from the bottom); font px (touch = phones)
+  spikeMs: 33, spikeGap: 50, backMs: 1500, keep: 12, show: 4, parts: 3, chars: 96, holdMs: 500 };   // spikes: a frame whose update + paint is over spikeMs (or whose gap since the last frame is over spikeGap ms) goes into a ring of `keep`; the HUD shows the last `show` (top `parts` parts each, cut at `chars`). Hold the readout holdMs = copy them all as text (a tap passes through to whatever is under it)
 const perfS = { t0: 0, uS: 0, uM: 0, uN: 0, dS: 0, dM: 0, dN: 0, pN: 0, l1: '', l2: '', l3: '', parts: {}, btn: 0,   // (pN = frames really painted; parts = ms per paint-block part; btn = menuBtn calls last frame)
   fu: 0, fd: 0, fp: {}, spikes: [], box: null, copied: 0,
   all: {}, aP: 0, aUS: 0, aUM: 0, aUN: 0, aDS: 0, aDM: 0 };   // (perfDump: the same, summed since the last perfDump(true))   // (this frame: update ms, paint ms, parts; the spike ring; the readout's box (game px); when it was last copied)
-function perfUpd(ms) { if (!SETTINGS.perfHud) return; perfS.uS += ms; perfS.uN++; if (ms > perfS.uM) perfS.uM = ms; perfS.fu = ms; perfS.aUS += ms; perfS.aUN++; if (ms > perfS.aUM) perfS.aUM = ms; }
+let perfVisAt = -1e9; document.addEventListener('visibilitychange', () => { if (!document.hidden) perfVisAt = PERF_NOW(); });   // (FRAME TIMES: when the page last came back from hidden)
+function perfUpd(ms) { if (!SETTINGS.perfHud) return; perfBlk.own += ms; perfS.uS += ms; perfS.uN++; if (ms > perfS.uM) perfS.uM = ms; perfS.fu = ms; perfS.aUS += ms; perfS.aUN++; if (ms > perfS.aUM) perfS.aUM = ms; }
 function perfSpike(gap) {   // frame(), first thing: was the frame before a spike? (covers frames that returned before painting too)
-  const P = perfS;
+  const P = perfS, sz = canvas.width + 'x' + canvas.height + '@' + RK, rz = P.sz !== undefined && P.sz !== sz, dec = perfBlk.dec || perfDecN > 0;
+  P.sz = sz; perfBlk.dec = perfDecN > 0 ? 1 : 0;   // (v0.72: the canvas size / scale changed since the last frame (fitScreen, dynResTick, an RK step) = RESIZED; an audio decode ran = DEC)
+  const back = PERF_NOW() - perfVisAt < PERF_HUD.backMs;   // (just back from a hidden page: the gap is the browser's, not ours)
   if (SETTINGS.perfHud && !document.hidden && gap < 1000) {
     const work = P.fu + P.fd;
-    if (work > PERF_HUD.spikeMs || gap > PERF_HUD.spikeGap) {
+    if (back && work <= PERF_HUD.spikeMs) { /* (the gap of a page coming back: not a spike) */ }
+    else if (work > PERF_HUD.spikeMs || gap > PERF_HUD.spikeGap) {
+      if (rz) PERF_TAGS.push('RESIZED'); if (dec) PERF_TAGS.push('DEC'); if (back) PERF_TAGS.push('BACK FROM HIDDEN');
       let parts = Object.keys(P.fp).map(k => [k, P.fp[k]]).sort((a, b) => b[1] - a[1]).slice(0, PERF_HUD.parts).filter(a => a[1] >= 1);
       if (P.fu > P.fd) {   // (v0.74: the update cost more than the paint: name its biggest u.* parts (+ u.other = the step's time no part covers) instead of the paint's)
         const up = Object.keys(P.fp).filter(k => k[0] === 'u' && k[1] === '.').map(k => [k, P.fp[k]]), cov = up.reduce((t, a) => t + a[1], 0);
         if (P.fu - cov >= 1) up.push(['u.other', P.fu - cov]);
         parts = up.sort((a, b) => b[1] - a[1]).slice(0, PERF_HUD.parts).filter(a => a[1] >= 1);
       }
-      const out = Object.keys(PERF_OUT).map(k => [k, PERF_OUT[k]]).sort((a, b) => b[1] - a[1]).slice(0, 2).filter(a => a[1] >= PERF_BLK.outMin);
+      const out = Object.keys(PERF_OUT).map(k => [k, PERF_OUT[k]]).sort((a, b) => b[1] - a[1]).filter((a, i) => a[1] >= PERF_BLK.outMin && (i < 2 || (Math.max(work, gap) > PERF_HUD.bigMs && a[1] > PERF_HUD.bigOut)));   // (v0.72: a line over bigMs lists every outside cost over bigOut ms: a save shows each setItem)
       P.spikes.push({ ms: work, gap, u: P.fu, d: P.fd, parts, blk: perfBlk.on ? perfBlk.max : -1, out, st: results ? 'menu:' + results.screen : state + (rec && rec.replaying ? '/replay' : '') + (hl ? '/hl' : ''), tags: PERF_TAGS.slice(), t: Math.round(PERF_NOW() / 100) / 10 });
       if (P.spikes.length > PERF_HUD.keep) P.spikes.shift();
     }
@@ -2017,12 +2026,12 @@ function canvasMB() {
   const seen = new Set(); let px = 0;
   const add = c => { if (!c || seen.has(c)) return; if (c instanceof HTMLCanvasElement) { seen.add(c); px += c.width * c.height; } else if (c.c instanceof HTMLCanvasElement) add(c.c); };
   const each = o => { if (!o) return; if (o instanceof Map) o.forEach(v => { add(v); if (v && v.fr) v.fr.forEach(add); }); else if (Array.isArray(o)) o.forEach(add); else if (typeof o === 'object') Object.values(o).forEach(add); };
-  try { add(canvas); each(crowdCanvases(crowdImg)); add(fieldImg); add(DESK_BG); add(PAPER_BG); add(START_BAKE); add(REEL_SNAP); each(KICK_BARS.c); each(BTN_SPR); each(AV_CACHE); each(SL.spr); add(TRS.img); add(typeof BG_REEL !== 'undefined' ? BG_REEL : null); } catch (e) {}
+  try { add(canvas); each(crowdCanvases(crowdImg)); add(fieldImg); add(fieldImgAlt); add(DESK_BG); add(PAPER_BG); add(START_BAKE); add(REEL_SNAP); each(KICK_BARS.c); each(BTN_SPR); each(AV_CACHE); each(SL.spr); add(TRS.img); add(typeof BG_REEL !== 'undefined' ? BG_REEL : null); } catch (e) {}
   return Math.round(px * 4 / 1048576);
 }
 function perfDraw(ms, now) {
   if (!SETTINGS.perfHud) return;
-  const P = perfS; P.dS += ms; P.dN++; if (ms > P.dM) P.dM = ms; P.fd = ms; P.aP++; P.aDS += ms; if (ms > P.aDM) P.aDM = ms;
+  const P = perfS; perfBlk.own += ms; P.dS += ms; P.dN++; if (ms > P.dM) P.dM = ms; P.fd = ms; P.aP++; P.aDS += ms; if (ms > P.aDM) P.aDM = ms;
   if (now - P.t0 < PERF_HUD.win) return;
   const f = n => n.toFixed(1), lv = liteLevel();
   P.l1 = `${Math.round(P.dN * 1000 / Math.max(1, now - P.t0))} FPS   UPD ${f(P.uS / Math.max(1, P.uN))} / ${f(P.uM)}   DRAW ${f(P.dS / Math.max(1, P.dN))} / ${f(P.dM)} ms`;
@@ -2033,7 +2042,13 @@ function perfDraw(ms, now) {
   P.t0 = now; P.uS = P.uM = P.uN = P.dS = P.dM = P.dN = P.pN = 0; P.parts = {};
 }
 // v0.55: per-part timing of the paint block (only while FRAME TIMES is on): t = perfMark('name', t) adds the ms since t to that part and returns now
+function perfUWrap(name, tag) {   // (v0.73 marks: a whole call as a u.* part, nested inside the u.* part that called it; only while FRAME TIMES is on)
+  const f = window[name]; if (typeof f !== 'function' || f.__pu) return;
+  const w = function () { if (!SETTINGS.perfHud) return f.apply(this, arguments); const t = PERF_NOW(); try { return f.apply(this, arguments); } finally { perfMark(tag, t); } };
+  w.__pu = f; window[name] = w;
+}
 function perfMark(name, t) { const n = PERF_NOW(), d = n - t; perfS.parts[name] = (perfS.parts[name] || 0) + d; perfS.fp[name] = (perfS.fp[name] || 0) + d; perfS.all[name] = (perfS.all[name] || 0) + d; if (d > CHORE.warnMs && (name[0] === 'u' || name[0] === 'f') && name[1] === '.' && liveNow()) perfNote('LIVE ' + name + ' ' + Math.round(d)); return n; }
+perfUWrap('reset', 'u.reset'); perfUWrap('liveFormPick', 'u.reset.form');   // (v0.73 marks: a 20-43 ms upd in pre names the new play's set-up)
 // console: perfDump() = every part (paint d.* + step u.* / cam) as ms per painted frame, sorted, + the step's average / max (FRAME TIMES must be on); perfDump(true) also starts a new sum
 function perfDump(reset) {
   const P = perfS, n = Math.max(1, P.aP), f = v => v.toFixed(2);
@@ -2105,9 +2120,10 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
     else { deskGate = true; stepAcc += dt; if (stepAcc >= STEP_MIN) { deskStepped = true; GRAV_K = 1; speedStep(Math.min(stepAcc * SPEED_BASE * celTSpeed(), 0.07)); stepAcc = 0; } }   // (the game steps about 60 times a second whatever the screen's refresh rate: a 120 / 144 Hz monitor ran every per-frame roll, reaction and AI decision twice as often)
   }
   let pu = SETTINGS.perfHud && ONL.on ? PERF_NOW() : 0;   // (v0.74: the online tick and the score tally as u.* parts, so an update spike names them)
+  perfUT = pu;
   try { if (ONL.host && !results) onlHostTick(); if (ONL.guest && !results) onlGuestStep(); }
   catch (err) { console.warn('online: snapshot dropped', err); }   // (a bad snapshot never crashes the game loop)
-  if (pu) pu = perfMark('u.net', pu);
+  if (pu) pu = perfMark('u.net', perfUT || pu); perfUT = 0;
   if (ONL.on) { if (ONL.host) onlLogFrame(performance.now() - perfU0, 'host'); else { const a = ONL.lastArr || 0, g = ONL.lgArr ? a - ONL.lgArr : 0; ONL.lgArr = a; onlLogFrame(g, 'gap'); } }   // (the online event log: FRAME TIMES only)
   if (!ONL.guest) { tallyScores(); otWatch(); }
   if (pu) perfMark('u.tally', pu);
@@ -2274,7 +2290,7 @@ function hushCheck(quiet) {
 const HUSH = { suspendMs: 90 };   // ms after a pause before the audio context is suspended (lets the one-shots' fade-out finish first)
 let lastPaint = 0, paintAvg = 0, fitWant = false, fitForce = false;
 // v0.62 the phone frame cap (FPS_CAP): lock = 30 for the rest of this game (AUTO), over = s the frames have been slow, gap = real ms between the last two paints
-const fpsCap = { lock: false, over: 0, gap: 16.7, lastAt: 0 };
+const fpsCap = { lock: false, over: 0, gap: 16.7, lastAt: 0, clean: 0, wait: 0, upAt: -1e9 };
 function fpsInterval() {
   if (!FPS_CAP.on || !TUI.on) return 0;
   if (results && !hlFront()) return 1000 / FPS_CAP.menuTouch;   // (menus: also paced by menuSkip)
@@ -2283,12 +2299,20 @@ function fpsInterval() {
   return 1000 / (fpsCap.lock || (FPS_CAP.cold && coldOn()) ? FPS_CAP.lo : FPS_CAP.hi);
 }
 function fpsCapTick(dtS, now) {   // (after each paint: is 60 being held? Paint time or the real gap between paints, smoothed)
-  if (fpsCap.lastAt) fpsCap.gap += (Math.min(100, FPS_CAP.gapClip * (fpsInterval() || 1000 / FPS_CAP.hi), now - fpsCap.lastAt) - fpsCap.gap) * 0.1; fpsCap.lastAt = now;   // (v0.74: each sample capped at gapClip frame intervals)
-  if (results && !hlFront()) { if (fpsCap.lock) perfNote('fps 60 (between games)'); fpsCap.lock = false; fpsCap.over = 0; return; }   // (between games: back to 60)
-  if (fpsCap.lock || (SETTINGS.fps || 'AUTO') !== 'AUTO' || paused) return;
+  const raw = fpsCap.lastAt ? now - fpsCap.lastAt : 0; fpsCap.lastAt = now;
+  if (raw) fpsCap.gap += (Math.min(100, FPS_CAP.gapClip * (fpsInterval() || 1000 / FPS_CAP.hi), raw) - fpsCap.gap) * 0.1;   // (each sample capped at gapClip frame intervals: a lone stall is not a slow frame rate)
+  if (results && !hlFront()) { if (fpsCap.lock) perfNote('fps 60 (between games)'); fpsCap.lock = false; fpsCap.over = 0; fpsCap.wait = 0; return; }   // (between games: back to 60)
+  if ((SETTINGS.fps || 'AUTO') !== 'AUTO' || paused) return;
+  if (fpsCap.lock) {   // (v0.72: a clean stretch at 30 = try 60 again at a dead ball; a failed try waits longer next time, so it never flaps)
+    const ok = raw && raw <= 1000 / FPS_CAP.lo * FPS_CAP.cleanGap && paintAvg < FPS_CAP.cleanMs;
+    fpsCap.clean = ok ? fpsCap.clean + dtS : raw > FPS_CAP.freezeMs ? fpsCap.clean : 0;
+    if (fpsCap.clean > (fpsCap.wait || FPS_CAP.retryS) && (state === 'pre' || state === 'done' || state === 'sim')) {
+      fpsCap.lock = false; fpsCap.over = 0; fpsCap.clean = 0; fpsCap.gap = 1000 / FPS_CAP.hi; fpsCap.upAt = now; perfNote('fps 60 (retry)'); }
+    return;
+  }
   const slow = paintAvg > FPS_CAP.slowMs || (fpsInterval() < 20 && fpsCap.gap > FPS_CAP.slowMs);
   fpsCap.over = slow ? fpsCap.over + dtS : Math.max(0, fpsCap.over - dtS * 0.5);
-  if (fpsCap.over > FPS_CAP.holdS && !(dynResOn() && dynRes.k != null && dynRes.k > DYN_RES.min)) { fpsCap.lock = true; perfNote('fps 30 (locked)'); }   // (v0.70: the resolution drops first, the 30 lock is the last resort)
+  if (fpsCap.over > FPS_CAP.holdS && !(dynResOn() && dynRes.k != null && dynRes.k > DYN_RES.min)) { fpsCap.lock = true; fpsCap.clean = 0; const fail = now - fpsCap.upAt < FPS_CAP.failS * 1000; fpsCap.wait = fail ? Math.min(FPS_CAP.retryMax, (fpsCap.wait || FPS_CAP.retryS) * FPS_CAP.retryK) : FPS_CAP.retryS; perfNote((fail ? 'fps 30 (retry failed, next ' + fpsCap.wait + 's)' : 'fps 30 (locked)') + ' gap ' + fpsCap.gap.toFixed(1) + ' paint ' + paintAvg.toFixed(1)); }   // (v0.70: the resolution drops first, the 30 lock is the last resort)
 }
 // the screen stays on in touch mode, even with no touches for a long stretch (the Wake Lock API; asked for on the first touch, taken again when the page comes back)
 let wakeLock = null;
@@ -2416,7 +2440,7 @@ function dynResTick(dtS) {
   if (!want || !(state === 'pre' || state === 'done')) return;
   const k = Math.max(DYN_RES.min, Math.min(DYN_RES.max, GAME_RES.touchMax, Math.round((dynRes.k + want * DYN_RES.step) * 100) / 100));
   dynRes.over = dynRes.under = 0;
-  if (k !== dynRes.k) { dynRes.k = k; perfNote('dynRes ' + k); fitScreen(); }
+  if (k !== dynRes.k) { dynRes.k = k; perfNote('dynRes ' + k + (want < 0 ? ' DOWN gap ' + fpsCap.gap.toFixed(1) + ' paint ' + paintAvg.toFixed(1) : '')); fitScreen(); }
 }
 function lockLandscape() { try { const o = screen.orientation; if (o && o.lock) o.lock('landscape').catch(() => {}); } catch (err) {} }
 const TUT_GONE = ['sprint', 'protect', 'timeout'];   // lessons for buttons the phone no longer has

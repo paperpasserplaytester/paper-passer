@@ -4508,7 +4508,7 @@ function leaveGame() {
   // (franchise safety net: still on the other team's side after that (their drive, a mirrored kick / punt return, a replay) = swap back, so you never leave as them)
   if (season && !exhibition && !tut && twoP && MATCH.you !== season.team && MATCH.opp === season.team) flipSides();
   suspendGame();
-  if (season && !exhibition && !tut && !ONL.on) { try { if (curSlot === null) autoAssignSlot(); else saveToSlot(curSlot, true); } catch (e) {} }   // (leaving a franchise game saves it, so it is ready to resume when you come back)
+  if (season && !exhibition && !tut && !ONL.on) autosaveSoon(true);   // (leaving a franchise game saves it, so it is ready to resume when you come back)
   let record = { w: 0, l: 0, t: 0 };
   try { record = { ...record, ...JSON.parse(localStorage.getItem(RECORD_KEY) || '{}') }; } catch (e) {}
   if (rec && !rec.replaying) keepHighlight(rec);   // (the last play)
@@ -4849,6 +4849,7 @@ function drawTurnoverBanner() {
 
 let DEF_SCR = null;
 const defOverlayOn = () => defLive() && !paused && !(rec && rec.replaying) && !(pvpDef() && fourthPending) && (!ONL.on || !onlIAmOff());
+let drawCastAP = null;   // (v0.73 mark: the line-up the last paint drew: a new one = d.players.newCast)
 const DRAW_ORDER = [], byDrawY = (a, b) => a.y - b.y;   // (draw(): the players back to front, one reused list)
 function draw() {
   NAMES_RECT = STAR_RECT = KEY_TIPS_RECT = null;   // (v0.62: a tip not drawn this frame has no box: a stale one used to eat taps)
@@ -4950,7 +4951,7 @@ function draw() {
   plLod = false; plGame = false;
   if (!gpDone) gpBase();
   if (!ballDrawn) drawBall();
-  if (pt) pt = perfMark('d.players', pt);
+  if (pt) { const ap = allPlayers(), nc = ap !== drawCastAP; drawCastAP = ap; pt = perfMark(nc ? 'd.players.newCast' : 'd.players', pt); }   // (v0.73 mark: the first paint of a new line-up / cast has its own name)
   if (SL.exN) slExUpTo(1e9);
   if (SL.on) { slDrawSide(1); refDrawItems(1); }
   if (REV) refRevWorld();   // (v0.68 a review: the ruler and the true spot)   // (the near (bottom) touchline's people: in front of the players; v0.68 a flag in the air, the officials' ball relay)
@@ -4964,6 +4965,7 @@ function draw() {
   if ((state === 'pre' || (rec && rec.replaying)) && !tossing() && tipHeld('names') && (!cine || (reelOn() && hlFront()))) drawNameTags();   // (v0.62: a held names tip shows them over a reel too)   // (Y hides / shows them in a replay too)
   if (!tossing() && !cine) drawStarMarks();
   if (!cine) drawPopups();
+  if (pt) pt = perfMark('d.tags', pt);
   if (kickAim) drawKickReticle('arc');   // (the kick's arc: over the players and everything else on the field)
   drawHsFreeze();   // (the halftime reel's freeze frame: the man of the play of the half, circled)
   } catch (e) { drawFail(e); } finally { ctx.restore(); }   // (v0.74: a throw inside the field clip used to leave the clip on for good: the guest lost the top bar)
@@ -4989,7 +4991,9 @@ function draw() {
   ctx.fillRect(0, 0, W, TOP_BAR);   // (the top bar only: no bottom bar, the field runs to the bottom of the screen)
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
+  if (pt) pt = perfMark('d.top', pt);
   drawScoreboard();
+  if (pt) pt = perfMark('d.score', pt);
   if (!cine) wxBadge();   // (v0.68: the weather sits at the top bar's right end)
   if (!(game && game.penQ) && !REV && !revWait) drawContHint();   // (v0.68 not over a flag card or a booth review)
   if (pt) pt = perfMark('d.hud', pt);
@@ -5059,6 +5063,7 @@ function draw() {
   ctx.font = 'bold 18px monospace';
   ctx.textAlign = 'center';
   ctx.textAlign = 'center';
+  if (pt) pt = perfMark('d.btns', pt);   // (v0.72 marks: what only some states draw, to name an unmarked slow frame)
   if (!(paused && !ONL.on)) drawPauseIcons();   // (v0.58: paused = drawn after the tracing paper instead, on top of it)   // (the settings page; game-changing ones are locked: SET_GAME_LOCK)   // (top left corner of the top bar)
   // the difficulty: bottom left, level with the down and distance (text over the field, no bar behind it)
   ctx.save(); ctx.font = `bold ${Math.round(14 * BB)}px monospace`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
@@ -5071,9 +5076,13 @@ function draw() {
   const ddTxt = tut ? (state !== 'pre' && tutStep() ? 'TUTORIAL  -  BACKSPACE to reset the play' : 'TUTORIAL') : (puntRetPlay || (state === 'kick' && kick && kick.punt) || (state === 'kickoff' && kickoff && kickoff.punt) || state === 'punt' || (puntRet && puntPlay && !puntPlay.ko)) ? 'PUNT' : kickoffPlay || (state === 'kick' && kick && kick.kickoff) || (puntRet && puntPlay && puntPlay.ko) ? 'KICKOFF' : patMode !== null || patNext ? 'PAT' : `${downAndDistance()}  |  ${spot(los)}`;
   ctx.strokeText(ddTxt, W / 2, H - BOT_BAR * 0.33); ctx.fillText(ddTxt, W / 2, H - BOT_BAR * 0.33);
   if (!cine && !inRp && celebPromptHere()) { const t = `${TOUCH ? 'DOUBLE TAP' : 'RIGHT CLICK'}  -  CELEBRATE`; ctx.save(); ctx.fillStyle = '#ffffff'; ctx.strokeText(t, W / 2, H - BOT_BAR - 14); ctx.fillText(t, W / 2, H - BOT_BAR - 14); ctx.restore(); }   // (one of your players has a celebration ready)
+  if (pt) pt = perfMark('d.pause', pt);
   if (!tut && state !== 'sim' && state !== 'kick' && !lightGfx() && !cine) { drawStarHud(); drawNamesTip(); }
+  if (pt) pt = perfMark('d.stars', pt);
   if (!cine && state !== 'sim') drawKeyTips();   // (key tips, top left)
+  if (pt) pt = perfMark('d.keytips', pt);
   if (!inRp && (state === 'kick' || (state === 'kickoff' && kick && kick.userKo))) drawKickMeters();
+  if (pt) pt = perfMark('d.kickMeters', pt);
   if (state === 'sim' && !halfHold) drawSim();   // (the halftime banner shows over the plain field, the sim panel hides)
   // the game's over: FINAL with the score, and FINISH GAME, once the last play's replay is rolling
   FINAL_BTN.x = undefined;

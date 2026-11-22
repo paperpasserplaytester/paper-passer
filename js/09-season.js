@@ -261,7 +261,7 @@ function seasonGameDone(blue, red) {
   if (g) { if (g.h === season.team) { g.hs = blue; g.as = red; } else { g.hs = red; g.as = blue; } season.last = season.week; season.lastPO = null; season.played = (season.played || 0) + 1; rbYards(g); try { recTeamGame(g, season.week); } catch (e) {} }
   seasonWeekStep(g);   // (the week you played; a bye after it now waits on the home screen for CONTINUE: seasonByeStep)
   try { rbWeek(season.week > SEASON_WEEKS ? 'end' : 'wk'); } catch (e) { console.warn('record book', e); }   // (season marks so far / locked once the regular season is over, careers)
-  lpstSave(); recSave();
+  lpstSave(true);   // (v0.72: written by the full autosave that follows)
   season.facts = postGameFacts(blue, red);
   try { postIssue('wk'); } catch (e) { console.warn('post', e); }   // (the Paper Passer Post: this week's paper)
 }
@@ -288,12 +288,12 @@ function seasonByeStep() {
   try { notes.push(...pracWeek(1)); } catch (e) { console.warn('bye practice', e); }
   LEAGUE.injNotes = notes;
   try { rbWeek(season.week > SEASON_WEEKS ? 'end' : 'wk'); } catch (e) { console.warn('record book', e); }
-  lpstSave(); recSave();
+  lpstSave(true);   // (v0.72: written by the full autosave that follows)
   season.facts = null;
   try { postIssue('wk'); } catch (e) { console.warn('post', e); }
   seasonMatch();
   homeNews();
-  try { if (curSlot === null) autoAssignSlot(); else saveToSlot(curSlot, true); } catch (e) {}
+  autosaveSoon(true);   // (v0.72: after the page paints, never inside the tap)
 }
 // --- weekly awards: after each week one Offensive and one Defensive Player of the Week from every game in the league (AWARD tunables at the top).
 // Candidates = the simulated games' lines (pstSimGame fills AWD_POOL) + the players' lines from your game (PST). Score = AWARD.off / .def stat points x position weight;

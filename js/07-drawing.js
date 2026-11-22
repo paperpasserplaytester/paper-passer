@@ -3431,6 +3431,7 @@ const FIELD_CACHE = { on: true, zoom: 0.55, up: 1.04, maxPx: 12e6, pad: 0.75, st
 // (a little soft) instead of redrawing the whole field every frame of a touchdown / celebration / replay zoom; QUALITY on a laptop keeps the live close-ups.
 // A new size / layout (RK after a graphics step, the touch layout, marker) is only rebuilt between plays (pre / done / menus): mid-play the old one is stretched.
 const fieldLiveOK = () => !liteOn() && (!TUI.on || FIELD_CACHE.liveTouch);
+let fieldImgAlt = null;   // (v0.72 perf: the other drive direction's cache, kept while everything else about it still matches: a change of possession swaps instead of re-baking)
 let fieldImg = null, fieldBaking = false, fieldMarks = false;   // { c, s, hk, mir, logo, tui }; fieldBaking = drawFieldStatic is drawing into the cache
 function fieldCacheDraw() {   // true = the static field was drawn from the cache
   if (!FIELD_CACHE.on) return false;
@@ -3445,7 +3446,11 @@ function fieldCacheDraw() {   // true = the static field was drawn from the cach
   const between = !!results || state === 'pre' || state === 'done' || state === 'sim';   // (a size change waits for the dead ball; a new home team / drive direction can't)
   const pud = wxPudKey();   // (puddles / mud: the field's wet stage, which only moves at a dead ball)
   if (!F || F.hk !== hk || F.mir !== MIRROR || F.logo !== logo || ((F.s !== s || F.tui !== TUI.on || F.mk !== mk || F.pud !== pud) && between)) {
-    if (F) freeCanvas(F.c);
+    const A = fieldImgAlt, same = X => X && X.hk === hk && X.logo === logo && X.s === s && X.tui === TUI.on && X.mk === mk && X.pud === pud;
+    if (F && F.mir !== MIRROR && A && A.mir === MIRROR && same(A)) { fieldImgAlt = F; F = fieldImg = A; }   // (v0.72: the other direction is already baked)
+    else {
+    if (A) { freeCanvas(A.c); fieldImgAlt = null; }
+    if (F) { if (F.mir !== MIRROR && same(F)) fieldImgAlt = F; else freeCanvas(F.c); }
     perfNote('fieldBake');
     markerFree();   // (the marker tiles go with it; drawFieldStatic makes the ones it needs again)
     const c = document.createElement('canvas'); c.width = Math.ceil(w * s); c.height = Math.ceil(h * s);
@@ -3455,6 +3460,7 @@ function fieldCacheDraw() {   // true = the static field was drawn from the cach
     try { g.setTransform(s, 0, 0, s, ox * s, M * s); drawFieldStatic(); } finally { ctx = main; fieldBaking = false; }
     if (!markerOn()) markerFree();   // (performance mode: the marker tiles were only needed for the bake)
     F = fieldImg = { c, s, hk, mir: MIRROR, logo, tui: TUI.on, mk, pud };
+    }
   }
   // the part of it on screen (canvas px -> world -> cache px, a pixel of slack each side)
   const xa = -m.e / m.a, xb = (ctx.canvas.width - m.e) / m.a, ya = -m.f / m.d, yb = (ctx.canvas.height - m.f) / m.d;
@@ -3480,7 +3486,7 @@ function drawField() {
   ctx.fillStyle = markerOn() ? markerFill(MARKER.outside.col, 1, true) : MARKER.outside.flat;   // (marker: lighter and sparser out here, so names and callouts stay readable)
   ctx.fillRect(-ENDZONE - 60 * YD, -40 * YD, FIELD + 2 * ENDZONE + 120 * YD, FW + 80 * YD);
   let pt = SETTINGS.perfHud ? PERF_NOW() : 0;   // (FRAME TIMES: d.* = parts of draw())
-  if (!lightGfx() || IS_MOBILE) drawCrowd();   // (a slow desktop in performance mode: no stands. A phone always keeps the stands and the sideline: drawCrowd already culls everything off-view)
+  if ((!lightGfx() || IS_MOBILE) && !(typeof PHOTO_NOCROWD !== 'undefined' && PHOTO_NOCROWD)) drawCrowd();   // (a slow desktop in performance mode: no stands. A phone always keeps the stands and the sideline: drawCrowd already culls everything off-view)
   if (pt) pt = perfMark('d.crowd', pt);
   if (!fieldCacheDraw()) { drawFieldStatic(); if (!fieldLive) { fieldLive = true; perfNote('fieldLive'); } } else fieldLive = false;   // (perfNote once a change, not every frame)
   if (pt) pt = perfMark('d.field', pt);

@@ -131,7 +131,7 @@ function coldDreamOn() {
   coldSetPlay('p1');
 }
 function coldFresh() {   // the pre-drawn field and stands are keyed by team: both are rebuilt (the dream's on the way in, the real ones on the way out)
-  try { if (fieldImg) { freeCanvas(fieldImg.c); fieldImg = null; } if (crowdImg) crowdImg.home = null; } catch (e) {}
+  try { if (fieldImg) { freeCanvas(fieldImg.c); fieldImg = null; } if (fieldImgAlt) { freeCanvas(fieldImgAlt.c); fieldImgAlt = null; } if (crowdImg) crowdImg.home = null; } catch (e) {}
 }
 function coldEnd(skipped) {
   if (!CO) return;

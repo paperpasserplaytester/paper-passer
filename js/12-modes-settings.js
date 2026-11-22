@@ -2019,7 +2019,7 @@ const stepWA = [null, null];
 function stepLoad() {
   if (stepTried || !actx) return;
   stepTried = true;
-  fetch('audio/footsteps.mp3').then(r => r.arrayBuffer()).then(b => new Promise((res, rej) => actx.decodeAudioData(b, res, rej))).then(buf => {
+  fetch('audio/footsteps.mp3').then(r => r.arrayBuffer()).then(b => { perfDecN++; perfBlk.dec = 1; const done = () => { perfDecN--; perfBlk.dec = 1; }, pr = new Promise((res, rej) => actx.decodeAudioData(b, res, rej)); pr.then(done, done); return pr; }).then(buf => {
     const d = buf.getChannelData(0), sr = buf.sampleRate, span = Math.round(0.04 * sr);
     const zc = t => {   // the nearest rising zero crossing: loop points there join without a jump
       const i = Math.round(t * sr); let best = i, bv = Infinity;
@@ -5143,7 +5143,7 @@ function saveSoon() { choreFlush('saveSoon');
   if (i === null) { try { autoAssignSlot(); } catch (e) {} return syncSoon(); }   // (no slot yet: the picker may open, as before)
   // (the data is taken now, in the click: once the start screen is up, frame() puts the default settings back into SETTINGS, which the save holds by reference)
   let pre = null; try { pre = buildSave(); pre.world = { ...pre.world, settings: JSON.parse(JSON.stringify(SETTINGS)) }; } catch (e) {}
-  let done = false; const go = () => { if (done) return; done = true; try { if (curSlot === i) saveToSlot(i, true, undefined, pre || undefined); } catch (e) {} syncSoon(); };
+  let done = false; const go = () => { if (done) return; done = true; try { if (curSlot === i) saveToSlot(i, true, undefined, pre || undefined); } catch (e) {} if (document.hidden) syncSoon(); else chore('save sync', syncSoon); };   // (v0.72: the sync after the save's chores)
   if (document.hidden) return go();
   let n = LEAVE_WAIT.frames; const step = () => { if (--n > 0 && !document.hidden) requestAnimationFrame(step); else go(); }; requestAnimationFrame(step);
   setTimeout(go, LEAVE_WAIT.maxMs);   // (frames held back by the browser: the save still happens)
@@ -5214,7 +5214,7 @@ function storeFull(what) {   // the STORAGE FULL note (settings line + a toast o
   const t = `${what}: STORAGE FULL. BIGGEST: ${storeTop()}. DELETE AN OLD SAVE`;
   note(t); ioToast(t);
 }
-function storeTidy(keepBase) {
+function storeTidy(keepBase, light) {   // (light = a save's own tidy: the slot-less copies only; the repack of old plain values ran at load)
   try {
     if (!keepBase) for (const b of SLOT_DATA_KEYS) localStorage.removeItem(b);
     for (let k = -1; k < SLOTS; k++) localStorage.removeItem(k < 0 ? REC_KEY : `${REC_KEY}.${k}`);   // (v0.69: the dead old records book: nothing reads it)
@@ -5223,36 +5223,66 @@ function storeTidy(keepBase) {
   } catch (e) {}
   // (anything big still stored as plain JSON by an older build is packed in place: saves, player / league stats, records, league clips.
   // The saves themselves were never packed, ~0.5 MB each: a few franchises filled localStorage and nothing could save any more.)
+  if (light) return;
   for (const base of STORE_PACK) for (let k = -1; k < SLOTS; k++) {
     try { const key = k < 0 ? base : `${base}.${k}`, v = localStorage.getItem(key); if (v && v.length > 2000 && !v.startsWith(LZ_MARK)) localStorage.setItem(key, lzPack(v)); } catch (e) {}
   }
 }
 try { storeTidy(true); } catch (e) {}   // (once at load: packs old saves' league stats, frees space before anything tries to save)
-function saveToSlot(i, auto, imported, pre) { choreFlush('saveToSlot');   // imported: a save file's data (written as it is; the current franchise and its slot stay as they were); pre = buildSave() taken earlier (saveSoon)
+// v0.72 perf: a save writes only the stats / highlights / photos that changed since this slot's last write (SAVE_FP: object + a cheap count fingerprint; a full save
+// = light false writes them all anyway), each as its own chore (one key a frame), and the slot key LAST (until it lands, a load gets the old save). light = the
+// debounced settings / roster autosave (autosaveSoon); everything else is full. SAVE_FP is forgotten when a slot loads or is deleted.
+let SAVE_FP = {};
+function saveFpOf(o) { if (!o) return '0'; if (Array.isArray(o)) return o.length + ':' + (o.length ? JSON.stringify(o[o.length - 1]).length : 0); let n = 0, g = 0; for (const k in o) { n++; const e = o[k]; if (e && e.games) g += e.games.length; } return n + ':' + g; }
+function saveNeed(i, k, o, light) { const f = SAVE_FP[k], fp = saveFpOf(o); return !light || !f || f.i !== i || f.o !== o || f.fp !== fp; }
+function saveDone(i, k, o) { SAVE_FP[k] = { i, o, fp: saveFpOf(o) }; }
+function saveToSlot(i, auto, imported, pre, light) { choreFlush('saveToSlot');   // imported: a save file's data (written as it is; the current franchise and its slot stay as they were); pre = buildSave() taken earlier (saveSoon)
   if (ONL.on) { console.warn('online: saving is disabled'); return; }
+  const fail = e => { if (imported) throw e; console.warn('save failed', e, 'storage chars used:', storeUsed()); if (/quota|storage/i.test((e && (e.name + e.message)) || '')) storeFull('COULD NOT SAVE'); else note('COULD NOT SAVE'); };
   try {
-    const data = imported || pre || buildSave(), m = slotMetas().slice(), txt = perfTime('lsPacked', lsPacked, null, [data]);   // (packed: ~6x smaller; perfTime = FRAME TIMES' timer, a plain call when it's off)
-    try { localStorage.setItem(SLOT_KEY(i), txt); }
-    catch (e) {
-      storeTidy(curSlot === null);   // (full: clear the leftovers and try once more)
+    const data = imported || pre || buildSave(), txt = perfTime('lsPacked', lsPacked, null, [data]);   // (packed now, from the data as it is now; written last)
+    let statsDropped = false;   // (writeSlot had to drop this slot's stats copies to fit)
+    const writeSlot = () => {
+      const m = slotMetas().slice();
       try { localStorage.setItem(SLOT_KEY(i), txt); }
-      catch (e2) { if (imported) throw e2; localStorage.removeItem(`${PHOTO_KEY}.${i}`); localStorage.setItem(SLOT_KEY(i), txt); }   // (still full: this slot's photos are the first thing dropped)
-    }
-    m[i] = metaOfData(data); localStorage.setItem(SLOT_META, JSON.stringify(m)); slotMetaCache = m;
-    if (imported) return;
-    storeFails = [];   // (from here: what didn't fit this save; earlier failed stat writes are rewritten below anyway)
-    let statsOk = true, photosOk = true;
+      catch (e) {
+        storeTidy(curSlot === null);   // (full: clear the leftovers and try once more)
+        try { localStorage.setItem(SLOT_KEY(i), txt); }
+        catch (e2) { if (imported) throw e2; localStorage.removeItem(`${PHOTO_KEY}.${i}`); delete SAVE_FP.ph;   // (still full: this slot's photos are the first thing dropped)
+          // (v0.73: still full: the slot must land, the stats are written first now. This slot's stats copies go next, least needed first; they stay in memory
+          //  and the next save writes them again. Never while pstStash holds them: then storage is the only copy)
+          const drop = pstStash ? [] : [['hl', LGHL_KEY], ['lpst', LPST_KEY], ['chof', CHOF_KEY], ['hof', HOF_KEY], ['pst', PST_KEY]];
+          for (let n = 0; ; n++) {
+            try { localStorage.setItem(SLOT_KEY(i), txt); break; }
+            catch (e3) { if (n >= drop.length) throw e3; const [k, key] = drop[n]; localStorage.removeItem(`${key}.${i}`); delete SAVE_FP[k]; statsDropped = true; }
+          }
+        }   // (still full: this slot's photos are the first thing dropped)
+      }
+      m[i] = metaOfData(data); localStorage.setItem(SLOT_META, JSON.stringify(m)); slotMetaCache = m;
+    };
+    if (imported) return writeSlot();
+    storeFails = [];   // (from here: what didn't fit this save)
     curSlot = i;
-    if (!pstStash) {   // (the stats are in memory and now go under the slot: drop the slot-less copies first)
-      storeTidy(false);
-      statsOk = pstSaveSlot(i) && recSave() !== false;
-      if (!statsOk) { localStorage.removeItem(`${PHOTO_KEY}.${i}`); photosOk = false; storeFails = []; statsOk = pstSaveSlot(i) && recSave() !== false; }   // (stats before photos: drop the photos and try again)
+    const steps = [], st = { ok: true, ph: true };
+    if (!pstStash) {   // (the stats are in memory and go under the slot: drop the slot-less copies first)
+      storeTidy(false, true);
+      for (const [k, key, get] of [['pst', PST_KEY, () => PST], ['hof', HOF_KEY, () => HOF], ['chof', CHOF_KEY, () => CHOF], ['lpst', LPST_KEY, () => LPST]])
+        if (saveNeed(i, k, get(), light)) steps.push(['save ' + k, () => { const o = get(); if (lsTry(`${key}.${i}`, lsPacked(o))) saveDone(i, k, o); else st.ok = false; }]);
+      if (saveNeed(i, 'hl', LGHL, light)) steps.push(['save hl', () => { const o = LGHL; if (recSave() !== false) saveDone(i, 'hl', o); else st.ok = false; }]);
     }
-    if (statsOk && photosOk) photosOk = photosSave(i);   // (the Post's photos: their own key, written last, after storeTidy)
-    if (!statsOk) storeFull('SAVED, BUT STATS DID NOT FIT');
-    else if (!photosOk) storeFull('SAVED WITHOUT PHOTOS');
-    else note(auto ? 'AUTOSAVED' : data.live ? 'GAME SAVED (at the last snap)' : 'GAME SAVED');
-  } catch (e) { if (imported) throw e; console.warn('save failed', e, 'storage chars used:', storeUsed()); if (/quota|storage/i.test((e && (e.name + e.message)) || '')) storeFull('COULD NOT SAVE'); else note('COULD NOT SAVE'); }
+    if (saveNeed(i, 'ph', PHOTOS, light)) steps.push(['save photos', () => { if (!st.ok) return; const o = PHOTOS; st.ph = photosSave(i); if (st.ph) saveDone(i, 'ph', o); }]);   // (the Post's photos: their own key, after the stats)
+    steps.push(['save slot', () => {
+      try {
+        if (!st.ok && !pstStash) { localStorage.removeItem(`${PHOTO_KEY}.${i}`); delete SAVE_FP.ph; st.ph = false; storeFails = []; SAVE_FP = {}; st.ok = pstSaveSlot(i) && recSave() !== false; }   // (stats before photos: drop the photos and try again)
+        writeSlot(); if (statsDropped) st.ok = false;
+        if (!st.ok) storeFull('SAVED, BUT STATS DID NOT FIT');
+        else if (!st.ph) storeFull('SAVED WITHOUT PHOTOS');
+        else note(auto ? 'AUTOSAVED' : data.live ? 'GAME SAVED (at the last snap)' : 'GAME SAVED');
+      } catch (e) { fail(e); }
+    }]);
+    if (!auto || document.hidden) { for (const [, f] of steps) f(); return; }   // (a SAVE button press, or the tab going away: written at once, as before)
+    for (const [n, f] of steps) chore(n, f);
+  } catch (e) { fail(e); }
 }
 function importSave(d) {   // a save file's data: checked, then into the first empty slot (none: asks before replacing the oldest)
   const ok = d && d.v === 1 && d.season && d.match && NFL[d.match.you] && d.career && d.world && d.world.roster && d.world.roster[d.match.you];
@@ -5266,7 +5296,7 @@ function autoAssignSlot() {   // a brand-new career: saved at once, to the first
   curSlot = null;
   if (i >= 0) saveToSlot(i, true);
 }
-function loadFromSlot(i) {
+function loadFromSlot(i) { choreFlush('loadFromSlot'); SAVE_FP = {};   // (v0.72: a save still being written lands first)
   let d = null;
   try { d = lsJson(localStorage.getItem(SLOT_KEY(i))); } catch (e) {}
   if (!d || !d.season) { note('NO SAVED GAME'); return; }
@@ -5380,7 +5410,7 @@ function drawSlots() {
     menuBtn(SLOT_YES, 'YES', RES.bright, 30); menuBtn(SLOT_NO, 'NO', RES.bright, 30);
   }
 }
-function deleteSlot(i) {
+function deleteSlot(i) { choreFlush('deleteSlot'); SAVE_FP = {};
   try {
     const m = slotMetas().slice(); m[i] = null;
     localStorage.removeItem(SLOT_KEY(i)); localStorage.removeItem(`${PST_KEY}.${i}`); localStorage.removeItem(`${LPST_KEY}.${i}`); localStorage.removeItem(`${HOF_KEY}.${i}`); localStorage.removeItem(`${CHOF_KEY}.${i}`); localStorage.removeItem(`${REC_KEY}.${i}`); localStorage.removeItem(`${LGHL_KEY}.${i}`); localStorage.removeItem(`${PHOTO_KEY}.${i}`); localStorage.setItem(SLOT_META, JSON.stringify(m)); slotMetaCache = m;

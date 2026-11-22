@@ -762,9 +762,21 @@ function autoPromote(team) {
 }
 // the franchise saves to its slot a moment after a roster / front office change (batched: several changes in a row save once)
 let autoSaveT = null;
-function autosaveSoon() {
-  if (autoSaveT) return;
-  autoSaveT = setTimeout(() => { autoSaveT = null; if (results && !exhibition && !tut && season) { try { if (curSlot === null) autoAssignSlot(); else saveToSlot(curSlot, true); } catch (e) {} } }, 400);   // (not mid-offseason: a load restarts that from the top)
+const AUTOSAVE = { waitMs: 3000, maxMs: 8000 };   // (v0.72 perf: requests within waitMs of each other = one save, at most maxMs after the first; then it waits LEAVE_WAIT.frames painted frames)
+let autoSaveA = 0, autoSaveP = false, autoSaveFull = false;
+function autosaveSoon(full) {   // full = a game finished / left / a week went by: everything is written, right after the next page paints. No arg = a settings / roster change (light, debounced)
+  if (full) autoSaveFull = true;
+  if (autoSaveP) return;   // (already waiting for its frames: it saves what is there then)
+  const t = performance.now(); if (!autoSaveA) autoSaveA = t;
+  if (autoSaveT) clearTimeout(autoSaveT);
+  const wait = autoSaveFull ? 0 : Math.max(0, Math.min(AUTOSAVE.waitMs, autoSaveA + AUTOSAVE.maxMs - t));
+  autoSaveT = setTimeout(() => {
+    autoSaveT = null; autoSaveP = true;
+    let done = false; const go = () => { if (done) return; done = true; const light = !autoSaveFull; autoSaveP = false; autoSaveA = 0; autoSaveFull = false;
+      if (results && !exhibition && !tut && season && !ONL.on) { try { if (curSlot === null) autoAssignSlot(); else saveToSlot(curSlot, true, undefined, undefined, light); } catch (e) {} } };   // (not mid-offseason: a load restarts that from the top)
+    if (document.hidden) return go();
+    let n = LEAVE_WAIT.frames; const step = () => { if (--n > 0 && !document.hidden) requestAnimationFrame(step); else go(); }; requestAnimationFrame(step); setTimeout(go, LEAVE_WAIT.maxMs);   // (no frames coming: saved anyway)
+  }, wait);
 }
 const benchable = p => !exhibition && !(SETTINGS.injuries && p.inj && p.inj.weeks > 0);
 // hurt: "BAD INJURY (2 WK)"; null if he's fine
@@ -4381,7 +4393,7 @@ function drawMatchupEx() {
   }
   roles.map((role, side) => [UNI_BTNS[side], shown[side], MATCH[role + 'Kit']]).forEach(([b, team, kit]) => {
     menuBtn(b, kit === 'alt' ? 'ALT' : kit.toUpperCase(), RES.bright, 20, undefined, onlMineSide(UNI_BTNS.indexOf(b)));
-    if (!team || !NFL[team]) return;   // (v0.74: an online lobby side with no team yet threw here mid-paint)
+    if (!team || !NFL[team] || !NFL[team][kit === 'alt' ? 'alt' : kit]) return;   // (v0.74: an online lobby side with no team yet threw here mid-paint)
     const [m, s] = kitColors(team, kit);
     for (let i = 0; i < 4; i++) { const dx = b.x + 10 + i * 24; ctx.fillStyle = '#0b1a3a'; ctx.fillRect(dx - 1, b.y + b.h + 3, 18, 8); ctx.fillStyle = i % 2 ? s : m; ctx.fillRect(dx, b.y + b.h + 4, 16, 6); }
   });

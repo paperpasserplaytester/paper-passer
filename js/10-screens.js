@@ -242,7 +242,7 @@ function openResults() { choreFlush('openResults');
   results = { record, screen: 'result', fin: { blue: game.blue, red: game.red }, injAlert: !exhibition && SETTINGS.injuries && LEAGUE.injNotes.length ? [...LEAGUE.injNotes] : null };
   hsEndReel();   // (the game's best plays run behind the result screen)
   results.pay = null;   // (v0.69: no CREDITS EARNED screen after a game; the pay and goal credits are still in payToFly and fly into the box on the next screen with one)
-  if (!exhibition && !tut && season) { try { if (curSlot === null) autoAssignSlot(); else saveToSlot(curSlot, true); } catch (e) {} }   // (every finished game autosaves to the franchise's slot; one without a slot yet gets the first free one)
+  if (!exhibition && !tut && season) autosaveSoon(true);   // (every finished game autosaves to the franchise's slot; one without a slot yet gets the first free one)
 }
 
 // paper theme: ink on paper. bg / bright = panel fills (index-card paper), line = pencil-ink, strip = highlighter

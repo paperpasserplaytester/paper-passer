@@ -2998,7 +2998,9 @@ function update(dt) {
   }
 
   if (state === 'pre') {
+    if (ut) ut = perfMark('u.play', ut);
     stepFormation(dt);
+    if (ut) ut = perfMark('u.pre.jog', ut);   // (v0.73 mark: the formation jog)
     blitzWalk(dt);   // (disguised blitzers creep up late: the read)
     // safety net: nobody may hold the snap forever. A man whose formation jog never finished (a stuck target, a lost frame) used to block the play for the rest of the game
     // ("cannot start a play"): after FM_MAX_WAIT seconds every one of them is simply put where he was going

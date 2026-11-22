@@ -1288,7 +1288,7 @@ function pstGames(name) {
   const key = g => (g.yr || 0) * 100 + (g.wk === 'PO' ? 60 : g.gp ? 0 : g.wk || 0);
   return [...a, ...b].map((g, i) => [g, i]).sort((x, y) => key(x[0]) - key(y[0]) || x[1] - y[1]).map(x => x[0]);
 }
-function lpstSave() {
+function lpstSave(fold) {   // (v0.72: fold = only fold the old seasons; the full autosave right after writes the stats)
   const yr = LEAGUE ? LEAGUE.year : 0;
   for (const e of Object.values(LPST)) {   // (fold old seasons)
     const old = e.games.filter(g => !g.gp && g.yr < yr);   // (the richer lines would crowd out storage: only this season keeps game-by-game lines)
@@ -1297,7 +1297,7 @@ function lpstSave() {
     for (const g of old) { const po = g.wk === 'PO', key = `${g.yr}|${g.tm || ''}|${po ? 'P' : ''}`, s = by[key] || (by[key] = Object.assign({ yr: g.yr, gp: 0 }, g.tm ? { tm: g.tm } : {}, po ? { wk: 'PO' } : {})); s.gp += g.gp || 1; for (const k in g) if (typeof g[k] === 'number' && k !== 'yr' && k !== 'rd' && k !== 'gp') s[k] = PST_MAX.has(k) ? Math.max(s[k] || 0, g[k]) : (s[k] || 0) + g[k]; }
     e.games = [...Object.values(by), ...e.games.filter(g => g.gp || g.yr >= yr)];
   }
-  return pstStash ? true : lsTry(pstKey(LPST_KEY), lsPacked(LPST));
+  return pstStash || fold ? true : lsTry(pstKey(LPST_KEY), lsPacked(LPST));
 }
 function pstSimGame(g, wk) {
   if (!season || exhibition || tut || !LEAGUE || g.hs == null) return;

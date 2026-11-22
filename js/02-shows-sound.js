@@ -94,6 +94,7 @@ function recordFrame(dt) {
   if (rec.frames.length > 2400) rec.frames.shift();
   if (state === 'done') {
     rec.doneT += dt;
+    if (!rec.hlEarly) { const r = rec; r.hlEarly = 1; if (!choreNow()) chore('hlCopy', u => hlPrep(r, u)); }   // (v0.72 perf: the frames up to the whistle are final: the highlight copy starts now, the tail chore below copies the rest, so a quick snap only copies the tail)
     if (rec.doneT >= tail && !rec.choreQ) { const r = rec; r.choreQ = 1; if (r.hs && !r.hs.done) { if (!choreNow()) chore('hsPrep', u => hsPrep(r, u)); chore('hsCollect', () => { hsCollect(r); }); } if (!choreNow()) chore('hlCopy', u => hlPrep(r, u)); }   // (the tape is complete: the halftime reel keeps its best window, a big play's copy is made; v0.71: on the chore queue, over the next dead-ball frames)
     if (!rec.played && !game.penQ && rec.doneT >= Math.max(RUNOFF_SECS, tail) && !(game.runoff > 0) && !bannerUp() && (replayWanted() || finalReplay())) startReplay();   // (v0.69: a flag is accepted / declined first)
   }
@@ -3406,10 +3407,11 @@ sfxVolCheck();
 // on: 'auto' = touch + iOS, true / false = forced. sr = decode rate (hi = files kept at 48 kHz), monoS = longer files are mixed to mono, cap = s kept of a long bed
 // (a start past half of it wraps into the first half), skip = loops / beds that stay on media elements, warm = decoded when audio starts (the rest on first use:
 // that play still goes through the element). Decoding never starts during a live play (sbufPump waits). sbufReport() = decoded sizes.
-const SBUF = { on: 'auto', sr: 32000, hi: /\/(cheer|boo|ooh|whistle|upgrade)\.mp3$/, monoS: 5, cap: { 'audio/disappointed.mp3': 16, 'audio/chant.mp3': 16 },
+const SBUF = { on: 'auto', sr: 32000, hi: /\/(cheer|boo|ooh|whistle|upgrade)\.mp3$/, monoS: 5, cap: { 'audio/disappointed.mp3': 16, 'audio/chant.mp3': 16, 'audio/eraser.mp3': 3, 'audio/pencil.mp3': 3 },
   skip: /\/(crowd2?|rain|wind|classroom|footsteps|endwhistle)\./, attack: 0.006, stop: 0.008,
   warm: ['whistle', 'cheer', 'cheer2.wav', 'cheer3', 'boo', 'boo2', 'jeer', 'disappointed', 'ooh', 'gasp', 'chant', 'whoosh1', 'whoosh2', 'thud', 'ground', 'hitcrack', 'boulder',
-    'clang', 'highfive', 'smack', 'shush', 'shush2', 'stamp', 'register', 'yell', 'splash', 'crumple', 'click', 'upgrade'] };
+    'clang', 'highfive', 'smack', 'shush', 'shush2', 'stamp', 'register', 'yell', 'splash', 'crumple', 'click', 'upgrade',
+    'eraser', 'pencil', 'tear', 'tap', 'flip', 'swoosh'] };   // (v0.72: the menu buttons' page sounds: never warmed, so their first play of a session went through a media element, ~33 ms on a phone; eraser / pencil kept to 3 s, their slices wrap)
 const sbuf = {}, sbufSz = {}, sbufQ = []; let sbufBusy = false;
 const sbufOn = () => SBUF.on === 'auto' ? !!(TOUCH || sfxIOS()) : !!SBUF.on;
 function sbufWant(f) { if (sbuf[f] !== undefined || SBUF.skip.test(f)) return; sbuf[f] = 0; sbufQ.push(f); sbufPump(); }
@@ -3422,7 +3424,8 @@ function sbufPump() {
 }
 function sbufDecode(ab, f) {
   let c = actx; try { const OC = window.OfflineAudioContext || window.webkitOfflineAudioContext; c = new OC(1, 1, SBUF.hi.test(f) ? 48000 : SBUF.sr); } catch (e) {}
-  return new Promise((res, rej) => { const p = c.decodeAudioData(ab, res, rej); if (p && p.then) p.then(res, rej); });
+  perfDecN++; perfBlk.dec = 1; const done = () => { perfDecN--; perfBlk.dec = 1; };   // (FRAME TIMES: a decode in flight is tagged on the spike line)
+  const pr = new Promise((res, rej) => { const p = c.decodeAudioData(ab, res, rej); if (p && p.then) p.then(res, rej); }); pr.then(done, done); return pr;
 }
 function sbufShape(b, f) {   // (cap a long bed, mix a long file to mono: done once, right after decoding)
   const cap = SBUF.cap[f], len = cap ? Math.min(b.length, Math.round(cap * b.sampleRate)) : b.length, mono = b.numberOfChannels > 1 && b.duration > SBUF.monoS;

@@ -1,6 +1,8 @@
 const canvas = document.getElementById('game');
 // FRAME TIMES spike tags (14's perfSpike): perfNote('tag') marks this frame as having done something heavy; a no-op unless SETTINGS.perfHud. Here so every file can call it
 const PERF_TAGS = [];
+let perfUT = 0;   // (v0.73 marks: the u.* clock handed to code inside a marked block (the online host tick), so its parts split that block instead of overlapping it)
+function perfU(n) { if (perfUT) perfUT = perfMark(n, perfUT); }
 function perfNote(tag) { if (typeof SETTINGS === 'undefined' || !SETTINGS.perfHud) return; if (PERF_TAGS.length < 12 && !PERF_TAGS.includes(tag)) PERF_TAGS.push(tag); }
 // v0.70: timers on the work outside the frame's timed parts (saves, sync, clicks, league tapes). perfTime(tag, f) runs f; with FRAME TIMES on, a run over PERF_SLOW.tag ms
 // tags the spike 'tag ms'. perfWrapAll() (14's frame, the first frame FRAME TIMES is on: nothing is wrapped before) swaps the PERF_WRAP functions for timed ones.
@@ -13,8 +15,14 @@ const PERF_EV = { on: 0, t0: 0, type: '', sub: [] };
 // Run at once, never queued (jobs already queued keep their budget): CHORE.on false, the cold open, the tutorial, sims, the league-tape sandbox, a replay playing. warnMs = the FRAME TIMES tripwire ('LIVE name ms').
 const CHORE = { on: true, budgetMs: 4, budgetTouch: 3, warnMs: 4, noteMs: 1 };
 const CHORE_Q = [];
+const LIVE_PRE_KO = /^(ready|enter|power|aim|wait|gone)$/;   // (v0.72: kickoff phases before the ball is in the air)
 const LIVE_PLAY = /^(drop|pocket|run|flight|loose|fumble|picked|kick|punt|kickoff)$/;   // (a play is live: no chore runs, the sound decoder waits)
-function liveNow() { return typeof state !== 'undefined' && LIVE_PLAY.test(state) && !(typeof game !== 'undefined' && game && game.over); }
+function liveNow() {   // (v0.72: not while a show, the results or a page crumple is up, nor a kickoff that is still being set up / aimed)
+  if (typeof state === 'undefined' || !LIVE_PLAY.test(state) || (typeof game !== 'undefined' && game && game.over)) return false;
+  if ((typeof results !== 'undefined' && results) || (typeof HT !== 'undefined' && HT) || (typeof crumple !== 'undefined' && crumple)) return false;
+  if (state === 'kickoff' && typeof kickoff !== 'undefined' && kickoff && LIVE_PRE_KO.test(kickoff.phase || '')) return false;
+  return true;
+}
 function choreNow() {
   return !CHORE.on || (typeof CO !== 'undefined' && !!CO) || (typeof tut !== 'undefined' && !!tut) || (typeof game !== 'undefined' && !!game && !!game.simAll)
     || (typeof state !== 'undefined' && state === 'sim') || (typeof LG_SAND !== 'undefined' && LG_SAND) || (typeof rec !== 'undefined' && !!rec && !!rec.replaying);
@@ -39,7 +47,8 @@ function choreTick() {
 function choreFlush(why) { while (CHORE_Q.length) { const j = CHORE_Q.shift(); let n = 0; while (choreRun(j, Infinity) && ++n < 1e4); } }
 document.addEventListener('visibilitychange', () => { if (document.hidden) choreFlush('hidden'); });
 const PERF_WRAP = ['saveToSlot', 'loadFromSlot', 'buildSave', 'storeTidy', 'storeReport', 'autoAssignSlot', 'syncNow', 'syncOnLeave', 'syncBundle',
-  'newGame', 'openResults', 'leagueReset', 'careerReset', 'startCrumple', 'cglStart', 'btnSprClear', 'offToDraft', 'startExhibition', 'lgTapeTick', 'hsEndReel', 'seasonGameDone', 'pgTry'];
+  'newGame', 'openResults', 'leagueReset', 'careerReset', 'startCrumple', 'cglStart', 'btnSprClear', 'offToDraft', 'startExhibition', 'lgTapeTick', 'hsEndReel', 'seasonGameDone', 'pgTry',
+  'throwBall', 'startReplay', 'snap', 'handoff', 'celebGo', 'celebSkip', 'audible', 'hotRouteClick', 'pstSaveSlot', 'recSave', 'photosSave', 'autosaveSoon', 'saveSoon'];   // (v0.72: the tap branches: throw release, replay start, snap, celebration taps; the save's parts)
 // v0.70: calls timed as spike parts of their own ('f.name', nested: they also stay inside the u.* part that called them): the score / celebration frames
 const PERF_PARTS = ['touchdown', 'endPlay', 'recLive', 'hsScoreRec', 'hsTape', 'keepHighlight', 'celebBegin', 'celebMake', 'celebPick', 'celebAsk', 'showBanner', 'crowdCheer', 'pstPlay', 'recordFrame', 'slReact'];
 function perfTime(tag, f, self, args) {
@@ -53,7 +62,7 @@ function perfWrapAll() {
   perfWrapped = true;
   try { const fr = window.frame; if (typeof fr === 'function' && !fr.__pw) { const w = function () { perfIn = 1; try { return fr.apply(this, arguments); } finally { perfIn = 0; } }; w.__pw = fr; window.frame = w; } } catch (e) {}
   try { for (const n of ['playSfx', 'clipSfx']) { const f = window[n]; if (typeof f !== 'function' || f.__pw) continue; const w = function (s) { return perfOutRun('sfx ' + (n === 'clipSfx' ? 'clip' : String(s).replace(/^audio\//, '')), f, this, arguments, 2); }; w.__pw = f; window[n] = w; } } catch (e) {}
-  try { if (typeof NET !== 'undefined' && NET._simIn && !NET._simIn.__pw) { const si = NET._simIn; NET._simIn = function (fast, fn, ...a) { return si.call(this, fast, function () { return perfOutRun((fast ? 'net fast ' : 'net rel ') + (NET._rxT || ''), fn, this, arguments);   /* (v0.74: + the message type, so a stall names it) */ }, ...a); }; NET._simIn.__pw = si; } } catch (e) {}
+  try { if (typeof NET !== 'undefined' && NET._simIn && !NET._simIn.__pw) { const si = NET._simIn; NET._simIn = function (fast, fn, ...a) { const tt = NET._rxT; return si.call(this, fast, function () { return perfOutRun((fast ? 'net fast ' : 'net rel ') + (tt || ''), fn, this, arguments);   /* (v0.74: + the message type, so a stall names it) */ }, ...a); }; NET._simIn.__pw = si; } } catch (e) {}
   for (const n of PERF_PARTS) { const f = window[n]; if (typeof f !== 'function' || f.__pw) continue; const w = function () { const t = performance.now(); try { return f.apply(this, arguments); } finally { perfMark('f.' + n, t); } }; w.__pw = f; window[n] = w; }
   for (const n of PERF_WRAP) { const f = window[n]; if (typeof f !== 'function' || f.__pw) continue; const w = function () { return perfTime(n, f, this, arguments); }; w.__pw = f; window[n] = w; }
   try { if (window.PerformanceObserver && (PerformanceObserver.supportedEntryTypes || []).includes('longtask')) new PerformanceObserver(l => { for (const e of l.getEntries()) perfNote('longtask ' + Math.round(e.duration)); }).observe({ entryTypes: ['longtask'] }); else perfNote('no longtask API'); } catch (e) {}
@@ -62,20 +71,30 @@ function perfEvOn(e) { if (typeof SETTINGS === 'undefined' || !SETTINGS.perfHud)
 function perfEvOff() {
   if (!PERF_EV.on) return; PERF_EV.on = 0; const ms = performance.now() - PERF_EV.t0;
   perfOut(PERF_EV.type, ms);
-  if (ms > PERF_SLOW.ev) perfNote(`${PERF_EV.type} ${Math.round(ms)}${PERF_EV.sub.length ? ': ' + PERF_EV.sub.sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => k + ' ' + Math.round(v)).join(', ') : ''}`);
+  if (ms > PERF_SLOW.ev) perfNote(`${PERF_EV.type} ${Math.round(ms)}${PERF_EV.sub.length ? ': ' + PERF_EV.sub.sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, v]) => k + ' ' + Math.round(v)).join(', ') : ''}`);
 }
 for (const t of ['pointerdown', 'pointerup', 'keydown']) window.addEventListener(t, perfEvOn, true);
+// v0.72: every pointer / key listener added after this line is timed as an event sub-mark named by where it was added ('pointerup 14-career-input:2673 85'), so a slow tap names its handler
+{ const AEL = EventTarget.prototype.addEventListener, REL = EventTarget.prototype.removeEventListener, PEV = /^(pointerdown|pointerup|pointermove|keydown|keyup)$/, WM = new WeakMap();
+  EventTarget.prototype.addEventListener = function (t, f, o) {
+    if (typeof f !== 'function' || !PEV.test(t) || (this !== window && this !== canvas && this !== document)) return AEL.call(this, t, f, o);
+    let w = WM.get(f); if (!w) { const n = t + ' ' + perfWho(); w = function (e) { return PERF_EV.on ? perfTime(n, f, this, arguments) : f.apply(this, arguments); }; WM.set(f, w); }
+    return AEL.call(this, t, w, o); };
+  EventTarget.prototype.removeEventListener = function (t, f, o) { return REL.call(this, t, (typeof f === 'function' && WM.get(f)) || f, o); }; }
 // v0.70 blocked-time probe (FRAME TIMES only): a heartbeat every PERF_BLK.ms off the frame loop keeps the longest it was late since the last frame (perfBlk.max:
 // blocked about as long as a spike's gap = main-thread code; not blocked = the browser didn't call the frame). PERF_OUT = ms per entry point outside frame() since
 // the last frame (pointer / key events, net messages, timer callbacks named by who set them, storage writes, sound starts); 14's perfSpike prints the top two and
 // the same names go to the online event log (onlLogTag). perfIn = frame() is running (wrapped in perfWrapAll), so a timed call inside it isn't counted as outside.
 const PERF_BLK = { ms: 10, outMin: 0.3 };   // ms between beats; an outside cost under outMin ms isn't printed
-const perfBlk = { last: 0, max: 0, on: 0 }, PERF_OUT = {}, PERF_ST = window.setTimeout.bind(window), PERF_SI = window.setInterval.bind(window);
+let perfDecN = 0;   // (audio decodes in flight: FRAME TIMES tags a spike line DEC; perfBlk.dec = one ran since the last frame)
+const perfBlk = { last: 0, max: 0, on: 0, own: 0, dec: 0 }, PERF_OUT = {}, PERF_ST = window.setTimeout.bind(window), PERF_SI = window.setInterval.bind(window);
 let perfIn = 0;
 const perfHudOn = () => typeof SETTINGS !== 'undefined' && SETTINGS.perfHud;
 function perfBeat() {
-  const n = performance.now(); if (perfBlk.last) { const d = n - perfBlk.last - PERF_BLK.ms; if (d > perfBlk.max) perfBlk.max = d; }
-  perfBlk.last = n; if (perfHudOn() && !document.hidden) PERF_ST(perfBeat, PERF_BLK.ms); else { perfBlk.on = 0; perfBlk.last = 0; }
+  // (v0.72: our own update / paint since the last beat (perfBlk.own, added by perfUpd / perfDraw) is taken off: blocked = the thread busy with anything BUT
+  // our frames. A late beat usually runs after the next frame has started, so other work shows on the frame line after the one it delayed.)
+  const n = performance.now(); if (perfBlk.last) { const d = n - perfBlk.last - PERF_BLK.ms - perfBlk.own; if (d > perfBlk.max) perfBlk.max = d; }
+  perfBlk.last = n; perfBlk.own = 0; if (perfHudOn() && !document.hidden) PERF_ST(perfBeat, PERF_BLK.ms); else { perfBlk.on = 0; perfBlk.last = 0; }
 }
 function perfBeatOn() { if (!perfBlk.on && !document.hidden) { perfBlk.on = 1; perfBlk.last = 0; perfBlk.max = 0; PERF_ST(perfBeat, PERF_BLK.ms); } }
 function perfOut(name, ms, noLog) { if (!perfHudOn()) return; PERF_OUT[name] = (PERF_OUT[name] || 0) + ms; if (!noLog && typeof onlLogOn === 'function' && onlLogOn()) onlLogTag(name, ms); }
@@ -84,7 +103,7 @@ function perfOutRun(name, f, self, args, always) {
   const t = performance.now(); try { return f.apply(self, args); } finally { const ms = performance.now() - t; perfOut(name, ms, always === 2); if (ms > CHORE.warnMs && liveNow()) perfNote('LIVE ' + name + ' ' + Math.round(ms)); if (always && ms > PERF_SLOW.tag) perfNote(name + ' ' + Math.round(ms)); }
 }
 function perfWho() {   // (the code that set a timer: function name, or file:line for an arrow)
-  try { const L = (new Error().stack || '').split('\n'); for (const s of L) { if (/perfWho|perfTimer|^Error/.test(s) || !/\d+-[a-z0-9-]+\.js/.test(s)) continue; const fn = s.match(/at ([\w$.]+) \(/) || s.match(/^([\w$.]+)@/), fl = s.match(/(\d+-[a-z0-9-]+)\.js:(\d+)/); return fn ? fn[1] : fl ? fl[1] + ':' + fl[2] : 'anon'; } } catch (e) {}
+  try { const L = (new Error().stack || '').split('\n'); for (const s of L) { if (/perfWho|perfTimer|^Error|01-tuning\.js/.test(s) || !/\d+-[a-z0-9-]+\.js/.test(s)) continue; const fn = s.match(/at ([\w$.]+) \(/) || s.match(/^([\w$.]+)@/), fl = s.match(/(\d+-[a-z0-9-]+)\.js:(\d+)/); return fn ? fn[1] : fl ? fl[1] + ':' + fl[2] : 'anon'; } } catch (e) {}
   return 'anon';
 }
 function perfTimer(orig) { return function (f, ms, ...a) { if (typeof f !== 'function' || !perfHudOn()) return orig(f, ms, ...a); const n = 'timer ' + (f.name || perfWho()); return orig(function () { return perfOutRun(n, f, this, arguments); }, ms, ...a); }; }
@@ -122,7 +141,7 @@ const RENDER_K = 1.1;   // (phones: was 0.75; the crowd has its own canvases and
 // v0.62 phones: the in-game frame cap (paint only; the game still steps on real dt). AUTO = 60 until frames stay over slowMs for holdS s, then 30 for the
 // rest of that game (back to 60 only between games); SETTINGS.fps '30' / '60' pins it. cold = the cold open on a phone runs at 30 from its first frame.
 // menuTouch = MENU_PACE.fps on a phone. slack = share of a refresh a paint may come early (vsync jitter)
-const FPS_CAP = { on: true, hi: 60, lo: 30, slowMs: 19, holdS: 2, gapClip: 2.5, menuTouch: 30,   /* (v0.74 gapClip: one gap between paints counts as at most this many frame intervals: a lone outside stall (network, timers) isn't a slow phone; steady slow paints still lock 30) */ cold: true, slack: 0.5, deskSkip: true };   // deskSkip: laptops skip the paint on refreshes where the game did not step (deskSkip in 14)
+const FPS_CAP = { on: true, hi: 60, lo: 30, slowMs: 19, holdS: 2, gapClip: 2.5, menuTouch: 30, cold: true, slack: 0.5, deskSkip: true, freezeMs: 100, cleanMs: 10, cleanGap: 1.2, retryS: 8, retryK: 2, retryMax: 90, failS: 6 };   // (gapClip: one gap between paints counts as at most this many frame intervals toward the lock: a lone outside stall isn't a slow phone; v0.72 perf: a gap over freezeMs never resets a clean stretch; locked, retryS s of gaps within cleanGap x the 30 frame and paintAvg under cleanMs = try 60 again at a dead ball; locked again within failS = the next wait x retryK, up to retryMax)   // deskSkip: laptops skip the paint on refreshes where the game did not step (deskSkip in 14)
 // v0.70 phone test switches (DEBUG page, not saved; also from the console: PHONE_TEST.turn = '2D'). Defaults = the normal game.
 // turn: page change GL (overlay) / 2D (old path) / OFF (pages cut); shadow ON / OFF (OFF = every shadowBlur on the main canvas is 0); res AUTO / a pinned render scale on touch
 const PHONE_TEST = { turn: 'GL', shadow: 'ON', res: 'AUTO', turns: ['GL', '2D', 'OFF'], shadows: ['ON', 'OFF'], ress: ['AUTO', '0.75', '1', '1.5'] };
@@ -2567,10 +2586,11 @@ function drawAvatar(f, cx, cy, R, o = {}) {
   let c = AV_CACHE.get(key);
   if (c) { AV_CACHE.delete(key); AV_CACHE.set(key, c); }   // (most recently used last)
   else {
+    const avT = SETTINGS.perfHud ? PERF_NOW() : 0;   // (v0.73 mark: a face drawn into the cache, d.avNew (nested inside the d.* part that drew it))
     const side = Math.ceil(106 * pr / 50) + 2; c = document.createElement('canvas'); c.width = c.height = side;
     const g = c.getContext('2d'), old = ctx; g.translate(side / 2, side / 2);
     ctx = g; try { drawAvatar0(f, 0, 0, pr, o); } finally { ctx = old; }
-    AV_CACHE.set(key, c);
+    AV_CACHE.set(key, c); if (avT) perfMark('d.avNew', avT);
     if (AV_CACHE.size > AV.max) { const [k0, c0] = AV_CACHE.entries().next().value; AV_CACHE.delete(k0); freeCanvas(c0); }
   }
   const s2 = c.width / k; ctx.drawImage(c, cx - s2 / 2, cy - s2 / 2, s2, s2);
