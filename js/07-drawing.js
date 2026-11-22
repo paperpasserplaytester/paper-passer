@@ -3426,12 +3426,12 @@ const paperFill = col => ctx.createPattern(paperTile(col), 'repeat');
 // drive direction (MIRROR: the un-mirrored logo / names / numbers), the logo sheet or the canvas resolution (RK: graphics mode, window size) changes.
 // zoom = the camera zoom it is sharp up to (x RK = its px per world px, in steps of `step`); a closer shot than that x up (the pre-snap wheel zoom, a reel's
 // close-up) is drawn live as before, so the picture is never softer; maxPx = most pixels it may hold (x 4 bytes); pad = yd of margin for the sideline stroke
-const FIELD_CACHE = { on: true, zoom: 0.55, up: 1.04, maxPx: 12e6, pad: 0.75, step: 0.05, liveTouch: false };
+const FIELD_CACHE = { on: true, zoom: 0.55, up: 1.04, maxPx: 12e6, pad: 0.75, step: 0.05, liveTouch: false, marksLive: true };   // (v0.74 marksLive: QUALITY on a phone redraws the end-zone names, the midfield logo and the yard numbers live over a stretched cache: sharp lettering, no bigger cache)
 // liveTouch = phones may draw a close shot live too. v0.60: on a phone (and in performance mode everywhere) the cache is ALWAYS blitted, stretched on a close-up
 // (a little soft) instead of redrawing the whole field every frame of a touchdown / celebration / replay zoom; QUALITY on a laptop keeps the live close-ups.
 // A new size / layout (RK after a graphics step, the touch layout, marker) is only rebuilt between plays (pre / done / menus): mid-play the old one is stretched.
 const fieldLiveOK = () => !liteOn() && (!TUI.on || FIELD_CACHE.liveTouch);
-let fieldImg = null, fieldBaking = false;   // { c, s, hk, mir, logo, tui }; fieldBaking = drawFieldStatic is drawing into the cache
+let fieldImg = null, fieldBaking = false, fieldMarks = false;   // { c, s, hk, mir, logo, tui }; fieldBaking = drawFieldStatic is drawing into the cache
 function fieldCacheDraw() {   // true = the static field was drawn from the cache
   if (!FIELD_CACHE.on) return false;
   const m = ctx.getTransform(), on = Math.abs(m.a);
@@ -3461,8 +3461,17 @@ function fieldCacheDraw() {   // true = the static field was drawn from the cach
   const fs = F.s;   // (the cache's own scale: mid-play it may be the last size)
   const sx0 = Math.max(0, Math.floor((Math.min(xa, xb) + ox) * fs) - 1), sx1 = Math.min(F.c.width, Math.ceil((Math.max(xa, xb) + ox) * fs) + 1);
   const sy0 = Math.max(0, Math.floor((Math.min(ya, yb) + M) * fs) - 1), sy1 = Math.min(F.c.height, Math.ceil((Math.max(ya, yb) + M) * fs) + 1);
-  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = TUI.on ? 'low' : 'high';
+  const qt = TUI.on && gfxHi();   // (v0.74: QUALITY on a phone: smooth stretch + the lettering drawn live when the shot is closer than the cache is sharp)
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = TUI.on && !qt ? 'low' : 'high';
   if (sx1 > sx0 && sy1 > sy0) ctx.drawImage(F.c, sx0, sy0, sx1 - sx0, sy1 - sy0, sx0 / fs - ox, sy0 / fs - M, (sx1 - sx0) / fs, (sy1 - sy0) / fs);
+  if (qt && FIELD_CACHE.marksLive && on > fs * FIELD_CACHE.up) {
+    const x0 = Math.min(xa, xb), x1 = Math.max(xa, xb), see = (cx, r) => cx + r > x0 && cx - r < x1;
+    if (see(-ENDZONE / 2, ENDZONE)) drawEndZoneName(-ENDZONE / 2, 1);
+    if (see(FIELD + ENDZONE / 2, ENDZONE)) drawEndZoneName(FIELD + ENDZONE / 2, -1);
+    if (see(FIELD / 2, 5 * YD)) drawFieldLogo(FIELD / 2, MID, 4.2 * YD);
+    drawFieldNumbers();
+    if (!fieldMarks) { fieldMarks = true; perfNote('fieldMarks'); }
+  } else fieldMarks = false;
   // (the canvas state the live drawing leaves behind, for whatever is drawn next)
   ctx.strokeStyle = ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 4; ctx.font = `bold ${2 * YD}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   return true;
@@ -3653,6 +3662,7 @@ function drawRushArt() {
 const HG_ART = { back: 1.2, side: 0.9 };   // hitch & go route art: the hitch jabs back this many yards (YL) and across (YD)
 const ROUTE_PTS = [];
 function drawRoute(r) {
+  if (!r.route || !r.path || !r.path.length || !r.cont) return;   // (v0.74: the online guest can draw a man a frame before his route arrives: it threw inside the field clip)
   // hitch & go (before the hitch): stem, a short jab back and across (the hitch), then straight up the field
   const hg = r.route.chatter && r.leg < 2, hit = hg && r.path[0];
   const jog = hg ? [hit[0] - HG_ART.back * YL, hit[1] + (Math.sign(r.path[r.path.length - 1][1] - hit[1]) || 1) * HG_ART.side * YD] : null;

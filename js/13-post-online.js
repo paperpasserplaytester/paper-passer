@@ -1830,7 +1830,7 @@ const NET_CFG = {
   fastId: 41,         // the channel's stream id (both sides open the same one themselves: no extra signaling)
   logCast: false,     // debug: true = the host logs each cast's size (characters) to the console, once per play (set NET_CFG.logCast = true in the console)
   fastMax: 12000,     // characters: a bigger message goes on the reliable channel (v0.70: 9000 -> 12000 = chunk, well under the 16 KiB every browser takes in one message; the snap's ~9.1 KB snapshots now fit)
-  statsMs: 4000,      // how often the link is asked whether it is DIRECT or going through a RELAY (the ping badge shows it)
+  statsMs: 4000, statsTouchMs: 15000, hbWarn: 2,   // (v0.74: phones ask far less often, and never mid-play; hbWarn = a heartbeat over this many ms is tagged on FRAME TIMES)      // how often the link is asked whether it is DIRECT or going through a RELAY (the ping badge shows it)
   sim: null,          // test bench: { ms, jit, loss } = fake lag on everything this device RECEIVES (set from DEBUG > FAKE LAG, NET_SIM; or by hand in the console)
 };
 // FAKE LAG presets (one-way: each device delays what it receives, so turn it on in both tabs to cover both directions). The reliable channel is only delayed
@@ -1964,7 +1964,7 @@ const NET = {
           if (NET.fast !== ch || typeof e.data !== 'string') return;
           NET._rx = performance.now(); NET._bytes += e.data.length; NET.fastRx = true;
           const d = JSON.parse(e.data);
-          if (d && d.t !== '_f' && NET.onmsg) { d.__len = e.data.length; NET._simIn(true, () => { try { if (NET.fast === ch && NET.onmsg) NET.onmsg(d); } catch (err) { console.warn('net fast message dropped', err); } }); }
+          if (d && d.t !== '_f' && NET.onmsg) { d.__len = e.data.length; NET._rxT = d.t; NET._simIn(true, () => { try { if (NET.fast === ch && NET.onmsg) NET.onmsg(d); } catch (err) { console.warn('net fast message dropped', err); } }); }
         } catch (err) { console.warn('net fast message dropped', err); }
       };
       ch.onclose = ch.onerror = () => { if (NET.fast === ch) { NET.fast = null; NET.fastRx = NET.fastOk = false; } };
@@ -1972,7 +1972,8 @@ const NET = {
     } catch (e) { NET.fast = null; }
   },
   _stats() {   // is the link direct or relayed, and how much is going over it
-    const now = performance.now(); if (now - NET._statAt < NET_CFG.statsMs) return;
+    const now = performance.now(); if (now - NET._statAt < (TUI.on ? NET_CFG.statsTouchMs : NET_CFG.statsMs)) return;
+    if (liveNow()) return;   // (v0.74: never mid-play: getStats + the report walk blocked an iPhone host; it runs at the next dead ball, the badge keeps its last DIRECT / RELAY)
     if (NET._statAt) NET.kbps = (NET._bytes - NET._statB) / 1024 / ((now - NET._statAt) / 1000);
     NET._statAt = now; NET._statB = NET._bytes;
     try {
@@ -1994,7 +1995,7 @@ const NET = {
     //  Anything else it sends, or a PeerJS without this hook, is serialized as before)
     try { if (c.serialization === 'json' && typeof c.stringify === 'function') { const js = c.stringify; c.stringify = d => (d === NET._pre && NET._preS != null ? NET._preS : js(d)); } } catch (e) {}
     c.on('open', () => { clearTimeout(NET._timer); NET._rx = performance.now(); NET.off = NET._offT = null; NET._offS = []; NET._offN = 0; NET.link = ''; NET.kbps = 0; NET._statAt = 0; NET._fastOpen(c); NET._beat(); if (NET.onopen) NET.onopen(); });
-    c.on('data', d0 => { NET._rx = performance.now(); NET._simIn(false, () => { let d = d0;
+    c.on('data', d0 => { NET._rx = performance.now(); NET._rxT = d0 && d0.t; NET._simIn(false, () => { let d = d0;
       try {
         if (!d || typeof d !== 'object') return;
         if (d.t === '_part') {
@@ -2017,12 +2018,18 @@ const NET = {
     clearInterval(NET._tick);
     NET._tick = setInterval(NET._hb, NET_CFG.pingMs);
   },
-  _hbAt: 0,
+  _hbAt: 0, hbMs: { send: 0, fast: 0, stats: 0, n: 0 },
   _hb() {   // one heartbeat (also called by the background ticker, so a hidden laptop tab keeps its link alive)
     const now = performance.now(); if (now - NET._hbAt < NET_CFG.pingMs * 0.8) return; NET._hbAt = now;
+    const t0 = performance.now();
     NET.send({ t: 'ping', ts: now, f: NET.fastRx ? 1 : 0 });
+    const t1 = performance.now();
     try { if (NET.fast && NET.fast.readyState === 'open' && !NET.fastOk) NET.fast.send('{"t":"_f"}'); } catch (e) {}   // (until the other side says it hears us)
+    const t2 = performance.now();
     NET._stats();
+    const t3 = performance.now(), H = NET.hbMs;   // (v0.74: the heartbeat's three parts timed: worst of each since the match began, FRAME TIMES tag over hbWarn)
+    H.send = Math.max(H.send, t1 - t0); H.fast = Math.max(H.fast, t2 - t1); H.stats = Math.max(H.stats, t3 - t2); H.n++;
+    if (t3 - t0 > NET_CFG.hbWarn) perfNote('hb send ' + (t1 - t0).toFixed(1) + ' fast ' + (t2 - t1).toFixed(1) + ' stats ' + (t3 - t2).toFixed(1));
     if (NET.conn && now - NET._rx > NET_CFG.deadMs && NET._gone) { const c = NET.conn; try { c.close(); } catch (e) {} NET._gone(); }
   },
   _fail(code) { clearTimeout(NET._timer); NET.close(); if (NET.onerror) NET.onerror(code); },

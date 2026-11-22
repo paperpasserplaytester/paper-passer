@@ -1983,7 +1983,12 @@ function perfSpike(gap) {   // frame(), first thing: was the frame before a spik
   if (SETTINGS.perfHud && !document.hidden && gap < 1000) {
     const work = P.fu + P.fd;
     if (work > PERF_HUD.spikeMs || gap > PERF_HUD.spikeGap) {
-      const parts = Object.keys(P.fp).map(k => [k, P.fp[k]]).sort((a, b) => b[1] - a[1]).slice(0, PERF_HUD.parts).filter(a => a[1] >= 1);
+      let parts = Object.keys(P.fp).map(k => [k, P.fp[k]]).sort((a, b) => b[1] - a[1]).slice(0, PERF_HUD.parts).filter(a => a[1] >= 1);
+      if (P.fu > P.fd) {   // (v0.74: the update cost more than the paint: name its biggest u.* parts (+ u.other = the step's time no part covers) instead of the paint's)
+        const up = Object.keys(P.fp).filter(k => k[0] === 'u' && k[1] === '.').map(k => [k, P.fp[k]]), cov = up.reduce((t, a) => t + a[1], 0);
+        if (P.fu - cov >= 1) up.push(['u.other', P.fu - cov]);
+        parts = up.sort((a, b) => b[1] - a[1]).slice(0, PERF_HUD.parts).filter(a => a[1] >= 1);
+      }
       const out = Object.keys(PERF_OUT).map(k => [k, PERF_OUT[k]]).sort((a, b) => b[1] - a[1]).slice(0, 2).filter(a => a[1] >= PERF_BLK.outMin);
       P.spikes.push({ ms: work, gap, u: P.fu, d: P.fd, parts, blk: perfBlk.on ? perfBlk.max : -1, out, st: results ? 'menu:' + results.screen : state + (rec && rec.replaying ? '/replay' : '') + (hl ? '/hl' : ''), tags: PERF_TAGS.slice(), t: Math.round(PERF_NOW() / 100) / 10 });
       if (P.spikes.length > PERF_HUD.keep) P.spikes.shift();
@@ -2099,10 +2104,13 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
     if (rec && rec.replaying) replayTick(dt);
     else { deskGate = true; stepAcc += dt; if (stepAcc >= STEP_MIN) { deskStepped = true; GRAV_K = 1; speedStep(Math.min(stepAcc * SPEED_BASE * celTSpeed(), 0.07)); stepAcc = 0; } }   // (the game steps about 60 times a second whatever the screen's refresh rate: a 120 / 144 Hz monitor ran every per-frame roll, reaction and AI decision twice as often)
   }
+  let pu = SETTINGS.perfHud && ONL.on ? PERF_NOW() : 0;   // (v0.74: the online tick and the score tally as u.* parts, so an update spike names them)
   try { if (ONL.host && !results) onlHostTick(); if (ONL.guest && !results) onlGuestStep(); }
   catch (err) { console.warn('online: snapshot dropped', err); }   // (a bad snapshot never crashes the game loop)
+  if (pu) pu = perfMark('u.net', pu);
   if (ONL.on) { if (ONL.host) onlLogFrame(performance.now() - perfU0, 'host'); else { const a = ONL.lastArr || 0, g = ONL.lgArr ? a - ONL.lgArr : 0; ONL.lgArr = a; onlLogFrame(g, 'gap'); } }   // (the online event log: FRAME TIMES only)
   if (!ONL.guest) { tallyScores(); otWatch(); }
+  if (pu) perfMark('u.tally', pu);
   perfUpd(performance.now() - perfU0);
   // pausing (or the keybinds page) fades every sound out; resuming fades them back in
   duck += Math.max(-dt / DUCK.out, Math.min(dt / DUCK.in, (paused || showKeys ? 0 : 1) - duck));
@@ -2191,8 +2199,29 @@ function gameWarm() {
   else { ctx.save(); try { draw(); } catch (e) {} ctx.restore(); perfNote('warm'); }   // (the field cache + one whole game frame, painted over below)
   S.step++;
 }
+// v0.74: a paint that throws between a save() + clip() and its restore() leaves that clip on the canvas for every later frame (the guest's missing top bar).
+// The main ctx counts its open saves (own-property hooks: ctxBake's copies count nothing) and each paint starts from an empty stack (perfNote ctxLeak).
+// drawFail = each different draw() exception, logged once (name + message + top frames) so the null read behind it can be found.
+let ctxDepth = 0, ctxLeakN = 0; const DRAW_FAIL = new Set();
+{ const c = ctx, S = c.save, R = c.restore;
+  c.save = function () { if (this === c) ctxDepth++; return S.call(this); };
+  c.restore = function () { if (this === c && ctxDepth > 0) ctxDepth--; return R.call(this); }; }
+function ctxUnwind() {
+  if (!ctxDepth) return;
+  if (!ctxLeakN++) console.warn('canvas: ' + ctxDepth + ' save(s) left open by the last paint: unwound');
+  perfNote('ctxLeak');
+  for (let n = 0; ctxDepth > 0 && n < 1000; n++) ctx.restore();
+}
+function drawFail(e) {
+  const key = (e && e.name) + ':' + (e && e.message); if (DRAW_FAIL.has(key) || DRAW_FAIL.size > 8) return; DRAW_FAIL.add(key);   // (each different throw once)
+  const at = String((e && e.stack) || '').split('\n').slice(0, 4).join(' | ');
+  console.warn('draw() threw: ' + (e && e.name) + ': ' + (e && e.message) + ' [state ' + state + '] ' + at);
+  perfNote('drawErr ' + (e && e.name));
+  (window.DRAW_ERRS || (window.DRAW_ERRS = [])).push({ name: e && e.name, msg: e && e.message, state, at });
+}
 function paintFrame(paintT0, pm, now) {
   let pt = paintT0;
+  ctxUnwind();
   // (touch: the canvas has RK x the pixels, drawn through a scale; the 16:9 game sits in the middle of a wider canvas, PAD logical px in)
   dmFrame();   // (dark mode: wraps / unwraps the canvas calls, clears last frame's backgrounds)
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#111'; ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -2254,7 +2283,7 @@ function fpsInterval() {
   return 1000 / (fpsCap.lock || (FPS_CAP.cold && coldOn()) ? FPS_CAP.lo : FPS_CAP.hi);
 }
 function fpsCapTick(dtS, now) {   // (after each paint: is 60 being held? Paint time or the real gap between paints, smoothed)
-  if (fpsCap.lastAt) fpsCap.gap += (Math.min(100, now - fpsCap.lastAt) - fpsCap.gap) * 0.1; fpsCap.lastAt = now;
+  if (fpsCap.lastAt) fpsCap.gap += (Math.min(100, FPS_CAP.gapClip * (fpsInterval() || 1000 / FPS_CAP.hi), now - fpsCap.lastAt) - fpsCap.gap) * 0.1; fpsCap.lastAt = now;   // (v0.74: each sample capped at gapClip frame intervals)
   if (results && !hlFront()) { if (fpsCap.lock) perfNote('fps 60 (between games)'); fpsCap.lock = false; fpsCap.over = 0; return; }   // (between games: back to 60)
   if (fpsCap.lock || (SETTINGS.fps || 'AUTO') !== 'AUTO' || paused) return;
   const slow = paintAvg > FPS_CAP.slowMs || (fpsInterval() < 20 && fpsCap.gap > FPS_CAP.slowMs);

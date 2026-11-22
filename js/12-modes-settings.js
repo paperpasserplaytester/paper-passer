@@ -4932,10 +4932,10 @@ async function syncUpload(sha) {   // overwrite the cloud with this device
 const syncMenu = () => typeof results !== 'undefined' && results && results.screen === 'start' && !settingsOpen && !slotUI && !teamPick && !offPop && !(typeof ONL !== 'undefined' && ONL.on);
 async function syncNow(manual) {   // the auto / SYNC NOW step
   if (!acct || !syncOn() || sync.busy || sync.wait) return;
+  if (!manual && syncInGame()) { sync.later = true; return; }   // (v0.74: nothing at all while a game is live (an online match too): syncGate runs it once the game is over)
   if (sync.snooze && !manual) return;   // (a put-off choice: nothing is pushed or pulled until he asks)
   if (manual) { sync.offline = false; sync.snooze = null; }   // (SYNC NOW always tries once)
   if (!syncNetOk()) { sync.err = 'OFFLINE: WILL SYNC WHEN THE INTERNET IS BACK'; acctRender(); return; }
-  if (!manual && !results) return;   // (never mid-game: bundling + sealing every save is heavy; it runs again back in the menus)
   sync.busy = true; sync.err = ''; acctRender();
   try {
     const path = await acctPath(acct.user); let local = null, h = acct.hash;
@@ -4961,7 +4961,9 @@ async function syncNow(manual) {   // the auto / SYNC NOW step
   } catch (e) { syncDirty = true; sync.err = syncErrText(e); if (!(e && e.message) || e instanceof TypeError || navigator.onLine === false) { sync.offline = true; sync.err = 'OFFLINE: WILL SYNC WHEN THE INTERNET IS BACK'; } }
   sync.busy = false; syncGate(); acctRender();
 }
+const syncInGame = () => typeof results === 'undefined' || !results || (typeof ONL !== 'undefined' && ONL.on);   // (a game or an online match is live: no sync work)
 async function syncGate() {   // a pull / choice waits for the main menu (never mid-game)
+  if (sync.later && !sync.busy && !syncInGame()) { sync.later = false; syncNow(); return; }   // (v0.74: the sync a live game put off, once it is over)
   const w = sync.wait;
   if (!w || sync.busy || !acct || !syncMenu()) return;
   if (w.kind === 'pull') {

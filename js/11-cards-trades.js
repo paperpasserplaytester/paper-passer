@@ -4148,6 +4148,7 @@ const RIV_PLAYOFF = new Set(['BUF-KC', 'CIN-KC', 'BAL-KC', 'BUF-CIN', 'JAX-KC', 
 function rivalBadge(a, b) {
   const k = [a, b].sort().join('-');
   if (RIV_SB.has(k)) return 'SUPER BOWL REMATCH';
+  if (!NFL[a] || !NFL[b]) return null;   // (v0.74: an online lobby side with no team yet threw here mid-paint)
   if (NFL[a].conf === NFL[b].conf) return 'DIVISIONAL RIVALS';
   if (RIV_CLASSIC.has(k)) return 'CLASSIC RIVALS';
   if (RIV_PLAYOFF.has(k)) return 'PLAYOFF FOES';
@@ -4380,6 +4381,7 @@ function drawMatchupEx() {
   }
   roles.map((role, side) => [UNI_BTNS[side], shown[side], MATCH[role + 'Kit']]).forEach(([b, team, kit]) => {
     menuBtn(b, kit === 'alt' ? 'ALT' : kit.toUpperCase(), RES.bright, 20, undefined, onlMineSide(UNI_BTNS.indexOf(b)));
+    if (!team || !NFL[team]) return;   // (v0.74: an online lobby side with no team yet threw here mid-paint)
     const [m, s] = kitColors(team, kit);
     for (let i = 0; i < 4; i++) { const dx = b.x + 10 + i * 24; ctx.fillStyle = '#0b1a3a'; ctx.fillRect(dx - 1, b.y + b.h + 3, 18, 8); ctx.fillStyle = i % 2 ? s : m; ctx.fillRect(dx, b.y + b.h + 4, 16, 6); }
   });
@@ -4401,6 +4403,7 @@ function drawMatchupEx() {
   const tapes = teamTapes();
   roles.forEach((role, side) => {
     const x = HELM_X[side], key = shown[side], mineSide = onlMineSide(side);
+    if (!NFL[key]) return;   // (v0.74: an online lobby side with no team yet threw here mid-paint)
     const hov = !!(hoverPt && inBtn(hoverPt, HELM_BTNS[side])) && !shuffling && mineSide;
     const hovCarousel = hov || (!!(hoverPt && (inBtn(hoverPt, PEEK_BTNS[side * 2]) || inBtn(hoverPt, PEEK_BTNS[side * 2 + 1]))) && mineSide);
     // PLAYER / CPU (online: you / opponent), with the CPU's flame meter

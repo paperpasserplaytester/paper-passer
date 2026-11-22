@@ -851,6 +851,13 @@ const DRAFT_SCHOOLS = ['BAYOU STATE', 'GREAT LAKES TECH', 'NORTH PRAIRIE', 'COAS
   'MAGNOLIA', 'SILVER LAKE', 'FORT ASH', 'PALMETTO BAY', 'BIG SKY NORTH', 'CAPITAL CITY', 'THREE RIVERS', 'SAGEBRUSH', 'MAPLE GROVE', 'SOUTH RIDGE', 'TIDEWATER', 'ELK RAPIDS', 'SUNCOAST', 'BLACK HILLS TECH', 'WINDWARD'];
 const CHANGELOG = [
   { v: "v0.73", secs: [
+    ["ONLINE FIXES", [
+      "Fixed: the guest could lose the whole top bar, scoreboard and all, for the rest of a match after one bad frame.",
+      "Fixed: the online lobby could hiccup while a side had no team picked yet.",
+      "Cloud sync waits for the game to end, and the link check no longer runs mid-play: fewer hitches when you host on a phone.",
+      "Phones no longer drop to 30 FPS for the rest of a game because of a few one-off hitches.",
+      "Phones on QUALITY: sharp end zone names, midfield logo and yard numbers on close shots.",
+    ]],
     ["FAIRER FLAGS", [
       "Every flag now follows something you can see. A clear foul is always called by an official who sees it.",
       "Only close calls can go wrong: contact a hair early, an arm out, a block finished to the ground, a hit right at the whistle. Very rare, and more likely far from an official.",

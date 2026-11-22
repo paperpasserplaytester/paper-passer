@@ -4860,6 +4860,8 @@ function draw() {
   ctx.beginPath();
   ctx.rect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - FIELD_BOT);
   ctx.clip();
+  let pt = 0, cine = false, inRp = false;   // (set inside the try, read after it)
+  try {
   DEF_SCR = ctx.getTransform();   // (screen space for drawDefOverlay's ground pass, drawn inside the world before the players)
   const shk = shake + stadiumShake();   // (the crowd on the road / a big kick's nerves)
   ctx.translate(W / 2 + (Math.random() - 0.5) * shk, viewCenterY() + (Math.random() - 0.5) * shk);
@@ -4901,7 +4903,7 @@ function draw() {
     if (!rb.split) drawPickCircle(rb, RB_COLOR, 'RUN');
     { const f = fbCarrier(); if (f) drawPickCircle(f, RB_COLOR, 'FB RUN'); }   // (two backs: either one can carry)
   }
-  const inRp = !!(rec && rec.replaying);   // (a replay shows the tape and nothing of the live play's controls: no aim, meters, reticle, landing ring)
+  inRp = !!(rec && rec.replaying);   // (a replay shows the tape and nothing of the live play's controls: no aim, meters, reticle, landing ring)
   if (aim && !inRp && (!ONL.on || onlIAmOff())) drawAim();   // (online: only the thrower sees his aim)
   const kickAim = !inRp && state === 'kickoff' && kick && kick.userKo && kick.target && !kick.onside && ['target', 'power', 'aim'].includes(kick.phase) && onlKickOwner();
   if (kickAim) drawKickReticle('ground');
@@ -4922,7 +4924,7 @@ function draw() {
     for (const b of UI_BTNS_PREV) if (b && b.w) ctx.rect(b.x - 4, b.y - 4, b.w + 8, b.h + 8);
     ctx.clip('evenodd'); drawDefOverlay(true); ctx.restore();
   }
-  let pt = SETTINGS.perfHud ? PERF_NOW() : 0;   // (FRAME TIMES: d.* parts)
+  pt = SETTINGS.perfHud ? PERF_NOW() : 0;   // (FRAME TIMES: d.* parts)
   if (SL.on) { slDrawSide(0); refDrawItems(0); }   // (sideline people on the far (top) touchline: behind every player, bar the few slExUpTo puts in order; v0.68 flags on the turf)
   if (pt) pt = perfMark('d.sideline', pt);
   DRAW_ORDER.length = 0; if (!tossing()) { const ap = allPlayers(); for (let i = 0; i < ap.length; i++) DRAW_ORDER.push(ap[i]); }   // (its own list: allPlayers' array is shared, never sorted in place)
@@ -4958,13 +4960,13 @@ function draw() {
   if (COLLIDE.show) drawHitboxes();
   if (PURSUIT.debug) pdbDraw();
   drawImpacts();
-  const cine = cinemaOn() || reelOn() || coldHud() || pclipOn();   // (CINEMATIC highlights and the halftime / end-of-game reel: nothing drawn over the field or the players)
+  cine = cinemaOn() || reelOn() || coldHud() || pclipOn();   // (CINEMATIC highlights and the halftime / end-of-game reel: nothing drawn over the field or the players)
   if ((state === 'pre' || (rec && rec.replaying)) && !tossing() && tipHeld('names') && (!cine || (reelOn() && hlFront()))) drawNameTags();   // (v0.62: a held names tip shows them over a reel too)   // (Y hides / shows them in a replay too)
   if (!tossing() && !cine) drawStarMarks();
   if (!cine) drawPopups();
   if (kickAim) drawKickReticle('arc');   // (the kick's arc: over the players and everything else on the field)
   drawHsFreeze();   // (the halftime reel's freeze frame: the man of the play of the half, circled)
-  ctx.restore();
+  } catch (e) { drawFail(e); } finally { ctx.restore(); }   // (v0.74: a throw inside the field clip used to leave the clip on for good: the guest lost the top bar)
   if (pt) pt = perfMark('d.overlay', pt);
   wxDraw();
   if (pt) pt = perfMark('d.wx', pt);
