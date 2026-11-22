@@ -606,8 +606,10 @@ function drawEndZoneName(cx, dir) {
 // canvases), the weather draws a share of its particles, the footsteps and the wind's hiss are off, dark mode's wrapping of every canvas call is off in the game,
 // an online game records no replay tape (it never shows one), and a phone's canvas is capped at LITE.rk. If the frames are STILL slow (over LITE.slowMs for
 // LITE.hold s) the second step starts and stays for the rest of that game: no stands, no star HUD, and the whole canvas at LITE.slowRk of its pixels.
-const LITE = { crowdK: 0.4, wx: 0.45, rk: 1, slowMs: 24, hold: 2, slowRk: 0.75 };   // crowdK = the stands' canvases at this share of their size (memory x crowdK^2); wx = share of the weather particles
-let liteSlow = false, liteSlowT = 0, liteLvl = 0, frameAvg = 16;   // (liteLvl: what fitScreen last sized the canvas for)
+const LITE = { crowdK: 0.4, wx: 0.45, rk: 1, slowMs: 24, hold: 2, slowRk: 0.75,
+  workShare: 0.45,   // v0.73: a slow gap only counts when our own work (update + paint ms) is at least this share of it: a 30 Hz capped display (battery saver) with 4 ms frames is not slow
+  backK: 0.6, backS: 10, backMax: 2 };   // recovery: at a dead ball, after backS s with work under workShare x backK of the gap (or gaps under slowMs), step 2 lifts; at most backMax times a game
+let liteSlow = false, liteSlowT = 0, liteLvl = 0, frameAvg = 16, liteWorkAvg = 4, liteOkT = 0, liteBackN = 0, liteWork = 0;   // (liteLvl: what fitScreen last sized the canvas for; liteWork = this frame's update + paint ms, added up in frame())
 // GRAPHICS (the same setting, SETTINGS.liteMode): AUTO = performance mode in online / two-player games only, PERFORMANCE = every game, QUALITY = never (and never the
 // slow-frame step either), with a phone's game canvas up to GAME_RES.touchMax, the stands at GFX.crowdTouch and every weather particle. gfxMode() reads old values too.
 const GFX = { crowdTouch: 1 };   // QUALITY on a phone / tablet: the stands' canvases at this share of their size (1 = full, ~230 MB: lower it if phones run out of memory)
@@ -616,11 +618,16 @@ const gfxHi = () => gfxMode() === 'QUALITY';
 const liteOn = () => { const m = gfxMode(); return m === 'PERFORMANCE' || (m === 'AUTO' && !!((typeof ONL !== 'undefined' && ONL.on) || (twoP && !twoP.ai))); };
 const liteGame = () => liteOn() && !results;   // (in a game: the menus keep their full look)
 const darkOn = () => !!SETTINGS.darkMode && !liteGame();
-function liteTick(ms) {   // once a frame, with this device's real frame time
-  if (!liteGame()) { liteSlow = false; liteSlowT = 0; frameAvg = 16; return; }
-  if (liteSlow || paused || document.hidden || !(ms > 0 && ms < 500) || fxShowing()) return;   // (v0.62: no step while a celebration / reel is on screen)
+function liteTick(ms, work) {   // once a frame, with this device's real frame time (the gap) and the last frame's own work (update + paint ms)
+  if (!liteGame()) { liteSlow = false; liteSlowT = liteOkT = liteBackN = 0; frameAvg = 16; liteWorkAvg = 4; return; }
+  if (paused || document.hidden || !(ms > 0 && ms < 500) || fxShowing()) return;   // (v0.62: no step while a celebration / reel is on screen)
   frameAvg += (ms - frameAvg) * 0.08;
-  if (frameAvg > LITE.slowMs) { liteSlowT += ms; if (liteSlowT > LITE.hold * 1000) { liteSlow = true; perfNote('liteSlow'); } } else liteSlowT = 0;
+  liteWorkAvg += ((work || 0) - liteWorkAvg) * 0.08;
+  const slow = k => frameAvg > LITE.slowMs && liteWorkAvg > frameAvg * LITE.workShare * k;   // (v0.73: a long gap with little work = a capped refresh rate, not a slow device)
+  if (!liteSlow) { if (slow(1)) { liteSlowT += ms; if (liteSlowT > LITE.hold * 1000) { liteSlow = true; liteOkT = 0; perfNote('liteSlow gap ' + frameAvg.toFixed(1) + ' work ' + liteWorkAvg.toFixed(1)); } } else liteSlowT = 0; return; }
+  if (slow(LITE.backK) || liteBackN >= LITE.backMax) { liteOkT = 0; return; }
+  liteOkT += ms;
+  if (liteOkT > LITE.backS * 1000 && (state === 'pre' || state === 'done')) { liteSlow = false; liteSlowT = liteOkT = 0; liteBackN++; perfNote('liteSlow off'); }   // (at a dead ball: the canvas resize / stands rebuild never lands mid-play)
 }
 const liteLevel = () => liteSlow ? 2 : liteGame() ? 1 : 0;
 const lightGfx = () => liteSlow;

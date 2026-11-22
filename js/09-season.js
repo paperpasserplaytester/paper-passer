@@ -425,7 +425,11 @@ const SCHED_HELMET_R = 28;
 // v0.72 treasure map: the stops sit on a winding dashed path (x = lx + swing * sin(row * wave)); text sits `text` px right of the stop;
 // X = the mark under a played stop; chest = this week's chest (opens over `ms` once per week); btn = SCHEDULE (league screen) over the box top
 Object.assign(SCHED, { lx: 66, swing: 20, wave: 1.1, text: 48, dash: [9, 7], ink: '#8a5a2b', X: 11, chest: { w: 34, h: 20, ms: 900, y: 26 },
-  btn: { x: 166, y: 96, w: 124, h: 36 } });
+  btn: { x: 166, y: 96, w: 124, h: 36 },
+  // v0.73 parchment behind the box (schedMap, baked once): colours light / dark, burnt edge width, stains, compass size
+  map: { img: null, key: '', inset: 3, edge: 26, stains: 4, rose: 16,
+    light: { paper: '#f3e2bb', burn: 'rgba(120,70,20,0.38)', stain: 'rgba(150,100,40,0.10)', crease: 'rgba(110,70,30,0.22)', doodle: 'rgba(110,70,30,0.30)' },
+    dark: { paper: '#4a3d2a', burn: 'rgba(10,5,0,0.55)', stain: 'rgba(0,0,0,0.16)', crease: 'rgba(240,210,160,0.14)', doodle: 'rgba(240,210,160,0.22)' } } });
 const schedX = i => SCHED.lx + SCHED.swing * Math.sin(i * SCHED.wave);   // i = row index (a fraction = a point on the path between stops)
 // the rows: one per week (the bye week included, shown as BYE WEEK) plus the playoffs; the list scrolls in whole rows (the box shows exactly 4)
 const schedRows = () => { const r = []; for (let w = 1; w <= SEASON_WEEKS; w++) r.push(w); r.push(SEASON_WEEKS + 1); return r; };

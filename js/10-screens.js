@@ -2399,6 +2399,48 @@ function boxSummary(p, g) {
   return o.join('  ') || '-';
 }
 // --- schedule treasure map (v0.72): this week's chest + the playoffs flag (drawHome's schedule); the chest opens once per week, read on uiNow()
+// v0.73 the parchment map behind the schedule: baked once per box size + dark mode + team (SCHED.map), one drawImage a frame
+function schedMap(SB) {
+  const M = SCHED.map, dk = darkOn(), key = `${SB.x}|${SB.y}|${SB.w}|${SB.h}|${dk}|${season && season.team}`;
+  if (M.img && M.key !== key) { freeCanvas(M.img); M.img = null; }
+  if (!M.img) { M.key = key; M.img = ctxBake(SB.x, SB.y, SB.w, SB.h, () => schedMapPaint(SB, dk ? M.dark : M.light, key)); }
+  ctx.drawImage(M.img, SB.x, SB.y, SB.w, SB.h);
+}
+function schedMapPaint(SB, P, key) {
+  const { x, y, w, h } = SB, i = SCHED.map.inset; let sd = 0; for (const ch of key) sd = (sd * 31 + ch.charCodeAt(0)) % 9973;
+  const r = (() => { let s = sd || 7; return () => (s = (s * 9301 + 49297) % 233280) / 233280; })();
+  ctx.save(); ctx.beginPath(); ctx.rect(x + i, y + i, w - 2 * i, h - 2 * i); ctx.clip();
+  ctx.fillStyle = P.paper; ctx.fillRect(x, y, w, h);
+  // worn, burnt edges: soft darker bands that fade inward
+  const ed = SCHED.map.edge;
+  for (const [gx0, gy0, gx1, gy1] of [[x, 0, x + ed, 0], [x + w, 0, x + w - ed, 0], [0, y, 0, y + ed], [0, y + h, 0, y + h - ed]]) {
+    const g = ctx.createLinearGradient(gx0, gy0, gx1, gy1); g.addColorStop(0, P.burn); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
+  }
+  // stains
+  for (let k = 0; k < SCHED.map.stains; k++) {
+    const sx = x + w * (0.2 + 0.7 * r()), sy = y + h * r(), sr = 14 + 26 * r(), g = ctx.createRadialGradient(sx, sy, 0, sx, sy, sr);
+    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.75, P.stain); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(sx - sr, sy - sr, sr * 2, sr * 2);
+  }
+  // fold creases (one down, two across)
+  ctx.strokeStyle = P.crease; ctx.lineWidth = 1.2; ctx.beginPath();
+  penLine(x + w * 0.52, y, x + w * 0.5, y + h, sd + 1, 1.2);
+  penLine(x, y + h * 0.34, x + w, y + h * 0.35, sd + 2, 1.2);
+  penLine(x, y + h * 0.68, x + w, y + h * 0.67, sd + 3, 1.2); ctx.stroke();
+  // doodles, faint, in the corners away from the trail (left) and the row text: waves top right, hills mid right, compass rose bottom right
+  ctx.strokeStyle = P.doodle; ctx.lineWidth = 1.3; ctx.beginPath();
+  for (let k = 0; k < 2; k++) { const wx = x + w - 62, wy = y + 16 + k * 9; ctx.moveTo(wx, wy); for (let q = 1; q <= 4; q++) ctx.quadraticCurveTo(wx + q * 12 - 6, wy - 5, wx + q * 12, wy); }
+  { const hx = x + w - 70, hy = y + h * 0.52; ctx.moveTo(hx, hy); ctx.quadraticCurveTo(hx + 12, hy - 16, hx + 24, hy); ctx.moveTo(hx + 16, hy); ctx.quadraticCurveTo(hx + 30, hy - 22, hx + 44, hy); }
+  ctx.stroke();
+  const cx = x + w - 34, cy = y + h - 36, R = SCHED.map.rose;
+  ctx.beginPath(); ctx.arc(cx, cy, R * 0.62, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = P.doodle; ctx.beginPath();
+  for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2 - Math.PI / 2, L = k % 2 ? R * 0.7 : R, s = R * 0.18;
+    ctx.moveTo(cx + Math.cos(a) * L, cy + Math.sin(a) * L); ctx.lineTo(cx + Math.cos(a + Math.PI / 2) * s, cy + Math.sin(a + Math.PI / 2) * s); ctx.lineTo(cx + Math.cos(a - Math.PI / 2) * s, cy + Math.sin(a - Math.PI / 2) * s); ctx.closePath(); }
+  ctx.fill(); ctx.font = `bold ${Math.round(R * 0.55)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillText('N', cx, cy - R - 1);
+  ctx.restore();
+}
 function schedChest(x, y, wk) {
   const C = SCHED.chest, key = `${wk}|${season && season.team}|${season && season.year}`;
   if (!C.at || C.at.key !== key) C.at = { key, t: uiNow() };
@@ -2664,6 +2706,7 @@ function drawHome() {
   // the schedule: a vertical, scrollable list down the left side (a played game shows its result and a W / L / T coloured dot)
   const SB = SCHED_BOX;
   thinPanel(SB.x, SB.y, SB.w, SB.h);
+  schedMap(SB);
   const done = wk > SEASON_WEEKS, cur = done ? SEASON_WEEKS : wk;
   const slot = w => {
     if (w < 1 || w > SEASON_WEEKS + 1) return null;

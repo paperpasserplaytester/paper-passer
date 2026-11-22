@@ -2521,13 +2521,15 @@ function annDraw() {
   const now = annNow(), lite = annLite(), n = ANN.card, dk = darkOn();
   if (S.fcDark !== dk) { for (let j = 0; j < 2; j++) { freeCanvas(S.fc[j]); S.fc[j] = null; } if (S.card) { freeCanvas(S.card.b); freeCanvas(S.card.f); S.card = null; } annFreeLine(c); S.fcDark = dk; }   // (dark mode flipped: everything is baked again)
   const out = c.hold ? 1 : 1 - cClamp((now - (c.end + ANN.hold)) / ANN.fade); if (out <= 0) { S.rect = null; return; }
-  const x = PAUSE_BTN.x, y = (pvpOn() ? LEFT_TO_BTN.y + LEFT_TO_BTN.h + ANN.pvpGap : TOP_BAR + ANN.pad) + (TOUCH ? ANN.touchY : 0),   /* (two players: under the left timeout / audible buttons) */ pc = lite ? 1 : cBack((now - S.popAt) / ANN.pop);
+  const kt = !pvpOn() && typeof keyTipsShown === 'function' && !!keyTipsShown();   // (v0.73: key tips up = top middle under the scoreboard, kept on screen)
+  let x = PAUSE_BTN.x; const y = kt ? TOP_BAR + ANN.midPad + (TOUCH ? ANN.touchY : 0) : (pvpOn() ? LEFT_TO_BTN.y + LEFT_TO_BTN.h + ANN.pvpGap : TOP_BAR + ANN.pad) + (TOUCH ? ANN.touchY : 0),   /* (two players: under the left timeout / audible buttons) */ pc = lite ? 1 : cBack((now - S.popAt) / ANN.pop);
   // bake the faces / card / bubble HERE, at the screen's own scale: baked inside the pop-in's scale (tiny on its first frames) they came out blurry and stayed so
   { const m = DM_P.getTransform.call(ctx), s0 = Math.round(Math.hypot(m.a, m.b) * 8) / 8 || 1, stale = cv => cv && cv._s < s0 - 0.01;
     for (let j = 0; j < 2; j++) if (stale(S.fc[j])) { freeCanvas(S.fc[j]); S.fc[j] = null; }
     if (S.card && stale(S.card.b)) { freeCanvas(S.card.b); freeCanvas(S.card.f); S.card = null; }
     if (c.bub && stale(c.bub.t)) annFreeLine(c);
     annFace(0); annFace(1); annCard(); annBubble(c); }
+  if (kt) { const tw = n + 10 + Math.min(annBubble(c).BW, ANN.maxW); x = Math.max(PAUSE_BTN.x, Math.min(W - PAUSE_BTN.x - tw, W / 2 - tw / 2)); }
   ctx.save(); ctx.globalAlpha *= out * (lite ? cClamp((now - S.popAt) / ANN.pop) : 1);
   // the card + the speaker (the faces swap with a quick slide)
   const cd = annCard(), cx = x + n / 2 + 3, cy = y + n / 2 + 3;

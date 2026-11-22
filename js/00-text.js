@@ -854,6 +854,7 @@ const CHANGELOG = [
     ["ONLINE FIXES", [
       "Fixed: the guest could lose the whole top bar, scoreboard and all, for the rest of a match after one bad frame.",
       "Fixed: the online lobby could hiccup while a side had no team picked yet.",
+      "Fixed: a laptop on battery saver no longer drops the stands and sharpness, settings categories open again as the guest, and holding FRAME TIMES copies again, and a phone in low power mode keeps its sharpness.",
       "Cloud sync waits for the game to end, and the link check no longer runs mid-play: fewer hitches when you host on a phone.",
       "Smoother on phones: saves are much shorter and never happen inside a tap or a play (and when storage is full the game itself is still saved, ahead of its stats), page changes no longer pause, one stall no longer drops the picture to low resolution or 30 FPS, a game that dropped to 30 FPS tries 60 again, and changes of possession, snaps and menu sounds no longer hitch.",
       "The guest's lag readout and lag compensation no longer count the gap between the two devices' clocks, and a reading that makes no sense falls back to a small one, so a phone guest isn't judged seconds late.",

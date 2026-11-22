@@ -1262,7 +1262,7 @@ window.addEventListener('pointerup', e => {
 }, true);
 window.addEventListener('pointercancel', e => { if (tapHold && tapHold.id === e.pointerId) tapHold = null; }, true);
 canvas.addEventListener('pointerdown', e => {
-  if (ONL.on && ONL.guest && !results) return;   // (online guest: the host plays every tap, aim and click. Running them here too started a second, local throw / snap on the phone that fought the host's)
+  if (ONL.on && ONL.guest && !results && !settingsOpen && !slotUI) return;   // (v0.73: settings / slots are local, so the guest's clicks on them go through) (online guest: the host plays every tap, aim and click. Running them here too started a second, local throw / snap on the phone that fought the host's)
   if (oo && !paused && e.button === 0 && ooClick(pointerPos(e))) return;   // (1v1 practice: the force-animation buttons)
   if (celT && !paused && !results && e.button === 0 && celTClick(pointerPos(e))) return;   // (test mode: the celebration panel)
   if (slotUI) { if (e.button === 0) slotClick(pointerPos(e)); return; }
@@ -2009,10 +2009,15 @@ function perfSpike(gap) {   // frame(), first thing: was the frame before a spik
 const perfLine = s => `${s.ms.toFixed(0)}ms (gap ${s.gap.toFixed(0)}, upd ${s.u.toFixed(0)}${s.blk >= 0 ? ', blocked ' + s.blk.toFixed(0) : ''})${s.out && s.out.length ? ' out: ' + s.out.map(([k, v]) => k + ' ' + v.toFixed(1)).join(', ') : ''} ${s.st}${s.tags.length ? ' [' + s.tags.join(',') + ']' : ''}${s.parts.length ? '  ' + s.parts.map(([k, v]) => k + ' ' + v.toFixed(0)).join(' ') : ''}`;
 function perfCopy() {   // the spike ring as text, onto the clipboard (pointerup: phones only allow it from a finger's release)
   const P = perfS, txt = `Paper Passer spikes  ${gfxMode()} L${liteLevel()}  ${canvas.width}x${canvas.height} x${RK.toFixed(2)}  ${phoneTestTxt()}  ${navigator.userAgent}\n` + (P.l1 ? P.l1 + '\n' + P.l2 + '\n' + P.l3 + '\n' : '') + P.spikes.map(s => `t${s.t}s  ` + perfLine(s)).join('\n');
+  // (v0.73: the textarea copy first, inside the gesture (iOS: readonly + setSelectionRange); writeText only if that failed, and COPIED only once one really worked.
+  // writeText's promise used to be counted as done, so a rejection on iOS was silent)
+  const done = () => { P.copied = PERF_NOW(); P.copyFail = 0; }, fail = () => { P.copyFail = PERF_NOW(); };
   let ok = false;
-  try { if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(txt); ok = true; } } catch (e) {}
-  if (!ok) try { const ta = document.createElement('textarea'); ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); } catch (e) {}
-  P.copied = PERF_NOW(); console.log(txt);
+  try { const ta = document.createElement('textarea'); ta.value = txt; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;font-size:16px'; document.body.appendChild(ta); ta.focus(); ta.select(); ta.setSelectionRange(0, txt.length); ok = document.execCommand('copy'); ta.remove(); } catch (e) {}
+  if (ok) done();
+  else if (navigator.clipboard && window.isSecureContext) { try { navigator.clipboard.writeText(txt).then(done, fail); } catch (e) { fail(); } }
+  else fail();
+  console.log(txt);
 }
 let perfTap = null;
 // (the press is never swallowed: a tap reaches the buttons under the readout; a press held PERF_HUD.holdMs copies on release, and only that release is kept from the game)
@@ -2081,7 +2086,7 @@ function drawPerfHud() {
   if (!SETTINGS.perfHud || !perfS.l1) { perfS.box = null; return; }
   const P = perfS, fs = TUI.on ? PERF_HUD.fontTouch : PERF_HUD.font;
   const sp = P.spikes.slice(-PERF_HUD.show).reverse().map(s => { const l = perfLine(s); return l.length > PERF_HUD.chars ? l.slice(0, PERF_HUD.chars - 1) + '…' : l; });
-  const head = P.spikes.length ? (PERF_NOW() - P.copied < 1500 ? 'COPIED ✓' : `SPIKES (${P.spikes.length})  newest first  - ${perfTap && PERF_NOW() - perfTap.t >= PERF_HUD.holdMs ? 'let go to copy' : 'hold to copy'}`) : 'no spikes yet';
+  const head = P.spikes.length ? (PERF_NOW() - P.copied < 1500 ? 'COPIED ✓' : PERF_NOW() - (P.copyFail || -1e9) < 2500 ? 'COPY FAILED (see console)' : `SPIKES (${P.spikes.length})  newest first  - ${perfTap && PERF_NOW() - perfTap.t >= PERF_HUD.holdMs ? 'let go to copy' : 'hold to copy'}`) : 'no spikes yet';
   const lines = [P.l1, P.l2, P.l3, head, ...sp], hgt = fs * (lines.length * 1.2 + 0.3), y = Math.max(TOP_BAR + 4, H - PERF_HUD.y - (lines.length - 3) * fs * 1.2);
   ctx.save(); ctx.font = `bold ${fs}px monospace`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   const w = Math.min(W - PERF_HUD.x, Math.max(...lines.map(l => ctx.measureText(l).width)) + 16);
@@ -2102,7 +2107,8 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   perfSpike(now - last);   // (FRAME TIMES: the frame before, a spike?)
   if (SETTINGS.perfHud && !perfWrapped) perfWrapAll();   // (v0.70: the save / sync / click timers go on the first time FRAME TIMES is)
   const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));   // (never negative: a timestamp older than the last one would stall the game step)
-  if (!bg) liteTick(now - last);   // (performance mode: are the frames still slow?)
+  if (!bg) liteTick(now - last, liteWork);   // (performance mode: are the frames still slow? v0.73: judged by the last frame's own work too)
+  liteWork = 0;
   last = now;
   if (!paused) pauseSim = false;   // (the pause menu always opens on its main screen)
   if (paused || showKeys || settingsOpen) { if (animFrozenAt === null) animFrozenAt = now; }
@@ -2127,7 +2133,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   if (ONL.on) { if (ONL.host) onlLogFrame(performance.now() - perfU0, 'host'); else { const a = ONL.lastArr || 0, g = ONL.lgArr ? a - ONL.lgArr : 0; ONL.lgArr = a; onlLogFrame(g, 'gap'); } }   // (the online event log: FRAME TIMES only)
   if (!ONL.guest) { tallyScores(); otWatch(); }
   if (pu) perfMark('u.tally', pu);
-  perfUpd(performance.now() - perfU0);
+  { const uMs = performance.now() - perfU0; liteWork += uMs; perfUpd(uMs); }
   // pausing (or the keybinds page) fades every sound out; resuming fades them back in
   duck += Math.max(-dt / DUCK.out, Math.min(dt / DUCK.in, (paused || showKeys ? 0 : 1) - duck));
   if (actx && actx.master) actx.master.gain.value = SETTINGS.volume * duck;
@@ -2151,7 +2157,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   lastPage = page;
   if (btnSndQ && PERF_NOW() - btnSndQ.at >= btnSndQ.wait) btnSndPlay(1);   // (no page change: full level; a finger's click lands TAP_DEFER later, so it waits a little)
   { const lv = liteLevel(), hi = results && (results.screen === 'roster' || results.screen === 'tradeb') ? 2 : !results && !lv && (!TUI.on || gfxHi()) ? 1 : 0; const dn = dynResOn() ? 1 : TUI.on && coldOn() && gfxMode() === 'AUTO' ? 2 : 0; if (hi !== RK_HI || lv !== liteLvl || dn !== dynRes.on) { const ft = PERF_NOW(); RK_HI = hi; liteLvl = lv; dynRes.on = dn; fitScreen(); if (SETTINGS.perfHud) perfMark('fit', ft); } }   // (the roster / offer builder render at full screen resolution; after the page-change snapshot above: a resize clears the canvas, so doing it first crumpled a blank / wrong page)
-  rafDt += (Math.min(100, Math.max(1, now - rafLast)) - rafDt) * 0.1; rafLast = now;
+  { const r = Math.min(100, Math.max(1, now - rafLast)); rafDt += (r - rafDt) * 0.1; rafLo = r < rafLo ? r : rafLo + (r - rafLo) * DYN_RES.floorUp; } rafLast = now;   // (rafLo: the shortest recent rAF interval, fast down / slow up = the display's real refresh)
   if (TUI.on) dynResTick(Math.min(0.1, rafDt / 1000));   // (v0.62: before the paint, so a resize it makes is painted over in this same frame)
   if (fitWant) { fitWant = false; fitScreen(); }   // (v0.62: a window resize is applied here, right before a paint, never in the event itself)
   cglTick();   // (v0.66: the GPU crumple overlay: every frame, even ones the menu below doesn't paint)
@@ -2162,7 +2168,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   lastPaint = now;
   const paintT0 = performance.now(), pm = SETTINGS.perfHud;
   UI_NOW = UI_LAST = paintT0; menuMoving = false; menuProbeN = 0; performance.now = menuProbe;
-  try { paintFrame(paintT0, pm, now); } finally { delete performance.now; UI_NOW = 0; menuClock = menuProbeN > 0; }
+  try { paintFrame(paintT0, pm, now); } finally { delete performance.now; UI_NOW = 0; menuClock = menuProbeN > 0; liteWork += performance.now() - paintT0; }
   if (TUI.on) {   // how long painting took, smoothed: slow frames drop the paint rate to ~30 (so the game keeps up and the thread isn't always behind), fast ones bring it back
     paintAvg += (performance.now() - paintT0 - paintAvg) * 0.1;
     fpsCapTick(Math.min(0.1, rafDt / 1000), now);
@@ -2173,7 +2179,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
 // A paint that reads the page clock (performance.now) is animating something; menu buttons read UI_NOW instead, so a still menu reads none.
 // After MENU_PACE.idleMs with no input, a menu whose last paint read no clock, had no hover still easing and nothing below busy is not painted again.
 const PERF_NOW = performance.now.bind(performance);
-let menuInputAt = 0, menuClock = true, menuProbeN = 0, rafDt = 16.7, rafLast = 0, menuWhy = null;
+let menuInputAt = 0, menuClock = true, menuProbeN = 0, rafDt = 16.7, rafLo = 16.7, rafLast = 0, menuWhy = null;
 function menuProbe() { if (!menuProbeN++ && MENU_PACE.debug) menuWhy = new Error().stack.split('\n').slice(2, 5).map(s => s.trim().replace(/\(http[^)]*\/js\//, '(')).join(' < '); return PERF_NOW(); }   // (MENU_PACE.debug: menuWhy = the first clock read of the last paint)
 for (const t of ['pointermove', 'pointerdown', 'pointerup', 'keydown', 'keyup', 'wheel', 'resize', 'focus', 'visibilitychange']) window.addEventListener(t, () => { menuInputAt = PERF_NOW(); }, { capture: true, passive: true });
 const menuPaced = () => !!results && !(hl && !hl.bg) && !HT && !(rec && rec.replaying);
@@ -2434,7 +2440,7 @@ const dynRes = { k: null, over: 0, under: 0, want: 0, on: 0 };
 const dynResOn = () => DYN_RES.on && TUI.on && gfxMode() === 'AUTO' && !liteOn() && !results;
 function dynResTick(dtS) {
   if (!dynResOn() || dynRes.k == null || paused || fxShowing()) { dynRes.over = dynRes.under = 0; return; }   // (v0.62: never a resolution step while a celebration or a reel is on screen)
-  const iv = fpsInterval(), slowGap = fpsCap.gap > iv * DYN_RES.gapSlow, room = fpsCap.gap < iv * DYN_RES.gapOk && paintAvg < DYN_RES.upMs && !fpsCap.lock;   // (v0.70: the real time between paints, not only the JS paint: a phone can paint in 5 ms and still miss frames)
+  const iv = Math.max(fpsInterval(), rafLo), slowGap = fpsCap.gap > iv * DYN_RES.gapSlow, room = fpsCap.gap < iv * DYN_RES.gapOk && paintAvg < DYN_RES.upMs && !fpsCap.lock;   // (v0.70: the real time between paints, not only the JS paint: a phone can paint in 5 ms and still miss frames)
   if (paintAvg > DYN_RES.budget || slowGap) { dynRes.over += dtS; dynRes.under = 0; } else if (room) { dynRes.under += dtS; dynRes.over = 0; } else dynRes.over = dynRes.under = 0;
   const want = dynRes.over > DYN_RES.down ? -1 : dynRes.under > DYN_RES.up ? 1 : 0;
   if (!want || !(state === 'pre' || state === 'done')) return;

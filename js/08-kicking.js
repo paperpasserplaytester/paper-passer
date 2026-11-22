@@ -5295,10 +5295,13 @@ function keyTipsSit() {
   if (state === 'drop' || state === 'pocket') return 'pocket';
   return { pre: 'pre', flight: 'flight', run: 'run', loose: 'loose', fumble: 'loose', picked: 'run' }[state] || null;
 }
+function keyTipsShown() {   // v0.73 the key tips box (open or shut) is on screen this frame: shared with annDraw (the announcers move top middle)
+  if (SETTINGS.hideKeyTips || tut || paused || results || game.over || (rec && rec.replaying) || reelOn() || hl || (typeof CO !== 'undefined' && CO)) return null;
+  return keyTipsSit();
+}
 function drawKeyTips() {
   KEY_TIPS_RECT = null;
-  if (SETTINGS.hideKeyTips || tut || paused || results || game.over || (rec && rec.replaying) || reelOn() || hl || (typeof CO !== 'undefined' && CO)) return;
-  const sit = keyTipsSit(); if (!sit) return;
+  const sit = keyTipsShown(); if (!sit) return;
   const T = KEY_TIPS, tch = !!TOUCH, rows = KEY_TIP_ROWS[sit][tch ? 1 : 0], shut = !!SETTINGS.keyTipsShut;
   const rh = tch ? T.rowTouch : T.row, fs = tch ? T.fontTouch : T.font, w = tch ? T.wTouch : T.w;
   const x = PAUSE_BTN.x, y = PAUSE_BTN.y + PAUSE_BTN.h + T.gap, h = rh + (shut ? 0 : rows.length * rh) + T.pad;

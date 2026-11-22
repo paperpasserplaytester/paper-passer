@@ -146,7 +146,8 @@ const FPS_CAP = { on: true, hi: 60, lo: 30, slowMs: 19, holdS: 2, gapClip: 2.5, 
 // turn: page change GL (overlay) / 2D (old path) / OFF (pages cut); shadow ON / OFF (OFF = every shadowBlur on the main canvas is 0); res AUTO / a pinned render scale on touch
 const PHONE_TEST = { turn: 'GL', shadow: 'ON', res: 'AUTO', turns: ['GL', '2D', 'OFF'], shadows: ['ON', 'OFF'], ress: ['AUTO', '0.75', '1', '1.5'] };
 const phoneTestTxt = () => `TURN ${PHONE_TEST.turn} SHAD ${PHONE_TEST.shadow} RES ${PHONE_TEST.res}`;
-const DYN_RES = { on: true, min: 0.75, max: 2, step: 0.15, budget: 13, upMs: 8, down: 2, up: 6, start: 1.25, gapSlow: 1.25, gapOk: 1.08 };   // v0.70: start = first scale (was the max); the real gap between paints (fpsCap.gap) counts too: over gapSlow x the frame interval = too slow, under gapOk x (+ paint under upMs, cap not locked) = room to go up. The 30 FPS lock waits until the scale is down at min
+const DYN_RES = { on: true, min: 0.75, max: 2, step: 0.15, budget: 13, upMs: 8, down: 2, up: 6, start: 1.25, gapSlow: 1.25, gapOk: 1.08,
+  floorUp: 0.02 };   // v0.73: the gaps are judged against the display's real refresh too (rafLo: shortest recent rAF interval, rises this share a frame): a phone in low power mode capped at 30 Hz is not slow   // v0.70: start = first scale (was the max); the real gap between paints (fpsCap.gap) counts too: over gapSlow x the frame interval = too slow, under gapOk x (+ paint under upMs, cap not locked) = room to go up. The 30 FPS lock waits until the scale is down at min
 // v0.55 menu pacing (frame() in 14): menus paint at most fps, idleFps after idleMs with no input, and not at all while nothing on them can change
 // (a slow beatMs repaint covers anything that changes without a clock or input: a late image, a cloud sync note)
 const MENU_PACE = { fps: 60, idleFps: 30, idleMs: 400, beatMs: 2000, on: true, underSettings: false };   // underSettings = still draw the menu hidden under the settings page
@@ -1293,6 +1294,7 @@ function thirdDownOn() {   // Third Down Specialist: this down counts (3rd and l
 // online game reads its own exPenalties / exBooth (default off; online = the host's). Off in the tutorial, the cold open, 1v1 and test mode (unless REF.force).
 // Odds below are x diffX('flags') x the penalty's own slider (flHold / flDpi / flOpi / flRough / flOff / flFalse, GAME RULES sliders in DIFF_SLIDERS).
 const REF = {
+  rate: 0.6,   // v0.73 master on every penalty (x flagK: the called roll of live fouls, pre-snap / kick offside happening); 1 = the old rate. REF.edge / REF.miss / REF.force don't read it
   force: null,   // TEST ONLY: 'hold' | 'pphold' | 'dpi' | 'edge' | 'opi' | 'rough' | 'false' | 'offside' | 'encroach' | 'dhold' | 'spot' | 'spotGoal' | 'knock' = make it happen on the next chance (null = off)
   miss: 0.02,    // a real foul that no official flags (very rare)
   // v0.73 bad calls are fringe cases, never dice: a clear foul (severity >= clear) is always called by an official who can see it; a subtle one (below clear) is missed
@@ -1358,7 +1360,7 @@ const flagsTest = () => !!REF.force;
 const refGate = () => !(typeof tut !== 'undefined' && tut) && !(typeof CO !== 'undefined' && CO) && !(typeof oo !== 'undefined' && oo) &&!(exhibition && exhibition.test && !flagsTest()) && !(typeof LG_SAND !== 'undefined' && LG_SAND);
 const refSet = k => exhibition ? SETTINGS['ex' + k[0].toUpperCase() + k.slice(1)] === true : SETTINGS[k] !== false;   // ('penalties' / 'booth': franchise default on, scrimmage / online default off)
 function flagsOn() { return refGate() && (refSet('penalties') || REF.force != null); }
-const flagK = key => flagsOn() ? diffX('flags') * diffX(key) : 0;   // (a penalty's odds multiplier: 0 with penalties off)
+const flagK = key => flagsOn() ? REF.rate * diffX('flags') * diffX(key) : 0;   // (a penalty's odds multiplier: 0 with penalties off)
 function boothOn() { return refGate() && (refSet('booth') || REF.force === 'spot' || REF.force === 'spotGoal'); }
 // Contracts (SETTINGS.contracts, gate contractsOn(); code: `// --- contracts` in 11-cards-trades): your head coach deal (credits, paid at the
 // season's end), staff extensions / poach alerts, player extensions. Off = AUTO (the old behaviour, the HC deal renews by itself).
@@ -1421,7 +1423,7 @@ const BB = BOT_BAR / 40;
 // pad = px under the top bar (two players: pvpGap = px under the left timeout / audible buttons), touchY = extra px down on touch (clear of the stick), card = face card px, face = face radius px, size / bigSize = text px, maxW = widest bubble
 const ANN = { cps: 30, gap: 0.55, hold: 2.1, fade: 0.45, holdMax: 3.2, maxQ: 2, recent: 24, minLines: 12, slide: 0.32, pop: 0.22,
   colorOdds: { 0: 0.15, 1: 0.3, 2: 0.55, 3: 0.75 }, crazy: 5, longTd: 50, deepYd: 25,
-  pad: 8, pvpGap: 10, touchY: 34, card: 64, face: 21, size: 17, bigSize: 22, maxW: 300, shake: 1.6,
+  pad: 8, midPad: 10, pvpGap: 10,   // (midPad: v0.73 top-middle spot under the scoreboard while the key tips are up) touchY: 34, card: 64, face: 21, size: 17, bigSize: 22, maxW: 300, shake: 1.6,
   reelEnd: 3.4, reelGap: 0.9,
   reelCps: 15, reelWord: 0.45, reelAirQuick: 1.0, reelAirHang: 1.9,   // halftime reel only: slower handwriting, a line stays up at least reelWord s a word before the next one, air time (s) for the quick / hang colour lines
   overYd: 1.5, wideYd: 2.5 };   // incompletions: past / short of the target by more than overYd along the throw = over / underthrown, more than wideYd across it (and more across than along) = wide   // halftime reel: B's comment comes reelEnd s before a clip's last frame, never sooner than reelGap s after its last moment
