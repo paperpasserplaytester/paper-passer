@@ -2849,9 +2849,9 @@ for (const [type, k] of [['pointerdown', 'pd'], ['pointermove', 'pm'], ['pointer
       const now = performance.now(); if (now - ONL.ptrAt < 33) { if (mouse) e.stopImmediatePropagation(); return; } ONL.ptrAt = now;   // (~30 a second)
       if (!e.buttons && mouse) { e.stopImmediatePropagation(); return; }
       ONL.gPidAt = now;
-    } else ONL.gPid = null;
+    } else { if (k === 'pu' && aim && onlIAmOff()) ONL.gRelAt = performance.now(); ONL.gPid = null; }   // (v0.74: a throw release: onlGuestStep hides the reticle at once, ONL_NET.relHide)
   }
-  if (k === 'pd') onlSendKm();   // (a tap can be the kick's click: the meter value this guest saw goes first)
+  if (k === 'pd') { ONL.gRelAt = 0; onlSendKm(); }   // (a tap can be the kick's click: the meter value this guest saw goes first)
   if (k === 'pd') ONL.gUi = overUiBtn(p);   // (a press on a button stays a screen spot for the whole gesture, never mirrored: no button moves with the drive direction; one on the field is scaled into the host's view)
   const hp = ONL.gUi ? { x: p.x, y: p.y } : onlPtOut(p), hx = Math.round(hp.x), hy = Math.round(hp.y);   // (the host's frame)
   { const pm = { t: 'in', k, x: hx, y: hy, q: ONL.pq = (ONL.pq || 0) + 1 }; if (k === 'pd') pm.l = onlMyLag(); if (k === 'pm') NET.sendFast(pm); else NET.send(pm); }   // (q: the order they were made in. A drag's moves may be lost (the next one replaces them): the fast channel; down / up always arrive)

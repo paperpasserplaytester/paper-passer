@@ -877,6 +877,8 @@ const CHANGELOG = [
       "FRAME TIMES: timers and save steps are named by the code behind them, blocked leaves out our own frames, and spike lines are tagged RESIZED, DEC (audio decoding) or BACK FROM HIDDEN.",
       "FRAME TIMES also names the online host's snapshot work, the formation jog and play set-up, each heartbeat part, reliable messages by type, the first paint of a new cast and new faces, and why 30 FPS or a lower resolution kicked in.",
       "Phones on QUALITY: sharp end zone names, midfield logo and yard numbers on close shots.",
+      "Near the goal line the pre-snap camera centres on your formation and keeps every receiver on screen, clear of the top bar, so you can tap him for a hot route.",
+      "Guest presses answer faster: about a quarter less delay from press to picture at 150 ms ping, and your aim line goes away the moment you let go of a throw.",
     ]],
     ["FAIRER FLAGS", [
       "Every flag now follows something you can see. A clear foul is always called by an official who sees it.",

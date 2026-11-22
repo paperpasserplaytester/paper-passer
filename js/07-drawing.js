@@ -3559,7 +3559,7 @@ function drawFieldStatic() {
   const tick = 0.67 * YD;
   ctx.lineWidth = 4;
   const hashA = mk ? FIELD_PRESS.a : FIELD_PRESS.flat;   // (marker on: the ticks get the yard lines' wobble and are split between the pressure shades)
-  for (let b = 0; b < hashA.length; b++) {
+  for (let b = 0; b < hashA.length && !PHONE_TEST.noHash; b++) {   // (PHONE_TEST.noHash: DEBUG > HASH TICKS OFF)
     ctx.strokeStyle = `rgba(255,255,255,${hashA[b]})`;
     ctx.beginPath();
     for (let yd = 1; yd < 100; yd++) {

@@ -1778,7 +1778,7 @@ function drawStartBtns() {
   }
 }
 function titleStamp(cx, cy) { qsStamp(cx, cy - 12, 'PAPER PASSER', '#c0392b', -0.005, 1, 60, { distress: 7 }); }   // (centre of the title sheet, inside its own tilt)
-const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-21 PHONEPERF-51';
+const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-22 GUESTFEEL-52';
 let hlFlash = -1e9;   // when the main menu's HIGHLIGHT button was last clicked
 let quickMenu = false;   // QUICK PLAY (START_BTNS.ex) drop down: EXHIBITION / 1V1 / ONLINE take the place of FRANCHISE / CAREER / TUTORIAL (same buttons, same size)
 function startClick(p) {
@@ -2199,12 +2199,13 @@ const ONL_NET = {
   kmHold: 1.5,         // s: after the guest taps a kick meter it stays on the tapped value until the host's phase change lands (or this long)
   castKeep: 0.6,       // a line-up change where at least this share of the new list was already on the field goes as a partial cast (only the new men whole)
   hz: 20, hzFast: 30,   // snapshots a second, host -> guest (hzFast: while a kick meter or the aiming reticle is up)
+  fastPlay: true,       // v0.74: hzFast for every snap from the line-up through the whistle (the guest's presses: hot routes, the snap, his man, the throw), not only aim / kick meter / runs
   pressSnap: true, pressMin: 12,   // v0.70: a guest press / release sends the next snapshot at once (after the host's frame acted on it) instead of waiting for the hz tick; pressMin = ms since the last snapshot it needs (no flood from key repeats)
   hzSlow: 10,           // ... while the link is backed up
   slowMs: 1500,         // ms the slow rate holds after a backed-up tick
   // the guest's playback clock (ONL.pt, see onlGuestStep): it stays the travel time + a margin behind the host, the margin = 1.6 snapshot gaps + 2.5 x the jitter,
   // kept within delayMin..delayMax ms. It drifts there by running up to `stretch` faster / slower (steerMs: ms off for the full stretch); jumpMs off = jumps
-  delayMin: 70, delayMax: 220, stretch: 0.04, steerMs: 500, jumpMs: 400, dlyEase: 1.5, ahead: 0.6,   // dlyEase = 1/s the delay target eases at; ahead = clock rate while the picture runs too far ahead (never backwards)
+  delayMin: 55, delayMax: 220, gapK: 1.2, jitK: 2, stretch: 0.04, steerMs: 500, jumpMs: 400, dlyEase: 1.5, ahead: 0.6,   // dlyEase = 1/s the delay target eases at; ahead = clock rate while the picture runs too far ahead (never backwards); v0.74 gapK / jitK = the margin's snapshot gaps + x jitter (were 1.6 / 2.5, delayMin 70: a 148 ms ping bench sat 169 ms in the buffer)
   curve: true,          // positions on a curve that follows each snapshot's speeds (false = straight lines between snapshots, as before)
   curveFit: 0.5, curveSlack: 0.1 * YD,   // ... only when both speeds x the gap are within this share of the move made (+ slack px): a blocked / pushed man's speed isn't his movement
   extrapMs: 40,         // ms the guest carries every move on past the newest snapshot (a late / lost one), along its speed (0 = off: no guessing at all)...
@@ -2216,7 +2217,7 @@ const ONL_NET = {
   spreadK: 2.5, spreadCap: 300,   // the margin also grows by spreadK x how unevenly the host itself sends (ONL.hgDev, ms), and delayMax with it, up to spreadCap ms
   slipPx: 1.5,          // readout: a free runner drawn moving back along his run by more than this (px) in a frame = a slip (SLIP n/s on the FRAME TIMES line)
   predict: true,        // the guest's own player (his defender, his ball carrier) leads the host's picture, so he answers the keys at once
-  predMax: 0.22,        // s: the longest lead (the lead = the guest's draw delay + half the ping)
+  predMax: 0.3,         // s: the longest lead (v0.74: was 0.22, under the ~0.24 s a 135-150 ms ping needed) (the lead = the guest's draw delay + half the ping)
   predMin: 4.5,         // yd/s he is assumed to reach before the host has answered
   predGrace: 0.12,      // s past the lead after which it follows the speed the host really gave him (blocked or wrapped up: no ghost running ahead)
   predBad: 0.8,         // s of the host moving him AGAINST the keys before the lead is switched off for the game (a key layout this guess doesn't know)
@@ -2224,6 +2225,7 @@ const ONL_NET = {
   lagMax: 250,          // ms: the most the host ever rewinds for him (his reported draw delay + half the ping)
   lagBad: 1000, lagFall: 100,   // ms: a reported delay over lagBad (or not a number) is a wrong reading: use half the ping + lagFall instead (v0.73)
   histS: 0.4,           // s of player / ball spots the host keeps for that (ONL_HIST)
+  relHide: 0.6,         // v0.74: s the guest's own reticle is hidden after his release, until the host's picture shows the throw (looks only)
   inDelayMs: 50,        // CONTROL FEEL: DELAY = the host's own keys for his player are held this long, so both players' presses land evenly (no prediction that game)
 };
 const SNAP_DELAY = 100;   // ms the guest is taken to draw behind before its playback clock starts (see ONL_NET.delayMin / delayMax)
@@ -2405,6 +2407,7 @@ function onlHostCastPart(ps, pm, key, seq, map) {
   ONL.castN = ONL.castN || { full: 0, part: 0, fullC: [], partC: [] }; ONL.castN.part++; ONL.castN.partC.push(len);
   if (NET_CFG.logCast) console.log('net: partial cast ' + len + ' chars, ' + ps.length + ' players, ' + nNew + ' new' + (m.sl !== undefined ? ' (with the sideline pack: ' + JSON.stringify(m.sl).length + ')' : ''));
 }
+const onlPlayLive = () => !!game && !game.over && state !== 'done' && state !== 'sim' && !results;   // (v0.74 ONL_NET.fastPlay: a snap is on, line-up to whistle)
 const onlRunLive = () => state === 'run' || ((state === 'drop' || state === 'pocket') && isRunPlay);   // (a ball carrier steered by keys: the fast rate, like an aimed pass. At the slow rate a run play was drawn a snapshot later and felt sluggish next to a pass play)
 // --- lag compensation (host only): the guest sees the game ONL.gLag ms late, so his defensive presses are judged against that picture too.
 // ONL_HIST = the last ONL_NET.histS s of every player's x / y and the ball, one entry a frame (onlHostTick). The host still decides everything.
@@ -2448,7 +2451,7 @@ function onlHostTick() {
   let backed = false;
   try { const dc = NET.conn && NET.conn.dataChannel, fc = NET.fast; backed = !!((dc && dc.bufferedAmount > ONL_BACKLOG) || (fc && fc.bufferedAmount > ONL_BACKLOG)); } catch (e) {}
   if (backed) ONL.slowUntil = now + ONL_NET.slowMs;
-  const gap = 1000 / (onlKickerSets() || aim || onlRunLive() ? ONL_NET.hzFast : now < (ONL.slowUntil || 0) ? ONL_NET.hzSlow : ONL_NET.hz);   // (a kick meter / aim in progress: faster, so it stays smooth)
+  const gap = 1000 / (onlKickerSets() || aim || onlRunLive() || (ONL_NET.fastPlay && onlPlayLive()) ? ONL_NET.hzFast : now < (ONL.slowUntil || 0) ? ONL_NET.hzSlow : ONL_NET.hz);   // (a kick meter / aim in progress: faster, so it stays smooth)
   const press = ONL.pressNow && now - ONL.snapAt >= ONL_NET.pressMin;   // (a guest press since the last snapshot: this frame already acted on it, send now)
   if (now - ONL.snapAt < gap - 2 && !press) return;
   ONL.pressNow = false;
@@ -2587,7 +2590,7 @@ const onlDrawLag = () => ONL.pt != null ? Math.max(0, performance.now() - ONL.pt
 const onlMyLag = () => Math.round(onlDrawLag() + (NET.ping || 0) / 2);   // ms between the host's moment and this guest's press reaching it (sent as `l` on key / pointer downs, lag compensation)
 function onlDelayTarget() {
   const sp = ONL_NET.spreadK * (ONL.hgDev || 0), hi = Math.max(ONL_NET.delayMax, Math.min(ONL_NET.spreadCap, ONL_NET.delayMax + sp));   // (v0.70: an unevenly sending host needs a deeper buffer, or the picture runs out and guesses ahead)
-  return (ONL.tr || 0) + Math.max(ONL_NET.delayMin, Math.min(hi, 1.6 * (ONL.gapAvg || 1000 / ONL_NET.hz) + 2.5 * (ONL.jit || 0) + sp));
+  return (ONL.tr || 0) + Math.max(ONL_NET.delayMin, Math.min(hi, ONL_NET.gapK * (ONL.gapAvg || 1000 / ONL_NET.hz) + ONL_NET.jitK * (ONL.jit || 0) + sp));
 }
 const onlHerm = (p0, m0, p1, m1, t) => { const t2 = t * t, t3 = t2 * t; return (2 * t3 - 3 * t2 + 1) * p0 + (t3 - 2 * t2 + t) * m0 + (-2 * t3 + 3 * t2) * p1 + (t3 - t2) * m1; };
 // guest, every frame: the state at the playback clock, positions on a curve between the two snapshots around it
@@ -2705,6 +2708,8 @@ function onlGuestStep() {
     if (f < 0 || Math.abs(k - 1) > 0.001 || hv !== vc) for (const [a, b] of [['sx', 'sy'], ['cx', 'cy']]) { aim[a] = W / 2 + f * (aim[a] - W / 2) * k; aim[b] = vc + (aim[b] - hv) * k; }
     if (ONL.gPid != null && ONL.gLoc && !ONL.gUi && onlIAmOff() && qb && qb.hasBall) { aim.cx = ONL.gLoc.x; aim.cy = ONL.gLoc.y; }   // (your own throw: the moving end is your own finger, this frame, not the host's echo of it)
   }
+  if (aim && ONL.gRelAt && now - ONL.gRelAt < ONL_NET.relHide * 1000 && onlIAmOff()) aim = null;   // (v0.74: your release hides your reticle now; the host's throw follows in the picture)
+  else if (!aim) ONL.gRelAt = 0;
   { const P = ONL.gPress, Q = ONL.gLoc;   // (your snap drag: the reticle is up under your finger the moment the drag snaps it here, not a round trip later when the host's aim comes back)
     if (!aim && P && P.bf && Q && ONL.gPid != null && !ONL.gUi && onlIAmOff() && qb && ['pre', 'drop', 'pocket'].includes(state) && Math.hypot(Q.x - P.x, Q.y - P.y) >= BACKFIELD_DRAG) aim = { sx: P.x, sy: P.y, cx: Q.x, cy: Q.y }; }
   onlKickAnchor(); { const L = onlKickLocal(); if (L) { if (L.ph === 'power') kick.meter = L.v; else kick.pos = L.v; } }
@@ -2748,7 +2753,7 @@ function onlPredict(now) {
   if (free && n) {
     const late = held > lead + ONL_NET.predGrace, spd = late ? hs : Math.max(hs, base);
     tx = dx * spd * lead; ty = dy * spd * lead;
-    if (late && hs > 2 * YD && me.vx * dx + me.vy * dy < -0.5 * hs) { P.bad += dt; if (P.bad > ONL_NET.predBad) { ONL.predOff = true; P.ox = P.oy = 0; return; } }
+    if (late && hs > 2 * YD && me.vx * dx + me.vy * dy < -0.5 * hs) { P.bad += dt; if (P.bad > ONL_NET.predBad) { ONL.predOff = true; ONL.predWhy = 'moved against the keys ' + ONL_NET.predBad + ' s (' + state + ')'; console.info('online: guest prediction off for the game:', ONL.predWhy); P.ox = P.oy = 0; return; } }
     else P.bad = Math.max(0, P.bad - dt);
   }
   const step = Math.max(hs, base) * dt, ex = tx - P.ox, ey = ty - P.oy, el = Math.hypot(ex, ey);
@@ -2949,7 +2954,7 @@ function onlBeginMatch(c, asHost) {   // c: what the lobby settled on (teams, un
   if (ONL.on || !onlLobbyActive()) return;
   ONL.host = !!asHost; ONL.guest = !asHost;
   ONL.on = true; ONL.buf = []; ONL.full = []; ONL.gPrev = null; ONL.st = onlStNew(); ONL.pt = null; ONL.ptHi = null; ONL.dly = null; ONL.evQ = []; ONL.tr = null; ONL.gapAvg = 0; ONL.jit = 0; ONL.hgDev = 0; ONL.lastArr = 0; ONL.lastH = null; ONL.pred = null; ONL.predOff = false; ONL.pq = 0; ONL.gQ = 0; ONL.castKey = ''; ONL.slRef = undefined; ONL.slGot = -1; ONL.hold = {}; ONL.gHeld = {}; ONL.gDown = false; ONL.seq = 0;
-  ONL.feel = c.fl === 'DELAY' ? 'DELAY' : 'PREDICT'; if (ONL.feel === 'DELAY') ONL.predOff = true;   // (CONTROL FEEL: DELAY = no prediction on the guest; the host's own keys wait ONL_NET.inDelayMs, onlDelayKey)
+  ONL.feel = c.fl === 'DELAY' ? 'DELAY' : 'PREDICT'; if (ONL.feel === 'DELAY') { ONL.predOff = true; ONL.predWhy = 'CONTROL FEEL: DELAY'; }   // (CONTROL FEEL: DELAY = no prediction on the guest; the host's own keys wait ONL_NET.inDelayMs, onlDelayKey)
   ONL.gLag = 0; ONL.gStat = null; ONL_HIST.length = 0;
   ONL.savedSimDef = SETTINGS.simDefense; SETTINGS.simDefense = false;   // (defense is always played: the saved setting is ignored, and never written back)
   teamPick = null;
