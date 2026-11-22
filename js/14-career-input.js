@@ -1598,7 +1598,7 @@ canvas.addEventListener('pointerup', e => {
   if (!(e.buttons & 2)) replayDrag = null;
   if (e.button === 2) { replayDrag = null; return; }   // (end of a replay pan)
   if (e.button !== 0) return;
-  if (pclipOn()) { replayLeft = null; pclipEnd(); return; }   // (v0.71 a click skips the penalty clip, and only it)
+  if (pclipOn()) { replayLeft = null; pclipEnd(true); return; }   // (v0.71 a click skips the penalty clip, and only it)
   if (revOn()) { pressAt = 0; replayLeft = null; return; }   // (v0.68 a booth review can't be skipped)
   if (rec && rec.replaying && !(hl && hl.bg)) {
     if (rec.hl) {   // a highlight loops until you move on: a quick left click goes to the next one (a hold is slow motion, a drag looks around)
@@ -1746,7 +1746,7 @@ function onKeyDown(e) {
   if (settingsOpen) { if (diffUI) { diffKey(e); return; } if (e.code === 'Escape') { e.preventDefault(); if (dbgUI) dbgUI = false; else if (spdUI) spdUI = false; else if (htUI) htUI = false; else if (setCat) { setCat = null; rebinding = null; } else settingsOpen = false; } return; }
   if (injuryShowing() && !paused && e.code !== 'Escape') return;   // (answer the injury timeout first)
   if (state === 'done' && game && game.penQ && !paused && e.code !== 'Escape' && !(rec && rec.replaying)) { e.preventDefault(); if (!e.repeat) penKey(e.code); return; }   // (v0.68 the flag's accept / decline card)
-  if (pclipOn()) { e.preventDefault(); if (!e.repeat) pclipEnd(); return; }   // (v0.71 any key / Esc skips the penalty clip)
+  if (pclipOn()) { e.preventDefault(); if (!e.repeat) pclipEnd(true); return; }   // (v0.71 any key / Esc skips the penalty clip)
   if (revOn() && e.code !== 'Escape') { e.preventDefault(); return; }   // (v0.68 a booth review plays itself: no scrub, skip, save or finish)
   if (HT && !hl) { if (e.code === 'Escape' || e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); if (!e.repeat) { if (e.code === 'Escape') HSK.at = performance.now(); else hsNext(); } } return; }   // (a halftime card: Enter / Space next segment, HOLD Esc skips the show)
   if (hl && hl.mode === 'half' && !hl.bg) {   // a halftime clip: Enter next clip, Backspace previous clip, Esc skips the show, Space pauses

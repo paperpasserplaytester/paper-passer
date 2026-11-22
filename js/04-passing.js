@@ -302,10 +302,12 @@ function endPlay(text, next, kind) {
   playEndedAt = performance.now();
   const clutch = kind === 'fg' && bigKick();   // (a late kick that ties or wins it: asked before the points go up; the kicker's celebration)
   const wasKickoff = kickoffPlay || puntRet || puntRetPlay;   // (kick and punt returns aren't rushes)
-  let pen = !wasKickoff && (rbpPenalty(kind, next) || flagPenalty(kind, next) || kproPenalty());   // (run-block holding: the play comes back, replay the down; v0.68 pass-pro holding / pass interference / roughing (flagPenalty); a kick rusher offside: 5 yards, kick it again)
+  const hadFlag = !pq && !tut && (!!flagPen || !!rbpPen);   // (v0.73 a flag already on the turf: it must be explained, penWaved if it comes to nothing)
+  let pen = !wasKickoff && (rbpPenalty(kind, next) || flagPenalty(kind, next) || kproPenalty());
+  if (hadFlag && !pen) { flagPen = null; rbpPen = null; try { penWaved(); } catch (e) {} text += "  -  flag picked up"; }   // (the top bar says it too)   // (run-block holding: the play comes back, replay the down; v0.68 pass-pro holding / pass interference / roughing (flagPenalty); a kick rusher offside: 5 yards, kick it again)
   if (pen && !pen.dead && !pq && penAsk(text, next, kind, pen)) return;   // (v0.68 a live-ball foul: parked on game.penQ until the fouled side chooses)
   if (pq) { pen = pick === 'accept' ? pq.pen : null; game.penDeclined = pick !== 'accept'; game.penPick = null; game.penQ = null; if (!pen) text += '  -  flag declined'; }
-  if (pen) { text = pen.text; next = los; kind = ''; if (pen.dead) try { penBanner(pen); } catch (e) {} }   // (v0.70: a dead-ball flag says what and on whom too)
+  if (pen) { text = pen.text; next = los; kind = ''; if (pen.dead || !pq) try { let ln = ''; try { ln = penResLine(penOut({ pen }), penMine()); } catch (e) {} penBanner(pen, null, ln); } catch (e) {} }   // (v0.70: a dead-ball flag says what and on whom too; v0.73 + what it means now, and a live foul settled without a choice gets one too)   // (v0.70: a dead-ball flag says what and on whom too)
   else celebWhistle(text, kind);   // (celebrations: a blocked kick, a pick, a recovery, a sack)
   if (!pen && !kind && /SACKED/.test(text) && state !== 'done') sackCall();   // (whatever path ended it: the banner is up at the whistle)
   for (const p of allPlayers()) if (!p.hasBall) { p.tipArms = false; p.tipK = 0; p.reach = false; p.overShoulder = false; }   // (the pass is dead: nobody keeps his hands up for a catch / tip that didn't happen)
@@ -1641,7 +1643,7 @@ function homeLunge(d, c, dt, fooled) {
 // push / vMin / vMax = yd/s; friction = yd/s^2 on the turf; slideMax = most of an untimed dive's length spent sliding; over = s he lands after the catch
 // point of a timed dive; minT = shortest dive (s)
 const DIVE = { push: 3, vMin: 4.5, vMax: 14, plant: 0.7, friction: 40, slideMax: 0.3, over: 0.05, minT: 0.12,
-  topRef: 8.5, topK: [0.8, 1.15], wtRef: 200, wtExp: 0.5, wtK: [0.8, 1.12], gather: 0.12 };   // v0.71 one rule for both sides: push x (his own top yd/s / topRef) x (wtRef lb / his weight)^wtExp, each clamped; vMin = a standing man's floor; gather = most s a timed dive spends on his feet (at the pace he had, never braking below it)
+  topRef: 8.5, topK: [0.8, 1.15], wtRef: 200, wtExp: 0.5, wtK: [0.8, 1.12], gather: 0.12, htRef: 74, htExp: 1, htK: [0.95, 1.05], launchRule: true, gatherMax: 0.6, minAir: 0.1 };   // v0.73 htRef in (his height / htRef)^htExp clamped htK = a taller man covers a bit more; launchRule = a timed pass dive flies at his launch speed and waits on his feet instead (up to gatherMax s), false = the old float   // v0.71 one rule for both sides: push x (his own top yd/s / topRef) x (wtRef lb / his weight)^wtExp, each clamped; vMin = a standing man's floor; gather = most s a timed dive spends on his feet (at the pace he had, never braking below it)
 const DIVE_FEEL = { min: 0.55, fullSpeed: 8 * YD };   // reach: x the lunge standing still .. the full lunge at fullSpeed or faster
 // a dive for the ball is never longer than lunge yd and never aims more than oob yd past a sideline (balls sailing out of bounds made players "teleport" after them)
 const DIVE_CAP = { lunge: 4.5, oob: 1.2 };
@@ -1652,7 +1654,8 @@ function diveLaunch(p, ux, uy) {
   const carry = sp * (cos >= 0 ? DIVE.plant + (1 - DIVE.plant) * cos : DIVE.plant * (1 + cos));
   const top = ownTop(p), tk = Number.isFinite(top) && top > 0 ? Math.max(DIVE.topK[0], Math.min(DIVE.topK[1], top / YD / DIVE.topRef)) : 1;
   const wk = p.wt > 0 ? Math.max(DIVE.wtK[0], Math.min(DIVE.wtK[1], Math.pow(DIVE.wtRef / p.wt, DIVE.wtExp))) : 1;
-  return Math.max(DIVE.vMin, Math.min(DIVE.vMax, carry / YD + DIVE.push * tk * wk)) * YD;
+  const hk = p.ht > 0 ? Math.max(DIVE.htK[0], Math.min(DIVE.htK[1], Math.pow(p.ht / DIVE.htRef, DIVE.htExp))) : 1;   // (v0.73 his height, small)
+  return Math.max(DIVE.vMin, Math.min(DIVE.vMax, carry / YD + DIVE.push * tk * wk * hk)) * YD;
 }
 // s until a dive launched now gets to that spot (for leading a tackle: where the runner will be when the dive lands)
 const diveEta = (p, tx, ty) => { const dx = tx - p.x, dy = ty - p.y, d = Math.hypot(dx, dy) || 1; return Math.min(0.35, d / diveLaunch(p, dx / d, dy / d)); };
@@ -1670,10 +1673,10 @@ function diveKin(L, v, arrive, z0, v0 = 0) {
       // the ball is still a moment off: v0.71 he keeps the pace he had (never faster than the ball needs) for at most DIVE.gather s, then lays out at the speed
       // that has him there with it (never above his launch speed): no braking on his feet first
       vg = Math.max(0, Math.min(v0, L / ta));
-      tw = Math.max(0, Math.min(DIVE.gather, (v * ta - L) / (v - vg)));
+      tw = Math.max(0, Math.min(DIVE.launchRule ? DIVE.gatherMax : DIVE.gather, (v * ta - L) / (v - vg)));   // (v0.73 launchRule: the wait is all on his feet, so he flies at his launch speed)
       if (ta - tw > flyMax) { tw = ta - flyMax; vg = Math.max(0, Math.min(v0 || L / ta, (L - v * flyMax) / tw)); }   // (too far to fly in one dive: he closes more of it on his feet)
-      vv = Math.max(vg, Math.min(v, (L - vg * tw) / Math.max(0.05, ta - tw))); Ls = vv * vv / (2 * mu);
-      air = ta - tw + DIVE.over;
+      if (DIVE.launchRule && ta - tw < DIVE.minAir) { tw = Math.max(0, ta - DIVE.minAir); vv = v; Ls = vv * vv / (2 * mu); air = Math.max(DIVE.minAir, ta - tw) + DIVE.over; }   // (v0.73 a tiny lunge with the ball almost there: he still flies minAir s at his launch speed, carrying a little past the spot, never floating)
+      else { vv = Math.max(vg, Math.min(v, (L - vg * tw) / Math.max(0.05, ta - tw))); Ls = vv * vv / (2 * mu); air = ta - tw + DIVE.over; }
     }
   } else {
     Ls = Math.min(nat, L * DIVE.slideMax);

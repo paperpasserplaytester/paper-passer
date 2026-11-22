@@ -307,7 +307,7 @@ function stepReplay(dt, scrub = 0) {
   replayPanClamp();
   camX = rec.camBase[0] + replayPan.x; camY = rec.camBase[1] + replayPan.y; zoom = replayZoom() * replayUserZoom / userZoom; passPull = 1;
   if (revOn() && !hl) revCam(dt, a, b, last);   // (v0.68 the booth's camera: follows the ball, then pushes in on it at the line)
-  else if (pclipOn() && !hl) { const f = PCLIP.fl[PCLIP.i], F = REF.flagCam; camX += (f.x - camX) * F.pan; camY += (f.y - camY) * F.pan; zoom *= F.push; }   // (v0.71 the penalty clip: flagCam at full weight on this flag)
+  else if (pclipOn() && !hl) pclipCam();   // (v0.71 the penalty clip: flagCam at full weight on this flag)
   else if (rec.flags && rec.flags.length && !hl && replayPan.lockX == null && !rec.clipShown) flagCam();   // (v0.71 not again after the penalty clip)   // (v0.70 a flagged play: pushed in on each foul around its time)
   if (hl && hl.mode === 'half') {   // the halftime reel's director: tighter than a replay, on the ball (or the blocker at a big block), leading the runner, pushing in at each moment
     const C = HLREEL.cam, apx = (hl.list[hl.i] || {}).apex || [];
@@ -2841,17 +2841,21 @@ function diffMig(sl) { if (isFinite(sl.catchTol)) { for (const k of ['youCatch',
 const diffNew = () => ({ v: 1, mode: ['dynamic', 'custom'].includes(SETTINGS.diffMode) ? SETTINGS.diffMode : 'preset', preset: 'NORMAL', sliders: diffMig({ ...(SETTINGS.diffSliders || {}) }), masters: { ...diffMastersAt(0.5), ...(SETTINGS.diffMasters || {}) }, dyn: { D: DYN_START, S: 0.5, games: 0, years: 0, lossRun: 0, sD: DYN_START, history: [], M: Object.fromEntries(DYN_IDS.map(id => [id, DYN_START])), P: Object.fromEntries(DYN_IDS.map(id => [id, dynPfresh()])), ev: 0, last: null } });
 var DYN_START = 0.1;   // (a new franchise's dynamic difficulty starts this low: lenient)
 let DIFFV = diffNew();
-const diffMode = () => tut || exhibition || !season ? 'preset' : DIFFV.mode;   // (the tutorial, exhibitions and the menus are always a preset: NORMAL)
+// (v0.73: a scrimmage may be CUSTOM: its own sliders / masters live in SETTINGS.exDiff, set from the settings' difficulty page; no adaptive)
+const exDiff = () => SETTINGS.exDiff || (SETTINGS.exDiff = { mode: 'preset', sliders: {}, masters: diffMastersAt(0.5) });
+const exCustom = () => !!exhibition && !exhibition.online && !exhibition.lg && !tut && exDiff().mode === 'custom';
+const diffLive = () => exhibition ? exDiff() : DIFFV;   // (where the custom sliders / masters the game reads come from)
+const diffMode = () => exCustom() ? 'custom' : tut || exhibition || !season ? 'preset' : DIFFV.mode;   // (the tutorial, exhibitions and the menus are always a preset: NORMAL; a scrimmage may be CUSTOM)
 const diffD = () => diffMode() === 'dynamic' ? dynNow() : diffMode() === 'custom' ? 0.5 : (DIFF_D[curDiff()] ?? 0.5);
 const diffNearest = D => DIFF_NAMES.reduce((a, k) => Math.abs(DIFF_D[k] - D) < Math.abs(DIFF_D[a] - D) ? k : a, 'NORMAL');
 // the resolved value of every slider right now (custom: the chosen one, else neutral)
 const diffLim = (s, v) => Math.max(s.lo, Math.min(s.hi, v));   // (clamped to the slider's range, never rounded: a neutral stays exactly neutral)
 // a master's D: preset / dynamic = the mode's one D (phase 4 splits dynamic), custom = DIFFV.masters (0.5 if unset)
-const diffMasterD = (id, m = diffMode(), D = diffD(), ms = DIFFV.masters) => m === 'custom' ? (ms && ms[id] != null ? diffMLim(ms[id]) : 0.5) : m === 'dynamic' && !DIFF_MENU && DYN_IDS.includes(id) ? dynMD(id) : D;   // (adaptive: each judged master its own D)
+const diffMasterD = (id, m = diffMode(), D = diffD(), ms = diffLive().masters) => m === 'custom' ? (ms && ms[id] != null ? diffMLim(ms[id]) : 0.5) : m === 'dynamic' && !DIFF_MENU && DYN_IDS.includes(id) ? dynMD(id) : D;   // (adaptive: each judged master its own D)
 // one slider's value: custom = a hand-set value, else its master's D (GAME RULES: n); preset / dynamic = at the mode's D
-const diffValOf = (s, m = diffMode(), D = diffD(), sl = DIFFV.sliders, ms = DIFFV.masters) => m === 'custom'
+const diffValOf = (s, m = diffMode(), D = diffD(), sl = diffLive().sliders, ms = diffLive().masters) => m === 'custom'
   ? (sl[s.key] != null ? diffLim(s, sl[s.key]) : s.m ? diffSliderAt(s, diffMasterD(s.m, m, D, ms)) : s.n) : diffSliderAt(s, s.m ? diffMasterD(s.m, m, D, ms) : D);
-const diffVals = (m = diffMode(), D = diffD(), sl = DIFFV.sliders, ms = DIFFV.masters) => { const o = {}; for (const s of DIFF_SLIDERS) o[s.key] = diffValOf(s, m, D, sl, ms); return o; };   // (an untouched custom slider at a 0.5 master is exactly neutral)
+const diffVals = (m = diffMode(), D = diffD(), sl = diffLive().sliders, ms = diffLive().masters) => { const o = {}; for (const s of DIFF_SLIDERS) o[s.key] = diffValOf(s, m, D, sl, ms); return o; };   // (an untouched custom slider at a 0.5 master is exactly neutral)
 const diffSave = () => ({ v: 1, mode: DIFFV.mode, preset: SETTINGS.difficulty, sliders: { ...DIFFV.sliders }, masters: { ...DIFFV.masters }, dyn: JSON.parse(JSON.stringify(DIFFV.dyn)) });
 function diffLoad(x) {   // (a save's `diff`: an old one is just the level's name = preset mode)
   DIFFV = diffNew(); DIFFV.mode = 'preset';
@@ -3108,7 +3112,7 @@ const DIFF_C = { f: -1, k: [], t: [], v: null };
 function diffSig(a) {   // every piece of state diffLvlRaw's answer depends on (sliders edited in place are covered by the new frame)
   let i = 0;
   a[i++] = tut; a[i++] = tut && tut.defOn; a[i++] = twoP; a[i++] = twoP && twoP.ai; a[i++] = twoP && twoP.flipped;
-  a[i++] = exhibition; a[i++] = exhibition && exhibition.diff; a[i++] = season; a[i++] = season && season.offseason;
+  a[i++] = exhibition; a[i++] = exhibition && exhibition.diff; { const X = SETTINGS.exDiff; a[i++] = X; a[i++] = X && X.mode; a[i++] = X && X.masters; a[i++] = X && X.sliders; } a[i++] = season; a[i++] = season && season.offseason;
   a[i++] = SETTINGS.difficulty; a[i++] = DIFFV; a[i++] = DIFFV.mode; a[i++] = DIFFV.masters; for (const id of DIFF_MIDS) a[i++] = DIFFV.masters && DIFFV.masters[id]; a[i++] = DIFFV.dyn.D; a[i++] = DIFFV.dyn.games; a[i++] = DIFFV.dyn.M; for (const id of DYN_IDS) a[i++] = DIFFV.dyn.M && DIFFV.dyn.M[id];
   a[i++] = LEAGUE.year; a[i++] = LEAGUE.firstPlayed; a[i++] = MATCH.opp; a[i++] = MATCH.playoff; a[i++] = career.hcMain; a[i++] = career.rivals;
   a[i++] = po; a[i++] = po && po.round; a[i++] = po && po.playing; a[i++] = po && po.over; a[i++] = game;
@@ -3131,7 +3135,7 @@ const diffLvlRaw = () => tut ? { ...DIFFICULTY.NORMAL, ...DIFF_ONE } : (() => {
   // pressure, tackling and shedding all weaker), so every multiplier is flipped around NORMAL. sim / stars already mean "their offense".
   if (aiOff()) {
     if (!pre) for (const [id, keys] of DIFF_FLIP_M) for (const key of keys) {   // (the flipped keys are the PLAYER's defense against the CPU offense: read at the CPU masters' D, not the PLAYER ones; a hand-set value stays)
-      const s = DIFF_SLIDERS.find(q => q.key === key); if (s && !(diffMode() === 'custom' && DIFFV.sliders[key] != null)) lv[key] = diffSliderAt(s, diffMasterD(id));
+      const s = DIFF_SLIDERS.find(q => q.key === key); if (s && !(diffMode() === 'custom' && diffLive().sliders[key] != null)) lv[key] = diffSliderAt(s, diffMasterD(id));
     }
     const n = DIFFICULTY.NORMAL, o = { ...lv, rz: -lv.rz };
     for (const key of ['hit', 'fum', 'cover', 'drop', 'brk']) o[key] = n[key] * n[key] / lv[key];

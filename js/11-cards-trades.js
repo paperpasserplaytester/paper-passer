@@ -4331,7 +4331,7 @@ function drawFlameMeter(b, now) {   // the CPU's level: six flames that grow, li
     drawFlame(x0 + i * 24 + sway, b.y + b.h - 3, h * (over ? 1.08 : 1), lit ? ['#ffd23a', '#ffb02a', '#ff8a1e', '#f4601a', '#e0301a', '#b3120f'][i] : null, lit ? RES.line : 'rgba(70,60,40,0.35)');
   }
   ctx.fillStyle = RES.line; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  ctx.fillText(dn(curDiff()), b.x + 160, b.y + b.h / 2 + 1);
+  ctx.fillText(exCustom() ? 'CUSTOM' : dn(curDiff()), b.x + 160, b.y + b.h / 2 + 1);
   ctx.restore();
 }
 function stampFace(b) {   // PLAY as an ink stamp

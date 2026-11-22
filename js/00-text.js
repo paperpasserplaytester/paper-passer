@@ -711,6 +711,8 @@ const ANN_LINES = {
     B: ['Smart to stay put.', 'No sense bringing that out.', 'Free yards, take them.', 'Big leg on that kick.', 'Nothing to gain there.', 'Start from the {tb}.'] },
   flag: { A: ['Flag on the play.', 'Yellow flag down.', 'Penalty there.', 'Flag is out.', 'There is a flag.', 'Hanky on the field.'],
     B: ['That will cost them.', 'Discipline, folks.', 'Could not get away with it.', 'Ref saw that one.', 'Bring it back.', 'Self-inflicted wound.'] },
+  flagWaved: { A: ['They are picking that flag up.', 'Flag waved off.', 'No foul on the play.', 'Picked up. Nothing there.'],
+    B: ['The play stands.', 'Good call by the crew.', 'Phew.', 'Nothing doing.'] },
   review: { A: ['They are going to look.', 'Booth review.', 'Under review.', 'Upstairs wants a look.', 'Let us look again.', 'Hold on, review.', 'Checking the spot.', 'Booth is buzzing in.', 'Time for a look.', 'Replay will decide.'],
     B: ['That was close.', 'Could go either way.', 'Need a good angle.', 'Watch the ball here.', 'Tight one, folks.', 'Glad they are checking.', 'Every inch counts.', 'Get it right.', 'I think he made it.', 'I am not so sure.'] },
   revStands: { A: ['The ruling stands.', 'Call stands.', 'Stands as called.', 'No change.', 'Ruling on the field stands.', 'They keep it.', 'Not enough to overturn.', 'Stays the same.', 'Confirmed.', 'Call is good.'],
@@ -851,6 +853,20 @@ const DRAFT_SCHOOLS = ['BAYOU STATE', 'GREAT LAKES TECH', 'NORTH PRAIRIE', 'COAS
   'MAGNOLIA', 'SILVER LAKE', 'FORT ASH', 'PALMETTO BAY', 'BIG SKY NORTH', 'CAPITAL CITY', 'THREE RIVERS', 'SAGEBRUSH', 'MAPLE GROVE', 'SOUTH RIDGE', 'TIDEWATER', 'ELK RAPIDS', 'SUNCOAST', 'BLACK HILLS TECH', 'WINDWARD'];
 const CHANGELOG = [
   { v: "v0.73", secs: [
+    ["SCRIMMAGE", [
+      "Scrimmages can use a CUSTOM difficulty: set it in the settings' difficulty page.",
+    ]],
+    ["FLAGS", [
+      "About 40% fewer penalties.",
+      "Every flag now ends with a result: accepted, declined, offsetting or picked up, and where the ball goes next.",
+      "Penalty replays slow down and zoom in on the foul, ease in and out, and wear a PENALTY REPLAY note.",
+      "The announcers move to the top middle while the key tips are showing.",
+    ]],
+    ["LOOKS", [
+      "The schedule sits on an old treasure map.",
+      "Officials run smoother: no more bobbing heads or stuttering legs on every re-aim.",
+      "Taller players cover a little more ground on a dive.",
+    ]],
     ["ONLINE FIXES", [
       "Fixed: the guest could lose the whole top bar, scoreboard and all, for the rest of a match after one bad frame.",
       "Fixed: the online lobby could hiccup while a side had no team picked yet.",

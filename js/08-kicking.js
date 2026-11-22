@@ -4975,7 +4975,8 @@ function draw() {
   dmHold = Math.max(0, dmHold - 1);
   if (CAM.debug) camDebugDraw();   // (dev only: the camera's safe zone / must-fit box / centres / zooms)
   if (coldHud()) return;   // (the cold open's dream: the field and nothing else)
-  if (pclipOn()) { ctx.fillStyle = '#16211a'; ctx.fillRect(0, 0, W, TOP_BAR); return; }   // (v0.71 the penalty clip: the play and nothing else, like a reel)
+  if (pclipOn()) { ctx.fillStyle = '#16211a'; ctx.fillRect(0, 0, W, TOP_BAR); pclipNote(); return; }
+  if (PCLIP_FADE) pclipFadeDraw();   // (v0.73 the live picture fades back in after the penalty clip)   // (v0.71 the penalty clip: the play and nothing else, like a reel)
   if (reelOn()) { ctx.fillStyle = '#16211a'; ctx.fillRect(0, 0, W, TOP_BAR); if (hlFront()) { drawPauseIcons(); drawNamesTip(); } return; }   // (v0.62: the exit door + the names tip sit in the top bar strip, nothing over the play; v0.68: the halftime reel's announcers are drawn after this, in drawHsClipUI)   // (a reel: the play and nothing else. No scoreboard, buttons, down and distance or text)
   if (rec && rec.replaying && !rec.intro && !rec.rewind && !(hl && hl.mode === 'half') && !cine && !revOn()) {   // (v0.68 none in a booth review) (the badge waits for the rewind to finish; none on the halftime reel): a torn red paper scrap, and SAVE beside it
     ctx.save();

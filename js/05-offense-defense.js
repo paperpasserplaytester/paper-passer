@@ -2290,7 +2290,7 @@ function flagPenalty(kind, next) {   // v0.70 every flag of the play: fouls on b
   const dn = ['1st', '2nd', '3rd', '4th'][down - 1] || 'the';
   if (res.some(r => r.fouled === 'off') && res.some(r => r.fouled === 'def')) return { spot: los, dead: true, off2: true, sig: 'rfWaveOff', key: 'flag', num: '', fouled: '', yds: 0, text: `OFFSETTING PENALTIES (${res.map(r => r.name).join(' + ')}): replay ${dn} down` };
   const w = r => (r.yds || 0) + (r.first ? 10 : 0), best = res.sort((a, b) => w(b) - w(a))[0];
-  if (res.length > 1) best.text += `  (${res.length} flags: the worst one)`;
+  if (res.length > 1) { best.text += `  (${res.length} flags: the worst one)`; best.others = res.length - 1; }   // (v0.73 the banner names the enforced one, the rest declined)
   return best;
 }
 function flagOne(f, kind, next) {   // one flag's result, or null
@@ -2374,10 +2374,22 @@ function penWho(pen) {   // (v0.70) the foul and who it was on, for the banners 
   const pl = pen.num ? allPlayers().find(p => String(p.num) === String(pen.num) && p.team === side) : null, nm = pl && ((pl.src && pl.src.name) || pl.name);
   return { name: head.split(',')[0].trim().toUpperCase() || 'PENALTY', on: `${tm}${pen.num ? ' #' + pen.num : ''}${nm ? ' ' + nm : ''}`.trim() };
 }
-function penBanner(pen, head) {   // (v0.70) every flag, for or against you, announcers on or off
-  const w = penWho(pen), yd = pen.off2 ? 'replay the down' : pen.first ? 'automatic first down' : (pen.yds || 0) + ' yards';
-  showBanner((head || 'FLAG') + ': ' + w.name, '#ffd23f', '#3a2a00', (w.on ? 'on ' + w.on + '  -  ' : '') + yd, true);
+function penBanner(pen, head, line) {   // (v0.70) every flag, for or against you, announcers on or off; line = v0.73 the result ("2nd & 20 at your 25")
+  const w = penWho(pen), yd = (pen.off2 ? 'replay the down' : pen.first ? 'automatic first down' : (pen.yds || 0) + ' yards') + (line ? '  -  ' + line : '');
+  showBanner((head || 'FLAG') + ': ' + w.name, '#ffd23f', '#3a2a00', (w.on ? 'on ' + w.on + '  -  ' : '') + yd + (pen.others ? `  -  ${pen.others} more declined` : ''), true);
   return w;
+}
+const penMine = () => (aiOff() ? 'def' : 'off');   // (v0.73 "your" / "their" in a result line = your side)
+function penAfter(pen, play, txt) {   // v0.73 the result line after a flag is settled: what it means now (top bar + the banner's sub, set by the caller)
+  let line = ''; try { line = penResLine(penOut(play || { pen }), penMine()); } catch (e) {}
+  msg = txt + (line ? '  -  ' + line : '');
+  return line;
+}
+function penWaved(reason) {   // v0.73 a flag was thrown but comes to nothing (a kick / PAT / kickoff play, or no foul stood): say so, never silent
+  showBanner('FLAG PICKED UP', '#ffd23f', '#3a2a00', 'no foul  -  the play stands', true);
+  try { refPenCall({ sig: 'rfWaveOff' }); } catch (e) {}
+  try { annSay('flagWaved', { pri: 3 }); } catch (e) {}
+  msg = 'FLAG PICKED UP  -  no foul' + (reason ? ' (' + reason + ')' : '');
 }
 function penAsk(text, next, kind, pen) {   // (endPlay) park a live-ball foul; false = settle it at once (as before)
   if (tut || (rec && rec.replaying) || patMode !== null || !pen.fouled) return false;
@@ -2400,9 +2412,13 @@ function penTick() {   // (update, while game.penQ) the call, then the choice
 }
 function penResolve(pick) {
   const q = game.penQ; if (!q || game.penPick) return;
-  { const w = q.who || penWho(q.pen); showBanner((pick === 'accept' ? 'ACCEPTED: ' : 'DECLINED: ') + w.name, '#ffd23f', '#3a2a00', (w.on ? 'on ' + w.on + '  -  ' : '') + (pick === 'accept' ? (q.pen.first ? 'automatic first down' : (q.pen.yds || 0) + ' yards') : 'the play stands'), true); }
+  const w = q.who || penWho(q.pen), acc = pick === 'accept', o = acc ? q.acc : q.play;
+  let line = ''; try { line = penResLine(o, penMine()); } catch (e) {}   // (v0.73 what it means now: "2nd & 20 at your 25")
+  const sub = (acc ? (q.pen.first ? 'automatic first down' : (q.pen.yds || 0) + ' yards') : 'the play stands') + (line ? '  -  ' + line : '');
+  showBanner((acc ? 'ACCEPTED: ' : 'DECLINED: ') + w.name, '#ffd23f', '#3a2a00', (w.on ? 'on ' + w.on + '  -  ' : '') + sub, true);
   game.penPick = pick;
   try { endPlay(q.text, q.next, q.kind); } catch (e) { console.warn(e); game.penPick = null; game.penQ = null; state = 'done'; }
+  msg = (acc ? 'ACCEPTED: ' : 'DECLINED: ') + w.name + '  -  ' + sub;   // (after endPlay, so its own msg doesn't wipe it)
 }
 const penOrd = d => ['1st', '2nd', '3rd', '4th'][Math.max(1, Math.min(4, d)) - 1];
 function penResLine(o, mine) {   // an outcome as the card shows it ("1st & 10 at the 35")
@@ -2452,25 +2468,67 @@ function pclipStart() {
   q.clipped = true;
   if (SETTINGS.replays === 'NONE' || ONL.on || tut || !rec || rec.replaying || !rec.frames || rec.frames.length < 2 || !rec.flags || !rec.flags.length) return false;
   const fl = rec.flags.slice().sort((a, b) => a.t - b.t);
-  PCLIP = { fl, i: 0, rt: Math.max(rec.frames[0].t, fl[0].t - REF.flagCam.lead), msg: msg };
+  PCLIP = { fl, i: 0, rt: Math.max(rec.frames[0].t, fl[0].t - REF.flagCam.lead), msg: msg, age: 0, dtR: 0, w: 0, pk: 0, sp: 1, tx: fl[0].x, ty: fl[0].y, out: null, note: null, who: q.who || null };
   startReplay(); rec.fromClick = true; rec.intro = null; rec.rewind = null; rec.rt = PCLIP.rt; rec.idx = 0;
   return true;
 }
 function pclipTape(dt, fr) {   // (stepReplay while pclipOn) the clip's clock
-  const P = PCLIP, f = P.fl[P.i], t0 = fr[0].t, endT = fr[fr.length - 1].t;
-  P.rt += dt;
-  if (P.rt >= Math.min(endT, f.t) + REF.clip.hold) {
-    if (P.i + 1 < P.fl.length) { P.i++; P.rt = Math.max(t0, P.fl[P.i].t - REF.flagCam.lead); if (typeof reelSnap === 'function' && hl) hl.fx = { t0: performance.now(), snap: reelSnap() }; }
-    else P.end = true;
+  const P = PCLIP, f = P.fl[P.i], t0 = fr[0].t, endT = fr[fr.length - 1].t, C = REF.clip, ss = u => { u = Math.max(0, Math.min(1, u)); return u * u * (3 - 2 * u); };
+  P.age += dt; P.dtR = dt;
+  if (P.out) {   // (v0.73 the out-transition: the tape holds its last frame while the camera eases back, then the dead ball)
+    P.out.t += dt; P.w = (1 - ss(P.out.t / P.out.S)) * ss(P.age / C.inS);
+    if (P.out.t >= P.out.S) P.end = true;
+    return Math.max(t0, Math.min(endT, P.rt));
+  }
+  const ft = Math.min(endT, f.t), r = C.slowRamp;   // (v0.73 slow motion about the foul, eased: no step in speed)
+  const slow = ss((P.rt - (ft - C.slowLead - r)) / r) * (1 - ss((P.rt - (ft + C.slowHold)) / r));
+  P.sp = 1 - (1 - C.slowK) * slow;
+  P.pk = 1 - ss(Math.abs(P.rt - ft) / C.pushW);
+  P.w = ss(P.age / C.inS);
+  P.rt += dt * P.sp;
+  if (P.rt >= ft + C.hold) {
+    if (P.i + 1 < P.fl.length) { P.i++; P.rt = Math.max(t0, P.fl[P.i].t - REF.flagCam.lead); }   // (v0.73 the camera eases on to the next flag: pclipCam)
+    else P.out = { t: 0, S: C.outS };
   }
   return Math.max(t0, Math.min(endT, P.rt));
 }
-function pclipEnd() {   // (replayTick once it ran out, or a skip) back to the dead ball: the card comes next (penTick)
+function pclipCam() {   // (stepReplay's camera while pclipOn) v0.73 eased in from the tape's own camera, an extra push at the foul, flag to flag without a jump
+  const P = PCLIP, f = P.fl[P.i], C = REF.clip, F = REF.flagCam, k = 1 - Math.exp(-C.follow * (P.dtR || 0));
+  P.tx += (f.x - P.tx) * k; P.ty += (f.y - P.ty) * k;
+  camX += (P.tx - camX) * F.pan * P.w; camY += (P.ty - camY) * F.pan * P.w;
+  zoom *= 1 + (F.push * (1 + (C.push - 1) * P.pk) - 1) * P.w;
+}
+let PCLIP_FADE = 0;   // (v0.73 performance.now() the clip ended: the live picture fades back in over REF.clip.fadeIn)
+function pclipEnd(skip) {   // (replayTick once it ran out, or a skip) back to the dead ball: the card comes next (penTick)
   const P = PCLIP; if (!P) return;
-  PCLIP = null;
-  if (rec && rec.replaying) endReplay();
+  if (!P.end && rec && rec.replaying) { if (!P.out) P.out = { t: 0, S: skip ? REF.clip.skipS : REF.clip.outS }; else P.out.S = Math.min(P.out.S, REF.clip.skipS); return; }   // (v0.73 a skip / the end eases out first: pclipTape)
+  PCLIP = null; if (P.note) freeCanvas(P.note);
+  if (rec && rec.replaying) { endReplay(); PCLIP_FADE = performance.now(); }
   if (rec) { rec.played = false; rec.clipShown = true; rec.fromClick = false; }
   msg = P.msg; pressAt = 0;
+}
+function pclipNote() {   // (draw(), the pclip branch) v0.73 the PENALTY REPLAY sticky note + the foul, baked once a clip
+  const P = PCLIP, N = REF.clip.note; if (!P) return;
+  if (!P.note) {
+    const w = P.who || (game.penQ && game.penQ.who) || null, sub = w ? w.name + (w.on ? '  -  ' + w.on : '') : '';
+    P.note = ctxBake(0, 0, N.w + 12, N.h + 12, () => {
+      ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(9, 9, N.w, N.h);
+      ctx.fillStyle = N.paper; ctx.fillRect(4, 4, N.w, N.h); ctx.fillStyle = N.band; ctx.fillRect(4, 4, N.w, 9);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = N.ink; ctx.font = `bold ${N.font}px ${HAND_FONT}`;
+      ctx.fillText('PENALTY REPLAY', 4 + N.w / 2, 4 + N.h * (sub ? 0.42 : 0.55));
+      if (sub) { ctx.fillStyle = N.sub; ctx.font = `${N.subFont}px ${HAND_FONT}`; ctx.fillText(sub.length > 34 ? sub.slice(0, 33) + '.' : sub, 4 + N.w / 2, 4 + N.h * 0.78); }
+    });
+  }
+  const pop = Math.min(1, P.age / N.pop), a = pop * P.w, s = 0.85 + 0.15 * pop, cx = W / 2, cy = TOP_BAR + N.y + N.h / 2;
+  ctx.save(); ctx.globalAlpha *= Math.max(0, Math.min(1, P.out ? P.w : pop)); ctx.translate(cx, cy); ctx.rotate(N.tilt); ctx.scale(s, s);
+  ctx.drawImage(P.note, -P.note._w / 2, -P.note._h / 2, P.note._w, P.note._h); ctx.restore();
+  if (P.out) { ctx.save(); ctx.globalAlpha = REF.clip.fadeA * (1 - P.w); ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); ctx.restore(); }
+  if (TOUCH) { ctx.save(); ctx.globalAlpha *= 0.7 * a; ctx.fillStyle = '#fff'; ctx.font = `13px ${HAND_FONT}`; ctx.textAlign = 'center'; ctx.fillText('tap to skip', cx, cy + N.h / 2 + 16); ctx.restore(); }
+}
+function pclipFadeDraw() {   // (end of draw()) the live picture fading back in after the clip
+  if (!PCLIP_FADE) return; const u = (performance.now() - PCLIP_FADE) / 1000 / REF.clip.fadeIn;
+  if (u >= 1) { PCLIP_FADE = 0; return; }
+  ctx.save(); ctx.globalAlpha = REF.clip.fadeA * (1 - u); ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); ctx.restore();
 }
 function penKey(code) {   // (keydown while game.penQ) arrows / A D pick a side, Enter / Space takes it; true = used
   const q = game && game.penQ; if (!q) return false;

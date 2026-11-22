@@ -931,8 +931,8 @@ const slRefBackT = w => w.ff && Math.sign(w.tx - w.fx) === -w.ff && Math.abs(w.t
 function slRefBack(w, u) { const b = slRefBackT(w); if (w.pb === undefined) return b; const e = Math.max(0, Math.min(1, u / REF.crew.gait.blend)); return w.pb + (b - w.pb) * e * e * (3 - 2 * e); }   // (v0.71 backpedal share, eased from the last leg's)
 function slRefPh(w, u, G, back) {   // v0.70 stride cycles done u s into the walk = the integral of speed / stride length (stride grows with speed), so the feet never slide while he speeds up or slows down; v0.71 + w.ph0 = the phase the last leg had, so a re-aim never restarts the step
   const N = 10, du = Math.max(0, Math.min(u, w.T)) / N; let c = 0;
-  for (let n = 0; n < N; n++) { const v = slTrapV((n + 0.5) * du, w), k = Math.max(0, Math.min(1, (v - G.walkV) / (G.runV - G.walkV))); c += v * du / (G.cyc[0] + (G.cyc[1] - G.cyc[0]) * k); }
-  return (w.ph0 || 0) + SL_PI2 * c / (1 + (G.backK - 1) * back);
+  for (let n = 0; n < N; n++) { const un = (n + 0.5) * du, v = slTrapV(un, w), k = Math.max(0, Math.min(1, (v - G.walkV) / (G.runV - G.walkV))), bn = w.pb === undefined ? slRefBackT(w) : slRefBack(w, un); c += v * du / ((G.cyc[0] + (G.cyc[1] - G.cyc[0]) * k) * (1 + (G.backK - 1) * bn)); }   // (v0.73 the backpedal share per sample: steps already taken never slide while it blends)
+  return (w.ph0 || 0) + SL_PI2 * c;
 }
 function slRefGait(Q, P, w, wd, arms) {   // (v0.70) an official's own jog / run: stride length, leg and arm swing, knee lift, lean and bob all grow with his speed now; a backpedal (facing kept against the way he goes) leans back on short steps
   const G = REF.crew.gait, v = SL_P.gv >= 0 ? SL_P.gv : w.L / w.T / YD, k = Math.max(0, Math.min(1, (v - G.walkV) / (G.runV - G.walkV))), m = (a) => a[0] + (a[1] - a[0]) * k;
@@ -942,7 +942,7 @@ function slRefGait(Q, P, w, wd, arms) {   // (v0.70) an official's own jog / run
   Q[6] = leg * sn; Q[7] = -leg * sn;
   Q[8] = m(G.kn) * (0.55 + 0.45 * Math.abs(Math.cos(ph))) * st;
   Q[1] = (m(G.lean) + (-G.backLean - m(G.lean)) * back) * st;
-  Q[0] = G.bob * k * (0.5 + 0.5 * Math.cos(2 * ph));
+  Q[0] = G.bob * k * st * (0.5 + 0.5 * Math.cos(2 * ph));   // (v0.73 faded in with the legs, smaller)
   if (arms) { const a = m(G.arm) * st, f = G.armFwd * k, e = m(G.el) * (0.4 + 0.6 * st); Q[2] = -a * sn + f; Q[3] = a * sn + f; Q[4] = e; Q[5] = e; }
 }
 const slAim0 = P => P.ez ? (P.ez < 0 ? 0 : Math.PI) : P.s ? -1.5708 : 1.5708;   // (straight at the field: an end-zone man looks along it)
@@ -2178,8 +2178,11 @@ function refGo(i, tx, ty, v, ff, t0 = SL.now) {   // a steady-pace walk from whe
   if (moving && w0.a0 !== undefined) { const u = t0 - w0.t0; v0 = slTrapV(u, w0); pb = slRefBack(w0, u); ph0 = slRefPh(w0, u, G, pb) % SL_PI2; }
   let a0 = moving ? G.acc * G.carry : G.acc, a1 = G.dec; const sq = Math.min(1, T * 0.8 / (a0 + a1 || 1)); a0 *= sq; a1 *= sq;
   if (v0 > 0) a0 = Math.min(a0, 0.9 * L / (v0 * YD));   // (never a leg so short the carried speed overshoots it)
-  slEvent(i, 0, { fx: p.x, fy: p.y, tx, ty, t0, T, L, d0: 0, d1: 0, fs: ff || p.f, fe: ff || (tx >= p.x ? 1 : -1), rt: 0, ln: 1, ff: ff || 0, a0, a1, v0, ph0, pb });
-  return t0 + T;
+  let T2 = T;   // (v0.73 a re-aim while moving cruises at the pace itself: the leg's time is fitted to it, so the speed never pulses above / below on every re-aim)
+  if (moving && v0 > 0) { const cr = (L / YD - (v0 + v) * a0 / 2 - v * a1 / 2) / v; if (cr >= 0) T2 = cr + a0 + a1; }
+  else if (!(v0 > 0) && T < G.acc + G.dec) { a0 = G.acc; a1 = G.dec; const ve = Math.min(v, 2 * (L / YD) / (a0 + a1)); T2 = L / YD / ve + (a0 + a1) / 2; }   // (v0.73 a short step from a stand: full ramps at a lower top speed, never a 0 -> 8 -> 0 yd/s hop in a fifth of a second)
+  slEvent(i, 0, { fx: p.x, fy: p.y, tx, ty, t0, T: T2, L, d0: 0, d1: 0, fs: ff || p.f, fe: ff || (tx >= p.x ? 1 : -1), rt: 0, ln: 1, ff: ff || 0, a0, a1, v0, ph0, pb });
+  return t0 + T2;
 }
 function refFace(i, f, t0) { const p = refAt(i); slEvent(i, 0, { fx: p.x, fy: p.y, tx: p.x, ty: p.y, t0, T: 0, L: 0, d0: 0, d1: 0, fs: f, fe: f, rt: 0 }); }
 const slStriped = P => P.k === SLK.REF || P.k === SLK.JUDGE || P.k === SLK.TVOFF;   // (vertical official's stripes; other P.cv = a vest's cross stripes)

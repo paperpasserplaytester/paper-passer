@@ -4475,13 +4475,13 @@ const DBTN = { mDyn: { x: 70, y: 100, w: 170, h: 54 }, mPre: { x: 250, y: 100, w
 const DLIST = { top: 96, bottom: 652, bx: 935, bw: 175 };
 // (in a franchise the page edits DIFFV; in the menus it edits the defaults a new career starts with: SETTINGS.diffMode / diffSliders)
 const MENU_DIFF = { get mode() { return SETTINGS.diffMode; }, set mode(v) { SETTINGS.diffMode = v; }, get sliders() { return SETTINGS.diffSliders || (SETTINGS.diffSliders = {}); }, set sliders(v) { SETTINGS.diffSliders = v; }, get masters() { return SETTINGS.diffMasters || (SETTINGS.diffMasters = diffMastersAt(0.5)); }, set masters(v) { SETTINGS.diffMasters = v; } };
-const diffSt = () => inSave() ? DIFFV : MENU_DIFF;
-const diffUiMode = () => exhibition ? 'preset' : ['dynamic', 'custom'].includes(diffSt().mode) ? diffSt().mode : 'preset';
+const diffSt = () => inSave() ? DIFFV : exhibition ? exDiff() : MENU_DIFF;   // (v0.73: a scrimmage edits its own, SETTINGS.exDiff)
+const diffUiMode = () => exhibition ? (exDiff().mode === 'custom' ? 'custom' : 'preset') : ['dynamic', 'custom'].includes(diffSt().mode) ? diffSt().mode : 'preset';
 const diffCanEdit = () => !tut && (diffSettable() || inSave());   // (a franchise can change it anywhere, the pause menu too)
 const diffUiPreset = () => exhibition ? exhibition.diff || SETTINGS.difficulty : SETTINGS.difficulty;
 const diffUiD = () => { const m = diffUiMode(); return m === 'dynamic' ? (inSave() ? DIFFV.dyn.D : DYN_START) : DIFF_D[diffUiPreset()] ?? 0.5; };
 const diffLabel = () => { const m = diffUiMode(); return m === 'dynamic' ? 'ADAPTIVE' : m === 'custom' ? 'CUSTOM' : dn(diffUiPreset()); };
-const diffCanCustom = () => diffCanEdit() && !exhibition;
+const diffCanCustom = () => diffCanEdit() && !(exhibition && exhibition.online);
 // (display only: NORMAL always reads 1.00x and sits in the middle of the bar, whatever the real number is; sliders whose NORMAL is 0 or negative show the change from NORMAL)
 const diffPos = (s, v) => Math.max(0, Math.min(1, diffPos0(s, v)));   // (clamped: a knob never leaves its bar)
 const diffPos0 = (s, v) => v <= s.n ? (s.n > s.lo ? 0.5 * (v - s.lo) / (s.n - s.lo) : 0.5) : (s.hi > s.n ? 0.5 + 0.5 * (v - s.n) / (s.hi - s.n) : 0.5);
@@ -4490,7 +4490,7 @@ const diffFmt = (s, v) => s.n > 0 ? `${(v / s.n).toFixed(2)}x` : `${v - s.n >= 0
 const diffFmtReal = (s, v) => s.fmt === 'yd' ? `${v > 0 ? '+' : ''}${Math.round(v)} yd` : s.fmt === 'x' ? `${v.toFixed(2)}x` : s.step < 1 ? v.toFixed(1) : String(Math.round(v));
 const diffPersist = () => { if (inSave()) { try { autosaveSoon(); } catch (e) {} } else saveSettings(); };
 function diffSetMode(m) {
-  if (!diffCanEdit() || (m === 'custom' && !diffCanCustom()) || (exhibition && m !== 'preset')) return;
+  if (!diffCanEdit() || (m === 'custom' && !diffCanCustom()) || (exhibition && m === 'dynamic')) return;
   const st = diffSt();
   if (m === 'custom' && st.mode !== 'custom') diffSeedCustom(st);   // (starts where you were)
   st.mode = m;
@@ -4498,7 +4498,7 @@ function diffSetMode(m) {
 }
 function diffSetPreset(k) {
   if (!diffCanEdit()) return;
-  if (exhibition) exhibition.diff = k; else { SETTINGS.difficulty = k; diffSt().mode = 'preset'; }
+  if (exhibition) { exhibition.diff = k; exDiff().mode = 'preset'; } else { SETTINGS.difficulty = k; diffSt().mode = 'preset'; }
   diffPersist();
 }
 function diffSetSlider(s, v) {
@@ -4527,7 +4527,7 @@ const diffUiMasterD = id => diffMenuDo(() => diffMasterD(id, diffUiMode(), diffU
 const diffUiVals = () => diffMenuDo(() => diffVals(diffUiMode(), diffUiD(), diffSt().sliders, diffSt().masters));
 const DIFF_RULES = { id: 'gr', label: 'GAME RULES', rules: true };
 const diffMSliders = M => DIFF_SLIDERS.filter(s => M.rules ? !s.m : s.m === M.id);
-function diffResetAll() { if (!diffCanEdit()) return; diffSt().sliders = {}; diffSt().masters = diffMastersAt(0.5); SETTINGS.difficulty = 'NORMAL'; diffSt().mode = 'preset'; if (exhibition) exhibition.diff = 'NORMAL'; diffPersist(); }
+function diffResetAll() { if (!diffCanEdit()) return; diffSt().sliders = {}; diffSt().masters = diffMastersAt(0.5); diffSt().mode = 'preset'; if (exhibition) exhibition.diff = 'NORMAL'; else SETTINGS.difficulty = 'NORMAL'; diffPersist(); }
 function diffDragTo(x) { if (!diffDrag) return; const t = Math.max(0, Math.min(1, (x - DLIST.bx) / DLIST.bw)); if (diffDrag.M) diffSetMaster(diffDrag.M.id, t * DYN.hi); else diffSetSlider(diffDrag, diffFromPos(diffDrag, t)); }
 function diffItems() {
   const items = [], open = diffUI.open || (diffUI.open = {});   // one row per master (GAME RULES last); an open master lists its sliders under it
@@ -4556,7 +4556,7 @@ function drawDiffUI() {
   else lines.push(['Custom: your own sliders', RES.line, 20], ['A tick on each bar is PRO.', RES.dim, 15], ['Arrows: select / adjust, Backspace: reset one.', RES.dim, 15]);
   if (!edit) lines.push(['Read-only here: change it from the home screen.', '#b04020', 15]);
   else if (!inSave() && !exhibition) lines.push(['Default for new careers. Sliders: in a franchise.', RES.dim, 15]);
-  else if (exhibition) lines.push(['This scrimmage only. Presets only.', RES.dim, 15]);
+  else if (exhibition) lines.push(['Scrimmages only. Your franchise keeps its own.', RES.dim, 15]);
   let ty = 330;
   for (const [t, c, sz] of lines) { ctx.fillStyle = c; ctx.font = `bold ${sz}px monospace`; ctx.fillText(t, 70, ty); ty += sz + 12; }
   menuBtn(DBTN.reset, 'RESET TO PRO', Y, 17, null, edit);
@@ -5478,7 +5478,7 @@ const DIFFS = ['BABY', 'EASY', 'NORMAL', 'HARD', 'EXTREME', 'UNFAIR'];
 const diffSettable = () => !!results && ['start', 'franchise', 'home', 'exhibition', 'matchup'].includes(results.screen) && !tut;
 const nextDiff = () => {
   const n = DIFFS[(DIFFS.indexOf(curDiff()) + 1) % DIFFS.length];
-  if (exhibition) exhibition.diff = n; else SETTINGS.difficulty = n;
+  if (exhibition) { exhibition.diff = n; exDiff().mode = 'preset'; } else SETTINGS.difficulty = n;   // (the board's flames: back to a preset)
   saveSettings();
 };
 const carNextDiff = () => {   // (new career: DYNAMIC, then the presets, round again)
