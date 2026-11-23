@@ -313,6 +313,7 @@ function staffHalftime() {   // v0.64 staff traits at the half: Fire Starter III
 }
 function nextPeriod() {
   game.quarter++; game.pendingQuarter = false;
+  try { annPeriod(); } catch (e) {}   // (v0.74 the announcers: the break)
   if (SL.on) slTvWalk();   // (sideline: the TV official walks on for the break)
   if (game.quarter < 5) { game.secs = QUARTER_SECS; if (game.quarter === 3) { xfHalftime(); wearFreshArm = true; game.timeouts = diffTO(); if (twoP) twoP.to = 3; staffHalftime(); } return null; }
   const post = postseason();
@@ -1436,7 +1437,8 @@ const catchers = () => {
   return rb.route && !rb.protect ? [...rs, rb] : rs;
 };
 
-function reset() { choreFlush('reset');
+let RESET_N = 0;   // counts reset() calls: online snapshots carry it (g.rz) so the guest cuts every player at a new line-up instead of sliding them there
+function reset() { choreFlush('reset'); RESET_N++;
   runPid++;   // (a new play: everyone's yards run start over)
   annReset();   // (the announcers: a finished line goes, one still being written runs into the pre-snap)
   flagPen = null;   // (v0.68: no flag carries into the next play)

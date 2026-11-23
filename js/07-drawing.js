@@ -42,7 +42,7 @@ const CROWD = { x0: -ENDZONE - CROWD_PAD, depth: 24 * YD, wall: 4.4 * YD, wallH:
 // strips hop (crowdFx), boo / groan = they tilt about their base (crowdFx.boo), the wave = a ripple round the bowl (crowdFx.wave, home climax); sticky-note signs
 // pop up on a cheer. Outside the rim = a desk (HANDMADE.desk), with a lamp on the side the light comes from and a few easter eggs far out.
 const HANDMADE = { card: '#c99c62', cardDk: '#8d6a3c', stick: '#ead09a', stickDk: '#a88a52', stickBase: 8, stickGrow: 26, ink: 'rgba(34,34,44,0.7)', inkW: 1.3, streak: 0.2,
-  tape: 'rgba(236,224,176,0.82)', tapeEdge: 'rgba(150,135,90,0.5)', ruler: '#e6c372', rulerDk: '#7a5a22', cardWall: '#b98e58',
+  tape: 'rgba(236,224,176,0.82)', tapeW: 1.4, tapeEdge: 'rgba(150,135,90,0.5)', ruler: '#e6c372', rulerDk: '#7a5a22', cardWall: '#b98e58',
   tilt: 0.014, tiltIn: 0.25, wave: { ms: 3800, amp: 16, width: 0.55 }, signs: { n: 4, pop: 0.22, drop: 0.45, size: 1.6 },
   desk: { wood: '#8f6034', grain: '#6e4524', scale: 3, lamp: 900 } };
 const crowdLit = () => { const w = typeof game !== 'undefined' && game && game.wx; return !w || !w.on ? 'cl' : w.roof ? 'in' : w.rain > 0 || w.snow > 0 ? 'ov' : 'cl'; };   // (which light set the crowd is baked with)
@@ -243,15 +243,6 @@ function drawCrowd() {
     ctx.beginPath(); rrAdd(G.X0 - G.D, G.Y0 - G.D, G.X1 + G.D, G.Y1 + G.D, G.R); rrAdd(G.X0, G.Y0, G.X1, G.Y1, G.ri); ctx.fillStyle = C.stand; ctx.fill('evenodd');
     const dd = G.D * (1 - LT.deckAt);
     ctx.beginPath(); rrAdd(G.X0 - G.D, G.Y0 - G.D, G.X1 + G.D, G.Y1 + G.D, G.R); rrAdd(G.X0 - dd, G.Y0 - dd, G.X1 + dd, G.Y1 + dd, G.ri + dd); ctx.fillStyle = `rgba(3,5,16,${LS.deck})`; ctx.fill('evenodd');
-    // the aisles: a stair strip from the wall to the rim between sections (one dashed stroke each: the steps)
-    const O = C.oval;
-    for (const [x, y, ux, uy] of I.aisles) {
-      const ex = x + ux * G.D, ey = y + uy * G.D;
-      if (Math.max(x, ex) < vL - 40 || Math.min(x, ex) > vR + 40 || Math.max(y, ey) < vTop - 40 || Math.min(y, ey) > vBot + 40) continue;
-      ctx.lineCap = 'butt'; ctx.setLineDash([]); ctx.strokeStyle = HANDMADE.tapeEdge; ctx.lineWidth = O.stair + 3; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(ex, ey); ctx.stroke();   // (masking tape over the join)
-      ctx.strokeStyle = HANDMADE.tape; ctx.lineWidth = O.stair; ctx.stroke();
-      ctx.setLineDash([2, 9]); ctx.strokeStyle = 'rgba(120,105,70,0.25)'; ctx.lineWidth = O.stair - 8; ctx.stroke(); ctx.setLineDash([]);
-    }
     // the fans: each baked piece, only its visible part (on their feet and bouncing while the crowd roars)
     const still = liteOn(), HM = HANDMADE, bounce = cheering && !still ? -Math.abs(Math.sin(now / 95)) * (4 + 6 * crowdFx.level) : 0;
     const booK = still ? 0 : Math.max(0, Math.min(1, ((crowdFx.boo || 0) - now) / 1000 / HM.tiltIn)), waveT = still ? 1 : (now - (crowdFx.wave || -1e9)) / HM.wave.ms;
@@ -272,6 +263,15 @@ function drawCrowd() {
       ctx.drawImage(img, (lx0 - A.ox) * K, (ly0 - A.oy) * K, (lx1 - lx0) * K, (ly1 - ly0) * K, lx0, ly0, lx1 - lx0, ly1 - ly0);
       ctx.restore();
     });
+    // the aisles: a stair strip from the wall to the rim between sections (one dashed stroke each: the steps), taped OVER the pieces' cut ends (HANDMADE.tapeW x the aisle: wide enough to hide the bare band and the seam where two pieces meet)
+    const O = C.oval, tw = Math.max(O.stair, HANDMADE.tapeW * O.aisle);
+    for (const [x, y, ux, uy] of I.aisles) {
+      const ex = x + ux * G.D, ey = y + uy * G.D;
+      if (Math.max(x, ex) < vL - 40 || Math.min(x, ex) > vR + 40 || Math.max(y, ey) < vTop - 40 || Math.min(y, ey) > vBot + 40) continue;
+      ctx.lineCap = 'butt'; ctx.setLineDash([]); ctx.strokeStyle = HANDMADE.tapeEdge; ctx.lineWidth = tw + 3; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(ex, ey); ctx.stroke();   // (masking tape over the join)
+      ctx.strokeStyle = HANDMADE.tape; ctx.lineWidth = tw; ctx.stroke();
+      ctx.setLineDash([2, 9]); ctx.strokeStyle = 'rgba(120,105,70,0.25)'; ctx.lineWidth = tw - 8; ctx.stroke(); ctx.setLineDash([]);
+    }
     if (cheering && !still) crowdSigns(G, now, vL, vR, vTop, vBot);
   }
   // the wall all the way round (thick along the sidelines, thin behind the end lines, drawn lower on the near side), its light cap on the stand side
@@ -845,7 +845,7 @@ const SL_WALK = SLR[SLRI.walk],SL_TF = SL_ROUTINES.fall.secs, SL_TG = SL_ROUTINE
 const SL_MDI = [-1, -1, SLRI.limp, SLRI.helped, SLRI.helper, SLRI.lying, SLRI.ride, SLRI.rideBack, SLRI.lying, SLRI.kneelBy, SLRI.liftOn, SLRI.tentIn, SLRI.lying];   // (12 = lying on the cart's bed)
 const SL_STRIDE = 1.6;   // yd walked per stride cycle (the walk table's legs follow the distance covered, so they never skate)
 const SL_MARGIN = 3 * YD;   // px a person can be off his home x (a squad sliding clear of the crew, a lift, a knockdown): the x-sorted search looks this far past the edges
-const SL = { coHide: [-1e9, -1e9], on: false, cast: null, W: [], A: [], H: [], crewOn: 1, crewHid: false, fresh: false, now: 0, pn: 0, seed: 1, key: '', fl: false, m: -1,
+const SL = { sk: [], rbK: -1, rbO: null, coHide: [-1e9, -1e9], on: false, cast: null, W: [], A: [], H: [], crewOn: 1, crewHid: false, fresh: false, now: 0, pn: 0, seed: 1, key: '', fl: false, m: -1,
   cap: 0, PT: null, sp: [], l0: null, l1: null, n0: 0, n1: 0, ex: null, exY: null, exN: 0, exI: 0, one: new Int16Array(1), lod: 2, cssK: 1, cssN: 0,
   TW: [], TA: [], TH: [], tp: null, tpI: 0, tpT: 0, tOn: 1, w: null, a: null, h: null, c: null, ok: false, cA: -1, cB: -1, cv: null, y0: 0, y1: 0,
   rEnd: [0, 0], rMag: [0, 0], rLift: [0, 0], last: ['', ''], sfxT: -9,
@@ -1236,6 +1236,7 @@ function slPaint0(L, n) {   // the posed slots L[0..n), in colour-batched passes
   slMode = 0;
   for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR, hp = sp[k].hp; if (!hp || T[o + 44] < 0.5) continue; const u = T[o + 43], D = SL_HP[hp]; slSet(D[0]); ctx.rect(T[o + 20] - D[1] * u, T[o + 21] - D[2] * u, 2 * D[1] * u, D[3] * u); }
   slEnd();
+  if (SL.rbK >= 0) for (let j = 0; j < n; j++) if (L[j] === SL.rbK) { const o = L[j] * SL_STR; refBallAt(T[o + 20], T[o + 21] - REF.crew.relay.handUp * T[o + 43]); }   // (the relay ball in the holder's hand: one sprite with him)
   for (let j = 0; j < n; j++) {   // held items' detail (close up only): a photographer's long lens, the rake's head; a knocked-down photographer's camera flying off and lying on the turf
     const k = L[j], o = k * SL_STR, P = sp[k], hp = P.hp, u = T[o + 43], g = T[o + 42], ht = T[o + 49];
     if (hp === 8 && ht >= 0.1 && ht < SL_TF + SIDELINE.downT + SL_TG * 0.5) {   // (picked up again as he gets up)
@@ -1522,7 +1523,7 @@ function slFrame() {   // once a frame (draw()'s far pass): the source (live or 
     }
     slPose(P, w, SL.a[i], SL.h[i], t);
     if (SL_P.hid || SL_P.x < vL || SL_P.x > vR || (lvl >= 2 && slOnField())) continue;
-    const y = SL_P.y; slPrep(k, P); SL.sp[k] = P;
+    const y = SL_P.y; slPrep(k, P); SL.sp[k] = P; SL.sk[i] = k;
     if (y > Y_MIN && y < Y_MAX) { if (SL.exN < SIDELINE.exMax) { SL.ex[SL.exN] = k; SL.exY[SL.exN++] = y; } }
     else if (P.s) SL.l1[SL.n1++] = k; else SL.l0[SL.n0++] = k;
     k++;
@@ -1531,12 +1532,12 @@ function slFrame() {   // once a frame (draw()'s far pass): the source (live or 
   if (rf && !refHidden()) for (let j = 0; j < rf.length; j++) {
     const i = rf[j], P = ppl[i]; slPose(P, SL.w[i], SL.a[i], SL.h[i], t);
     if (SL_P.x < vL || SL_P.x > vR) continue;
-    const y = SL_P.y; slPrep(k, P); SL.sp[k] = P;
+    const y = SL_P.y; slPrep(k, P); SL.sp[k] = P; SL.sk[i] = k;
     if (y > Y_MIN - SIDELINE.gap * YD && y < Y_MAX + SIDELINE.gap * YD) { if (SL.exN < SIDELINE.exMax) { SL.ex[SL.exN] = k; SL.exY[SL.exN++] = y; } }
     else if (y >= Y_MAX) SL.l1[SL.n1++] = k; else SL.l0[SL.n0++] = k;
     k++;
   }
-  if (rf && !refHidden()) refRelayEx(C, t);   // (v0.69 the relay's ball, in y order with the players and officials)
+  SL.rbK = -1; if (rf && !refHidden()) refRelayEx(C, t, k);   // (v0.69 the relay's ball, in y order with the players and officials)
   const ez = C.ez;   // end-zone crews: inside the field's width, so drawn in y order with the players (slExUpTo)
   if (ez && e.mt >= 0) for (let j = 0; j < ez.length; j++) {
     const i = ez[j], P = ppl[i]; if (P.hx < vL - M || P.hx > vR + M || SL.exN >= SIDELINE.exMax) continue;
@@ -2175,8 +2176,9 @@ function refGo(i, tx, ty, v, ff, t0 = SL.now) {   // a steady-pace walk from whe
   const p = refAt(i), L = Math.hypot(tx - p.x, ty - p.y); if (L < 1) return t0;
   const T = L / (v * YD), G = REF.crew.gait, w0 = SL.W[i], moving = w0 && !w0.pa && w0.T > 0 && t0 > w0.t0 && t0 < w0.t0 + w0.T;
   let v0 = 0, ph0 = 0, pb;   // (v0.71 already on the move: the new leg starts at the speed, stride phase and backpedal share he has now, eased to the new pace over carry x acc)
-  if (moving && w0.a0 !== undefined) { const u = t0 - w0.t0; v0 = slTrapV(u, w0); pb = slRefBack(w0, u); ph0 = slRefPh(w0, u, G, pb) % SL_PI2; }
-  let a0 = moving ? G.acc * G.carry : G.acc, a1 = G.dec; const sq = Math.min(1, T * 0.8 / (a0 + a1 || 1)); a0 *= sq; a1 *= sq;
+  if (moving && w0.a0 !== undefined) { const u = t0 - w0.t0; v0 = slTrapV(u, w0); pb = slRefBack(w0, u); ph0 = slRefPh(w0, u, G, pb) % SL_PI2;
+    if (REF.crew.turnCarry && w0.L > 0) { const c = ((w0.tx - w0.fx) * (tx - p.x) + (w0.ty - w0.fy) * (ty - p.y)) / (w0.L * L); v0 *= Math.max(0, c); } }   // (v0.74: only the speed along the new heading carries over: a turn slows him instead of snapping his velocity round)
+  let a0 = moving && (v0 > 0.5 || !REF.crew.turnCarry) ? G.acc * G.carry : G.acc, a1 = G.dec; const sq = Math.min(1, T * 0.8 / (a0 + a1 || 1)); a0 *= sq; a1 *= sq;
   if (v0 > 0) a0 = Math.min(a0, 0.9 * L / (v0 * YD));   // (never a leg so short the carried speed overshoots it)
   let T2 = T;   // (v0.73 a re-aim while moving cruises at the pace itself: the leg's time is fitted to it, so the speed never pulses above / below on every re-aim)
   if (moving && v0 > 0) { const cr = (L / YD - (v0 + v) * a0 / 2 - v * a1 / 2) / v; if (cr >= 0) T2 = cr + a0 + a1; }
@@ -2230,7 +2232,8 @@ function refKickSpot(P, edge) {   // before a kick: kickoff (spread down the fie
 }
 function refSpotFor(P, i) {   // where this official wants to be right now -> { x, y, ff, v } (null = stay)
   const Rc = REF.crew, live = !!REF_LIVE[state], bx = slClampX(ball.x), by = Math.max(Y_MIN, Math.min(Y_MAX, ball.y));
-  const v = SL.rfBV || 0, dir = state === 'picked' ? -1 : Math.abs(v) > 2 * YD ? Math.sign(v) : 1;
+  const v = SL.rfBV || 0; if (state === 'pre' || state === 'done') SL.rfDir = 1; else if (Math.abs(v) > (Rc.dirOn || 2) * YD) SL.rfDir = Math.sign(v);   // (hysteresis: the direction holds until the ball really goes the other way)
+  const dir = state === 'picked' ? -1 : (SL.rfDir || 1);
   const edge = P.s ? Y_MAX + Rc.L.out * YD : Y_MIN - Rc.L.out * YD, mix = (a, b, k) => a + (b - a) * k;
   const back = state === 'drop' || state === 'pocket' || (state === 'flight' && bx < los + 3 * YL);
   let x, y, ff = 0;
@@ -2256,7 +2259,7 @@ function refSpotFor(P, i) {   // where this official wants to be right now -> { 
     else if (P.rr === 'U') { if (back) { x = los + Rc.U.deep * YL; y = MID - YD; } else if (run) { x = los + Rc.run2.uDeep * YL; y = mix(MID, by, 0.35); } else { x = bx - dir * 6 * YL; y = mix(MID, by, 0.6) - 2 * YD; } }
     else if (P.rr === 'L') { x = dir > 0 && bx > FIELD - Rc.gl.live * YL ? FIELD : bx - dir * Rc.L.lag * YL; y = edge; }   // (near the goal line he holds it, for the pylon)
     else { x = dir > 0 ? Math.max(los + Rc.B.deep * YL, bx + Rc.B.lead * YL) : bx - Rc.B.lead * YL; y = mix(MID, by, 0.5); }
-    ff = bx >= x ? 1 : -1;   // (watching the ball: running away from it = a backpedal)
+    { const w = SL.W[i], f0 = w && !w.pa ? (w.ff || 0) : 0, hy = (Rc.ffYd || 0) * YL; ff = f0 && Math.abs(bx - x) < hy ? Math.sign(f0) : bx >= x ? 1 : -1; }   // (watching the ball: running away from it = a backpedal; held within ffYd so he doesn't spin round as the ball passes him)
   }
   x = Math.max(-ENDZONE + YL, Math.min(FIELD + ENDZONE - YL, x));
   if (P.rr !== 'L') y = Math.max(Y_MIN + 0.5 * YD, Math.min(Y_MAX - 0.5 * YD, y));
@@ -2475,7 +2478,7 @@ function refBallBoy(X, Y, X2) {   // a fresh ball from the nearest ball boy (the
   const tb = refGo(B, cx - fb * 0.3 * YD, cy, REF.crew.run, fb, now + 0.2), t0 = Math.max(now + 0.9, tb - 0.6), rel = t0 + 0.35, tc = rel + rl.boyToss * (1 + Math.hypot(cx - bx, cy - by) / (30 * YD));
   slEvent(boy, 0, { fx: bx, fy: by, tx: bx, ty: by, t0: rel - 0.6, T: 0, L: 0, d0: 0, d1: 0, fs: cx >= bx ? 1 : -1, fe: cx >= bx ? 1 : -1, rt: 0 });   // (the boy looks at his man)
   slEvent(boy, 1, { id: SLRI.rfToss, t0: rel - 0.55 });
-  const rb = [t0, bx, by, 18 * S, 0, rel, bx, by, 22 * S, 0, tc, cx, cy, hz, 1];
+  const rb = [t0, bx, by, 18 * S, 0, rel, bx, by, 22 * S, 2 + boy, tc, cx, cy, hz, 1];
   refRelay(cx, cy, X2, { A: B, rb, t: tc + 0.15, catchAt: tc - 0.25, noSpot: true });
   return true;
 }
@@ -2485,10 +2488,10 @@ function refRelay(X, Y, X2, give) {   // spot the ball: the nearest man runs to 
   const A = give ? give.A : refNearest(X0, Y); if (A < 0) return;
   const t1 = refGo(A, X0 - 0.5 * YD, Y, give ? Rc.jog : Rc.run, 1, give ? give.t : now + 0.15) + 0.1;
   const rb = give ? give.rb : [t1, X0, Y, 0, 0];
-  if (give) rb.push(t1, X0, Y, hz, 0);   // (carried to the spot)
+  if (give) rb.push(t1, X0, Y, hz, 2 + A);   // (carried to the spot)
   if (Math.abs(Y - hy) < Rc.relay.near * YD && Math.abs(X - X0) < Rc.relay.near * YL) {   // (close to the hash: he carries it there himself)
     const t2 = t1 + 1.3, t3 = t2 + Math.hypot(hy - Y, X - X0) / (Rc.jog * YD);
-    rb.push(t1 + 0.6, X0, Y, hz, 0, t2, X0, Y, hz, 0, t3, X, hy, hz, 0, t3 + 0.45, X, hy, 0, 0);
+    rb.push(t1 + 0.6, X0, Y, hz, give ? 2 + A : 0, t2, X0, Y, hz, 2 + A, t3, X, hy, hz, 2 + A, t3 + 0.45, X, hy, 0, 0);
     refQ(t2, () => refGo(A, X - 0.5 * YD, hy, Rc.jog, 1));
     refQ(t3, () => refAnim(A, { id: SLRI[refPick(REF_LOOKS.set, 'set' + A)], t0: SL.now }));
     refJob(A, t3 + 1.2);
@@ -2498,7 +2501,7 @@ function refRelay(X, Y, X2, give) {   // spot the ball: the nearest man runs to 
     const fA = X >= X0 ? 1 : -1;   // (the tosser looks where he throws, the catcher back at him)
     const tb = refGo(B, X + fA * 0.4 * YD, hy, Rc.run, -fA, now + 0.2), tt = Math.max(t1 + 1.1, tb - 0.15), tc = tt + Rc.relay.toss, bob = refPick(REF_LOOKS.bob, 'bob' + B);
     const far = Math.hypot(X - X0, hy - Y) / YD, toss = refPick(far < 7 ? REF_LOOKS.tossShort : far > 16 ? REF_LOOKS.tossLong : REF_LOOKS.toss, 'toss' + A), cat = refPick(REF_LOOKS.catch, 'catch' + B), set = refPick(REF_LOOKS.set, 'set' + B);
-    rb.push(t1 + 0.6, X0, Y, hz, 0, tt, X0, Y, hz, 0, tc, X, hy, hz, 1, tc + Rc.relay.gap + (bob ? 0.6 : 0), X, hy, hz, 0, tc + Rc.relay.gap + (bob ? 1.05 : 0.45), X, hy, 0, 0);
+    rb.push(t1 + 0.6, X0, Y, hz, give ? 2 + A : 0, tt, X0, Y, hz, 2 + A, tc, X, hy, hz, 1, tc + Rc.relay.gap + (bob ? 0.6 : 0), X, hy, hz, 2 + B, tc + Rc.relay.gap + (bob ? 1.05 : 0.45), X, hy, 0, 0);
     refQ(tt - 0.35, () => { refFace(A, fA, SL.now); refAnim(A, { id: SLRI[toss], t0: SL.now }); });
     refQ(tc - 0.25, () => { refFace(B, -fA, SL.now); refAnim(B, { id: SLRI[bob ? 'rfBobble' : cat], t0: SL.now }); });
     refQ(tc + Rc.relay.gap + (bob ? 0.6 : 0), () => refAnim(B, { id: SLRI[set], t0: SL.now }));
@@ -2577,17 +2580,29 @@ function refDrawItems(layer) {
   }
 }
 const REF_BALL = -32000;   // (slFrame's ex code for the relay ball: drawn in y order, just in front of the man holding it, behind anyone nearer the camera)
-function refRelayEx(C, t) {   // (slFrame) the relay ball as one ex item at its ground spot
+function refRelayEx(C, t, nk) {   // (slFrame) the relay ball: in the holder's own paint while a man holds it (SL.rbK = his slot), else one ex item at its ground spot
   if ((rec && rec.replaying) || state !== 'done' || SL.exN >= SIDELINE.exMax) return;
-  for (const i of C.rf) { const a = SL.a && SL.a[i]; if (a && a.rb && t >= a.rb[0]) { SL.rbA = a.rb; SL.ex[SL.exN] = REF_BALL; SL.exY[SL.exN++] = refRelayPt(a.rb, t).y + 0.05; return; } }
+  const hs = h => { if (h < 0 || SL.lod === 0) return -1; const k = SL.sk[h]; return k != null && k < nk && SL.sp[k] === C.people[h] ? k : -1; };   // (his slot this frame; LOD 0 has no hand points)
+  for (const i of C.rf) { const a = SL.a && SL.a[i]; if (a && a.rb && t >= a.rb[0]) {
+    const rb = a.rb, P = refRelayPt(rb, t), k = hs(P.h);
+    if (k >= 0) { SL.rbK = k; return; }
+    // in the air / picked up / set down: from the last holder's hand to the next one's (their hands now, eased along the leg)
+    const T = SL.PT, up = REF.crew.relay.handUp, off = (k2, w) => { const o = k2 * SL_STR; return [T[o + 20] - rb[w + 1], T[o + 21] - up * T[o + 43] - (rb[w + 2] - rb[w + 3])]; };
+    const ka = P.h < 0 ? hs(P.hp) : -1, kb = P.h < 0 ? hs(P.hn) : -1;
+    P.ox = P.oy = 0;
+    if (ka >= 0) { const d = off(ka, P.a); P.ox += d[0] * (1 - P.q); P.oy += d[1] * (1 - P.q); }
+    if (kb >= 0) { const d = off(kb, P.a + 5); P.ox += d[0] * P.q; P.oy += d[1] * P.q; }
+    SL.rbA = rb; SL.rbO = [P.ox, P.oy]; SL.ex[SL.exN] = REF_BALL; SL.exY[SL.exN++] = P.y + 0.05; return; } }
 }
-const REF_RB_P = { x: 0, y: 0, z: 0 };
-function refRelayPt(rb, t) {   // where the relay's ball is at t (REF_RB_P, reused)
-  const n = rb.length / 5, P = REF_RB_P; let j = 0;
+const REF_RB_P = { x: 0, y: 0, z: 0, a: 0, q: 0, h: -1, hp: -1, hn: -1, ox: 0, oy: 0 };
+function refRelayPt(rb, t) {   // where the relay's ball is at t (REF_RB_P, reused); a = this leg's first way-point, q = how far along, h = who holds it on this leg (people index, -1 none), hp / hn = the legs before / after
+  const n = rb.length / 5, P = REF_RB_P, hd = v => v >= 2 ? v - 2 : -1; let j = 0;
   while (j < n - 2 && t >= rb[(j + 1) * 5]) j++;
   const a = j * 5, b = a + 5, ta = rb[a], tb = rb[b];
-  if (b >= rb.length || t >= rb[(n - 1) * 5]) { const o = (n - 1) * 5; P.x = rb[o + 1]; P.y = rb[o + 2]; P.z = rb[o + 3]; }
-  else { const q = tb > ta ? Math.min(1, (t - ta) / (tb - ta)) : 1; P.x = rb[a + 1] + (rb[b + 1] - rb[a + 1]) * q; P.y = rb[a + 2] + (rb[b + 2] - rb[a + 2]) * q; P.z = rb[a + 3] + (rb[b + 3] - rb[a + 3]) * q + (rb[b + 4] ? Math.sin(Math.PI * q) * 1.3 * YD : 0); }
+  P.a = a; P.h = P.hp = P.hn = -1; P.q = 1;
+  if (b >= rb.length || t >= rb[(n - 1) * 5]) { const o = (n - 1) * 5; P.x = rb[o + 1]; P.y = rb[o + 2]; P.z = rb[o + 3]; P.a = Math.max(0, o - 5); }
+  else { const q = tb > ta ? Math.min(1, (t - ta) / (tb - ta)) : 1; P.q = q; P.h = hd(rb[b + 4]); P.hp = hd(rb[a + 4]); P.hn = b + 9 < rb.length ? hd(rb[b + 9]) : -1;
+    P.x = rb[a + 1] + (rb[b + 1] - rb[a + 1]) * q; P.y = rb[a + 2] + (rb[b + 2] - rb[a + 2]) * q; P.z = rb[a + 3] + (rb[b + 3] - rb[a + 3]) * q + (rb[b + 4] === 1 ? Math.sin(Math.PI * q) * 1.3 * YD : 0); }
   return P;
 }
 function refDrawFlag(fl, t, layer) {
@@ -2606,11 +2621,12 @@ function refFlagShape(x, y, rot, k) {   // a crumpled yellow sticky note (pencil
 }
 function refDrawRelay(rb, t) {
   if (!rb || t < rb[0]) return;
-  const { x, y, z } = refRelayPt(rb, t);
+  const { x, y, z } = refRelayPt(rb, t), o = SL.rbO || [0, 0];
   const dk = ball.dk || (typeof BALL_K !== 'undefined' ? BALL_K : 1);   // (the dead ball's own size: no pop when the real one hides)
-  if (z > 0.5) { ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(x, y + 12 * S, 6 * S * BALL_SIZE * dk, 3 * S * BALL_SIZE * dk, 0, 0, Math.PI * 2); ctx.fill(); }
-  ctx.save(); ctx.translate(x, y - z); ctx.scale(S * dk, S * dk); drawFootball(7.5, 4.2); ctx.restore();
+  if (z > 0.5) { ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(x + o[0], y + 12 * S, 6 * S * BALL_SIZE * dk, 3 * S * BALL_SIZE * dk, 0, 0, Math.PI * 2); ctx.fill(); }
+  refBallAt(x + o[0], y - z + o[1]);
 }
+function refBallAt(x, y) { const dk = ball.dk || (typeof BALL_K !== 'undefined' ? BALL_K : 1); ctx.save(); ctx.translate(x, y); ctx.scale(S * dk, S * dk); drawFootball(7.5, 4.2); ctx.restore(); }
 // --- booth review (v0.68; gate boothOn(); tunables REF.spot / REF.rev / REF.chal). The true result is always kept (game.truth = { spot, td, bad, line, y }); the
 // officials' spot is the true one except rarely, and only when it matters (within REF.spot.near of the sticks, or a goal-line touchdown with a defender on him),
 // never on 4th down: refBadSpot (endPlay) / refTdShort (touchdown). After the whistle refReviewAfter (endPlay) runs the automatic booth review (a caught bad
@@ -2664,6 +2680,7 @@ function refChallenge() {   // pause sheet CHALLENGE: the same review; a ruling 
   if (!chalOK()) return;
   const o = game.revOK; game.revOK = null; game.chalN = (game.chalN | 0) + 1; paused = false;
   showBanner('CHALLENGE!', '#ff5a4a', '#3a0a06', `${REF.chal - game.chalN} left this game`);
+  try { annSay('challenge', { pri: 3 }); } catch (e) {}
   refRevStart({ kind: o.kind, line: o.line, x: o.x, y: o.y, rx: o.rx, res: o.bad ? 'REVERSED' : 'STANDS', chal: true });
 }
 // v0.68: a review waits for the end of the play (revQueue -> revWait, started by revTick once no celebration / flag is pending), then runs as its own mode: revOn() =
@@ -2725,7 +2742,7 @@ function refRevApply() {   // the fix, while the ball is still dead (state 'done
   const r = REV; if (!r) return;
   { const R = refRole('R'), wasTd = r.kind === 'td' && (r.res === 'REVERSED' ? true : r.rx >= FIELD), first = r.kind === 'spot' && (r.res === 'REVERSED' ? r.x : r.rx) + BALL_TIP >= lineToGain;   // (v0.68 the referee comes back on: the call, then its signal)
     if (R >= 0 && refHost()) { refJob(R, SL.now + 6); refAnim(R, { id: SLRI.rfAnnounce, t0: SL.now }); refQ(SL.now + 2.9, () => refAnim(R, { id: SLRI[wasTd ? 'rfTD' : first ? 'rfFirst' : 'rfWaveOff'], t0: SL.now })); }
-    try { annSay(r.res === 'REVERSED' ? 'revReversed' : 'revStands', { pri: 3 }); } catch (e) {} }
+    try { annSay(r.res === 'REVERSED' ? 'revReversed' : 'revStands', { pri: 3 }); annRefRev(r.res); } catch (e) {} }
   if (r.res === 'STANDS') {
     if (r.chal) { if (aiOff() && twoP) twoP.to = Math.max(0, twoP.to - 1); else game.timeouts = Math.max(0, game.timeouts - 1); msg = `THE RULING STANDS  -  challenge lost, a timeout gone  -  click`; }
     else msg = msg.replace(/  -  click$/, '') + '  -  the ruling stands  -  click';
@@ -3448,7 +3465,7 @@ function fieldCacheDraw() {   // true = the static field was drawn from the cach
   const m = ctx.getTransform(), on = Math.abs(m.a);
   if (m.b || m.c || !(on > 0) || !m.d) return false;
   const M = FIELD_CACHE.pad * YD, ox = ENDZONE + M, w = FIELD + 2 * ox, h = FW + 2 * M;
-  const s = Math.min(Math.ceil(RK * FIELD_CACHE.zoom / FIELD_CACHE.step - 1e-6) * FIELD_CACHE.step, Math.sqrt(FIELD_CACHE.maxPx / (w * h)));
+  const s = Math.min(Math.ceil(RK * FIELD_CACHE.zoom / FIELD_CACHE.step - 1e-6) * FIELD_CACHE.step, Math.sqrt(FIELD_CACHE.maxPx / (w * h)), PHONE_TEST.blit === 'CAP 4096' ? Math.floor(4096 / Math.max(w, h) * 1e4) / 1e4 : Infinity);
   if (on > s * FIELD_CACHE.up && fieldLiveOK()) return false;
   const hk = homeKey(), logo = !!LOGOS[hk];
   let F = fieldImg;
@@ -3478,8 +3495,11 @@ function fieldCacheDraw() {   // true = the static field was drawn from the cach
   const sx0 = Math.max(0, Math.floor((Math.min(xa, xb) + ox) * fs) - 1), sx1 = Math.min(F.c.width, Math.ceil((Math.max(xa, xb) + ox) * fs) + 1);
   const sy0 = Math.max(0, Math.floor((Math.min(ya, yb) + M) * fs) - 1), sy1 = Math.min(F.c.height, Math.ceil((Math.max(ya, yb) + M) * fs) + 1);
   const qt = TUI.on && gfxHi();   // (v0.74: QUALITY on a phone: smooth stretch + the lettering drawn live when the shot is closer than the cache is sharp)
-  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = TUI.on && !qt ? 'low' : 'high';
-  if (sx1 > sx0 && sy1 > sy0) ctx.drawImage(F.c, sx0, sy0, sx1 - sx0, sy1 - sy0, sx0 / fs - ox, sy0 / fs - M, (sx1 - sx0) / fs, (sy1 - sy0) / fs);
+  ctx.imageSmoothingEnabled = PHONE_TEST.blit !== 'NO SMOOTH'; ctx.imageSmoothingQuality = TUI.on && !qt ? 'low' : 'high';
+  if (sx1 > sx0 && sy1 > sy0 && PHONE_TEST.blit === 'WHOLE PX') {   // (debug: the blit's edges on whole device pixels, so the cache is never sampled at a fractional offset)
+    const sw = sx1 - sx0, sh = sy1 - sy0, X0 = Math.round(m.a * (sx0 / fs - ox) + m.e), X1 = Math.round(m.a * (sx1 / fs - ox) + m.e), Y0 = Math.round(m.d * (sy0 / fs - M) + m.f), Y1 = Math.round(m.d * (sy1 / fs - M) + m.f);
+    ctx.save(); ctx.setTransform((X1 - X0) / sw, 0, 0, (Y1 - Y0) / sh, X0, Y0); ctx.drawImage(F.c, sx0, sy0, sw, sh, 0, 0, sw, sh); ctx.restore();
+  } else if (sx1 > sx0 && sy1 > sy0) ctx.drawImage(F.c, sx0, sy0, sx1 - sx0, sy1 - sy0, sx0 / fs - ox, sy0 / fs - M, (sx1 - sx0) / fs, (sy1 - sy0) / fs);
   if (qt && FIELD_CACHE.marksLive && on > fs * FIELD_CACHE.up) {
     const x0 = Math.min(xa, xb), x1 = Math.max(xa, xb), see = (cx, r) => cx + r > x0 && cx - r < x1;
     if (see(-ENDZONE / 2, ENDZONE)) drawEndZoneName(-ENDZONE / 2, 1);
@@ -3567,6 +3587,7 @@ function drawFieldStatic() {
       const x = yd * YL;
       for (let j = 0; j < 4; j++) {
         const a = j === 0 ? 0.1 * YD : j === 1 ? FW - 0.1 * YD - tick : j === 2 ? HASH_IN - tick / 2 : FW - HASH_IN - tick / 2, sd = yd * 4 + j;
+        if (PHONE_TEST.tickPath) { if (mk && (sd * 7919) % hashA.length !== b) continue; ctx.stroke(); ctx.beginPath(); if (mk) penLine(x, a, x, a + tick, sd * 31 + 9, FIELD_PRESS.hashAmp); else { ctx.moveTo(x, a); ctx.lineTo(x, a + tick); } ctx.stroke(); ctx.beginPath(); continue; }   // (debug: one path a tick)
         if (!mk) { ctx.moveTo(x, a); ctx.lineTo(x, a + tick); continue; }
         if ((sd * 7919) % hashA.length !== b) continue;
         penLine(x, a, x, a + tick, sd * 31 + 9, FIELD_PRESS.hashAmp);
@@ -11165,6 +11186,7 @@ function callTimeout(cpu = false, defense = false) {   // defense: two players, 
   if (mine) twoP.to--; else game.timeouts--;
   if (!cpu && !mine) timeoutRecover(); else if (cpu) timeoutRecover(true);   // (your timeout: a breather and a steadier locker room; theirs: their men catch their breath)
   const left = mine ? twoP.to : game.timeouts, nm = teamName(mine ? 'RED' : 'BLUE');
+  try { annTimeout(left); } catch (e) {}   // (v0.74 the announcers)
   if (tut) tutEvent('timeout');
   showBanner(`TIMEOUT  -  ${nm}`.toUpperCase(), '#ffffff', '#1b2a3a', `${left} left this half`);
   crowdCheer(0.2);

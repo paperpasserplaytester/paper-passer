@@ -1637,6 +1637,7 @@ function drawHalfShow() {
   const s = HT.segs[HT.i]; if (!s) return;
   ({ cards: drawHsCards, lgclips: drawHsLgClip, league: drawHsLeague, hist: drawHsHist, qb: drawHsQB, def: drawHsDef, match: drawHsMatch })[s.k](s);
   if (HT) drawHsBar();   // (a staged league clip can end the show from its own draw)
+  if (HT) { annShow(s); if (ANN_S.cur) { ctx.save(); ctx.translate(0, ANN.showY - TOP_BAR - ANN.pad); annDraw(); ctx.restore(); } }   // (v0.74 the booth talks over each card, low left, clear of its title)
 }
 function drawHsCards(s) {
   hsFrame('HALFTIME HIGHLIGHTS', 'BEST PLAYS OF THE FIRST HALF');
@@ -2311,22 +2312,26 @@ function drawIcon(pp) {
 // Real time (annNow), so slow motion / hit-stop never freezes a line. Picker = a shuffle bag per event + speaker, the last ANN.recent lines never again.
 // Drawing (annDraw): the face card and each line's bubble + text are baked once (ctxBake) and blitted; write-on = the baked text clipped to the written
 // width. Event-driven only: update() does one `if (ANN_S.cur)` check. Online: the host picks and sends { t: 'ann' } (annNet); the guest never picks.
-const ANN_S = { cur: null, q: [], who: null, was: null, sw: -9, popAt: -9, bags: {}, recent: [], pl: { br: 0 }, faces: null, fc: [null, null], fcDark: null, card: null, rect: null };
+const ANN_S = { cur: null, q: [], who: null, was: null, sw: -9, popAt: -9, bags: {}, recent: new Set(), pl: { br: 0 }, faces: null, fc: [null, null], fcDark: null, card: null, rect: null };
 const annNow = () => performance.now() / 1000;
 const annLive = () => SETTINGS.announcers !== false && !tut && !CO && !(ONL.on && ONL.guest);
 const annGate = () => annLive() && !(rec && (rec.replaying || rec.hl)) && !LG_SAND && !LGS && !stSimming && !xfSimming && state !== 'sim';
 const annFill = (t, v) => t.replace(/\{(\w+)\}/g, (m, k) => v && v[k] != null ? v[k] : m);
-const annCan = (t, v) => !/\{\w+\}/.test(annFill(t, v));
+// (v0.74) precomputed at load: the tokens each line needs (ANN_TK[key.who][i], null = none) and ANN_MORE (00: 'line|line' strings) merged in; recents = a Set of 'key.who#i' in hearing order
+for (const k in (typeof ANN_MORE !== 'undefined' ? ANN_MORE : {})) for (const w of ['A', 'B']) { const m = ANN_MORE[k][w]; if (m) { const L = ANN_LINES[k] || (ANN_LINES[k] = {}); L[w] = (L[w] || []).concat(typeof m === 'string' ? m.split('|') : m); } }
+const ANN_TK = {};
+for (const k in ANN_LINES) for (const w of ['A', 'B']) { const set = ANN_LINES[k][w]; if (set) ANN_TK[k + '.' + w] = set.map(t => { const m = t.match(/\{(\w+)\}/g); return m ? m.map(x => x.slice(1, -1)) : null; }); }
+const annOk = (tk, v) => !tk || (!!v && tk.every(k => v[k] != null));
 function annPick(key, who, v) {   // a line no one has heard lately: the bag is used up before any line repeats
   const set = (ANN_LINES[key] || {})[who]; if (!set || !set.length) return -1;
-  const S = ANN_S, bk = key + '.' + who;
+  const S = ANN_S, bk = key + '.' + who, tk = ANN_TK[bk] || [], R = S.recent;
   let bag = S.bags[bk];
   if (!bag || !bag.length) { bag = S.bags[bk] = set.map((_, i) => i); for (let i = bag.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [bag[i], bag[j]] = [bag[j], bag[i]]; } }
-  let j = bag.findIndex(i => annCan(set[i], v) && !S.recent.includes(bk + i));
-  if (j < 0) j = bag.findIndex(i => annCan(set[i], v));
-  if (j < 0) return set.findIndex(t => annCan(t, v));
+  let j = bag.findIndex(i => annOk(tk[i], v) && !R.has(bk + '#' + i));
+  if (j < 0) j = bag.findIndex(i => annOk(tk[i], v));
+  if (j < 0) { for (let i = 0; i < set.length; i++) if (annOk(tk[i], v)) return i; return -1; }
   const i = bag.splice(j, 1)[0];
-  S.recent.push(bk + i); if (S.recent.length > ANN.recent) S.recent.shift();
+  R.add(bk + '#' + i); if (R.size > ANN.recent) R.delete(R.values().next().value);
   return i;
 }
 function annSay(key, o = {}) { if (annGate()) annPut(key, o); }
@@ -2347,7 +2352,7 @@ function annPut(key, o = {}) {
 }
 function annStart(l, now) {
   const S = ANN_S, set = (ANN_LINES[l.key] || {})[l.who]; if (!set || set[l.i] == null) return;
-  l.text = annFill(set[l.i], l.v); l.at = now; l.end = now + (annLite() ? 0 : l.text.length / (annReelOn() ? ANN.reelCps : ANN.cps)); l.read = annReelOn() ? now + l.text.split(' ').length * ANN.reelWord : 0; l.big = l.pri >= ANN.crazy; l.bub = null;
+  l.text = annFill(set[l.i], l.v); l.at = now; l.end = now + (annLite() ? 0 : l.text.length / (annSlow() ? ANN.reelCps : ANN.cps)); l.read = annSlow() ? now + l.text.split(' ').length * ANN.reelWord : 0; l.big = l.pri >= ANN.crazy; l.bub = null;
   const old = S.cur;
   if (!old || annGone(old, now)) { S.popAt = now; S.sw = -9; S.was = null; }
   else if (old.who !== l.who) { S.sw = now; S.was = old.who; }
@@ -2367,9 +2372,9 @@ function annTick() {   // the queue (from update(), only while a line is up, and
 function annFreeLine(c) { if (c && c.bub) { freeCanvas(c.bub.b); freeCanvas(c.bub.t); c.bub = null; } }
 function annClear(free) {
   const S = ANN_S; annFreeLine(S.cur); S.cur = null; S.q = []; S.rect = null;
-  if (free) { for (let i = 0; i < 2; i++) { freeCanvas(S.fc[i]); S.fc[i] = null; } if (S.card) { freeCanvas(S.card.b); freeCanvas(S.card.f); S.card = null; } S.bags = {}; S.recent = []; }
+  if (free) { for (let i = 0; i < 2; i++) { freeCanvas(S.fc[i]); S.fc[i] = null; } if (S.card) { freeCanvas(S.card.b); freeCanvas(S.card.f); S.card = null; } S.bags = {}; S.recent = new Set(); S.g = null; }
 }
-function annReset() { const S = ANN_S; S.pl = { br: 0 }; if (S.cur && !S.cur.hold && annNow() >= S.cur.end + ANN.gap && !S.q.length) annClear(); }   // (reset(): a result line still being written runs into the pre-snap)
+function annReset() { const S = ANN_S; S.pl = { br: 0 }; if (S.cur && !S.cur.hold && annNow() >= S.cur.end + ANN.gap && !S.q.length) annClear(); annSetup(); }   // (reset(): a result line still being written runs into the pre-snap)
 function annSnap() { const S = ANN_S; S.pl = { br: 0 }; if (S.cur || S.q.length) { annClear(); if (ONL.on && ONL.host) { try { NET.send({ t: 'ann', c: 1 }); } catch (e) {} } } }
 function annNet(d) {   // the guest: the host's exact line
   if (d.c) return annClear();
@@ -2390,7 +2395,7 @@ function annPopup(p, text) {   // (popup(): every callout's text, drawn or not)
   if (e[2]) P.one = true;
   if (e[0] === 'tip') P.tip = true;
   if (e[0] === 'hurdle' && p) P.hurdleX = p.x;
-  annSay(e[0], { pri: e[1], add: e[0] === 'record', vars: p && p.num != null ? { num: p.num } : null });
+  annSay(annBig(e[0], p), { pri: e[1], add: e[0] === 'record', vars: p && p.num != null ? { num: p.num } : null });
 }
 function annMiss(c, kind, ico) {   // (missReel: a tackler beaten by a move; ico = iconic)
   if (!c || !annGate()) return;
@@ -2411,12 +2416,12 @@ function annThrow(P, t) {   // (throwBall: the release)
 function annCatch(r) {   // (catchBall, in bounds)
   if (!annGate()) return;
   if (ball.tipped) return annSay('tipCatch', { pri: 6 });
+  const st = r && r.catchFx && ANN_CST[r.catchFx.style]; if (st) return annSay(annBig(st, r), { pri: 2.5 });   // (v0.74 the catch looks with no callout of their own; a popup's call (pri 3) still wins)
   annSay(ANN_S.pl.deep ? 'deepCatch' : 'catch', { pri: ANN_S.pl.deep ? 2 : 0.5, who: 'A' });
 }
-function annPlayEnd(text, next, kind, ko, pen) {   // (endPlay: the result line, or a crazy play's)
-  if (!annGate()) return;
+function annPlayBase(text, next, kind, ko, pen) {   // (annPlayEnd: the base result line, or a crazy play's)
   const P = ANN_S.pl, T = String(text || ''), g = Number.isFinite(next) ? Math.round((next - los) / YL) : 0, o = { add: true, vars: { gain: Math.abs(g) } };
-  if (pen) { const pv = { yd: pen.yds || 0, num: pen.num || null }; return annSay(pen.dead ? (pen.key || 'flag') : pen.first ? 'penFirst' : 'penAccepted', { ...o, pri: 2, vars: pv }); }   // (v0.68: a dead-ball foul's own call; a live one was called in penTick, this is the accept)
+  if (pen) { const pv = { yd: pen.yds || 0, num: pen.num || null }; return annSay(pen.off2 ? 'penOffset' : pen.dead ? (pen.key || 'flag') : pen.first ? 'penFirst' : 'penAccepted', { ...o, pri: 2, vars: pv }); }   // (v0.68: a dead-ball foul's own call; a live one was called in penTick, this is the accept)
   if (game.penDeclined) return annSay('penDeclined', { ...o, pri: 2 });
   if (patMode === 'kick') return annSay(kind === 'fg' ? 'patGood' : /BLOCK/i.test(T) ? 'blocked' : 'patMiss', { ...o, pri: 2 });
   if (patMode === 'two') return annSay(kind === 'td' ? 'twoGood' : 'twoFail', { ...o, pri: 3 });
@@ -2458,8 +2463,110 @@ function annInjury(p, s, out) {   // (slExit / a mild one kept in: one line per 
   const k = !out ? 'injStay' : s.inj.season ? 'injSeason' : s.inj.re || s.inj.sev >= 2 ? 'injCart' : s.inj.sev === 1 ? 'injHelp' : 'injWalk';
   annSay(k, { pri: 2, add: true, wait: true, vars: { name: s.short || s.name || (p && p.num ? '#' + p.num : 'he') } });
 }
+// --- announcers: the situation (v0.74). ONE object a play (ANN_S.sit), built pre-snap in annReset and refreshed in annPlayEnd: never per frame. Per-game
+// tallies on ANN_S.g (drive, streaks, flags, reviews; cleared by annClear(true) = newGame). Tunables ANN.sit / ANN.ref (01). Both teams, neutral lines.
+function annG() { const S = ANN_S; return S.g || (S.g = { dr: null, newDr: true, sc: '', fd3: 0, sk: 0, ds: [], min: { blue: 0, red: 0 }, fl: { blue: 0, red: 0 }, rev: 0, rx: 0, bad: 0, good: 0, show: '', refSaid: false, truth: null, two: 0, red: 0, goal: 0 }); }
+const annOffT = () => (aiOff() ? 'red' : 'blue');
+const annClock = () => (Math.min(game.quarter, 5) - 1) * QUARTER_SECS + (QUARTER_SECS - game.secs);
+const annSecsLeft = () => Math.max(0, game.quarter > 4 ? game.secs : (4 - game.quarter) * QUARTER_SECS + game.secs);
+function annPossLeft() {   // possessions left for EACH team: time left / this game's average drive (blended toward ANN.sit.drive x QUARTER_SECS until drives are in)
+  const d = annG().ds, W = ANN.sit, avg = (W.drive * QUARTER_SECS * W.driveW + d.reduce((a, b) => a + b, 0)) / (W.driveW + d.length);
+  return annSecsLeft() / Math.max(1, avg) / 2;
+}
+function annSit() {
+  const G = annG(), W = ANN.sit, off = annOffT(), def = off === 'blue' ? 'red' : 'blue', mar = game[off] - game[def], q = game.quarter, secs = game.secs;
+  const sc = game.blue + ',' + game.red + ',' + (q > 2 ? 2 : 1);
+  if (!G.dr || G.newDr || G.sc !== sc) { G.dr = { t0: annClock(), n: 0, yd: 0, fd: 0, off }; G.newDr = false; G.fd3 = 0; G.red = G.goal = 0; }
+  G.sc = sc;
+  for (const t of ['blue', 'red']) G.min[t] = Math.min(G.min[t], game[t] - game[t === 'blue' ? 'red' : 'blue']);
+  const dist = Math.max(0, Math.round((lineToGain - los) / YL)), toGo = Math.max(0, Math.round((FIELD - los) / YL)), goal = lineToGain >= FIELD - BALL_TIP;
+  const late = q >= 4 && secs <= lateS(W.lateS), need = -mar;
+  return ANN_S.sit = { down, dist, db: dist <= W.short ? 's' : dist >= W.long ? 'l' : 'm', toGo, zone: goal ? 'goal' : toGo <= 20 ? 'red' : toGo >= 90 ? 'deep' : toGo > 60 ? 'own' : 'mid',
+    mar, q, secs, late, two: (q === 2 || q === 4) && secs <= lateS(W.lateS), last: (q === 2 || q >= 4) && secs <= lateS(W.lastS), ot: q >= 5,
+    poss: annPossLeft(), gw: (late || q >= 5) && need >= 0 && need <= 8 ? (need <= 6 ? 'win' : 'tie') : late && mar > 0 && mar <= 8 ? 'hold' : null,
+    blow: Math.abs(mar) >= W.blow, shut: q >= 3 && (game.blue === 0 || game.red === 0), come: G.min[off] <= -W.comeback && mar >= -8,
+    po: typeof MATCH !== 'undefined' && !!MATCH.playoff, wx: game.wx && game.wx.ext || null, dr: G.dr, fd3: G.fd3, sk2: G.sk >= 2 };
+}
+function annSetup() {   // reset(): a line before the snap on the downs that matter (it waits behind a result line still up)
+  if (typeof CO === 'undefined' || !annGate() || patMode !== null || game.over || state !== 'pre') return;   // (reset() also runs at load, before 15 defines CO)
+  const s = annSit(), G = annG(), n = s.dr.n;
+  const k = s.last ? 'sit_last' : s.ot && !n ? 'sit_ot' : (s.gw === 'win' || s.gw === 'tie') && !n ? (s.gw === 'win' ? 'sit_gwdWin' : 'sit_gwdTie')
+    : s.two && G.two !== s.q ? 'sit_two' : s.down === 4 ? (s.db === 's' ? 'sit_4s' : 'sit_4l') : s.zone === 'goal' && !G.goal ? 'sit_goal'
+    : s.down === 3 ? 'sit_3' + s.db : s.zone === 'red' && !G.red ? 'sit_red' : null;
+  if (!k) return;
+  if (k === 'sit_two') G.two = s.q; if (k === 'sit_goal') G.goal = 1; if (k === 'sit_red') G.red = 1;
+  annSay(k, { pri: 1, add: true, wait: true, odds: ANN.sit.always.includes(k) ? 1 : ANN.sit.setOdds });
+}
+function annPlayEnd(text, next, kind, ko, pen) {   // (endPlay) the base call, then the drive / streak tallies, the officials' spot, a context colour line
+  if (!annGate()) return;
+  const G = annG(), s0 = ANN_S.sit || annSit(), T = String(text || ''), g = Number.isFinite(next) ? Math.round((next - los) / YL) : 0;
+  const offT = annOffT(), was = s0.mar;   // (the margin at the snap: endPlay runs after the points are added)
+  annPlayBase(text, next, kind, ko, pen);
+  if (pen) { annFlagCount(pen); if (pen.others) annSay('penMore', { who: 'B', pri: 2, add: true, wait: true }); return; }
+  if (patMode !== null || (ANN_S.cur && ANN_S.cur.pri >= ANN.crazy)) { if (patMode === null) annDriveEnd(kind, T, ko); return; }
+  const sack = /SACKED/.test(T), first = !kind && !ko && Number.isFinite(next) && next > los && next + BALL_TIP >= lineToGain, d = G.dr;
+  if (d && !ko) { d.n++; d.yd += g; if (first) { d.fd++; G.fd3++; } else G.fd3 = 0; G.sk = sack ? G.sk + 1 : 0; }
+  const end = annDriveEnd(kind, T, ko);
+  if (annRefSpot()) return;
+  if (ANN_S.q.some(l => l.who === 'B')) return;
+  const s = annSit(), now = game[offT] - game[offT === 'blue' ? 'red' : 'blue'], C = ANN.sit.ctx;
+  const k = s0.late && was <= 0 && now > 0 ? 'ctx_lead' : kind === 'turnover' && s0.late && Math.abs(was) <= 8 ? 'ctx_turnLate'
+    : kind === 'punt' && d && d.n <= 3 && !d.fd ? 'ctx_3out' : G.sk >= 2 ? 'ctx_sack2' : G.fd3 === 3 ? 'ctx_fd3' : first && d && d.n >= C.longN ? 'ctx_longDrive'
+    : !end && s.gw === 'win' ? 'ctx_gwd' : !end && s.gw === 'tie' ? 'ctx_tie' : !end && s.gw === 'hold' ? 'ctx_hold'
+    : s.q === 4 && s.poss <= C.one ? 'ctx_poss1' : s.q === 4 && s.poss <= C.two ? 'ctx_poss2' : s.two && !end ? 'ctx_clock'
+    : s.come && end ? 'ctx_come' : s.blow ? 'ctx_blow' : s.shut ? 'ctx_shut' : s.wx ? 'ctx_wx' : s.po ? 'ctx_po' : null;
+  if (k) annSay(k, { who: 'B', pri: 1.2, add: true, wait: true, odds: C.big.includes(k) ? C.bigOdds : C.odds });
+}
+function annDriveEnd(kind, T, ko) {   // true = the drive is over (its time goes into the average)
+  const G = annG(); if (ko) return false;
+  const over = kind === 'td' || kind === 'fg' || kind === 'fgmiss' || kind === 'punt' || kind === 'turnover' || /TOUCHDOWN|SAFETY|PICK SIX|DOWNS/i.test(T);
+  if (over && G.dr && !G.newDr) { G.ds.push(Math.max(10, annClock() - G.dr.t0)); G.newDr = true; }
+  return over;
+}
+const ANN_CST = { overShoulder: 'overShoulder', highPoint: 'highPoint', undercut: 'highPoint', oneSideline: 'sideline', sideOneLeap: 'sideline', mossOver: 'moss', mossKnee: 'moss', mossBack: 'moss' };
+function annBig(k, r) {   // a bigger variant of a great catch: in the end zone, on 3rd / 4th down, or late in a close game
+  if (!ANN_LINES[k + 'Big']) return k;
+  const s = ANN_S.sit, ez = r && r.x >= FIELD;
+  return ez || down >= 3 || (s && s.late && Math.abs(s.mar) <= 8) ? k + 'Big' : k;
+}
+// --- announcers: the officials (v0.74): bad / good spots, reviews, agree / doubt colour on flags, tallies for the halftime recap. No missed-call detection.
+function annRefSpot() {
+  const G = annG(), t = game.truth; if (!t || t === G.truth) return false; G.truth = t;
+  const o = { who: 'B', pri: 2.2, add: true, wait: true };
+  if (t.bad) { G.bad++; annSay(t.td ? 'ref_tdShort' : 'ref_badSpot', o); return true; }
+  const near = t.td ? t.close : Number.isFinite(t.spot) && t.tk && Math.abs(t.spot - t.line) <= ANN.ref.near * YL;
+  if (near && Math.random() < ANN.ref.goodOdds) { G.good++; annSay(t.td ? 'ref_tdClose' : 'ref_goodSpot', o); return true; }
+  return false;
+}
+function annRefRev(res) {   // (refRevApply) after the ruling's own call: did they get it right in the end
+  const G = annG(); G.rev++; if (res === 'REVERSED') G.rx++;
+  annSay(res === 'REVERSED' ? 'ref_fixed' : game.truth && game.truth.bad ? 'ref_missed' : 'ref_right', { who: 'B', pri: 3, add: true, wait: true });
+}
+function annFlagCount(pen) {
+  if (!pen || pen.off2 || pen.counted) return; pen.counted = true;
+  const off = annOffT(), def = /defense/i.test(String(pen.text || '').split(':')[0]); annG().fl[def ? (off === 'blue' ? 'red' : 'blue') : off]++;
+}
+function annFlag(pen) {   // (penAsk, after the foul's own call) agree or doubt it, now and then
+  if (!annGate() || !pen) return; annFlagCount(pen);
+  if (ANN_S.q.some(l => l.who === 'B') || Math.random() > ANN.ref.flagOdds) return;
+  const doubt = Math.random() < (ANN.ref.doubt[pen.key] || ANN.ref.doubt.d);
+  annSay(!doubt ? 'flagAgree' : pen.key === 'penDpi' || pen.key === 'penOpi' ? 'flagPiDoubt' : pen.key === 'penRough' ? 'flagRoughDoubt' : 'flagDoubt', { who: 'B', pri: 3, add: true, wait: true });
+}
+// --- announcers: dead time (v0.74): timeouts, quarter breaks, challenges, the halftime / pregame show's cards (one A + one B a card, from its own segment)
+function annTimeout(left) { annSay(left ? 'timeout' : 'timeoutLast', { pri: 2, add: true }); }
+function annPeriod() { const q = game.quarter; annSay(q >= 5 ? 'otStart' : q === 3 ? 'half2' : q === 4 ? 'q4' : 'qBreak', { pri: 2, add: true }); }
+function annQ(key, who, v) { const i = annPick(key, who, v); if (i >= 0 && ANN_S.q.length <= ANN.maxQ) ANN_S.q.push({ who, key, i, pri: 1, v, hold: false }); }
+function annShow(s) {   // (drawHalfShow) a new card: its lines; the first halftime card adds the officiating recap. One compare a frame while the show is up.
+  const G = annG(), id = (HT.pre ? 'p' : 'h') + HT.i; if (G.show === id) return; G.show = id;
+  if (!s || s.k === 'clips' || !annShowOn() || (ONL.on && ONL.guest)) return;
+  const pre = HT.pre ? 'pre_' : 'show_', k = ANN_LINES[pre + s.k] ? pre + s.k : pre + 'gen', v = { sc: Math.max(game.blue, game.red) + ' to ' + Math.min(game.blue, game.red) };
+  annClear(); annPut(k, { who: 'A', pri: 1, vars: v }); annQ(k, 'B', v);
+  if (!HT.pre && !G.refSaid) { G.refSaid = true; const n = G.fl.blue + G.fl.red; annQ(G.rx ? 'show_refRev' : !n ? 'show_refNone' : n >= ANN.ref.many ? 'show_refMany' : 'show_ref', 'B', { fl: n }); }
+}
 // --- announcers: the halftime reel (hl.mode 'half', never the end-of-game reel behind the result screen, hl.bg): A sets each clip up (hlPlay), reacts
 // to each apex moment as its tape time goes by (beside hsPops), B comments at the clip's end or on its second run (hl.again). Skipping = a new clip clears it.
+const annSlow = () => annReelOn() || annShowOn();   // (v0.74 the reel and the show's cards: slow handwriting, read time)
+const annShowOn = () => !!HT && !hl && SETTINGS.announcers !== false && !tut && !CO;
 const annReelOn = () => !!hl && hl.mode === 'half' && !hl.bg && SETTINGS.announcers !== false && !tut && !CO;
 const ANN_REEL_K = { pick: 'pick', pickTd: 'pick', fumble: 'fumble', fg: 'fg', hit: 'hit', iconic: 'run', move: 'run', broken: 'run', spectacular: 'catch', moss: 'catch', tipcatch: 'catch', pbu: 'def', block: 'def' };
 function annReelColor(c) {   // B's colour line from what the clip's record really holds: air time, men beaten, the pancake that sprang it, the defense, his name

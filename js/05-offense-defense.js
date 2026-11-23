@@ -2399,7 +2399,7 @@ function penAsk(text, next, kind, pen) {   // (endPlay) park a live-ball foul; f
   game.penQ.who = penBanner(pen); msg = 'FLAG: ' + game.penQ.who.name + (game.penQ.who.on ? ' on ' + game.penQ.who.on : '');
   setTimeout(whistle, 150);
   try { refPenCall(pen); } catch (e) {}
-  try { annSay(pen.key || 'flag', { pri: 3, vars: { yd: pen.yds || 0, num: pen.num || null } }); } catch (e) {}
+  try { annSay(pen.key || 'flag', { pri: 3, vars: { yd: pen.yds || 0, num: pen.num || null } }); annFlag(pen); } catch (e) {}
   return true;
 }
 function penTick() {   // (update, while game.penQ) the call, then the choice

@@ -2124,7 +2124,7 @@ function aiWantsRun() {
 }
 function aiOffense(dt) {
   if (!ai) ai = newAi();
-  for (const k of AI_KEYS) keys[k] = false;
+  for (const k of AI_KEYS) HELD.ai[k] = false; heldSync();   // (perf job: the computer's presses live in its own map, HELD.ai; keys = every owner's, heldSync)
   if (state === 'pre') { if (ai.snapped) ai = newAi(); aiPre(dt); }
   else if (state === 'drop' && ai.kneel) {   // victory formation: the QB takes the snap and goes down on a knee (a yard lost, the clock runs)
     if (!ai.knelt) { ai.knelt = true; qb.action = 'kneel'; qb.act = { t: 0 }; popup(qb, 'KNEEL', '#7fe3ff'); endPlay(`${teamName('BLUE')} takes a knee`, Math.max(YL, los - YL)); }
@@ -2135,6 +2135,7 @@ function aiOffense(dt) {
   }
   else if (state === 'run') aiRun(dt);
   else if (state === 'done' && !tut) aiTimeout();
+  heldSync();
 }
 // their offense calls a timeout when the same clock logic that has them hurrying says every second counts
 function aiTimeout() {
@@ -2400,6 +2401,7 @@ function aiStiffNear(c) {
   return [...dl, ...back7].some(d => d && !grounded(d) && d.action !== 'down' && (dist(d, c) <= STIFF_RANGE || Math.hypot(d.x + (d.vx || 0) * L - cx, d.y + (d.vy || 0) * L - cy) <= STIFF_RANGE));
 }
 function aiPocket() {
+  const keys = HELD.ai;   // (perf job: the computer's own held keys, folded into the real keys by heldSync)
   const hold = tut && tutStep() && tutStep().hold;   // (the tutorial's rush steps: no throwing early, whatever the pressure)
   const e = cpuEdge();
   let heat = pressure();
@@ -2535,7 +2537,7 @@ function aiMoveWeights(c, d) {
   return w;
 }
 function aiRun(dt) {
-  const c = runner;
+  const c = runner, keys = HELD.ai;   // (perf job: the computer's own held keys)
   ai.mv -= dt;
   if (clock < ai.truckUntil) keys.KeyC = true;
   if (clock < (ai.stiffUntil || 0) && !aiStiffNear(c)) ai.stiffUntil = 0;   // (broken free / the man is gone: no arm out at nobody)
@@ -2851,6 +2853,7 @@ function hipHands(dt) {
 function update(dt) {
   if (dt <= 0) return;
   let ut = SETTINGS.perfHud ? PERF_NOW() : 0;   // (FRAME TIMES: u.* parts of the game step, perfDump(); 0 = off, every mark below is skipped)
+  heldSync();   // (perf job: keys / dkeys = what every owner holds, at the top of every game step)
   DIFF_FRAME++;   // (a new game step: diffLvl's kept row is rebuilt)
   if (tut && tut.defAsk) return;   // (the tutorial's "play defense or sim it?" card: nothing moves until you pick)
   if (wxDelayUp()) return;   // (the lightning delay card: everything waits)
@@ -2872,7 +2875,7 @@ function update(dt) {
   hipHands(dt);
   if (aiOff()) { aiOffense(dt); defTick(dt); }
   else if (pvpDef()) defTick(dt);
-  else if (ai) { ai = null; for (const k of AI_KEYS) keys[k] = false; }
+  else if (ai) { ai = null; heldClear('ai'); }
   if (state === 'pre') qb.scrT = 0;   // (scrambling time this play, for qbTire)
   else if ((state === 'pocket' || (state === 'run' && runner === qb)) && Math.hypot(qb.vx, qb.vy) > QB_TIRE.speed * YD) qb.scrT = (qb.scrT || 0) + dt;
   updatePylons(dt);
@@ -3440,7 +3443,7 @@ function updateCamera(dt) {
   // and the goal-line zoom x TOUCH_ZOOM cut the outside receivers: here the 16:9 part may run on into the stands up to the rim (the PAD strips may show past it)
   let preFit = null;
   const PF = CAM.preFit;
-  if (PF.on && state === 'pre' && wide && !kickoffPlay && !aiOff() && !mine && !tut && !lockPre && SETTINGS.camZoom !== false && !(rec && rec.replaying)) {
+  if (PF.on && state === 'pre' && wide && !kickoffPlay && !aiOff() && !tut && !lockPre && SETTINGS.camZoom !== false && !(rec && rec.replaying)) {   // (v0.74 fix: no '!mine' here: with a live human defender (pvpDef, online / local two-player) 'mine' is true on every human offense and blocked the fit)
     const ek = userZoom * (TOUCH ? TOUCH_ZOOM : 1), vc = viewCenterY(), fm = catchers();
     let fx0 = qb.x, fx1 = qb.x, fy0 = qb.y, fy1 = qb.y;
     for (let i = 0; i < fm.length; i++) { const p = fm[i]; if (p.x < fx0) fx0 = p.x; if (p.x > fx1) fx1 = p.x; if (p.y < fy0) fy0 = p.y; if (p.y > fy1) fy1 = p.y; }

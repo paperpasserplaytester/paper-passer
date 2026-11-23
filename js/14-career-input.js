@@ -1227,7 +1227,7 @@ window.addEventListener('pointerup', e => {
 window.addEventListener('keyup', e => { if (e.code === 'Escape' && HSK.at && !HSK.f) HSK.at = 0; }, true);
 // A finger on a menu / canvas button: holding it is the mouse's hover (the lift), and the tap is the click, which now happens on the RELEASE (the button
 // presses in for a moment, then the click goes through and it springs back). A finger that drags (a slider, a scrolling list) gets its press at once, at the spot it landed.
-const TAP_DEFER = { move: 12, press: 130 };   // px a tap may drift, ms the button stays pressed in before the click goes through
+const TAP_DEFER = { move: 12, press: 60, game: 0, look: 130 };   // px a tap may drift, ms before the click goes through: press = menus, game = in-game buttons (perf job: on the release; the pressed-in look plays after, look ms)
 let tapHold = null;
 const menuTouch = p => !!((results && !hlFront()) || settingsOpen || slotUI || paused || showKeys || (tut && tut.defAsk) || overUiBtn(p));
 function sendMouse(type, pt, target) {
@@ -1257,8 +1257,15 @@ window.addEventListener('pointerup', e => {
   tapHold = null;
   const pt = pointerPos(e), onIt = Math.hypot(layPt(e).x - h.lp.x, layPt(e).y - h.lp.y) <= TAP_DEFER.move;
   if (!onIt) return;
+  const inGame = !(results && !hlFront()) && !settingsOpen && !slotUI && !paused && !showKeys && !(tut && tut.defAsk);
+  if (inGame && !TAP_DEFER.game) {   // (perf job: an in-game button acts on the release; the pressed-in look plays after)
+    sendMouse('pointerdown', h.p, canvas); sendMouse('pointerup', h.p, window);
+    btnPress = { ...h.p, held: true, upAt: 0 };
+    setTimeout(() => { if (btnPress && btnPress.held) { btnPress.held = false; btnPress.upAt = performance.now(); } }, TAP_DEFER.look);
+    return;
+  }
   setTimeout(() => { btnPress = { ...h.p, held: true, upAt: 0 }; }, 0);   // (pressed in...)
-  setTimeout(() => { sendMouse('pointerdown', h.p, canvas); sendMouse('pointerup', h.p, window); }, TAP_DEFER.press);   // (...then the click, and the spring back)
+  setTimeout(() => { sendMouse('pointerdown', h.p, canvas); sendMouse('pointerup', h.p, window); }, inGame ? TAP_DEFER.game : TAP_DEFER.press);   // (...then the click, and the spring back)
 }, true);
 window.addEventListener('pointercancel', e => { if (tapHold && tapHold.id === e.pointerId) tapHold = null; }, true);
 canvas.addEventListener('pointerdown', e => {
@@ -1712,6 +1719,53 @@ function flipKey(code, def) {
   if (code === 'KeyD') return 'KeyA';
   return code;
 }
+// --- held keys (perf job): every held key has an owner. kb = this keyboard, touch = the stick / swipes / touch buttons (tkey), guest = the online guest's
+// keys replayed by the host (onlGuestKey), ai = the computer's offense (aiPocket / aiRun write HELD.ai the way they used to write keys). keys / dkeys are the
+// union of every owner, rebuilt by heldSync() after each change and at the top of every game step: never write keys / dkeys directly. Blur / hidden clear kb only.
+const HELD = { kb: {}, touch: {}, guest: {}, ai: {} };   // kb / touch / guest: code (kb / guest: the physical code; touch: the logical one tkey was given) -> { k: code held in keys, d: code held in dkeys, a: the alias read at the press, sent / t0: (touch) the code dispatched, when }; ai: code -> true / false
+const HELD_SRC = ['kb', 'touch', 'guest'], HELD_K = {}, HELD_D = {};
+let heldEv = null;   // { src, phys, a }: the press / release being handled (tkey and onlGuestKey set it around their events; null = this keyboard, phys = e.code)
+function heldMark(code, m) {   // a press holds code in keys (m 'k') or dkeys ('d'), owned by whoever sent it
+  const c = heldEv || { src: 'kb', phys: code }, M = HELD[c.src];
+  const h = M[c.phys] || (M[c.phys] = {}); h[m] = code; if (c.a) h.a = c.a; heldSync();
+}
+function heldUp(src, phys) { const h = HELD[src][phys]; if (h) { delete HELD[src][phys]; heldSync(); } return h; }
+function heldClear(src) { const M = HELD[src]; let any = false; for (const k in M) { delete M[k]; any = true; } if (any) heldSync(); }
+function heldSync() {
+  for (const k in HELD_K) delete HELD_K[k]; for (const k in HELD_D) delete HELD_D[k];
+  for (const s of HELD_SRC) { const M = HELD[s]; for (const p in M) { const h = M[p]; if (h.k) HELD_K[h.k] = 1; if (h.d) HELD_D[h.d] = 1; } }
+  for (const c in HELD.ai) if (HELD.ai[c]) HELD_K[c] = 1;
+  if (typeof CO !== 'undefined' && CO && CO.keys) for (const c in CO.keys) if (CO.keys[c]) HELD_K[c] = 1;   // (the cold open's scripted presses: CO.keys is its own map)
+  for (const c in keys) if (keys[c] && !HELD_K[c]) keys[c] = false;
+  for (const c in HELD_K) if (!keys[c]) keys[c] = true;
+  for (const c in dkeys) if (dkeys[c] && !HELD_D[c]) dkeys[c] = false;
+  for (const c in HELD_D) if (!dkeys[c]) dkeys[c] = true;
+}
+const INPUT_AUDIT = { tapMs: 1500 };   // a touch press with no finger / swipe / button behind it is let go after this long (a tap's own release comes within TUI.tapMs)
+// what a touch hold is for: the stick's arrows while its finger steers, a swipe's truck / stiff arm, a touch button held, or a tap's short press
+function heldTouchWhy(p, h, now) {
+  if (TUI.held[p] && (!/^Arrow/.test(p) || (tpad._id != null && !tpad._sus))) return true;
+  if (swipeFrom && ((p === 'KeyC' && swipeFrom.truck) || (p === 'KeyQ' && swipeFrom.stiff))) return true;
+  for (const b of tbtns.children) if (b._down && b._code === p) return true;
+  return now - (h.t0 || 0) < INPUT_AUDIT.tapMs;
+}
+// every held entry whose owner no longer has a reason for it: [{ src, key }]. The 100 ms interval lets them go and notes 'stickStuck <key> <source> <state>'
+function inputAudit() {
+  const out = [], now = performance.now();
+  try {
+    for (const p in HELD.touch) if (!heldTouchWhy(p, HELD.touch[p], now)) out.push({ src: 'touch', key: p });
+    for (const p in TUI.held) if (TUI.held[p] && /^Arrow/.test(p) && !(tpad._id != null && !tpad._sus) && !out.some(o => o.key === p)) out.push({ src: 'stick', key: p });
+    for (const p in HELD.guest) if (!(ONL.on && ONL.host)) out.push({ src: 'guest', key: p });
+  } catch (e) {}
+  return out;
+}
+function inputAuditFix() {
+  for (const o of inputAudit()) {
+    perfNote('stickStuck ' + o.key + ' ' + o.src + ' ' + state);
+    if (o.src === 'guest') heldUp('guest', o.key);
+    else { if (TUI.held[o.key]) TUI.held[o.key] = false; tkey(o.key, false); heldUp('touch', o.key); }
+  }
+}
 window.addEventListener('keydown', e => {
   if (settingsOpen && rebinding) {   // capturing the new key for a row on the settings page
     e.preventDefault();
@@ -1730,10 +1784,10 @@ window.addEventListener('keydown', e => {
   }
   if (!olKey(e) && !careerKey(e) && !trSearchKey(e) && !qsKey(e) && !coachKey(e) && !nickKey(e) && !staffNameKey(e)) {
     if (!onlKeyOk(e)) return;   // (v0.58: Ctrl / Cmd / Alt combos (tab switching...) and F-keys belong to the browser: never a game key, never preventDefault'd; the text fields above keep their own Ctrl+A / Ctrl+Backspace)
-    const a = aliasKey(e); if (!e.repeat) heldKeys[e.code] = a; onKeyDown(a);
+    const a = aliasKey(e), ev0 = heldEv; heldEv = { src: ev0 ? ev0.src : 'kb', phys: ev0 ? ev0.phys : e.code, a };   // (each hold remembers what its key was read as at the press: it is let go as that, whatever has changed since (the snap, the drive direction))
+    try { onKeyDown(a); } finally { heldEv = ev0; }
   }
 });
-const heldKeys = {};   // (what each physical key was read as when it went down: it is let go as that, whatever has changed since (the snap, the drive direction))
 function onKeyDown(e) {
   if (dcg && e.code === 'Escape' && !offPop && !teamPick) { e.preventDefault(); if (rosterView.sel != null) { rosterView.sel = null; statsView = null; } else dcClose(); return; }   // (the in-game depth chart: Esc steps back, then closes it)
   if (tour && results) {   // a tutorial is up: Esc skips, Enter / Space / right arrow go on, left arrow goes back
@@ -1760,7 +1814,7 @@ function onKeyDown(e) {
     if (e.code === 'Escape') { if (!e.repeat) { e.preventDefault(); hlClose(); } }
     else if (e.code === 'Enter' || e.code === 'Backspace') { e.preventDefault(); if (!e.repeat) hlPlay(hl.i + (e.code === 'Enter' ? 1 : -1)); }
     else if (e.code === 'Space') { e.preventDefault(); if (!e.repeat && rec && !rec.rewind) rec.paused = !rec.paused; }
-    else if (GAME_KEYS.includes(e.code)) { e.preventDefault(); keys[e.code] = true; }
+    else if (GAME_KEYS.includes(e.code)) { e.preventDefault(); heldMark(e.code, 'k'); }
     return;
   }
   if (offPop && e.code === 'Escape') { e.preventDefault(); if (!e.repeat) offPopClose(); return; }   // (Esc closes the popup on top, one at a time: the changelog and every other popup)
@@ -1793,7 +1847,7 @@ function onKeyDown(e) {
   if (paused) return;
   if (finalReplay() && !e.repeat && e.code === 'Enter') { e.preventDefault(); finishLive(); return; }   // (the game's over: Enter = FINISH GAME, any time)
   if (!e.repeat) celebSkip();   // (any key ends a celebration)
-  if (e.def && !(rec && rec.replaying)) { e.preventDefault(); dkeys[e.code] = true; if (!e.repeat) defKeyDown({ code: e.code }); return; }   // (two players: the defender's keys; the offense's fall through as the usual codes)
+  if (e.def && !(rec && rec.replaying)) { e.preventDefault(); heldMark(e.code, 'd'); if (!e.repeat) defKeyDown({ code: e.code }); return; }   // (two players: the defender's keys; the offense's fall through as the usual codes)
   if (tut && tutStep() && e.code === 'Backspace' && !e.repeat) { e.preventDefault(); tut.passed = false; aim = null; reset(); return; }   // start this step over
   if (state === 'pre' && fourthPending && !aiOff() && !(rec && rec.replaying) && GAME_KEYS.includes(e.code) && e.code !== 'KeyT') { e.preventDefault(); return; }   // choose punt or go first (their call on defense: your defender still moves)
   if (!GAME_KEYS.includes(e.code)) return;
@@ -1802,8 +1856,8 @@ function onKeyDown(e) {
   if (e.code === 'Space' && !e.repeat && state === 'kickoff' && kick && kick.userKo) { kickClick(); return; }   // (your mirrored kick's meters)
   // T = timeout, on offense and on defense (before the snap, or once the play is over; on defense only once it has fully settled; two players: Shift+T is the defense's)
   if (e.code === 'KeyT' && !e.repeat && (!tut || (tutStep() && tutStep().id === 'timeout')) && (state === 'pre' || state === 'done') && !(rec && rec.replaying)) { if (state === 'pre' || !aiOff() || playSettled()) callTimeout(false, pvpOn() && e.shiftKey); return; }
-  if (aiOff() && !(rec && rec.replaying)) { dkeys[e.code] = true; if (!e.repeat && defKeyDown(e)) return; }   // (on defense your keys steer your defender; the offense is the computer's)
-  else keys[e.code] = true;
+  if (aiOff() && !(rec && rec.replaying)) { heldMark(e.code, 'd'); if (!e.repeat && defKeyDown(e)) return; }   // (on defense your keys steer your defender; the offense is the computer's)
+  else heldMark(e.code, 'k');
   if (e.repeat) return;
   if (halfShown()) { if (e.code === 'Space' || e.code === 'Enter') halfOK(); return; }
   if (halfHold && !(rec && rec.replaying)) { if (state === 'done' && !(rec && (rec.replaying || rec.rewind)) && playSettled() && !bannerUp() && (e.code === 'Space' || e.code === 'Enter')) halfGo = true; return; }   // (not up yet: Space / Enter moves on to the card; the play may be settling or a replay on)
@@ -1850,13 +1904,13 @@ function onKeyDown(e) {
   }
 }
 window.addEventListener('keyup', e => {   // (never filtered by modifiers: a key let go with Ctrl held must still be let go)
-  const a = heldKeys[e.code] || aliasKey(e); delete heldKeys[e.code]; if (a.def !== true) keys[a.code] = false; if (a.def !== false) dkeys[a.code] = false; if (a.code === 'KeyD' && !a.def) ignoreD = false; });
-window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; for (const k in dkeys) dkeys[k] = false; });
+  const h = heldUp(heldEv ? heldEv.src : 'kb', heldEv ? heldEv.phys : e.code), a = (h && h.a) || aliasKey(e); if (a.code === 'KeyD' && !a.def) ignoreD = false; });
+window.addEventListener('blur', () => heldClear('kb'));   // (perf job: only the keyboard's: a thumb on the stick is still down)
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {   // (off the tab: everything goes quiet, in a game or on a menu)
     silenceLoops();
     try { for (const k in sfxPlaying) sfxPlaying[k].pause(); if (crowdAmb) crowdAmb.forEach(a => a.pause()); if (actx) actx.suspend(); } catch (e) {}
-    if (!results && !game.over && !(ONL.on && !TOUCH)) { paused = true; aim = null; for (const k in keys) keys[k] = false; }   // (an online game on a laptop keeps running off the tab: see the background ticker)
+    if (!results && !game.over && !(ONL.on && !TOUCH)) { paused = true; aim = null; heldClear('kb'); }   // (an online game on a laptop keeps running off the tab: see the background ticker)
   } else { try { if (actx && !hushed) actx.resume(); } catch (e) {} }   // (back on the tab with the pause sheet up: stays quiet until unpaused)
 });   // (switching tabs pauses a game in progress)
 
@@ -2249,6 +2303,7 @@ function paintFrame(paintT0, pm, now) {
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#111'; ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.save(); ctx.setTransform(RK, 0, 0, RK, PAD * RK, 0);
   if (pm) pt = perfMark('clear', pt);
+  const d0 = ctxDepth; try {   // (a throw anywhere below is logged and the frame still gets brightPass: a skipped pass = a darker frame)
   if (hl && hl.bg) { if (results.screen === 'result') { reelBgDraw(); if (pm) pt = perfMark('reel', pt); } drawMenus(); if (pm) pt = perfMark('menus', pt); }   // (the end-of-game reel: the plays, then the result screen over them)
   else if (hl) { draw(); if (hl) drawHlBar(); hlDelStep(); if (hl) drawHlDel(); if (pm) pt = perfMark('hl', pt); } else if (HT) { gameWarm(); drawHalfShow(); if (pm) pt = perfMark('half', pt); } else if (results) { if (results.screen === 'matchup') gameWarm(); if (!settingsOpen || MENU_PACE.underSettings) { drawMenus(); if (pm) pt = perfMark(crumple ? (crumple.painted ? 'menusUC' : 'menusUC1') : 'menus', pt); } } else { draw(); if (pm) pt = perfMark('draw', pt); }   // (v0.55: settings starts with a full-screen desk: the menu under it isn't drawn)
   if (settingsOpen) { drawSettings(); if (pm) pt = perfMark('settings', pt); }
@@ -2256,6 +2311,7 @@ function paintFrame(paintT0, pm, now) {
   if (crumple) { drawCrumple(); if (crumple) crumple.painted = true; if (pm) pt = perfMark('crumple', pt); }
   ioDrawToast();
   drawNetBadge(); drawOnlineHud(); drawOnlineOverlay();
+  } catch (e) { drawFail(e); while (ctxDepth > d0) ctx.restore(); }
   ctx.restore();
   if (pm) pt = perfMark('misc', pt);
   brightPass();
@@ -2397,12 +2453,14 @@ const tuiEl = document.getElementById('tui'), tbtns = document.getElementById('t
 // (the touch buttons / swipes name the game's own forward (A) and back (D) keys; a keyboard A / D is flipped by the drive direction in aliasKey, so name the physical one that flips to it)
 // (the A / D swap follows the drive's direction. A key's RELEASE must be the very code its press sent: the direction can flip in between (a quarter break
 // mid-run), and a release with the new mapping left the other key stuck down, so the player ran the opposite way)
-const tkeySent = {};
-let tuiLastMirror = MIRROR, tuiRetOn = false, tuiRetFlash = 0, tuiRetSide = 0;   // (tuiRetFlash: until when the stick flashes at the start of a kickoff / punt return)
-function tkey(code, down) {
-  if (down) { const logical = code; if (MIRROR > 0 && (code === 'KeyA' || code === 'KeyD')) code = code === 'KeyA' ? 'KeyD' : 'KeyA'; tkeySent[logical] = code; }
-  else { const s = tkeySent[code]; delete tkeySent[code]; code = s || (MIRROR > 0 && (code === 'KeyA' || code === 'KeyD') ? (code === 'KeyA' ? 'KeyD' : 'KeyA') : code); }
-  window.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code, bubbles: true, cancelable: true })); }
+let tuiLive = false, tuiLastMirror = MIRROR, tuiRetOn = false, tuiRetFlash = 0, tuiRetSide = 0;   // (tuiRetFlash: until when the stick flashes at the start of a kickoff / punt return)
+function tkey(code, down) {   // (perf job: every finger press is held by the 'touch' owner, HELD.touch[logical], with the code it really sent)
+  const logical = code, flip = c => MIRROR > 0 && (c === 'KeyA' || c === 'KeyD') ? (c === 'KeyA' ? 'KeyD' : 'KeyA') : c;
+  if (down) { code = flip(code); const h = HELD.touch[logical] || (HELD.touch[logical] = {}); h.sent = code; h.t0 = performance.now(); }
+  else { const h = HELD.touch[logical]; code = (h && h.sent) || flip(code); }
+  const ev0 = heldEv; heldEv = { src: 'touch', phys: logical };
+  try { window.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code, bubbles: true, cancelable: true })); } finally { heldEv = ev0; }
+  if (!down) heldUp('touch', logical); }   // (the online guest's keyup never reaches 14's listener: let go here too)
 // touch mode: the canvas fills the whole screen (stretched to the phone's ratio) and the page is forced to landscape
 // (orientation lock where the browser allows it, else html.rot turns the page 90 deg while the phone is held upright)
 let rotNow = false, rotVotes = 0, rotInit = false, fitRK = 0;
@@ -2483,7 +2541,7 @@ function tuiBuild(name) {
   tbtns.textContent = '';
   for (const [label, mode, code, cls] of TSETS[name] || []) {
     const b = document.createElement('div');
-    b.className = 'tb ' + (cls || ''); b.textContent = label;
+    b.className = 'tb ' + (cls || ''); b.textContent = label; b._code = code;
     const rel = () => { if (b._down) { b._down = false; b.classList.remove('on'); if (mode === 'hold') tkey(code, false); } };
     b.addEventListener('pointerdown', e => {
       e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch (err) {} b._down = true; b.classList.add('on');
@@ -2522,6 +2580,42 @@ const overUiBtn = p => {
 const stickOn = name => STICK_SETS.includes(name) && !preKick() && !(tut && tut.passed) &&   // (the tutorial's "tap for the next play": any tap goes on, the stick is off)
  !(name === 'kickoff' && kick && kick.userKo && kick.punt && kickoff && kickoff.phase === 'flight');
 let stickTapAt = 0;
+// --- the stick (perf job): one state machine. idle = tpad._id null; down = a finger steers; suspended = tpad._sus (a set with no stick, a drive-direction
+// flip, a reset or a not-live layer: its keys are let go, the finger is kept). The suspended finger's next move, once a stick set is live, puts the pad back under
+// the thumb, neutral, and it steers from there. It ends on pointerup / pointercancel / lostpointercapture, or touchend / touchcancel (no touches left, or the
+// lifted touch is the one nearest the stick's last point) when the pointer release never came ('stickLost <event>'), or when a new stick touch finds it gone.
+const TOUCHES = [];   // client points of the fingers on the screen (touch events: kept to tell whether the stick's finger is still down)
+const STICK_LOST = { near: 80, touchWait: 30 };   // px: a finger this close to the stick's last point is the stick's; ms a touchend waits for the pointerup it came with
+function stickSuspend() {
+  if (tpad._id == null || tpad._sus) return;
+  tpad._sus = true; tuiStick({ clientX: 0, clientY: 0 }, true); tpad.style.display = 'none';
+}
+function stickResume(e) {   // (the suspended thumb moved with a stick set live: the pad re-centres under it)
+  const lp = layPt(e); tpad._sus = false; tpad._pts = []; tpad._t0 = performance.now() - 1000; tpad._p0 = lp;   // (_t0 back: its release is never read as a quick tap)
+  tpad.style.display = 'block'; const R = tpad.offsetWidth / 2;
+  tpad.style.left = (lp.x - R) + 'px'; tpad.style.top = (lp.y - R) + 'px'; tpad.style.bottom = 'auto';
+  tuiStick(e);
+}
+function stickGone() {   // (the stick's finger is no longer among the fingers on the screen)
+  const c = tpad._lc; if (!c) return true;
+  return !TOUCHES.some(t => Math.hypot(t.x - c.x, t.y - c.y) < STICK_LOST.near);
+}
+function stickEnd(e, why) {
+  if (tpad._id == null) return;
+  if (why && why !== 'pointerup') perfNote('stickLost ' + why);
+  if (tpad._sus) { tpad._id = null; tpad._sus = false; tpad.style.display = 'none'; return; }
+  tuiStickEnd(e);
+}
+for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) window.addEventListener(type, e => {
+  TOUCHES.length = 0; for (const t of e.touches) TOUCHES.push({ x: t.clientX, y: t.clientY });
+  if ((type !== 'touchend' && type !== 'touchcancel') || tpad._id == null || !tpad._lc) return;
+  const c = tpad._lc; let bd = 1e9, lifted = false;
+  for (const t of e.touches) { const d = Math.hypot(t.clientX - c.x, t.clientY - c.y); if (d < bd) { bd = d; lifted = false; } }
+  for (const t of e.changedTouches) { const d = Math.hypot(t.clientX - c.x, t.clientY - c.y); if (d < bd) { bd = d; lifted = true; } }
+  if (!(lifted || !e.touches.length)) return;
+  const id = tpad._id, x = c.x, y = c.y;
+  setTimeout(() => { if (tpad._id === id) stickEnd({ clientX: x, clientY: y, pointerId: id, type }, type); }, STICK_LOST.touchWait);   // (the pointerup normally comes first and ends it)
+}, { capture: true, passive: true });
 function tuiStickEnd(e) {
   if (tpad._id == null) return;
   // a quick double tap on the stick side (no drag) in the pocket flips lob / bullet
@@ -2534,7 +2628,7 @@ function tuiStickEnd(e) {
       bulletMode = !bulletMode; popup(qb, bulletMode ? 'BULLET' : 'LOB', '#ffd94a');   // (one quick tap on the stick side)
     }
   }
-  tuiStick(e, true); tpad._id = null; tpad.style.display = 'none'; }
+  tuiStick(e, true); tpad._id = null; tpad._sus = false; tpad.style.display = 'none'; }
 // the stick lives on the side away from where the play is going: opposite the aiming reticle on offense, on the offense's side of the ball on defense
 // (+1 = right half of the screen; the field is drawn mirrored). The buttons take the other side.
 // (the screen splits at the line of scrimmage. On offense: the offensive side aims / throws, the defensive side is the joystick. On defense: the
@@ -2559,6 +2653,7 @@ function touchHalf(e) {
 }
 window.addEventListener('pointerdown', e => {
   if (coldOn()) return;   // (the cold open reads every finger itself: no stick)
+  if (TUI.on && e.isTrusted && tpad._id != null && tpad._id !== e.pointerId && stickGone()) stickEnd({ clientX: 0, clientY: 0, pointerId: tpad._id }, 'replaced');   // (perf job: its release never came)
   if (!TUI.on || !e.isTrusted || (e.pointerType !== 'touch' && e.button !== 0) || tpad._id != null || !stickOn(TUI.set) ||   /* (!isTrusted: the other player's presses, replayed here by the online host as mouse events, are never this finger) */ (e.target.closest && e.target.closest('#tbtns'))) return;
   const lp = layPt(e), py = pointerPos(e).y;
   if (overUiBtn(pointerPos(e))) return;
@@ -2566,7 +2661,7 @@ window.addEventListener('pointerdown', e => {
   if (touchHalf(e) !== stickSide()) return;
   e.stopImmediatePropagation();   // (this finger is the stick: the canvas never sees it, so it can't start a throw drag or a swipe)
   tpad._pts = []; tpad._flash = false; tpad.style.opacity = ''; if (tut) tut.flashUntil = 0;
-  tpad._id = e.pointerId; swipeEnd(); bulletTap = null; tpad._t0 = performance.now(); tpad._p0 = lp;
+  tpad._id = e.pointerId; tpad._sus = false; tpad._lc = { x: e.clientX, y: e.clientY }; swipeEnd(); bulletTap = null; tpad._t0 = performance.now(); tpad._p0 = lp;
   tpad.style.display = 'block';
   const R = tpad.offsetWidth / 2;
   tpad.style.left = (lp.x - R) + 'px'; tpad.style.top = (lp.y - R) + 'px'; tpad.style.bottom = 'auto';
@@ -2577,25 +2672,29 @@ window.addEventListener('pointerdown', e => {
 const spinOK = () => !(aiOff() || onlDefSide()) ? ['run', 'kickoff', 'pocket', 'drop'].includes(state) : (lineUd() || state === 'picked');
 window.addEventListener('pointermove', e => {
   if (tpad._id !== e.pointerId) return;
-  tuiStick(e); e.stopImmediatePropagation();
+  e.stopImmediatePropagation(); tpad._lc = { x: e.clientX, y: e.clientY };
+  if (tpad._sus) { if (tuiLive && stickOn(TUI.set)) stickResume(e); return; }
+  tuiStick(e);
   const pts = tpad._pts || (tpad._pts = []); pts.push(layPt(e)); if (pts.length > SPIN_GEST.keep) pts.shift();
   if (spinOK() && circleSwept(pts)) { pts.length = 0; tuiKey('KeyR'); }
 }, true);
-for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, e => { if (tpad._id === e.pointerId) { tuiStickEnd(e); e.stopImmediatePropagation(); } }, true);
+for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) window.addEventListener(ev, e => { if (tpad._id === e.pointerId) { if (window.BENCH && window.BENCH.skipStickUp > 0) { window.BENCH.skipStickUp--; return; }   /* (test bench only: a release the phone never sent; always window.BENCH: BENCH alone is 01's bench-player table) */ stickEnd(e, ev); e.stopImmediatePropagation(); } }, true);
 const tpause = document.getElementById('tpause');   // (the real pause button is the one on the canvas: this one stays hidden)
 // every frame-ish: which buttons, whether the layer shows at all (not on menus / results / the pause menu), the rotate-me notice
 setInterval(() => {
   fitScreen(); cursorSync();   // (the pencil cursor follows the canvas's on-screen size and the snow)
+  inputAuditFix();   // (perf job: anything held with no finger / swipe / guest behind it is let go and noted)
   if (!TUI.on) return;
-  if (MIRROR !== tuiLastMirror) {   // the drive switched ends (a quarter break): nothing stays held from the old direction, and the stick starts over
+  if (MIRROR !== tuiLastMirror) {   // the drive switched ends (a quarter break): nothing stays held from the old direction, and the stick waits for the thumb to move
     tuiLastMirror = MIRROR;
+    stickSuspend();
     for (const k in TUI.held) if (TUI.held[k]) { TUI.held[k] = false; tkey(k, false); }
-    if (tpad._id != null) tuiStickEnd({ clientX: 0, clientY: 0 });
     swipeEnd();
   }
   let live = false, name = 'run';
   try { live = !coldOn() && !results && !showKeys && !settingsOpen && !slotUI && !hl && !paused && !(ONL.on && (ONL.lost || (ONL.view && ONL.view.pz))); if (live) name = tuiWhich(); } catch (err) { live = false; }   // (the cold open: no stick, buttons or swipes)   // (online pause / lost link: the stick lets go)
-  if (tpad._id != null && (!live || !stickOn(name))) tuiStickEnd({ clientX: 0, clientY: 0 });   // (the play ended under his thumb)
+  tuiLive = live;
+  if (tpad._id != null && (!live || !stickOn(name))) stickSuspend();   // (the play ended under his thumb, a pass in the air, a menu: the finger is kept, its keys let go)
   tbtns.style.display = live ? '' : 'none';
   tuiEl.classList.toggle('flip', live && stickOn(name) && stickSide() > 0);   // (stick on the right: the buttons go left)
   if (tuiEl._dm !== darkOn()) { tuiEl._dm = darkOn(); tuiEl.classList.toggle('dm', tuiEl._dm); }   // (v0.60: the pencil stick's dark-mode ink, index.html #tui.dm)
@@ -2678,7 +2777,7 @@ const coldOn = () => typeof CO !== 'undefined' && !!CO;   // (the cold open is r
 function swipeEnd() { const s = swipeFrom; swipeFrom = null; if (!s) return; if (s.truck) tkey('KeyC', false); if (s.stiff) tkey('KeyQ', false); s.truck = s.stiff = false; }
 function tuiReleaseAll() {   // (reset: nothing held by a finger carries into the next play)
   try { if (!TUI.on) return; } catch (e) { return; }   // (the very first reset runs at load, before TUI exists further down this file)
-  swipeEnd();
+  stickSuspend(); swipeEnd();
   for (const k in TUI.held) if (TUI.held[k]) { TUI.held[k] = false; tkey(k, false); }
 }
 // a finger behind the line of scrimmage (between the sidelines, within BACKFIELD_CLICK yd) while the passer can still throw: a throw drag from anywhere back there
@@ -2852,9 +2951,9 @@ for (const [type, k] of [['pointerdown', 'pd'], ['pointermove', 'pm'], ['pointer
     } else { if (k === 'pu' && aim && onlIAmOff()) ONL.gRelAt = performance.now(); ONL.gPid = null; }   // (v0.74: a throw release: onlGuestStep hides the reticle at once, ONL_NET.relHide)
   }
   if (k === 'pd') { ONL.gRelAt = 0; onlSendKm(); }   // (a tap can be the kick's click: the meter value this guest saw goes first)
-  if (k === 'pd') ONL.gUi = overUiBtn(p);   // (a press on a button stays a screen spot for the whole gesture, never mirrored: no button moves with the drive direction; one on the field is scaled into the host's view)
+  if (k === 'pd') { ONL.gB = onlBtnAt(p); ONL.gUi = !!ONL.gB || overUiBtn(p); }// (a press on a button stays a screen spot for the whole gesture, never mirrored: no button moves with the drive direction; one on the field is scaled into the host's view)
   const hp = ONL.gUi ? { x: p.x, y: p.y } : onlPtOut(p), hx = Math.round(hp.x), hy = Math.round(hp.y);   // (the host's frame)
-  { const pm = { t: 'in', k, x: hx, y: hy, q: ONL.pq = (ONL.pq || 0) + 1 }; if (k === 'pd') pm.l = onlMyLag(); if (k === 'pm') NET.sendFast(pm); else NET.send(pm); }   // (q: the order they were made in. A drag's moves may be lost (the next one replaces them): the fast channel; down / up always arrive)
+  { const pm = { t: 'in', k, x: hx, y: hy, q: ONL.pq = (ONL.pq || 0) + 1 }; if (ONL.gB) pm.b = ONL.gB; if (k === 'pd') pm.l = onlMyLag(); if (k === 'pm') NET.sendFast(pm); else NET.send(pm); }   // (q: the order they were made in. A drag's moves may be lost (the next one replaces them): the fast channel; down / up always arrive)
   ONL.gLastP = { x: hx, y: hy }; ONL.gClient = { x: e.clientX, y: e.clientY };
   if (k === 'pu' || k === 'pc') setTimeout(() => { if (ONL.gLastP && ONL.gPid == null) NET.send({ t: 'in', k, x: ONL.gLastP.x, y: ONL.gLastP.y }); }, 150);   // (the release is sent twice: the host ignores the second one, a lost first one no longer leaves the aim stuck)
   if (mouse) e.stopImmediatePropagation();

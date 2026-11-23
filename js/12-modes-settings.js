@@ -4120,7 +4120,7 @@ const GFX_SHORT = { AUTO: 'AUTO', PERFORMANCE: 'PERF', QUALITY: 'QUAL' };   // (
 const gfxNext = () => LITE_MODES[(LITE_MODES.indexOf(gfxMode()) + 1) % LITE_MODES.length];
 const SL_MODES = ['ALL', 'CREW', 'OFF'];     // SETTINGS.sideline (sideline people: everyone / the chain crew only / nobody; missing = ALL)
 // settings opened from a game's pause menu: the ones that change the game being played are locked until it ends
-const SET_GAME_LOCK = ['setup', 'flags', 'booth', 'inj', 'pinj', 'wx', 'diff', 'dir', 'simDef', 'spd', 'morale', 'qtr', 'scouts', 'deals', 'post', 'save', 'load', 'dbg'];
+const SET_GAME_LOCK = ['setup', 'flags', 'booth', 'inj', 'pinj', 'wx', 'diff', 'dir', 'simDef', 'spd', 'morale', 'qtr', 'scouts', 'deals', 'post', 'save', 'load'];   // (perf job: DEBUG is this device's own: open in a game)
 const setInGame = () => !results && typeof game !== 'undefined' && !!game && !game.over;
 const SET_TIP_Y = 598;   // the main page's one-line tip / note (popups: SET_POP.tipY)
 const SET_TIPS = {   // hover tips: ONE short line each, copy rules (plain, no parentheses / semicolons); functions = different text on / off
@@ -4184,7 +4184,7 @@ const TOUCH_HELP = [
 // the debug page: goes over the settings screen (DEBUG, bottom of the settings panel)
 let dbgUI = false;
 const DBG_PANEL = { x: 330, y: 70, w: 620, h: 560 };
-const DBG_BTNS = { hit: { x: 370, y: 140, w: 265, h: 54 }, fld: { x: 645, y: 140, w: 265, h: 54 }, mobile: { x: 370, y: 204, w: 265, h: 54 }, hash: { x: 645, y: 204, w: 265, h: 54 }, tools: { x: 370, y: 268, w: 540, h: 54 }, perf: { x: 370, y: 332, w: 540, h: 54 }, net: { x: 370, y: 396, w: 540, h: 54 }, dyn: { x: 370, y: 460, w: 265, h: 54 }, store: { x: 645, y: 460, w: 265, h: 54 }, turn: { x: 370, y: 522, w: 174, h: 48 }, shadow: { x: 553, y: 522, w: 174, h: 48 }, res: { x: 736, y: 522, w: 174, h: 48 }, back: { x: 370, y: 578, w: 540, h: 46 } };   // (v0.70: turn / shadow / res = PHONE_TEST)   // (dyn = ADAPTIVE: LAST GAME readout)   // (perf = the frame-time readout, see PERF_HUD; net = FAKE LAG for testing online, see NET_SIM)
+const DBG_BTNS = { hit: { x: 370, y: 140, w: 265, h: 54 }, fld: { x: 645, y: 140, w: 265, h: 54 }, mobile: { x: 370, y: 204, w: 265, h: 54 }, hash: { x: 645, y: 204, w: 265, h: 54 }, tools: { x: 370, y: 268, w: 265, h: 54 }, blit: { x: 645, y: 268, w: 265, h: 54 }, perf: { x: 370, y: 332, w: 265, h: 54 }, tick: { x: 645, y: 332, w: 265, h: 54 }, net: { x: 370, y: 396, w: 540, h: 54 }, dyn: { x: 370, y: 460, w: 265, h: 54 }, store: { x: 645, y: 460, w: 265, h: 54 }, turn: { x: 370, y: 522, w: 174, h: 48 }, shadow: { x: 553, y: 522, w: 174, h: 48 }, res: { x: 736, y: 522, w: 174, h: 48 }, back: { x: 370, y: 578, w: 540, h: 46 } };   // (v0.70: turn / shadow / res = PHONE_TEST)   // (dyn = ADAPTIVE: LAST GAME readout)   // (perf = the frame-time readout, see PERF_HUD; net = FAKE LAG for testing online, see NET_SIM)
 function drawDebug() {
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
   if (dbgUI === 'dyn') return drawDynDebug();
@@ -4196,8 +4196,9 @@ function drawDebug() {
   menuBtn(DBG_BTNS.hit, `HITBOXES: ${SETTINGS.hitboxes ? 'ON' : 'OFF'}`, Y, 20);
   menuBtn(DBG_BTNS.mobile, `MOBILE: ${TUI.on ? 'ON' : 'OFF'}`, Y, 20);
   menuBtn(DBG_BTNS.fld, `FIELD: ${FIELD_CACHE.on ? 'CACHE' : 'LIVE'}`, Y, 20); menuBtn(DBG_BTNS.hash, `HASH TICKS: ${PHONE_TEST.noHash ? 'OFF' : 'ON'}`, Y, 20);   // (v0.74 white-line hunt: the field drawn live every frame / the hash ticks skipped; not saved)
-  menuBtn(DBG_BTNS.tools, `HIDE EXTRA TOOLS: ${SETTINGS.hideTools ? 'ON' : 'OFF'}`, Y, 24);   // (the start screen's ANIMATION LIBRARY + TEST MODE)
-  menuBtn(DBG_BTNS.perf, `FRAME TIMES: ${SETTINGS.perfHud ? 'ON' : 'OFF'}`, Y, 24);   // (fps + update / draw ms in a corner of every screen)
+  menuBtn(DBG_BTNS.tools, `HIDE TOOLS: ${SETTINGS.hideTools ? 'ON' : 'OFF'}`, Y, 20);
+  menuBtn(DBG_BTNS.blit, `FIELD BLIT: ${PHONE_TEST.blit}`, Y, 20); menuBtn(DBG_BTNS.tick, `TICK PATHS: ${PHONE_TEST.tickPath ? 'ON' : 'OFF'}`, Y, 20);   // (v0.74 white-line hunt 2, PHONE_TEST.blit / tickPath)   // (the start screen's ANIMATION LIBRARY + TEST MODE)
+  menuBtn(DBG_BTNS.perf, `FRAME TIMES: ${SETTINGS.perfHud ? 'ON' : 'OFF'}`, Y, 20);   // (fps + update / draw ms in a corner of every screen)
   menuBtn(DBG_BTNS.net, `FAKE LAG: ${SETTINGS.netSim || 'OFF'}`, Y, 24);   // (online test bench: delays / drops what this device receives)
   menuBtn(DBG_BTNS.turn, 'TURN: ' + PHONE_TEST.turn, Y, 20); menuBtn(DBG_BTNS.shadow, 'SHADOW: ' + PHONE_TEST.shadow, Y, 20); menuBtn(DBG_BTNS.res, 'RES: ' + PHONE_TEST.res, Y, 20);   // (v0.70 phone test switches, not saved)
   menuBtn(DBG_BTNS.back, 'DONE', Y, 24);
@@ -4247,6 +4248,7 @@ function debugClick(p) {
   if (inBtn(p, DBG_BTNS.store)) { dbgUI = 'store'; DBG_STORE = null; return; }
   if (inBtn(p, DBG_BTNS.hit)) { SETTINGS.hitboxes = !SETTINGS.hitboxes; COLLIDE.show = SETTINGS.hitboxes; }
   else if (inBtn(p, DBG_BTNS.fld)) FIELD_CACHE.on = !FIELD_CACHE.on;
+  else if (inBtn(p, DBG_BTNS.blit) || inBtn(p, DBG_BTNS.tick)) { if (inBtn(p, DBG_BTNS.blit)) { const L = PHONE_TEST.blits; PHONE_TEST.blit = L[(L.indexOf(PHONE_TEST.blit) + 1) % L.length]; } else PHONE_TEST.tickPath = !PHONE_TEST.tickPath; for (const F of [fieldImg, fieldImgAlt]) if (F) freeCanvas(F.c); fieldImg = fieldImgAlt = null; }   // (the cache is baked again)
   else if (inBtn(p, DBG_BTNS.hash)) { PHONE_TEST.noHash = !PHONE_TEST.noHash; for (const F of [fieldImg, fieldImgAlt]) if (F) freeCanvas(F.c); fieldImg = fieldImgAlt = null; }   // (the cache is baked again without / with them)
   else if (inBtn(p, DBG_BTNS.tools)) SETTINGS.hideTools = !SETTINGS.hideTools;
   else if (inBtn(p, DBG_BTNS.perf)) SETTINGS.perfHud = !SETTINGS.perfHud;

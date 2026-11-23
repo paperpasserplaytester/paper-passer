@@ -1778,7 +1778,7 @@ function drawStartBtns() {
   }
 }
 function titleStamp(cx, cy) { qsStamp(cx, cy - 12, 'PAPER PASSER', '#c0392b', -0.005, 1, 60, { distress: 7 }); }   // (centre of the title sheet, inside its own tilt)
-const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-22 GUESTFEEL-52';
+const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-22 BOOTH-54';   // (v0.74: announcer lines travel by index, so new line tables need matching builds)
 let hlFlash = -1e9;   // when the main menu's HIGHLIGHT button was last clicked
 let quickMenu = false;   // QUICK PLAY (START_BTNS.ex) drop down: EXHIBITION / 1V1 / ONLINE take the place of FRANCHISE / CAREER / TUTORIAL (same buttons, same size)
 function startClick(p) {
@@ -2194,6 +2194,8 @@ function olAutoJoin() {   // ?join=CODE opens JOIN with the code filled in
 const ONL_BACKLOG = 48000;   // bytes waiting in the data channel above which the host skips snapshots
 // online tuning: the host's send rate, the guest's smoothing, and the head start its own player gets. Looks and timing only: the host still decides every play.
 const ONL_NET = {
+  cutWin: 250,         // ms of host time after a reset (g.rz) in which every guest snapshot is a cut (late stale spots snap instead of sliding)
+  logBtn: false,       // console line on the host for each guest button id received (ONL_BTNS)
   logMs: 25, logGapMs: 150, logN: 8,   // online event log (FRAME TIMES only): a host frame whose game step + snapshot work runs this long, a guest stretch with no new picture this long; the worst logN are kept
   camEase: 0.07,       // s: the guest's camera eases toward the snapshot camera (a cut = a SNAP_JUMP move or a big zoom change still cuts)
   kmHold: 1.5,         // s: after the guest taps a kick meter it stays on the tapped value until the host's phase change lands (or this long)
@@ -2230,7 +2232,7 @@ const ONL_NET = {
 };
 const SNAP_DELAY = 100;   // ms the guest is taken to draw behind before its playback clock starts (see ONL_NET.delayMin / delayMax)
 const SNAP_JUMP = 8 * YD; // a player / ball move bigger than this between two snapshots is a cut (a new play), not interpolated
-const ONL = { on: false, host: false, guest: false, nid: 0, castKey: '', sent: [], snapAt: 0, seq: 0, buf: [], full: [], savedSimDef: null, hold: {}, depth: 0, orig: {}, hostDown: false, ptrAt: 0, gHeld: {} };
+const ONL = { on: false, host: false, guest: false, nid: 0, castKey: '', sent: [], snapAt: 0, seq: 0, buf: [], full: [], savedSimDef: null, depth: 0, orig: {}, hostDown: false, ptrAt: 0, gHeld: {} };
 // a value safe to send: numbers rounded, functions / DOM dropped, players turned into { __p: index }
 function slim(v, ps, depth = 0) {
   if (v === null || v === undefined) return v;
@@ -2347,7 +2349,7 @@ function onlGlobals(ps, pm) {
     mt: { you: MATCH.you, opp: MATCH.opp, yk: MATCH.youKit, ok: MATCH.oppKit, home: MATCH.home },
     bm: bulletMode, pm: patMode, fp: fourthPending, hh: halfHold, pz: paused, pkb: preKickBack ? preKickBack.down * 2 + (preKickBack.who === 'g' ? 1 : 0) : 0, ko: !!kickoffPlay, cw: celebWaitBits(), npl: !!noPlayLines, pr: puntRet, prp: puntRetPlay,
     vz: Math.round(userZoom * (TOUCH ? TOUCH_ZOOM : 1) * 1000) / 1000, vc: Math.round(viewCenterY()),   // (the host's own view: his wheel zoom / phone zoom and the field's middle on his screen, see onlPtOut)
-    ud: ix(ud), tg: ix(tgt), rn: ix(runner), mi: MIRROR,   // (mi: the host's screen direction: the guest translates his taps / keys when his own differs)
+    rz: RESET_N, ud: ix(ud), tg: ix(tgt), rn: ix(runner), mi: MIRROR,   // (mi: the host's screen direction: the guest translates his taps / keys when his own differs)
     nm: { cbT: ix(cbT), cbB: ix(cbB), sT: ix(sT), sB: ix(sB), lbW: ix(lbW), lbM: ix(lbM), lbS: ix(lbS) },
     ball: slim(ball, pm), cam: [Math.round(camX), Math.round(camY), Math.round(zoom * passPull * 1000) / 1000], sh: Math.round(shake * 10) / 10,
     wx: game.wx ? slim(game.wx) : null, wxi: { rain: WXI.rain, snow: WXI.snow, mph: WXI.mph },
@@ -2624,9 +2626,16 @@ function onlGuestStep() {
   if (!a.u) a.u = { ball: unslim(g.ball, ps), po: g.po.filter(q => q.i >= 0).map(q => ({ p: ps[q.i], text: q.text, color: q.color, t: q.t, t0: q.t, ico: q.ico })), im: g.im.map(q => { const o = unslim(q, ps); o.__t0 = o.t; return o; }), pp: g.pp ? unslim(g.pp, ps) : null };
   const fixK = Math.exp(-3 * dtR * 1000 / ONL_NET.fixMs), bd = b && b.d;
   let snaps = 0, slips = 0; const me = ONL.pred && ONL.pred.p;
+  // a host reset (g.rz) between a and b: the new line-up is a cut, never a slide (a is held until b is due); cutNow = the first frame drawn from the new line-up
+  // (the first snapshots after a reset can still carry a few stale spots: for cutWin ms of host time after it every snapshot is drawn as a cut too, so a late spot snaps, never slides)
+  const newRz = a.g && a.g.rz !== ONL.drawRz; if (newRz) { ONL.drawRz = a.g.rz; ONL.rzAt = a.at; }
+  const inWin = ONL.rzAt != null && a.at - ONL.rzAt < ONL_NET.cutWin;
+  const rzCut = !!(b && b.g && a.g && (b.g.rz !== a.g.rz || inWin)), cutNow = newRz || (inWin && a !== ONL.cutA); ONL.cutA = a;
+  if (newRz) { ONL.cutN = (ONL.cutN || 0) + 1; ONL.camCut = true; }
   for (let i = 0, j = 0, k = 0; i < ps.length; i++, j += 3, k += 2) {
     const p = ps[i]; let x = A[j], y = A[j + 1], z = A[j + 2];
-    if (B && Math.abs(B[j] - x) < SNAP_JUMP && Math.abs(B[j + 1] - y) < SNAP_JUMP) {
+    if (cutNow) { p.__ex = p.__ey = 0; p.__rx = undefined; }
+    if (B && !rzCut && Math.abs(B[j] - x) < SNAP_JUMP && Math.abs(B[j + 1] - y) < SNAP_JUMP) {
       const bf = bd && bd[i], acted = bf && 'action' in bf && bf.action !== p.action;   // (a move starts / ends between the two: a straight line)
       const mx0 = VA[k] * dc, my0 = VA[k + 1] * dc, mx1 = VB[k] * dc, my1 = VB[k + 1] * dc;
       const dx = B[j] - x, dy = B[j + 1] - y, ch = ONL_NET.curveFit * Math.hypot(dx, dy) + ONL_NET.curveSlack;   // (speeds that don't fit the move made (blocked, pushed, a hit, a cut): a straight line too)
@@ -2682,7 +2691,7 @@ function onlGuestStep() {
   ONL.view = g.ob || {};
   const bl = a.u.ball; Object.assign(ball, bl);
   const bb = b && b.g.ball;
-  if (bb && Math.abs(bb.x - bl.x) < SNAP_JUMP && Math.abs(bb.y - bl.y) < SNAP_JUMP) { ball.x = L(bl.x, bb.x, t); ball.y = L(bl.y, bb.y, t); ball.z = Math.max(0, L(bl.z || 0, bb.z || 0, t)); }
+  if (bb && !rzCut && Math.abs(bb.x - bl.x) < SNAP_JUMP && Math.abs(bb.y - bl.y) < SNAP_JUMP) { ball.x = L(bl.x, bb.x, t); ball.y = L(bl.y, bb.y, t); ball.z = Math.max(0, L(bl.z || 0, bb.z || 0, t)); }
   if (state === 'flight' && bl.T > 0 && typeof bl.p === 'number' && bl.fx != null) {   // (a pass in the air: drawn from its own formula, so the arc has no corners)
     // (anchored once per throw: p / age arrive rounded, so re-reading them every snapshot nudged the arc)
     const key = bl.fx + ',' + bl.fy + ',' + bl.tx + ',' + bl.ty + ',' + bl.T;
@@ -2726,8 +2735,8 @@ function onlGuestStep() {
 // the guest's camera: the snapshot camera eased (exponential, ONL_NET.camEase), so a late or early snapshot never steps it. A cut still cuts.
 function onlCamEase(now) {
   const E = ONL.camE || (ONL.camE = { x: camX, y: camY, z: zoom, at: now }), dt = Math.min(0.1, Math.max(0, (now - E.at) / 1000));
-  if (Math.hypot(camX - E.x, camY - E.y) < SNAP_JUMP && Math.abs(Math.log(zoom / (E.z || zoom))) < 0.2) { const k = Math.exp(-dt / ONL_NET.camEase); camX += (E.x - camX) * k; camY += (E.y - camY) * k; zoom += (E.z - zoom) * k; }
-  E.x = camX; E.y = camY; E.z = zoom; E.at = now;
+  if (!ONL.camCut && Math.hypot(camX - E.x, camY - E.y) < SNAP_JUMP && Math.abs(Math.log(zoom / (E.z || zoom))) < 0.2) { const k = Math.exp(-dt / ONL_NET.camEase); camX += (E.x - camX) * k; camY += (E.y - camY) * k; zoom += (E.z - zoom) * k; }
+  E.x = camX; E.y = camY; E.z = zoom; E.at = now; ONL.camCut = false;
 }
 const onlStNew = () => ({ t0: performance.now(), f: 0, ex: 0, sn: 0, sl: 0, gSum: 0, gN: 0, gMax: 0, bSum: 0, bN: 0, ahead: 0, show: null });   // ONL.st: the guest's smoothness counters
 // The guest's own player answers his keys at once: he is drawn ahead of the host's (late) picture by where the held keys take him in the time the picture is
@@ -2841,12 +2850,12 @@ function onlGuestKey(code, down) {
   if (ONL.pz) return;
   const ev = { code, key: code, repeat: false, fromGuest: true, preventDefault() {} };
   ONL.pendUp = ONL.pendUp || {}; ONL.downAt = ONL.downAt || {};
-  const release = () => { const a = ONL.hold[code] || aliasKey(ev); delete ONL.hold[code]; if (a.def !== true) keys[a.code] = false; if (a.def !== false) dkeys[a.code] = false; };
+  const release = () => heldUp('guest', code);   // (perf job: the guest's holds are their own owner, HELD.guest)
   if (down) {
     if ((code === 'Space' || code === 'Enter') && !onlMaySpace(true)) return;
     if (ONL.pendUp[code]) { clearTimeout(ONL.pendUp[code]); ONL.pendUp[code] = 0; release(); }   // (a new press before the held-back release ran: let go first)
-    const a = aliasKey(ev); ONL.hold[code] = a; ONL.downAt[code] = performance.now();
-    ONL.fromGuest = true; try { onKeyDown(a); } finally { ONL.fromGuest = false; }   // (the defense code reads this: a guest press is judged against the picture he saw, see lagRew)
+    const a = aliasKey(ev); ONL.downAt[code] = performance.now();
+    ONL.fromGuest = true; heldEv = { src: 'guest', phys: code, a }; try { onKeyDown(a); } finally { ONL.fromGuest = false; heldEv = null; }   // (the defense code reads this: a guest press is judged against the picture he saw, see lagRew)
   } else {
     // a quick tap (a swipe's jump / dive / catch key) can arrive with its release in the same breath: the game reads held keys once a frame and never saw it. Every
     // press stays down at least ONL_MIN_HOLD ms on the host, as a tap on the host's own keyboard would.
@@ -2868,10 +2877,19 @@ function onlMayPoint(guestSide, pt) {   // may this player's pointer act here?  
   }
   return off || !(['pre', 'drop', 'pocket', 'kick', 'punt', 'kickoff'].includes(state) || patMode !== null || fourthPending);
 }
+// In-game buttons whose rect depends on the device (TOUCH / IS_MOBILE: kickBtnFit's KICK_BTN_TOUCH, the TOP_BAR-based corner buttons): the guest tests them on
+// ITS layout and sends the id (pd / pm / pu field b); the host presses the middle of its OWN rect for that id, never the guest's screen spot.
+const ONL_BTNS = {
+  kickGo: () => reticleOn() && KICK_GO_BTN, patSwitch: () => patSwitch() && PAT_SWITCH_BTN,
+  aud: () => (state === 'pre' || state === 'done') && AUDIBLE_BTN, to: () => (state === 'pre' || state === 'done') && TIMEOUT_BTN,
+  laud: () => (state === 'pre' || state === 'done') && LEFT_AUD_BTN, lto: () => (state === 'pre' || state === 'done') && LEFT_TO_BTN,
+};
+function onlBtnAt(p) { for (const id in ONL_BTNS) { const r = ONL_BTNS[id](); if (r && inBtn(p, r)) return id; } return null; }
 function onlGuestPtr(m) {
   if (results || m.x == null) return;
   if (m.q != null) { if (m.k === 'pm' && m.q < (ONL.gQ || 0)) return; ONL.gQ = m.k === 'pm' ? m.q : Math.max(ONL.gQ || 0, m.q); }   // (a move that arrives after a later one: stale, the moves come unordered)
   const pt = { x: m.x, y: m.y };
+  if (m.b && ONL_BTNS[m.b]) { const r = ONL_BTNS[m.b]() || ({ kickGo: KICK_GO_BTN, patSwitch: PAT_SWITCH_BTN })[m.b]; if (r) { pt.x = r.x + r.w / 2; pt.y = r.y + r.h / 2; } if (m.k === 'pd' && ONL_NET.logBtn) console.log('[onl] guest button', m.b, '->', Math.round(pt.x), Math.round(pt.y)); }
   ONL.gAt = performance.now(); ONL.gLast = pt;
   if (m.k === 'pd') { if (!onlMayPoint(true, pt)) { ONL.gDown = false; return; } ONL.gDown = true; ONL.fromGuest = true; try { sendMouse('pointerdown', pt, canvas); } finally { ONL.fromGuest = false; } }
   else if (m.k === 'pm') { if (ONL.gDown) sendMouse('pointermove', pt, canvas); }   // (canvas: the drag handlers sit on it; the event bubbles up to the window's)
@@ -2888,7 +2906,7 @@ function onlHandleInput(m) {
   if (ONL_NET.pressSnap && (m.k === 'kd' || m.k === 'ku' || m.k === 'pd' || m.k === 'pu')) ONL.pressNow = true;   // (onlHostTick: the next snapshot goes at once)
   if (m.k === 'kd' || m.k === 'ku') onlGuestKey(m.c, m.k === 'kd');
   else if (m.k === 'cm') { if (!results) { const r = layRect(canvas); touchLong = false; canvas.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 10, clientY: r.top + 10 })); } }
-  else if (m.k === 'cl') { for (const c of Object.keys(ONL.hold)) onlGuestKey(c, false); }
+  else if (m.k === 'cl') { for (const c of Object.keys(HELD.guest)) onlGuestKey(c, false); }
   else if (m.k === 'pk') { if (!results && !ONL.pz) preKickNet(m.id); }   // (v0.70: the guest's PUNT / FIELD GOAL / GO FOR IT corner button)
   else if (m.k === 'km') ONL.km = { ph: m.ph, v: m.v, at: performance.now() };   // (the guest's meter value, used by the very next kick click)
   else onlGuestPtr(m);
@@ -2924,7 +2942,7 @@ window.addEventListener('keydown', e => {
   if (ONL.guest) {
     if (!onlKeyOk(e)) return;
     e.preventDefault(); e.stopImmediatePropagation();
-    if (!ONL.gHeld[e.code]) { const mc = onlKeyOut(e.code); ONL.gHeld[e.code] = mc; onlSendKm(); NET.send({ t: 'in', k: 'kd', c: mc, l: onlMyLag() }); }   // (mc: left / right as the host's screen has them)
+    if (!ONL.gHeld[e.code]) { const mc = onlKeyOut(e.code); ONL.gHeld[e.code] = mc; (ONL.gSrc = ONL.gSrc || {})[e.code] = heldEv ? heldEv.src : 'kb'; onlSendKm(); NET.send({ t: 'in', k: 'kd', c: mc, l: onlMyLag() }); }   // (mc: left / right as the host's screen has them)
   } else if (ONL.host) {
     if (e.isTrusted) ONL.inputAt.host = performance.now();
     if (e.code === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); if (!e.repeat) onlPauseToggle('host'); }   // (the pause key: the online pause menu, not the offline one)
@@ -2937,7 +2955,7 @@ window.addEventListener('keyup', e => {
   if (!ONL.on || !ONL.guest || results || onlLocalUi()) return;
   if (ONL.gHeld[e.code]) { const mc = ONL.gHeld[e.code]; delete ONL.gHeld[e.code]; NET.send({ t: 'in', k: 'ku', c: mc }); e.stopImmediatePropagation(); }
 }, true);
-window.addEventListener('blur', () => { if (ONL.on && ONL.guest) { ONL.gHeld = {}; NET.send({ t: 'in', k: 'cl' }); } });
+window.addEventListener('blur', () => { if (ONL.on && ONL.guest) { const S = ONL.gSrc || {}; for (const c of Object.keys(ONL.gHeld)) if ((S[c] || 'kb') === 'kb') { NET.send({ t: 'in', k: 'ku', c: ONL.gHeld[c] }); delete ONL.gHeld[c]; } } });   // (perf job: a blur lets go of the keyboard's keys only: the stick's thumb is still down)
 for (const [type, k] of [['pointerdown', 'pd'], ['pointermove', 'pm'], ['pointerup', 'pu']]) window.addEventListener(type, e => {
   if (!ONL.on || results || !e.isTrusted || (onlLocalUi() && !ONL.lost)) return;
   const p = pointerPos(e);
@@ -2953,7 +2971,7 @@ window.addEventListener('contextmenu', e => {
 function onlBeginMatch(c, asHost) {   // c: what the lobby settled on (teams, uniforms, ball, weather); both devices run this on PLAY
   if (ONL.on || !onlLobbyActive()) return;
   ONL.host = !!asHost; ONL.guest = !asHost;
-  ONL.on = true; ONL.buf = []; ONL.full = []; ONL.gPrev = null; ONL.st = onlStNew(); ONL.pt = null; ONL.ptHi = null; ONL.dly = null; ONL.evQ = []; ONL.tr = null; ONL.gapAvg = 0; ONL.jit = 0; ONL.hgDev = 0; ONL.lastArr = 0; ONL.lastH = null; ONL.pred = null; ONL.predOff = false; ONL.pq = 0; ONL.gQ = 0; ONL.castKey = ''; ONL.slRef = undefined; ONL.slGot = -1; ONL.hold = {}; ONL.gHeld = {}; ONL.gDown = false; ONL.seq = 0;
+  ONL.on = true; ONL.buf = []; ONL.full = []; ONL.gPrev = null; ONL.st = onlStNew(); ONL.pt = null; ONL.ptHi = null; ONL.dly = null; ONL.evQ = []; ONL.tr = null; ONL.gapAvg = 0; ONL.jit = 0; ONL.hgDev = 0; ONL.lastArr = 0; ONL.lastH = null; ONL.pred = null; ONL.predOff = false; ONL.pq = 0; ONL.gQ = 0; ONL.castKey = ''; ONL.slRef = undefined; ONL.slGot = -1; ONL.gHeld = {}; ONL.gSrc = {}; ONL.gDown = false; ONL.seq = 0;
   ONL.feel = c.fl === 'DELAY' ? 'DELAY' : 'PREDICT'; if (ONL.feel === 'DELAY') { ONL.predOff = true; ONL.predWhy = 'CONTROL FEEL: DELAY'; }   // (CONTROL FEEL: DELAY = no prediction on the guest; the host's own keys wait ONL_NET.inDelayMs, onlDelayKey)
   ONL.gLag = 0; ONL.gStat = null; ONL_HIST.length = 0;
   ONL.savedSimDef = SETTINGS.simDefense; SETTINGS.simDefense = false;   // (defense is always played: the saved setting is ignored, and never written back)
@@ -2971,7 +2989,7 @@ function onlEnd(err) {   // back to the lobby menu (world, settings and sides pu
   ONL.on = ONL.host = ONL.guest = false; ONL.buf = []; ONL.full = [];
   Object.assign(ONL, { pz: null, away: null, lost: null, afk: null, alert: null, view: {}, sum: null, joinBusy: false });
   SETTINGS.simDefense = ONL.savedSimDef; paused = false; settingsOpen = false; showKeys = false;
-  for (const k of Object.keys(keys)) keys[k] = false; for (const k of Object.keys(dkeys)) dkeys[k] = false;
+  heldClear('kb'); heldClear('guest'); heldClear('ai');   // (perf job: owners; the stick keeps its own until the finger lifts)
   if (twoP && twoP.flipped) flipSides();
   twoP = null; rec = null; kick = null; kickoff = null; aim = null;
   results = results || { record: { w: 0, l: 0, t: 0 }, screen: 'online' };
@@ -3018,7 +3036,7 @@ function onlSummary(loser, why) {
 function onlShowResult(sum) {
   if (results && results.screen === 'onresult') return;
   ONL.sum = sum; ONL.pz = null; ONL.away = null; ONL.lost = null; ONL.afk = null; ONL.alert = null; paused = false; aim = null;
-  for (const k of Object.keys(keys)) keys[k] = false; for (const k of Object.keys(dkeys)) dkeys[k] = false;
+  heldClear('kb'); heldClear('guest'); heldClear('ai');   // (perf job: owners; the stick keeps its own until the finger lifts)
   results = { record: { w: 0, l: 0, t: 0 }, screen: 'onresult' };
   if (!ONL.recorded) {   // (the little online record: never the franchise's)
     ONL.recorded = true;
@@ -3143,7 +3161,7 @@ function onlRematchCheck() {
   const t = ONL.teams;
   onlMatchInit(t.host, t.guest);
   if (twoP && twoP.flipped) flipSides();
-  Object.assign(ONL, { buf: [], full: [], castKey: '', slRef: undefined, slGot: -1, hold: {}, gHeld: {}, gDown: false, seq: 0 });
+  Object.assign(ONL, { buf: [], full: [], castKey: '', slRef: undefined, slGot: -1, gHeld: {}, gSrc: {}, gDown: false, seq: 0 });
   MATCH.you = t.host; MATCH.opp = t.guest; MATCH.home = 'you'; applyKits();   // (the lobby's uniforms stay)
   game.over = true; paused = false; kick = null; kickoff = null; aim = null; simMode = 'none';
   reset();   // (results stays set until reset sees game.over: a new game, a new coin toss)
