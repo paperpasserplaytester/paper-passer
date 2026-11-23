@@ -866,6 +866,12 @@ const CHANGELOG = [
     ["MORE TO SAY, LESS WORK", [
       "About 5,500 lines, three times as many as before, so repeats are rare.",
       "Lines are prepared once at load, so picking one costs almost nothing."
+    ]],
+    ["QUICKER, STEADIER CONTROLS", [
+      "Phone: the stick no longer gets stuck or goes dead after a catch, a notification or switching apps, and a lost finger is let go on its own.",
+      "In-game buttons like AUDIBLE act the moment you lift your finger, and menu taps answer twice as fast.",
+      "The game runs at the same speed on every screen: 30 Hz in Low Power Mode, 75, 144 or 165 Hz monitors now play exactly the game a 60 Hz screen does, which changes the odds a little on those screens only. Between-frame drawing keeps fast monitors smooth.",
+      "A phone in Low Power Mode is no longer treated as a slow phone. DEBUG: FRAME TIMES says why the frame rate is what it is, GPU switches help find what slows a phone down, and the debug page opens during a game."
     ]]
   ] },
   { v: "v0.73", secs: [

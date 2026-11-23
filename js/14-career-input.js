@@ -1914,8 +1914,62 @@ document.addEventListener('visibilitychange', () => {
   } else { try { if (actx && !hushed) actx.resume(); } catch (e) {} }   // (back on the tab with the pause sheet up: stays quiet until unpaused)
 });   // (switching tabs pauses a game in progress)
 
-let last = performance.now(), stepAcc = 0;
-const STEP_MIN = 1 / 65;   // shortest game step (s); frames that come sooner wait and add up
+let last = performance.now();
+// --- fixed step (perf job phase 2; tunables FRAME_LOOP in 01-tuning) ---
+// The game steps 60 times a second with one fixed step on every screen. The display's refresh is measured from the rAF gaps (middle half's mean);
+// on a 30 / 60 / 120 / 240 Hz screen the steps are counted per refresh (no remainder, nothing blended), on any other rate an accumulator keeps
+// the remainder and the paint draws players / ball / camera between the last two steps (loopBlendSet before the paint, loopBlendBack after it).
+const frameLoop = { acc: 0, rate: 0, hz: 60, gaps: new Float64Array(FRAME_LOOP.gapsN), srt: new Float64Array(FRAME_LOOP.gapsN), gi: 0, gn: 0, blendN: 0, blended: false,
+  bl: { ok: false, list: null, gen: -1, ball: null, n: 0, x: new Float64Array(64), y: new Float64Array(64), qx: new Float64Array(64), qy: new Float64Array(64), bx: 0, by: 0, bz: 0, qb: [0, 0, 0], cx: 0, cy: 0, z: 1, qc: [0, 0, 1] } };
+function loopRefresh(gapMs) {   // every frame: the display's refresh, and counted (rate) or timed (0) steps
+  const F = FRAME_LOOP, L = frameLoop;
+  if (gapMs > 0.5 && gapMs < 100) { L.gaps[L.gi] = gapMs; L.gi = (L.gi + 1) % F.gapsN; if (L.gn < F.gapsN) L.gn++; }   // (stalls and duplicate stamps say nothing about the refresh)
+  if (L.gn < 8) return;
+  const n = L.gn, s = L.srt.subarray(0, n); s.set(L.gaps.subarray(0, n)); s.sort();
+  let sum = 0, c = 0; for (let i = n >> 2; i < n - (n >> 2); i++) { sum += s[i]; c++; }   // (the middle half's mean: Safari's whole-ms stamps 16 / 17 / 17 average to 16.67, a median would read 17)
+  const hz = 1000 / (sum / c); L.hz = hz;
+  if (L.rate) { if (Math.abs(hz - L.rate) > L.rate * F.snapOut) { L.rate = 0; L.acc = 0; } }
+  else for (const r of F.snap) if (Math.abs(hz - r) < r * F.snapIn) { L.rate = r; L.acc = 0; break; }
+}
+function loopSteps(gapMs) {   // how many fixed steps this frame runs
+  const F = FRAME_LOOP, L = frameLoop;
+  if (L.rate) L.acc += Math.round(gapMs * L.rate / 1000) * (1 / F.step) / L.rate;   // (counted: 2, 1, 0.5 or 0.25 steps a refresh, exact in binary; a refresh late = the steps it missed)
+  else L.acc += Math.min(gapMs, 1000) / 1000 / F.step;
+  let k = Math.floor(L.acc + 1e-6);
+  if (k > F.maxSteps) { k = F.maxSteps; L.acc -= Math.floor(L.acc + 1e-6); }   // (a longer stall is dropped, as the old 0.05 s clamp did)
+  else L.acc -= k;
+  if (L.acc < 1e-6) L.acc = 0;
+  return k;
+}
+function loopPrev() {   // before a step: where everything is (the blend's "previous")
+  const B = frameLoop.bl, A = allPlayers(), n = A.length;
+  if (B.x.length < n) for (const k of ['x', 'y', 'qx', 'qy']) B[k] = new Float64Array(n * 2);
+  for (let i = 0; i < n; i++) { B.x[i] = A[i].x; B.y[i] = A[i].y; }
+  B.list = A; B.n = n; B.gen = RESET_N; B.ball = ball;
+  if (ball) { B.bx = ball.x; B.by = ball.y; B.bz = ball.z || 0; }
+  B.cx = camX; B.cy = camY; B.z = zoom; B.ok = true;
+}
+function loopBlendSet(a) {   // right before the paint: draw at previous + (current - previous) x a; false = nothing changed
+  const B = frameLoop.bl;
+  if (!B.ok || B.gen !== RESET_N || allPlayers() !== B.list || B.ball !== ball) return false;   // (a reset / a new line-up: no blend across it)
+  const A = B.list, J = SPEED_JUMP * YD;
+  for (let i = 0; i < B.n; i++) {
+    const p = A[i], x = p.x, y = p.y; B.qx[i] = x; B.qy[i] = y;
+    if (Math.abs(x - B.x[i]) < J && Math.abs(y - B.y[i]) < J) { p.x = B.x[i] + (x - B.x[i]) * a; p.y = B.y[i] + (y - B.y[i]) * a; }
+  }
+  if (ball) { const q = B.qb; q[0] = ball.x; q[1] = ball.y; q[2] = ball.z || 0;
+    if (Math.abs(q[0] - B.bx) < J && Math.abs(q[1] - B.by) < J) { ball.x = B.bx + (q[0] - B.bx) * a; ball.y = B.by + (q[1] - B.by) * a; if (ball.z != null) ball.z = B.bz + (q[2] - B.bz) * a; } }
+  const c = B.qc; c[0] = camX; c[1] = camY; c[2] = zoom;
+  if (Math.abs(camX - B.cx) < J && Math.abs(camY - B.cy) < J && zoom > B.z * 0.8 && zoom < B.z * 1.25) { camX = B.cx + (c[0] - B.cx) * a; camY = B.cy + (c[1] - B.cy) * a; zoom = B.z + (c[2] - B.z) * a; }
+  frameLoop.blendN++;
+  return true;
+}
+function loopBlendBack() {   // right after the paint: every stepped value back
+  const B = frameLoop.bl, A = B.list;
+  for (let i = 0; i < B.n; i++) { A[i].x = B.qx[i]; A[i].y = B.qy[i]; }
+  if (ball) { ball.x = B.qb[0]; ball.y = B.qb[1]; if (ball.z != null) ball.z = B.qb[2]; }
+  camX = B.qc[0]; camY = B.qc[1]; zoom = B.qc[2];
+}
 function replayTick(dt) {   // one frame of a replay or highlight
   if (PCLIP && PCLIP.end) { pclipEnd(); return; }   // (v0.71 the penalty clip ran out)
   // A = forward in time (fast), D = back; the arrow keys move the camera around (like a right-drag)
@@ -2021,7 +2075,7 @@ function cursorShape(down, dark, k, ox, oy) {
   ctx.restore();
 }
 function brightPass() {   // (frame(): last, over everything)
-  if (!brightOn()) return;
+  if (!brightOn() || PHONE_TEST.gpu === 'NO BRIGHT') return;
   dmHold++; ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; const C = brightCols(); ctx.globalCompositeOperation = C.pass; ctx.fillStyle = C.up; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.restore(); dmHold--;
 }
 function snapUnbright(c) {   // a copy of the canvas, taken back to the picture before brightPass (bright spots that clipped stay at full white, as shown)
@@ -2093,7 +2147,7 @@ function perfDraw(ms, now) {
   const P = perfS; perfBlk.own += ms; P.dS += ms; P.dN++; if (ms > P.dM) P.dM = ms; P.fd = ms; P.aP++; P.aDS += ms; if (ms > P.aDM) P.aDM = ms;
   if (now - P.t0 < PERF_HUD.win) return;
   const f = n => n.toFixed(1), lv = liteLevel();
-  P.l1 = `${Math.round(P.dN * 1000 / Math.max(1, now - P.t0))} FPS   UPD ${f(P.uS / Math.max(1, P.uN))} / ${f(P.uM)}   DRAW ${f(P.dS / Math.max(1, P.dN))} / ${f(P.dM)} ms`;
+  P.l1 = `${Math.round(P.dN * 1000 / Math.max(1, now - P.t0))} FPS: ${fpsReason()}   STEP ${frameLoop.rate ? 'x' + frameLoop.rate : 'ACC'} ${Math.round(frameLoop.hz)}Hz   UPD ${f(P.uS / Math.max(1, P.uN))} / ${f(P.uM)}   DRAW ${f(P.dS / Math.max(1, P.dN))} / ${f(P.dM)} ms`;
   P.l2 = `avg / worst   ${gfxMode()}${lv ? ' L' + lv : ''}   ${canvas.width}x${canvas.height} (x${RK.toFixed(2)})  HI${RK_HI}  DM ${dmOn ? 'on' : 'off'}  BTN ${P.btn}`;
   P.l2 += `  CANVAS ~${canvasMB()} MB  ${phoneTestTxt()}`;   // (v0.70: the phone test switches)   // (v0.62: rough canvas memory alive: Safari drops backing stores past its budget = black frames)
   const top = Object.keys(P.parts).map(k => [k, P.parts[k] / Math.max(1, P.dN)]).sort((a, b) => b[1] - a[1]).slice(0, 2);
@@ -2160,7 +2214,8 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   if (!bg) requestAnimationFrame(frame);   // (first, so a bug thrown below shows up in the console but can't stop the loop and freeze the whole game)
   perfSpike(now - last);   // (FRAME TIMES: the frame before, a spike?)
   if (SETTINGS.perfHud && !perfWrapped) perfWrapAll();   // (v0.70: the save / sync / click timers go on the first time FRAME TIMES is)
-  const dt = Math.max(0, Math.min((now - last) / 1000, 0.05));   // (never negative: a timestamp older than the last one would stall the game step)
+  const gapMs = Math.max(0, now - last), dt = Math.min(gapMs / 1000, 0.05);   // (never negative: a timestamp older than the last one would stall the game step)
+  loopRefresh(gapMs);   // (perf job phase 2: the display's refresh -> counted or timed fixed steps)
   if (!bg) liteTick(now - last, liteWork);   // (performance mode: are the frames still slow? v0.73: judged by the last frame's own work too)
   liteWork = 0;
   last = now;
@@ -2177,8 +2232,12 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   else if (HT) { if (!settingsOpen) hsTick(); }   // (the halftime show's cards: the game stays stopped)
   else if (!showKeys && !paused && !results && !settingsOpen && !injuryShowing() && !ONL.guest && !(ONL.on && (ONL.away || ONL.lost))) {    // (online guest: the host steps the game, onlGuestStep below draws its snapshots)   // the keybinds page, the pause button, settings, an injury timeout and the result screen stop the game
     if (rec && rec.replaying) replayTick(dt);
-    else { deskGate = true; stepAcc += dt; if (stepAcc >= STEP_MIN) { deskStepped = true; GRAV_K = 1; speedStep(Math.min(stepAcc * SPEED_BASE * celTSpeed(), 0.07)); stepAcc = 0; } }   // (the game steps about 60 times a second whatever the screen's refresh rate: a 120 / 144 Hz monitor ran every per-frame roll, reaction and AI decision twice as often)
+    else {   // (perf job phase 2: 60 fixed steps a second on every screen; a 30 Hz screen runs 2 a refresh, 120 Hz one every 2nd, 75 / 144 Hz an accumulator + the blend)
+      deskGate = true; const k = loopSteps(gapMs), bl = FRAME_LOOP.blend && !frameLoop.rate;
+      for (let i = 0; i < k; i++) { deskStepped = true; GRAV_K = 1; if (bl) loopPrev(); speedStep(Math.min(FRAME_LOOP.step * SPEED_BASE * celTSpeed(), 0.07)); }
+    }
   }
+  if (!deskGate) frameLoop.bl.ok = false;   // (the game didn't step this frame: nothing to blend from when it comes back)
   let pu = SETTINGS.perfHud && ONL.on ? PERF_NOW() : 0;   // (v0.74: the online tick and the score tally as u.* parts, so an update spike names them)
   perfUT = pu;
   try { if (ONL.host && !results) onlHostTick(); if (ONL.guest && !results) onlGuestStep(); }
@@ -2217,12 +2276,14 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   cglTick();   // (v0.66: the GPU crumple overlay: every frame, even ones the menu below doesn't paint)
   const force = fitForce; fitForce = false;   // (v0.62: the canvas was resized = cleared: paint this frame whatever the caps say, or a black frame shows)
   if (!force && TUI.on && now - lastPaint < fpsInterval() - rafDt * FPS_CAP.slack) { choreTick(); return; }   // (phones: at most 60 a second even on a 90 / 120 Hz screen, 30 once locked (fpsInterval); the game steps above are unaffected)
-  if (!force && deskSkip(now, deskGate, deskStepped)) { choreTick(); return; }   // (laptops / high-refresh screens: no step ran = the same picture, keep the last one)
+  const blendA = deskGate && FRAME_LOOP.blend && !frameLoop.rate && frameLoop.acc > 0 && !ONL.guest && !(rec && rec.replaying) ? frameLoop.acc : 0;   // (between two steps: drawn at the remainder)
+  if (!force && deskSkip(now, deskGate, deskStepped || blendA > 0)) { choreTick(); return; }   // (laptops / high-refresh screens: no step ran = the same picture, keep the last one)
   if (!force && menuSkip(now)) { choreTick(); return; }   // (v0.55: menus: paced, and nothing painted while nothing on them can change; the canvas keeps its last picture)
   lastPaint = now;
   const paintT0 = performance.now(), pm = SETTINGS.perfHud;
   UI_NOW = UI_LAST = paintT0; menuMoving = false; menuProbeN = 0; performance.now = menuProbe;
-  try { paintFrame(paintT0, pm, now); } finally { delete performance.now; UI_NOW = 0; menuClock = menuProbeN > 0; liteWork += performance.now() - paintT0; }
+  const blended = blendA > 0 && loopBlendSet(blendA); frameLoop.blended = blended;
+  try { paintFrame(paintT0, pm, now); } finally { if (blended) loopBlendBack(); delete performance.now; UI_NOW = 0; menuClock = menuProbeN > 0; liteWork += performance.now() - paintT0; }
   if (TUI.on) {   // how long painting took, smoothed: slow frames drop the paint rate to ~30 (so the game keeps up and the thread isn't always behind), fast ones bring it back
     paintAvg += (performance.now() - paintT0 - paintAvg) * 0.1;
     fpsCapTick(Math.min(0.1, rafDt / 1000), now);
@@ -2255,7 +2316,7 @@ function paintHold() { UI_BTNS = UI_BTNS_PREV; UI_MODAL.now = UI_MODAL.was; UI_M
 // every refresh while the game steps ~60 a second). Never skips past the step rate, so a game stopped for any other reason paints as before
 function deskSkip(now, gate, stepped) {
   if (!FPS_CAP.deskSkip || TUI.on || !gate || stepped || CO || results || hl || HT || paused || showKeys || settingsOpen || ONL.guest) return false;
-  if (now - lastPaint >= STEP_MIN * 1000) return false;
+  if (now - lastPaint >= FRAME_LOOP.step * 1000) return false;
   paintHold(); return true;
 }
 // v0.70: the stands and the field cache are built and drawn once while the matchup screen / pregame show is still up, a step a painted frame,
@@ -2372,9 +2433,20 @@ function fpsCapTick(dtS, now) {   // (after each paint: is 60 being held? Paint 
       fpsCap.lock = false; fpsCap.over = 0; fpsCap.clean = 0; fpsCap.gap = 1000 / FPS_CAP.hi; fpsCap.upAt = now; perfNote('fps 60 (retry)'); }
     return;
   }
-  const slow = paintAvg > FPS_CAP.slowMs || (fpsInterval() < 20 && fpsCap.gap > FPS_CAP.slowMs);
+  const slow = paintAvg > FPS_CAP.slowMs || (fpsInterval() < 20 && fpsCap.gap > Math.max(FPS_CAP.slowMs, rafLo * DYN_RES.gapSlow));   // (perf job phase 2: judged against the display's own refresh: a 30 Hz screen (Low Power Mode) has 33 ms gaps and is not slow)
   fpsCap.over = slow ? fpsCap.over + dtS : Math.max(0, fpsCap.over - dtS * 0.5);
   if (fpsCap.over > FPS_CAP.holdS && !(dynResOn() && dynRes.k != null && dynRes.k > DYN_RES.min)) { fpsCap.lock = true; fpsCap.clean = 0; const fail = now - fpsCap.upAt < FPS_CAP.failS * 1000; fpsCap.wait = fail ? Math.min(FPS_CAP.retryMax, (fpsCap.wait || FPS_CAP.retryS) * FPS_CAP.retryK) : FPS_CAP.retryS; perfNote((fail ? 'fps 30 (retry failed, next ' + fpsCap.wait + 's)' : 'fps 30 (locked)') + ' gap ' + fpsCap.gap.toFixed(1) + ' paint ' + paintAvg.toFixed(1)); }   // (v0.70: the resolution drops first, the 30 lock is the last resort)
+}
+// perf job phase 2: why the frame rate is what it is (FRAME TIMES line 1): 60 / N (a laptop's refresh) / 30 (display | locked: paint N ms | frames late, paint only N ms | setting | menu | cold open)
+function fpsReason() {
+  const disp = 1000 / Math.max(1, rafLo), ms = Math.round(paintAvg), m = SETTINGS.fps || 'AUTO', cap = FPS_CAP.on && TUI.on;
+  if (cap && results && !hlFront()) return FPS_CAP.menuTouch + ' (menu)';
+  if (cap && m === '30') return '30 (setting)';
+  if (cap && m === 'AUTO' && fpsCap.lock) return '30 (locked: paint ' + ms + ' ms)';
+  if (disp < 45) return '30 (display)';   // (the screen itself refreshes at 30: Low Power Mode, battery saver)
+  if (cap && m === 'AUTO' && FPS_CAP.cold && coldOn()) return '30 (cold open)';
+  if (cap && fpsCap.gap > rafLo * DYN_RES.gapSlow * 1.3 && paintAvg < FPS_CAP.slowMs) return '30 (frames late, paint only ' + ms + ' ms)';   // (the display can do 60, the JS paint is cheap, the frames still land a refresh late: the GPU side. Try DEBUG > GPU)
+  return String(cap ? 60 : Math.round(frameLoop.hz / 5) * 5 || 60);
 }
 // the screen stays on in touch mode, even with no touches for a long stretch (the Wake Lock API; asked for on the first touch, taken again when the page comes back)
 let wakeLock = null;

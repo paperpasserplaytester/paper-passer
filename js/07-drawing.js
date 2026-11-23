@@ -3495,7 +3495,7 @@ function fieldCacheDraw() {   // true = the static field was drawn from the cach
   const sx0 = Math.max(0, Math.floor((Math.min(xa, xb) + ox) * fs) - 1), sx1 = Math.min(F.c.width, Math.ceil((Math.max(xa, xb) + ox) * fs) + 1);
   const sy0 = Math.max(0, Math.floor((Math.min(ya, yb) + M) * fs) - 1), sy1 = Math.min(F.c.height, Math.ceil((Math.max(ya, yb) + M) * fs) + 1);
   const qt = TUI.on && gfxHi();   // (v0.74: QUALITY on a phone: smooth stretch + the lettering drawn live when the shot is closer than the cache is sharp)
-  ctx.imageSmoothingEnabled = PHONE_TEST.blit !== 'NO SMOOTH'; ctx.imageSmoothingQuality = TUI.on && !qt ? 'low' : 'high';
+  ctx.imageSmoothingEnabled = PHONE_TEST.blit !== 'NO SMOOTH'; ctx.imageSmoothingQuality = TUI.on && !qt || PHONE_TEST.gpu === 'SMOOTH LOW' ? 'low' : 'high';
   if (sx1 > sx0 && sy1 > sy0 && PHONE_TEST.blit === 'WHOLE PX') {   // (debug: the blit's edges on whole device pixels, so the cache is never sampled at a fractional offset)
     const sw = sx1 - sx0, sh = sy1 - sy0, X0 = Math.round(m.a * (sx0 / fs - ox) + m.e), X1 = Math.round(m.a * (sx1 / fs - ox) + m.e), Y0 = Math.round(m.d * (sy0 / fs - M) + m.f), Y1 = Math.round(m.d * (sy1 / fs - M) + m.f);
     ctx.save(); ctx.setTransform((X1 - X0) / sw, 0, 0, (Y1 - Y0) / sh, X0, Y0); ctx.drawImage(F.c, sx0, sy0, sw, sh, 0, 0, sw, sh); ctx.restore();
@@ -3516,7 +3516,7 @@ function drawField() {
   ctx.fillStyle = markerOn() ? markerFill(MARKER.outside.col, 1, true) : MARKER.outside.flat;   // (marker: lighter and sparser out here, so names and callouts stay readable)
   ctx.fillRect(-ENDZONE - 60 * YD, -40 * YD, FIELD + 2 * ENDZONE + 120 * YD, FW + 80 * YD);
   let pt = SETTINGS.perfHud ? PERF_NOW() : 0;   // (FRAME TIMES: d.* = parts of draw())
-  if ((!lightGfx() || IS_MOBILE) && !(typeof PHOTO_NOCROWD !== 'undefined' && PHOTO_NOCROWD)) drawCrowd();   // (a slow desktop in performance mode: no stands. A phone always keeps the stands and the sideline: drawCrowd already culls everything off-view)
+  if ((!lightGfx() || IS_MOBILE) && !(typeof PHOTO_NOCROWD !== 'undefined' && PHOTO_NOCROWD) && PHONE_TEST.gpu !== 'NO STANDS') drawCrowd();   // (a slow desktop in performance mode: no stands. A phone always keeps the stands and the sideline: drawCrowd already culls everything off-view)
   if (pt) pt = perfMark('d.crowd', pt);
   if (!fieldCacheDraw()) { drawFieldStatic(); if (!fieldLive) { fieldLive = true; perfNote('fieldLive'); } } else fieldLive = false;   // (perfNote once a change, not every frame)
   if (pt) pt = perfMark('d.field', pt);

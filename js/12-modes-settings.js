@@ -4184,7 +4184,7 @@ const TOUCH_HELP = [
 // the debug page: goes over the settings screen (DEBUG, bottom of the settings panel)
 let dbgUI = false;
 const DBG_PANEL = { x: 330, y: 70, w: 620, h: 560 };
-const DBG_BTNS = { hit: { x: 370, y: 140, w: 265, h: 54 }, fld: { x: 645, y: 140, w: 265, h: 54 }, mobile: { x: 370, y: 204, w: 265, h: 54 }, hash: { x: 645, y: 204, w: 265, h: 54 }, tools: { x: 370, y: 268, w: 265, h: 54 }, blit: { x: 645, y: 268, w: 265, h: 54 }, perf: { x: 370, y: 332, w: 265, h: 54 }, tick: { x: 645, y: 332, w: 265, h: 54 }, net: { x: 370, y: 396, w: 540, h: 54 }, dyn: { x: 370, y: 460, w: 265, h: 54 }, store: { x: 645, y: 460, w: 265, h: 54 }, turn: { x: 370, y: 522, w: 174, h: 48 }, shadow: { x: 553, y: 522, w: 174, h: 48 }, res: { x: 736, y: 522, w: 174, h: 48 }, back: { x: 370, y: 578, w: 540, h: 46 } };   // (v0.70: turn / shadow / res = PHONE_TEST)   // (dyn = ADAPTIVE: LAST GAME readout)   // (perf = the frame-time readout, see PERF_HUD; net = FAKE LAG for testing online, see NET_SIM)
+const DBG_BTNS = { hit: { x: 370, y: 140, w: 265, h: 54 }, fld: { x: 645, y: 140, w: 265, h: 54 }, mobile: { x: 370, y: 204, w: 265, h: 54 }, hash: { x: 645, y: 204, w: 265, h: 54 }, tools: { x: 370, y: 268, w: 265, h: 54 }, blit: { x: 645, y: 268, w: 265, h: 54 }, perf: { x: 370, y: 332, w: 265, h: 54 }, tick: { x: 645, y: 332, w: 265, h: 54 }, net: { x: 370, y: 396, w: 265, h: 54 }, gpu: { x: 645, y: 396, w: 265, h: 54 }, dyn: { x: 370, y: 460, w: 265, h: 54 }, store: { x: 645, y: 460, w: 265, h: 54 }, turn: { x: 370, y: 522, w: 174, h: 48 }, shadow: { x: 553, y: 522, w: 174, h: 48 }, res: { x: 736, y: 522, w: 174, h: 48 }, back: { x: 370, y: 578, w: 540, h: 46 } };   // (v0.70: turn / shadow / res = PHONE_TEST)   // (dyn = ADAPTIVE: LAST GAME readout)   // (perf = the frame-time readout, see PERF_HUD; net = FAKE LAG for testing online, see NET_SIM)
 function drawDebug() {
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
   if (dbgUI === 'dyn') return drawDynDebug();
@@ -4200,7 +4200,7 @@ function drawDebug() {
   menuBtn(DBG_BTNS.blit, `FIELD BLIT: ${PHONE_TEST.blit}`, Y, 20); menuBtn(DBG_BTNS.tick, `TICK PATHS: ${PHONE_TEST.tickPath ? 'ON' : 'OFF'}`, Y, 20);   // (v0.74 white-line hunt 2, PHONE_TEST.blit / tickPath)   // (the start screen's ANIMATION LIBRARY + TEST MODE)
   menuBtn(DBG_BTNS.perf, `FRAME TIMES: ${SETTINGS.perfHud ? 'ON' : 'OFF'}`, Y, 20);   // (fps + update / draw ms in a corner of every screen)
   menuBtn(DBG_BTNS.net, `FAKE LAG: ${SETTINGS.netSim || 'OFF'}`, Y, 24);   // (online test bench: delays / drops what this device receives)
-  menuBtn(DBG_BTNS.turn, 'TURN: ' + PHONE_TEST.turn, Y, 20); menuBtn(DBG_BTNS.shadow, 'SHADOW: ' + PHONE_TEST.shadow, Y, 20); menuBtn(DBG_BTNS.res, 'RES: ' + PHONE_TEST.res, Y, 20);   // (v0.70 phone test switches, not saved)
+  menuBtn(DBG_BTNS.gpu, 'GPU: ' + PHONE_TEST.gpu, Y, 20); menuBtn(DBG_BTNS.turn, 'TURN: ' + PHONE_TEST.turn, Y, 20); menuBtn(DBG_BTNS.shadow, 'SHADOW: ' + PHONE_TEST.shadow, Y, 20); menuBtn(DBG_BTNS.res, 'RES: ' + PHONE_TEST.res, Y, 20);   // (v0.70 phone test switches, not saved)
   menuBtn(DBG_BTNS.back, 'DONE', Y, 24);
 }
 function drawStoreDebug() {   // DEBUG > STORAGE: storeReport, per slot and the biggest keys
@@ -4238,7 +4238,7 @@ function drawDynDebug() {   // the last judged game, per adaptive master (tuning
   menuBtn({ x: 515, y: 556, w: 250, h: 56 }, 'BACK', IN_GAME_PAPER.yellow, 22);
 }
 function phoneTestNext(k) {   // (v0.70: the DEBUG page's phone test cyclers; the console can set PHONE_TEST.* the same way, then call this with no key to apply)
-  const T = PHONE_TEST, L = { turn: T.turns, shadow: T.shadows, res: T.ress }[k];
+  const T = PHONE_TEST, L = { turn: T.turns, shadow: T.shadows, res: T.ress, gpu: T.gpus }[k];
   if (L) T[k] = L[(L.indexOf(T[k]) + 1) % L.length];
   btnSprClear(); fitScreen();   // (baked buttons keep the old blur; a pinned scale applies at once)
 }
@@ -4253,6 +4253,7 @@ function debugClick(p) {
   else if (inBtn(p, DBG_BTNS.tools)) SETTINGS.hideTools = !SETTINGS.hideTools;
   else if (inBtn(p, DBG_BTNS.perf)) SETTINGS.perfHud = !SETTINGS.perfHud;
   else if (inBtn(p, DBG_BTNS.net)) netSimNext();
+  else if (inBtn(p, DBG_BTNS.gpu)) phoneTestNext('gpu');
   else if (inBtn(p, DBG_BTNS.turn) || inBtn(p, DBG_BTNS.shadow) || inBtn(p, DBG_BTNS.res)) phoneTestNext(inBtn(p, DBG_BTNS.turn) ? 'turn' : inBtn(p, DBG_BTNS.shadow) ? 'shadow' : 'res');
   else if (inBtn(p, DBG_BTNS.mobile)) { DEVICE.mobile = !TUI.on; saveDevice(); tuiSet(DEVICE.mobile); }   // (touch controls: on by default on a phone / tablet, off on a PC; this overrides that)
   else if (inBtn(p, DBG_BTNS.back) || !inBtn(p, DBG_PANEL)) dbgUI = false;
