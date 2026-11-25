@@ -618,6 +618,7 @@ function pickEnd(d, text) {
   endPlay(text, 0, 'turnover');
   if (tb && pendingSim) pendingSim = { startYd: INT_TB.yard };
 }
+const PR_AIM = ppNew(), PR_BASE = ppNew();   // (chaseReturner's pursuitPoint answer and its copy: T-ALLOC)
 function chaseReturner(p, d, dt) {
   if (p.push && clock < p.push.until && !p.action) { const px = p.x, py = p.y; p.x += p.push.vx * dt; p.y += p.push.vy * dt; clampField(p); setVelocity(p, px, py, dt); p.moving = true; return; }   // (shoved off by the returner's stiff arm: driven back first)
   if (p.stiffBy) {   // held at arm's length: updateReturner places him and runs the struggle (no lunging out of it)
@@ -673,7 +674,7 @@ function chaseReturner(p, d, dt) {
   // cut him off: aim at where he'll be when we get there, pinning him to the sideline if he's headed for it
   const ck = puntRet ? PUNT.chaseK * PUNT_COVER.speed * diffRetCov(d) : 1;   // (a punt team runs lanes and finishes better than a defense chasing a pick)
   let chase = top * ck * (held ? 0.2 : PICK_RETURN.chase);
-  const aimAt = pursuitPoint(p, d, top * ck * PICK_RETURN.chase, -1), base = { ...aimAt };
+  const aimAt = pursuitPoint(p, d, top * ck * PICK_RETURN.chase, -1, 1, PR_AIM), base = ppCopy(PR_BASE, aimAt);
   if (puntRet && puntPlay && p.x < d.x + 1.5 * YD) {   // the punt team: the two widest men (the gunners) contain (keep their leverage on the outside), the rest hold lanes in a net between them
     const cv = puntPlay.cover.filter(q => !q.action), lo = cv.reduce((a, b) => (b.y < a.y ? b : a), cv[0]), hi = cv.reduce((a, b) => (b.y > a.y ? b : a), cv[0]);
     const gap = d.x - p.x, reach = Math.min(1, Math.max(0, gap) / PUNT_COVER.net);
@@ -2737,19 +2738,20 @@ function colSkip(a, b) {
   return a.team !== b.team && a.engaged && b.engaged;
 }
 // bodies are solid: overlapping men ease apart (heavier gives less), and a pair that passed through each other this frame is put back
+let SEP_MS = new Float64Array(64), SEP_MH = new Uint8Array(64);   // (separatePlayers' scratch: masses this call + which are worked out)
 function separatePlayers(dt) {
   const all = allPlayers();
   // (no body collisions at all once the play is dead: nobody gets pushed, slid or snapped after the whistle)
   if (state === 'pre' || state === 'done' || state === 'sim' || state === 'kick' || (kickoff && kickoff.forming) || (rec && rec.replaying)) { for (const p of all) p.cx = null; return; }
   const R = COLLIDE.r * 2, k = Math.min(1, COLLIDE.ease * dt);
-  const ms = new Array(all.length);   // (each man's mass, worked out once a call, the first time a pair needs it: it was once per pair)
+  let ms = SEP_MS, mh = SEP_MH; if (ms.length < all.length) ms = SEP_MS = new Float64Array(all.length * 2), mh = SEP_MH = new Uint8Array(all.length * 2); mh.fill(0);   // (each man's mass, worked out once a call, the first time a pair needs it: it was once per pair. Phase 4: scratch typed arrays, no new array a step)
   for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
     const a = all[i], b = all[j];
     const sk = colSkip(a, b);
     if (sk === true) continue;
     const soft = sk === 'soft' || sk === 'clip';
     let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
-    let ma = ms[i] !== undefined ? ms[i] : (ms[i] = colMass(a)), mb = ms[j] !== undefined ? ms[j] : (ms[j] = colMass(b));
+    if (!mh[i]) { ms[i] = colMass(a); mh[i] = 1; } if (!mh[j]) { ms[j] = colMass(b); mh[j] = 1; } let ma = ms[i], mb = ms[j];
     // (a blocker locked up on his man is never moved by a teammate: a back or receiver running past slides round him instead of
     //  shoving him off his block and dragging him along on the route)
     if (a.team === b.team && !!a.engaged !== !!b.engaged) { if (a.engaged) { ma = 1; mb = 0; } else { ma = 0; mb = 1; } }
@@ -2850,11 +2852,16 @@ function hipHands(dt) {
     } else if (near && beside && clock >= (d.hipWait || 0) && r.x > los) { d.hipOn = r; }
   }
 }
+// perf job phase 4: update()'s lists without new arrays each step. Each is a snapshot taken before its loop (as the old spreads were), in one of a few
+// scratch arrays used round-robin, so a list in use is never refilled by the next one inside the same step; never kept past its loop.
+const UPD_S = [[], [], [], []]; let UPD_I = 0;
+function updList(a, b, c, x) { const L = UPD_S[UPD_I = (UPD_I + 1) & 3]; L.length = 0; if (a) for (let i = 0; i < a.length; i++) L.push(a[i]); if (b) for (let i = 0; i < b.length; i++) L.push(b[i]); if (c) for (let i = 0; i < c.length; i++) L.push(c[i]); if (x !== undefined) L.push(x); return L; }
+function updQOT() { const L = UPD_S[UPD_I = (UPD_I + 1) & 3]; L.length = 0; L.push(qb); for (let i = 0; i < ols.length; i++) L.push(ols[i]); for (let i = 0; i < recs.length; i++) if (recs[i].teBlock) L.push(recs[i]); return L; }   // ([qb, ...ols, ...recs.filter(r => r.teBlock)])
 function update(dt) {
   if (dt <= 0) return;
   let ut = SETTINGS.perfHud ? PERF_NOW() : 0;   // (FRAME TIMES: u.* parts of the game step, perfDump(); 0 = off, every mark below is skipped)
   heldSync();   // (perf job: keys / dkeys = what every owner holds, at the top of every game step)
-  DIFF_FRAME++;   // (a new game step: diffLvl's kept row is rebuilt)
+  // (perf job phase 4: no DIFF_FRAME bump per game step any more: the kept diffLvl row is reused while diffSig is unchanged; frame() still bumps it once a frame for sliders edited in place)
   if (tut && tut.defAsk) return;   // (the tutorial's "play defense or sim it?" card: nothing moves until you pick)
   if (wxDelayUp()) return;   // (the lightning delay card: everything waits)
   clock += dt;
@@ -2870,7 +2877,7 @@ function update(dt) {
   wxTick(dt);
   tensionTick(dt);   // (v0.55: the riser / big-kick heartbeat, 08)
   // each defender's real movement over the last frame, whatever code moved him (pursue picks its speed up from it)
-  for (const d of [...(back7 || []), ...(dl || [])]) { if (d.mpx != null) { d.mvx = (d.x - d.mpx) / dt; d.mvy = (d.y - d.mpy) / dt; } d.mpx = d.x; d.mpy = d.y; }
+  { const L = updList(back7 || [], dl || [], null); for (let i = 0; i < L.length; i++) { const d = L[i]; if (d.mpx != null) { d.mvx = (d.x - d.mpx) / dt; d.mvy = (d.y - d.mpy) / dt; } d.mpx = d.x; d.mpy = d.y; } }
   if (state !== 'kick' && !(typeof CO !== 'undefined' && CO)) for (const p of allPlayers()) if (p.armsUp && !(p.armsUpT > clock)) p.armsUp = false;   // (v0.59: kick-block hands come down once the kick is over (blocked, scooped...): never taped up on a runner; armsUpT = a short hold, BATTED BACK)
   hipHands(dt);
   if (aiOff()) { aiOffense(dt); defTick(dt); }
@@ -2895,7 +2902,7 @@ function update(dt) {
     game.fastRunoff = false;
     if (!game.over && !game.pendingQuarter) proceed();
   }
-  for (const r of [...dl, ...recs, ...back7]) if (r.swimLeft > 0) r.swimLeft = Math.max(0, r.swimLeft - dt);   // the swim's arm-over
+  { const L = updList(dl, recs, back7); for (let i = 0; i < L.length; i++) { const r = L[i]; if (r.swimLeft > 0) r.swimLeft = Math.max(0, r.swimLeft - dt); } }   // the swim's arm-over
   for (const r of defenders()) { if (r.spinFx > 0) r.spinFx = Math.max(0, r.spinFx - dt); if (r.bullFx > 0) r.bullFx = Math.max(0, r.bullFx - dt); }
   if (fgExit.length && state !== 'kick' && state !== 'pre' && state !== 'punt') { slSubFlush(); fgExit = []; }   // (anyone still walking off finishes as a sideline person: slSubFlush)   // (the swapped-out players' stand-ins only exist during a unit change: never left standing as duplicates once the next play is under way)
   if (state !== 'pre' && state !== 'done') recordSnap();
@@ -2919,7 +2926,7 @@ function update(dt) {
       // he just crossed the line this frame: everyone switches to the run right now (skipping a frame froze the line and the
       // blitzers for a beat and cost them their speed)
       updateLine(dt);
-      for (const p of [...recs, rb]) if (p !== runner && state === 'run') updateBlocker(p, dt, WR_BLOCK_SPEED);
+      { const L = updList(recs, null, null, rb); for (let i = 0; i < L.length; i++) { const p = L[i]; if (p !== runner && state === 'run') updateBlocker(p, dt, WR_BLOCK_SPEED); } }
       for (const d of back7) if (state === 'run') pursue(d, runner, dt);
     } else if (state === 'run') {
       for (const r of catchers()) if (r !== runner) updateReceiver(r, dt);
@@ -2942,7 +2949,8 @@ function update(dt) {
     // (they block by default; as soon as the screen catcher draws the ball back to set up, they go back into their routes)
     const settingUp = screenPasserView();
     if (ut) ut = perfMark('u.misc', ut);
-    for (const p of [...recs, rb]) {
+    const RL = updList(recs, null, null, rb);
+    for (let i = 0; i < RL.length; i++) { const p = RL[i];
       if (p === runner || state !== 'run') continue;
       if (kickoffPlay) kickoffBlock(p, dt, WR_BLOCK_SPEED);
       // (a QB scramble, a run or a caught ball: they block for him; only a screen catcher setting up to throw sends them back to routes)
@@ -2956,7 +2964,7 @@ function update(dt) {
     if (kickoffPlay && state === 'run' && runner !== qb) kickoffBlock(qb, dt, WR_BLOCK_SPEED);
     else if (runner !== qb) { if (isRunPlay && !kickoffPlay && !qb.action && !(tut && (tutStep() || {}).still) && clock < RUN_DROP.time && !ball.pitch && !meshOn()) runDrop(dt); else if (ball.pitch && isRunPlay && !qb.action) { qb.pvx = qb.pvy = 0; setVelocity(qb, qb.x, qb.y, dt); qb.face = pitchFace(); }   /* (the toss: a reverse pivot, his back to the line until it goes; meshOn: a handoff's footwork starts at the snap, meshQB) */ else if (passCaught() && !qb.action) updateBlocker(qb, dt, QB_SPEED); else if (!meshQB(dt) && !rbpQB(dt)) idleQB(qb, dt); }   // (a caught pass: the QB goes downfield to block too)
   } else if (state === 'flight') {
-    for (const p of [qb, ...ols, ...recs.filter(r => r.teBlock)]) { if (p.action || p.coast || p.hitBy) idleQB(p, dt); else afterThrow(p, dt, p === qb ? QB_SPEED : OL_RUN); }   // (no freezing once it's thrown: they keep working / follow the ball like they do once it's caught)
+    { const L = updQOT(); for (let i = 0; i < L.length; i++) { const p = L[i]; if (p.action || p.coast || p.hitBy) idleQB(p, dt); else afterThrow(p, dt, p === qb ? QB_SPEED : OL_RUN); } }   // (no freezing once it's thrown: they keep working / follow the ball like they do once it's caught)
     if (ut) ut = perfMark('u.off', ut);
     for (const d of dl) d.dropZone ? defendBall(d, dt) : lineToBall(d, dt);
     if (ut) ut = perfMark('u.def.dl', ut);
@@ -2969,7 +2977,7 @@ function update(dt) {
     updateFlight(dt);
     if (ut) ut = perfMark('u.ball', ut);
   } else if (state === 'loose') {
-    for (const p of [qb, ...ols, ...recs.filter(r => r.teBlock)]) { if (p.action || p.coast || p.hitBy) idleQB(p, dt); else afterThrow(p, dt, p === qb ? QB_SPEED : OL_RUN); }
+    { const L = updQOT(); for (let i = 0; i < L.length; i++) { const p = L[i]; if (p.action || p.coast || p.hitBy) idleQB(p, dt); else afterThrow(p, dt, p === qb ? QB_SPEED : OL_RUN); } }
     for (const d of dl) lineToBall(d, dt);
     if (!catchers().includes(rb)) idleQB(rb, dt);
     for (const r of catchers()) updateReceiver(r, dt);
@@ -3283,6 +3291,10 @@ const CAM = { touch: 0.55,   // phone / tablet: camera pan and zoom speed x this
               bowlMax: 2.2,
               // v0.74 pre-snap on offense: screen px kept clear under the top bar / above the bottom (touch: the button band) / at the sides; world px of sprite above / below a man's feet; px inside the stands' rim
               preFit: { on: true, top: 26, bot: 16, botTouch: 44, side: 34, head: 56, feet: 22, rim: 40 } };   // the stadium-edge limit never zooms in more than x this past the shot's own zoom (the old 20 x 1.04 steps)   // after a play: the pre-snap pan / zoom ease (1/s) for the first preTime s of 'pre' (the tight whistle shot used to snap out wide); zoom speed cap (x zoom per s)   // field goal: steady, slow pan / zoom (1/s)   // loose ball / fumble / pick: x zoom (< 1 = out to show the chase)
+// perf job 19, whose shot is it: online each device frames ITS player. The defender you steer pulls the shot only on the defending player's device, a throw drag only
+// on the passer's (onlIAmOff: host = it has the ball, guest = the opposite); offline (one screen) as before
+const camMine = () => !!(defLive() && ud && (!ONL.on || !onlIAmOff()));
+const camAimMine = () => !aiOff() && (!ONL.on || onlIAmOff());
 let camPre = { pid: -1 };   // the computer offense's pre-snap shot, set once a play (its audibles / shifts never move the camera)
 const camS = { vx: 0, vy: 0, vz: 0, x: null, y: null, z: null, st: null, pre: 99 };   // (st / pre: last state seen, seconds into this 'pre')   // the camera spring's velocity, and where it last put the camera
 // one step of a critically damped spring toward `to` (w = stiffness, 1/s); exact for any frame time, speed capped at `cap`
@@ -3378,7 +3390,7 @@ function updateCamera(dt) {
   pts = pts.filter(Boolean);   // (no target yet when the QB fumbles before throwing; no ball carrier found)
   if (!pts.length) pts = [ball];
   // on defense your player and his assignment (his man, the middle of his zone, then the ball / ball carrier) are always in the shot
-  const mine = defLive() && ud && ['pre', 'drop', 'pocket', 'flight', 'run', 'loose'].includes(state) && !kickoffPlay;
+  const mine = camMine() && ['pre', 'drop', 'pocket', 'flight', 'run', 'loose'].includes(state) && !kickoffPlay;
   if (mine) {
     pts.push(ud);
     if (state === 'pre' || state === 'drop' || state === 'pocket') { if (ud.man) pts.push(ud.man); else if (ud.zone) pts.push({ x: los + (ud.zone.d || 0) * YL, y: ud.zone.y }); }
@@ -3598,7 +3610,7 @@ function cam2Shot(dt, dn, rn, pickCam) {
   else if (state === 'run' && rn) { c = rn; kind = kickoffPlay ? 'ko' : 'run'; }
   if (!kind) return false;
   const C = C2, VH = H - TOP_BAR - FIELD_BOT, ek = userZoom * (TOUCH ? TOUCH_ZOOM : 1), R = CAM2.run;
-  const mine = defLive() && ud && !kickoffPlay, kcuIn = (kickoffPlay || state === 'picked') && typeof kcuOn === 'function' && kcuOn() && kcu;
+  const mine = camMine() && !kickoffPlay, kcuIn = (kickoffPlay || state === 'picked') && typeof kcuOn === 'function' && kcuOn() && kcu;
   const keeper = mine ? ud : kcuIn ? kcu : null;   // (your defender / cover man: always comfortably in frame)
   if (C.pid !== runPid) { C.pid = runPid; C.rat = Infinity; }   // (a new play: the out-only passing ratchet starts again)
   const fresh = C.zt == null || camS.x !== camX || camS.y !== camY || camS.z !== zoom;
@@ -3614,7 +3626,7 @@ function cam2Shot(dt, dn, rn, pickCam) {
     cbReset(); cbAdd(P.x, P.y);
     const cs = catchers();
     for (let i = 0; i < cs.length; i++) { const r = cs[i]; if ((tut && tut.bench.includes(r)) || (oo && oo.bench.includes(r))) continue; cbAdd(r.x, r.y); }
-    if (aim && !aiOff()) { const t = throwTarget(); cbAdd(t.x, t.y); }
+    if (aim && camAimMine()) { const t = throwTarget(); cbAdd(t.x, t.y); }
     if (mine) { if (ud.man) cbAdd(ud.man.x, ud.man.y); else if (ud.zone) cbAdd(los + (ud.zone.d || 0) * YL, ud.zone.y); }
     Z = Math.min(CAM2.passMaxZ, cbFitZ(C.cx, C.cy, m, VH));
     if (keeper) { const lim = 1 - 2 * CAM2.edge; Z = Math.min(Z, W / 2 * lim / Math.max(1, Math.abs(keeper.x - C.cx)), VH / 2 * lim / Math.max(1, Math.abs(keeper.y - C.cy))); }
@@ -3681,7 +3693,7 @@ function cam2Shot(dt, dn, rn, pickCam) {
 // the v2 smoothing for every live shot: timed target blend between shots, zoom dead band, the spring, then pan tied to zoom (the subject never leaves the frame)
 let camJump = false;   // one-shot: the next camera update starts ON its shot (no pan): the try after a touchdown (proceed's patNext), whatever the replay / TD hold left the camera on
 function cam2Apply(dt, cx, cy, want, wp, wz, capV, kind, info) {
-  if (camJump) { camJump = false; if (isFinite(cx) && isFinite(cy)) { camX = cx; camY = cy; } if (want > 0 && isFinite(want)) zoom = want; camS.x = null; }
+  if (camJump) { camJump = false; if (ONL.on && ONL.host) ONL.cjN = (ONL.cjN || 0) + 1; if (isFinite(cx) && isFinite(cy)) { camX = cx; camY = cy; } if (want > 0 && isFinite(want)) zoom = want; camS.x = null; }
   if (!(zoom > 0 && isFinite(zoom))) { zoom = want > 0 && isFinite(want) ? want : 0.5; camS.z = null; }   // (never stuck on a broken zoom)
   if (!isFinite(camX) || !isFinite(camY)) { camX = isFinite(cx) ? cx : 0; camY = isFinite(cy) ? cy : MID; camS.x = null; }
   const C = C2, fresh = C.zt == null || camS.x !== camX || camS.y !== camY || camS.z !== zoom;
@@ -3698,7 +3710,7 @@ function cam2Apply(dt, cx, cy, want, wp, wz, capV, kind, info) {
   if (kind === 'dead' || SETTINGS.camZoom === false || C.bT > 0) C.zt = tz;
   else { const b = 1 + CAM2.band; if (tz > C.zt * b) C.zt = tz / b; else if (tz < C.zt / b) C.zt = tz * b; if (info && info.fitShot && C.zt > tz) C.zt = tz; }   // (dead band: a small change in the must-fit set never makes the view breathe)
   C.tx = tx; C.ty = ty;
-  const wpE = aim && !aiOff() && kind === 'pass' ? wp * CAM2.dragPan : wp;   // (a throw drag: the pan slows, the zoom is out-only)
+  const wpE = aim && camAimMine() && kind === 'pass' ? wp * CAM2.dragPan : wp;   // (a throw drag: the pan slows, the zoom is out-only)
   [camX, camS.vx] = camSpring(camX, tx, camS.vx, wpE, dt, capV);
   [camY, camS.vy] = camSpring(camY, ty, camS.vy, wpE, dt, capV);
   [zoom, camS.vz] = camSpring(zoom, C.zt, camS.vz, wz, dt, zoom > 0.2 && isFinite(zoom) ? CAM.zoomMax * zoom * (TOUCH ? CAM.touch : 1) : Infinity);

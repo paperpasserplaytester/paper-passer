@@ -4075,7 +4075,12 @@ function shoveOff(c, d, win) {
 // dir = which way he's heading for the end zone (+1 offense, -1 a defensive return). err scales the lead
 // (1 = a perfect angle). Uses everybody's real reach so he aims to arrive, not to trail.
 const PP_BUF = new Float64Array(2 * 400);   // (his predicted path, reused: no per-frame arrays)
-function pursuitPoint(d, c, speed, dir, err = 1) {
+// (T-ALLOC: `out` = a scratch object of the caller's that gets the answer instead of a new one each call; the numbers are the same. Callers that change
+//  or keep it pass their own: PP_TK / PP_AIM / PP_BASE / PP_GUN, PR_AIM / PR_BASE in 06)
+const PP_TK = ppNew(), PP_AIM = ppNew(), PP_BASE = ppNew(), PP_GUN = ppNew();
+function ppNew() { return { x: 0.5, y: 0.5, t: 0.5, met: false }; }
+function ppCopy(o, a) { o.x = a.x; o.y = a.y; o.t = a.t; o.met = a.met; return o; }   // (= { ...a }, into o)
+function pursuitPoint(d, c, speed, dir, err = 1, out = null) {
   if (c.velAt !== clock) {   // (smoothed on the clock, not per frame: the same read of a cut at 30 fps as at 60)
     const dt = c.vsx === undefined || c.velAt === undefined ? 1 : clock - c.velAt;
     const k = dt <= 0 || dt > 0.5 ? 1 : 1 - (1 - PURSUIT.smooth) ** (dt * 60);
@@ -4121,6 +4126,7 @@ function pursuitPoint(d, c, speed, dir, err = 1) {
   // further on (met stays false), or with none before the goal line, the deepest cutoff (where his run gets there) so he is there if the carrier slows or cuts
   const i = best >= 0 ? Math.min(n - 1, end) : far >= 0 ? far : n - 1;
   if (PURSUIT.debug && c === runner) { PDB.pathN = 2 * n; for (let j = 0; j < 2 * n; j++) PDB.path[j] = buf[j]; }
+  if (out) { out.x = buf[2 * i]; out.y = buf[2 * i + 1]; out.t = i * P.step; out.met = best >= 0; return out; }
   return { x: buf[2 * i], y: buf[2 * i + 1], t: i * P.step, met: best >= 0 };   // (t = seconds until the carrier is there; met = he can get there in time)
 }
 // the man most likely to tackle carrier c: the soonest pursuit meeting he can make (men who can't get there come last, nearest first). ONE rule for every
@@ -4132,7 +4138,7 @@ function likelyTackler(pool, c, skip = null) {
   for (const p of pool) {
     if (!p || p === skip || p === c || p.action === 'down' || p.hasBall) continue;
     const o = ownTop(p), top = isFinite(o) && o > 0 ? o : (p.top || 7 * YD);
-    const m = pursuitPoint(p, c, top, dir), s = m.met ? m.t : 100 + dist(p, c) / YD;
+    const m = pursuitPoint(p, c, top, dir, 1, PP_TK), s = m.met ? m.t : 100 + dist(p, c) / YD;
     if (s < bs) { bs = s; best = p; }
   }
   return best;
@@ -4494,7 +4500,7 @@ function pursueMove(d, c, dt) {
   const plantK = koCov && clock - (d.plantT ?? -9) < COVER_REACT.plant ? COVER_REACT.plantK : 1;
   const chase = d.top * (lastLine ? PURSUIT.lastLine : PURSUIT.chase) * (1 + 0.08 * (d.mom || 0)) * (closing ? BREAKDOWN.k : 1) * PURSUIT.boost * (koCov ? diffRetCov(c) * (kickoff && kickoff.punt ? PUNT.chaseK * PUNT_COVER.speed : KICK_COVER.speed) : 1) * plantK * (koCov && d.koBust ? KO_V56.bustK : 1);   // (their punt = the same coverage speed as yours)
   const errP = d.team === 'def' && !aiOff() ? 1 + (err - 1) / diffX('pursuit') : err;   // (CPU PURSUIT ANGLES: a smaller angle error)
-  const aimAt = pursuitPoint(d, c, chase, c.team === 'off' ? 1 : -1, closing ? Math.min(errP, 1) : errP), base = { ...aimAt }, cdir = c.team === 'off' ? 1 : -1;
+  const aimAt = pursuitPoint(d, c, chase, c.team === 'off' ? 1 : -1, closing ? Math.min(errP, 1) : errP, PP_AIM), base = ppCopy(PP_BASE, aimAt), cdir = c.team === 'off' ? 1 : -1;
   // he commits to his angle: the planned meeting point is held, re-planned only on a real cut (the carrier's smoothed heading turns over P.cutDeg) or when the
   // meeting point has moved over P.replanYd; inside P.holdNear yd he tracks it live (scrimmage chases only: kick coverage keeps its own lanes)
   if (!kickoffPlay && PURSUIT.hold) {
@@ -4527,7 +4533,7 @@ function pursueMove(d, c, dt) {
   }
   // a punt's gunners: no lane or wide contain, a tight angle right at where he's headed (a sliver of outside shade), so he has nowhere to go
   const gunP = kickoffPlay && puntRetPlay && (d.lane === 0 || d.lane === 9) && d.x > c.x - YD;
-  if (gunP) aimAt.y = Math.max(Y_MIN + YD, Math.min(Y_MAX - YD, pursuitPoint(d, c, chase, c.team === 'off' ? 1 : -1, 1).y + (d.lane ? 1 : -1) * PUNT_GUN.shade * YD));
+  if (gunP) aimAt.y = Math.max(Y_MIN + YD, Math.min(Y_MAX - YD, pursuitPoint(d, c, chase, c.team === 'off' ? 1 : -1, 1, PP_GUN).y + (d.lane ? 1 : -1) * PUNT_GUN.shade * YD));
   // the angle is lost (he can't get to his lane / contain / vise spot before the returner is past it): straight to the meeting point
   if (kickoffPlay && !d.isKicker && d.lane !== undefined && pursuitLate(d, aimAt, base, chase)) { aimAt.x = base.x; aimAt.y = base.y; }
   // leverage (every play): a man in front of the carrier comes in on his near hip, never across his face, so the cutback behind him stays shut

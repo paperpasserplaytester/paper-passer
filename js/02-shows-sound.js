@@ -1,5 +1,5 @@
 // --- replays: every frame of the play is recorded, then played back (looping) once it's over ---
-// The live tape is DELTA-packed (tapePack): every TAPE.key-th frame keeps each player's full copy (a key); the frames between keep, per player, an object
+// The live tape is DELTA-packed (captureFrame / tapeFill): every TAPE.key-th frame keeps each player's full copy (a key); the frames between keep, per player, an object
 // whose prototype is his key copy and whose own properties are only what differs from it. Reading a property (f.players[i].x) works as before; anything that
 // COPIES a taped player (Object.assign, a spread, JSON) must go through tapeApply / tapeFlat, since those only see own properties. Kept clips (keepHighlight,
 // hsTape: highlights, reels, exports) are flattened to plain full copies, so their format is unchanged.
@@ -13,44 +13,49 @@ function tapeSame(a, b) {   // equal values; objects one level deep (a move's co
   for (const k in b) n--;
   return n === 0;
 }
-function tapePack(list, ps) {   // list = this frame's full copies (one per player of ps)
-  if (!TAPE.on || !rec) return list;
-  const T = rec.tk || (rec.tk = { ps: null, key: null, n: 0 });
-  if (T.ps !== ps || !T.key || T.key.length !== list.length || ++T.n >= TAPE.key) { T.ps = ps; T.key = list; T.n = 0; return list; }   // (a new line-up, or time for a key)
-  for (let i = 0; i < list.length; i++) {
-    const cur = list[i], K = T.key[i], d = Object.create(K);
-    for (const k in cur) if (!tapeSame(cur[k], K[k])) d[k] = cur[k];
-    list[i] = d;
-  }
-  return list;
-}
 const tapeFlat = q => { const b = Object.getPrototypeOf(q); return b && b !== Object.prototype ? Object.assign({}, b, q) : q; };   // a taped player as one plain object
 function tapeApply(p, q) { const b = Object.getPrototypeOf(q); if (b && b !== Object.prototype) Object.assign(p, b); Object.assign(p, q); }   // (onto the live player)
 // a showboat (p.show, 05) on the tape: its look clocks (k0 / pvK = when the look / the one before it began, ptA / stA = a finish's moments) moved onto the tape clock
 const showTape = s => { if (!s) return null; const sh = v => v != null ? rec.t - (clock - v) : null;
   return { id: s.id, fin: s.fin, pv: s.pv, k0: sh(s.k0 ?? s.t0), pvK: sh(s.pvK), pt: s.pt != null ? 1 : null, st: s.st != null ? 1 : null, ptA: sh(s.ptA ?? s.pt), stA: sh(s.stA ?? s.st), rp: 1 }; };
+// perf job phase 4: one taped player written into o (a key frame's fresh copy, or the reused scratch a delta frame is diffed from). Same props, same
+// order and the same calls as the old object literal. K = his key copy (null on a key frame): a nested copy equal to the key's is the key's own object
+// (tapeSame would have dropped it from the delta anyway), so a still man makes no garbage.
+function tapeKT(src, Kv, kk) { const t = rec.t - (clock - src.t); if (Kv && Kv[kk] === src[kk] && Math.abs(Kv.t - t) < TAPE.eps) return Kv; const o = {}; o[kk] = src[kk]; o.t = t; return o; }   // ({ kind / k, t } on the tape clock)
+function tapeShift(src, Kv, tk) {   // ({ ...src, [tk]: on the tape clock }, or Kv when it is already that)
+  const t = rec.t - (clock - src[tk]);
+  if (Kv && Math.abs(Kv[tk] - t) < TAPE.eps) { let n = 0, ok = true; for (const k in src) { n++; if (k === tk) continue; const x = src[k], y = Kv[k]; if (x !== y && !(typeof x === 'number' && typeof y === 'number' && Math.abs(x - y) < TAPE.eps)) { ok = false; break; } if (y === undefined && !(k in Kv)) { ok = false; break; } }
+    if (ok) { for (const k in Kv) n--; if (n === 0) return Kv; } }
+  const o = { ...src }; o[tk] = t; return o;
+}
+function tapeFill(o, p, K) {
+  o.stB = p.stB; o.stKey = p.stKey; o.xfg = xfGlowLive(p); o.x = p.x; o.y = p.y; o.z = p.z;
+  o.face = p.face; o.vx = p.vx; o.vy = p.vy; o.action = p.action; o.act = p.act ? (K && tapeSame(p.act, K.act) ? K.act : { ...p.act }) : null; o.isUd = p === ud && aiOff();
+  o.moving = p.moving; o.run = p.run; o.stride = p.stride; o.reach = p.reach; o.engaged = p.engaged; o.churn = !!p.stiffBy;
+  o.hasBall = p.hasBall; o.catchMode = p.catchMode; o.hand = p.hand; o.lefty = p.lefty; o.ballSide = p.ballSide; o.stiffSide = p.stiffSide;
+  o.stiff = !!p.stiff; o.truck = p.truck; o.overShoulder = p.overShoulder; o.cradle = p.cradle; o.snapK = p.snapK; o.snapIn = p.snapIn;
+  o.snapArm = p.snapArm; o.exK = p.exK; o.exE = p.exE; o.paK = p.paK; o.penK = p.penK; o.penV = p.penV;
+  o.penS = p.penS; o.penL = p.penL; o.penD = p.penD; o.penDx = p.penDx; o.penDy = p.penDy; o.pk = p.pk;
+  o.exSet = p.exSet; o.pitchK = p.pitchK; o.twoArm = p.twoArm; o.fakeArms = p.fakeArms; o.exLean = p.exLean; o.cock = p.cock;
+  o.ready = p.ready; o.guard = p.guard; o.swimLeft = p.swimLeft || 0; o.catchStyle = p.catchStyle; o.catchSide = p.catchSide; o.tipArms = p.tipArms;
+  o.tipK = p.tipK; o.watch = watchingBall(p); o.handAim = p.action === 'jump' || p.action === 'toetap' || (!p.action && p.tipArms) ? jumpAim(p) : null; o.yawRec = p.yaw || 0; o.kickSwing = p.kickSwing; o.kickK = p.kickK;
+  o.kickWind = p.kickWind; o.fightOn = p.fightOn || null; o.hitStick = p.hitStick; o.spinFx = p.spinFx; o.bullFx = p.bullFx; o.jumpCaught = p.jumpCaught;
+  o.diveCaught = p.diveCaught; o.holding = p.holding; o.tackling = p.tackling; o.hipOn = p.hipOn; o.reachGoal = p.reachGoal; o.fairSig = p.fairSig;
+  o.mom = p.mom; o.faceShow = p.faceShow; o.breakFx = p.breakFx ? tapeKT(p.breakFx, K && K.breakFx, 'kind') : null; o.relFx = p.relFx ? tapeShift(p.relFx, K && K.relFx, 't') : null; o.headTop = p.headTop ? tapeShift(p.headTop, K && K.headTop, 't') : null; o.catchFx = p.catchFx ? tapeShift(p.catchFx, K && K.catchFx, 't') : null;
+  o.mvFx = p.mvFx ? tapeShift(p.mvFx, K && K.mvFx, 't') : null; o.mlTight = p.mlTight; o.saLook = p.saLook || null; o.saT1 = p.saT1 != null ? rec.t - (clock - p.saT1) : null; o.saHeld = p.saHeld || null; o.saTx = p.saTx;
+  o.saTy = p.saTy; o.saTz = p.saTz; o.saLoss = p.saLoss ? tapeKT(p.saLoss, K && K.saLoss, 'k') : null; o.lid = p.lid ? tapeShift(p.lid, K && K.lid, 't') : null; o.cel = p.cel ? tapeShift(p.cel, K && K.cel, 't0') : null; o.show = showTape(p.show);
+  o.showLast = p.showLast || null; o.showEnd = p.showEnd != null ? rec.t - (clock - p.showEnd) : null; o.falterUntil = rec.t + ((p.falterUntil || 0) - clock); o.stumbleRec = p.stumbleRec != null ? rec.t - (clock - p.stumbleRec) : null;
+  return o;
+}
+const TAPE_S = [];   // (captureFrame's scratch copies, one per slot: only ever diffed, never taped)
 function captureFrame() {
-  const ps = allPlayers();
+  const ps = allPlayers(), n = ps.length, T = TAPE.on && rec ? (rec.tk || (rec.tk = { ps: null, key: null, n: 0 })) : null;
+  const keys = T && !(T.ps !== ps || !T.key || T.key.length !== n || ++T.n >= TAPE.key) ? T.key : null, list = new Array(n);   // (null = this frame is a key: a new line-up, or time for one)
+  if (!keys) { for (let i = 0; i < n; i++) list[i] = tapeFill({}, ps[i], null); if (T) { T.ps = ps; T.key = list; T.n = 0; } }
+  else for (let i = 0; i < n; i++) { const K = keys[i], c = tapeFill(TAPE_S[i] || (TAPE_S[i] = {}), ps[i], K), d = Object.create(K); for (const k in c) if (!tapeSame(c[k], K[k])) d[k] = c[k]; list[i] = d; }
   return {
     t: rec.t,
-    players: tapePack(ps.map(p => ({ stB: p.stB, stKey: p.stKey, xfg: xfGlowLive(p), x: p.x, y: p.y, z: p.z, face: p.face, vx: p.vx, vy: p.vy, action: p.action, act: p.act ? { ...p.act } : null,
-      isUd: p === ud && aiOff(), moving: p.moving, run: p.run, stride: p.stride, reach: p.reach, engaged: p.engaged, churn: !!p.stiffBy, hasBall: p.hasBall, catchMode: p.catchMode,
-      hand: p.hand, lefty: p.lefty, ballSide: p.ballSide, stiffSide: p.stiffSide, stiff: !!p.stiff, truck: p.truck, overShoulder: p.overShoulder, cradle: p.cradle, snapK: p.snapK, snapIn: p.snapIn, snapArm: p.snapArm, exK: p.exK, exE: p.exE, paK: p.paK, penK: p.penK, penV: p.penV, penS: p.penS, penL: p.penL, penD: p.penD, penDx: p.penDx, penDy: p.penDy, pk: p.pk, exSet: p.exSet, pitchK: p.pitchK, twoArm: p.twoArm, fakeArms: p.fakeArms, exLean: p.exLean, cock: p.cock, ready: p.ready, guard: p.guard, swimLeft: p.swimLeft || 0,
-      catchStyle: p.catchStyle, catchSide: p.catchSide, tipArms: p.tipArms, tipK: p.tipK, watch: watchingBall(p), handAim: p.action === 'jump' || p.action === 'toetap' || (!p.action && p.tipArms) ? jumpAim(p) : null, yawRec: p.yaw || 0,
-      kickSwing: p.kickSwing, kickK: p.kickK, kickWind: p.kickWind, fightOn: p.fightOn || null,
-      // (what drawPlayer also reads: without them a replay showed the end-of-play values, a highlight the first frame's)
-      hitStick: p.hitStick, spinFx: p.spinFx, bullFx: p.bullFx, jumpCaught: p.jumpCaught, diveCaught: p.diveCaught, holding: p.holding, tackling: p.tackling,
-      hipOn: p.hipOn, reachGoal: p.reachGoal, fairSig: p.fairSig, mom: p.mom, faceShow: p.faceShow,
-      // timed effects, moved onto the replay's own clock (rec.t) so they play back
-      breakFx: p.breakFx ? { kind: p.breakFx.kind, t: rec.t - (clock - p.breakFx.t) } : null,
-      relFx: p.relFx ? { ...p.relFx, t: rec.t - (clock - p.relFx.t) } : null,
-      headTop: p.headTop ? { ...p.headTop, t: rec.t - (clock - p.headTop.t) } : null,
-      catchFx: p.catchFx ? { ...p.catchFx, t: rec.t - (clock - p.catchFx.t) } : null,
-      mvFx: p.mvFx ? { ...p.mvFx, t: rec.t - (clock - p.mvFx.t) } : null, mlTight: p.mlTight,
-      saLook: p.saLook || null, saT1: p.saT1 != null ? rec.t - (clock - p.saT1) : null, saHeld: p.saHeld || null, saTx: p.saTx, saTy: p.saTy, saTz: p.saTz,   // (stiff-arm looks: the look, its lock clock, the held man's look, the target's spot)
-      saLoss: p.saLoss ? { k: p.saLoss.k, t: rec.t - (clock - p.saLoss.t) } : null, lid: p.lid ? { ...p.lid, t: rec.t - (clock - p.lid.t) } : null,   // (move looks: a look's tail after the move)
-      cel: p.cel ? { ...p.cel, t0: rec.t - (clock - p.cel.t0) } : null, show: showTape(p.show), showLast: p.showLast || null, showEnd: p.showEnd != null ? rec.t - (clock - p.showEnd) : null,   // (v0.58: showboat looks, on the tape clock) oneHanded: p.oneHanded, oneAt: p.oneAt,
-      falterUntil: rec.t + ((p.falterUntil || 0) - clock), stumbleRec: p.stumbleRec != null ? rec.t - (clock - p.stumbleRec) : null })), ps),
+    players: list,
     ball: { x: ball.x, y: ball.y, z: ball.z, lift: ballLift(), rot: ball.rot, nose: ball.nose, snapNose: ball.snapNose, spiral: ball.spiral, wob: ball.wob, tucked: ball.tucked, inAir: ball.inAir, tx: ball.tx, ty: ball.ty, live: ball.live, dk: ball.dk,
       hitP: ball.hitP ? [rec.t - (clock - ball.hitP[0]), ball.hitP[1], ball.hitP[2]] : null },   // (a doink: the post's ring on the replay clock)
     cam: [camX, camY, zoom * passPull],
@@ -376,9 +381,10 @@ const hlFront = () => !!hl && !hl.bg;                 // highlights that own the
 const cinemaOn = () => !!(hl && hl.mode !== 'half' && SETTINGS.cinema);   // CINEMATIC mode (highlight reels: post-game and saved): only the top and bottom bars and their buttons stay, nothing over the field
 const HL_BAR = { cine: { x: 300, y: H - 36, w: 150, h: 32 }, prev: { x: 20, y: H - 36, w: 130, h: 32 }, next: { x: 160, y: H - 36, w: 130, h: 32 }, done: { x: W - 150, y: H - 36, w: 130, h: 32 },
                   exp: { x: W - 350, y: H - 36, w: 190, h: 32 }, imp: { x: W - 460, y: H - 36, w: 100, h: 32 } };   // (EXPORT HIGHLIGHTS and IMPORT sit left of DONE, clear of the centred key hint)
+function castCopy(p) { const o = {}; for (const k in p) if (p[k] !== undefined) o[k] = p[k]; return o; }   // (phase 4: a player's copy without the properties declared up front and never set: PLAYER_LAZY; same as the old { ...p })
 function castPlay() {   // (from recordFrame, at a play's first frame)
   const ps = allPlayers();
-  rec.castLive = ps; rec.cast = ps.map(p => ({ ...p }));
+  rec.castLive = ps; rec.cast = ps.map(castCopy);
   rec.castShape = [ols.length, recs.length, dl.length, back7.length, fgExit.length];
   rec.field = { los, lineToGain, down, yl: YL };   // (yl: tapes saved before a yard change are rescaled in hlYard)
   rec.sb = sbSnap();
@@ -400,12 +406,37 @@ function hlCopy(r, until) {
   if (!J || J.f0 !== fr[0]) { J = r.hlJob = tapeCopyInit(r); J.f0 = fr[0]; }
   return tapeCopyStep(J, fr, until);
 }
-function tapeCopyInit(r) { const cast = r.cast.map(o => ({ ...o })), map = new Map(r.castLive.map((p, i) => [p, cast[i]])); cast.forEach(o => hlFix(o, map)); return { cast, map, out: [] }; }
+function tapeCopyInit(r) { const cast = r.cast.map(o => ({ ...o })), map = new Map(r.castLive.map((p, i) => [p, cast[i]])); cast.forEach(o => hlFix(o, map)); return { cast, map, out: [], keys: new Map() }; }
+// perf job phase 4: a kept clip stays delta-packed like the live tape (read it through tapeApply / tapeFlat). A taped player is shared with the live tape
+// unless his act / fightOn points at a live player (then a copy with those pointed at the cast copies); a key copy is made once and its frames' deltas
+// are re-parented onto it. Flattened to the old plain format only where it is stored / exported (hlFlat).
+function hlNeedFix(o, map) { if (o && typeof o === 'object') for (const k in o) if (map.has(o[k])) return true; return false; }
+function hlOwnFix(o, map) { return o && typeof o === 'object' ? hlFix({ ...o }, map) : o; }
+function tapeCopyKey(J, K) {   // (the clip's version of a key copy: K itself when nothing in it points at a live player)
+  let c = J.keys.get(K); if (c) return c;
+  c = K; const m = J.map;
+  if (hlNeedFix(K.act, m) || hlNeedFix(K.fightOn, m)) { c = Object.assign({}, K); c.act = hlOwnFix(K.act, m); c.fightOn = hlOwnFix(K.fightOn, m); }
+  J.keys.set(K, c); return c;
+}
+function tapeCopyP(J, q) {
+  const b = Object.getPrototypeOf(q), m = J.map;
+  if (!b || b === Object.prototype) return tapeCopyKey(J, q);
+  const K = tapeCopyKey(J, b), oa = Object.prototype.hasOwnProperty.call(q, 'act'), of = Object.prototype.hasOwnProperty.call(q, 'fightOn');
+  const fa = oa && hlNeedFix(q.act, m), ff = of && hlNeedFix(q.fightOn, m);
+  if (K === b && !fa && !ff) return q;
+  const d = Object.assign(Object.create(K), q); if (fa) d.act = hlOwnFix(q.act, m); if (ff) d.fightOn = hlOwnFix(q.fightOn, m);
+  return d;
+}
 function tapeCopyStep(J, src, until) {   // (copies src[J.out.length ..] into J.out until the clock passes until; true = all copied)
-  const own = o => o && typeof o === 'object' ? hlFix({ ...o }, J.map) : o;
   let i = J.out.length;
-  while (i < src.length) { const f = src[i++]; J.out.push({ ...f, players: f.players.map(q => ({ ...tapeFlat(q), act: own(q.act), fightOn: own(q.fightOn) })) }); if (!(i & 1) && performance.now() > until) break; }
+  while (i < src.length) { const f = src[i++], ps = f.players, n = ps.length, out = new Array(n); for (let j = 0; j < n; j++) out[j] = tapeCopyP(J, ps[j]); const g = Object.assign({}, f); g.players = out; J.out.push(g); if (!(i & 1) && performance.now() > until) break; }
   return i >= src.length;
+}
+// a kept clip in the old plain format (every player a full copy, his act / fightOn his own): what hlStore / hlExport write and hlYard scales
+function hlFlat(c) {
+  if (!c || !c.frames || !c.frames.some(f => f.players.some(q => { const b = Object.getPrototypeOf(q); return b && b !== Object.prototype; }))) return c;
+  const own = o => o && typeof o === 'object' ? { ...o } : o;
+  return Object.assign({}, c, { frames: c.frames.map(f => ({ ...f, players: f.players.map(q => ({ ...tapeFlat(q), act: own(q.act), fightOn: own(q.fightOn) })) })) });
 }
 function hlPrep(r, until) {   // (the hlCopy chore: only a tape keepHighlight will keep without force; true = more to copy)
   if (!r || r.hlKept || r.hl || !r.big || !r.cast || !r.castLive || tut || !r.frames || r.frames.length < 10) return false;
@@ -465,7 +496,7 @@ function hlStore() {
   const step = () => {
     if (tok !== hlStoreTok) return;   // (a newer SAVE / DELETE took over)
     if (i < list.length) {
-      try { let t = HL_PLAIN.get(list[i]); if (!t) { t = hlPlain(list[i], new Map()); HL_PLAIN.set(list[i], t); } tapes.push(t); } catch (e) { return; }
+      try { let t = HL_PLAIN.get(list[i]); if (!t) { t = hlPlain(hlFlat(list[i]), new Map()); HL_PLAIN.set(list[i], t); } tapes.push(t); } catch (e) { return; }
       i++; setTimeout(step, 0); return;
     }
     hlDb().then(db => { const tx = db.transaction(HL_DB.store, 'readwrite'); tx.objectStore(HL_DB.store).put(tapes, HL_DB.key); tx.oncomplete = tx.onerror = () => db.close(); }).catch(() => {});
@@ -531,6 +562,7 @@ function hlKitsBack() { if (rec) wxTapeOff(rec.kits); if (rec && rec.kits && rec
 const HL_XKEYS = ['x', 'fx', 'tx', 'rx', 'sx', 'lx', 'gx', 'bx', 'px', 'ex', 'x0', 'x1'];
 function hlYard(c) {
   if (!c.field || c.field.yl === YL) return;
+  c.frames = hlFlat(c).frames;   // (phase 4: a delta-packed clip is scaled as plain copies)
   const k = ylFix(c.field.yl), sc = o => { if (o) for (const n of HL_XKEYS) if (typeof o[n] === 'number') o[n] *= k; };
   c.field.los *= k; c.field.lineToGain *= k; c.field.yl = YL;
   for (const f of c.frames || []) {
@@ -1811,7 +1843,7 @@ const hlValid = c => !!c && Array.isArray(c.frames) && c.frames.length >= 10 && 
 function hlExport() {
   if (!hl || !hl.list.length) return;
   let data;
-  try { data = { v: 1, tapes: ioPack(hlPlain(hl.list, new Map())) }; } catch (e) { ioToast('COULD NOT EXPORT'); return; }
+  try { data = { v: 1, tapes: ioPack(hlPlain(hl.list.map(hlFlat), new Map())) }; } catch (e) { ioToast('COULD NOT EXPORT'); return; }
   if (ioExport('highlights', data, `paper-passer-highlights-${hl.list.length}`)) ioToast(`${hl.list.length} HIGHLIGHT${hl.list.length > 1 ? 'S' : ''} EXPORTED`, false);
 }
 function hlImportData(d) {   // merged into the saved highlights: invalid and repeated tapes skipped, the cap (HIGHLIGHTS.max) respected
@@ -3394,7 +3426,8 @@ const SFX_TOUCH = { layers: 2, re: /#(big|road|climax)/ };   // v0.62 phones: at
 const SFX_SLEW = { up: 0.45, down: 0.8 };   // how fast (volume per second) a playing clip's loudness glides to a new level
 function playSfx(src, vol, maxMs, fadeMs, fadeInMs = 0, startAt = 0, rate = 1) {   // startAt: seconds into the clip to begin (a different stretch of it each time); rate: playback speed (pitch follows it)
   if (TOUCH && SFX_TOUCH.re.test(src)) { let n = 0; for (const c of sfxLive) if (c.src && SFX_TOUCH.re.test(c.src) && !c.a.paused) n++; if (n >= SFX_TOUCH.layers) return; }   // (v0.62: phones: many media elements at once stutter on iOS)
-  if (sbufOn()) { const bc = sbufStart(src, vol, maxMs, fadeMs, fadeInMs, startAt, rate); if (bc) return bc; }   // (v0.70: decoded buffer; else the element below)
+  if (sbufOn()) { const bc = sbufStart(src, vol, maxMs, fadeMs, fadeInMs, startAt, rate); if (bc) return bc;   // (v0.70: decoded buffer; else the element below)
+    if (TOUCH && !SBUF.skip.test(src) && liveNow()) { perfNote('sfx skipped ' + src.split('#')[0].replace('audio/', '')); return null; } }   // (v0.74: a phone mid-play: a cue not decoded yet is skipped, a media element's start cost ~33 ms; throwSfx falls back to its synthesized whoosh)
   try {
     // one audio element per clip, reused (a new Audio every play left hundreds of media players waiting on GC in Chrome); a re-trigger while it still plays
     // takes the clip's second element and fades the old one out over SFX_FIX.retrig ms (a pause() cut it dead: the cheers)
@@ -3522,15 +3555,15 @@ sfxVolCheck();
 // that play still goes through the element). Decoding never starts during a live play (sbufPump waits). sbufReport() = decoded sizes.
 const SBUF = { on: 'auto', sr: 32000, hi: /\/(cheer|boo|ooh|whistle|upgrade)\.mp3$/, monoS: 5, cap: { 'audio/disappointed.mp3': 16, 'audio/chant.mp3': 16, 'audio/eraser.mp3': 3, 'audio/pencil.mp3': 3 },
   skip: /\/(crowd2?|rain|wind|classroom|footsteps|endwhistle)\./, attack: 0.006, stop: 0.008,
-  warm: ['whistle', 'cheer', 'cheer2.wav', 'cheer3', 'boo', 'boo2', 'jeer', 'disappointed', 'ooh', 'gasp', 'chant', 'whoosh1', 'whoosh2', 'thud', 'ground', 'hitcrack', 'boulder',
-    'clang', 'highfive', 'smack', 'shush', 'shush2', 'stamp', 'register', 'yell', 'splash', 'crumple', 'click', 'upgrade',
+  warm: ['whoosh1', 'whoosh2', 'thud', 'ground', 'hitcrack', 'smack', 'whistle', 'cheer', 'cheer2.wav', 'cheer3', 'boo', 'boo2', 'jeer', 'disappointed', 'ooh', 'gasp', 'chant', 'boulder',   // (v0.74: the in-play cues first)
+    'clang', 'highfive', 'shush', 'shush2', 'stamp', 'register', 'yell', 'splash', 'crumple', 'click', 'upgrade',
     'eraser', 'pencil', 'tear', 'tap', 'flip', 'swoosh'] };   // (v0.72: the menu buttons' page sounds: never warmed, so their first play of a session went through a media element, ~33 ms on a phone; eraser / pencil kept to 3 s, their slices wrap)
 const sbuf = {}, sbufSz = {}, sbufQ = []; let sbufBusy = false;
 const sbufOn = () => SBUF.on === 'auto' ? !!(TOUCH || sfxIOS()) : !!SBUF.on;
 function sbufWant(f) { if (sbuf[f] !== undefined || SBUF.skip.test(f)) return; sbuf[f] = 0; sbufQ.push(f); sbufPump(); }
 function sbufWarm() { if (!sbufOn()) return; for (const n of SBUF.warm) sbufWant('audio/' + (n.includes('.') ? n : n + '.mp3')); }
 function sbufPump() {
-  if (sbufBusy || !sbufQ.length || !actx || liveNow()) return;
+  if (sbufBusy || !sbufQ.length || !actx || liveNow() || window.BENCH && window.BENCH.sbufHold) return;   // (BENCH.sbufHold: the bench holds the decoder back, T-SND)
   sbufBusy = true; const f = sbufQ.shift();
   const done = () => { sbufBusy = false; sbufPump(); };
   fetch(f).then(r => r.ok ? r.arrayBuffer() : Promise.reject(r.status)).then(ab => sbufDecode(ab, f)).then(b => { sbuf[f] = sbufShape(b, f); done(); }, () => { sbuf[f] = null; done(); });

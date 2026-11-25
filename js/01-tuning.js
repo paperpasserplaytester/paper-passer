@@ -33,18 +33,20 @@ function choreRun(j, until) {
   if (perfHudOn()) { const ms = performance.now() - t; if (ms >= CHORE.noteMs) perfNote('chore ' + j.name + ' ' + ms.toFixed(1)); if (ms > CHORE.warnMs && liveNow()) perfNote('LIVE chore ' + j.name + ' ' + Math.round(ms)); }
   return more;
 }
-function chore(name, fn, o) {
-  const j = { name, fn, key: o && o.key };
+function chore(name, fn, o) {   // o.keep (v0.74) = a job that reads nothing of the play (the stands' rebuild): choreFlush leaves it queued, ordinary chores go ahead of it
+  const j = { name, fn, key: o && o.key, keep: !!(o && o.keep) };
   if (choreNow()) { while (choreRun(j, Infinity)); return; }
-  if (j.key) { const i = CHORE_Q.findIndex(q => q.key === j.key); if (i >= 0) CHORE_Q.splice(i, 1); }
-  CHORE_Q.push(j);
+  if (j.key) choreDrop(j.key);
+  const i = j.keep ? -1 : CHORE_Q.findIndex(q => q.keep);
+  if (i >= 0) CHORE_Q.splice(i, 0, j); else CHORE_Q.push(j);
 }
+function choreDrop(key) { const i = CHORE_Q.findIndex(q => q.key === key); if (i >= 0) CHORE_Q.splice(i, 1); }
 function choreTick() {
   if (!CHORE_Q.length || liveNow()) return;
   const until = performance.now() + (typeof TUI !== 'undefined' && TUI.on ? CHORE.budgetTouch : CHORE.budgetMs);
   while (CHORE_Q.length && performance.now() < until) { const j = CHORE_Q.shift(); if (choreRun(j, until)) { CHORE_Q.unshift(j); break; } }
 }
-function choreFlush(why) { while (CHORE_Q.length) { const j = CHORE_Q.shift(); let n = 0; while (choreRun(j, Infinity) && ++n < 1e4); } }
+function choreFlush(why) { let k = 0; while (CHORE_Q.length > k) { if (CHORE_Q[k].keep) { k++; continue; } const j = CHORE_Q.splice(k, 1)[0]; let n = 0; while (choreRun(j, Infinity) && ++n < 1e4); } }   // (keep jobs stay queued)
 document.addEventListener('visibilitychange', () => { if (document.hidden) choreFlush('hidden'); });
 const PERF_WRAP = ['saveToSlot', 'loadFromSlot', 'buildSave', 'storeTidy', 'storeReport', 'autoAssignSlot', 'syncNow', 'syncOnLeave', 'syncBundle',
   'newGame', 'openResults', 'leagueReset', 'careerReset', 'startCrumple', 'cglStart', 'btnSprClear', 'offToDraft', 'startExhibition', 'lgTapeTick', 'hsEndReel', 'seasonGameDone', 'pgTry',
@@ -141,11 +143,18 @@ const RENDER_K = 1.1;   // (phones: was 0.75; the crowd has its own canvases and
 // v0.62 phones: the in-game frame cap (paint only; the game still steps on real dt). AUTO = 60 until frames stay over slowMs for holdS s, then 30 for the
 // rest of that game (back to 60 only between games); SETTINGS.fps '30' / '60' pins it. cold = the cold open on a phone runs at 30 from its first frame.
 // menuTouch = MENU_PACE.fps on a phone. slack = share of a refresh a paint may come early (vsync jitter)
-const FPS_CAP = { on: true, hi: 60, lo: 30, slowMs: 19, holdS: 2, gapClip: 2.5, menuTouch: 30, cold: true, slack: 0.5, deskSkip: true, freezeMs: 100, cleanMs: 10, cleanGap: 1.2, retryS: 8, retryK: 2, retryMax: 90, failS: 6 };   // (gapClip: one gap between paints counts as at most this many frame intervals toward the lock: a lone outside stall isn't a slow phone; v0.72 perf: a gap over freezeMs never resets a clean stretch; locked, retryS s of gaps within cleanGap x the 30 frame and paintAvg under cleanMs = try 60 again at a dead ball; locked again within failS = the next wait x retryK, up to retryMax)   // deskSkip: laptops skip the paint on refreshes where the game did not step (deskSkip in 14)
+const FPS_CAP = { on: true, hi: 60, lo: 30, slowMs: 19, holdS: 2, gapClip: 2.5, menuTouch: 30, cold: true, slack: 0.5, deskSkip: true, freezeMs: 100, cleanMs: 10, cleanGap: 1.2, retryS: 8, retryK: 2, retryMax: 90, failS: 6, quietMs: 500, startMs: 3000, gapLock: false };   // perf job phase 5 (14c): a lock needs the game's own paints slow (paintAvg) for holdS; frames inside a one-off (fpsQuiet: crumple, stands / field bake, resize, decode, page change, back from hidden = quietMs; a new game = startMs) neither count nor reset; gapLock true = the old rule (late gaps alone could lock)   // (gapClip: one gap between paints counts as at most this many frame intervals toward the lock: a lone outside stall isn't a slow phone; v0.72 perf: a gap over freezeMs never resets a clean stretch; locked, retryS s of gaps within cleanGap x the 30 frame and paintAvg under cleanMs = try 60 again at a dead ball; locked again within failS = the next wait x retryK, up to retryMax)   // deskSkip: laptops skip the paint on refreshes where the game did not step (deskSkip in 14)
+// perf job phase 4: drawing never uses the game's random numbers. Every paint entry (paintFrame, draw, ctxBake) runs between drawRandOn / drawRandOff,
+// which swap Math.random for this draw-only stream (nests; put back in a finally), so how many frames get painted can't change the game (T-DRAWRAND).
+// If code inside a paint sets Math.random itself (the tutorial's seeded dice), drawRandOff leaves that one in place.
+const DRAW_RNG = { s: 0x2545F491, n: 0, real: null };
+function drawRnd() { let t = DRAW_RNG.s = (DRAW_RNG.s + 0x6D2B79F5) >>> 0; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }
+function drawRandOn() { if (DRAW_RNG.n++ === 0) { DRAW_RNG.real = Math.random; Math.random = drawRnd; } }
+function drawRandOff() { if (DRAW_RNG.n > 0 && --DRAW_RNG.n === 0) { if (Math.random === drawRnd) Math.random = DRAW_RNG.real; DRAW_RNG.real = null; } }
 const FRAME_LOOP = { step: 1 / 60, maxSteps: 3, snap: [30, 60, 120, 240], snapIn: 0.02, snapOut: 0.04, gapsN: 32, blend: true };   // perf job phase 2: the game steps 60 times a second with ONE fixed step (step x SPEED_BASE x celTSpeed()) on every screen. The refresh = the middle half's mean of the last gapsN rAF gaps; within snapIn of a snap rate (left past snapOut) the steps are COUNTED (60 / rate a refresh, a whole refresh late = the steps it missed), else an accumulator keeps the remainder; at most maxSteps a frame (a longer stall is dropped). blend = on other rates, players / ball / camera are drawn between the last two steps by the remainder (put back right after the paint)
 // v0.70 phone test switches (DEBUG page, not saved; also from the console: PHONE_TEST.turn = '2D'). Defaults = the normal game.
 // turn: page change GL (overlay) / 2D (old path) / OFF (pages cut); shadow ON / OFF (OFF = every shadowBlur on the main canvas is 0); res AUTO / a pinned render scale on touch
-const PHONE_TEST = { turn: 'GL', shadow: 'ON', res: 'AUTO', turns: ['GL', '2D', 'OFF'], shadows: ['ON', 'OFF'], ress: ['AUTO', '0.75', '1', '1.5'], noHash: false, blit: 'AS IS', blits: ['AS IS', 'CAP 4096', 'NO SMOOTH', 'WHOLE PX'], tickPath: false, gpu: 'NORMAL', gpus: ['NORMAL', 'NO BRIGHT', 'SMOOTH LOW', 'NO STANDS'] };   // (perf job phase 2: gpu = DEBUG > GPU: what a 'frames late' phone is spending its GPU time on: no brightPass fill / the field blit at smoothing low / no stands)   // (v0.74 white-line hunt 2: blit = DEBUG > FIELD BLIT (cache capped to 4096 px a side / smoothing off for the field blit / blit edges on whole device px), tickPath = DEBUG > TICK PATHS (each hash tick stroked as its own path in the bake))   // (v0.74 noHash: DEBUG > HASH TICKS OFF, the white-line hunt)
+const PHONE_TEST = { turn: 'GL', shadow: 'ON', res: 'AUTO', turns: ['GL', '2D', 'OFF'], shadows: ['ON', 'OFF'], ress: ['AUTO', '0.75', '1', '1.5'], noHash: false, blit: 'AS IS', blits: ['AS IS', 'CAP 4096', 'NO SMOOTH', 'WHOLE PX', 'OLD SCALE', 'NO PAPER'], marks: 'LIVE', edge: 'INSET', tickPath: false, gpu: 'NORMAL', gpus: ['NORMAL', 'NO BRIGHT', 'SMOOTH LOW', 'NO STANDS'] };   // (perf job phase 2: gpu = DEBUG > GPU: what a 'frames late' phone is spending its GPU time on: no brightPass fill / the field blit at smoothing low / no stands)   // (v0.74 white-line hunt 2: blit = DEBUG > FIELD BLIT (cache capped to 4096 px a side / smoothing off for the field blit / blit edges on whole device px), tickPath = DEBUG > TICK PATHS (each hash tick stroked as its own path in the bake))   // (v0.74 noHash: DEBUG > HASH TICKS OFF, the white-line hunt)
 const phoneTestTxt = () => `TURN ${PHONE_TEST.turn} SHAD ${PHONE_TEST.shadow} RES ${PHONE_TEST.res} GPU ${PHONE_TEST.gpu}`;
 const DYN_RES = { on: true, min: 0.75, max: 2, step: 0.15, budget: 13, upMs: 8, down: 2, up: 6, start: 1.25, gapSlow: 1.25, gapOk: 1.08,
   floorUp: 0.02 };   // v0.73: the gaps are judged against the display's real refresh too (rafLo: shortest recent rAF interval, rises this share a frame): a phone in low power mode capped at 30 Hz is not slow   // v0.70: start = first scale (was the max); the real gap between paints (fpsCap.gap) counts too: over gapSlow x the frame interval = too slow, under gapOk x (+ paint under upMs, cap not locked) = room to go up. The 30 FPS lock waits until the scale is down at min

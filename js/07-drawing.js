@@ -74,17 +74,52 @@ const benchKit = () => [homeKit(), awayKit()].map(t => [t.shell, t.jersey, t.pan
 const freeCanvas = c => { if (c && c.width) { c.width = 0; c.height = 0; } };
 const CROWD_LOW = 0.5;   // touch devices (mobile Safari runs out of canvas memory on the ~230 MB crowd): every crowd canvas is built at this fraction of its size (memory x CROWD_LOW^2), then drawn back up to full size
 const crowdK = () => { try { return Math.min(IS_MOBILE ? (gfxHi() ? GFX.crowdTouch : CROWD_LOW) : 1, liteOn() ? LITE.crowdK : 1); } catch (err) { return 1; } };   // (IS_MOBILE is defined far below; performance mode: smaller still, see LITE)
-function buildCrowd() {
-  perfNote('buildCrowd');   // (FRAME TIMES spike tag)
+function crowdNote(how) {
+  perfNote('buildCrowd' + (how || ''));   // (FRAME TIMES spike tag)
   if (SETTINGS.perfHud) { const I = crowdImg; perfNote('crowd:' + (I ? [I.home !== homeKey() && 'home', I.kit !== benchKit() && 'kit', I.k !== crowdK() && 'k', I.lit !== crowdLit() && 'lit'].filter(Boolean).join('+') || 'same' : 'none')); }   // (v0.70: why it was rebuilt)
-  if (crowdImg) { for (const c of crowdCanvases(crowdImg)) freeCanvas(c); crowdImg = null; }
-  const K = crowdK(), G = bowlGeo(), O = CROWD.oval, LT = CROWD.light, lit = crowdLit(), LS = LT[lit] || LT.cl;
-  const mkCanvas = (cw, chh) => { const c = document.createElement('canvas'); c.width = Math.max(1, Math.ceil(cw * K)); c.height = Math.max(1, Math.ceil(chh * K)); if (K !== 1) c.getContext('2d').scale(K, K); return c; };   // (the scale stays on its one context: the drawing keeps full-size coordinates)
+}
+function crowdJobOf() { return { made: [], k: crowdK(), lit: crowdLit(), home: homeKey(), kit: benchKit() }; }
+function buildCrowd() {   // in one go: a first build, a new home team / kit, the warm-up under the matchup screen (gameWarm)
+  crowdNote(); crowdJobDrop(); if (typeof fpsQuiet === 'function') fpsQuiet(0, 'buildCrowd');   // (phase 5: never counts toward the 30 lock)
+  if (crowdImg) { for (const c of crowdCanvases(crowdImg)) freeCanvas(c); crowdImg = null; }   // (freed first: the old set is big)
+  const J = crowdJobOf(), G = crowdGen(J); let r; do r = G.next(); while (!r.done);
+  crowdImg = r.value;
+}
+// v0.74 perf: the stands' new lights / size at a dead ball are baked a few ms a frame (a 'crowd' keep chore) into a new set while the old set draws, swapped when
+// complete, then the old set is freed (it was one 120 ms paint). crowdJ = that job: { G (the generator), made (its canvases), k, lit, home, kit }.
+let crowdJ = null;
+// (a new canvas only starts a slice: making one can take ~2-3 ms on a slow device; fans bake right up to the budget)
+let crowdOld = [];   // (the swapped-out set's canvases, freed by the job's next slice or the next build)
+const crowdOldFree = () => { for (const c of crowdOld) freeCanvas(c); crowdOld = []; };
+function crowdJobDrop() { crowdOldFree(); if (!crowdJ) return; choreDrop('crowd'); for (const c of crowdJ.made) freeCanvas(c); crowdJ = null; }
+function crowdRebuildSoon() {
+  const k = crowdK(), lit = crowdLit();
+  if (crowdJ && crowdJ.k === k && crowdJ.lit === lit) return;
+  crowdJobDrop(); crowdNote(' (chore)');
+  const J = crowdJ = crowdJobOf(); J.G = crowdGen(J);
+  // (two passes: every piece's seated fans, then the swap (a cheer draws them seated meanwhile), then the standing fans baked into the live set)
+  chore('crowd rebuild', until => {
+    if (crowdOld.length) { do freeCanvas(crowdOld.pop()); while (crowdOld.length && performance.now() < until); return crowdOld.length > 0 || crowdJ === J; }   // (the slices after the swap free the old set)
+    if (crowdJ !== J) return false;
+    for (let n = 0; ; n++) {
+      const r = J.G.next();
+      if (r.done) { crowdJ = null; J.made = []; return false; }
+      if (r.value && r.value.img) {
+        if (J.home !== homeKey() || J.kit !== benchKit()) { for (const c of J.made) freeCanvas(c); crowdJ = null; return false; }   // (the teams changed meanwhile: drawCrowd builds those at once)
+        crowdOld = crowdOld.concat(crowdCanvases(crowdImg)); crowdImg = r.value.img; J.swapped = true; J.made = []; return true;
+      }
+      if (r.value === 'big' ? n > 0 : performance.now() >= until) return true;
+    }
+  }, { key: 'crowd', keep: true });
+}
+function* crowdGen(J) {   // the stands' pieces, one fan drawn a step (yield); returns the new crowdImg
+  const K = J.k, G = bowlGeo(), O = CROWD.oval, LT = CROWD.light, lit = J.lit, LS = LT[lit] || LT.cl;
+  const mkCanvas = (cw, chh) => { const c = document.createElement('canvas'); J.made.push(c); c.width = Math.max(1, Math.ceil(cw * K)); c.height = Math.max(1, Math.ceil(chh * K)); if (K !== 1) c.getContext('2d').scale(K, K); return c; };   // (the scale stays on its one context: the drawing keeps full-size coordinates)
   let seed = 90210;
   const rnd = () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const pick = a => a[Math.floor(rnd() * a.length)];
   const skins = ['#f1c9a0', '#d9a273', '#b9824f', '#8a5a36', '#5e3b22'], hairs = ['#16120e', '#3a2a1c', '#6b4a2a', '#c9a46a', '#8a8a8a'];
-  const [hm, hs] = NFL[homeKey()].home;   // (the home crowd: mostly the home team's colours, a few others mixed in)
+  const [hm, hs] = NFL[J.home].home;   // (the home crowd: mostly the home team's colours, a few others mixed in)
   const shirts = [hm, hm, hm, hm, hm, hs, hs, hs, hs, '#ffffff', '#2a2f3a', '#c9d2e6'], caps = [hm, hm, hs, hs, '#ffffff'];
   const shade = (hex, k) => { const n = parseInt(hex.slice(1), 16); return `rgb(${Math.min(255, (n >> 16 & 255) * k) | 0},${Math.min(255, (n >> 8 & 255) * k) | 0},${Math.min(255, (n & 255) * k) | 0})`; };
   const tl = Math.hypot(LT.dir[0], LT.dir[1]) || 1, TX = LT.dir[0] / tl, TY = LT.dir[1] / tl;
@@ -116,7 +151,7 @@ function buildCrowd() {
   // one fan, feet at (f.x, f.y), drawn in its look (all in the old fans' pencil sizes); the side looks are drawn facing right, mirrored for left
   const drawFan = (g, f, cheer) => { drawFan0(g, f, cheer); seat(g, f); };   // (his strip is in front of him: it hides his lower shirt, the next row overlaps it)
   const drawFan0 = (g, f, cheer) => {
-    const k = f.k, y = f.y - (cheer ? 5 : 0), cx = f.x, v = f.v, skin = shade(f.skin, k), hair = shade(f.hair, k), capC = f.cap ? shade(f.capCol, k) : null;
+    const k = f.k, y = f.y - (cheer ? 5 : 0), cx = f.x, v = f.v, C = f.cc || (f.cc = [shade(f.skin, k), shade(f.hair, k), f.cap ? shade(f.capCol, k) : null, shade(f.sh, k)]), skin = C[0], hair = C[1], capC = C[2];   // (his shades worked out once: both passes use them)
     const bw = v === 2 ? 9 : v === 0 || v === 4 ? 14 : 12, arms = cheer ? f.ar < 0.75 : f.ar < 0.12;
     g.fillStyle = skin;
     if (arms) for (const q of [-1, 1]) g.fillRect(cx + q * (bw + 2) - 3, y - (cheer ? 66 : 52), 6, cheer ? 44 : 30);
@@ -124,7 +159,7 @@ function buildCrowd() {
       g.fillStyle = HM.ink; g.beginPath(); g.arc(cx + (v === 1 ? 2 * f.s : 0), y - 36 - (v === 4 ? 1 : 0), 13 + HM.inkW, 0, Math.PI * 2); g.fill();
       g.fillRect(cx - bw - HM.inkW, y - 26 - HM.inkW, 2 * bw + 2 * HM.inkW, 26 + HM.inkW);
     }
-    g.fillStyle = shade(f.sh, k); g.fillRect(cx - bw, y - 26, 2 * bw, 26);
+    g.fillStyle = C[3]; g.fillRect(cx - bw, y - 26, 2 * bw, 26);
     if (dood) { g.fillStyle = `rgba(255,255,255,${HM.streak})`; g.fillRect(cx - bw + 3, y - 23, 3, 18); }   // (a marker streak down the shirt)
     if (v === 0) {
       g.fillStyle = skin; g.beginPath(); g.arc(cx, y - 36, 13, 0, Math.PI * 2); g.fill();
@@ -164,28 +199,30 @@ function buildCrowd() {
     g.restore();
   };
   // a piece: its fans baked seated (c0) and standing (c1) onto one canvas each, cut to their bounds (ox / oy = the canvas's corner in the piece's own frame)
-  const bake = F => {
+  const bake = function* (F) {
     if (!F.length) return null;
-    F.sort((a, b) => a.y - b.y);   // (lower on screen = painted later)
+    F.sort((a, b) => a.y - b.y); yield;   // (lower on screen = painted later)
     let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
     for (const f of F) { if (f.x < x0) x0 = f.x; if (f.x > x1) x1 = f.x; if (f.y < y0) y0 = f.y; if (f.y > y1) y1 = f.y; }
     x0 -= 22; x1 += 22; y0 -= 74; y1 += 4;
-    const one = cheer => { const c = mkCanvas(x1 - x0, y1 - y0), g = c.getContext('2d'); g.translate(-x0, -y0); for (const f of F) drawFan(g, f, cheer); return c; };
-    return { c0: one(false), c1: one(true), ox: x0, oy: y0, w: x1 - x0, h: y1 - y0 };
+    const B = { c0: null, c1: null, ox: x0, oy: y0, w: x1 - x0, h: y1 - y0 };
+    B.cheer = function* () { yield 'big'; const c = mkCanvas(x1 - x0, y1 - y0), g = c.getContext('2d'); g.translate(-x0, -y0); for (const f of F) { drawFan(g, f, true); yield; } B.c1 = c; J.made.length = 0; delete B.cheer; };   // (the standing fans: second pass, into the live set)
+    yield 'big'; const c = mkCanvas(x1 - x0, y1 - y0), g = c.getContext('2d'); g.translate(-x0, -y0); for (const f of F) { drawFan(g, f, false); yield; }
+    B.c0 = c; return B;
   };
   // a straight piece: rows along it, the aisles at both ends (segs = sub-sections with their own aisles); at(u, d) = the spot in the piece's own frame
-  const strip = (len, segs, nx, ny, at) => {
+  const strip = function* (len, segs, nx, ny, at) {   // (a yield a row: the fans' list is made a few rows a slice too)
     const F = [], A = O.aisle, sl = len / segs;
-    for (let j = 0; j < rows; j++) for (let q = 0; q < segs; q++) {
+    for (let j = 0; j < rows; j++, yield) for (let q = 0; q < segs; q++) {
       const s0 = q * sl, L = sl - 2 * A, n = Math.max(1, Math.floor(L / spOf(ny))), d0 = rowD(ny, j);
       for (let i = 0; i < n; i++) { const u = s0 + A + (i + 0.5 + ((j % 2) ? 0.15 : -0.15)) * L / n + (rnd() - 0.5) * 4, d = d0 + (rnd() - 0.5) * 5, p = at(u, d); F.push(fan(p[0], p[1], d, nx, ny, Math.abs(u - s0 - sl / 2))); }
     }
     return F;
   };
   // a corner: the rows as arcs round its centre (sx / sy = which corner: +1 right / bottom), split by an aisle at 45 degrees and the ones at both ends
-  const corner = sy => {
+  const corner = function* (sy) {
     const F = [], A = O.aisle, ri = G.ri, q4 = Math.PI / 4;
-    for (let j = 0; j < rows; j++) for (const [a0, a1] of [[0, q4], [q4, 2 * q4]]) {
+    for (let j = 0; j < rows; j++, yield) for (const [a0, a1] of [[0, q4], [q4, 2 * q4]]) {
       const am = (a0 + a1) / 2, rm = ri + rowD(-sy * Math.sin(am), j), L = rm * (a1 - a0) - 2 * A, n = Math.max(1, Math.floor(L / spOf(Math.sin(am) * 0.9)));
       for (let i = 0; i < n; i++) {
         const a = a0 + (A + (i + 0.5 + ((j % 2) ? 0.15 : -0.15)) * L / n) / rm + (rnd() - 0.5) * 0.01, ca = Math.cos(a), sa = Math.sin(a), nx = -ca, ny = -sy * sa;
@@ -197,10 +234,11 @@ function buildCrowd() {
   };
   const Ls = G.X1 - G.X0 - 2 * G.ri, N = Math.max(1, Math.round(Ls / O.tile)), TW = Ls / N;   // the sideline straights: N pieces of TW, two looks taking turns
   const Le = G.Y1 - G.Y0 - 2 * G.ri, Ne = Math.max(1, Math.round(Le / O.tile));               // the end straight: one piece with Ne sections (the far end = it mirrored)
-  const top = [0, 1].map(v => { seed = 90210 + 77 * (v + 1); return bake(strip(TW, 1, 0, 1, (u, d) => [u, G.Y0 - d])); });
-  const bot = [0, 1].map(v => { seed = 90210 + 311 * (v + 1); return bake(strip(TW, 1, 0, -1, (u, d) => [u, G.Y1 + d])); });
-  seed = 31337; const end = bake(strip(Le, Ne, -1, 0, (u, d) => [d, G.Y0 + G.ri + u]));
-  seed = 4242; const cT = bake(corner(-1)); seed = 4343; const cB = bake(corner(1));
+  const top = [], bot = [];
+  for (const v of [0, 1]) { seed = 90210 + 77 * (v + 1); top.push(yield* bake(yield* strip(TW, 1, 0, 1, (u, d) => [u, G.Y0 - d]))); }   // (seed is this job's own: another job between slices can't move it)
+  for (const v of [0, 1]) { seed = 90210 + 311 * (v + 1); bot.push(yield* bake(yield* strip(TW, 1, 0, -1, (u, d) => [u, G.Y1 + d]))); }
+  seed = 31337; const end = yield* bake(yield* strip(Le, Ne, -1, 0, (u, d) => [d, G.Y0 + G.ri + u]));
+  seed = 4242; const cT = yield* bake(yield* corner(-1)); seed = 4343; const cB = yield* bake(yield* corner(1));
   // where each piece goes (world spot of its frame, mirrored or not), in painting order: top, top corners, ends, bottom corners, bottom (lower on screen later)
   const pieces = [];
   for (let t = 0; t < N; t++) pieces.push({ a: top[t % 2], x: G.X0 + G.ri + t * TW, y: 0, m: false });
@@ -213,12 +251,17 @@ function buildCrowd() {
   for (let t = 0; t <= N; t++) { const x = G.X0 + G.ri + t * TW; aisles.push([x, G.Y0, 0, -1], [x, G.Y1, 0, 1]); }
   for (let t = 0; t <= Ne; t++) { const y = G.Y0 + G.ri + t * Le / Ne; aisles.push([G.X1, y, 1, 0], [G.X0, y, -1, 0]); }
   for (const [cx, cy, sx, sy] of [[G.X1 - G.ri, G.Y0 + G.ri, 1, -1], [G.X0 + G.ri, G.Y0 + G.ri, -1, -1], [G.X1 - G.ri, G.Y1 - G.ri, 1, 1], [G.X0 + G.ri, G.Y1 - G.ri, -1, 1]]) aisles.push([cx + sx * G.ri * Math.SQRT1_2, cy + sy * G.ri * Math.SQRT1_2, sx * Math.SQRT1_2, sy * Math.SQRT1_2]);
-  crowdImg = { pieces: pieces.filter(p => p.a), aisles, k: K, home: homeKey(), kit: benchKit(), lit, TW, Le, Ne };
+  const img = { pieces: pieces.filter(p => p.a), aisles, k: K, home: J.home, kit: J.kit, lit, TW, Le, Ne };
+  yield { img };   // (the chore swaps it in here)
+  for (const B of [...top, ...bot, end, cT, cB]) if (B && B.cheer) yield* B.cheer();
+  return img;
 }
 // a rounded rectangle path (no beginPath: callers combine two for an even-odd band)
 const rrAdd = (x0, y0, x1, y1, r) => ctx.roundRect(x0, y0, x1 - x0, y1 - y0, Math.max(0, r));
 function drawCrowd() {
-  if (!crowdImg || (!PHOTO_SHOOT && (crowdImg.home !== homeKey() || crowdImg.kit !== benchKit())) || (!PHOTO_SHOOT && (crowdImg.k !== crowdK() || crowdImg.lit !== crowdLit()) && (state === 'pre' || state === 'done' || !!results))) buildCrowd();   // (v0.60: a graphics step's new stand size waits for the dead ball too, like the lighting)   // (a new sky = new lights, baked between plays; a new home team / kit / performance level: rebuilt)
+  if (!crowdImg || (!PHOTO_SHOOT && (crowdImg.home !== homeKey() || crowdImg.kit !== benchKit()))) buildCrowd();
+  else if (!PHOTO_SHOOT && (crowdImg.k !== crowdK() || crowdImg.lit !== crowdLit())) { if (state === 'pre' || state === 'done' || !!results) crowdRebuildSoon(); }   // (v0.74: baked as a chore, the old stands draw until the new set is done)
+  else if (crowdJ && !crowdJ.swapped) crowdJobDrop();   // (back to what is drawn: the half-baked set is dropped)   // (v0.60: a graphics step's new stand size waits for the dead ball too, like the lighting)   // (a new sky = new lights, baked between plays; a new home team / kit / performance level: rebuilt)
   const I = crowdImg, G = bowlGeo(), C = CROWD, LT = C.light, LS = LT[I.lit] || LT.cl, now = animNow(), cheering = now < crowdFx.until, K = I.k;
   // only what the camera can see is drawn: the view's world rectangle
   const zc = camZ(), vc = viewCenterY(), vTop = camY - (vc - TOP_BAR) / zc - 24, vBot = camY + (H - FIELD_BOT - vc) / zc + 24;
@@ -248,7 +291,7 @@ function drawCrowd() {
     const booK = still ? 0 : Math.max(0, Math.min(1, ((crowdFx.boo || 0) - now) / 1000 / HM.tiltIn)), waveT = still ? 1 : (now - (crowdFx.wave || -1e9)) / HM.wave.ms;
     const bcx = (G.X0 + G.X1) / 2, bcy = (G.Y0 + G.Y1) / 2, mg = booK || waveT < 1 ? 60 : 0;
     I.pieces.forEach((P, pi) => {
-      const A = P.a, img = cheering ? A.c1 : A.c0;
+      const A = P.a, img = cheering ? A.c1 || A.c0 : A.c0;   // (v0.74: a rebuilt set swaps in before its standing fans are baked)
       let by = P.y + bounce;
       if (waveT < 1) {   // (the wave: a bump travelling once round the bowl by where the piece sits)
         const ax = (P.m ? P.x - A.ox - A.w / 2 : P.x + A.ox + A.w / 2), ay = P.y + A.oy + A.h / 2, ang = Math.atan2(ay - bcy, ax - bcx) / (Math.PI * 2) + 0.5;
@@ -567,9 +610,17 @@ const EZ_TEXT = { maxW: 0.6, h: 0.62, logoY: 0.1 };   // text width (x field wid
 // before and just after the snap) re-rasterises the glyphs each frame and stuttered badly. TEXT_RES = image px per world px.
 const TEXT_RES = 1.25, TEXT_CACHE = new Map();
 // (also jersey numbers, name tags and pick labels: live text there made presnap / snap lag on some Windows laptops. res = image px per world px)
+// (T-ALLOC: the arguments -> the same key string through nested Maps, so a cache hit builds no array or string each paint)
+const TEXT_KEYS = new Map();
+function tkSub(m, v) { let n = m.get(v); if (n === undefined) { n = new Map(); m.set(v, n); } return n; }
+function textKey(txt, fs, weight, family, fill, stroke, lw, R) {
+  const m = tkSub(tkSub(tkSub(tkSub(tkSub(tkSub(tkSub(TEXT_KEYS, txt), fs), weight), family), fill), stroke), lw);
+  let k = m.get(R); if (k === undefined) { k = [txt, fs, weight, family, fill, stroke, lw, R].join('|'); m.set(R, k); }
+  return k;
+}
 function drawTextCached(txt, fs, weight, family, x, y, fill, stroke, lw, res) {
   if (typeof txt === 'string' && txt.includes('*')) txt = txt.replace(/(\d(?:\.\d)?)\s*\*/g, '$1★');   // (a rating's * = the star icon, like ctx.fillText)
-  const R = res || TEXT_RES, key = [txt, fs, weight, family, fill, stroke, lw, R].join('|');
+  const R = res || TEXT_RES, key = textKey(txt, fs, weight, family, fill, stroke, lw, R);
   let c = TEXT_CACHE.get(key);
   if (!c) {
     c = document.createElement('canvas');
@@ -579,7 +630,7 @@ function drawTextCached(txt, fs, weight, family, x, y, fill, stroke, lw, res) {
     g.font = font; g.textAlign = 'center'; g.textBaseline = 'middle';
     if (stroke) { g.lineJoin = 'round'; g.lineWidth = lw * R; g.strokeStyle = stroke; g.strokeText(txt, c.width / 2, c.height / 2); }
     g.fillStyle = fill; g.fillText(txt, c.width / 2, c.height / 2);
-    if (TEXT_CACHE.size > 600) { for (const t of TEXT_CACHE.values()) freeCanvas(t); TEXT_CACHE.clear(); }
+    if (TEXT_CACHE.size > 600) { for (const t of TEXT_CACHE.values()) freeCanvas(t); TEXT_CACHE.clear(); TEXT_KEYS.clear(); }
     TEXT_CACHE.set(key, c);
   }
   ctx.drawImage(c, x - c.width / R / 2, y - c.height / R / 2, c.width / R, c.height / R);
@@ -1091,6 +1142,7 @@ function slPaint(L, n) {   // v0.70: bench men noted by slbNote (SLB.m) go to sl
   for (let j = 0; j < n; j++) { const k = L[j]; if (SLB.m[k]) B[nb++] = k; else L[m++] = k; }
   slPaint0(L, m); if (nb) slbDraw(B, nb);
 }
+function slUpArm(sp, T, k, o) { return (sp[k].k === SLK.REF || sp[k].k === SLK.JUDGE) && T[o + 46] < 0.6 && T[o + 21] < T[o + 3] - SL_FIG.overUp * T[o + 43]; }   // (an official's raised near arm, slPaintB)
 function slPaint0(L, n) {   // the posed slots L[0..n), in colour-batched passes (back to front: shadow, far arm, legs, body, near arm, head, props)
   if (!n) return;
   const T = SL.PT, sp = SL.sp, lod = SL.lod, u0 = S * FIGURE.grow;
@@ -1118,6 +1170,11 @@ function slPaint0(L, n) {   // the posed slots L[0..n), in colour-batched passes
   const dk = DOODLE_PL.on && !liteOn(), dw = DOODLE_PL.w * 2 * u0, dj = lod === 2 ? Math.floor(animNow() / 1000 * ICON.boil) % DOODLE_PL.sets : 0;
   const dox = (DOODLE_PL.off * 0.6 + (lod === 2 ? (dpH(dj * 7 + 1) - 0.5) * 2 * DOODLE_PL.boil : 0)) * u0, doy = (DOODLE_PL.off * 0.6 + (lod === 2 ? (dpH(dj * 7 + 2) - 0.5) * 2 * DOODLE_PL.boil : 0)) * u0;
   SL_INK.x = dox; SL_INK.y = doy;
+  slPaintA(L, n, T, sp, lod, u0, dk, dw); slPaintB(L, n, T, sp, lod, u0, dk, dw); slPaintC(L, n, T, sp, lod, u0);
+}
+// (T-ALLOC: slPaint0's passes cut in three, the same calls in the same order: as one function V8 refused it ("too big to be optimized"), so it ran in
+//  the baseline tier and boxed every number it worked out)
+function slPaintA(L, n, T, sp, lod, u0, dk, dw) {   // far arms, legs, torso, stripes
   if (dk) { slInkA(SL_FIG.armW * u0 + dw, 'round'); for (let j = 0; j < n; j++) { const o = L[j] * SL_STR; ctx.moveTo(T[o + 2], T[o + 3]); ctx.lineTo(T[o + 14], T[o + 15]); ctx.lineTo(T[o + 16], T[o + 17]); } slInkB(); }   // (far arms)
   slMode = 1; ctx.lineWidth = SL_FIG.armW * u0;
   for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR; slSet(sp[k].c1); ctx.moveTo(T[o + 2], T[o + 3]); ctx.lineTo(T[o + 14], T[o + 15]); }
@@ -1172,6 +1229,8 @@ function slPaint0(L, n) {   // the posed slots L[0..n), in colour-batched passes
     }
     slEnd();
   }
+}
+function slPaintB(L, n, T, sp, lod, u0, dk, dw) {   // numbers, edges, near arms, heads, hair, an official's signal, props
   if (lod === 2) for (let j = 0; j < n; j++) {   // a bench player's number (close up only)
     const k = L[j], o = k * SL_STR, P = sp[k]; if (!P.num || T[o + 46] > 0.3 || (T[o + 47] < 0.6 && T[o + 47] > -0.6)) continue;
     const u = T[o + 43]; ctx.save(); ctx.translate((T[o] + T[o + 2]) / 2, (T[o + 1] + T[o + 3]) / 2 - 1.5 * u); ctx.scale(MIRROR * u, u * FIGURE.tall);
@@ -1209,15 +1268,15 @@ function slPaint0(L, n) {   // the posed slots L[0..n), in colour-batched passes
   }
   slEnd();
   {   // v0.68: an official's raised near arm (a signal) is drawn again over his head, in front of it as seen from the side (the far one stays behind)
-    const up = (k, o) => (sp[k].k === SLK.REF || sp[k].k === SLK.JUDGE) && T[o + 46] < 0.6 && T[o + 21] < T[o + 3] - SL_FIG.overUp * T[o + 43];
-    let any = false; for (let j = 0; j < n && !any; j++) any = up(L[j], L[j] * SL_STR);
+    // (the test: slUpArm, a plain function so no closure is made a paint)
+    let any = false; for (let j = 0; j < n && !any; j++) any = slUpArm(sp, T, L[j], L[j] * SL_STR);
     if (any) {
       slMode = 1; ctx.lineWidth = SL_FIG.armW * u0;
-      for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR; if (up(k, o)) { slSet(sp[k].c1); ctx.moveTo(T[o + 2], T[o + 3]); ctx.lineTo(T[o + 18], T[o + 19]); } }
+      for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR; if (slUpArm(sp, T, k, o)) { slSet(sp[k].c1); ctx.moveTo(T[o + 2], T[o + 3]); ctx.lineTo(T[o + 18], T[o + 19]); } }
       slEnd(); ctx.lineWidth = SL_FIG.foreW * u0;
-      for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR; if (up(k, o)) { slSet(sp[k].cfa); ctx.moveTo(T[o + 18], T[o + 19]); ctx.lineTo(T[o + 20], T[o + 21]); } }
+      for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR; if (slUpArm(sp, T, k, o)) { slSet(sp[k].cfa); ctx.moveTo(T[o + 18], T[o + 19]); ctx.lineTo(T[o + 20], T[o + 21]); } }
       slEnd(); slMode = 0;
-      for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR; if (up(k, o)) { const r = SL_FIG.hand * 0.5 * T[o + 43]; slSet(sp[k].cs); ctx.rect(T[o + 20] - r, T[o + 21] - r, 2 * r, 2 * r); } }
+      for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR; if (slUpArm(sp, T, k, o)) { const r = SL_FIG.hand * 0.5 * T[o + 43]; slSet(sp[k].cs); ctx.rect(T[o + 20] - r, T[o + 21] - r, 2 * r, 2 * r); } }
       slEnd();
     }
   }
@@ -1237,6 +1296,8 @@ function slPaint0(L, n) {   // the posed slots L[0..n), in colour-batched passes
   for (let j = 0; j < n; j++) { const k = L[j], o = k * SL_STR, hp = sp[k].hp; if (!hp || T[o + 44] < 0.5) continue; const u = T[o + 43], D = SL_HP[hp]; slSet(D[0]); ctx.rect(T[o + 20] - D[1] * u, T[o + 21] - D[2] * u, 2 * D[1] * u, D[3] * u); }
   slEnd();
   if (SL.rbK >= 0) for (let j = 0; j < n; j++) if (L[j] === SL.rbK) { const o = L[j] * SL_STR; refBallAt(T[o + 20], T[o + 21] - REF.crew.relay.handUp * T[o + 43]); }   // (the relay ball in the holder's hand: one sprite with him)
+}
+function slPaintC(L, n, T, sp, lod, u0) {   // held items, helmets, the mascot's head, cameras, pom-poms, headsets
   for (let j = 0; j < n; j++) {   // held items' detail (close up only): a photographer's long lens, the rake's head; a knocked-down photographer's camera flying off and lying on the turf
     const k = L[j], o = k * SL_STR, P = sp[k], hp = P.hp, u = T[o + 43], g = T[o + 42], ht = T[o + 49];
     if (hp === 8 && ht >= 0.1 && ht < SL_TF + SIDELINE.downT + SL_TG * 0.5) {   // (picked up again as he gets up)
@@ -1885,10 +1946,20 @@ function slSubTick(dt = 0) {   // (slTick, host) arrivals (each one sits down: s
 }
 const SL_X3 = new Float64Array(4);
 const slCrewT = L => Math.min(SIDELINE.walkMax, L / (SIDELINE.walkSpeed * YD));   // (a walk, never a sprint: the crew followed the play, so what is left is short)
-function slOffCam(s, x) {   // is a spot on sideline s off camera (the view's rectangle + crewTp yd)?
+function slOffCam(s, x) {   // is a spot on sideline s off camera (the view's rectangle + crewTp yd)? Online: off BOTH players' views (slGuestView)
   const zc = camZ(), vc = viewCenterY(), half = (W / 2 + PAD) / zc + SIDELINE.crewTp * YD;
-  if (x < camX - half || x > camX + half) return true;
-  return s ? camY + (H - FIELD_BOT - vc) / zc < FW - 3 * YD : camY - (vc - TOP_BAR) / zc > YD;
+  const off = x < camX - half || x > camX + half || (s ? camY + (H - FIELD_BOT - vc) / zc < FW - 3 * YD : camY - (vc - TOP_BAR) / zc > YD);
+  if (!off) return false;
+  const G = slGuestView(); if (G === undefined) return true; if (!G) return false;
+  const p = SIDELINE.crewTp * YD + G.pad;
+  return x < G.l - p || x > G.r + p || (s ? G.b < FW - 3 * YD : G.t > YD);
+}
+// perf job 21: the online guest's view (a world rectangle it reports with its acks, ONL.gView). undefined = no guest (offline / the guest itself); null = the guest
+// can see everything (no report yet, or one over ONL_NET.viewOld s old): people walk instead of popping. pad = how far its camera can travel between reports
+function slGuestView() {
+  if (typeof ONL === 'undefined' || !ONL.on || !ONL.host) return undefined;
+  const V = ONL.gView, age = V ? (performance.now() - V.at) / 1000 : Infinity; if (age > ONL_NET.viewOld) return null;
+  return { l: V.r[0], r: V.r[1], t: V.r[2], b: V.r[3], pad: (ONL_NET.viewPad + age * ONL_NET.viewSpd) * YD };
 }
 const slPoleOff = P => SIDELINE.poleHand * S * FIGURE.grow * P.z;   // px from a holder's feet to his stick
 // The STICKS mark the spots (each holder stands beside his): the front chain stick on the line to gain, the rear one 10 yd behind it (the start of the series), the box's
@@ -2773,13 +2844,23 @@ function refRevWorld() {   // (draw(), world coords) the pencil ruler at the lin
   }
   ctx.restore();
 }
-function refRevDraw() {   // (end of draw(), screen) the stamp; moves the review along and applies it
+// perf job phase 4: the review moves along and applies its result in refRevTick (frame(), every frame, painted or not); refRevDraw only draws it,
+// so how often the screen is painted can't change the game
+function refRevTick() {
   const r = REV; if (!r) return;
   let now = performance.now(); const RV = REF.rev;
   if (paused) { if (!r.pa) r.pa = now; now = r.pa; } else if (r.pa) { const d = now - r.pa; r.t0 += d; r.ts += d; r.pa = 0; }   // (v0.71 paused in the booth: its clocks stand still)
   if (r.ph === 'tape' && r.tapeDone && rec && rec.replaying) endReplay();   // (v0.68 the booth's tape ends itself)
   if (r.ph === 'tape' && !(rec && rec.replaying)) { r.ph = 'stamp'; r.ts = now; }
   if (r.ph === 'still' && now - r.t0 > RV.still * 1000) { r.ph = 'stamp'; r.ts = now; }
+  if (r.ph !== 'stamp') return;
+  const e = (now - r.ts) / 1000;
+  if (!r.done && e > 0.25) { r.done = true; try { refRevApply(); } catch (er) { console.warn(er); } try { CELEB_SFX.stomp(1); } catch (er) {} }
+  if (e > RV.stamp) REV = null;
+}
+function refRevDraw() {   // (end of draw(), screen) the slate and the stamp (refRevTick moves the review along)
+  const r = REV; if (!r) return;
+  const now = r.pa || performance.now(), RV = REF.rev;
   const lab = r.chal ? 'CHALLENGE REVIEW' : 'BOOTH REVIEW', e0 = (now - r.t0) / 1000;
   if (r.ph !== 'stamp' || (now - r.ts) / 1000 < 0.3) {   // (v0.68 the look: a pencil border round the screen, a corner tag, and the slate going in)
     ctx.save();
@@ -2799,9 +2880,7 @@ function refRevDraw() {   // (end of draw(), screen) the stamp; moves the review
     if (r.ph !== 'stamp') return;
   }
   const e = (now - r.ts) / 1000;
-  if (!r.done && e > 0.25) { r.done = true; try { refRevApply(); } catch (er) { console.warn(er); } try { CELEB_SFX.stomp(1); } catch (er) {} }
   qsStamp(W / 2, H * 0.4, r.res, r.res === 'REVERSED' ? '#c0392b' : '#2f8f3a', -0.12, Math.max(1, 2.2 - e * 8), 46, { distress: 7 });
-  if (e > RV.stamp) REV = null;
 }
 function slSetting() {   // settings: SIDELINE cycled (applies next frame; OFF frees the cast)
   if (ONL.on && ONL.guest) { SL.on = !!SL.cast; return; }
@@ -3033,7 +3112,10 @@ function slSquad(s, m, happy) {
 // The snap never waits for it: it goes on during the next play, and once nobody of it is on camera it is finished in one step (slExitTick: the same records,
 // moved back in time). Tent: its flap / light is a prop record (kind 2). SL.tin = who is inside (he walks back out if he is cleared: slTentCheck).
 const slSide = (s, d) => s ? Y_MAX + d * YD : Y_MIN - d * YD;
-const slOffView = (x, y) => { const zc = camZ(), vc = viewCenterY(), half = (W / 2 + PAD) / zc + YD; return x < camX - half || x > camX + half || y + FOOT < camY - (vc - TOP_BAR) / zc - YD || y - 3 * YD > camY + (H - FIELD_BOT - vc) / zc + YD; };
+const slOffView = (x, y) => { const zc = camZ(), vc = viewCenterY(), half = (W / 2 + PAD) / zc + YD;
+  if (!(x < camX - half || x > camX + half || y + FOOT < camY - (vc - TOP_BAR) / zc - YD || y - 3 * YD > camY + (H - FIELD_BOT - vc) / zc + YD)) return false;
+  const G = slGuestView(); if (G === undefined) return true; if (!G) return false;   // (online: off the guest's view too, slGuestView)
+  const p = YD + G.pad; return x < G.l - p || x > G.r + p || y + FOOT < G.t - p || y - 3 * YD > G.b + p; };
 function slExitPlan(kind, G) {   // G = { t0, hx, hy, f, T: the three trainers' homes [x, y], park, door, in, bench } -> every record of the exit
   const E = INJURY_EXIT, t0 = G.t0 + E.delay, hx = G.hx, hy = G.hy, fl = 0.62 * YD, T = G.T, u = S * FIGURE.grow;
   const go = (ax, ay, bx, by, v) => Math.hypot(bx - ax, by - ay) / (v * YD);
@@ -3329,9 +3411,10 @@ function penPoly(pts, seed, amp = PENCIL.amp) {   // (a polyline: each leg wobbl
   }
 }
 function penEllipse(cx, cy, rx, ry, seed) {   // (begins a new path: a lumpy, jagged closed loop)
-  penSeed(seed); const n = PENCIL.ellN, ph = penNext() * Math.PI * 2, pts = [];
-  for (let i = 0; i < n; i++) { const a = ph + i / n * Math.PI * 2, k = 1 + (penNext() - 0.5) * 2 * PENCIL.ell * (i % 2 ? 1.5 : 0.7); pts.push([cx + Math.cos(a) * rx * k, cy + Math.sin(a) * ry * k]); }
-  ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath();
+  penSeed(seed); const n = PENCIL.ellN, ph = penNext() * Math.PI * 2;
+  ctx.beginPath();   // (T-ALLOC: each point drawn as it is worked out, no point arrays: the same random draws in the same order)
+  for (let i = 0; i < n; i++) { const a = ph + i / n * Math.PI * 2, k = 1 + (penNext() - 0.5) * 2 * PENCIL.ell * (i % 2 ? 1.5 : 0.7), x = cx + Math.cos(a) * rx * k, y = cy + Math.sin(a) * ry * k; if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); }
+  ctx.closePath();
 }
 const penPlain = () => (typeof plLod !== 'undefined' && plLod) || liteOn();   // (no wobble when it would not be seen or costs too much: small-player LOD, performance mode)
 // a hand-drawn dashed line along a polyline (adds to the current path; stroke it, no setLineDash): dash and gap lengths vary by PENCIL.dashVar, each dash's
@@ -3446,7 +3529,7 @@ function paperTile(col) {
   }
   return c;
 }
-const paperOn = () => PAPER_TURF.on && markerOn();
+const paperOn = () => PAPER_TURF.on && markerOn() && PHONE_TEST.blit !== 'NO PAPER';   // (phase 5: DEBUG > FIELD BLIT: NO PAPER = no paper turf, at the old cache scale)
 const paperFill = col => ctx.createPattern(paperTile(col), 'repeat');
 // the pre-drawn field: everything drawFieldStatic paints (turf, stripes, end zones + names, yard lines, hash marks, sidelines, logo, numbers) never changes within
 // a game (the pencil wobble is seeded), so it is drawn once into its own canvas and only the part on screen is copied each frame. Rebuilt when the home team, the
@@ -3459,48 +3542,57 @@ const FIELD_CACHE = { on: true, zoom: 0.55, up: 1.04, maxPx: 12e6, pad: 0.75, st
 // A new size / layout (RK after a graphics step, the touch layout, marker) is only rebuilt between plays (pre / done / menus): mid-play the old one is stretched.
 const fieldLiveOK = () => !liteOn() && (!TUI.on || FIELD_CACHE.liveTouch);
 let fieldImgAlt = null;   // (v0.72 perf: the other drive direction's cache, kept while everything else about it still matches: a change of possession swaps instead of re-baking)
-let fieldImg = null, fieldBaking = false, fieldMarks = false;   // { c, s, hk, mir, logo, tui }; fieldBaking = drawFieldStatic is drawing into the cache
+let fieldImg = null, fieldBaking = false, fieldMarks = false, fieldNoMarks = false;   // (phase 5: fieldNoMarks = the bake running leaves out the end-zone names, logo and numbers (marksLive draws them live, once))   // { c, s, hk, mir, logo, tui }; fieldBaking = drawFieldStatic is drawing into the cache
+function fieldTileGcd() { let a = Math.round(PAPER_TURF.tile), b = Math.round(MARKER.tile); while (b) [a, b] = [b, a % b]; return Math.max(1, a); }   // (176, 192 -> 16: the cache scale is a multiple of 1/16)
 function fieldCacheDraw() {   // true = the static field was drawn from the cache
   if (!FIELD_CACHE.on) return false;
   const m = ctx.getTransform(), on = Math.abs(m.a);
   if (m.b || m.c || !(on > 0) || !m.d) return false;
-  const M = FIELD_CACHE.pad * YD, ox = ENDZONE + M, w = FIELD + 2 * ox, h = FW + 2 * M;
-  const s = Math.min(Math.ceil(RK * FIELD_CACHE.zoom / FIELD_CACHE.step - 1e-6) * FIELD_CACHE.step, Math.sqrt(FIELD_CACHE.maxPx / (w * h)), PHONE_TEST.blit === 'CAP 4096' ? Math.floor(4096 / Math.max(w, h) * 1e4) / 1e4 : Infinity);
+  const M0 = FIELD_CACHE.pad * YD, w0 = FIELD + 2 * (ENDZONE + M0), h0 = FW + 2 * M0;
+  const s0 = Math.min(Math.ceil(RK * FIELD_CACHE.zoom / FIELD_CACHE.step - 1e-6) * FIELD_CACHE.step, Math.sqrt(FIELD_CACHE.maxPx / (w0 * h0)), PHONE_TEST.blit === 'CAP 4096' ? Math.floor(4096 / Math.max(w0, h0) * 1e4) / 1e4 : Infinity);
+  // (phase 5, the phone's white lines: a pattern tile or the margin landing on a half pixel left a seam in Safari's rasteriser. The scale is nudged down to a
+  // multiple of 1 / gcd(paper tile, marker tile) and the margins up to whole cache pixels, so every tile join is on a whole pixel. DEBUG > FIELD BLIT: OLD SCALE / NO PAPER = the old numbers)
+  const old = PHONE_TEST.blit === 'OLD SCALE' || PHONE_TEST.blit === 'NO PAPER', u = fieldTileGcd();
+  const s = old ? s0 : Math.max(1 / u, Math.floor(s0 * u + 1e-6) / u);
+  let M = old ? M0 : Math.ceil(M0 * s - 1e-6) / s, ox = old ? ENDZONE + M0 : Math.ceil((ENDZONE + M) * s - 1e-6) / s, w = FIELD + 2 * ox, h = FW + 2 * M;
   if (on > s * FIELD_CACHE.up && fieldLiveOK()) return false;
   const hk = homeKey(), logo = !!LOGOS[hk];
   let F = fieldImg;
   const mk = (MARKER.on ? 1 : 0) + (PAPER_TURF.on && MARKER.on ? 2 : 0);   // (marker / paper switched: a rebuild. The cache always has the full look, performance mode too: it is drawn once, so switching graphics never rebuilds it or changes the end zones)
   const between = !!results || state === 'pre' || state === 'done' || state === 'sim';   // (a size change waits for the dead ball; a new home team / drive direction can't)
   const pud = wxPudKey();   // (puddles / mud: the field's wet stage, which only moves at a dead ball)
-  if (!F || F.hk !== hk || F.mir !== MIRROR || F.logo !== logo || ((F.s !== s || F.tui !== TUI.on || F.mk !== mk || F.pud !== pud) && between)) {
-    const A = fieldImgAlt, same = X => X && X.hk === hk && X.logo === logo && X.s === s && X.tui === TUI.on && X.mk === mk && X.pud === pud;
+  const qt = TUI.on && gfxHi(), nm = qt && FIELD_CACHE.marksLive && PHONE_TEST.marks !== 'OLD';   // (phase 5, the end-zone name spelled twice: with marksLive the cache has no marks, they are drawn live at every zoom; DEBUG MARKS: OLD = baked + live over close shots)
+  if (!F || F.hk !== hk || F.mir !== MIRROR || F.logo !== logo || F.nm !== nm || ((F.s !== s || F.tui !== TUI.on || F.mk !== mk || F.pud !== pud) && between)) {
+    const A = fieldImgAlt, same = X => X && X.hk === hk && X.logo === logo && X.s === s && X.tui === TUI.on && X.mk === mk && X.pud === pud && X.nm === nm;
     if (F && F.mir !== MIRROR && A && A.mir === MIRROR && same(A)) { fieldImgAlt = F; F = fieldImg = A; }   // (v0.72: the other direction is already baked)
     else {
     if (A) { freeCanvas(A.c); fieldImgAlt = null; }
     if (F) { if (F.mir !== MIRROR && same(F)) fieldImgAlt = F; else freeCanvas(F.c); }
-    perfNote('fieldBake');
+    perfNote('fieldBake'); if (typeof fpsQuiet === 'function') fpsQuiet(0, 'fieldBake');
     markerFree();   // (the marker tiles go with it; drawFieldStatic makes the ones it needs again)
     const c = document.createElement('canvas'); c.width = Math.ceil(w * s); c.height = Math.ceil(h * s);
     const g = c.getContext('2d'), main = ctx;
     ctx = g;
     fieldBaking = true;
-    try { g.setTransform(s, 0, 0, s, ox * s, M * s); drawFieldStatic(); } finally { ctx = main; fieldBaking = false; }
+    fieldNoMarks = nm;
+    try { g.setTransform(s, 0, 0, s, ox * s, M * s); drawFieldStatic(); } finally { ctx = main; fieldBaking = false; fieldNoMarks = false; }
     if (!markerOn()) markerFree();   // (performance mode: the marker tiles were only needed for the bake)
-    F = fieldImg = { c, s, hk, mir: MIRROR, logo, tui: TUI.on, mk, pud };
+    F = fieldImg = { c, s, hk, mir: MIRROR, logo, tui: TUI.on, mk, pud, M, ox, nm };
     }
   }
   // the part of it on screen (canvas px -> world -> cache px, a pixel of slack each side)
   const xa = -m.e / m.a, xb = (ctx.canvas.width - m.e) / m.a, ya = -m.f / m.d, yb = (ctx.canvas.height - m.f) / m.d;
   const fs = F.s;   // (the cache's own scale: mid-play it may be the last size)
+  if (F.M != null && (F.M !== M || F.ox !== ox)) { M = F.M; ox = F.ox; }   // (phase 5: and its own margins, which follow its scale)
   const sx0 = Math.max(0, Math.floor((Math.min(xa, xb) + ox) * fs) - 1), sx1 = Math.min(F.c.width, Math.ceil((Math.max(xa, xb) + ox) * fs) + 1);
   const sy0 = Math.max(0, Math.floor((Math.min(ya, yb) + M) * fs) - 1), sy1 = Math.min(F.c.height, Math.ceil((Math.max(ya, yb) + M) * fs) + 1);
-  const qt = TUI.on && gfxHi();   // (v0.74: QUALITY on a phone: smooth stretch + the lettering drawn live when the shot is closer than the cache is sharp)
+  // (v0.74: QUALITY on a phone (qt): smooth stretch + the lettering drawn live)
   ctx.imageSmoothingEnabled = PHONE_TEST.blit !== 'NO SMOOTH'; ctx.imageSmoothingQuality = TUI.on && !qt || PHONE_TEST.gpu === 'SMOOTH LOW' ? 'low' : 'high';
   if (sx1 > sx0 && sy1 > sy0 && PHONE_TEST.blit === 'WHOLE PX') {   // (debug: the blit's edges on whole device pixels, so the cache is never sampled at a fractional offset)
     const sw = sx1 - sx0, sh = sy1 - sy0, X0 = Math.round(m.a * (sx0 / fs - ox) + m.e), X1 = Math.round(m.a * (sx1 / fs - ox) + m.e), Y0 = Math.round(m.d * (sy0 / fs - M) + m.f), Y1 = Math.round(m.d * (sy1 / fs - M) + m.f);
     ctx.save(); ctx.setTransform((X1 - X0) / sw, 0, 0, (Y1 - Y0) / sh, X0, Y0); ctx.drawImage(F.c, sx0, sy0, sw, sh, 0, 0, sw, sh); ctx.restore();
   } else if (sx1 > sx0 && sy1 > sy0) ctx.drawImage(F.c, sx0, sy0, sx1 - sx0, sy1 - sy0, sx0 / fs - ox, sy0 / fs - M, (sx1 - sx0) / fs, (sy1 - sy0) / fs);
-  if (qt && FIELD_CACHE.marksLive && on > fs * FIELD_CACHE.up) {
+  if (F.nm || (qt && FIELD_CACHE.marksLive && on > fs * FIELD_CACHE.up)) {   // (F.nm: the cache has none, so always; else the old close-shot redraw)
     const x0 = Math.min(xa, xb), x1 = Math.max(xa, xb), see = (cx, r) => cx + r > x0 && cx - r < x1;
     if (see(-ENDZONE / 2, ENDZONE)) drawEndZoneName(-ENDZONE / 2, 1);
     if (see(FIELD + ENDZONE / 2, ENDZONE)) drawEndZoneName(FIELD + ENDZONE / 2, -1);
@@ -3537,7 +3629,7 @@ function drawFieldStatic() {
   ctx.fillStyle = mk ? markerFill(homeColor(), 1) : homeColor();   // both end zones in the home team's colour
   ctx.fillRect(-ENDZONE, 0, ENDZONE, FW);
   ctx.fillRect(FIELD, 0, ENDZONE, FW);
-  drawEndZoneName(-ENDZONE / 2, 1); drawEndZoneName(FIELD + ENDZONE / 2, -1);
+  if (!fieldNoMarks) { drawEndZoneName(-ENDZONE / 2, 1); drawEndZoneName(FIELD + ENDZONE / 2, -1); }   // (phase 5: a cache baked for marksLive leaves them out)
 
   ctx.lineWidth = 4;
   if (mk) {   // pencil pressure: each yard line in a few pieces, each piece in one of FIELD_PRESS.a's alphas (one path a shade)
@@ -3596,8 +3688,7 @@ function drawFieldStatic() {
     ctx.stroke();
   }
 
-  drawFieldLogo(FIELD / 2, MID, 4.2 * YD);
-  drawFieldNumbers();
+  if (!fieldNoMarks) { drawFieldLogo(FIELD / 2, MID, 4.2 * YD); drawFieldNumbers(); }
   wxPuddlesStatic();   // (rain: puddles / mud by the field's wet stage; baked with the field, key wxPudKey)
 }
 function drawFieldRest() {   // (the live part of drawField, over the weather's ground)
@@ -9124,17 +9215,20 @@ function overJumpOK(p) {
 // the neck as a swivel (looks only): the head yaws toward what he's watching (the ball, or the ball carrier he's chasing / blocking for),
 // eased at NECK.rate, never past NECK.max either way (no turning right round). Yaw toward the camera shows more of the face, away shows the back of the helmet.
 const NECK = { max: 1.4, rate: 7, minFace: 0.22, awayFade: 0.9, cageMin: 0.75 };   // cageMin = the facemask's width left at full turn (it stays drawn)   // max rad (~80 deg) each way; minFace = face width left at full turn; awayFade = rad turned away before the face fades
+// (T-ALLOC: headYaw's checks without the per-call arrays, closure and object; the same tests in the same order)
+const HY_PASS = { x: 0.5, y: 0.5 };
+function hyMan(p, m) { return !!(m && m !== p && m.team && m.team !== p.team && typeof m.x === 'number' && m.action !== 'down'); }
 function headYaw(p, watch) {
   const now = animNow(), dt = Math.min(0.05, Math.max(0, (now - (p.yawAt || now)) / 1000));
   p.yawAt = now;
-  const bm = !watch && !p.hasBall && ['run', 'picked'].includes(state) ? [p.blockOn, p.assign].find(m => m && m !== p && m.team && m.team !== p.team && typeof m.x === 'number' && m.action !== 'down') : null;   // (a blocker: eyes on the man he's blocking or about to block, not the ball carrier)
+  const bm = !watch && !p.hasBall && (state === 'run' || state === 'picked') ? (hyMan(p, p.blockOn) ? p.blockOn : hyMan(p, p.assign) ? p.assign : undefined) : null;   // (a blocker: eyes on the man he's blocking or about to block, not the ball carrier)
   let pass = null;   // (the passer: eyes on where he's aiming, then on the throw's landing spot through the follow-through)
   if (!watch && p === thrower()) {
-    if (p.action === 'throw' && state === 'flight' && typeof ball.tx === 'number') pass = { x: ball.tx, y: ball.ty };
+    if (p.action === 'throw' && state === 'flight' && typeof ball.tx === 'number') { pass = HY_PASS; pass.x = ball.tx; pass.y = ball.ty; }
     else if (aim && p.hasBall && (state === 'drop' || state === 'pocket' || canPasserThrow())) pass = throwTarget();
   }
   const key = !watch && p === qb && (p.exK === 'hold' || p.exK === 'ride') && rbpLive() && rbp.key && !rbp.key.action ? rbp.key : null;   // (zone read: his eyes are on the read key through the mesh)
-  const at = pass ? pass : watch ? ball : key ? key : bm ? bm : p.lookAt && p.team === 'def' && !p.action && state !== 'run' && state !== 'picked' ? p.lookAt : (runner && runner !== p && ['run', 'picked'].includes(state) && !p.hasBall) ? runner : null;
+  const at = pass ? pass : watch ? ball : key ? key : bm ? bm : p.lookAt && p.team === 'def' && !p.action && state !== 'run' && state !== 'picked' ? p.lookAt : (runner && runner !== p && (state === 'run' || state === 'picked') && !p.hasBall) ? runner : null;
   let want = 0;
   if (at) {
     const dx = (at.x - p.x) * p.face, dy = at.y - p.y;
@@ -9811,6 +9905,34 @@ function stiffNearest(p) {   // (drawPlayer's stiff arm with no target: the near
   }
   return best;
 }
+function dpTuck(nearTuck, stiff, guardTuck, tw, bob) {   // (T-ALLOC: drawPlayer's tucked ball, a plain function instead of a closure made each call; same calls)
+  // smaller than the ball in the air (TUCK_BALL) so it sits inside the arm wrapped round it
+  const tk = TUCK_BALL.scale, ti = TUCK_BALL.in;
+    ctx.save();
+    if (nearTuck && !stiff) { ctx.beginPath(); ctx.rect(TUCK_BALL.hideX, -30, 30, 50); ctx.clip(); }   // (the tail end behind his carrying arm is hidden: only the part in front of the arm shows)
+    ctx.translate((stiff ? -3.5 + ti : guardTuck ? 2.5 - ti : nearTuck ? 2 - ti : 3.5 - ti) * (0.4 + 0.6 * tw / FIGURE.torso), guardTuck ? -6.2 + bob : (nearTuck ? -7 : -6.5) + bob); ctx.rotate(guardTuck ? 0 : TUCK_BALL.tilt);   // (diagonal: tail in the crook of the elbow, nose out at the hand, the side against the chest; G = flat across the belly)
+    drawFootball(7 * BALL_HELD, 4.5 * BALL_HELD);
+    ctx.restore();
+}
+function dpClasp(t, skin, bob, bl) {   // (T-ALLOC: hands clamped on either side of the ball, a plain function instead of drawPlayer's closure; same calls)
+  drawArmTo(t, skin, -1, -10.5 + bob, bl.x - 1, bl.y - 2.6, 5, 5.5, -1);
+  drawArmTo(t, skin, 2, -9 + bob, bl.x + 0.5, bl.y + 2.6, 5, 5.5, 1);
+}
+function dpToSpr(p, bk, fx, fxTw, wx, wy) {   // a world offset from his body (along the field, up the screen incl. height) -> his sprite space (T-ALLOC: was a closure in drawPlayer)
+  const o = { x: wx * p.face / bk, y: 14 + wy / bk };
+  if (fx) {   // (into the posed frame, so hands still find the ball)
+    const x0 = o.x - (fx.tx || 0), y0 = o.y - (fx.ty || 0), c = Math.cos(fx.R || 0), sn = Math.sin(fx.R || 0);
+    o.x = (x0 * c + y0 * sn) / (fxTw * (fx.sx || 1)); o.y = (-x0 * sn + y0 * c) / (fx.sy || 1);
+  }
+  o.y = 14 + (o.y - 14) / FIGURE.tall;   // (into the stretched frame)
+  return o;
+}
+// (T-ALLOC: the shadow's and the ear hole's black at an alpha, the string kept while the alpha repeats: no new string each player each paint)
+const BLK_SH = { a: NaN, s: '' }, BLK_EAR = { a: NaN, s: '' };
+function blackA(m, a) { if (a !== m.a) { m.a = a; m.s = `rgba(0,0,0,${a})`; } return m.s; }
+// (T-ALLOC: the plain leg poses go into this one scratch pair instead of new arrays each call: drawPlayer draws them before anything can reuse it)
+const DP_LEGS = [[0.5, 0.5, 0.5], [0.5, 0.5, 0.5]];
+function dpLegs(a0, a1, a2, b0, b1, b2) { const A = DP_LEGS[0], B = DP_LEGS[1]; A[0] = a0; A[1] = a1; A[2] = a2; B[0] = b0; B[1] = b1; B[2] = b2; return DP_LEGS; }
 function drawPlayer(p) {
   BALL_HELD = BALL_K / (figK(p) || 1);
   dpBegin(p);   // (the doodle look's level and this frame's edge offset: see DOODLE_PL)
@@ -9876,7 +9998,7 @@ function drawPlayer(p) {
   const shDive = p.action === 'dive' && p.act && p.act.dur ? smooth01(p.act.t / (p.act.dur * 0.4)) : 0;
   { const shA = 0.25 * (0.5 + 0.5 * shLift), shRx = Math.max(12 * (1 + (figBuild(p) - 1) * FIGURE.build.shadow) * shLift, DIVE_LOOK.shadowLen * shDive) * S * FIGURE.grow, shRy = 4 * S * FIGURE.grow * (0.6 + 0.4 * shLift);
     if (DP.lv >= 3) { const a = ctx.globalAlpha; ctx.globalAlpha = a * shA * 1.6; ctx.drawImage(dpShadowImg(DP.j + DP.n), p.x - shRx, p.y + FOOT - shRy, shRx * 2, shRy * 2); ctx.globalAlpha = a; }   // (QUALITY / menus: a scribbled shadow, same size and fade)
-    else { ctx.fillStyle = `rgba(0,0,0,${shA})`; ctx.beginPath(); ctx.ellipse(p.x, p.y + FOOT, shRx, shRy, 0, 0, Math.PI * 2); ctx.fill(); } }
+    else { ctx.fillStyle = blackA(BLK_SH, shA); ctx.beginPath(); ctx.ellipse(p.x, p.y + FOOT, shRx, shRy, 0, 0, Math.PI * 2); ctx.fill(); } }
   drawToeFx(p);
   drawDiveSpray(p);
   mlDiveScuff(p);
@@ -10053,16 +10175,7 @@ function drawPlayer(p) {
   // where the ball is in his sprite space (+x = the way he faces), for hands that go to it
   // (bk = world px per sprite unit across, bkY = up and down with the stretch; another player's spot: (his y - ours) / bkY + the spot on his body)
   const bk = S * sz, bkY = bk * FIGURE.tall;
-  const toSpr = (wx, wy) => {   // a world offset from his body (along the field, up the screen incl. height) -> his sprite space
-    const o = { x: wx * p.face / bk, y: 14 + wy / bk };
-    if (fx) {   // (into the posed frame, so hands still find the ball)
-      const x0 = o.x - (fx.tx || 0), y0 = o.y - (fx.ty || 0), c = Math.cos(fx.R || 0), sn = Math.sin(fx.R || 0);
-      o.x = (x0 * c + y0 * sn) / (fxTw * (fx.sx || 1)); o.y = (-x0 * sn + y0 * c) / (fx.sy || 1);
-    }
-    o.y = 14 + (o.y - 14) / FIGURE.tall;   // (into the stretched frame)
-    return o;
-  };
-  const bl = toSpr(ball.x - p.x, ball.y - ball.z - (p.y - p.z) - FOOT);
+  const bl = dpToSpr(p, bk, fx, fxTw, ball.x - p.x, ball.y - ball.z - (p.y - p.z) - FOOT);
   const nearBall = Math.hypot(bl.x - 2, bl.y + 10) < CLASP_REACH;
   // a fresh catch still held out in front in both hands (before he tucks it)
   // head top: both hands on the ball as he takes it over the defender's helmet and brings it down
@@ -10082,14 +10195,14 @@ function drawPlayer(p) {
   let legs;
   if (cq && cq.legs) legs = cq.legs;
   else if (cq && !cq.mvl) legs = cq.legs;
-  else if (p.action === 'kneel' || (!p.action && kneelK > 0.01)) legs = [[-3, 0.1 * kneelK, 1.5 * kneelK], [3, -1.5 * kneelK, 0.9 * kneelK]];   // back knee on the turf, front foot planted
+  else if (p.action === 'kneel' || (!p.action && kneelK > 0.01)) legs = dpLegs(-3, 0.1 * kneelK, 1.5 * kneelK, 3, -1.5 * kneelK, 0.9 * kneelK);   // back knee on the turf, front foot planted
   else if ((p.kickSwing && (p.kickK ?? 9) < KICK_ANIM.done) || (!p.kickSwing && p.kickWind > 0 && !p.action)) {
     // kicking: plant leg firm; the kicking leg cocks back at the knee on the last stride, whips through
     // (knee snapping straight) to finish high, then comes back down
     const kq = p.kickK || 0, sw = p.kickSwing ? smooth01(Math.min(1, kq)) : 0, down = p.kickSwing ? Math.max(0, kq - 1) / (KICK_ANIM.done - 1) : 0;
     const w = p.kickSwing ? 1 : p.kickWind;
     const thigh = (0.75 * w + (-1.9 - 0.75) * sw) * (1 - down), knee = (1.7 * w * (1 - sw) + 0.1) * (1 - down);
-    legs = [[-1.5, 0.2 * (1 - down), 0.05], [1.5, thigh, knee]];
+    legs = dpLegs(-1.5, 0.2 * (1 - down), 0.05, 1.5, thigh, knee);
   }
   else if (p.action === 'getup' && p.act && p.act.g0) legs = getUpLegs(p);   // (knees tucked under, onto a knee, a lunge, then up)
   else if (fx && fx.legs) legs = fx.legs;
@@ -10101,17 +10214,17 @@ function drawPlayer(p) {
   else if (p.action === 'toetap' && p.act && p.act.fine) legs = toeFineLegs(p.act);   // (the full toe tap: one foot down, then the other)
   else if ((p.action === 'jump' || p.action === 'toetap') && p.act && p.act.dur) {   // a leap (and a toe tap's hop, same pose): knees tuck up under him in the air (never the straight-legged layout of a dive)
     const a = Math.sin(Math.PI * Math.min(1, p.act.t / p.act.dur));
-    legs = [[-2.5, 0.35 * a, 1.2 * a], [2.5, -0.25 * a, 0.9 * a]];
+    legs = dpLegs(-2.5, 0.35 * a, 1.2 * a, 2.5, -0.25 * a, 0.9 * a);
   }
-  else if (together) legs = [[-3.5, 0, 0], [3.5, 0, 0]];
-  else if ((p.action === 'juke' && !striding) || throwing) legs = [[-3.5, 0.4, 0.15], [3.5, -0.35, 0.1]];   // (a juke at speed keeps the stride going)
-  else if (plant) legs = [[-4.5, 0.6, 0.45], [3.5, -0.3, 0.1]];
-  else if (p.action === 'hurdle') legs = [[-1.5, 1.0, 1.4], [2, -0.9, 0.5]];   // lead leg reaching out over him, trail knee tucked up   // planted foot out wide, knee loaded to push off
+  else if (together) { const A = DP_LEGS[0], B = DP_LEGS[1]; A[0] = -3.5; A[1] = 0; A[2] = 0; B[0] = 3.5; B[1] = 0; B[2] = 0; legs = DP_LEGS; }
+  else if ((p.action === 'juke' && !striding) || throwing) legs = dpLegs(-3.5, 0.4, 0.15, 3.5, -0.35, 0.1);   // (a juke at speed keeps the stride going)
+  else if (plant) legs = dpLegs(-4.5, 0.6, 0.45, 3.5, -0.3, 0.1);
+  else if (p.action === 'hurdle') legs = dpLegs(-1.5, 1.0, 1.4, 2, -0.9, 0.5);   // lead leg reaching out over him, trail knee tucked up   // planted foot out wide, knee loaded to push off
   else if (striding) {
     const A = LEG_SWING * (p.hasBall ? 0.9 : 1) * (chop ? 0.35 : p.stride ?? 1);
     const f0 = (chop ? ac * 45 : p.run) + 0, f1 = (chop ? ac * 45 : p.run) + Math.PI, kb = chop ? 0.5 : 0.15, kk = LEG_KNEE * (chop ? 0.4 : 1);
-    legs = [[-1.5, -A * Math.sin(f0), kb + kk * Math.max(0, Math.cos(f0))], [1.5, -A * Math.sin(f1), kb + kk * Math.max(0, Math.cos(f1))]];
-  } else legs = [[-3.5, 0, 0.05], [3.5, 0, 0.05]];
+    const L0 = DP_LEGS[0], L1 = DP_LEGS[1]; L0[0] = -1.5; L0[1] = -A * Math.sin(f0); L0[2] = kb + kk * Math.max(0, Math.cos(f0)); L1[0] = 1.5; L1[1] = -A * Math.sin(f1); L1[2] = kb + kk * Math.max(0, Math.cos(f1)); legs = DP_LEGS;
+  } else { const A = DP_LEGS[0], B = DP_LEGS[1]; A[0] = -3.5; A[1] = 0; A[2] = 0.05; B[0] = 3.5; B[1] = 0; B[2] = 0.05; legs = DP_LEGS; }
   if (gNote) p.gLegs = legs.map(l => l.slice(0, 3));
   if (st) {   // stance legs, blended with his normal ones by how far into the stance he is (the later leg is the near one: receivers put the inside foot
               // forward, DBs the outside one, linemen drop the inside one back)
@@ -10125,7 +10238,7 @@ function drawPlayer(p) {
   if (stShift) ctx.translate(-stShift, 0);   // (a lineman leaning in keeps his helmet on his side of the line of scrimmage: back by what the lean pushes past his spot)
   const FS = FIGURE.side, tv = FS.on ? (p.cel && cq ? (cq.tv ?? 0) : 1) : 0;   // view this frame: 0 = front, 1 = side (a pure function of the pose, never stored)
   const legK = 1 + (FS.legs - 1) * tv;   // (side-on the hips close up: the legs overlap under the narrow torso instead of standing apart)
-  for (const [hx, a, bend, up] of legs) drawLeg(t, hx * legK, 2, a, bend, tip || !!up);
+  for (let li = 0; li < legs.length; li++) { const L = legs[li]; drawLeg(t, L[0] * legK, 2, L[1], L[2], tip || !!L[3]); }   // (phase 4: no iterator / destructuring per leg)
   if (st) { ctx.translate(0, 2); ctx.rotate(st.lean); ctx.translate(0, -2); }   // upper body tipped forward from the hips
 
   if (sideArm && striding && !p.hasBall && !stArms) {
@@ -10153,16 +10266,7 @@ function drawPlayer(p) {
   // ball tucked between the pads and the carrying arm. In the far arm (toward the top sideline) it's drawn under the torso, so only a sliver
   // shows; in the near arm (ballSide > 0) it's drawn over the torso, under the arm wrapped round it (drawTuck, after the jersey)
   const nearTuck = tucked && !guardTuck && p.ballSide > 0;
-  const drawTuck = () => {
-    // smaller than the ball in the air (TUCK_BALL) so it sits inside the arm wrapped round it
-    const tk = TUCK_BALL.scale, ti = TUCK_BALL.in;
-    ctx.save();
-    if (nearTuck && !stiff) { ctx.beginPath(); ctx.rect(TUCK_BALL.hideX, -30, 30, 50); ctx.clip(); }   // (the tail end behind his carrying arm is hidden: only the part in front of the arm shows)
-    ctx.translate((stiff ? -3.5 + ti : guardTuck ? 2.5 - ti : nearTuck ? 2 - ti : 3.5 - ti) * (0.4 + 0.6 * tw / FIGURE.torso), guardTuck ? -6.2 + bob : (nearTuck ? -7 : -6.5) + bob); ctx.rotate(guardTuck ? 0 : TUCK_BALL.tilt);   // (diagonal: tail in the crook of the elbow, nose out at the hand, the side against the chest; G = flat across the belly)
-    drawFootball(7 * BALL_HELD, 4.5 * BALL_HELD);
-    ctx.restore();
-  };
-  if (tucked && !nearTuck) drawTuck();
+  if (tucked && !nearTuck) dpTuck(nearTuck, stiff, guardTuck, tw, bob);
 
   ctx.save();
   ctx.scale((lying ? MIRROR : MIRROR * p.face) * numK, 1);   // (undoes the world mirror, whichever way the drive goes; squashed away as he turns side-on)
@@ -10182,14 +10286,12 @@ function drawPlayer(p) {
 
   ctx.fillStyle = skin;
   ctx.fillRect(-2, -15 + bob, 4, 3);
-  if (nearTuck) drawTuck();   // (near arm: the ball sits over the jersey, the arm drawn over it below)
+  if (nearTuck) dpTuck(nearTuck, stiff, guardTuck, tw, bob);   // (near arm: the ball sits over the jersey, the arm drawn over it below)
 
   // hands clamped on either side of the ball: the top hand over it, the bottom hand under it
-  const claspBall = () => {
-    drawArmTo(t, skin, -1, -10.5 + bob, bl.x - 1, bl.y - 2.6, 5, 5.5, -1);
-    drawArmTo(t, skin, 2, -9 + bob, bl.x + 0.5, bl.y + 2.6, 5, 5.5, 1);
-  };
   const bringIn = p.hasBall && !(p.headTop && ((rec && rec.replaying ? rec.rt : clock) - p.headTop.t) < HEAD_TOP.dur + HEAD_TOP.hold) && ((p.oneHanded && (p.action === 'jump' || p.action === 'dive')) || (p.action === 'dive' && !!p.diveCaught) || (p.action === 'jump' && !!p.jumpCaught));   // (a diving catch, either way: he tucks it in during the dive)   // one-handed catch made in the air: he pulls it in
+  // (perf job closing: the arm chain runs in its own closure, same code in the same order, so drawPlayer's bytecode fits under V8's optimizing limit (85.6 KB -> under 60): it used to stay in the baseline tier and box every number it computed)
+  const armChain = () => {
   if (cq) celebArms(t, skin, cq, cSide ? 'near' : undefined);
   else if (clapping) {   // clapping a hurt man off: both hands meet in front of the chest on each beat
     const ph = (ac - p.clap.t0) * INJURY_EXIT.clapRate, gap = 1.6 + 2.6 * Math.abs(Math.sin(Math.PI * ph));
@@ -10233,7 +10335,7 @@ function drawPlayer(p) {
     else pose(1.1, 4, -1.3, 4.5);   // two-point: hands up and ready in front
   } else if ((p.exK === 'hold' || p.exK === 'wind' || p.exK === 'ride') && !p.action) {
     // a handoff on its way to the back / a pitch being wound up / riding it in the back's belly: both hands on the ball, wherever it is held
-    claspBall();
+    dpClasp(t, skin, bob, bl);
   } else if (p.exK === 'thru' && !p.action) {
     // the pitch is away: both hands swing out after it along its path (the follow-through), then come back to his sides
     const out = p.exE < 0.45 ? 1 : 1 - smooth01((p.exE - 0.45) / 0.55), dxb = bl.x - 3, dyb = bl.y - 1, dn = Math.hypot(dxb, dyb) || 1, rr = Math.min(dn, 11);
@@ -10319,7 +10421,7 @@ function drawPlayer(p) {
     // carrying arm: elbow down at his side, forearm wrapped forward over the ball
     drawArm(t, skin, 1, -10 + bob, 1.35, 3, -1.5, 5, 3.5);
   } else if (holdingOut) {
-    if (!headTopping) claspBall();   // just caught it: both hands still on it out in front (head top: drawn over the helmet, below)
+    if (!headTopping) dpClasp(t, skin, bob, bl);   // just caught it: both hands still on it out in front (head top: drawn over the helmet, below)
   } else if (p.action === 'dive' && p.hitStick) {
     // a big hit: no reaching or grabbing, arms folded in tight and the shoulder pads lead into him
     if (DP.lv) dpBox(2, -13 + bob, 7, 8);
@@ -10413,7 +10515,7 @@ function drawPlayer(p) {
     // reaching for a catch: the arms go out in his catch style, and once the ball is on him the
     // hands close around it; blocking or bracing: arms punched out nearly straight
     const basket = p.reach && !p.engaged, style = basket ? p.catchStyle : null;
-    if (basket && nearBall && (ball.inAir || ball.loose)) claspBall();
+    if (basket && nearBall && (ball.inAir || ball.loose)) dpClasp(t, skin, bob, bl);
     else if (style === 'overBasket') {
       // over-the-shoulder basket: elbows pinned to his ribs, forearms up in front, palms up at his chest
       // so the ball drops over his shoulder straight into his hands (stride unbroken)
@@ -10556,8 +10658,10 @@ function drawPlayer(p) {
   } else if (!armsUp) {
     // arm at his side: swings from the shoulder with the stride, elbow bent more the harder he runs
     drawArm(t, skin, 0.5, -9.5 + bob, Math.PI / 2 + s * pump, 2.5, striding ? -1 - s * 0.3 : -0.15, 3.5, 3);
-  }
+  } };   // (end of armChain)
+  armChain();
 
+  const upperBody = () => {   // (perf job closing: the raised arms, head and helmet in their own closure too, same code in the same order, to the end of drawPlayer)
   // arms straight up (catching, jumping) or, on a dive, stretched out ahead of the head, one on each side
   // of it with the hands apart, drawn behind the helmet so the head sits between them
   const diveArms = p.action === 'dive';
@@ -10617,7 +10721,7 @@ function drawPlayer(p) {
     // (v0.58: a standing man with his hands up to tip it aims them too: chest / basket for a low ball, overhead only for a high one; never straight up whatever the ball)
     const aimW = !diveArms && (p.action === 'jump' || p.action === 'toetap' || (!p.action && p.tipArms)) ? (rec && rec.replaying ? (ball.inAir ? p.handAim : null) : jumpAim(p)) : null;
     if (aimW) {
-      const g = toSpr(aimW.x, aimW.y), reach = 3 + len * 0.42 + len * 0.5 + 1.5, rest = 1.03, restD = reach * 0.85;   // (rest = the arm's angle hanging at his side, as the raise below starts from)
+      const g = dpToSpr(p, bk, fx, fxTw, aimW.x, aimW.y), reach = 3 + len * 0.42 + len * 0.5 + 1.5, rest = 1.03, restD = reach * 0.85;   // (rest = the arm's angle hanging at his side, as the raise below starts from)
       for (const [sx, hx, hy, el] of [[-4.5, -1.5, -4, -1], [4.5, 0.5, 4, 1]]) {
         if (p.oneArm && sx < 0) { drawArmTo(t, skin, sx, -11.5, sx - 3 - 4 * raise, -8 + 3 * raise, len * 0.42, len * 0.5, el, 4); continue; }   // (a one-handed leap: the other arm trails out behind him for balance)
         const tx = g.x + hx, ty = g.y + hy, sy = -11.5;
@@ -10725,7 +10829,7 @@ function drawPlayer(p) {
   ctx.restore();
   // ...and so does the ear hole: it swings back round the head as the face turns toward us, forward as it turns away, fading at the edge
   const earX = -1.5 - 5 * Math.sin(yaw), earA = Math.max(0, 1 - Math.max(0, -earX - 4.5) / 2.2);
-  if (earA > 0) { ctx.fillStyle = `rgba(0,0,0,${0.45 * earA})`; ctx.beginPath(); ctx.arc(earX, hy + 1, 1.2, 0, Math.PI * 2); ctx.fill(); }   // (ear hole slides back as the face turns toward us)
+  if (earA > 0) { ctx.fillStyle = blackA(BLK_EAR, 0.45 * earA); ctx.beginPath(); ctx.arc(earX, hy + 1, 1.2, 0, Math.PI * 2); ctx.fill(); }   // (ear hole slides back as the face turns toward us)
   }
   // (the cage sticks out front of the shell: it foreshortens as the head turns but never fades out or shrinks inside the helmet)
   ctx.save(); ctx.translate(0, hy); ctx.scale(Math.max(NECK.cageMin, faceW), 1); ctx.translate(0, -hy);
@@ -10776,6 +10880,8 @@ function drawPlayer(p) {
   ctx.restore();
   if (cq) { if (cq.mvl) mvAfter(p, cq); else celebAfter(p, cq); }   // (world space: the scripted ball / a move look's turf puffs and pencil strokes)
   if (p.lid) saLidDraw(p, ac, t);   // (icoLidPop: his helmet tumbling away)
+  };   // (end of upperBody)
+  upperBody();
 }
 
 const PICK_R = 1.7 * YD;

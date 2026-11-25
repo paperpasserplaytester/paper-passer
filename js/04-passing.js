@@ -5,6 +5,7 @@
 // QB's controls and view, and the others run their routes; dragging back again tucks it and runs.
 let passer = null, passerMode = false;
 const thrower = () => passer || qb;
+const qbPastLine = () => thrower() === qb && qb.x > los;   // (phase 5, 14d: past the line of scrimmage the QB is a runner: no aim, no throw, touch and mouse alike)
 const canPasserThrow = () => state === 'run' && passer && runner === passer && !passer.action && passer.x < los;
 // the camera pulls out to the QB's view as soon as he drags the ball back to set up (and stays out while he's set)
 // (the same moment the others leave their blocks and go back into their routes)
@@ -91,12 +92,13 @@ function throwBall() {
   if (oo && oo.cfg && oo.cfg.kind === 'rb') return;   // (1v1 RB vs LB: no passing)
   if (state === 'drop' && snapFly && clock < snapFly.dur && thrower() === qb && aim) { throwQueued = true; throwQueuedAim = aim; return; }   // (never an instant snap: the ball isn't in his hands yet)
   throwQueued = false;
+  if (qbPastLine()) { aim = null; throwQueuedAim = null; return; }   // (phase 5: a release once he is past the line throws nothing; his next step makes him the runner (updateQB))
   const t = throwTarget(), bullet = bulletMode, P = thrower(), trick = P !== qb;
   aim = null; ball.forced = false;   // (the computer's QB sets this after a forced throw)
   stiffClear(P);
   if (t.dist < 3 * YD || P.action) return;
-  hsEv('throw', P);   // (the release: a long completion's highlight starts here)
-  annThrow(P, t);   // (the announcers: a deep ball is held until it comes down)
+  perfTime('throw hl', hsEv, null, ['throw', P]);   // (the release: a long completion's highlight starts here)
+  perfTime('throw ann', annThrow, null, [P, t]);   // (the announcers: a deep ball is held until it comes down)
   if (tut) tut.bullet = bulletMode;
   if (trick) {
     if (t.x < P.x - 0.5 * YD) return;   // (a screen catcher just keeps running)
@@ -163,7 +165,7 @@ function throwBall() {
     const k = Math.random() < PRESSURE_THROW.ground ? (grounded = true, 0.08 + Math.random() * 0.12) : 1 - PRESSURE_THROW.hitShort * Math.random();
     t.x = P.x + (t.x - P.x) * k; t.y = P.y + (t.y - P.y) * k;
   }
-  throwSfx(bullet);
+  perfTime('throw sfx', throwSfx, null, [bullet]);   // (v0.74: a spike line on the release names the sound if it is the cost)
   const tl = Math.hypot(t.x - P.x, t.y - P.y) || 1;
   for (const d of back7) { d.diveRolled = false; d.divePick = false; d.userJump = null; }
   for (const d of dl) {

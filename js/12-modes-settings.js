@@ -2323,7 +2323,7 @@ function healAll() { for (const s of Object.values(ROSTER).flat()) { s.cond = 10
 const PRAC = {
   xpBase: 0.35,                                 // weekly practice XP = MARKET.avgXP x this x the curve and every multiplier (x UPG.xpK in upgGain)
   tau: 40, loadDefault: 40, weeks: 17,           // dev curve 1 - e^(-load/tau), scaled to 1 at load 100; weeks = a season, for the projections
-  riskMax: 0.017, riskPow: 2.4,                 // weekly injury chance of a baseline player at load 100; x (load/100)^riskPow
+  riskMax: 0.004, riskPow: 2.4,                // weekly injury chance of a baseline player at load 100; x (load/100)^riskPow
   fatigue: 9, fatPow: 1.5,                       // condition lost a week at load 100 (x (load/100)^fatPow)
   trCond: 0.7, trCondSpec: 2,                     // condition regained a week per trainer star (+ a CONDITIONING specialist)
   trDev: 0.15, trDevBase: 0.7, specDev: 1.25, youthDev: 1.35,   // dev x = base + per star; x specDev for his position groups; x youthDev at 24 and under for YOUTH
@@ -2334,6 +2334,16 @@ const PRAC = {
 };
 // focus (up to `max` position groups, career.prac.focus): chosen groups x xp XP, x fat condition lost, x risk injury chance; every other group x off XP once any is chosen
 const PRAC_FOCUS = { max: 2, xp: 1.4, off: 0.92, fat: 1.25, risk: 1.3 };
+// practice sessions (career.prac.ses = { wk, yr, done: [{ unit, grade, len }], auto }): up to `max` a week, any unit, QUICK = quickK of a FULL one.
+// A unit's sessions walk up the cumulative `load` steps (so pracCurve gives falling returns, the fatigue formula the condition hit); XP x grade.
+// A unit with no session that week gets the old automatic week at its slider x autoK only while ses.auto is on.
+const PRAC_SES = {
+  max: 3, quickK: 0.6, autoK: 0.6,
+  load: [45, 75, 100],                                // cumulative load after a unit's 1st / 2nd / 3rd full session of the week
+  grade: { gold: 1.25, silver: 1, bronze: 0.75 },     // XP multiplier by the session's grade
+  units: ['off', 'def', 'kick', 'punt', 'ret'],
+  roll: { gold: 0.7, silver: 0.3, starK: 0.08 },     // placeholder grade (pracSesGrade until drills exist): score = random + starK x (unit avg stars - 3); >= gold / >= silver / bronze
+};
 // mentors: a veteran (vetYrs+ years in the league, healthy) coaches players under menteeYrs years in his group. Each mentor adds each x his value (stars/awareness mix), best `max` count, total capped at cap
 const MENTOR = { vetYrs: 5, menteeYrs: 5, max: 2, each: 0.15, cap: 0.25, starsW: 0.5, awrW: 0.5, minMood: 25 };   // minMood: a player in poor mood (below this) can be neither mentor nor mentoree
 // bench: non-starters x xp XP; a group's non-starters (average stars minus base, x perStar, 0..cap) lift that group's starters' XP. No bench or a weak one = no bonus
@@ -2390,6 +2400,7 @@ function prac() {
   if (P.report === undefined) P.report = null;
   if (P.unseen == null) P.unseen = false;
   if (!P.rec) P.rec = { slots: [], touched: false };   // (the recovery room's weekly slots)
+  if (!P.ses || P.ses.yr !== LEAGUE.year) P.ses = { wk: season ? season.week : 0, yr: LEAGUE.year, done: [], auto: P.ses ? P.ses.auto !== false : true };   // (practice sessions: reset each week by pracWeek, and each new season)
   return P;
 }
 // one look at the roster for a week of practice: starters (the game's own startersOf), each group's players, healthy veterans, depth
@@ -2450,6 +2461,66 @@ function pracPreview(side, load) {
   }
   return { upg, cd: n ? cd / n : 0, hurt, pAny: 1 - any };
 }
+// --- practice sessions (PRAC_SES): the player starts them; the old automatic week is AUTO-RUN
+const pracSesSide = s => OFF_GROUPS.includes(s.group) ? 'off' : 'def';   // (whose trainer runs him; the kicker sits on the offense's side)
+function pracSesUnit(unit) {   // the players a session of this unit trains (special teams from the depth chart's own picks)
+  const me = MATCH.you, R = ROSTER[me] || [], ok = p => p && R.includes(p), uniq = L => [...new Set(L.filter(ok))];
+  if (unit === 'off' || unit === 'def') return pracUnit(unit);
+  const pg = u => ST_PAGES.find(p => p.unit === u);
+  if (unit === 'kick') return uniq([kickerFor(me, 'ko'), kickerFor(me, 'fg')]);
+  if (unit === 'punt') { const G = pg('punt'); return uniq(stPeople(me, G).filter((p, i) => G.slots[i].rule === 'P' || G.slots[i].rule === 'gun')); }
+  return uniq(stPeople(me, pg('kr')));
+}
+const pracSesW = len => len === 'quick' ? PRAC_SES.quickK : 1;
+const pracSesCount = (unit, P = prac()) => P.ses.done.filter(d => d.unit === unit).reduce((t, d) => t + pracSesW(d.len), 0);
+function pracSesLoadAt(c) {   // cumulative load after c sessions of one unit (fractions = QUICK ones)
+  const L = PRAC_SES.load, i = Math.floor(c);
+  if (c <= 0) return 0;
+  if (i >= L.length) return L[L.length - 1];
+  const a = i ? L[i - 1] : 0;
+  return a + (L[i] - a) * (c - i);
+}
+// one player's share of a session: the step from the unit's load so far to the next one (XP before the grade, condition change, injury chance)
+function pracSesCalc(s, unit, len, cx, c0 = pracSesCount(unit)) {
+  const side = pracSesSide(s), L0 = pracSesLoadAt(c0), L1 = pracSesLoadAt(c0 + pracSesW(len)), a = pracCalc(s, side, L0, cx), b = pracCalc(s, side, L1, cx);
+  return { xp: b.xp - a.xp, cd: b.cd - a.cd, risk: Math.max(0, b.risk - a.risk), L0, L1 };
+}
+function pracSesGrade(unit) {   // placeholder until the drills (prompt 2): a roll from the unit's ratings
+  const L = pracSesUnit(unit), R = PRAC_SES.roll, st = L.length ? L.reduce((t, s) => t + s.stars, 0) / L.length : 3;
+  const sc = Math.random() + R.starK * (st - 3);
+  return sc >= R.gold ? 'gold' : sc >= R.silver ? 'silver' : 'bronze';
+}
+const pracSesLeft = () => Math.max(0, PRAC_SES.max - prac().ses.done.length);
+function pracInjure(s) {   // a practice injury (sessions and the automatic week). Returns the report line.
+  const sev = rollSev(s);
+  s.inj = { sev, weeks: medWeeks(Math.max(1, rint(...INJURY.weeks[sev]))) }; if (seasonEnder(sev, true)) Object.assign(s.inj, { season: true, weeks: INJ_SEASON.weeks }); injuryBegin(s);
+  injuryPotential(s, sev); moraleKeyInjury(s);
+  return `${s.short} (${sevName(s.inj)}): hurt in practice, out ${injWk(s.inj)}`;
+}
+// run one session NOW (click handlers only, never a draw): XP + condition + the injury roll for the whole unit. Returns what happened, or null.
+function pracSesRun(unit, len = 'full', grade = null) {
+  const P = prac(), S = P.ses;
+  if (!season || S.done.length >= PRAC_SES.max || !PRAC_SES.units.includes(unit)) return null;
+  grade = grade || pracSesGrade(unit);
+  const cx = pracCtx(), c0 = pracSesCount(unit, P), gk = PRAC_SES.grade[grade] || 1, men = [], ups = [], hurt = [];
+  const rest = new Set(rrOn() ? recSlots().filter(x => x.kind === 'rest').map(x => x.s) : []);   // (recovery room REST: no practice)
+  for (const s of pracSesUnit(unit)) {
+    if ((s.inj && s.inj.weeks > 0) || rest.has(s)) continue;
+    const c = pracSesCalc(s, unit, len, cx, c0), cond0 = condOf(s);
+    if (upgGain(s, c.xp * gk)) ups.push(s.name);
+    let line = null;
+    if (SETTINGS.injuries) {
+      s.cond = Math.max(0, Math.min(100, cond0 + c.cd));
+      if (pracInjOn() && !s.inj && Math.random() < c.risk) { line = pracInjure(s); hurt.push(line); }
+    }
+    men.push({ s, xp: c.xp * gk * UPG.xpK, cd: condOf(s) - cond0, hurt: line });
+  }
+  S.done.push({ unit, grade, len });
+  if (hurt.length) { S.hurt = [...(S.hurt || []), ...hurt]; autoPromote(MATCH.you); }
+  if (ups.length) LEAGUE.upgNew = [...new Set([...(LEAGUE.upgNew || []), ...ups])];
+  recalcTeamStars(); autosaveSoon();
+  return { unit, grade, len, men, ups, hurt };
+}
 // --- recovery room
 // The Recovery Center's weekly slots (career.prac.rec = { slots: [{ name, kind }], touched }): REST (healthy: no practice that week, a big
 // condition gain) or TREATMENT (hurt / LIMITED: a week off the layoff, maybe two, lower reinjury odds next game; LIMITED = an extra week of rehab).
@@ -2490,7 +2561,7 @@ function recTreat(s, lines) {   // TREATMENT on a hurt player (pracWeek's hurt b
 // a week (or more, with byes) of practice after a game: XP, condition, injuries, rehab, construction. Returns lines for the injury report.
 function pracWeek(passed = 1) {
   if (!season || exhibition || tut) return [];
-  const P = prac(), notes = [], got = [], hurtNew = [], cx = pracCtx();
+  const P = prac(), notes = [], got = [], hurtNew = [], cx = pracCtx(), S = P.ses, did = new Set(S.done.map(d => d.unit));
   let xpSum = 0;
   const recMap = new Map(), recLines = [];   // (the recovery room: this week's slots)
   if (rrOn()) for (const x of recSlots()) recMap.set(x.s, x.kind);
@@ -2506,18 +2577,14 @@ function pracWeek(passed = 1) {
     const rk = w === 0 ? recMap.get(s) : null;
     if (rk === 'treat') { rehabStep(s); recLines.push(`${s.short}: treatment, an extra week of rehab`); }   // (LIMITED: rehab fills faster)
     if (rk === 'rest' && SETTINGS.injuries) { const was = condOf(s); s.cond = Math.min(100, was + recGain()); recLines.push(`${s.short}: rested, condition ${was} > ${condOf(s)}`); continue; }   // (REST: no practice, no XP, no practice injury)
-    const c = pracCalc(s, side, P.load[side], cx);
+    if (w === 0 && did.has(side)) { if (SETTINGS.injuries) s.cond = Math.max(0, Math.min(100, condOf(s) + pracCalc(s, side, 0, cx).cd)); continue; }   // (sessions this week: they already gave the XP / fatigue; the trainers' weekly recovery still comes)
+    if (!S.auto) continue;   // (AUTO-RUN off and no session: nothing at all for this unit)
+    const c = pracCalc(s, side, P.load[side] * PRAC_SES.autoK, cx);
     xpSum += c.xp * UPG.xpK;
     if (upgGain(s, c.xp)) got.push(s.name);
     if (SETTINGS.injuries) {
       s.cond = Math.max(0, Math.min(100, condOf(s) + c.cd));
-      if (pracInjOn() && !s.inj && Math.random() < c.risk) {
-        const sev = rollSev(s);
-        s.inj = { sev, weeks: medWeeks(Math.max(1, rint(...INJURY.weeks[sev]))) }; if (seasonEnder(sev, true)) Object.assign(s.inj, { season: true, weeks: INJ_SEASON.weeks }); injuryBegin(s);
-        injuryPotential(s, sev); moraleKeyInjury(s);
-        const line = `${s.short} (${sevName(s.inj)}): hurt in practice, out ${injWk(s.inj)}`;
-        notes.push(line); hurtNew.push(line);
-      }
+      if (pracInjOn() && !s.inj && Math.random() < c.risk) { const line = pracInjure(s); notes.push(line); hurtNew.push(line); }
     }
   }
   if (got.length) LEAGUE.upgNew = [...new Set([...(LEAGUE.upgNew || []), ...got])];
@@ -2528,7 +2595,8 @@ function pracWeek(passed = 1) {
   if (Object.keys(seen).length > 80) P.pairs = Object.fromEntries(pairs.map(x => [x.m.name + '>' + x.e.name, 1]));
   notes.push(...recLines.filter(l => /treatment/.test(l)));
   P.rec = { slots: [], touched: false };   // (the slots clear after the week)
-  P.report = { rec: recLines, wk: season ? season.week : 0, xp: Math.round(xpSum), ups: [...new Set(got)], inj: hurtNew, battles: battles.map(b => b.line), pairs: pairs.slice(0, 4).map(x => ({ m: x.m.name, e: x.e.name, pct: Math.round(x.pct * 100) })), load: { ...P.load } };
+  P.report = { rec: recLines, wk: season ? season.week : 0, xp: Math.round(xpSum), ups: [...new Set(got)], inj: [...(S.hurt || []), ...hurtNew], battles: battles.map(b => b.line), pairs: pairs.slice(0, 4).map(x => ({ m: x.m.name, e: x.e.name, pct: Math.round(x.pct * 100) })), load: { ...P.load }, ses: S.done.slice(), auto: S.auto };
+  P.ses = { wk: season ? season.week : 0, yr: LEAGUE.year, done: [], auto: S.auto };   // (a new week of sessions)
   if (battles.length || hurtNew.length || newPair) P.unseen = true;
   autoPromote(MATCH.you); recalcTeamStars();
   return notes;
@@ -3240,15 +3308,25 @@ const TOUR_STEPS = {
     { scr: 'practice', enter: () => { PR.tab = 'fac'; }, rect: () => [PR_SCOUT.off, PR_SCOUT.def], text: 'Scouts hunt draft gems for you.',
       more: 'SCOUTS (if the SCOUTS setting is on): your offense and defense scouts watch the next draft class all season and report generational or underrated prospects. Click one to assign him a position group or a few prospects by name: his reads on those get sharper.' },
   ],
+  pracField: [
+    { scr: 'practice', enter: () => { PR.tab = 'field'; }, rect: () => PRAC_SES.units.map((u, i) => prMag(i)), text: 'Tap a unit to see them.',
+      more: 'Each magnet is a unit: offense, defense, kicking, punting, returns. Its players are pinned below with their XP bar, condition bar and a green arrow when an upgrade is close. Hover a magnet to preview a session.' },
+    { scr: 'practice', enter: () => { PR.tab = 'field'; }, rect: () => PR.pick ? [PR_PICK] : [PR_START], can: () => pracSesLeft() > 0 && !!season, doBase: () => prac().ses.done.length, do: b => prac().ses.done.length > b, text: 'Run a session. Earn a sticker.',
+      more: 'START PRACTICE: pick a unit, then QUICK (1 drill) or FULL (3 drills). The unit gets XP right away and loses a little condition. Each extra session of the same unit that week gives less.' },
+    { scr: 'practice', enter: () => { PR.tab = 'field'; }, rect: () => [0, 1, 2].map(i => ({ x: PR_BOARD.slotX + (i - 1) * PR_BOARD.slotGap - PR_BOARD.slotR, y: PR_BOARD.slotY - PR_BOARD.slotR, w: PR_BOARD.slotR * 2, h: PR_BOARD.slotR * 2 })), text: 'Three a week. Gold pays most.',
+      more: 'Three sessions a week. A gold sticker gives the most XP, bronze the least. They reset after every game.' },
+    { scr: 'practice', enter: () => { PR.tab = 'field'; }, rect: () => PR_AUTO, text: 'Skipped units can practice themselves.',
+      more: () => `AUTO ON: a unit with no session that week practices by itself at ${Math.round(PRAC_SES.autoK * 100)}% of the pace set in the COACHES' OFFICE. AUTO OFF: skipped units rest, no XP and no wear.` },
+  ],
   pracWeek: [
     { scr: 'practice', enter: () => { PR.tab = 'week'; }, rect: () => ({ x: 30, y: 84, w: 600, h: 530 }), text: 'Last week\'s practice, in one look.',
-      more: "THIS WEEK, left: last week's practice. XP earned, upgrades that became ready, practice injuries, the load you ran and your focus groups." },
+      more: "REPORT, left: last week's practice. XP earned, upgrades that became ready, practice injuries, the sessions you ran and AUTO." },
     { scr: 'practice', enter: () => { PR.tab = 'week'; }, rect: () => ({ x: 650, y: 84, w: 600, h: 530 }), text: 'Battles, mentors, and what\'s ahead.',
       more: 'Right: battles that were decided, the top mentor pairs, and the outlook per season if you keep the current plan.' },
   ],
   pracPlan: [
-    { scr: 'practice', enter: () => { PR.tab = 'plan'; }, rect: () => [PR_CARD.off, PR_CARD.def], text: 'Train harder, grow faster.',
-      more: 'TRAINING LOAD: set how hard each unit trains (0-100). More load gives every player on that unit practice XP toward his +1 upgrades.' },
+    { scr: 'practice', enter: () => { PR.tab = 'plan'; }, rect: () => [PR_CARD.off, PR_CARD.def], text: 'Auto pace for skipped units.',
+      more: 'AUTO-RUN INTENSITY: how hard a unit trains by itself in a week you ran no session for it (AUTO on, on the FIELD tab). More gives more XP toward +1 upgrades.' },
     { scr: 'practice', enter: () => { PR.tab = 'plan'; }, rect: () => [pracSlider('off'), pracSlider('def')], text: 'Push too hard and they break.',
       more: 'But load also wears on condition and raises the chance of a practice injury, and it rises faster than the XP does. Old, tired and injury-prone players suffer most. The tick is the plan in force.' },
     { scr: 'practice', enter: () => { PR.tab = 'plan'; }, rect: () => [PR_OK, PR_STAFF], text: 'Lock it in. Trainers do the rest.',
@@ -3263,8 +3341,8 @@ const TOUR_STEPS = {
   pracBattles: [
     { scr: 'practice', enter: () => { PR.tab = 'battles'; }, rect: () => ({ x: 30, y: 84, w: 600, h: 530 }), text: 'Close battles. Winner gets better.',
       more: 'HEATED COMPETITIONS: a starter and a backup close in rating battle in practice. The winner gains, the loser can sulk.' },
-    { scr: 'practice', enter: () => { PR.tab = 'battles'; }, rect: () => [{ x: 650, y: 84, w: 600, h: 270 }, { x: 650, y: 366, w: 600, h: 248 }], text: 'Vets coach the young ones.',
-      more: 'Recent results are logged here, and MENTOR PAIRS show veterans (5+ years) who boost the XP of younger players in their group.' },
+    { scr: 'practice', enter: () => { PR.tab = 'battles'; }, rect: () => ({ x: 650, y: 84, w: 600, h: 530 }), text: 'Every result lands right here.',
+      more: "Recent battle results are logged here. MENTOR PAIRS moved to the COACHES' OFFICE." },
   ],
   scouts: [   // the scout popup on the facilities campus (its ? while the popup is open)
     { scr: 'practice', enter: () => { PR.tab = 'fac'; if (!SCU) SCU = { side: 'off', page: 0 }; }, rect: () => ({ x: SCU_P.x + 16, y: SCU_P.y + 50, w: SCU_P.w - 32, h: 44 }), text: 'More stars, sharper draft reads.',
@@ -3275,16 +3353,16 @@ const TOUR_STEPS = {
       more: 'He reports on the home screen during the season and again on draft day. Better scouts are on the HIRING BOARD.' },
   ],
   pracAll: [   // the first visit to PRACTICE: every page in turn
-    { scr: 'practice', enter: () => { PR.tab = 'week'; }, rect: () => PR_TAB_BTNS, text: 'Practice runs itself. Steer it here.',
-      more: 'WELCOME TO PRACTICE. Your team practices after every game by itself. These four pages let you steer it. Tap the ? on any page to replay its tips.' },
-    { scr: 'practice', enter: () => { PR.tab = 'week'; }, rect: () => [{ x: 30, y: 84, w: 600, h: 530 }, { x: 650, y: 84, w: 600, h: 530 }], text: 'Last week\'s report card.',
-      more: 'THIS WEEK: the report of the last practice: XP earned, upgrades ready, injuries, battles and mentors.' },
-    { scr: 'practice', enter: () => { PR.tab = 'plan'; }, rect: () => [PR_CARD.off, PR_CARD.def], text: 'More training, more XP, more risk.',
-      more: 'TRAINING PLAN: how hard each unit trains. More load means more XP toward +1 upgrades, but more wear and practice injuries.' },
-    { scr: 'practice', enter: () => { PR.tab = 'groups'; }, rect: () => PR_FOCUS_BTNS, text: 'Push the groups you need.',
-      more: "GROUPS: focus up to " + PRAC_FOCUS.max + " position groups so they train harder, and see each group's depth and mentors." },
-    { scr: 'practice', enter: () => { PR.tab = 'battles'; }, rect: () => [{ x: 30, y: 84, w: 600, h: 530 }, { x: 650, y: 366, w: 600, h: 248 }], text: 'Rivals battle. Vets mentor.',
-      more: 'BATTLES: close starter vs backup fights, plus mentor pairs where veterans coach the young. FACILITIES (its own button on the home screen) upgrades the buildings.' },
+    { scr: 'practice', enter: () => { PR.tab = 'field'; }, rect: () => PR_TAB_BTNS, text: 'Your practice field. Run sessions here.',
+      more: 'WELCOME TO PRACTICE. Run up to three sessions a week on the FIELD. Tap the ? on any page to replay its tips.' },
+    { scr: 'practice', enter: () => { PR.tab = 'field'; }, rect: () => PR.pick ? [PR_PICK] : [PR_START], can: () => pracSesLeft() > 0 && !!season, doBase: () => prac().ses.done.length, do: b => prac().ses.done.length > b, text: 'Start one. Pick a unit.',
+      more: 'START PRACTICE: pick a unit, then QUICK or FULL. The XP lands right away and the sticker shows how it went.' },
+    { scr: 'practice', enter: () => { PR.tab = 'week'; }, rect: () => [{ x: 30, y: 84, w: 600, h: 530 }, { x: 650, y: 84, w: 600, h: 530 }], text: "Last week's report card.",
+      more: 'REPORT: the last practice week: XP earned, upgrades ready, injuries, battles and mentors.' },
+    { scr: 'practice', enter: () => { PR.tab = PR.office = 'plan'; }, rect: () => [PR_CARD.off, PR_CARD.def], text: 'Quiet settings live in here.',
+      more: "COACHES' OFFICE: the AUTO-RUN pace, trainers, focus groups and mentors. It all works in the background if you never touch it." },
+    { scr: 'practice', enter: () => { PR.tab = 'battles'; }, rect: () => ({ x: 30, y: 84, w: 600, h: 530 }), text: 'Rivals battle for the job.',
+      more: 'BATTLES: close starter vs backup fights. FACILITIES (its own button on the home screen) upgrades the buildings.' },
   ],
 };
 const TOUR_FREE = ['carDiff', 'locker'];   // tours that run before a franchise exists (the new career screen, the questionnaire)
@@ -3310,7 +3388,7 @@ function tourEnd() {
   const s = tour.saved;
   if (tour.id === 'trade') { Object.assign(TR, { sel: s.sel, page: s.page, partner: s.partner, give: s.give, get: s.get, tab: s.tab, pg: s.pg }); TR.v++; TCX = null; }
   results.screen = s.scr; const was = tour.id; tour = null;
-  if (was === 'pracAll') PR.tab = 'week';
+  if (was === 'pracAll') PR.tab = 'field';
   if (was === 'home') tutPrompt = LEAGUE.firstRun === 'after' ? 'setup' : 'ready';   // (the intro is over: continue to the football tutorial? first franchise: the setup questions first)
 }
 // facilities + practice unlock after the first offseason (year 2): a popup says so and the two buttons flash in
@@ -3350,7 +3428,7 @@ function tourQDraw() {   // the "?" button that replays the tutorial of the scre
   if (b) menuBtn(b, '?', RES.bright, 30);
 }
 function tourQClick(pt) {   // true when the "?" was hit
-  const scr = results.screen, id = scr === 'trade' && !TR.sel ? 'trade' : scr === 'tradeb' ? 'trade' : scr === 'hire' || scr === 'board' ? 'hire' : scr === 'practice' ? SCU && PR.tab === 'fac' ? 'scouts' : ({ fac: 'prac', week: 'pracWeek', plan: 'pracPlan', groups: 'pracGroups', battles: 'pracBattles' }[PR.tab] || 'pracWeek') : null;
+  const scr = results.screen, id = scr === 'trade' && !TR.sel ? 'trade' : scr === 'tradeb' ? 'trade' : scr === 'hire' || scr === 'board' ? 'hire' : scr === 'practice' ? SCU && PR.tab === 'fac' ? 'scouts' : ({ fac: 'prac', field: 'pracField', week: 'pracWeek', plan: 'pracPlan', groups: 'pracGroups', battles: 'pracBattles' }[PR.tab] || 'pracField') : null;
   if (!id || !inBtn(pt, id === 'trade' && scr === 'trade' ? TR_HELP_BTN : id.startsWith('prac') || id === 'scouts' ? PRAC_Q_BTN : id === 'hire' ? HIRE_Q_BTN : TOUR_Q_BTN)) return false;
   tourStart(id, true); return true;
 }
@@ -3466,12 +3544,12 @@ function drawTradeMeter(k) {
 }
 
 // the screen: a top-down campus (left) beside the dashboard (right)
-const PR = { draft: null, sel: 'field', drag: null, msg: null, done: null, tab: 'week' };
+const PR = { draft: null, sel: 'field', drag: null, msg: null, done: null, tab: 'field', unit: 'off', office: 'plan', pick: null, land: null, pv: null };   // (unit = the FIELD tab's unit magnet, office = the COACHES' OFFICE page, pick = the START PRACTICE picker, land = the sticker landing)
 // PRACTICE is introduced after FACILITIES: from week PRAC_FROM.week of season PRAC_FROM.year (a franchise that already opened practice keeps it)
 const PRAC_FROM = { year: 2, week: 2 };
 const pracOpenYet = () => { const y = LEAGUE.year || 1, t = career.tut || {}; return y > PRAC_FROM.year || (y === PRAC_FROM.year && !!season && (season.offseason || season.week >= PRAC_FROM.week)) || !!t.pracAll || !!t.pracSeen; };
 const pracShown = () => !!season && !exhibition && !tut && pracOpenYet();   // (franchise only: no PRACTICE button in exhibitions or the tutorial)
-const PR_TABS = [['week', 'THIS WEEK'], ['plan', 'TRAINING PLAN'], ['groups', 'GROUPS'], ['battles', 'BATTLES']];   // (FACILITIES is not a tab: its home button opens the campus alone, tab 'fac')
+const PR_TABS = [['field', 'FIELD'], ['battles', 'BATTLES'], ['week', 'REPORT'], ['office', "COACHES' OFFICE"]];   // (the office tab shows PR.tab 'plan' or 'groups': PR_SUB)   // (FACILITIES is not a tab: its home button opens the campus alone, tab 'fac')
 const PR_TAB_BTNS = PR_TABS.map((t, i) => ({ k: t[0], x: 96 + i * 250, y: 14, w: 240, h: 50 }));
 const PR_FOCUS_BTNS = PRAC_GROUPS.map((g, i) => ({ g, x: 50, y: 138 + i * 50, w: 120, h: 40 }));
 const PR_CELLS = { field: { x: 30, y: 90, w: 206, h: 190 }, weight: { x: 242, y: 90, w: 206, h: 190 }, film: { x: 454, y: 90, w: 206, h: 190 }, med: { x: 30, y: 290, w: 206, h: 180 }, rec: { x: 242, y: 290, w: 206, h: 180 }, lounge: { x: 454, y: 290, w: 206, h: 180 } };   // the campus: 3 x 2
@@ -3481,14 +3559,18 @@ const PR_CARD = { off: { x: 690, y: 90, w: 560, h: 196 }, def: { x: 690, y: 300,
 const PR_STAFF = { x: 130, y: 625, w: 250, h: 80 };
 const PR_UP = { x: 500, y: 520, w: 140, h: 76 }, PR_OK = { x: 690, y: 524, w: 560, h: 76 }, PR_REP = { off: { x: 1100, y: 108, w: 138, h: 34 }, def: { x: 1100, y: 318, w: 138, h: 34 } };
 const pracSlider = side => ({ x: 730, y: PR_CARD[side].y + 84, w: 440, h: 12 });
-function pracOpen(tab) { const P = prac(); PR.draft = { ...P.load }; PR.drag = null; PR.msg = null; PR.tab = tab === 'fac' && facOn() ? 'fac' : tab === 'groups' || tab === 'battles' || tab === 'plan' ? tab : 'week'; P.unseen = false; results.screen = 'practice'; }
+const PR_SUB = [{ k: 'plan', label: 'AUTO-RUN & TRAINERS', x: 400, y: 634, w: 250, h: 62 }, { k: 'groups', label: 'FOCUS GROUPS', x: 662, y: 634, w: 250, h: 62 }];   // the COACHES' OFFICE pages
+const prOffice = () => PR.tab === 'plan' || PR.tab === 'groups';
+function pracOpen(tab) { const P = prac(); PR.draft = { ...P.load }; PR.drag = null; PR.msg = null; PR.pick = null; PR.land = null; PR.tab = tab === 'fac' && facOn() ? 'fac' : ['groups', 'battles', 'plan', 'week'].includes(tab) ? tab : 'field'; P.unseen = false; results.screen = 'practice'; }
 function pracSetLoad(side, x) { const r = pracSlider(side); PR.draft[side] = Math.round(Math.max(0, Math.min(1, (x - r.x) / r.w)) * 20) * 5; }
 function pracClick(pt) {
   if (offPop) return;
   if (tourQClick(pt)) return;
   if (SCU) { if (PR.tab === 'fac' && scoutsOn()) scuClick(pt); else SCU = null; return; }
   if (inBtn(pt, BACK_BTN)) { results.screen = 'home'; return; }
-  if (PR.tab !== 'fac') for (const b of PR_TAB_BTNS) if (inBtn(pt, b)) { PR.tab = b.k; PR.drag = null; return; }
+  if (PR.tab === 'field' && pracFieldClick(pt)) return;   // (the picker is modal: it takes every click while open)
+  if (PR.tab !== 'fac') for (const b of PR_TAB_BTNS) if (inBtn(pt, b)) { PR.tab = b.k === 'office' ? PR.office : b.k; PR.drag = null; return; }
+  if (prOffice()) for (const b of PR_SUB) if (inBtn(pt, b)) { PR.tab = PR.office = b.k; PR.drag = null; return; }
   if (PR.tab === 'groups') {   // FOCUS toggles (up to PRAC_FOCUS.max groups)
     const P = prac();
     for (const b of PR_FOCUS_BTNS) if (inBtn(pt, b)) {
@@ -3721,11 +3803,13 @@ function pracConstruction(c, F, t) {   // hatching and a swinging crane over a b
 }
 function drawPractice() {
   if (PR.tab === 'fac' && !facOn()) PR.tab = 'week';
-  if (PR.tab !== 'fac' && !PR_TABS.some(t => t[0] === PR.tab)) PR.tab = 'week';
+  if (PR.tab !== 'fac' && !prOffice() && !PR_TABS.some(t => t[0] === PR.tab)) PR.tab = 'field';
   if (PR.tab === 'fac') drawPracFac(false);
   else if (PR.tab === 'plan') drawPracFac(true);
-  else { paperBg(); coinBox(26, 22, LEAGUE.coins, RES.bright); ({ week: drawPracWeek, groups: drawPracGroups, battles: drawPracBattles })[PR.tab](); menuBtn(BACK_BTN, '', RES.bright, 22, backArrow); }
-  if (PR.tab !== 'fac') PR_TAB_BTNS.forEach((b, i) => menuBtn(b, PR_TABS[i][1], PR.tab === b.k ? '#f2c230' : RES.bright, 20));
+  else { paperBg(); coinBox(26, 22, LEAGUE.coins, RES.bright); ({ field: drawPracField, week: drawPracWeek, groups: drawPracGroups, battles: drawPracBattles })[PR.tab](); menuBtn(BACK_BTN, '', RES.bright, 22, backArrow); }
+  if (PR.tab !== 'fac') PR_TAB_BTNS.forEach((b, i) => menuBtn(b, PR_TABS[i][1], PR.tab === b.k || (b.k === 'office' && prOffice()) ? '#f2c230' : RES.bright, 20));
+  if (prOffice()) PR_SUB.forEach(b => menuBtn(b, b.label, PR.tab === b.k ? '#f2c230' : RES.bright, 18));
+  if (PR.tab === 'field') pracPickDraw();
   if (SCU && PR.tab === 'fac' && scoutsOn()) drawScu(); else SCU = null;
   tourQDraw();
 }
@@ -3749,7 +3833,7 @@ const prSt = v => v ? v.toFixed(1) + '★' : '-';
 function drawPracWeek() {
   const P = prac(), R = P.report;
   resPanel(30, 84, 600, 530, [[R ? `LAST PRACTICE  WEEK ${R.wk}` : 'LAST PRACTICE', 24]], RES.bright);
-  if (!R) { prT('NO PRACTICE YET.', 54, 150); prT('It runs by itself after every game.', 54, 176, RES.dim, 15); }
+  if (!R) { prT('NO PRACTICE YET.', 54, 150); prT('Start a session on the FIELD tab', 54, 176, RES.dim, 15); }
   else {
     let y = 146;
     prT(`XP EARNED         ${R.xp}`, 54, y); y += 30;
@@ -3759,7 +3843,7 @@ function drawPracWeek() {
     if (!pracInjOn()) { prT(SETTINGS.injuries ? '(practice injuries are off in settings)' : '(injuries are off in settings)', 74, y, RES.dim, 14); y += 20; }
     else if (!R.inj.length) { prT('none this week', 74, y, RES.dim, 14); y += 20; }
     R.inj.slice(0, 5).forEach(l => { prT(l, 74, y, RES.dim, 14, 530); y += 20; });
-    y += 14; prT(`LOAD   OFFENSE ${R.load.off}%   DEFENSE ${R.load.def}%`, 54, y); y += 30;
+    y += 14; prT(`SESSIONS ${(R.ses || []).length}/${PRAC_SES.max}   AUTO ${R.auto === false ? 'OFF' : `ON  ${R.load.off}% / ${R.load.def}%`}`, 54, y); y += 30;
     prT(`FOCUS  ${P.focus.length ? P.focus.join(', ') : 'none (set it on the GROUPS tab)'}`, 54, y);
   }
   resPanel(650, 84, 600, 530, [['BATTLES, MENTORS, OUTLOOK', 24]], RES.bright);
@@ -3819,13 +3903,157 @@ function drawPracBattles() {
   }
   if (!any) prT('No close competitions right now.', 54, y, RES.dim, 16);
   prT(`A starter and a backup within ${BATTLE.gap} star${BATTLE.gap === 1 ? '' : 's'} can battle in practice.`, 54, 590, RES.dim, 12, 540);
-  resPanel(650, 84, 600, 270, [['RECENT RESULTS', 24]], RES.bright);
+  resPanel(650, 84, 600, 530, [['RECENT RESULTS', 24]], RES.bright);
   if (!P.hist.length) prT('no battles yet', 674, 146, RES.dim, 14);
-  P.hist.slice(0, 8).forEach((h, i) => prT(`WK${h.wk} ${h.line}`, 674, 140 + i * 25, h.big ? '#2e8b57' : RES.line, 13, 560));
-  resPanel(650, 366, 600, 248, [['MENTOR PAIRS', 24]], RES.bright);
-  const pairs = pracPairs();
-  if (!pairs.length) prT('none: veterans (5+ yrs) coach younger players of their group', 674, 428, RES.dim, 13, 560);
-  pairs.slice(0, 7).forEach((x, i) => prT(`${x.m.short} (${yrsPro(x.m)} yrs) > ${x.e.short}  +${Math.round(x.pct * 100)}% XP`, 674, 422 + i * 25, RES.line, 14, 560));
+  P.hist.slice(0, 18).forEach((h, i) => prT(`WK${h.wk} ${h.line}`, 674, 140 + i * 25, h.big ? '#2e8b57' : RES.line, 13, 560));
+}
+// --- practice field (the FIELD tab: sessions on a whiteboard)
+const PR_UNIT = { off: ['OFFENSE', '#3a6fd8', 'OFF'], def: ['DEFENSE', '#d0473a', 'DEF'], kick: ['KICKING', '#e09a1a', 'K'], punt: ['PUNTING', '#8a5ad0', 'P'], ret: ['RETURNS', '#2e9b5a', 'KR'] };
+const PR_MEDAL = { gold: ['#f2c230', '#8a5a00'], silver: ['#d3d8e0', '#5d6675'], bronze: ['#d08a4c', '#6a3a12'] };
+const PR_BOARD = { x: 30, y: 76, w: 1220, h: 544, slotY: 126, slotX: 640, slotGap: 170, slotR: 34, magY: 186, magH: 62, magW: 204, magX: 66, magGap: 232,
+  cardX: 50, cardY: 270, cardW: 188, cardH: 160, cardGap: 10, cols: 6, rows: 2, land: 0.5, landHold: 1.6 };   // land = the sticker's drop (s), landHold = its grade word stays (s)
+const PR_START = { x: 960, y: 628, w: 290, h: 78 }, PR_AUTO = { x: 800, y: 640, w: 146, h: 54 };
+const PR_PICK = { x: 290, y: 170, w: 700, h: 380 };
+const prMag = i => ({ x: PR_BOARD.magX + i * PR_BOARD.magGap, y: PR_BOARD.magY, w: PR_BOARD.magW, h: PR_BOARD.magH });
+const prPickUnit = i => ({ x: PR_PICK.x + 24 + i * 132, y: PR_PICK.y + 84, w: 124, h: 64 });
+const prPickLen = i => ({ x: PR_PICK.x + 70 + i * 290, y: PR_PICK.y + 196, w: 270, h: 120, len: i ? 'full' : 'quick' });
+let PR_BOARD_IMG = null;
+function pracBoardImg() {   // the whiteboard (frame, marker doodles, empty sticker spots), baked once per look
+  const B = PR_BOARD, dk = darkOn();
+  if (PR_BOARD_IMG && PR_BOARD_IMG.dk === dk) return PR_BOARD_IMG;
+  if (PR_BOARD_IMG) freeCanvas(PR_BOARD_IMG);
+  PR_BOARD_IMG = ctxBake(B.x - 8, B.y - 8, B.w + 24, B.h + 24, () => {
+    ctx.fillStyle = 'rgba(40,25,5,0.25)'; ctx.fillRect(B.x + 8, B.y + 8, B.w, B.h);
+    ctx.fillStyle = '#b9bec7'; ctx.fillRect(B.x - 6, B.y - 6, B.w + 12, B.h + 12);   // aluminium rim
+    ctx.fillStyle = RES.bright; ctx.fillRect(B.x, B.y, B.w, B.h);
+    ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(B.x - 6, B.y - 6, B.w + 12, B.h + 12);
+    ctx.fillStyle = '#9aa0aa'; ctx.fillRect(B.x + 40, B.y + B.h - 4, B.w - 80, 8);   // marker tray
+    const pen = (c, w, pts) => { ctx.strokeStyle = c; ctx.lineWidth = w; ctx.lineCap = 'round'; ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke(); };
+    for (let i = 0; i < 4; i++) pen('rgba(40,120,60,0.22)', 2, [[B.x + 60 + i * 30, B.y + 24], [B.x + 60 + i * 30 + 2, B.y + 96]]);   // faint yard lines, top corners
+    for (let i = 0; i < 4; i++) pen('rgba(40,120,60,0.22)', 2, [[B.x + B.w - 150 + i * 30, B.y + 24], [B.x + B.w - 148 + i * 30, B.y + 96]]);
+    ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    [['X', 120, 62, '#c83a2a'], ['O', 160, 44, '#2a5ac8'], ['O', 196, 74, '#2a5ac8'], ['X', B.w - 110, 50, '#c83a2a'], ['O', B.w - 70, 80, '#2a5ac8']].forEach(([t, x, y, c]) => { ctx.fillStyle = c; ctx.fillText(t, B.x + x, B.y + y); });
+    pen('rgba(42,90,200,0.5)', 2.5, [[B.x + 168, B.y + 52], [B.x + 210, B.y + 30], [B.x + 250, B.y + 40]]);   // a marker route
+    pen('rgba(34,48,90,0.35)', 2, [[B.x + 24, B.y + 166], [B.x + B.w - 24, B.y + 168]]);   // the line under the sticker spots
+    ctx.setLineDash([6, 6]);
+    for (let i = 0; i < PRAC_SES.max; i++) { ctx.strokeStyle = 'rgba(34,48,90,0.45)'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(B.slotX + (i - 1) * B.slotGap, B.slotY, B.slotR, 0, 7); ctx.stroke(); }
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(34,48,90,0.35)'; ctx.font = 'bold 28px monospace';
+    for (let i = 0; i < PRAC_SES.max; i++) ctx.fillText(String(i + 1), B.slotX + (i - 1) * B.slotGap, B.slotY + 1);
+  });
+  PR_BOARD_IMG.dk = dk;
+  return PR_BOARD_IMG;
+}
+function pracSticker(x, y, r, d, k = 1) {   // one gold / silver / bronze sticker for a done session d
+  const [f, e] = PR_MEDAL[d.grade] || PR_MEDAL.silver;
+  ctx.save(); ctx.translate(x, y); ctx.scale(k, k);
+  ctx.fillStyle = 'rgba(40,25,5,0.25)'; ctx.beginPath(); ctx.arc(3, 4, r, 0, 7); ctx.fill();
+  ctx.fillStyle = f; ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.fill(); ctx.strokeStyle = e; ctx.lineWidth = 3; ctx.stroke();
+  drawStar(0, -6, r * 0.42, '#ffffff', e, 2);
+  ctx.fillStyle = e; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(PR_UNIT[d.unit][2] + (d.len === 'quick' ? ' Q' : ''), 0, r * 0.52);
+  ctx.restore();
+}
+// what a FULL session of `unit` would give each man right now (cached by unit + sessions done: a draw only reads it)
+function pracPreviewSes(unit) {
+  const P = prac(), key = unit + '|' + P.ses.done.length + '|' + (ROSTER[MATCH.you] || []).length;
+  if (PR.pv && PR.pv.key === key) return PR.pv.m;
+  const cx = pracCtx(), c0 = pracSesCount(unit, P), m = new Map();
+  for (const s of pracSesUnit(unit)) m.set(s, pracSesCalc(s, unit, 'full', cx, c0));
+  PR.pv = { key, m };
+  return m;
+}
+function pracCardDraw(s, x, y, pv) {   // a pinned player card: face, XP bar, condition bar, green arrow when an upgrade is close
+  const B = PR_BOARD, w = B.cardW, h = B.cardH, out = s.inj && s.inj.weeks > 0, cost = upgCost(s), room = upgRoom(s) > 0;
+  ctx.fillStyle = 'rgba(40,25,5,0.2)'; ctx.fillRect(x + 4, y + 5, w, h);
+  ctx.fillStyle = out ? '#e6e1d3' : RES.bg; ctx.fillRect(x, y, w, h); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
+  ctx.fillStyle = '#c83a2a'; ctx.beginPath(); ctx.arc(x + w / 2, y + 4, 6, 0, 7); ctx.fill(); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.stroke();   // the pin
+  drawPortrait(s, x + 40, y + 78, 2.1, MATCH.you);
+  prT(s.short, x + 76, y + 30, RES.line, 15, w - 82);
+  prT(`${s.group}  ${prSt(s.stars)}`, x + 76, y + 52, RES.dim, 13, w - 82);
+  if (out) prT('HURT', x + 76, y + 74, '#c81b1b', 14, w - 82);
+  const bar = (by, v, add, col, addCol, lab) => {
+    const bx = x + 34, bw = w - 44;
+    prT(lab, x + 6, by + 5, RES.dim, 11, 28);
+    ctx.fillStyle = '#e2dcc6'; ctx.fillRect(bx, by, bw, 10);
+    ctx.fillStyle = col; ctx.fillRect(bx, by, bw * Math.max(0, Math.min(1, v)), 10);
+    if (add) { const a = Math.max(0, Math.min(1, v + add)); ctx.fillStyle = addCol; ctx.fillRect(bx + bw * Math.min(v, a), by, bw * Math.abs(a - Math.max(0, Math.min(1, v))), 10); }
+    ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.strokeRect(bx, by, bw, 10);
+  };
+  const xpv = room ? ((s.xp || 0) + (s.upg ? cost : 0)) / cost : 1, c = condOf(s) / 100;
+  bar(y + 114, xpv, pv && room ? pv.xp * UPG.xpK / cost : 0, room ? '#3a6fd8' : '#b07a10', '#9fd0ff', 'XP');
+  bar(y + 136, c, pv && SETTINGS.injuries ? pv.cd / 100 : 0, c > 0.7 ? '#4fae5a' : c > 0.45 ? '#e0a020' : '#d0473a', 'rgba(200,40,40,0.55)', 'CND');
+  const tri = (tx, ty, up, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(tx, ty + (up ? -8 : 8)); ctx.lineTo(tx - 7, ty + (up ? 4 : -4)); ctx.lineTo(tx + 7, ty + (up ? 4 : -4)); ctx.fill(); };
+  if (room && (s.upg || (s.xp || 0) / cost >= 0.75)) tri(x + w - 16, y + 18, true, '#2e9b5a');   // an upgrade is waiting or close
+  if (pv && pv.xp > 0 && room) tri(x + w - 8, y + 110, true, '#3a6fd8');
+  if (pv && pv.cd < 0 && SETTINGS.injuries) tri(x + w - 8, y + 150, false, '#d0473a');
+}
+function drawPracField() {
+  const P = prac(), S = P.ses, B = PR_BOARD, img = pracBoardImg(), now = uiNow();
+  ctx.drawImage(img, img._x, img._y, img._w, img._h);
+  // stickers on the spots (the newest one drops in)
+  const L = PR.land, age = L ? (now - L.t) / 1000 : 99;
+  S.done.forEach((d, i) => {
+    const x = B.slotX + (i - 1) * B.slotGap;
+    if (L && L.i === i && age < B.land) { const u = age / B.land, k = 1 + 1.6 * (1 - u) * (1 - u) - 0.15 * Math.sin(u * Math.PI); ctx.globalAlpha = Math.min(1, u * 3); pracSticker(x, B.slotY, B.slotR, d, k); ctx.globalAlpha = 1; }
+    else pracSticker(x, B.slotY, B.slotR, d);
+  });
+  if (L && age < B.landHold) { const d = S.done[L.i]; if (d) prT(d.grade.toUpperCase() + '!', B.slotX + (L.i - 1) * B.slotGap, B.slotY + B.slotR + 16, PR_MEDAL[d.grade][1], 18, 160, 'center'); }
+  if (L && age < B.landHold) menuMoving = true; else if (L) PR.land = null;
+  // unit magnets (hover = preview)
+  let hov = null;
+  PRAC_SES.units.forEach((u, i) => {
+    const r = prMag(i), on = PR.unit === u, over = !PR.pick && hoverPt && inBtn(hoverPt, r), n = S.done.filter(d => d.unit === u).length, lift = on ? 4 : 0;
+    if (over) hov = u;
+    ctx.fillStyle = 'rgba(40,25,5,0.3)'; ctx.fillRect(r.x + 4, r.y + 6, r.w, r.h);
+    ctx.fillStyle = PR_UNIT[u][1]; ctx.fillRect(r.x, r.y - lift, r.w, r.h);
+    ctx.strokeStyle = on ? '#f2c230' : RES.line; ctx.lineWidth = on ? 5 : 2; ctx.strokeRect(r.x, r.y - lift, r.w, r.h);
+    prT(PR_UNIT[u][0], r.x + r.w / 2, r.y - lift + r.h / 2 - 6, '#ffffff', 22, r.w - 12, 'center');
+    for (let j = 0; j < n; j++) { ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(r.x + r.w / 2 + (j - (n - 1) / 2) * 16, r.y - lift + r.h - 12, 5, 0, 7); ctx.fill(); }   // sessions this week
+  });
+  const unit = hov || PR.unit, men = pracSesUnit(unit), pv = hov || TOUCH ? pracPreviewSes(unit) : null;
+  const R = ROSTER[MATCH.you] || [], st = startersOf(MATCH.you);
+  men.sort((a, b) => (st.has(b) - st.has(a)) || R.indexOf(a) - R.indexOf(b));
+  const max = B.cols * B.rows;
+  men.slice(0, max).forEach((s, i) => pracCardDraw(s, B.cardX + (i % B.cols) * (B.cardW + B.cardGap), B.cardY + Math.floor(i / B.cols) * (B.cardH + B.cardGap), pv && pv.get(s)));
+  if (men.length > max) prT(`+${men.length - max} more`, B.x + B.w - 20, B.y + B.h - 18, RES.dim, 14, 200, 'right');
+  if (!men.length) prT('Nobody on this unit yet', 640, 420, RES.dim, 18, 600, 'center');
+  // START PRACTICE + AUTO
+  const left = pracSesLeft();
+  menuBtn(PR_START, left ? `START PRACTICE  ${left}/${PRAC_SES.max}` : `ALL ${PRAC_SES.max} DONE`, left ? '#6cc070' : RES.bright, 22, null, !!left && !!season);
+  menuBtn(PR_AUTO, S.auto ? 'AUTO ON' : 'AUTO OFF', S.auto ? '#8ecbe8' : RES.bright, 18);
+}
+function pracPickDraw() {   // the START PRACTICE picker: unit, then QUICK / FULL
+  if (!PR.pick) return;
+  ctx.fillStyle = 'rgba(10,15,30,0.55)'; ctx.fillRect(-PAD, 0, 1280 + 2 * PAD, 720); uiModal();
+  resPanel(PR_PICK.x, PR_PICK.y, PR_PICK.w, PR_PICK.h, [['PICK A UNIT', 24]], RES.bright);
+  PRAC_SES.units.forEach((u, i) => menuBtn(prPickUnit(i), PR_UNIT[u][2], PR.pick.unit === u ? PR_UNIT[u][1] : RES.bright, 22));
+  const n = pracSesCount(PR.pick.unit);
+  [['QUICK', '1 DRILL'], ['FULL', '3 DRILLS']].forEach(([t, sub], i) => {
+    const b = prPickLen(i), w = pracSesW(b.len), gain = pracCurve(pracSesLoadAt(n + w)) - pracCurve(pracSesLoadAt(n));
+    menuBtn(b, '', i ? '#f2c230' : '#8ecbe8', 24);
+    prT(t, b.x + b.w / 2, b.y + 28, RES.line, 28, b.w - 20, 'center'); prT(sub, b.x + b.w / 2, b.y + 58, RES.dim, 15, b.w - 20, 'center');
+    ctx.fillStyle = '#e2dcc6'; ctx.fillRect(b.x + 30, b.y + 84, b.w - 60, 14);   // how much this one gives (falls with each session of the unit this week)
+    ctx.fillStyle = '#3a6fd8'; ctx.fillRect(b.x + 30, b.y + 84, (b.w - 60) * Math.min(1, gain / 0.75), 14);
+    ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.strokeRect(b.x + 30, b.y + 84, b.w - 60, 14);
+  });
+}
+function pracFieldClick(pt) {   // true = handled (the picker eats every click while open)
+  const P = prac();
+  if (PR.pick) {
+    PRAC_SES.units.forEach((u, i) => { if (inBtn(pt, prPickUnit(i))) PR.pick.unit = u; });
+    for (let i = 0; i < 2; i++) { const b = prPickLen(i); if (inBtn(pt, b)) {
+      const res = pracSesRun(PR.pick.unit, b.len);   // (the roll, the XP and the condition happen here, never in a draw)
+      if (res) { PR.unit = res.unit; PR.land = { t: uiNow(), i: P.ses.done.length - 1, res }; PR.pv = null; }
+      PR.pick = null; return true;
+    } }
+    if (!inBtn(pt, PR_PICK)) PR.pick = null;
+    return true;
+  }
+  for (let i = 0; i < PRAC_SES.units.length; i++) if (inBtn(pt, prMag(i))) { PR.unit = PRAC_SES.units[i]; return true; }
+  if (inBtn(pt, PR_START)) { if (pracSesLeft() && season) PR.pick = { unit: PR.unit }; return true; }
+  if (inBtn(pt, PR_AUTO)) { P.ses.auto = !P.ses.auto; autosaveSoon(); return true; }
+  return false;
 }
 function drawPracFac(plan) {   // plan = the TRAINING PLAN tab (load sliders, trainers); else the FACILITIES campus
   paperBg();
@@ -3869,20 +4097,22 @@ function drawPracFac(plan) {   // plan = the TRAINING PLAN tab (load sliders, tr
     if (!can && !F.build && F.lvl < FAC_MAX) { ctx.fillStyle = RES.dim; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'; ctx.fillText('NOT ENOUGH ¤', PR_UP.x + PR_UP.w / 2, PR_UP.y + PR_UP.h + 8); }
   }
   } else {   // the training plan
-  resPanel(30, 84, 636, 520, [['HOW TRAINING WORKS', 24]], RES.bright);
+  resPanel(30, 84, 636, 520, [['MENTOR PAIRS', 24]], RES.bright);
   ctx.fillStyle = RES.line; ctx.font = '16px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  ['Practice runs by itself after every game.', '', 'The TRAINING LOAD (0-100) is how hard each unit works. More load = more practice XP toward +1 upgrades, but more wear on condition and a higher chance of a practice injury.', '', 'The slider previews the gains, the condition change and the injury risk. The tick on each bar is the plan in force; CONFIRM PLAN makes the draft the new plan.', '', 'Your TRAINERS set how well each unit develops and recovers: hire better ones on STAFF & HIRING.', '', 'FOCUS groups and mentors are on the GROUPS tab. The ? button explains each page.'].flatMap(l => l ? wrapLines(l, 56) : ['']).forEach((l, i) => ctx.fillText(l, 54, 140 + i * 24));
+  { const pairs = pracPairs();   // (moved here from BATTLES: vets lift the young players of their group)
+    if (!pairs.length) prT('No vets to coach the kids yet', 54, 146, RES.dim, 15, 590);
+    pairs.slice(0, 16).forEach((x, i) => prT(`${x.m.short} > ${x.e.short}`, 54, 140 + i * 28, RES.line, 16, 420) || prT(`+${Math.round(x.pct * 100)}% XP`, 640, 140 + i * 28, '#2e8b57', 16, 160, 'right')); }
   // the dashboard: one card per unit
   for (const side of ['off', 'def']) {
     const C = PR_CARD[side], tr = P.tr[side], sp = pracSpecOf(side, tr.spec), d = PR.draft[side], cur = P.load[side], S = pracSlider(side);
-    resPanel(C.x, C.y, C.w, C.h, [[`${side === 'off' ? 'OFFENSE' : 'DEFENSE'} TRAINING LOAD  ${d}%`, 24]], RES.bright);
+    resPanel(C.x, C.y, C.w, C.h, [[`${side === 'off' ? 'OFFENSE' : 'DEFENSE'} AUTO PACE  ${d}%`, 24]], RES.bright);
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.line; ctx.font = 'bold 15px monospace';
     hireFill(tr, side === 'off' ? 'to' : 'td');
     ctx.save(); ctx.beginPath(); ctx.rect(C.x + 10, C.y + 12, 50, 52); ctx.clip(); ctx.fillStyle = '#d9e2f2'; ctx.fillRect(C.x + 10, C.y + 12, 50, 52); drawAvatar(tr.face, C.x + 35, C.y + 40, 26, { shirt: side === 'off' ? '#2a62b0' : '#b82a30' }); ctx.restore();
     ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(C.x + 10, C.y + 12, 50, 52);
     ctx.fillText(`${tr.name}  ${tr.age}  $${tr.sal.toFixed(1)}M`, C.x + 72, C.y + 30, 400);
     for (let i = 0; i < 5; i++) drawStar(C.x + 80 + i * 20, C.y + 52, 7, i < tr.stars ? '#f2c230' : '#d8d4c4', '#0b1a3a', 1.5);
-    ctx.font = 'bold 13px monospace'; ctx.fillStyle = RES.gold; ctx.fillText(`${sp.id}${tr.trait ? ', ' + traitName(tr).toUpperCase() : ''}`, C.x + 190, C.y + 52, 270);
+    ctx.font = 'bold 13px monospace'; ctx.fillStyle = RES.gold; ctx.fillText(`${sp.id}${tr.trait ? ', ' + traitName(tr).toUpperCase() : ''}`, C.x + 190, C.y + 52, 205);
     menuBtn(PR_REP[side], 'HIRE TRAINER', RES.bright, 14);
     // slider
     ctx.fillStyle = '#e2dcc6'; ctx.fillRect(S.x, S.y, S.w, S.h); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(S.x, S.y, S.w, S.h);
@@ -3911,7 +4141,7 @@ function drawPracFac(plan) {   // plan = the TRAINING PLAN tab (load sliders, tr
   if (same) { ctx.fillStyle = RES.dim; ctx.font = 'bold 24px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('PLAN IN FORCE', PR_OK.x + PR_OK.w / 2, PR_OK.y + PR_OK.h / 2); }
   ctx.textAlign = 'center'; ctx.fillStyle = RES.dim; ctx.font = 'bold 13px monospace';
   if (PR.msg && now - PR.msg.t < 3000) { ctx.fillStyle = RES.line; ctx.font = 'bold 18px monospace'; ctx.fillText(PR.msg.text, 970, 614); }
-  else ctx.fillText('Drag the sliders to preview, then confirm. The tick on the bar is your current plan.', 970, 614);
+  else ctx.fillText('Skipped units practice at this pace on AUTO', 970, 614);
   menuBtn(PR_STAFF, 'STAFF & HIRING', RES.bright, 22);
   }
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
@@ -4183,8 +4413,8 @@ const TOUCH_HELP = [
 ];
 // the debug page: goes over the settings screen (DEBUG, bottom of the settings panel)
 let dbgUI = false;
-const DBG_PANEL = { x: 330, y: 70, w: 620, h: 560 };
-const DBG_BTNS = { hit: { x: 370, y: 140, w: 265, h: 54 }, fld: { x: 645, y: 140, w: 265, h: 54 }, mobile: { x: 370, y: 204, w: 265, h: 54 }, hash: { x: 645, y: 204, w: 265, h: 54 }, tools: { x: 370, y: 268, w: 265, h: 54 }, blit: { x: 645, y: 268, w: 265, h: 54 }, perf: { x: 370, y: 332, w: 265, h: 54 }, tick: { x: 645, y: 332, w: 265, h: 54 }, net: { x: 370, y: 396, w: 265, h: 54 }, gpu: { x: 645, y: 396, w: 265, h: 54 }, dyn: { x: 370, y: 460, w: 265, h: 54 }, store: { x: 645, y: 460, w: 265, h: 54 }, turn: { x: 370, y: 522, w: 174, h: 48 }, shadow: { x: 553, y: 522, w: 174, h: 48 }, res: { x: 736, y: 522, w: 174, h: 48 }, back: { x: 370, y: 578, w: 540, h: 46 } };   // (v0.70: turn / shadow / res = PHONE_TEST)   // (dyn = ADAPTIVE: LAST GAME readout)   // (perf = the frame-time readout, see PERF_HUD; net = FAKE LAG for testing online, see NET_SIM)
+const DBG_PANEL = { x: 330, y: 50, w: 620, h: 650 };
+const DBG_BTNS = { hit: { x: 370, y: 140, w: 265, h: 54 }, fld: { x: 645, y: 140, w: 265, h: 54 }, mobile: { x: 370, y: 204, w: 265, h: 54 }, hash: { x: 645, y: 204, w: 265, h: 54 }, tools: { x: 370, y: 268, w: 265, h: 54 }, blit: { x: 645, y: 268, w: 265, h: 54 }, perf: { x: 370, y: 332, w: 265, h: 54 }, tick: { x: 645, y: 332, w: 265, h: 54 }, net: { x: 370, y: 396, w: 265, h: 54 }, gpu: { x: 645, y: 396, w: 265, h: 54 }, dyn: { x: 370, y: 460, w: 265, h: 54 }, store: { x: 645, y: 460, w: 265, h: 54 }, turn: { x: 370, y: 522, w: 174, h: 48 }, shadow: { x: 553, y: 522, w: 174, h: 48 }, res: { x: 736, y: 522, w: 174, h: 48 }, edge: { x: 370, y: 578, w: 174, h: 48 }, marks: { x: 553, y: 578, w: 174, h: 48 }, lock: { x: 736, y: 578, w: 174, h: 48 }, back: { x: 370, y: 636, w: 540, h: 46 } };   // (phase 5: edge / marks / lock = PHONE_TEST.edge, PHONE_TEST.marks, FPS_CAP.gapLock)   // (v0.70: turn / shadow / res = PHONE_TEST)   // (dyn = ADAPTIVE: LAST GAME readout)   // (perf = the frame-time readout, see PERF_HUD; net = FAKE LAG for testing online, see NET_SIM)
 function drawDebug() {
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
   if (dbgUI === 'dyn') return drawDynDebug();
@@ -4201,6 +4431,7 @@ function drawDebug() {
   menuBtn(DBG_BTNS.perf, `FRAME TIMES: ${SETTINGS.perfHud ? 'ON' : 'OFF'}`, Y, 20);   // (fps + update / draw ms in a corner of every screen)
   menuBtn(DBG_BTNS.net, `FAKE LAG: ${SETTINGS.netSim || 'OFF'}`, Y, 24);   // (online test bench: delays / drops what this device receives)
   menuBtn(DBG_BTNS.gpu, 'GPU: ' + PHONE_TEST.gpu, Y, 20); menuBtn(DBG_BTNS.turn, 'TURN: ' + PHONE_TEST.turn, Y, 20); menuBtn(DBG_BTNS.shadow, 'SHADOW: ' + PHONE_TEST.shadow, Y, 20); menuBtn(DBG_BTNS.res, 'RES: ' + PHONE_TEST.res, Y, 20);   // (v0.70 phone test switches, not saved)
+  menuBtn(DBG_BTNS.edge, 'EDGE: ' + PHONE_TEST.edge, Y, 18); menuBtn(DBG_BTNS.marks, 'MARKS: ' + PHONE_TEST.marks, Y, 18); menuBtn(DBG_BTNS.lock, 'FPS LOCK: ' + (FPS_CAP.gapLock ? 'OLD' : 'PAINT'), Y, 18);   // (phase 5 phone switches, not saved)
   menuBtn(DBG_BTNS.back, 'DONE', Y, 24);
 }
 function drawStoreDebug() {   // DEBUG > STORAGE: storeReport, per slot and the biggest keys
@@ -4254,6 +4485,9 @@ function debugClick(p) {
   else if (inBtn(p, DBG_BTNS.perf)) SETTINGS.perfHud = !SETTINGS.perfHud;
   else if (inBtn(p, DBG_BTNS.net)) netSimNext();
   else if (inBtn(p, DBG_BTNS.gpu)) phoneTestNext('gpu');
+  else if (inBtn(p, DBG_BTNS.edge)) { PHONE_TEST.edge = PHONE_TEST.edge === 'INSET' ? 'AS IS' : 'INSET'; fitScreen(); }   // (phase 5: the turned page clear of the status bar / as before)
+  else if (inBtn(p, DBG_BTNS.marks)) PHONE_TEST.marks = PHONE_TEST.marks === 'LIVE' ? 'OLD' : 'LIVE';   // (phase 5: the field cache is baked again on the next frame (its nm key))
+  else if (inBtn(p, DBG_BTNS.lock)) { FPS_CAP.gapLock = !FPS_CAP.gapLock; fpsCap.lock = false; fpsCap.over = 0; }   // (phase 5: OLD = late gaps alone may lock 30)
   else if (inBtn(p, DBG_BTNS.turn) || inBtn(p, DBG_BTNS.shadow) || inBtn(p, DBG_BTNS.res)) phoneTestNext(inBtn(p, DBG_BTNS.turn) ? 'turn' : inBtn(p, DBG_BTNS.shadow) ? 'shadow' : 'res');
   else if (inBtn(p, DBG_BTNS.mobile)) { DEVICE.mobile = !TUI.on; saveDevice(); tuiSet(DEVICE.mobile); }   // (touch controls: on by default on a phone / tablet, off on a PC; this overrides that)
   else if (inBtn(p, DBG_BTNS.back) || !inBtn(p, DBG_PANEL)) dbgUI = false;
@@ -5240,13 +5474,21 @@ try { storeTidy(true); } catch (e) {}   // (once at load: packs old saves' leagu
 // debounced settings / roster autosave (autosaveSoon); everything else is full. SAVE_FP is forgotten when a slot loads or is deleted.
 let SAVE_FP = {};
 function saveFpOf(o) { if (!o) return '0'; if (Array.isArray(o)) return o.length + ':' + (o.length ? JSON.stringify(o[o.length - 1]).length : 0); let n = 0, g = 0; for (const k in o) { n++; const e = o[k]; if (e && e.games) g += e.games.length; } return n + ':' + g; }
-function saveNeed(i, k, o, light) { const f = SAVE_FP[k], fp = saveFpOf(o); return !light || !f || f.i !== i || f.o !== o || f.fp !== fp; }
-function saveDone(i, k, o) { SAVE_FP[k] = { i, o, fp: saveFpOf(o) }; }
+function saveNeed(i, k, o, light) { if (!light) return true; const f = SAVE_FP[k]; return !f || f.i !== i || f.o !== o || f.fp !== saveFpOf(o); }   // (the fingerprint only when a light save needs it)
+function saveDone(i, k, o, fp) { SAVE_FP[k] = { i, o, fp: fp || saveFpOf(o) }; }   // (fp = the fingerprint when its packing started: an entry that changed between slices is written again next time)
+// v0.74 perf: a step that packs get()'s value a few ms a chore slice (lzJob / lzStep, 03) and then calls done(o, text, fp); fn(until) -> true while more
+// SAVE_FREEZE = the slot text jobs of saves still running: any pointer / key input first takes the rest of their text (lzFreeze), so a save holds the data as it
+// was when it started even though it is stringified a slice at a time (window capture listeners: added here, before 14's input handlers)
+const SAVE_FREEZE = new Set(), SAVE_MARGIN = 2;   // (ms a save slice stops short of the chore budget)
+function saveFreeze() { if (!SAVE_FREEZE.size) return; for (const J of SAVE_FREEZE) lzFreeze(J); SAVE_FREEZE.clear(); }
+for (const t of ['pointerdown', 'pointerup', 'touchstart', 'touchend', 'mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'wheel']) window.addEventListener(t, saveFreeze, { capture: true, passive: true });
+const savePackStep = (get, done) => { let J = null, o, fp, packed = false; return until => { if (!J) { o = get(); fp = typeof o === 'string' ? '' : saveFpOf(o); J = lzJob(o); } if (!packed) { if (lzStep(J, until)) return true; packed = true; if (until !== Infinity) return true; } done(o, J.s, fp); return false; }; };   // (the write gets a slice of its own)
 function saveToSlot(i, auto, imported, pre, light) { choreFlush('saveToSlot');   // imported: a save file's data (written as it is; the current franchise and its slot stay as they were); pre = buildSave() taken earlier (saveSoon)
   if (ONL.on) { console.warn('online: saving is disabled'); return; }
   const fail = e => { if (imported) throw e; console.warn('save failed', e, 'storage chars used:', storeUsed()); if (/quota|storage/i.test((e && (e.name + e.message)) || '')) storeFull('COULD NOT SAVE'); else note('COULD NOT SAVE'); };
   try {
-    const data = imported || pre || buildSave(), txt = perfTime('lsPacked', lsPacked, null, [data]);   // (packed now, from the data as it is now; written last)
+    const data = imported || pre || buildSave();   // (its text: walked and packed a slice at a time in the 'save slot' step, frozen by any input before then: saveFreeze; written last)
+    let txt = imported ? lzPack(JSON.stringify(data)) : null; const slotJ = imported ? null : lzJob(data); if (slotJ) SAVE_FREEZE.add(slotJ);
     let statsDropped = false;   // (writeSlot had to drop this slot's stats copies to fit)
     const writeSlot = () => {
       const m = slotMetas().slice();
@@ -5271,13 +5513,13 @@ function saveToSlot(i, auto, imported, pre, light) { choreFlush('saveToSlot');  
     curSlot = i;
     const steps = [], st = { ok: true, ph: true };
     if (!pstStash) {   // (the stats are in memory and go under the slot: drop the slot-less copies first)
-      storeTidy(false, true);
+      steps.push(['save tidy', () => { storeTidy(false, true); }]);   // (v0.74: its own step, still before any write)
       for (const [k, key, get] of [['pst', PST_KEY, () => PST], ['hof', HOF_KEY, () => HOF], ['chof', CHOF_KEY, () => CHOF], ['lpst', LPST_KEY, () => LPST]])
-        if (saveNeed(i, k, get(), light)) steps.push(['save ' + k, () => { const o = get(); if (lsTry(`${key}.${i}`, lsPacked(o))) saveDone(i, k, o); else st.ok = false; }]);
+        if (saveNeed(i, k, get(), light)) steps.push(['save ' + k, savePackStep(get, (o, t, fp) => { if (lsTry(`${key}.${i}`, t)) saveDone(i, k, o, fp); else st.ok = false; })]);
       if (saveNeed(i, 'hl', LGHL, light)) steps.push(['save hl', () => { const o = LGHL; if (recSave() !== false) saveDone(i, 'hl', o); else st.ok = false; }]);
     }
     if (saveNeed(i, 'ph', PHOTOS, light)) steps.push(['save photos', () => { if (!st.ok) return; const o = PHOTOS; st.ph = photosSave(i); if (st.ph) saveDone(i, 'ph', o); }]);   // (the Post's photos: their own key, after the stats)
-    steps.push(['save slot', () => {
+    steps.push(['save slot', until => { if (txt === null) { if (lzStep(slotJ, until)) return true; SAVE_FREEZE.delete(slotJ); txt = slotJ.s; if (until !== Infinity) return true; }   // (the write gets a slice of its own)
       try {
         if (!st.ok && !pstStash) { localStorage.removeItem(`${PHOTO_KEY}.${i}`); delete SAVE_FP.ph; st.ph = false; storeFails = []; SAVE_FP = {}; st.ok = pstSaveSlot(i) && recSave() !== false; }   // (stats before photos: drop the photos and try again)
         writeSlot(); if (statsDropped) st.ok = false;
@@ -5285,9 +5527,10 @@ function saveToSlot(i, auto, imported, pre, light) { choreFlush('saveToSlot');  
         else if (!st.ph) storeFull('SAVED WITHOUT PHOTOS');
         else note(auto ? 'AUTOSAVED' : data.live ? 'GAME SAVED (at the last snap)' : 'GAME SAVED');
       } catch (e) { fail(e); }
+      return false;
     }]);
-    if (!auto || document.hidden) { for (const [, f] of steps) f(); return; }   // (a SAVE button press, or the tab going away: written at once, as before)
-    for (const [n, f] of steps) chore(n, f);
+    if (!auto || document.hidden) { for (const [, f] of steps) while (f(Infinity)); return; }   // (a SAVE button press, or the tab going away: written at once, as before; steps = fn(until) -> true while more)
+    for (const [n, f] of steps) chore(n, until => f(until - SAVE_MARGIN));   // (a little under the chore budget: a GC or a slow batch still lands inside one frame's budget)
   } catch (e) { fail(e); }
 }
 function importSave(d) {   // a save file's data: checked, then into the first empty slot (none: asks before replacing the oldest)

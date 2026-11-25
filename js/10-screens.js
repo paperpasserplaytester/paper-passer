@@ -791,7 +791,7 @@ function ctxBake(x0, y0, w, h, draw) {
   for (const k of Object.getOwnPropertyNames(main)) Object.defineProperty(g, k, Object.getOwnPropertyDescriptor(main, k));
   const keep = dmRecs.slice();
   ctx = g; DM_P.setTransform.call(g, s, 0, 0, s, -x0 * s, -y0 * s);
-  try { draw(); } finally { ctx = main; dmRecs.length = 0; for (const r of keep) dmRecs.push(r); }
+  drawRandOn(); try { draw(); } finally { drawRandOff(); ctx = main; dmRecs.length = 0; for (const r of keep) dmRecs.push(r); }
   c._x = x0; c._y = y0; c._w = w; c._h = h; c._s = s;
   return c;
 }

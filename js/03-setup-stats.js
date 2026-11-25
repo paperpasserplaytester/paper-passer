@@ -1,9 +1,30 @@
 // --- setup --------------------------------------------------------------------
 
+// perf job phase 4: the properties the play code adds to a player as it goes (measured: 8 plays, by how many men get each), declared up front as
+// undefined. Added one by one, every man walked his own path through the engine's shape tree and every new branch threw the optimized game code
+// back to the slow tiers ("dependent prototype chain changed", ~135 times in 8 plays: the boxed numbers that were most of update()'s garbage).
+// An undefined property reads exactly like a missing one; nothing checks for them with `in` (the online snapshot skips undefined values).
+const PLAYER_LAZY = ['engaged', 'reach', 'cx', 'sideTo', 'sx', 'sy', 'gs', 'fetchBall', 'fetched', 'downMiss', 'cpuJumpRoll', 'scrRoll', 'isPasser', 'screenStay', 'pulling', 'released',
+  'pullHold', 'ranPid', 'ranYd', 'cy', 'stride', 'overShoulder', 'tipArms', 'tipK', 'sprPid', 'sprVy', 'sprVx', 'mpx', 'mpy', 'mvx', 'mvy', 'stLoop', 'stCrash',
+  'countered', 'helped', 'tryAt', 'olHit', 'chaseKey', 'stuntHold', 'chip', 'pPid', 'pC', 'pAx', 'pAy', 'pHd', 'hy', 'hipOn', 'qbRead', 'paBiteUntil', 'rType', 'hipT',
+  'hsy', 'wrAt', 'lockedTo', 'userJump', 'passX0', 'pancakeTried', 'pancakeAt', 'missK', 'settling', 'stopT', 'jamFightOn', 'handfight', 'rbl', 'rbp', 'coast', 'assign',
+  'bt', 'breakFx', 'sealK', 'engAt', 'move', '__miss', 'diveRolled', 'divePick', 'paWait', 'hipAt', 'catchStyle', 'lieT', 'fightOn', 'eyes', 'recoverUntil', 'jumpPress',
+  'divePress', 'jumpQ', 'toe', 'tackling', 'stiff', 'cradle', 'cock', 'etPid', 'etx', 'ety', 'engagedAtThrow', 'batRolled', 'leapBat', 'freezeUntil', 'driveY0',
+  'driveAway', 'rblAdj', 'angleErr', 'mom', 'hx', 'tkStyle', 'resolved', 'blockers', 'clipMate', 'whiffed', 'blockUntil', 'blockMove', 'helpRoll', 'upAfter', 'hitStick',
+  'rbpDrive', 'shed', 'cutTried', 'rbpEng', 'swimLeft', 'swimSide', 'hitSpeed', 'lowDive', 'lungeAt', 'sealed', 'freedAt', 'scrT', 'snapIn', 'exK', 'exE', 'paK', 'paT',
+  'exThru', 'exGive', 'pvy', 'pvx', 'rvx', 'rvy', 'snapK', 'ready', 'fakeArms', 'twoArm', 'pk', 'exSet', 'pitchK', 'protect', 'pickedUp', 'fakeUntil', 'snapArm',
+  'catchFrom', 'fpT', 'guard', 'stiffSide', 'ballPid', 'ballSide', 'ballSwapUntil', 'truck', 'sprint', 'vsx', 'vsy', 'velAt', 'scrambleAt', 'tech', 'fwdX', 'fwdRun',
+  'fwdAt', 'hole', 'joyA', 'xfSeen', 'reachGoal', 'hurdleAir', 'bullFx', 'cutUntil', 'stiffBy', 'push', 'pinT', 'pinPid', 'fightPid', 'fightRoll', 'trailAll', 'stiffTgt',
+  'stiffSet', 'relLook', 'catchPull', 'diveCaught', 'jumpCaught', 'oneHanded', 'oneAt', 'claspUntil', 'catchFx', 'ripNext', 'exRide', 'awaiting', 'lane', 'laneLeg',
+  'noCutUntil', 'wrapUntil', 'stunUntil', 'catchSide', 'catchAt', 'exLean', 'faceHold', 'flat', 'oneTried', 'hand', 'helper', 'helpTarget', 'helpT', 'openT0', 'rbpPush',
+  'stumRec', 'swipeT', 'hipWait', 'diveCatch', 'jamDone', 'jammer', 'jamUntil', 'ripTries', 'ripAt', 'jamFall', 'jamTrip', 'stickUntil', 'contPid', 'contX', 'falterUntil',
+  'falterRoll', 'stumbleRec', 'spinFx', 'rbpFrz'];
 function makePlayer(team, x, y, num, extra = {}) {
-  return Object.assign({ team, x, y, z: 0, vx: 0, vy: 0, svx: 0, svy: 0, speed: 0, run: 0, moving: false,
+  const p = Object.assign({ team, x, y, z: 0, vx: 0, vy: 0, svx: 0, svy: 0, speed: 0, run: 0, moving: false,
     action: null, act: null, face: team === 'off' ? 1 : -1, num, big: false, hasBall: false,
     stam: 1, slow: 0, fatigue: 0 }, extra);
+  for (let i = 0; i < PLAYER_LAZY.length; i++) { const k = PLAYER_LAZY[i]; if (!(k in p)) p[k] = undefined; }
+  return p;
 }
 
 function makeDefender(role, num) {
@@ -394,22 +415,88 @@ const tossing = () => !tut && performance.now() < tossUntil;
 // intact), marked by LZ_MARK. The league's simulated stat lines (~1.4 MB a franchise as plain JSON) shrink ~6-8x; three franchises
 // used to fill localStorage (~5M characters) so no new save fit. lsJson reads both packed and plain values.
 const LZ_MARK = '\u0001Z', LZ_OFF = 0x100, LZ_MAX = 0xD000, LZ_CLEAR = LZ_MAX;   // (codes 0-255 = bytes, 256.. = dictionary, LZ_CLEAR = start a new dictionary)
-function lzPack(str) {
-  const b = new TextEncoder().encode(str), dict = new Map(), out = [];
-  let next = 256, w = '';
-  const code = s => s.length === 1 ? s.charCodeAt(0) : dict.get(s);
-  for (let i = 0; i < b.length; i++) {
-    const c = String.fromCharCode(b[i]), wc = w + c;
-    if (!w || dict.has(wc)) { w = wc; continue; }
-    out.push(code(w));
-    if (next < LZ_MAX) dict.set(wc, next++); else { out.push(LZ_CLEAR); dict.clear(); next = 256; }
-    w = c;
-  }
-  if (w) out.push(code(w));
-  let s = LZ_MARK;
-  for (let i = 0; i < out.length; i += 0x4000) s += String.fromCharCode.apply(null, out.slice(i, i + 0x4000).map(x => x + LZ_OFF));
-  return s;
+// v0.74 perf: the same codes as the old string-keyed packer (identical text), keyed by prefixCode * 256 + byte, and resumable: lzJob(src) + lzStep(J, until)
+// (true = more to do; J.s = the text once false). src = a string, or a plain object / array stringified a piece at a time: its entries, and inside entries
+// that hold objects down to LZ_JOB.depth levels (a stat line or a player's ratings stay one piece), each from a snapshot of the keys when
+// that level is reached (the joined text === JSON.stringify(src)). lzFreeze(J) = take the rest of the text now (the packing carries on in slices): the
+// save calls it on any input so the text is the data as it was. lzPack(str) = the same job in one go.
+const LZ_JOB = { chunk: 1024, enc: 0x10000, bits: 17, depth: 4, block: 1 << 16, out: 0x1000, batch: 4096 };   // bytes between clock checks / characters a long piece is encoded at a time / dictionary table size (2^bits slots, > 2 x LZ_MAX) / levels walked
+const LZ_SPARE = [];   // (finished jobs' tables and byte buffers, reused: no 0.8 MB of garbage a key)
+const lzPlain = v => v !== null && typeof v === 'object' && typeof v.toJSON !== 'function' && (Array.isArray(v) || Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null);   // (JSON.stringify writes these key by key)
+const lzNest = v => { for (const k in v) { const x = v[k]; if (x !== null && typeof x === 'object') return true; } return false; };   // (holds an object: worth walking into)
+const lzFrame = v => { const arr = Array.isArray(v), keys = arr ? null : Object.keys(v); return { v, arr, keys, n: arr ? v.length : keys.length, i: 0, first: true }; };
+function lzJob(src) {
+  const J = { st: null, root: undefined, str: null, si: 0, rest: null, ri: 0, b: null, bl: 0, bi: 0, T: null, fin: false, next: 256, w: -1, c: new Uint16Array(LZ_JOB.block), cb: [], n: 0, s: LZ_MARK, ob: 0, oi: 0 };   // (codes in fixed blocks: growing one array meant ~1 MB copies)
+  if (typeof src === 'string') J.str = src;
+  else if (lzPlain(src)) { J.st = []; J.root = src; }
+  else { J.str = JSON.stringify(src); if (J.str === undefined) J.str = ''; }
+  return J;
 }
+function lzPiece(J) {   // the next piece of text, null at the end
+  if (J.rest) return J.ri < J.rest.length ? J.rest[J.ri++] : null;
+  for (;;) {
+    if (J.str !== null) {
+      if (J.si < J.str.length) {
+        let e = Math.min(J.str.length, J.si + LZ_JOB.enc); const h = J.str.charCodeAt(e - 1); if (e < J.str.length && h >= 0xD800 && h <= 0xDBFF) e--;   // (never split a surrogate pair)
+        const p = J.str.slice(J.si, e); J.si = e; return p;
+      }
+      J.str = null; J.si = 0;
+    }
+    const S = J.st; if (!S) return null;
+    if (J.root !== undefined) { const f = lzFrame(J.root); J.root = undefined; S.push(f); return f.arr ? '[' : '{'; }
+    if (!S.length) return null;
+    const f = S[S.length - 1];
+    if (f.i >= f.n) { S.pop(); return f.arr ? ']' : '}'; }
+    const i = f.i++, k = f.arr ? i : f.keys[i], v = f.v[k], pre = (f.first ? '' : ',') + (f.arr ? '' : JSON.stringify(k) + ':');
+    if (S.length < LZ_JOB.depth && lzPlain(v) && lzNest(v)) { f.first = false; const g = lzFrame(v); S.push(g); return pre + (g.arr ? '[' : '{'); }
+    let t = JSON.stringify(v);
+    if (t === undefined) { if (!f.arr) continue; t = 'null'; }   // (JSON.stringify leaves those keys out, writes null in an array)
+    f.first = false;
+    const p = pre + t;
+    if (p.length > LZ_JOB.enc) { J.str = p; J.si = 0; continue; }
+    return p;
+  }
+}
+function lzFreeze(J) { if (J.rest) return; const R = []; for (let p; (p = lzPiece(J)) !== null;) R.push(p); J.rest = R; J.ri = 0; }
+const LZ_ENC = new TextEncoder();
+function lzStep(J, until) {
+  const C = LZ_JOB.chunk;
+  if (!J.fin && !J.T) { J.T = LZ_SPARE.pop() || { hk: new Int32Array(1 << LZ_JOB.bits), hv: new Uint16Array(1 << LZ_JOB.bits), buf: new Uint8Array(3 * (LZ_JOB.enc + LZ_JOB.batch) + 8) }; J.T.hk.fill(-1); }   // (open addressing: key = prefixCode * 256 + byte, -1 = empty; taken on the first step)
+  const T = J.T;
+  let c = J.c, n = J.n, w = J.w, next = J.next;
+  if (!J.fin) {
+    const hk = T.hk, hv = T.hv, buf = T.buf, M = hk.length - 1, SH = 32 - LZ_JOB.bits;
+    while (J.b !== false) {
+      if (!J.b || J.bi >= J.bl) {   // (the next batch of pieces: small pieces go in together, one encode and clock check per batch)
+        let p = lzPiece(J); if (p === null) { J.b = false; break; }
+        for (let q; p.length < LZ_JOB.batch && (q = lzPiece(J)) !== null;) p += q;
+        J.b = true; J.bl = LZ_ENC.encodeInto(p, buf).written; J.bi = 0;
+        if (performance.now() >= until) { J.n = n; J.w = w; J.next = next; return true; }
+        continue;
+      }
+      const end = Math.min(J.bl, J.bi + C);
+      for (let i = J.bi; i < end; i++) {
+        const x = buf[i];
+        if (w < 0) { w = x; continue; }
+        const k = w * 256 + x; let h = Math.imul(k, 0x9E3779B1) >>> SH, q;
+        while ((q = hk[h]) !== -1 && q !== k) h = (h + 1) & M;
+        if (q === k) { w = hv[h]; continue; }
+        if (n + 2 > c.length) { J.cb.push(c.subarray(0, n)); c = J.c = new Uint16Array(LZ_JOB.block); n = 0; }
+        c[n++] = w + LZ_OFF;
+        if (next < LZ_MAX) { hk[h] = k; hv[h] = next++; } else { c[n++] = LZ_CLEAR + LZ_OFF; hk.fill(-1); next = 256; }
+        w = x;
+      }
+      J.bi = end;
+      if (performance.now() >= until) { J.n = n; J.w = w; J.next = next; return true; }
+    }
+    if (w >= 0) { if (n + 1 > c.length) { J.cb.push(c.subarray(0, n)); c = J.c = new Uint16Array(LZ_JOB.block); n = 0; } c[n++] = w + LZ_OFF; w = -1; }
+    J.cb.push(c.subarray(0, n));
+    J.n = n; J.w = w; J.next = next; LZ_SPARE.length < 1 && LZ_SPARE.push(T); J.T = null; J.fin = true;
+  }
+  for (const B = J.cb; J.ob < B.length;) { const b = B[J.ob], e = Math.min(b.length, J.oi + LZ_JOB.out); J.s += String.fromCharCode.apply(null, b.subarray(J.oi, e)); J.oi = e; if (e >= b.length) { J.ob++; J.oi = 0; } if (J.ob < B.length && performance.now() >= until) return true; }
+  J.c = null; return false;
+}
+function lzPack(str) { const J = lzJob(String(str)); lzStep(J, Infinity); return J.s; }
 function lzUnpack(s) {
   const bytes = [], dict = [];
   let next = 256, prev = null;
@@ -1386,6 +1473,7 @@ function pstSimGame(g, wk) {
 }
 
 function newGame() {
+  if (typeof fpsQuiet === 'function') fpsQuiet(FPS_CAP.startMs, 'game start');   // (phase 5: the first seconds of a game never count toward the 30 lock)
   pstGame = null; playPass = null;   // (a new game's stat lines)
   if (game) { game.penQ = null; game.penPick = null; game.penDeclined = false; } revWait = null; REV = null;   // (v0.68: no flag card / review left over from a game quit mid-way)
   annClear(true);  // (the announcers: new bags, the baked faces freed)

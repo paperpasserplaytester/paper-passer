@@ -1778,7 +1778,7 @@ function drawStartBtns() {
   }
 }
 function titleStamp(cx, cy) { qsStamp(cx, cy - 12, 'PAPER PASSER', '#c0392b', -0.005, 1, 60, { distress: 7 }); }   // (centre of the title sheet, inside its own tilt)
-const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-22 BOOTH-54';   // (v0.74: announcer lines travel by index, so new line tables need matching builds)
+const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-25 OWNCAM-55';   // (v0.74: announcer lines travel by index, so new line tables need matching builds; perf job: the host decides the lobby's teams, step-clock stamps, key presses on both channels, each device's own camera, field presses as world spots)
 let hlFlash = -1e9;   // when the main menu's HIGHLIGHT button was last clicked
 let quickMenu = false;   // QUICK PLAY (START_BTNS.ex) drop down: EXHIBITION / 1V1 / ONLINE take the place of FRANCHISE / CAREER / TUTORIAL (same buttons, same size)
 function startClick(p) {
@@ -1833,7 +1833,7 @@ const NET_CFG = {
   fastId: 41,         // the channel's stream id (both sides open the same one themselves: no extra signaling)
   logCast: false,     // debug: true = the host logs each cast's size (characters) to the console, once per play (set NET_CFG.logCast = true in the console)
   fastMax: 12000,     // characters: a bigger message goes on the reliable channel (v0.70: 9000 -> 12000 = chunk, well under the 16 KiB every browser takes in one message; the snap's ~9.1 KB snapshots now fit)
-  statsMs: 4000, statsTouchMs: 15000, hbWarn: 2,   // (v0.74: phones ask far less often, and never mid-play; hbWarn = a heartbeat over this many ms is tagged on FRAME TIMES)      // how often the link is asked whether it is DIRECT or going through a RELAY (the ping badge shows it)
+  statsFirst: 2000, statsStep: 0.5, statsStepMs: 20, statsBeats: 3, hbWarn: 2,   // (perf job: getStats is never on a timer (it blocked an iPhone host). The link is asked DIRECT / RELAY once statsFirst ms after it opens, again on an ICE state change, or when the ping moved by statsStep of itself (and statsStepMs) for statsBeats beats in a row; hbWarn = a heartbeat over this many ms is tagged on FRAME TIMES)
   sim: null,          // test bench: { ms, jit, loss } = fake lag on everything this device RECEIVES (set from DEBUG > FAKE LAG, NET_SIM; or by hand in the console)
 };
 // FAKE LAG presets (one-way: each device delays what it receives, so turn it on in both tabs to cover both directions). The reliable channel is only delayed
@@ -1945,13 +1945,13 @@ const NET = {
   },
   // clock sync: off = the other device's performance.now() minus ours. Each pong gives a sample (its time when it answered vs the middle of our round trip); the
   // lowest round trip of the last 8 is the truest, and the offset used eases toward it at most offEase ms a second (the first few samples are taken as they come)
-  off: null, _offS: [], _offT: null, _offN: 0, offEase: 2,
+  off: null, _offS: [], _offT: null, _offN: 0, offEase: 2, offSnap: 25,
   _offSample(ts, h, now) {
     const r = now - ts; if (!(r >= 0 && r < 5000)) return;
     const S = NET._offS; S.push({ r, o: h - (ts + now) / 2 }); if (S.length > 8) S.shift();
     let b = S[0]; for (const q of S) if (q.r < b.r) b = q;
     NET._offT = b.o; NET._offN++;
-    if (NET.off == null || NET._offN <= 6) NET.off = b.o;
+    if (NET.off == null || (NET._offN <= 6 && !(ONL.on && Math.abs(b.o - NET.off) < NET.offSnap))) NET.off = b.o;   // (perf job 17a: in a match a small step is eased, never jumped: it moved every snapshot's time at once)
   },
   offTick(dt) { if (NET.off == null || NET._offT == null) return; const d = NET._offT - NET.off, m = NET.offEase * dt; NET.off += Math.max(-m, Math.min(m, d)); },
   _fastOpen(c) {   // both devices open the same pre-agreed channel on the link PeerJS made
@@ -1974,11 +1974,17 @@ const NET = {
       NET.fast = ch;
     } catch (e) { NET.fast = null; }
   },
-  _stats() {   // is the link direct or relayed, and how much is going over it
-    const now = performance.now(); if (now - NET._statAt < (TUI.on ? NET_CFG.statsTouchMs : NET_CFG.statsMs)) return;
-    if (liveNow()) return;   // (v0.74: never mid-play: getStats + the report walk blocked an iPhone host; it runs at the next dead ball, the badge keeps its last DIRECT / RELAY)
-    if (NET._statAt) NET.kbps = (NET._bytes - NET._statB) / 1024 / ((now - NET._statAt) / 1000);
+  _kbps(now) {   // kB a second over the link, from the bytes counted as they go (no getStats)
+    if (NET._statAt) { const dt = (now - NET._statAt) / 1000; if (dt > 0.5) NET.kbps = (NET._bytes - NET._statB) / 1024 / dt; else return; }
     NET._statAt = now; NET._statB = NET._bytes;
+  },
+  _statWant: 0, _pingRef: 0, _pingN: 0,
+  _stats() {   // is the link direct or relayed: asked only when _statWant is due (open + statsFirst, an ICE change, a ping step), never mid-play
+    const now = performance.now(); NET._kbps(now);
+    const pr = NET._pingRef, pg = NET.ping || 0;   // (a lasting ping step = the route may have changed)
+    if (pr && pg && Math.abs(pg - pr) > Math.max(NET_CFG.statsStepMs, NET_CFG.statsStep * pr)) { if (++NET._pingN >= NET_CFG.statsBeats && !NET._statWant) NET._statWant = now; } else NET._pingN = 0;
+    if (!NET._statWant || now < NET._statWant || liveNow()) return;
+    NET._statWant = 0; NET._pingN = 0; NET._pingRef = pg || NET._pingRef;
     try {
       const pc = NET.conn && NET.conn.peerConnection; if (!pc || !pc.getStats) return;
       pc.getStats().then(st0 => perfOutRun('net getStats cb', st => {   // (v0.73 mark: the report walk timed on its own)
@@ -1997,7 +2003,7 @@ const NET = {
     // (NET.send has already made the message's JSON text to measure it: PeerJS's JSON channel is handed that text instead of stringifying the same object again.
     //  Anything else it sends, or a PeerJS without this hook, is serialized as before)
     try { if (c.serialization === 'json' && typeof c.stringify === 'function') { const js = c.stringify; c.stringify = d => (d === NET._pre && NET._preS != null ? NET._preS : js(d)); } } catch (e) {}
-    c.on('open', () => { clearTimeout(NET._timer); NET._rx = performance.now(); NET.off = NET._offT = null; NET._offS = []; NET._offN = 0; NET.link = ''; NET.kbps = 0; NET._statAt = 0; NET._fastOpen(c); NET._beat(); if (NET.onopen) NET.onopen(); });
+    c.on('open', () => { clearTimeout(NET._timer); NET._rx = performance.now(); NET.off = NET._offT = null; NET._offS = []; NET._offN = 0; NET.link = ''; NET.kbps = 0; NET._statAt = 0; NET._statWant = performance.now() + NET_CFG.statsFirst; NET._pingRef = 0; NET._pingN = 0; NET._fastOpen(c); NET._beat(); if (NET.onopen) NET.onopen(); });
     c.on('data', d0 => { NET._rx = performance.now(); NET._rxT = d0 && d0.t; NET._simIn(false, () => { let d = d0;
       try {
         if (!d || typeof d !== 'object') return;
@@ -2014,7 +2020,7 @@ const NET = {
     }); });
     const gone = why => { if (NET.conn !== c) return; NET.conn = null; NET.fast = null; NET.fastRx = NET.fastOk = false; NET.closeWhy = typeof why === 'string' ? why : 'closed'; clearInterval(NET._tick); NET.ping = 0; if (NET.onclose) NET.onclose(); };   // (closeWhy: shown after OPPONENT DISCONNECTED, to tell a dead link from a closed one)
     c.on('close', () => gone('closed ' + (NET.ice || ''))); c.on('error', e => gone('error ' + ((e && e.type) || '')));
-    c.on('iceStateChanged', s => { NET.ice = s; });
+    c.on('iceStateChanged', s => { if (NET.ice && s !== NET.ice) NET._statWant = performance.now(); NET.ice = s; });
     NET._gone = () => gone('silent ' + Math.round((performance.now() - NET._rx) / 1000) + 's');
   },
   _beat() {
@@ -2066,7 +2072,7 @@ function olOpen() {
   if (!ol.team) ol.team = Object.keys(NFL)[Math.floor(Math.random() * Object.keys(NFL).length)];
   results.screen = 'online';
 }
-function olBack() { NET.send({ t: 'bye' }); NET.close(); ol.peerTeam = null; ol.joining = false; ol.hostCode = ''; ol.note = ''; }
+function olBack() { NET.send({ t: 'bye' }); NET.close(); ol.peerTeam = null; ol.selEarly = ol.selPend = null; ol.joining = false; ol.hostCode = ''; ol.note = ''; }
 function olHello() { NET.send({ t: 'hello', ver: BUILD_STAMP, team: ol.team }); }
 NET.onerror = code => { if (ONL.on) { ONL.joinBusy = false; return; }   // (a rejoin that failed: the watchdog tries again)
   ol.joining = false; ol.hostCode = ''; ol.err = (OL_ERR[code] || OL_ERR.TIMEOUT).replace('\n', code === 'TIMEOUT' && NET.why ? ' [' + NET.why.toUpperCase() + ']\n' : '\n');   /* the reason rides on the title line: the box has only two */ ol.view = NET.role === 'host' || ol.view === 'host' ? 'menu' : 'join'; };
@@ -2082,8 +2088,8 @@ NET.onmsg = d => {
     ol.peerTeam = d.team;
     if (!onlLobbyActive()) onlEnterLobby();   // (connected: the exhibition screen, with the other player on the other side)
   } else if (d.t === 'sel') onlGotSel(d);
-  else if (d.t === 'rej') { if (onlLobbyActive()) { MATCH[exhibition.myRole] = d.team; applyKits(); } }
-  else if (d.t === 'cfg') { if (onlLobbyActive() && exhibition.myRole !== 'you') { MATCH.ball = d.ball; exhibition.wx = d.wx; if (d.fc != null) exhibition.fcCode = d.fc; if (d.fl) exhibition.feel = d.fl; } }
+  else if (d.t === 'rej') { if (onlLobbyActive()) { MATCH[exhibition.myRole] = d.team; ol.selPend = null; applyKits(); } }
+  else if (d.t === 'cfg') { if (onlLobbyActive() && exhibition.myRole !== 'you') { MATCH.ball = d.ball; exhibition.wx = d.wx; if (d.fc != null) exhibition.fcCode = d.fc; if (d.fl) exhibition.feel = d.fl; onlCfgTeams(d); } }
   else if (d.t === 'bye') { NET.closeWhy = 'other side left'; if (ONL.on) { onlMsg2({ t: 'leave' }); return; } if (onlLobbyActive()) { onlLobbyLeave(d.why === 'ver' ? OL_ERR.VER : OL_ERR.DROP, true); return; } const why = d.why; NET.close(); ol.view = 'menu'; ol.err = why === 'ver' ? OL_ERR.VER : OL_ERR.DROP; ol.peerTeam = null; }
   else console.warn('net: unknown message', d);
 };
@@ -2096,24 +2102,37 @@ function onlEnterLobby() {
   exhibition.two = true; exhibition.online = true; exhibition.myRole = host ? 'you' : 'opp'; exhibition.wx = exhibition.wx != null ? exhibition.wx : 'AUTO';
   const keys = Object.keys(NFL), other = except => keys.filter(k => k !== except)[Math.floor(Math.random() * (keys.length - 1))];
   MATCH.home = 'you';
+  // (perf job: ONE device decides the teams. The host rolls the guest's replacement when both picked the same team and sends both teams in 'cfg';
+  //  the guest never rolls its own: it shows the host's team and its own pick until the cfg says)
   if (host) { MATCH.you = mine; MATCH.opp = theirs === mine ? other(mine) : theirs; }
-  else { MATCH.you = theirs; MATCH.opp = mine === theirs ? other(theirs) : mine; }
+  else { MATCH.you = theirs; MATCH.opp = mine; }
   MATCH.youKit = 'home'; MATCH.oppKit = NFL[MATCH.you].home[0] === W_ ? 'home' : 'away'; applyKits();
   results.screen = 'exhibition'; teamPick = null;
-  if (!host) onlSendSel();   // (the guest's team may have changed to avoid the host's)
+  if (host) { const e = ol.selEarly; ol.selEarly = null; if (e) onlGotSel(e); onlSendCfg(); }   // (a 'sel' that got here before this lobby was up)
+  else { ol.selPend = null; if (mine !== theirs) onlSendSel(); }
 }
-const onlSendSel = () => { ol.note = ''; NET.send({ t: 'sel', team: MATCH[exhibition.myRole], kit: MATCH[exhibition.myRole + 'Kit'] }); };
-const onlSendCfg = () => NET.send({ t: 'cfg', ball: MATCH.ball, wx: exhibition.wx, fc: wxForecast().code, fl: onlFeel() });
+const onlSendSel = () => { ol.note = ''; const me = exhibition.myRole, team = MATCH[me], kit = MATCH[me + 'Kit']; if (me !== 'you') ol.selPend = { team, kit, at: performance.now(), n: 0 }; NET.send({ t: 'sel', team, kit }); };
+const onlSendCfg = () => NET.send({ t: 'cfg', ball: MATCH.ball, wx: exhibition.wx, fc: wxForecast().code, fl: onlFeel(), you: MATCH.you, yk: MATCH.youKit, opp: MATCH.opp, ok: MATCH.oppKit });
+function onlCfgTeams(d) {   // guest: the host's cfg names both teams. A pick of ours the host has not taken yet is kept on screen and said again (a lost / early 'sel')
+  if (!NFL[d.you] || !NFL[d.opp]) return;
+  MATCH.you = d.you; if (KITS.includes(d.yk)) MATCH.youKit = d.yk;
+  const P = ol.selPend, now = performance.now();
+  if (P && (P.team !== d.opp || P.kit !== d.ok) && P.n < ONL_NET.lobbyResend) { if (now - P.at > ONL_NET.lobbyResendMs) { P.at = now; P.n++; NET.send({ t: 'sel', team: P.team, kit: P.kit }); } }
+  else { ol.selPend = null; MATCH.opp = d.opp; if (KITS.includes(d.ok)) MATCH.oppKit = d.ok; }
+  applyKits();
+}
 setInterval(() => { if (onlLobbyActive() && exhibition.myRole === 'you' && NET.conn) onlSendCfg(); }, 700);   // (the host's ball / weather / forecast keep both lobby screens the same, whatever changed: teams too)
 function onlGotSel(d) {
-  if (!onlLobbyActive() || !NFL[d.team]) return;
+  if (!NFL[d.team]) return;
+  if (!onlLobbyActive()) { if (NET.role === 'host') ol.selEarly = d; return; }   // (early: kept for onlEnterLobby)
   const o = onlOther(), me = exhibition.myRole;
-  if (d.team === MATCH[me]) { if (me === 'you') NET.send({ t: 'rej', team: MATCH[o] }); return; }   // (the same team on both sides: the host's stays, the guest is sent back)
+  if (d.team === MATCH[me]) { if (me === 'you') { NET.send({ t: 'rej', team: MATCH[o] }); onlSendCfg(); } return; }   // (the same team on both sides: the host's stays, the guest is sent back)
   MATCH[o] = d.team; if (KITS.includes(d.kit)) MATCH[o + 'Kit'] = d.kit; applyKits();
+  if (me === 'you') onlSendCfg();
 }
 function onlLobbyLeave(err, quiet) {
   if (!quiet) NET.send({ t: 'bye' });
-  NET.close(); teamPick = null; ol.peerTeam = null; ol.joining = false; ol.hostCode = '';
+  NET.close(); teamPick = null; ol.peerTeam = null; ol.selEarly = ol.selPend = null; ol.joining = false; ol.hostCode = '';
   if (exhibition) endExhibition('online'); else results.screen = 'online';
   ol.view = 'menu'; ol.err = err || '';
 }
@@ -2194,20 +2213,24 @@ function olAutoJoin() {   // ?join=CODE opens JOIN with the code filled in
 const ONL_BACKLOG = 48000;   // bytes waiting in the data channel above which the host skips snapshots
 // online tuning: the host's send rate, the guest's smoothing, and the head start its own player gets. Looks and timing only: the host still decides every play.
 const ONL_NET = {
+  clkSoft: 30, clkSlew: 0.002, clkHard: 100, clkAhead: 400,   // (perf job) the host's step clock (onlClkStep): ms off performance.now() before it is slewed / re-anchored (behind), slew share of a step, ms ahead before it is pulled back (a multi-step frame runs it ahead: that is the steps' own time)
+  lobbyResend: 6, lobbyResendMs: 400,   // (perf job) lobby: a guest pick the host's cfg doesn't show yet is said again at most this often / this many times, then the host's word is taken
+  viewMs: 250, viewOld: 1, viewPad: 4, viewSpd: 15,   // (perf job 21) the guest's view report: ms between reports (riding the acks), s before one is too old (= it sees everything), yd + yd a second of the report's age its camera may have moved
   cutWin: 250,         // ms of host time after a reset (g.rz) in which every guest snapshot is a cut (late stale spots snap instead of sliding)
   logBtn: false,       // console line on the host for each guest button id received (ONL_BTNS)
   logMs: 25, logGapMs: 150, logN: 8,   // online event log (FRAME TIMES only): a host frame whose game step + snapshot work runs this long, a guest stretch with no new picture this long; the worst logN are kept
-  camEase: 0.07,       // s: the guest's camera eases toward the snapshot camera (a cut = a SNAP_JUMP move or a big zoom change still cuts)
   kmHold: 1.5,         // s: after the guest taps a kick meter it stays on the tapped value until the host's phase change lands (or this long)
   castKeep: 0.6,       // a line-up change where at least this share of the new list was already on the field goes as a partial cast (only the new men whole)
-  hz: 20, hzFast: 30,   // snapshots a second, host -> guest (hzFast: while a kick meter or the aiming reticle is up)
+  hz: 20, hzFast: 30,   // snapshots a second, host -> guest (hzFast: a kick meter, the aiming reticle, a run or any live play; hzDirect below overrides both on a clean link)
   fastPlay: true,       // v0.74: hzFast for every snap from the line-up through the whistle (the guest's presses: hot routes, the snap, his man, the throw), not only aim / kick meter / runs
   pressSnap: true, pressMin: 12,   // v0.70: a guest press / release sends the next snapshot at once (after the host's frame acted on it) instead of waiting for the hz tick; pressMin = ms since the last snapshot it needs (no flood from key repeats)
   hzSlow: 10,           // ... while the link is backed up
+  trimRate: 4, trimWait: 3, trimBack: 0, trimMax: 60,   // (perf job 18) adaptive margin: ms a second it comes down after trimWait s with nothing past the newest snapshot; trimBack = share kept when it is (0 = all of it back at once); trimMax = the most taken off
+  hzDirect: 60, directNet: 2, directHitch: 1,   // (perf job 18) a clean link sends at the step rate: NET.link DIRECT, not backed up, the host's snapshot work under directNet ms, the guest's HITCH under directHitch / s (0 = off)
   slowMs: 1500,         // ms the slow rate holds after a backed-up tick
-  // the guest's playback clock (ONL.pt, see onlGuestStep): it stays the travel time + a margin behind the host, the margin = 1.6 snapshot gaps + 2.5 x the jitter,
+  // the guest's playback clock (ONL.pt, see onlGuestStep): it stays the travel time + a margin behind the host, the margin = see delayMin.. below (the late tail of arrivals, perf job 17b),
   // kept within delayMin..delayMax ms. It drifts there by running up to `stretch` faster / slower (steerMs: ms off for the full stretch); jumpMs off = jumps
-  delayMin: 55, delayMax: 220, gapK: 1.2, jitK: 2, stretch: 0.04, steerMs: 500, jumpMs: 400, dlyEase: 1.5, ahead: 0.6,   // dlyEase = 1/s the delay target eases at; ahead = clock rate while the picture runs too far ahead (never backwards); v0.74 gapK / jitK = the margin's snapshot gaps + x jitter (were 1.6 / 2.5, delayMin 70: a 148 ms ping bench sat 169 ms in the buffer)
+  delayMin: 30, delayGaps: 1.5, delayMax: 220, gapK: 1.0, tailN: 60, tailQ: 0.95, tailGap: 0.5, stretch: 0.04, steerMs: 500, jumpMs: 400, dlyEase: 1.5, ahead: 0.6,   // dlyEase = 1/s the delay target eases at; ahead = clock rate while the picture runs too far ahead (never backwards); perf job 17b: margin = max(delayMin, delayGaps gaps, gapK gaps + the tailQ quantile of the last tailN arrivals' lateness + tailGap gap)
   curve: true,          // positions on a curve that follows each snapshot's speeds (false = straight lines between snapshots, as before)
   curveFit: 0.5, curveSlack: 0.1 * YD,   // ... only when both speeds x the gap are within this share of the move made (+ slack px): a blocked / pushed man's speed isn't his movement
   extrapMs: 40,         // ms the guest carries every move on past the newest snapshot (a late / lost one), along its speed (0 = off: no guessing at all)...
@@ -2215,6 +2238,7 @@ const ONL_NET = {
   fixMin: 0.4 * YD,     // a correction this big (a spot off from the last frame's by more than he could move) is faded out instead of popping...
   fixMs: 150,           // ... over this long (0 = off)
   fixHold: true,        // a free runner's correction along his run never draws him backwards: he waits for the picture (false = the plain fade, as before v0.70)...
+  holdK: 0.5,           // (perf job) ... shrinking at holdK of his speed (1 = he stands still until the picture reaches him, as before: a hitch)
   holdMax: 3 * YD,      // ... for corrections up to this big (a bigger one fades as above)
   spreadK: 2.5, spreadCap: 300,   // the margin also grows by spreadK x how unevenly the host itself sends (ONL.hgDev, ms), and delayMax with it, up to spreadCap ms
   slipPx: 1.5,          // readout: a free runner drawn moving back along his run by more than this (px) in a frame = a slip (SLIP n/s on the FRAME TIMES line)
@@ -2311,10 +2335,11 @@ function onlNote(st, seq, k, r, o) {
   if (st.v[k] !== r || !(k in st.v)) { st.v[k] = r; st.s[k] = seq; if (o !== undefined) st.o[k] = o; else if (k in st.o) delete st.o[k]; if (k in st.x) delete st.x[k]; }
 }
 function onlDelta(p, pm, st, seq) {   // pm: Map(player -> index)
-  for (const k of Object.keys(p)) {
+  for (const k in p) {   // (for-in, no key array: a player carries ~230 PLAYER_LAZY props declared undefined, skipped first)
+    const v = p[k];
+    if (v === undefined) continue;
     if (k[0] === '_' && k[1] === '_') continue;
     if (ONL_HOST_ONLY.has(k)) continue;
-    const v = p[k];
     let r, o;
     if (v !== null && typeof v === 'object') {
       if (ONL_STATIC.has(k)) {
@@ -2342,16 +2367,16 @@ const onlHostIsOff = () => !twoP || !twoP.flipped;              // Player 1 (the
 const onlIAmOff = () => ONL.guest ? !onlHostIsOff() : onlHostIsOff();
 function onlGlobals(ps, pm) {
   const ix = o => { const i = pm.get(o); return i === undefined ? -1 : i; };
-  return {
+  const o = {
     st: state, msg, los, dn: down, ltg: lineToGain, nl: nextLos,
     gm: { blue: game.blue, red: game.red, quarter: game.quarter, secs: Math.round(game.secs * 10) / 10, timeouts: game.timeouts, over: game.over, runoff: game.runoff, pendingQuarter: game.pendingQuarter, qs: game.qs, ot: game.ot ? slim(game.ot) : null, kickPending: game.kickPending, recvFirst: game.recvFirst },
     tp: twoP ? { fl: twoP.flipped, to: twoP.to } : null,
     mt: { you: MATCH.you, opp: MATCH.opp, yk: MATCH.youKit, ok: MATCH.oppKit, home: MATCH.home },
     bm: bulletMode, pm: patMode, fp: fourthPending, hh: halfHold, pz: paused, pkb: preKickBack ? preKickBack.down * 2 + (preKickBack.who === 'g' ? 1 : 0) : 0, ko: !!kickoffPlay, cw: celebWaitBits(), npl: !!noPlayLines, pr: puntRet, prp: puntRetPlay,
-    vz: Math.round(userZoom * (TOUCH ? TOUCH_ZOOM : 1) * 1000) / 1000, vc: Math.round(viewCenterY()),   // (the host's own view: his wheel zoom / phone zoom and the field's middle on his screen, see onlPtOut)
     rz: RESET_N, ud: ix(ud), tg: ix(tgt), rn: ix(runner), mi: MIRROR,   // (mi: the host's screen direction: the guest translates his taps / keys when his own differs)
     nm: { cbT: ix(cbT), cbB: ix(cbB), sT: ix(sT), sB: ix(sB), lbW: ix(lbW), lbM: ix(lbM), lbS: ix(lbS) },
-    ball: slim(ball, pm), cam: [Math.round(camX), Math.round(camY), Math.round(zoom * passPull * 1000) / 1000], sh: Math.round(shake * 10) / 10,
+    ball: slim(ball, pm), sh: Math.round(shake * 10) / 10,
+    cs: onlCamScripted() ? 1 : 0, cj: ONL.cjN || 0,   // (perf job 19: each device runs its own camera. cs = the host's camera is being placed by a script (a replay, a reel): the guest shows the host's `cam` (below) then; cj = the host's camJump count: the guest's camera starts ON its next shot too)
     wx: game.wx ? slim(game.wx) : null, wxi: { rain: WXI.rain, snow: WXI.snow, mph: WXI.mph },
     po: popups.map(q => ({ i: ix(q.p), text: q.text, color: q.color, t: Math.round(q.t * 100) / 100, ico: q.ico })),
     im: impacts.map(q => slim(q, pm)),
@@ -2359,7 +2384,11 @@ function onlGlobals(ps, pm) {
     ob: onlObs(),
     aim: aim ? slim(aim, pm) : null, kick: kick ? slim(kick, pm) : null, kof: kickoff ? slim(kickoff, pm) : null, pp: puntPlay ? slim(puntPlay, pm) : null,
   };
+  if (o.cs) o.cam = [Math.round(camX), Math.round(camY), Math.round(zoom * passPull * 1000) / 1000];   // (only while scripted: a live-play snapshot never carries a camera)
+  return o;
 }
+// the host's camera was put where it is by something other than updateCamera (camS = where updateCamera last left it): a replay, a reel, a booth review
+const onlCamScripted = () => !!((rec && rec.replaying) || (typeof reelOn === 'function' && reelOn()) || camS.x !== camX || camS.y !== camY || camS.z !== zoom);
 function onlHostCast(ps, pm, key) {   // (always on the reliable channel: everything after it builds on it)
   const seq = ++ONL.seq;
   { const old = ONL.castKey && ONL.castPs, om = old && new Map(), on = old && new Map();   // (old index by object, and by the man: reset() builds new player objects every play, so the same 22 men never matched and every play went whole)
@@ -2370,7 +2399,7 @@ function onlHostCast(ps, pm, key) {   // (always on the reliable channel: everyt
   ONL.castKey = key; ONL.epoch = (ONL.epoch || 0) + 1; ONL.castSeq = ONL.relSeq = ONL.ack = seq;
   ONL.sent = ps.map(onlNewSt); ONL.gSt = { v: {}, s: {}, o: {} };   // (gSt: the globals sent so far; a new cast sends them all again)
   const full = ps.map((p, i) => { onlDelta(p, pm, ONL.sent[i], seq); return onlSince(ONL.sent[i], 0)[0]; });
-  const m = { t: 'cast', e: ONL.epoch, n: seq, h: Math.round(performance.now()), full, sizes: [ols.length, recs.length, dl.length, back7.length, fgExit.length] };
+  const m = { t: 'cast', e: ONL.epoch, n: seq, h: onlStamp(), full, sizes: [ols.length, recs.length, dl.length, back7.length, fgExit.length] };
   // the sideline people (~52 KB) go once: with the first cast, and again only when the cast of people itself is a new one (a new game, the setting, an injury
   // exit's extra man: SL.cast is then a new object) or the guest says it has none ('slq'). Everything else about them already travels as 'sl' events (slEvent).
   // sv = which pack this cast belongs with; sn = the sideline clock, so the guest's stays on the host's between events.
@@ -2402,7 +2431,7 @@ function onlHostCastPart(ps, pm, key, seq, map) {
   const g = onlGlobals(ps, pm), G = ONL.gSt = { v: {}, s: {}, o: {} };
   for (const k of Object.keys(g)) { G.v[k] = JSON.stringify(g[k]); G.s[k] = seq; G.o[k] = g[k]; }
   ONL.castSeq = ONL.relSeq = ONL.ack = seq;
-  const m = { t: 'castp', e: ONL.epoch, n: seq, h: Math.round(performance.now()), map, full, d, g, sizes: [ols.length, recs.length, dl.length, back7.length, fgExit.length] };
+  const m = { t: 'castp', e: ONL.epoch, n: seq, h: onlStamp(), map, full, d, g, sizes: [ols.length, recs.length, dl.length, back7.length, fgExit.length] };
   if (gone) m.x = x;
   onlCastSl(m);
   const len = NET.send(m);
@@ -2440,6 +2469,22 @@ function lagDist(d, c, ms) {
   const dd = dist(d, c); if (!ms) return dd;
   const s = histSpot(c, ms); return s ? Math.min(dd, Math.hypot(d.x - s.x, d.y - s.y)) : dd;
 }
+// host step clock (perf job 17a): snapshots, casts and events are stamped with the time of the game step they show, 1000 / 60 ms a step run, never
+// performance.now() at send time (the host's work before the stamp turned into speed wobble on the guest). Slewed toward performance.now() by
+// ONL_NET.clkSlew of a step while it is clkSoft ms off, re-anchored when over clkHard ms (a pause, a stall)
+function onlClkStep() {
+  const now = performance.now(), N = ONL_NET, st = 1000 / 60;
+  const stall = (frameLoop.drops || 0) !== (ONL.sClkDr || 0); ONL.sClkDr = frameLoop.drops || 0;   // (the frame loop dropped steps: a stall, the game really lost that time)
+  const off0 = now - (ONL.sClk + st);   // (+ = the clock is behind real time)
+  if (ONL.sClk == null || stall || off0 > N.clkHard || off0 < -N.clkAhead) { ONL.sClk = ONL.sClk == null || off0 < -N.clkAhead ? Math.max(now, ONL.hLast || 0) : Math.max(now, ONL.sClk + st); ONL.sClkRe = (ONL.sClkRe || 0) + 1; return; }   // (a re-anchor moves the clock forward by at least this step: a frame of several steps runs the clock ahead of now, which is right (the positions moved by those steps); only a clock clkAhead ms ahead is pulled back)
+  const off = now - (ONL.sClk + st);
+  ONL.sClk += st + (Math.abs(off) > N.clkSoft ? Math.sign(off) * N.clkSlew * st : 0);
+}
+function onlStamp() {   // (0.1 ms, never backwards; no step for clkHard ms (a pause, a replay) = re-anchored to performance.now())
+  const now = performance.now();
+  if (ONL.sClk == null || now - ONL.sClk > ONL_NET.clkHard) { ONL.sClk = Math.max(now, ONL.hLast || 0); ONL.sClkRe = (ONL.sClkRe || 0) + 1; }   // (forward only: a clock ahead of now is the steps' own time, never pulled back here)
+  return (ONL.hLast = Math.round(Math.max(ONL.sClk, ONL.hLast || 0) * 10) / 10);
+}
 function onlHostTick() {
   histPush();
   if (NET._simQ.length) NET.simPump();
@@ -2453,7 +2498,8 @@ function onlHostTick() {
   let backed = false;
   try { const dc = NET.conn && NET.conn.dataChannel, fc = NET.fast; backed = !!((dc && dc.bufferedAmount > ONL_BACKLOG) || (fc && fc.bufferedAmount > ONL_BACKLOG)); } catch (e) {}
   if (backed) ONL.slowUntil = now + ONL_NET.slowMs;
-  const gap = 1000 / (onlKickerSets() || aim || onlRunLive() || (ONL_NET.fastPlay && onlPlayLive()) ? ONL_NET.hzFast : now < (ONL.slowUntil || 0) ? ONL_NET.hzSlow : ONL_NET.hz);   // (a kick meter / aim in progress: faster, so it stays smooth)
+  const fastW = onlKickerSets() || aim || onlRunLive() || (ONL_NET.fastPlay && onlPlayLive()), slowW = now < (ONL.slowUntil || 0), dir = !slowW && onlDirectOk(now);
+  const gap = 1000 / (dir ? ONL_NET.hzDirect : fastW ? ONL_NET.hzFast : slowW ? ONL_NET.hzSlow : ONL_NET.hz);   // (a kick meter / aim in progress: faster, so it stays smooth; a clean direct link: every step, onlDirectOk)
   const press = ONL.pressNow && now - ONL.snapAt >= ONL_NET.pressMin;   // (a guest press since the last snapshot: this frame already acted on it, send now)
   if (now - ONL.snapAt < gap - 2 && !press) return;
   ONL.pressNow = false;
@@ -2475,10 +2521,17 @@ function onlHostTick() {
   for (const k of Object.keys(g)) { const j = JSON.stringify(g[k]); if (G.v[k] !== j) { G.v[k] = j; G.s[k] = seq; G.o[k] = g[k]; } }
   for (const k in G.s) if (G.s[k] > base) gd[k] = G.o[k];
   perfU('u.net.glob');
-  const m = { t: 'snap', e: ONL.epoch, n: seq, h: Math.round(performance.now()), a: base, c: Math.round(clock * 1000) / 1000, d, g: gd };
+  const m = { t: 'snap', e: ONL.epoch, n: seq, h: onlStamp(), a: base, c: Math.round(clock * 1e5) / 1e5, d, g: gd };
   if (gone) m.x = x;
   if (!NET.sendFast(m)) ONL.relSeq = seq;
   perfU('u.net.send');
+  { const w = performance.now() - now; ONL.uNetAvg = ONL.uNetAvg == null ? w : ONL.uNetAvg * 0.95 + w * 0.05; }   // (this tick's own work: onlDirectOk)
+}
+// (perf job 18) snapshots at the step rate (ONL_NET.hzDirect) only on a clean link: DIRECT, neither channel backed up (the caller checks the slow rate), the host's own
+// snapshot work under directNet ms on average, and the guest's last report (under 5 s old) with HITCH under directHitch a second. Anything else = the old rates
+function onlDirectOk(now) {
+  if (!ONL_NET.hzDirect || NET.link !== 'DIRECT' || (ONL.uNetAvg || 0) >= ONL_NET.directNet) return false;
+  const G = ONL.gStat; return !(G && now - G.at < 5000 && (G.hi || 0) >= ONL_NET.directHitch);
 }
 // guest: the cast arrives whole (everyone's properties), after which snapshots are deltas on it
 function onlGotCast(m) {
@@ -2529,7 +2582,10 @@ function onlGotSnap(m) {
   // (a snapshot before its cast / from an older cast / old or repeated / built on one that never got here: the next one covers it. The fast channel can reorder:
   //  an older one than the newest kept is dropped here too, so the buffer stays in the host's order)
   if (!n || m.e !== ONL.epoch || m.n <= ONL.rxSeq || m.a > ONL.rxSeq || !m.d || m.d.length !== n || !ONL.pos) return;
-  ONL.rxSeq = m.n; NET.sendFast({ t: 'ak', e: m.e, n: m.n });
+  ONL.rxSeq = m.n;
+  { const a = { t: 'ak', e: m.e, n: m.n }, now = performance.now();   // (perf job 21: about 4 times a second the ack carries this screen's view, a world rectangle: the host's sideline pops wait until neither screen sees them)
+    if (now - (ONL.vSentAt || 0) >= ONL_NET.viewMs) { ONL.vSentAt = now; a.v = onlMyView(); }
+    NET.sendFast(a); }
   // where everyone is as of this snapshot (pos: x y z), how fast (vel: vx vy, px per game second) and the leg cycle (an: run, stride, run's rate per game second)
   const pos = ONL.pos.slice(), vel = ONL.vel.slice(), an = ONL.anim.slice(), dc = ONL.lastC != null ? m.c - ONL.lastC : 0;
   ONL.lastC = m.c;
@@ -2556,8 +2612,11 @@ function onlGotSnap(m) {
   }
   ONL.lastArr = now; ONL.lastH = hasH ? m.h : null;
   let at = hasH && NET.off != null ? m.h - NET.off : now;
-  const last = ONL.buf[ONL.buf.length - 1]; if (last && at <= last.at) at = last.at + 1;
+  const last = ONL.buf[ONL.buf.length - 1]; if (last && at <= last.at) at = last.at + 0.01;   // (perf job: a hair, not 1 ms: two snapshots of one step share a stamp, and +1 shortened the next pair by 1 ms)
   ONL.tr = ONL.tr == null ? now - at : ONL.tr + (now - at - ONL.tr) * 0.05;   // (how long after the host made one it gets here: the playback clock stays this much + a margin behind)
+  { const Lt = ONL.lateS || (ONL.lateS = []); Lt.push(now - at - ONL.tr); if (Lt.length > ONL_NET.tailN) Lt.shift();   // (perf job 17b: the late tail of the arrivals, not their mean, sizes the margin)
+    const q = Lt.slice().sort((u, v) => u - v); ONL.tail = Math.max(0, q[Math.min(q.length - 1, Math.floor(ONL_NET.tailQ * q.length))]); }
+  if (S && last && m.c > last.c && at > last.at) { const r = (m.c - last.c) / ((at - last.at) / 1000); S.rMin = Math.min(S.rMin, r); S.rMax = Math.max(S.rMax, r); }   // (RATE: game s per s between two snapshots; a host stamping off its step clock keeps it flat)
   if (S && (m.__len || SETTINGS.perfHud)) { S.bSum += m.__len || JSON.stringify(m).length; S.bN++; }   // (fast-channel snapshots carry their size: counted always, free)
   const gFull = Object.assign({}, ONL.gPrev || {}, m.g); ONL.gPrev = gFull;   // (the globals arrive as a delta: put back together)
   ONL.buf.push({ at, c: m.c, g: gFull, pos, vel, an, d: m.d, x: m.x || null, ap: false });
@@ -2592,12 +2651,14 @@ const onlDrawLag = () => ONL.pt != null ? Math.max(0, performance.now() - ONL.pt
 const onlMyLag = () => Math.round(onlDrawLag() + (NET.ping || 0) / 2);   // ms between the host's moment and this guest's press reaching it (sent as `l` on key / pointer downs, lag compensation)
 function onlDelayTarget() {
   const sp = ONL_NET.spreadK * (ONL.hgDev || 0), hi = Math.max(ONL_NET.delayMax, Math.min(ONL_NET.spreadCap, ONL_NET.delayMax + sp));   // (v0.70: an unevenly sending host needs a deeper buffer, or the picture runs out and guesses ahead)
-  return (ONL.tr || 0) + Math.max(ONL_NET.delayMin, Math.min(hi, ONL_NET.gapK * (ONL.gapAvg || 1000 / ONL_NET.hz) + ONL_NET.jitK * (ONL.jit || 0) + sp));
+  const gap = ONL.gapAvg || 1000 / ONL_NET.hz, tail = (ONL.tail || 0) + ONL_NET.tailGap * gap;   // (perf job 17b: the late tail + half a gap, not 2 x the mean jitter)
+  const fl = Math.max(ONL_NET.delayMin, ONL_NET.delayGaps * gap);
+  return (ONL.tr || 0) + Math.max(fl, Math.min(hi, ONL_NET.gapK * gap + tail + sp) - (ONL.mTrim || 0));   // (mTrim: the adaptive trim, onlTrimTick)
 }
 const onlHerm = (p0, m0, p1, m1, t) => { const t2 = t * t, t3 = t2 * t; return (2 * t3 - 3 * t2 + 1) * p0 + (t3 - 2 * t2 + t) * m0 + (-2 * t3 + 3 * t2) * p1 + (t3 - t2) * m1; };
 // guest, every frame: the state at the playback clock, positions on a curve between the two snapshots around it
 function onlGuestStep() {
-  const now = performance.now(), dtR = ONL.stepAt ? Math.min(0.25, (now - ONL.stepAt) / 1000) : 0; ONL.stepAt = now;
+  const now = typeof last === 'number' && Math.abs(performance.now() - last) < 250 ? last : performance.now(), dtR = ONL.stepAt ? Math.min(0.25, (now - ONL.stepAt) / 1000) : 0; ONL.stepAt = now;   // (perf job 17a: the frame's rAF time, not a mid-frame read)
   NET.offTick(dtR); if (NET._simQ.length) NET.simPump();
   const buf = ONL.buf; if (!buf.length) { onlEvRun(); return; }
   const ps = allPlayers();
@@ -2625,13 +2686,13 @@ function onlGuestStep() {
   // (what the picture needs from this snapshot's globals, unpacked once: not again every drawn frame)
   if (!a.u) a.u = { ball: unslim(g.ball, ps), po: g.po.filter(q => q.i >= 0).map(q => ({ p: ps[q.i], text: q.text, color: q.color, t: q.t, t0: q.t, ico: q.ico })), im: g.im.map(q => { const o = unslim(q, ps); o.__t0 = o.t; return o; }), pp: g.pp ? unslim(g.pp, ps) : null };
   const fixK = Math.exp(-3 * dtR * 1000 / ONL_NET.fixMs), bd = b && b.d;
-  let snaps = 0, slips = 0; const me = ONL.pred && ONL.pred.p;
+  let snaps = 0, slips = 0, hitchMen = 0; const me = ONL.pred && ONL.pred.p;
   // a host reset (g.rz) between a and b: the new line-up is a cut, never a slide (a is held until b is due); cutNow = the first frame drawn from the new line-up
   // (the first snapshots after a reset can still carry a few stale spots: for cutWin ms of host time after it every snapshot is drawn as a cut too, so a late spot snaps, never slides)
   const newRz = a.g && a.g.rz !== ONL.drawRz; if (newRz) { ONL.drawRz = a.g.rz; ONL.rzAt = a.at; }
   const inWin = ONL.rzAt != null && a.at - ONL.rzAt < ONL_NET.cutWin;
   const rzCut = !!(b && b.g && a.g && (b.g.rz !== a.g.rz || inWin)), cutNow = newRz || (inWin && a !== ONL.cutA); ONL.cutA = a;
-  if (newRz) { ONL.cutN = (ONL.cutN || 0) + 1; ONL.camCut = true; }
+  if (newRz) { ONL.cutN = (ONL.cutN || 0) + 1; runPid++; }   // (runPid: a new play for the camera's per-play state too, as reset() does on the host)
   for (let i = 0, j = 0, k = 0; i < ps.length; i++, j += 3, k += 2) {
     const p = ps[i]; let x = A[j], y = A[j + 1], z = A[j + 2];
     if (cutNow) { p.__ex = p.__ey = 0; p.__rx = undefined; }
@@ -2666,7 +2727,7 @@ function onlGuestStep() {
     { // (v0.70) the correction along his run shrinks no faster than he runs: drawn ahead of the picture, he waits for it instead of sliding back. Across it, and when it is
       // over holdMax, it fades as before
       const a = free ? ex * ux + ey * uy : 0, cx = ex - a * ux, cy = ey - a * uy;
-      let a2 = a * fixK; if (a > 0 && a <= ONL_NET.holdMax) a2 = Math.max(a2, a - sp * cr * dtR);
+      let a2 = a * fixK; if (a > 0 && a <= ONL_NET.holdMax) a2 = Math.max(a2, a - sp * cr * dtR * ONL_NET.holdK);   // (perf job: holdK < 1 = he keeps moving at (1 - holdK) of his speed while the picture catches up, never a standstill)
       ex = a2 * ux + cx * fixK; ey = a2 * uy + cy * fixK;
     }
     if (Math.abs(ex) < 0.05 && Math.abs(ey) < 0.05) ex = ey = 0;
@@ -2675,11 +2736,15 @@ function onlGuestStep() {
       const mx = x + ex - p.x, my = y + ey - p.y;
       if (Math.abs(mx) < SNAP_JUMP && Math.abs(my) < SNAP_JUMP && mx * ux + my * uy < -ONL_NET.slipPx) slips++;
     }
+    if (S && ONL.extPrev && !cutNow && sp > 2 * YD && typeof p.x === 'number') {   // (HITCH: past the newest snapshot last frame, and a moving man drawn under a third of his step or backwards)
+      const mv = (x + ex - p.x) * ux + (y + ey - p.y) * uy; if (mv < sp * cr * dtR / 3) hitchMen++; }
     p.x = x + ex; p.y = y + ey; p.z = z;
+    if (VB && !rzCut) { p.vx = L(VA[k], VB[k], t); p.vy = L(VA[k + 1], VB[k + 1], t); } else { p.vx = VA[k]; p.vy = VA[k + 1]; }   // (perf job 19: the speeds between the two snapshots, so the guest camera's look-ahead never steps with them)
     // the move's clock runs on from the snapshot's (see onlApply)
     const ac = p.act;
     if (ac && !p.__af && p.__aN === p.action && typeof p.__at0 === 'number') { let tt = p.__at0 + Math.max(0, clk - p.__ac); if (ac.dur) tt = Math.min(tt, Math.max(ac.dur, p.__at0)); ac.t = tt; }
   }
+  const st0 = state;
   state = g.st; msg = g.msg; los = g.los; down = g.dn; lineToGain = g.ltg; nextLos = g.nl;
   Object.assign(game, g.gm);
   if (g.tp) { if (!twoP) twoP = { flipped: false, to: 3, def: true }; twoP.flipped = g.tp.fl; twoP.to = g.tp.to; twoP.def = true; }
@@ -2687,9 +2752,12 @@ function onlGuestStep() {
   if (MATCH.you !== mt.you || MATCH.opp !== mt.opp || MATCH.youKit !== mt.yk || MATCH.oppKit !== mt.ok || MATCH.home !== mt.home) { Object.assign(MATCH, { you: mt.you, opp: mt.opp, youKit: mt.yk, oppKit: mt.ok, home: mt.home }); applyKits(); }
   bulletMode = g.bm; patMode = g.pm; fourthPending = g.fp; halfHold = g.hh; paused = g.pz; preKickBack = g.pkb ? { down: g.pkb >> 1, who: g.pkb & 1 ? 'g' : 'h' } : null; kickoffPlay = g.ko; ONL.cw = g.cw || 0; if (g.npl !== undefined) noPlayLines = g.npl; puntRet = g.pr; puntRetPlay = g.prp;
   ud = ps[g.ud] || null; tgt = ps[g.tg] || null; runner = ps[g.rn] || null;
+  if (state === 'done' && st0 !== 'done') doneAt = performance.now();   // (the whistle on THIS device's clock: the camera's dead-ball / touchdown holds time from it)
+  if (state === 'run' && st0 !== 'run' && kickoffPlay) runStart = clk;   // (a kick return starts: the camera's slow first koSettle s)
   cbT = ps[g.nm.cbT]; cbB = ps[g.nm.cbB]; sT = ps[g.nm.sT]; sB = ps[g.nm.sB]; lbW = ps[g.nm.lbW]; lbM = ps[g.nm.lbM]; lbS = ps[g.nm.lbS];
   ONL.view = g.ob || {};
   const bl = a.u.ball; Object.assign(ball, bl);
+  if (ball.incDone != null) ball.incDone = state === 'done' ? doneAt : -1;   // (the host stamps an incompletion with ITS doneAt: on this device it is this device's whistle)
   const bb = b && b.g.ball;
   if (bb && !rzCut && Math.abs(bb.x - bl.x) < SNAP_JUMP && Math.abs(bb.y - bl.y) < SNAP_JUMP) { ball.x = L(bl.x, bb.x, t); ball.y = L(bl.y, bb.y, t); ball.z = Math.max(0, L(bl.z || 0, bb.z || 0, t)); }
   if (state === 'flight' && bl.T > 0 && typeof bl.p === 'number' && bl.fx != null) {   // (a pass in the air: drawn from its own formula, so the arc has no corners)
@@ -2701,8 +2769,6 @@ function onlGuestStep() {
     const hi = ps.findIndex(p => p.hasBall);
     if (hi >= 0 && !ball.inAir && !(bd && bd[hi] && bd[hi].hasBall === false)) { const h = hi * 3; ball.x = ps[hi].x + L(bl.x - A[h], bb.x - B[h], t); ball.y = ps[hi].y + L(bl.y - A[h + 1], bb.y - B[h + 1], t); }
   }
-  const c = g.cam, c2 = b ? b.g.cam : c, cp = past && dc > 0 ? past / dc : 0;
-  camX = L(c[0], c2[0], t + cp); camY = L(c[1], c2[1], t + cp); zoom = L(c[2], c2[2], t); passPull = 1; onlCamEase(now);
   clock = clk; shake = g.sh;
   game.wx = g.wx; Object.assign(WXI, g.wxi);
   popups = a.u.po; impacts = a.u.im;
@@ -2711,11 +2777,10 @@ function onlGuestStep() {
   const gn = ne.g;   // (the reticle and the kick meters follow your own finger / taps: the newest snapshot, not the late picture)
   if (!ne.un) ne.un = { aim: gn.aim ? unslim(gn.aim, ps) : null, kick: gn.kick ? unslim(gn.kick, ps) : null, kof: gn.kof ? unslim(gn.kof, ps) : null };
   aim = ne.un.aim ? { ...ne.un.aim } : null; kick = ne.un.kick ? { ...ne.un.kick } : null; kickoff = ne.un.kof ? { ...ne.un.kof } : null; puntPlay = a.u.pp ? { ...a.u.pp } : null;
-  ONL.hostMirror = gn.mi; ONL.hostVz = gn.vz || 1; ONL.hostVc = gn.vc;
-  if (aim) {   // (the host's aim is in the host's screen frame: into this one. Mirrored drive, another zoom)
-    const k = 1 / onlViewK(), f = onlFlip() ? -1 : 1, vc = viewCenterY(), hv = ONL.hostVc || vc;
-    if (f < 0 || Math.abs(k - 1) > 0.001 || hv !== vc) for (const [a, b] of [['sx', 'sy'], ['cx', 'cy']]) { aim[a] = W / 2 + f * (aim[a] - W / 2) * k; aim[b] = vc + (aim[b] - hv) * k; }
-    if (ONL.gPid != null && ONL.gLoc && !ONL.gUi && onlIAmOff() && qb && qb.hasBall) { aim.cx = ONL.gLoc.x; aim.cy = ONL.gLoc.y; }   // (your own throw: the moving end is your own finger, this frame, not the host's echo of it)
+  ONL.hostMirror = gn.mi;
+  if (aim) {   // (perf job 20: the host's aim is a drag on the host's screen. Only its vector matters (throwTarget): the same vector here, flipped when the two screens are mirrored apart, never scaled)
+    if (onlFlip()) { aim.sx = W - aim.sx; aim.cx = W - aim.cx; }
+    if (ONL.gPid != null && ONL.gLoc && ONL.gPress && !ONL.gUi && onlIAmOff() && qb && qb.hasBall) { aim.sx = ONL.gPress.x; aim.sy = ONL.gPress.y; aim.cx = ONL.gLoc.x; aim.cy = ONL.gLoc.y; }   // (your own throw: your own press and finger, this frame, not the host's echo of them)
   }
   if (aim && ONL.gRelAt && now - ONL.gRelAt < ONL_NET.relHide * 1000 && onlIAmOff()) aim = null;   // (v0.74: your release hides your reticle now; the host's throw follows in the picture)
   else if (!aim) ONL.gRelAt = 0;
@@ -2723,22 +2788,31 @@ function onlGuestStep() {
     if (!aim && P && P.bf && Q && ONL.gPid != null && !ONL.gUi && onlIAmOff() && qb && ['pre', 'drop', 'pocket'].includes(state) && Math.hypot(Q.x - P.x, Q.y - P.y) >= BACKFIELD_DRAG) aim = { sx: P.x, sy: P.y, cx: Q.x, cy: Q.y }; }
   onlKickAnchor(); { const L = onlKickLocal(); if (L) { if (L.ph === 'power') kick.meter = L.v; else kick.pos = L.v; } }
   onlPredict(now);
+  // perf job 19: the camera is this device's own, framed for this screen, from what this picture shows. While the host's camera is placed by a script (g.cs: a replay,
+  // a reel) the guest shows that one; when it ends, updateCamera starts from rest (camS.x !== camX)
+  if (g.cs && g.cam) { const c = g.cam, c2 = b && b.g.cs && b.g.cam ? b.g.cam : c; camX = L(c[0], c2[0], t); camY = L(c[1], c2[1], t); zoom = L(c[2], c2[2], t); passPull = 1; }
+  else {
+    if (g.cj !== ONL.cjSeen) { if (ONL.cjSeen != null) camJump = true; ONL.cjSeen = g.cj; }   // (the host's camera started ON a new shot (the try after a touchdown): this one does too)
+    const pc = SETTINGS.perfHud ? PERF_NOW() : 0; updateCamera(Math.min(0.07, dClk)); if (pc) perfMark('cam', pc);
+  }
   if (S) {   // the readout (drawNetBadge): counted per frame, shown per second
-    S.f++; if (ext) S.ex++; if (snaps) S.sn++; S.sl += slips; S.ahead = S.ahead ? S.ahead * 0.9 + (ne.at - rt) * 0.1 : ne.at - rt;
+    S.f++; if (ext) S.ex++; if (snaps) S.sn++; S.sl += slips; if (hitchMen && liveNow()) S.hi++; S.ahead = S.ahead ? S.ahead * 0.9 + (ne.at - rt) * 0.1 : ne.at - rt;
     if (now - S.t0 >= 1000) {
       const sec = (now - S.t0) / 1000;
-      S.show = { gap: S.gN ? S.gSum / S.gN : 0, gMax: S.gMax, bytes: S.bN ? S.bSum / S.bN : 0, ex: S.ex / sec, sn: S.sn / sec, sl: S.sl / sec };
-      Object.assign(S, { t0: now, f: 0, ex: 0, sn: 0, sl: 0, gSum: 0, gN: 0, gMax: 0, bSum: 0, bN: 0 });
+      S.show = { gap: S.gN ? S.gSum / S.gN : 0, gMax: S.gMax, bytes: S.bN ? S.bSum / S.bN : 0, ex: S.ex / sec, sn: S.sn / sec, sl: S.sl / sec, hi: S.hi / sec, rate: S.rMax >= S.rMin ? [S.rMin, S.rMax] : null };
+      Object.assign(S, { t0: now, f: 0, ex: 0, sn: 0, sl: 0, hi: 0, gSum: 0, gN: 0, gMax: 0, bSum: 0, bN: 0, rMin: Infinity, rMax: -Infinity });
     }
   }
+  ONL.extPrev = ext; onlTrimTick(now, dtR, ext || hitchMen > 0);
 }
-// the guest's camera: the snapshot camera eased (exponential, ONL_NET.camEase), so a late or early snapshot never steps it. A cut still cuts.
-function onlCamEase(now) {
-  const E = ONL.camE || (ONL.camE = { x: camX, y: camY, z: zoom, at: now }), dt = Math.min(0.1, Math.max(0, (now - E.at) / 1000));
-  if (!ONL.camCut && Math.hypot(camX - E.x, camY - E.y) < SNAP_JUMP && Math.abs(Math.log(zoom / (E.z || zoom))) < 0.2) { const k = Math.exp(-dt / ONL_NET.camEase); camX += (E.x - camX) * k; camY += (E.y - camY) * k; zoom += (E.z - zoom) * k; }
-  E.x = camX; E.y = camY; E.z = zoom; E.at = now; ONL.camCut = false;
+// (perf job 18) the margin comes down while the picture has stayed inside the snapshots for trimWait s (trimRate ms a second), and goes back up at once
+// (to trimBack of itself) the first frame it runs past the newest one
+function onlTrimTick(now, dtR, bad) {
+  const N = ONL_NET; if (!N.trimRate) { ONL.mTrim = 0; return; }
+  if (bad || ONL.calmAt == null) { ONL.calmAt = now; if (bad) ONL.mTrim = (ONL.mTrim || 0) * N.trimBack; return; }
+  if (now - ONL.calmAt > N.trimWait * 1000) ONL.mTrim = Math.min(N.trimMax, (ONL.mTrim || 0) + N.trimRate * dtR);
 }
-const onlStNew = () => ({ t0: performance.now(), f: 0, ex: 0, sn: 0, sl: 0, gSum: 0, gN: 0, gMax: 0, bSum: 0, bN: 0, ahead: 0, show: null });   // ONL.st: the guest's smoothness counters
+const onlStNew = () => ({ t0: performance.now(), f: 0, ex: 0, sn: 0, sl: 0, hi: 0, rMin: Infinity, rMax: -Infinity, gSum: 0, gN: 0, gMax: 0, bSum: 0, bN: 0, ahead: 0, show: null });   // ONL.st: the guest's smoothness counters
 // The guest's own player answers his keys at once: he is drawn ahead of the host's (late) picture by where the held keys take him in the time the picture is
 // behind (the draw delay + half the ping). The lead is only ever an offset on the host's own position, so it can never drift: it grows at running speed when a key
 // goes down, the host's real movement then takes over underneath it, and it shrinks back the same way on release. Looks only, guest only.
@@ -2777,16 +2851,21 @@ function onlPredict(now) {
 const onlFlip = () => !!(ONL.on && ONL.guest && ONL.hostMirror != null && MIRROR !== ONL.hostMirror);
 const ONL_SWAP = { ArrowLeft: 'ArrowRight', ArrowRight: 'ArrowLeft', KeyA: 'KeyD', KeyD: 'KeyA', KeyJ: 'KeyL', KeyL: 'KeyJ' };
 const onlKeyOut = code => onlFlip() && ONL_SWAP[code] ? ONL_SWAP[code] : code;   // (left / right in the host's frame)
-const onlPtX = p => (onlFlip() && !overPauseButton(p)) ? W - p.x : p.x;   // (the field and the centred buttons mirror; the fixed pause icon stays where it is)
-// The two screens can show the field at different sizes (each player's own wheel zoom; a phone is zoomed in): the same spot on the field is then a different spot
-// on each screen. A tap on the field is sent as the spot the HOST's screen has that piece of field at (both views share the camera, so it is a plain scale around
-// the view's middle); a tap on a button keeps its screen spot. Sent as it was, a click on the back missed him on the host whenever the zooms differed.
-const onlViewK = () => (ONL.hostVz || 1) / (userZoom * (TOUCH ? TOUCH_ZOOM : 1));   // host pixels per guest pixel on the field
-function onlPtOut(p) {
-  if (overUiBtn(p)) return { x: p.x, y: p.y };   // (a button: never mirrored. No button's layout depends on the drive direction (decision buttons, PAT / TWO, audibles, timeouts sit at the same spot on both screens), so a mirrored tap on GO used to land on PUNT / FIELD GOAL)
-  const k = onlViewK(), f = onlFlip() ? -1 : 1, vc = viewCenterY();
-  return { x: W / 2 + f * (p.x - W / 2) * k, y: (ONL.hostVc || vc) + (p.y - vc) * k };
+// perf job 20: each device has its own camera, so a guest's field press can't travel as a spot on a shared picture. One gesture rule, written once on each side:
+// a press on the field goes as the WORLD spot under it (w); the host puts it on its own screen with its own camera (onlWorldPt). A drag also carries the guest's
+// pixel move since the press (dx / dy, already flipped into the host's direction when the two screens are mirrored apart); while the host is aiming / about to
+// snap from that press (a throw drag: throwTarget reads a SCREEN vector) the host's point = its press point + that move, never scaled, so the throw equals the
+// reticle the guest drew from its own finger. A press on a button keeps its screen spot (x / y, or the button's id b).
+function onlPtField(p) {   // guest: the field part of a pointer message
+  const w = screenToWorld(p), P = ONL.gPress, f = onlFlip() ? -1 : 1;
+  return { wx: Math.round(w.x * 10) / 10, wy: Math.round(w.y * 10) / 10, dx: P ? Math.round(f * (p.x - P.x) * 10) / 10 : 0, dy: P ? Math.round((p.y - P.y) * 10) / 10 : 0 };
 }
+function onlMyView() {   // this screen's view as a world rectangle [left, right, top, bottom] (whole px; x is along the field either way the screen is mirrored)
+  const z = camZ(), vc = viewCenterY(), hw = (W / 2 + PAD) / z;
+  return [Math.round(camX - hw), Math.round(camX + hw), Math.round(camY - (vc - TOP_BAR) / z), Math.round(camY + (H - FIELD_BOT - vc) / z)];
+}
+const onlWorldPt = (x, y) => { const z = camZ(); return { x: W / 2 + MIRROR * (x - camX) * z, y: viewCenterY() + (y - camY) * z }; };   // (screenToWorld's inverse, this device's camera)
+const onlGuestDrag = () => !!((aim && aim.pid === 1) || (backfieldPress && backfieldPress.pid === 1));   // (a drag from the guest's press: sendMouse's pointerId is 1)
 const ONL_K = { ph: '', t: 0, at: 0, ht: 0 };
 function onlKickAnchor() {
   if (!kick || (kick.phase !== 'power' && kick.phase !== 'aim')) { ONL_K.ph = ''; return; }
@@ -2810,7 +2889,7 @@ for (const name of ['showBanner', 'playSfx', 'clipSfx', 'impactSfx', 'throwSfx',
   window[name] = function (...a) {
     if (ONL.guest && ONL.on && !ONL.evPlay && name !== 'showBanner') return;   // (the guest only plays what the host sent: its own copy of the game state must never make sounds of its own, those came out as random noises)
     const fwd = ONL.host && ONL.on && ONL.depth === 0;
-    if (fwd) { try { NET.send({ t: 'ev', f: name, a: slim(a), h: Math.round(performance.now()) }); } catch (e) {} }   // (h: when, on the host's clock: the guest plays it when its picture gets there)
+    if (fwd) { try { NET.send({ t: 'ev', f: name, a: slim(a), h: onlStamp() }); } catch (e) {} }   // (h: when, on the host's clock: the guest plays it when its picture gets there)
     ONL.depth++; try { return orig.apply(this, a); } finally { ONL.depth--; }
   };
 }
@@ -2886,9 +2965,14 @@ const ONL_BTNS = {
 };
 function onlBtnAt(p) { for (const id in ONL_BTNS) { const r = ONL_BTNS[id](); if (r && inBtn(p, r)) return id; } return null; }
 function onlGuestPtr(m) {
-  if (results || m.x == null) return;
+  if (results || (m.x == null && m.wx == null)) return;
   if (m.q != null) { if (m.k === 'pm' && m.q < (ONL.gQ || 0)) return; ONL.gQ = m.k === 'pm' ? m.q : Math.max(ONL.gQ || 0, m.q); }   // (a move that arrives after a later one: stale, the moves come unordered)
-  const pt = { x: m.x, y: m.y };
+  let pt = { x: m.x, y: m.y };
+  if (m.wx != null) {   // (a field gesture: the press at the world spot; a throw drag from it = the press point + the guest's pixel move)
+    if (m.k !== 'pd' && ONL.gHP && onlGuestDrag()) pt = { x: ONL.gHP.x + m.dx, y: ONL.gHP.y + m.dy };
+    else pt = onlWorldPt(m.wx, m.wy);
+    if (m.k === 'pd') ONL.gHP = pt;
+  }
   if (m.b && ONL_BTNS[m.b]) { const r = ONL_BTNS[m.b]() || ({ kickGo: KICK_GO_BTN, patSwitch: PAT_SWITCH_BTN })[m.b]; if (r) { pt.x = r.x + r.w / 2; pt.y = r.y + r.h / 2; } if (m.k === 'pd' && ONL_NET.logBtn) console.log('[onl] guest button', m.b, '->', Math.round(pt.x), Math.round(pt.y)); }
   ONL.gAt = performance.now(); ONL.gLast = pt;
   if (m.k === 'pd') { if (!onlMayPoint(true, pt)) { ONL.gDown = false; return; } ONL.gDown = true; ONL.fromGuest = true; try { sendMouse('pointerdown', pt, canvas); } finally { ONL.fromGuest = false; } }
@@ -2900,6 +2984,7 @@ function onlGuestPtr(m) {
 function onlGuestCancel() { ONL.gDown = false; aim = null; }
 function onlHandleInput(m) {
   if (!ONL.host || !ONL.on) return;
+  if (m.k === 'kd' && m.q != null) { const Q = ONL.kqSeen || (ONL.kqSeen = new Set()); if (Q.has(m.q)) return; Q.add(m.q); if (Q.size > 64) Q.delete(Q.values().next().value); }   // (the same press on the other channel)
   if (m.k === 'kd' || m.k === 'pd') ONL.inputAt.guest = performance.now();   // (AFK: the guest is there)
   if ((m.k === 'kd' || m.k === 'pd') && m.l != null) { const l = +m.l; ONL.gLag = Math.max(0, Math.min(ONL_NET.lagMax, isFinite(l) && l >= 0 && l <= ONL_NET.lagBad ? l : (NET.ping || 0) / 2 + ONL_NET.lagFall)); }   // (how late the guest's picture was when he pressed: lag compensation)
   if (m.k === 'st') { ONL.gStat = { ...m, at: performance.now() }; return; }   // (the guest's readout numbers, shown on the host's FRAME TIMES)
@@ -2916,7 +3001,7 @@ function onlMsg(d) {   // NET.onmsg's game messages (true: handled)
   if (d.t === 'cast') { if (ONL.guest) onlGotCast(d); return true; }
   if (d.t === 'castp') { if (ONL.guest) onlGotCastP(d); return true; }
   if (d.t === 'snap') { if (ONL.guest) onlGotSnap(d); return true; }
-  if (d.t === 'ak') { if (ONL.host && d.e === ONL.epoch && d.n > (ONL.ack || 0) && d.n <= ONL.seq) ONL.ack = d.n; return true; }   // (the guest has this snapshot: the next ones only carry what changed after it)
+  if (d.t === 'ak') { if (ONL.host && d.v && d.v.length === 4 && d.v.every(Number.isFinite)) ONL.gView = { r: d.v, at: performance.now() }; if (ONL.host && d.e === ONL.epoch && d.n > (ONL.ack || 0) && d.n <= ONL.seq) ONL.ack = d.n; return true; }   // (the guest has this snapshot: the next ones only carry what changed after it)
   if (d.t === 'ev') { onlGotEvent(d); return true; }
   if (d.t === 'sl') { if (ONL.guest) slNet(d); return true; }
   if (d.t === 'ann') { if (ONL.guest) annNet(d); return true; }   // (v0.68: the host's announcer line)
@@ -2942,7 +3027,7 @@ window.addEventListener('keydown', e => {
   if (ONL.guest) {
     if (!onlKeyOk(e)) return;
     e.preventDefault(); e.stopImmediatePropagation();
-    if (!ONL.gHeld[e.code]) { const mc = onlKeyOut(e.code); ONL.gHeld[e.code] = mc; (ONL.gSrc = ONL.gSrc || {})[e.code] = heldEv ? heldEv.src : 'kb'; onlSendKm(); NET.send({ t: 'in', k: 'kd', c: mc, l: onlMyLag() }); }   // (mc: left / right as the host's screen has them)
+    if (!ONL.gHeld[e.code]) { const mc = onlKeyOut(e.code); ONL.gHeld[e.code] = mc; (ONL.gSrc = ONL.gSrc || {})[e.code] = heldEv ? heldEv.src : 'kb'; onlSendKm(); const km = { t: 'in', k: 'kd', c: mc, l: onlMyLag(), q: ONL.kq = (ONL.kq || 0) + 1 }; NET.send(km); if (NET.fast && NET.fastOk) NET.sendFast(km); }   // (perf job 18: a press goes on both channels, the host keeps the first: q)   // (mc: left / right as the host's screen has them)
   } else if (ONL.host) {
     if (e.isTrusted) ONL.inputAt.host = performance.now();
     if (e.code === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); if (!e.repeat) onlPauseToggle('host'); }   // (the pause key: the online pause menu, not the offline one)
@@ -2971,7 +3056,7 @@ window.addEventListener('contextmenu', e => {
 function onlBeginMatch(c, asHost) {   // c: what the lobby settled on (teams, uniforms, ball, weather); both devices run this on PLAY
   if (ONL.on || !onlLobbyActive()) return;
   ONL.host = !!asHost; ONL.guest = !asHost;
-  ONL.on = true; ONL.buf = []; ONL.full = []; ONL.gPrev = null; ONL.st = onlStNew(); ONL.pt = null; ONL.ptHi = null; ONL.dly = null; ONL.evQ = []; ONL.tr = null; ONL.gapAvg = 0; ONL.jit = 0; ONL.hgDev = 0; ONL.lastArr = 0; ONL.lastH = null; ONL.pred = null; ONL.predOff = false; ONL.pq = 0; ONL.gQ = 0; ONL.castKey = ''; ONL.slRef = undefined; ONL.slGot = -1; ONL.gHeld = {}; ONL.gSrc = {}; ONL.gDown = false; ONL.seq = 0;
+  ONL.on = true; ONL.gView = null; ONL.vSentAt = 0; ONL.gHP = null; ONL.buf = []; ONL.full = []; ONL.gPrev = null; ONL.st = onlStNew(); ONL.pt = null; ONL.ptHi = null; ONL.dly = null; ONL.evQ = []; ONL.tr = null; ONL.lateS = []; ONL.tail = 0; ONL.mTrim = 0; ONL.calmAt = null; ONL.kqSeen = null; ONL.kq = 0; ONL.extPrev = false; ONL.uNetAvg = null; ONL.gapAvg = 0; ONL.jit = 0; ONL.hgDev = 0; ONL.lastArr = 0; ONL.lastH = null; ONL.pred = null; ONL.predOff = false; ONL.pq = 0; ONL.gQ = 0; ONL.castKey = ''; ONL.slRef = undefined; ONL.slGot = -1; ONL.gHeld = {}; ONL.gSrc = {}; ONL.gDown = false; ONL.seq = 0;
   ONL.feel = c.fl === 'DELAY' ? 'DELAY' : 'PREDICT'; if (ONL.feel === 'DELAY') { ONL.predOff = true; ONL.predWhy = 'CONTROL FEEL: DELAY'; }   // (CONTROL FEEL: DELAY = no prediction on the guest; the host's own keys wait ONL_NET.inDelayMs, onlDelayKey)
   ONL.gLag = 0; ONL.gStat = null; ONL_HIST.length = 0;
   ONL.savedSimDef = SETTINGS.simDefense; SETTINGS.simDefense = false;   // (defense is always played: the saved setting is ignored, and never written back)
@@ -3336,14 +3421,14 @@ function drawNetBadge() {   // the connection readout in a corner of an online g
   // the guest's smoothness readout (DEBUG > FRAME TIMES): snapshot gaps, jitter, buffer ahead, size, frames guessed past the newest, corrections
   const S = ONL.guest && SETTINGS.perfHud && ONL.st, sh = S && S.show;
   if (sh) {
-    const t2 = `GAP ${Math.round(sh.gap)}/${Math.round(sh.gMax)}  JIT ${Math.round(ONL.jit || 0)}  AHEAD ${Math.round(S.ahead)}  ${Math.round(sh.bytes)} B  EXT ${Math.round(sh.ex)}/s  SNAP ${Math.round(sh.sn)}/s  SLIP ${Math.round(sh.sl || 0)}/s${NET_CFG.sim ? '  LAG ' + SETTINGS.netSim : ''}`;
+    const t2 = `GAP ${Math.round(sh.gap)}/${Math.round(sh.gMax)}  JIT ${Math.round(ONL.jit || 0)}  AHEAD ${Math.round(S.ahead)}  ${Math.round(sh.bytes)} B  EXT ${Math.round(sh.ex)}/s  HITCH ${(sh.hi || 0).toFixed(1)}/s  SNAP ${Math.round(sh.sn)}/s  SLIP ${Math.round(sh.sl || 0)}/s${sh.rate ? '  RATE ' + sh.rate[0].toFixed(3) + '-' + sh.rate[1].toFixed(3) : ''}${NET_CFG.sim ? '  LAG ' + SETTINGS.netSim : ''}`;
     const w2 = ctx.measureText(t2).width + 16, y2 = pz ? y - 24 : y + 20;
     ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(x - w2, y2, w2, pz ? 22 : 18);
     ctx.fillStyle = '#cfe8ff'; ctx.fillText(t2, x - 8, y2 + (pz ? 11 : 9));
   }
   const G = ONL.host && SETTINGS.perfHud && ONL.gStat;   // (host: the guest's numbers, sent every 2 s; grey once they're stale)
   if (G) {
-    const t3 = `GUEST  LAG ${G.lag}  GAP ${G.gap}  JIT ${G.jit}  AHEAD ${G.ah}  EXT ${G.ex}/s  SNAP ${G.sn}/s  ${G.fps} FPS  COMP ${ONL_NET.lagComp ? Math.round(ONL.gLag || 0) : 'OFF'}${ONL.feel === 'DELAY' ? '  DELAY' : ''}`;
+    const t3 = `GUEST  LAG ${G.lag}  GAP ${G.gap}  JIT ${G.jit}  AHEAD ${G.ah}  EXT ${G.ex}/s  HITCH ${G.hi != null ? G.hi : '--'}/s  SNAP ${G.sn}/s  ${G.fps} FPS  COMP ${ONL_NET.lagComp ? Math.round(ONL.gLag || 0) : 'OFF'}${ONL.feel === 'DELAY' ? '  DELAY' : ''}`;
     const w3 = ctx.measureText(t3).width + 16, y3 = pz ? y - 24 : y + 20;
     ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(x - w3, y3, w3, pz ? 22 : 18);
     ctx.fillStyle = now - G.at > 5000 ? '#8a8a8a' : '#cfe8ff'; ctx.fillText(t3, x - 8, y3 + (pz ? 11 : 9));
@@ -3373,7 +3458,7 @@ function drawOnlLobbyExtras() {
 // the guest's readout numbers go to the host every 2 s, so the host's FRAME TIMES shows both screens
 setInterval(() => {
   const S = ONL.on && ONL.guest && ONL.st, sh = S && S.show; if (!sh || !NET.conn) return;
-  NET.send({ t: 'in', k: 'st', gap: Math.round(sh.gap), jit: Math.round(ONL.jit || 0), ah: Math.round(S.ahead || 0), ex: Math.round(sh.ex), sn: Math.round(sh.sn), lag: Math.round(onlDrawLag()), fps: NET.fms ? Math.round(1000 / NET.fms) : 0 });
+  NET.send({ t: 'in', k: 'st', gap: Math.round(sh.gap), jit: Math.round(ONL.jit || 0), ah: Math.round(S.ahead || 0), ex: Math.round(sh.ex), hi: Math.round((sh.hi || 0) * 10) / 10, sn: Math.round(sh.sn), lag: Math.round(onlDrawLag()), fps: NET.fms ? Math.round(1000 / NET.fms) : 0 });
 }, 2000);
 const NET_BADGE = { y: TOP_BAR + 6, alpha: 0.8 };   // the in-play readout: its top edge (just under the top bar, right) and how see-through it is
 

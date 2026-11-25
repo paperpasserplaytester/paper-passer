@@ -853,6 +853,13 @@ const DRAFT_SCHOOLS = ['BAYOU STATE', 'GREAT LAKES TECH', 'NORTH PRAIRIE', 'COAS
   'MAGNOLIA', 'SILVER LAKE', 'FORT ASH', 'PALMETTO BAY', 'BIG SKY NORTH', 'CAPITAL CITY', 'THREE RIVERS', 'SAGEBRUSH', 'MAPLE GROVE', 'SOUTH RIDGE', 'TIDEWATER', 'ELK RAPIDS', 'SUNCOAST', 'BLACK HILLS TECH', 'WINDWARD'];
 const CHANGELOG = [
   { v: "v0.74", secs: [
+    ["PRACTICE IS NOW SESSIONS", [
+      "Up to 3 sessions a week on the new FIELD tab: pick a unit (offense, defense, kicking, punting or returns), QUICK or FULL, and the XP lands right away with a gold, silver or bronze sticker. Each extra session of the same unit that week gives less.",
+      "Kickers, punters, gunners and returners can now train in the kicking, punting and returns units.",
+      "AUTO-RUN: a unit you skip practices by itself at 60% of its slider (the AUTO toggle next to START PRACTICE). AUTO off = skipped units rest: no XP, no wear, no practice injury.",
+      "New tabs FIELD, BATTLES, REPORT and COACHES' OFFICE: the office holds the auto-run pace, trainers, focus groups and mentor pairs.",
+      "Practice injuries are about 4 times rarer."
+    ]],
     ["THE BOOTH READS THE GAME", [
       "The announcers now know the situation: down and distance, field zone, score, time left, possessions left, game-winning and tying drives, the two-minute drill, overtime, playoffs, weather and streaks.",
       "A setup line before the big snaps, like third and long, fourth and short, goal to go or the last play, and a context line after the result, like a new lead, a three-and-out or one possession left.",
@@ -872,6 +879,25 @@ const CHANGELOG = [
       "In-game buttons like AUDIBLE act the moment you lift your finger, and menu taps answer twice as fast.",
       "The game runs at the same speed on every screen: 30 Hz in Low Power Mode, 75, 144 or 165 Hz monitors now play exactly the game a 60 Hz screen does, which changes the odds a little on those screens only. Between-frame drawing keeps fast monitors smooth.",
       "A phone in Low Power Mode is no longer treated as a slow phone. DEBUG: FRAME TIMES says why the frame rate is what it is, GPU switches help find what slows a phone down, and the debug page opens during a game."
+    ]],
+    ["NO MORE FREEZES", [
+      "Saving a big franchise no longer freezes the game: it saves in small pieces in the background, and a save cut short always loads the old or the new one, never a broken one.",
+      "The stands rebuild in the background when the lights or weather change, with no hitch at the snap.",
+      "Fewer hiccups mid-play: replays, players and the field make far less garbage, sounds during a play never stall on a phone, and the picture can no longer change how a play turns out.",
+      "A drawing error can no longer leave every later frame broken."
+    ]],
+    ["A SHARPER PHONE PICTURE", [
+      "The thin white lines across the field are gone, and the end-zone name is written once instead of twice.",
+      "The left edge is sharp: the turned page now sits clear of the phone's status bar.",
+      "The game only drops to 30 FPS when drawing is really slow, not after one long frame. DEBUG: FRAME TIMES shows why it locked and a PHONE line.",
+      "The quarterback can no longer throw a pass from past the line of scrimmage."
+    ]],
+    ["ONLINE, YOUR OWN VIEW", [
+      "Online: each player gets their own camera, framed for their own screen, so a phone and a laptop each see the play the way they would alone.",
+      "Online: a throw goes where your own aim showed and a tap lands on the spot you tapped, even when the two screens are zoomed or turned differently. Before, a phone guest against a laptop host threw passes that landed yards off.",
+      "Online: picking teams in the lobby always ends with both players seeing the same matchup.",
+      "Online: the guest's picture is steadier, with fewer hitches and quicker answers to your presses, and updates twice as often on a good connection.",
+      "Online: sideline people never pop in or out where either player can see them."
     ]]
   ] },
   { v: "v0.73", secs: [

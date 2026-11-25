@@ -4857,7 +4857,7 @@ function draw() {
   ctx.fillStyle = '#3f5f39';
   ctx.fillRect(0, 0, W, H);
 
-  ctx.save();
+  const d0 = ctxDepth; ctx.save();   // (the finally unwinds to here: a throw deep in a nested save leaves nothing open)
   ctx.beginPath();
   ctx.rect(-PAD, TOP_BAR, W + 2 * PAD, H - TOP_BAR - FIELD_BOT);
   ctx.clip();
@@ -4968,7 +4968,7 @@ function draw() {
   if (pt) pt = perfMark('d.tags', pt);
   if (kickAim) drawKickReticle('arc');   // (the kick's arc: over the players and everything else on the field)
   drawHsFreeze();   // (the halftime reel's freeze frame: the man of the play of the half, circled)
-  } catch (e) { drawFail(e); } finally { ctx.restore(); }   // (v0.74: a throw inside the field clip used to leave the clip on for good: the guest lost the top bar)
+  } catch (e) { drawFail(e); } finally { while (ctxDepth > d0) ctx.restore(); }   // (v0.74: a throw inside the field clip used to leave the clip on for good: the guest lost the top bar)
   if (pt) pt = perfMark('d.overlay', pt);
   wxDraw();
   if (pt) pt = perfMark('d.wx', pt);
@@ -5386,6 +5386,7 @@ function drawStarHud() {
   });
   ctx.restore();
 }
+{ const d0 = draw; draw = function () { drawRandOn(); try { return d0.apply(this, arguments); } finally { drawRandOff(); } }; }   // (phase 4: any draw() call, inside a paint or not (gameWarm, photos, the bench), draws from the draw-only random stream)
 function drawScoreboard() {
   // (a replay / highlight shows the board as it was in the frame on screen: the score and clock change as the play does)
   const sb = rec && (rec.replaying || rec.hl) && rec.sbNow;
