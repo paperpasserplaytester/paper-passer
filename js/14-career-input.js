@@ -1206,6 +1206,8 @@ function fbCarry(f) {   // the fullback and the back trade places in the code: t
   setAbsSpeed(f); setAbsSpeed(old);   // (spdMult is measured against the spot he plays: left as it was, a TE's multiplier (off the slow TE base) sat on the back's run speed, ~20% too fast)
 }
 
+// the decision dim (4th down / after a TD) takes only the chooser's click: online the offense's device (a guest's click arrives untrusted), offline you on offense (two players at one screen: always)
+const dimMine = e => ONL.on ? (e.isTrusted ? onlHostIsOff() : !onlHostIsOff()) : (pvpOn() || !aiOff());
 // Pre-snap: drag from the QB circle = pass play, click the RB circle = run play.
 // During the drop: press anywhere to aim, release to throw. Right-click: lob/bullet.
 let replayDrag = null;   // right-mouse drag panning the replay camera
@@ -1435,7 +1437,7 @@ canvas.addEventListener('pointerdown', e => {
   if (halfHold && !(rec && rec.replaying)) { if (e.button === 0 && replayBtnShowing() && inBtn(pointerPos(e), REPLAY_BTN) && replayBtnOn() && playSettled() && !bannerUp()) { startReplay(); rec.fromClick = true; } else if (e.button === 0 && state === 'done' && !(rec && (rec.replaying || rec.rewind)) && playSettled() && !bannerUp()) halfGo = true; return; }   // (the card isn't up yet: the play is still settling, or a replay is playing)
   if (e.button === 0 && patSwitch() && inBtn(pointerPos(e), PAT_SWITCH_BTN)) { patSwitchClick(); return; }
   if (e.button === 0 && preKickClick(pointerPos(e))) return;   // (v0.68: the pre-snap FIELD GOAL / PUNT / GO FOR IT buttons, bottom right)
-  if (((state === 'pre' && fourthPending) || patMode === 'choose') && e.button === 0 && !(rec && rec.replaying)) {   // (the decision dim is up: FIRST, before any on-field picker, and it swallows the click hit or miss)
+  if (((state === 'pre' && fourthPending) || patMode === 'choose') && e.button === 0 && !(rec && rec.replaying) && dimMine(e)) {   // (the decision dim is up: FIRST, before any on-field picker, and it swallows the chooser's click hit or miss; the side without the ball still picks its men)
     const p = pointerPos(e);
     const hit = decisionButtons().find(b => inBtn(p, b));
     if (hit && (hit.id === 'punt' || hit.id === 'fg') && preKickLive()) { fourthPending = false; preKickDo(hit.id); }   // (v0.70 your offense: the kick unit comes on with GO FOR IT left in the corner)
@@ -1450,7 +1452,7 @@ canvas.addEventListener('pointerdown', e => {
     if (inBtn(pointerPos(e), pvpAud().def)) defAudible(); else audible();
     return;
   }
-  if (e.button === 0 && defLive() && state === 'kick' && kick && !kick.kickoff && kick.rush && kick.rush.length && kick.phase !== 'flight' && !(rec && rec.replaying)) {   // (their FG / PAT / punt: click any rusher to take him over, before the snap or after)
+  if (e.button === 0 && defLive() && state === 'kick' && kick && !kick.kickoff && kick.rush && kick.rush.length && kick.phase !== 'flight' && !(rec && rec.replaying) && (!ONL.on || (e.isTrusted ? !onlHostIsOff() : onlHostIsOff()))) {   // (online: only the rushing side's click)   // (their FG / PAT / punt: click any rusher to take him over, before the snap or after)
     const w = screenToWorld(pointerPos(e)), best = kick.rush.filter(o => !o.action).sort((a, b) => Math.hypot(a.x - w.x, a.y - w.y) - Math.hypot(b.x - w.x, b.y - w.y))[0];
     if (best && Math.hypot(best.x - w.x, best.y - w.y) < (pvpOn() ? 1 : 3) * YD) { kick.me = best; return; }   // (two players: only a click right on a rusher; anywhere else is the kicker's meter click)
   }
@@ -1818,11 +1820,11 @@ function onKeyDown(e) {
   if (state === 'done' && game && game.penQ && !paused && e.code !== 'Escape' && !(rec && rec.replaying)) { e.preventDefault(); if (!e.repeat) penKey(e.code); return; }   // (v0.68 the flag's accept / decline card)
   if (pclipOn()) { e.preventDefault(); if (!e.repeat) pclipEnd(true); return; }   // (v0.71 any key / Esc skips the penalty clip)
   if (revOn() && e.code !== 'Escape') { e.preventDefault(); return; }   // (v0.68 a booth review plays itself: no scrub, skip, save or finish)
-  if (HT && !hl) { if (e.code === 'Escape' || e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); if (!e.repeat) { if (e.code === 'Escape') HSK.at = performance.now(); else hsNext(); } } return; }   // (a halftime card: Enter / Space next segment, HOLD Esc skips the show)
-  if (hl && hl.mode === 'half' && !hl.bg) {   // a halftime clip: Enter next clip, Backspace previous clip, Esc skips the show, Space pauses
+  if (HT && !hl) { if (e.code === 'Space') e.preventDefault(); if (e.code === 'Escape' || e.code === 'Enter') { e.preventDefault(); if (!e.repeat) { if (e.code === 'Escape') HSK.at = performance.now(); else hsNext(); } } return; }   // (a halftime card: Enter next segment, HOLD Esc skips the show; Space does nothing)
+  if (hl && hl.mode === 'half' && !hl.bg) {   // a halftime clip: Enter next clip, Backspace previous clip, Esc skips the show (Space does nothing)
     e.preventDefault();
     if (e.repeat) return;
-    if (e.code === 'Escape') HSK.at = performance.now(); else if (e.code === 'Enter') hsClip(1); else if (e.code === 'Backspace') hsClip(-1); else if (e.code === 'Space' && rec) rec.paused = !rec.paused;
+    if (e.code === 'Escape') HSK.at = performance.now(); else if (e.code === 'Enter') hsClip(1); else if (e.code === 'Backspace') hsClip(-1);
     return;
   }
   if (hlFront()) {   // the highlights: Enter next, Backspace previous, Esc done; everything else is the replay's (Space pause, A / D scrub, arrows pan)
@@ -2235,7 +2237,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
   if (REV) { try { refRevTick(); } catch (e) { console.warn(e); } }   // (phase 4: the booth review moves along / applies here, not in draw())
   try { spendWatch(); } catch (e) {}   // (credits spent since last frame: animate them into the clicked button; reads last frame's buttons)
   UI_BTNS_PREV = UI_BTNS; UI_BTNS = []; uiModalFrame();
-  { const s = inSave(); if (s !== setScope) { setScope = s; if (!s) { useDefaults(); QUARTER_SECS = SETTINGS.quarterMin * 60; } } }   // (back to the menu / an exhibition / franchise setup: the defaults apply)
+  { const s = inSave(); if (s !== setScope) { setScope = s; setScopeMove(s); } }   // (back to the menu / an exhibition / franchise setup: the defaults apply; a scrimmage of the franchise gives its own settings back when it ends)
   if (pstStash && !exhibition) pstExhibitionOff();   // (left the exhibition: the franchise's stats come back)
   if (!bg) requestAnimationFrame(frame);   // (first, so a bug thrown below shows up in the console but can't stop the loop and freeze the whole game)
   perfSpike(now - last);   // (FRAME TIMES: the frame before, a spike?)

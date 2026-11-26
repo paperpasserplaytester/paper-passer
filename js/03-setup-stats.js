@@ -225,7 +225,7 @@ function rateTrenches() {
       / (abilOn(o, 'strongBase') && rt === 'power' ? ABIL_FX.strongBase : 1) / (abilOn(o, 'quickFeet') && rt === 'speed' ? ABIL_FX.quickFeet : 1);
     if (d.shedAt < 50) d.shedAt *= ak;
     if (!abilOn(o, 'brickWall') && Math.random() < QUICK_WIN * (aiOff() ? 1 : diffX('rushMv')) / Math.sqrt(diffFor(d).shed) * (weak ? WEAK_RUSH.quick : 1) * rm(d, 'str', 'quickWin') * rm(d, 'prs', A5.dl.quickWin) / rmo(o, 'blk', 'quickWin')) d.shedAt = Math.min(d.shedAt, 0.8 + Math.random() * 0.7);
-    if (abilOn(d, 'speedRusher') && d.src && d.src.srDrive !== ABIL_ST.drive) { d.src.srDrive = ABIL_ST.drive; d.shedAt = Math.min(d.shedAt, ABIL_FX.speedRush); }   // (Speed Rusher: his first rush each drive wins)
+    if (abilOn(d, 'speedRusher') && d.src && !noCount() && d.src.srDrive !== ABIL_ST.drive) { d.src.srDrive = ABIL_ST.drive; d.shedAt = Math.min(d.shedAt, ABIL_FX.speedRush); }   // (Speed Rusher: his first rush each drive wins)
     if (xfOn(d, 'unblockable')) d.shedAt = Math.min(d.shedAt, XFX.unblockable);   // (Unblockable: free inside 1.5 s)
     if (xfOn(o, 'fortress') && !xfOn(d, 'unblockable')) d.shedAt = 99;              // (Fortress: his man never gets home)
   }
@@ -402,7 +402,7 @@ function halfOK() {
 }   // (from the sim panel: straight on to the second half, not back to the same sim screen)
 function announceHalf() { endWhistle(true); if (simGame || simFast) return; halfHold = true; halfGo = false; halfT0 = halfLeave = 0; }   // (drawTurnoverBanner shows HALFTIME once the other banners are done)
 // the final whistle: the horn sounds; a live game then shows the last play's replay with FINISH GAME over it
-function endGame() { choreFlush('endGame'); game.over = true; endWhistle(true); crowdFinal(); celebGameEnd(); setTimeout(() => { if (game.over && !(hl && hl.mode === 'half' && !hl.bg)) annClear(true); }, 4000); }   // (the announcers' baked canvases go once the last line has had its say)   // (the winners celebrate before the result screen: see celebrations)
+function endGame() { choreFlush('endGame'); game.over = true; endWhistle(true); crowdFinal(); celebGameEnd(); try { postDecider(); } catch (e) { console.warn('Post decider', e); } setTimeout(() => { if (game.over && !(hl && hl.mode === 'half' && !hl.bg)) annClear(true); }, 4000); }   // (the announcers' baked canvases go once the last line has had its say)   // (the winners celebrate before the result screen: see celebrations)
 const finalReplay = () => game.over && !results && state === 'done' && !ONL.on;
 let tossWinner = null;   // who receives the opening kickoff ('BLUE' = you, 'RED' = them): rolled when the matchup screen comes up, so it's known before the game starts
 let tossUntil = 0;   // performance.now() ms until the opening coin toss is decided: nobody is drawn on the field before that

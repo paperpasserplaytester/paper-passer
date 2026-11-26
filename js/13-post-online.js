@@ -224,6 +224,7 @@ function postCands(kind, r, ctxo) {   // every story the week could print: { w, 
       const s = snapOf(p, me, true), sl = snapSlots(s, { n: p.inj.weeks }); add(5 + p.stars / 2, mkStory('injury', gram('injury', 'head', sl, r), gram('injury', 'body', sl, r), s));
     }
     try { for (const c of postRoleStories(wk, r)) add(c.w, c.st); } catch (e) { console.warn('Post role stories', e); }   // (backups starring, starting jobs changing hands)
+    try { for (const c of postStatStories(wk, r)) add(c.w, c.st); } catch (e) { console.warn('Post stat stories', e); }   // (fixes job: slumps, hot streaks, turnovers, stars under / backups over their billing, the fans' calls)
     if (wk >= 2 && LEAGUE.morale >= POST.moodHi) add(3, withLogo(mkStory('moodHigh', gram('moodHigh', 'head', { team: pTeam(me) }, r), gram('moodHigh', 'body', { team: pTeam(me) }, r)), me));
     if (wk >= 2 && LEAGUE.morale <= POST.moodLo) add(4, withLogo(mkStory('moodLow', gram('moodLow', 'head', { team: pTeam(me) }, r), gram('moodLow', 'body', { team: pTeam(me) }, r)), me));
   }
@@ -293,6 +294,11 @@ function arcSubjects(key, min) {   // [{ s: snap, o?: snap, w, mine }]
   if (key === 'mentor') { const rk = R.filter(p => p.group !== 'K' && (p.rookie || (typeof yrsPro === 'function' && yrsPro(p) === 0)) && ok(p.name));
     for (const a of rk) { const v = R.find(p => p.group === a.group && p !== a && p.age >= POST.vetAge && ok(p.name)); if (v) out.push({ s: snapOf(a, me, true), o: snapOf(v, me, true), mine: true, w: 1 }); } }
   if (key === 'chase') { try { for (const c of rbk().chase || []) { if (!c.mine || !c.n) continue; const p = R.find(q => q.name === c.n); if (p && ok(p.name)) out.push({ s: snapOf(p, me, true), mine: true, w: 1 + c.k }); } } catch (e) {} }
+  if (key === 'washed' || key === 'redeem') for (const k of teams) for (const p of ROSTER[k]) {   // (fixes job) the stat sagas: a vet whose recent games fall well short (washed), a younger man at a low point (redemption)
+    if (p.group === 'K' || p.stars < min || !ok(p.name) || (key === 'washed' ? p.age < POST_STAT.washAge : p.age >= POST_STAT.washAge)) continue;
+    const z = postFormZ(p, postRecent(p.name, POST_STAT.n)); if (z == null || z > (key === 'washed' ? POST_STAT.washZ : POST_STAT.lowZ)) continue;
+    out.push({ s: snapOf(p, k, k === me), mine: k === me, w: starW(p.stars) * (k === me ? 1.3 : 1) });
+  }
   if (key === 'gem' || key === 'kid') { try { const C = boardClass(); for (const p of (C && C.pool) || []) {
     if (!ok(p.name) || (key === 'gem' ? !(scoutsOn() && p.flag === 'under') : strHash(p.name) % POST.kidOdds !== 0)) continue;
     out.push({ s: { ...snapOf(p, '', true), real: false }, mine: true, w: 1 }); } } catch (e) {} }
@@ -306,7 +312,7 @@ function arcGate(id) {
     if (id === 'owner') return approvalTier() === 1 || (contractsOn() && !!hcDeal() && hcDeal().patience <= POST.ownerPat);
     if (id === 'run' || id === 'tank') { if (off || season.week < POST.runWk) return false; const T = seasonTable()[season.team]; return id === 'run' ? T.w > T.l + 1 : T.l > T.w + 1; }
     if (id === 'snow') { if (off || !MATCH.opp) return false; const f = wxForecast(); return f.roof !== 'dome' && POST.snowCodes.includes(f.code); }
-    if (['luck', 'critic', 'leak', 'staffer', 'chase', 'qbrace', 'mentor'].includes(id)) return !off;
+    if (['luck', 'critic', 'leak', 'staffer', 'chase', 'qbrace', 'mentor', 'washed', 'redemption'].includes(id)) return !off;
   } catch (e) { return false; }
   return true;
 }
@@ -341,7 +347,9 @@ function arcFire(arc, stage, r) {
   return arc.p.team ? withLogo(story, season.team) : story;
 }
 function arcNext(arc, r) {
-  const st = arcDef(arc).st[arc.st]; if (st.end || !st.next) return null;
+  const st = arcDef(arc).st[arc.st]; if (st.end) return null;
+  if (st.form) { const f = arcForm(arc), d = arcDef(arc); return arc.hist.length >= POST_STAT.formMax && d.fin ? d.fin[f === 'up' ? 0 : 1] : st.form[f]; }   // (fixes job: the stat sagas move by his games since the last chapter)
+  if (!st.next) return null;
   if (arc.pick) { const pk = arc.pick, to = arcDef(arc).st[pk]; arc.pick = null; if (to && !(to.bad && arc.p.real)) return pk; }   // (your answer to the stage's ask decides the next chapter, once)
   const opts = st.next.filter(n => !(arcDef(arc).st[n[1]].bad && arc.p.real));
   const pick = rWeighted(r, opts.length ? opts : st.next.slice(0, 1), n => n[0]);
@@ -475,6 +483,114 @@ function postAutoResolve() {
   if (D.arc) { postAnswer(E, { l: '', fx: [] }, { auto: true, arc: true }); return; }
   const o = D.opts.find(x => x.def) || D.opts[D.opts.length - 1];
   postAnswer(E, o, { auto: true, k: E.later ? POST_UI.laterK : 1 });
+}
+// --- stat stories (fixes job): read existing stat lines only (pstGames: PST for your games, LPST for sims; nothing new saved per play).
+// Form = his last POST_STAT.n games' perfScore against this season's starters at his spot (perfLeague), in SDs; "plays like" = perfShift's perfSt.
+const POST_STAT = { n: 3, hot: 1.2, cold: -1.1, starMin: 3.5, tov: 4, tovQb: 5, under: 1, over: 1, overMin: 2, wMine: 6.5, wLg: 3, lgMax: 1, cool: 4, fanZ: -0.8, letter: 0.8,
+  washAge: 29, washZ: -0.9, lowZ: -1.2, form: { up: 0.6, down: -0.6 }, formMax: 6, decYd: 20, decMargin: 8, decLate: 300 };   // cool = weeks before the same man gets the same story; washAge = the washed saga's vets / the redemption's younger men; form = z for up / down; decMargin = most points a game can be won by and still have one deciding play; decLate = game seconds left in the 4th it counts from
+function postRecent(name, n) { const yr = LEAGUE.year, gs = pstGames(name).filter(g => !g.gp && g.yr === yr && g.wk !== 'PO'); return n ? gs.slice(-n) : gs; }
+function postFormZ(p, gs) {
+  if (!gs || !gs.length || typeof perfLeague !== 'function') return null;
+  const g = perfLeague().G[p.group]; if (!g || !g.now) return null;
+  const sc = perfScore(pstSum(gs), p.group); return sc == null ? null : (sc - g.now.m) / g.now.sd;
+}
+function postStatLine(p, gs) {   // his numbers over those games, in words (no parentheses: the Post's voice)
+  const t = pstSum(gs), G = p.group;
+  if (G === 'QB') return `${t.pc} of ${t.pa}, ${t.py} yards, ${t.pt} TD and ${t.pi} picks`;
+  if (G === 'RB') return `${t.ca} carries for ${t.cy} yards and ${t.ct} TD`;
+  if (G === 'WR' || G === 'TE') return `${t.rc} catches for ${t.ry} yards and ${t.rt} TD`;
+  if (G === 'K') return `${t.fg} of ${t.fa} on field goals`;
+  return `${t.tk} tackles, ${t.sk} sacks and ${t.ic} picks`;
+}
+const postTov = (p, gs) => { const t = pstSum(gs); return (p.group === 'QB' ? t.pi : 0) + (t.fl || 0); };
+function postDepth(k, p) {   // { starter, behind (next man at his spot), ahead (the weakest starter ahead of a backup) }
+  const st = [...startersOf(k)], grp = (ROSTER[k] || []).filter(q => q.group === p.group && !isOut(q)), starter = st.includes(p);
+  const behind = starter ? grp.find(q => !st.includes(q)) : null, ahead = starter ? null : st.filter(q => q.group === p.group).sort((a, b) => a.stars - b.stars)[0] || null;
+  return { starter, behind, ahead };
+}
+function postStatStories(wk, r) {
+  const P = postS(), me = season.team, yr = LEAGUE.year, S = POST_STAT, out = [], seen = P.statSeen || (P.statSeen = {}), now = yr * 100 + wk;
+  const fresh = (kind, n) => { const k = kind + ':' + n; if (seen[k] != null && now - seen[k] < S.cool) return false; seen[k] = now; return true; };
+  const story = (k, p, team, sl, w, big) => { const s = snapOf(p, team, team === me), slots = snapSlots(s, { team: pTeam(team), ...sl }); out.push({ w, st: mkStory(k, gram(k, 'head', slots, r), gram(k, 'body', slots, r), s, big) }); };
+  let lg = 0;
+  for (const k of Object.keys(ROSTER)) {
+    if (!NFL[k]) continue; const mine = k === me;
+    for (const p of ROSTER[k]) {
+      if (!TV_PERF.w[p.group] || !p.name || (!mine && (lg >= S.lgMax || p.stars < 4))) continue;
+      const gs = postRecent(p.name, S.n); if (gs.length < S.n || gs[gs.length - 1].wk !== wk) continue;   // (he played this week)
+      const z = postFormZ(p, gs), D = postDepth(k, p), line = postStatLine(p, gs), w = mine ? S.wMine : S.wLg, sl = { line, n: gs.length };
+      let told = null;
+      if (postTov(p, gs) >= (p.group === 'QB' ? S.tovQb : S.tov) && fresh('tov', p.name)) { story('statFumbles', p, k, { ...sl, n: postTov(p, gs) }, w + 0.5); told = 'tov'; }
+      else if (z != null && z <= S.cold && D.starter && p.stars >= S.starMin && fresh('slump', p.name)) { story('statSlump', p, k, sl, w); told = 'cold'; }
+      else if (z != null && z >= S.hot && fresh('hot', p.name)) { story('statHot', p, k, sl, w); told = 'hot'; }
+      else {
+        const ps = perfShift(p), all = postRecent(p.name), al = postStatLine(p, all);
+        if (ps.perfSt != null && ps.w >= 0.4 && D.starter && ps.perfSt <= p.stars - S.under && fresh('under', p.name)) { story('statUnder', p, k, { line: al }, w - 0.5); told = 'under'; }
+        else if (ps.perfSt != null && ps.w >= 0.3 && !D.starter && all.length >= S.overMin && ps.perfSt >= p.stars + S.over && fresh('over', p.name)) { story('statOver', p, k, { line: al }, w - 0.5); told = 'over'; }
+      }
+      if (!told) continue;
+      if (!mine) { lg++; continue; }
+      // the public: bench a starter who is sinking with a man behind him, start a backup playing over his head (a story and a letter)
+      const up = told === 'over' || (told === 'hot' && !D.starter), o = up ? D.ahead : D.behind;   // (a backup playing over his head or on fire: start him; a sinking starter: bench him)
+      if (o && (up || ((told === 'cold' || told === 'tov' || told === 'under') && D.starter && (z == null || z <= S.fanZ))) && fresh('fans', p.name)) {
+        const kind = up ? 'start' : 'bench';
+        story(kind === 'start' ? 'fansStart' : 'fansBench', p, k, { line, o: o.name }, w - 1);
+        if (r() < S.letter) { const L = rPick(r, LETTERS_FANS[kind]); P.fanLetter = [postFill(L[0], { p: p.name, o: o.name }), L[1]]; }
+      }
+    }
+  }
+  try { for (const c of postDecLeague(wk, r)) out.push(c); } catch (e) { console.warn('Post league deciders', e); }
+  return out;
+}
+// the saga's next chapter by his games since the last one: 'up' / 'down' / 'flat' (not found or no games = flat)
+function arcForm(arc) {
+  const f = findPlayer(arc.p.n); if (!f || !f.p) return 'flat';
+  const last = arc.hist[arc.hist.length - 1], yr = LEAGUE.year, gs = postRecent(f.p.name).filter(g => !last || g.yr > last.yr || (g.yr === last.yr && g.wk > last.wk));
+  const z = postFormZ(f.p, gs); return z == null ? 'flat' : z >= POST_STAT.form.up ? 'up' : z <= POST_STAT.form.down ? 'down' : 'flat';
+}
+// the game-winning / losing play: hsScoreRec notes every live play from the 4th quarter on (game.dec, never saved); endGame looks back over them
+function postDecNote(text, next, kind) {
+  const T = String(text || ''), offMine = !aiOff(), myDiff = offMine ? game.blue - game.red : game.red - game.blue;
+  const to = kind === 'turnover' || /INTERCEPT|FUMBLE|PICK SIX/i.test(T), int = /INTERCEPT|PICK SIX/i.test(T), miss = kind === 'fgmiss' || (/NO GOOD|MISSED|BLOCK/i.test(T) && /FIELD GOAL|KICK/i.test(T));
+  const add = kind === 'td' ? 6 : kind === 'fg' && patMode === null ? 3 : 0, defSix = /PICK SIX|SCOOP|RETURN TD/.test(T);
+  if (!to && !add && !miss && !defSix) return;
+  const man = int ? qb : to ? (runner || playCatcher || qb) : kind === 'fg' || miss ? rb : runner || playCatcher;   // (who it was about: the passer on a pick, the man with the ball on a fumble, the kicker)
+  const yd = Number.isFinite(next) ? Math.max(1, Math.round(((kind === 'td' ? FIELD : next) - los) / YL)) : 0, fgYd = Math.round((FIELD - los) / YL) + 17;
+  const nm = man && man.src && man.src.name ? man.src.name : man && man.num != null ? 'number ' + man.num : 'the offense';
+  const what = int ? `${nm} threw an interception` : to ? `${nm} fumbled` : miss ? `${nm} missed a ${fgYd}-yard field goal` : kind === 'fg' ? `${nm} hit a ${fgYd}-yard field goal` : yd >= POST_STAT.decYd ? `${nm} scored from ${yd} yards out` : `${nm} punched it in`;
+  const gain = add ? (offMine ? add : -add) : 0;
+  const six = defSix ? (offMine ? 6 : -6) : 0;   // (a return's six is already on the board here: d0 = before it)
+  (game.dec || (game.dec = [])).push({ q: game.quarter, secs: game.secs, to: to || defSix, miss, sc: !!add || defSix, mine: offMine, d0: myDiff + six, d1: myDiff + gain, what, nm, src: man && man.src ? man.src : null });
+  if (game.dec.length > 16) game.dec.shift();
+}
+function postDecider() {
+  if (!postOn() || !season || exhibition || tut || !game || !game.dec || !game.dec.length) return;
+  const fin = twoP && twoP.flipped ? game.red - game.blue : game.blue - game.red, m = Math.abs(fin), me = season.team, opp = MATCH.opp === me ? MATCH.you : MATCH.opp;
+  if (!fin || m > POST_STAT.decMargin) return;
+  const D = game.dec.filter(e => e.q >= 5 || e.secs <= POST_STAT.decLate), won = fin > 0; if (!D.length) return;
+  // the last score that put the winner ahead for good; a turnover / missed kick by the loser just before it is the play people will remember
+  let k = -1; for (let i = D.length - 1; i >= 0; i--) if (D[i].sc && (won ? D[i].d0 <= 0 && D[i].d1 > 0 : D[i].d0 >= 0 && D[i].d1 < 0)) { k = i; break; }
+  let e = k >= 0 ? D[k] : null;
+  const loserMine = !won, before = k > 0 ? D[k - 1] : null;
+  if (before && (before.to || before.miss) && before.mine === loserMine) e = before;   // (the loser's mistake gave the ball away)
+  if (!e) { const last = D[D.length - 1]; if (last.miss && last.mine === loserMine) e = last; }   // (a missed kick at the end with the score as it was)
+  if (!e) return;
+  const good = !(e.to || e.miss), manMine = e.mine;   // (his side had the ball: a score, or the turnover / miss that gave it away)
+  const clock = `${Math.floor(Math.max(0, e.secs) / 60)}:${String(Math.max(0, Math.round(e.secs)) % 60).padStart(2, '0')}`;
+  const key = won ? (manMine && good ? 'decideWin' : null) : manMine && !good ? 'decideLoss' : !manMine && good ? 'decideBeaten' : null;
+  if (!key) return;
+  const s = e.src ? snapOf(e.src, manMine ? me : opp, manMine) : null, sl = { ...(s ? snapSlots(s) : {}), p: e.nm, team: pTeam(me), opp: pTeam(opp), what: e.what, clock, m };
+  postNote(key, sl, { big: true, w: 13, team: me, s });
+}
+function postDecLeague(wk, r) {   // simmed games around the league: a winner by a field goal or less whose kicker made one (LPST keeps only each man's game line, not the plays)
+  const me = season.team, out = [], g = (season.sched[wk - 1] || []).filter(x => x.hs != null && x.h !== me && x.a !== me && Math.abs(x.hs - x.as) <= 3 && x.hs !== x.as);
+  for (const x of g.slice(0, 4)) {
+    const wn = x.hs > x.as ? x.h : x.a, lo = wn === x.h ? x.a : x.h, K = (ROSTER[wn] || []).find(p => p.group === 'K'); if (!K) continue;
+    const gl = postRecent(K.name, 1)[0]; if (!gl || gl.wk !== wk || !(gl.fg > 0)) continue;
+    const s = snapOf(K, wn, false), sl = snapSlots(s, { team: pTeam(wn), opp: pTeam(lo), m: Math.abs(x.hs - x.as) });
+    out.push({ w: 2.5, st: withLogo(mkStory('decideLeague', gram('decideLeague', 'head', sl, r), gram('decideLeague', 'body', sl, r), s), wn) }); break;
+  }
+  return out;
 }
 // dev (console): postArcTest('qbrace') starts a saga for your team now (or fires its first stage again), postArcTest('qbrace', 'letters') jumps to a stage (it asks if the stage has an ask); postEventShow(true) opens the card
 function postArcTest(id, stage) {
@@ -960,6 +1076,7 @@ function postIssue(kind, g) {
   for (const k of Object.keys(ROSTER)) if (NFL[k]) for (const p of ROSTER[k]) if (p.stars >= 4) notable.push([p, k]);
   for (let i = 0; i < 3 && notable.length; i++) { const [p, k] = rPick(r, notable), sl = snapSlots(snapOf(p, k), { team: pTeam(k) }); roll.push(postFill(rPick(r, RUMORS), sl)); }
   const city = pTeam(me), L = [rPick(r, LETTERS), rPick(r, LETTERS)];
+  if (P.fanLetter) { L[1] = P.fanLetter; P.fanLetter = null; }   // (fixes job: the public's call about one man, from postStatStories)
   if (LEAGUE.morale >= POST.moodHi) L[0] = rPick(r, LETTERS_MOOD.hi); else if (LEAGUE.morale <= POST.moodLo) L[0] = rPick(r, LETTERS_MOOD.lo);
   const myStk = kind === 'wk' ? teamStreak(me, wk) : 0, lastG = kind === 'wk' ? gameOf(wk) : null;
   const edk = myStk >= POST.streakMin ? 'streakW' : myStk <= -POST.streakMin ? 'streakL' : lastG && lastG.hs != null ? ((lastG.h === me ? lastG.hs > lastG.as : lastG.as > lastG.hs) ? 'win' : 'loss') : 'idle';
@@ -1778,7 +1895,7 @@ function drawStartBtns() {
   }
 }
 function titleStamp(cx, cy) { qsStamp(cx, cy - 12, 'PAPER PASSER', '#c0392b', -0.005, 1, 60, { distress: 7 }); }   // (centre of the title sheet, inside its own tilt)
-const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-25 OWNCAM-55';   // (v0.74: announcer lines travel by index, so new line tables need matching builds; perf job: the host decides the lobby's teams, step-clock stamps, key presses on both channels, each device's own camera, field presses as world spots)
+const MENU_HL_BTN = { x: W - 244, y: H - 80, w: 214, h: 56 }, BUILD_STAMP = '2026-11-25 SIDEVIEW-57';   // (side-view celebrations port)   // (fixes job: an announcer line carries n = its name variant)   // (v0.74: announcer lines travel by index, so new line tables need matching builds; perf job: the host decides the lobby's teams, step-clock stamps, key presses on both channels, each device's own camera, field presses as world spots)
 let hlFlash = -1e9;   // when the main menu's HIGHLIGHT button was last clicked
 let quickMenu = false;   // QUICK PLAY (START_BTNS.ex) drop down: EXHIBITION / 1V1 / ONLINE take the place of FRANCHISE / CAREER / TUTORIAL (same buttons, same size)
 function startClick(p) {
@@ -2950,9 +3067,13 @@ function onlMayPoint(guestSide, pt) {   // may this player's pointer act here?  
   if (hit(T.off) || hit(A.off)) return off;
   if (overPauseButton(pt)) return true;
   if (onlKickerSets()) return !off;
-  if (!off && ['pre', 'drop', 'pocket'].includes(state) && patMode === null && !fourthPending) {   // (the defender's tap on one of his men: switching defenders before / just after the snap)
+  if (!off && ['pre', 'drop', 'pocket'].includes(state)) {   // (the defender's tap on one of his men: switching defenders before / just after the snap, also while the offense chooses on 4th down / after a TD)
     const w = screenToWorld(pt);
     if (defenders().some(d => d.action !== 'down' && Math.hypot(d.x - w.x, d.y - w.y) < 2.5 * YD)) return true;
+  }
+  if (!off && state === 'kick' && kick && !kick.kickoff && kick.rush && kick.phase !== 'flight') {   // (their FG / PAT: the rushing side's tap on a rusher takes him over)
+    const w = screenToWorld(pt);
+    if (kick.rush.some(o => !o.action && Math.hypot(o.x - w.x, o.y - w.y) < YD)) return true;
   }
   return off || !(['pre', 'drop', 'pocket', 'kick', 'punt', 'kickoff'].includes(state) || patMode !== null || fourthPending);
 }

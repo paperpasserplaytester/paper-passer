@@ -84,7 +84,7 @@ const REPLAY_TAIL = 2.2;
 const REPLAY_PRE = 0.25;   // a play's tape opens with this many seconds of the pre-snap look (everyone in his stance) before the ball is snapped
 // the replays setting: every play, big plays (rec.big: a highlight callout, a 20+ yard gain, a big first down, a score
 // or a turnover), touchdowns only (rec.td) or none (the game's last play still gets its replay)
-const replayWanted = () => !!rec && !tut && !ONL.on && SETTINGS.replays !== 'NONE' && (SETTINGS.replays === 'EVERY PLAY' || !!rec.td || !!rec.int || (SETTINGS.replays === 'BIG PLAYS' && (!!rec.big || (!!rec.flagBig && !rec.clipShown))));   // (v0.71 a flag alone stops counting once its penalty clip showed the foul)
+const replayWanted = () => !!rec && !tut && !ONL.on && !pracLive() && SETTINGS.replays !== 'NONE' && (SETTINGS.replays === 'EVERY PLAY' || !!rec.td || !!rec.int || (SETTINGS.replays === 'BIG PLAYS' && (!!rec.big || (!!rec.flagBig && !rec.clipShown))));   // (v0.71 a flag alone stops counting once its penalty clip showed the foul)
 function recordFrame(dt) {
   if (!rec || rec.replaying) return;
   rec.t += dt;
@@ -292,6 +292,17 @@ function stepReplay(dt, scrub = 0) {
       rec.rt = nx.t; rec.ang = ((rec.ang || 0) + 1) % HLREEL.angles.length;
       if (far) { rec.hsCam = null; hl.fx = { t0: performance.now(), snap: reelSnap() }; }
       else hl.fx = { t0: performance.now(), a: HLREEL.smooth.dip, soft: true, snap: reelSnap() };   // (near: the camera glides over under a light dip, so the players' jump in time isn't a hard pop)
+    }
+    else if (!hl.again && !rec.paused && hl.skipI !== hl.i) {   // (fixes job) cut ahead through a long run: once a clip, from its first moment to just before the next
+      const c = hl.list[hl.i], K = HLREEL.jump, ap = c && c.apex;
+      if (ap && ap.length) {
+        let first = Infinity; for (const e of ap) if (e.t < first) first = e.t;
+        if (rec.rt > first + K.after) {
+          let next = c.td ? fr[fr.length - 1].t - HLREEL.finMin * 0.5 : Infinity; for (const e of ap) if (e.t > rec.rt && e.t < next) next = e.t;
+          hl.skipI = hl.i;
+          if (next < Infinity && next - rec.rt > K.lead + K.gap) { rec.rt = next - K.lead; while (fr[rec.idx + 1] && fr[rec.idx + 1].t <= rec.rt) rec.idx++; rec.ang = ((rec.ang || 0) + 1) % HLREEL.angles.length; rec.hsCam = null; hl.fx = { t0: performance.now(), snap: reelSnap() }; }
+        }
+      }
     }
   }
   while (rec.idx > 0 && fr[rec.idx].t > rec.rt) rec.idx--;
@@ -645,13 +656,39 @@ function drawHsFreeze() {   // (world space, from draw() right after drawPopups)
   ddSeed = 11 + (Math.floor(performance.now() / 140) % 3) * 131;   // (the pencil line boils)
   ddLine(ddEll(0, 0, 1, 1, 20, -1.9, -1.9 + Math.PI * 2.08 * on), '#ffd94a', 0.1);
   ctx.restore();
-  const name = String((p && p.src && p.src.name) || c.who || '').toUpperCase();
-  if (name && on >= 1) {
-    ctx.scale(MIRROR, 1);   // (undo the world mirror for text)
-    ctx.font = `bold ${0.6 * YD}px monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(0,0,0,0.75)'; ctx.strokeText(name, 0, -R * 1.25 - 0.55 * YD);
-    ctx.fillStyle = '#ffd94a'; ctx.fillText(name, 0, -R * 1.25 - 0.55 * YD);
-  }
+  const name = String((p && p.src && p.src.name) || c.who || '');
+  if (name && on >= 1) hsNameTag(name, R, Math.min(1, (rec.frz - HLREEL.cam.freeze * 0.35) / HLREEL.ring.pop));   // (fixes job: the name pops up beside him on a scrap of paper, no plain text)
+  ctx.restore();
+}
+// (fixes job) every reel clip: the clip's main man (its biggest moment's) gets his head circled in pencil at that moment, his name popping up beside it.
+// World space, from draw() beside drawHsFreeze; looks only (reads the tape's players, never moves anything). HLREEL.ring = its timing / size.
+function hsNameTag(name, R, k) {   // (inside a translate to his head) a small paper tag to his right on screen, popping in by k 0..1
+  if (k <= 0) return;
+  ctx.save(); ctx.scale(MIRROR, 1);   // (undo the world mirror for text)
+  const s = cBack(Math.min(1, k)), fs = HLREEL.ring.font * YD;
+  ctx.font = `bold ${fs}px monospace`;
+  const w = ctx.measureText(name).width + fs, h = fs * 1.5, x = R * 0.95, y = -R * 1.1;
+  ctx.translate(x, y); ctx.scale(s, s); ctx.rotate(-0.06);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(3, 3, w, h);
+  ctx.fillStyle = '#fbf6e4'; ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = Math.max(1.5, fs * 0.08); ctx.strokeRect(0, 0, w, h);
+  ctx.fillStyle = '#2a2a2a'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(name, fs * 0.5, h / 2);
+  ctx.restore();
+}
+function drawHsRing() {
+  if (!(hl && hl.mode === 'half' && !hl.again && rec && !rec.frz)) return;
+  const c = hl.list[hl.i], e = hsTopApex(c), G = HLREEL.ring; if (!e || e.i < 0) return;
+  const dt = rec.rt - e.t; if (dt < -G.pre || dt > G.hold) return;
+  const p = allPlayers()[e.i]; if (!p) return;
+  const R = G.r * YD, on = Math.min(1, (dt + G.pre) / G.draw), out = Math.min(1, (G.hold - dt) / G.fade);
+  ctx.save(); ctx.globalAlpha *= Math.max(0, out);
+  ctx.translate(p.x, p.y - 28 * S - (p.z || 0));
+  ctx.save(); ctx.scale(R, R * 1.15); ctx.lineCap = 'round';
+  ddSeed = 23 + (Math.floor(performance.now() / 140) % 3) * 131;   // (the pencil line boils)
+  ddLine(ddEll(0, 0, 1, 1, 20, -1.9, -1.9 + Math.PI * 2.08 * on), '#ffd94a', 0.1);
+  ctx.restore();
+  const name = String((p.src && p.src.name) || c.who || '');
+  if (name) hsNameTag(name, R, (dt + G.pre - G.draw) / G.pop);
   ctx.restore();
 }
 // the reel's crowd: coming out of slow motion they react to the play; while it's slow, any crowd clip playing drops in pitch
@@ -758,12 +795,15 @@ const HLREEL = {
   celebHype: 0.6, celebTail: 4.5, celebEv: ['pick', 'poWin', 'bowlWin'],   // a celebration this hyped (or a cast of 2+, or one of celebEv) is part of its play's clip: the tape runs on up to celebTail s past the whistle (never more), weight ev.celeb
   ev: { iconic: 45, spectacular: 40, moss: 35, tipcatch: 35, hit: 32, pbu: 16, move: 12, broken: 10, block: 12, celeb: 14 }, evCap: { move: 3, broken: 3 },   // per moment; a kind counts up to its cap in one play (default 1)
   air: { min: 0.9, pre: 0.5, post: 0.9, zoom: 0.84, w: 18 },    // a completed pass in the air min s or longer is shown from pre s before the throw to post s after the catch (the shot widens by zoom while it flies); w = its score
-  smooth: { pan: 6, panCap: 60 * YD, zoom: 4.5, zoomCap: 2.5,   // the director's springs: how fast the pan / the zoom settle (1/s; higher = tighter, lower = floatier) and their top speeds (px/s; zoom in e-folds a second)
+  smooth: { pan: 8, panCap: 70 * YD, zoom: 5.5, zoomCap: 3,   // (fixes job: a tighter follow, was pan 6 / 60 yd, zoom 4.5 / 2.5)   // the director's springs: how fast the pan / the zoom settle (1/s; higher = tighter, lower = floatier) and their top speeds (px/s; zoom in e-folds a second)
             lead: 3, focus: 3.5, near: 2,                        // eases (1/s): the runner's lead turning on / with a cut, the hold on a blocker, the push-in when defenders close
             kickIn: 0.07, kickOut: 6,                            // a hit's zoom kick swells over kickIn s, then dies away at kickOut /s
             fadeOut: 0.2, dip: 0.5, dipIn: 0.22 },               // s the picture darkens into a cut / a clip's end; how dark a near (panned) cut dips, and s it takes to come back
   cross: 0.4, crossNear: 0.3,                                  // s the last play's picture takes to fade away over the next one (a new clip / a far cut; a near cut inside one play)
-  fade: 0.3, panYd: 12, angles: [1, 1.1, 0.94],              // s of fade a new clip comes in under; parts of one play closer than panYd are joined by a camera pan, further by that fade; zoom of each part in turn (a new angle)
+  fade: 0.3, panYd: 10, angles: [1.12, 1.28, 1.02, 1.2],   // (fixes job: closer, four angles; was panYd 12, [1, 1.1, 0.94])
+  jump: { after: 0.8, gap: 2.5, lead: 1.6 },
+  ring: { pre: 0.25, draw: 0.35, pop: 0.25, hold: 1.4, fade: 0.3, r: 0.9, font: 0.5 },   // (fixes job) the main man's pencil ring: from pre s before his moment, drawn on over `draw` s, the name tag pops over `pop` s, gone by hold s after (fading over `fade`); r = ring radius / font = tag text, in yd   // (fixes job) a long stretch with nothing in it: from `after` s past a clip's first moment, when the next one (the touchdown) is more than lead + gap s off, the reel cuts ahead to `lead` s before it (the far-cut fade; the tape is untouched)
+              // s of fade a new clip comes in under; parts of one play closer than panYd are joined by a camera pan, further by that fade; zoom of each part in turn (a new angle)
   pop: { td: [1, 1], pick: [0.95, 1], fumble: [0.9, 1], iconic: [0.8, 0, 1], spectacular: [0.85], moss: [0.8], tipcatch: [0.7], hit: [0.7, 0, 1], pbu: [0.5], move: [0.45, 0, 1], broken: [0.45], block: [0.4], celeb: [0.8, 1], def: [0.5] },   // the crowd at each moment: [level, two clips layered, the ooh first]
   bgPaper: 0.5,                                                 // how much of the result screen's paper covers the reel behind it (0 = none, 1 = hidden)
   bgEvery: 2, bgK: 0.5,                                         // (v0.55) the reel behind the result screen is drawn every bgEvery-th frame into a canvas bgK x the size (the paper over it hides the softness)
@@ -782,7 +822,8 @@ const HTS = { clips: [], cards: [], game: [] };   // (game = the whole game's po
 let HT = null;                          // the show playing: { segs, i, t0, after, skip }
 const LGHL_KEY = 'pocketPasser.lgHL';   // per franchise slot: one best-stat-line per simulated league game, last 2 weeks
 let LGHL = [];
-const htOn = k => SETTINGS.halftime !== false && (!SETTINGS.ht || SETTINGS.ht[k] !== false);
+const HT_OPT_IN = ['league'];   // halftime segments that are OFF until the settings row turns them on (set to true); the rest are on unless set to false
+const htOn = k => SETTINGS.halftime !== false && (HT_OPT_IN.includes(k) ? !!(SETTINGS.ht && SETTINGS.ht[k] === true) : (!SETTINGS.ht || SETTINGS.ht[k] !== false));
 const HS_EV = [[/^(INTERCEPTED|PICK SIX)/, 'pick'], [/FUMBLE|PUNCHED OUT|SCOOP/, 'fumble'], [/ICONIC/, 'iconic'], [/HELMET CATCH|SPECTACULAR|ONE-HAND|LAYOUT GRAB|SHOESTRING GRAB|SNAGGED/, 'spectacular'], [/MOSS|RIPPED AWAY|CAUGHT IN TRAFFIC/, 'moss'], [/BOOM|KNOCKOUT|TRUCKED|SACKED|BLOCKED/, 'hit'], [/^(BROKEN UP|BATTED DOWN|TIPPED)$/, 'pbu'], [/^(HURDLE|STIFF ARM|JUKED|ANKLES BROKEN|SPUN AWAY|SPIN MOVE)$/, 'move'], [/^BROKEN TACKLE$/, 'broken'], [/^PANCAKE$/, 'block']];   // (first match wins)
 const hsEventKind = text => { for (const [rx, k] of HS_EV) if (rx.test(String(text))) return k; return null; };
 // a moment of the play being taped: when, what kind, and who (his index in allPlayers(), the order the frames keep)
@@ -801,10 +842,11 @@ function hsStat(s) {
 }
 const hsTn = t => t && NFL[t] ? shortName(t) : (t || '-');
 const hsClock = () => `Q${Math.min(game.quarter, 4)} ${Math.floor(game.secs / 60)}:${String(Math.floor(game.secs % 60)).padStart(2, '0')}`;
-const hsOn = () => !tut && !ONL.on && !(twoP && !twoP.ai);
+const hsOn = () => !tut && !ONL.on && !(twoP && !twoP.ai) && !pracLive();   // (no highlight tape in a practice drill)
 // a live play ended (endPlay): its highlight score and what kind of clip it makes
 function hsScoreRec(text, next, kind) {
   perfNote('hsScoreRec');   // (FRAME TIMES spike tag)
+  try { if (!(rec && rec.replaying) && game && game.quarter >= 4 && season && !exhibition && !tut) postDecNote(text, next, kind); } catch (e) {}   // (fixes job: the Post's game-winning / losing play, see postDecider)
   const blk = /BLOCK/i.test(String(text));   // (a blocked punt / PAT / field goal always makes a highlight)
   if (!rec || rec.replaying || rec.hl || !hsOn() || (patMode !== null && !blk) || !htOn('highlights')) return;   // (every quarter: the first half feeds the halftime reel, the whole game the one behind the result screen)
   const W = HLREEL, ev = rec.ev || [], has = k => ev.find(e => e.k === k);
@@ -835,7 +877,17 @@ function hsScoreRec(text, next, kind) {
   if (SL.on && (td || to || big)) slFlash(td ? 4 : 3);   // (a play the reel rates: the sideline cameras)
   rec.hs = { score: s, type, six: defSix, title: `${head}  -  ${hsClock()}`,
     apex, kind: top && W.ev[top.k] ? top.k : type, who: src && src.name ? src.name : '', stat: src ? hsStat(src) : '', fav: offGood === !aiOff() ? 'you' : 'opp',
-    q: game.quarter, air, ci: ct ? ct.i : -1, def: !offGood };   // (ci = the catcher: the Post's photo of a catch)
+    q: game.quarter, air, ci: ct ? ct.i : -1, def: !offGood, tal: hsTal() };   // (ci = the catcher: the Post's photo of a catch; tal = the booth's tallies of the play, for the reel's named line)
+}
+// (fixes job) the booth's tallies of this play, kept on the clip (ANN_S.pl is reset at the next snap): hurdles, moves by kind, the escape spin, a cross-body throw
+function hsTal() { const P = ANN_S.pl, mv = P.mv; return { br: P.br || 0, hu: P.hu || 0, mv: mv ? { ...mv } : null, spin: !!P.spin, cross: !!P.cross, race: !!P.race }; }
+const HS_MOVE = { juke: 'juke', spin: 'spin move', truck: 'truck', stiff: 'stiff arm' };
+function hsMoveWord(c) {   // the move the reel's line names: what the tallies say he did, else what kind of clip it is
+  const t = c.tal || {}, mv = t.mv;
+  if (t.hu >= 2) return 'double hurdle'; if (t.hu) return 'hurdle';
+  if (mv) { const k = Object.keys(mv).sort((a, b) => mv[b] - mv[a])[0]; if ((t.br || 0) >= 3) return 'run'; if (HS_MOVE[k]) return HS_MOVE[k]; }
+  if (t.spin) return 'escape'; if (t.cross) return 'throw'; if (t.race) return 'run';
+  return { pick: 'pick', pickTd: 'pick six', fumble: 'strip', fg: 'kick', hit: 'hit', spectacular: 'catch', moss: 'catch', tipcatch: 'catch', pbu: 'breakup', block: 'block', td: 'touchdown' }[c.kind] || (/TOUCHDOWN/.test(c.title || '') ? 'touchdown' : null);
 }
 // the tape is complete (or about to be replaced): keep its apex window if it's one of the best so far (copies, so the live tape can go)
 function hsCollect(r) {
@@ -2347,10 +2399,35 @@ function drawIcon(pp) {
 const ANN_S = { cur: null, q: [], who: null, was: null, sw: -9, popAt: -9, bags: {}, recent: new Set(), pl: { br: 0 }, faces: null, fc: [null, null], fcDark: null, card: null, rect: null };
 const annNow = () => performance.now() / 1000;
 const annLive = () => SETTINGS.announcers !== false && !tut && !CO && !(ONL.on && ONL.guest);
-const annGate = () => annLive() && !(rec && (rec.replaying || rec.hl)) && !LG_SAND && !LGS && !stSimming && !xfSimming && state !== 'sim';
-const annFill = (t, v) => t.replace(/\{(\w+)\}/g, (m, k) => v && v[k] != null ? v[k] : m);
+const annGate = () => annLive() && !(rec && (rec.replaying || rec.hl)) && !LG_SAND && !pracLive() && !LGS && !stSimming && !xfSimming && state !== 'sim';
+const annFill = (t, v) => t.replace(/\{(\w+)\}/g, (m, k, at) => v && v[k] != null ? (at === 0 && typeof v[k] === 'string' ? v[k].charAt(0).toUpperCase() + v[k].slice(1) : v[k]) : m);   // (a name slot opening the line: 'number 24' -> 'Number 24')
 // (v0.74) precomputed at load: the tokens each line needs (ANN_TK[key.who][i], null = none) and ANN_MORE (00: 'line|line' strings) merged in; recents = a Set of 'key.who#i' in hearing order
 for (const k in (typeof ANN_MORE !== 'undefined' ? ANN_MORE : {})) for (const w of ['A', 'B']) { const m = ANN_MORE[k][w]; if (m) { const L = ANN_LINES[k] || (ANN_LINES[k] = {}); L[w] = (L[w] || []).concat(typeof m === 'string' ? m.split('|') : m); } }
+// (fixes job) the booth's own random numbers: everything added after v0.74 (name swaps, the new calls, the reel's named line) draws from annRnd, never
+// Math.random, so the game's random stream (and T-SAME) is untouched; the old calls keep their exact draws (annR = Math.random while they run)
+let annSeed = 0x2f6b1d, annR = Math.random;
+const annRnd = () => { annSeed = (annSeed * 1103515245 + 12345) >>> 0; return ((annSeed >>> 8) & 0xffffff) / 0x1000000; };
+function annOwn(f) { const r0 = annR; annR = annRnd; try { return f(); } finally { annR = r0; } }
+function annSayOwn(key, o) { return annOwn(() => annSay(key, o)); }
+const ANN_SUFFIX = /^(jr\.?|sr\.?|ii|iii|iv|v)$/i;
+function annName(p) {   // the man's name for a line: his surname, or "number 24" when he has no real name
+  const n = p && p.src && p.src.name; if (n) { const w = String(n).split(' ').filter(Boolean); let k = w.length - 1; while (k > 0 && ANN_SUFFIX.test(w[k])) k--; return w[k] || n; }
+  return p && p.num != null ? 'number ' + p.num : null;
+}
+function annWho(t, d) {   // { p: the man with the ball / the event's man on offense, d: the defender } for the name slots
+  const v = {}, carrier = runner || (playCatcher && playCatcher.hasBall ? playCatcher : null);
+  if (t && t.team === 'def' && !t.hasBall) { v.d = annName(t); if (carrier) v.p = annName(carrier); }
+  else { if (t) v.p = annName(t); const o = d || (t && allPlayers().filter(q => q.team !== t.team && q.action !== 'down').sort((a, b) => Math.hypot(a.x - t.x, a.y - t.y) - Math.hypot(b.x - t.x, b.y - t.y))[0]); if (o && o !== t) v.d = annName(o); }
+  if (v.p == null) delete v.p; if (v.d == null) delete v.d;
+  return v;
+}
+const ANN_NT = {};   // (the name variants' tokens, like ANN_TK)
+for (const k in (typeof ANN_NAMED !== 'undefined' ? ANN_NAMED : {})) for (const w of ['A', 'B']) { const m = ANN_NAMED[k][w]; if (m) { const L = ANN_NAMED[k][w] = typeof m === 'string' ? m.split('|') : m; ANN_NT[k + '.' + w] = L.map(t => { const x = t.match(/\{(\w+)\}/g); return x ? x.map(y => y.slice(1, -1)) : null; }); } }
+function annNamed(key, who, v) {   // a name variant for this line now and then (annRnd only): its index, or -1
+  const L = typeof ANN_NAMED !== 'undefined' && ANN_NAMED[key] && ANN_NAMED[key][who]; if (!L || !v || annRnd() >= ANN.nameOdds) return -1;
+  const tk = ANN_NT[key + '.' + who], ok = []; for (let i = 0; i < L.length; i++) if (annOk(tk[i], v)) ok.push(i);
+  return ok.length ? ok[Math.floor(annRnd() * ok.length)] : -1;
+}
 const ANN_TK = {};
 for (const k in ANN_LINES) for (const w of ['A', 'B']) { const set = ANN_LINES[k][w]; if (set) ANN_TK[k + '.' + w] = set.map(t => { const m = t.match(/\{(\w+)\}/g); return m ? m.map(x => x.slice(1, -1)) : null; }); }
 const annOk = (tk, v) => !tk || (!!v && tk.every(k => v[k] != null));
@@ -2358,7 +2435,7 @@ function annPick(key, who, v) {   // a line no one has heard lately: the bag is 
   const set = (ANN_LINES[key] || {})[who]; if (!set || !set.length) return -1;
   const S = ANN_S, bk = key + '.' + who, tk = ANN_TK[bk] || [], R = S.recent;
   let bag = S.bags[bk];
-  if (!bag || !bag.length) { bag = S.bags[bk] = set.map((_, i) => i); for (let i = bag.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [bag[i], bag[j]] = [bag[j], bag[i]]; } }
+  if (!bag || !bag.length) { bag = S.bags[bk] = set.map((_, i) => i); for (let i = bag.length - 1; i > 0; i--) { const j = Math.floor(annR() * (i + 1)); [bag[i], bag[j]] = [bag[j], bag[i]]; } }
   let j = bag.findIndex(i => annOk(tk[i], v) && !R.has(bk + '#' + i));
   if (j < 0) j = bag.findIndex(i => annOk(tk[i], v));
   if (j < 0) { for (let i = 0; i < set.length; i++) if (annOk(tk[i], v)) return i; return -1; }
@@ -2368,13 +2445,13 @@ function annPick(key, who, v) {   // a line no one has heard lately: the bag is 
 }
 function annSay(key, o = {}) { if (annGate()) annPut(key, o); }
 function annPut(key, o = {}) {
-  const L = ANN_LINES[key]; if (!L || (o.odds != null && Math.random() > o.odds)) return;
+  const L = ANN_LINES[key]; if (!L || (o.odds != null && annR() > o.odds)) return;
   const S = ANN_S, now = annNow(), pri = o.pri != null ? o.pri : 1, v = o.vars || null, lines = [];
   if (o.who !== 'B' && L.A) { const i = annPick(key, 'A', v); if (i >= 0) lines.push({ who: 'A', key, i }); }
   const cOdds = pri >= ANN.crazy ? 1 : ANN.colorOdds[Math.max(0, Math.min(3, Math.floor(pri)))];
-  if (o.who !== 'A' && L.B && (o.who === 'B' || !lines.length || Math.random() < cOdds)) { const i = annPick(key, 'B', v); if (i >= 0) lines.push({ who: 'B', key, i }); }
+  if (o.who !== 'A' && L.B && (o.who === 'B' || !lines.length || annR() < cOdds)) { const i = annPick(key, 'B', v); if (i >= 0) lines.push({ who: 'B', key, i }); }
   if (!lines.length) return;
-  for (const l of lines) { l.pri = pri; l.v = v; l.hold = !!o.hold && l.who === 'A'; }
+  for (const l of lines) { l.pri = pri; l.v = v; l.hold = !!o.hold && l.who === 'A'; const n = annNamed(key, l.who, v); if (n >= 0) l.n = n; }   // (l.n = a name variant replaces the line)
   const c = S.cur;
   if (c && c.hold) { c.hold = false; c.end = Math.max(c.end, now); if (pri >= c.pri || now >= c.end) { S.q = lines.slice(1); return annStart(lines[0], now); } }   // (the held line's result replaces it)
   const busy = c && now < annDone(c) + ANN.gap;
@@ -2384,13 +2461,14 @@ function annPut(key, o = {}) {
 }
 function annStart(l, now) {
   const S = ANN_S, set = (ANN_LINES[l.key] || {})[l.who]; if (!set || set[l.i] == null) return;
-  l.text = annFill(set[l.i], l.v); l.at = now; l.end = now + (annLite() ? 0 : l.text.length / (annSlow() ? ANN.reelCps : ANN.cps)); l.read = annSlow() ? now + l.text.split(' ').length * ANN.reelWord : 0; l.big = l.pri >= ANN.crazy; l.bub = null;
+  const nm = l.n != null && typeof ANN_NAMED !== 'undefined' && ANN_NAMED[l.key] && ANN_NAMED[l.key][l.who] && ANN_NAMED[l.key][l.who][l.n];
+  l.text = annFill(nm || set[l.i], l.v); l.at = now; l.end = now + (annLite() ? 0 : l.text.length / (annSlow() ? ANN.reelCps : ANN.cps)); l.read = annSlow() ? now + l.text.split(' ').length * ANN.reelWord : 0; l.big = l.pri >= ANN.crazy; l.bub = null;
   const old = S.cur;
   if (!old || annGone(old, now)) { S.popAt = now; S.sw = -9; S.was = null; }
   else if (old.who !== l.who) { S.sw = now; S.was = old.who; }
   if (old) annFreeLine(old);
   S.who = l.who; S.cur = l;
-  if (ONL.on && ONL.host) { try { NET.send({ t: 'ann', w: l.who, k: l.key, i: l.i, v: l.v || 0, p: l.pri, h: l.hold ? 1 : 0 }); } catch (e) {} }
+  if (ONL.on && ONL.host) { try { NET.send({ t: 'ann', w: l.who, k: l.key, i: l.i, n: l.n != null ? l.n : -1, v: l.v || 0, p: l.pri, h: l.hold ? 1 : 0 }); } catch (e) {} }
 }
 const annLite = () => liteOn() || touchLite();
 const annDone = c => Math.max(c.end, c.read || 0);   // (the line is written AND read: a reel line's minimum time up)
@@ -2406,12 +2484,12 @@ function annClear(free) {
   const S = ANN_S; annFreeLine(S.cur); S.cur = null; S.q = []; S.rect = null;
   if (free) { for (let i = 0; i < 2; i++) { freeCanvas(S.fc[i]); S.fc[i] = null; } if (S.card) { freeCanvas(S.card.b); freeCanvas(S.card.f); S.card = null; } S.bags = {}; S.recent = new Set(); S.g = null; }
 }
-function annReset() { const S = ANN_S; S.pl = { br: 0 }; if (S.cur && !S.cur.hold && annNow() >= S.cur.end + ANN.gap && !S.q.length) annClear(); annSetup(); }   // (reset(): a result line still being written runs into the pre-snap)
-function annSnap() { const S = ANN_S; S.pl = { br: 0 }; if (S.cur || S.q.length) { annClear(); if (ONL.on && ONL.host) { try { NET.send({ t: 'ann', c: 1 }); } catch (e) {} } } }
+function annReset() { const S = ANN_S; S.pl = annPl(); if (S.cur && !S.cur.hold && annNow() >= S.cur.end + ANN.gap && !S.q.length) annClear(); annSetup(); }   // (reset(): a result line still being written runs into the pre-snap)
+function annSnap() { const S = ANN_S; S.pl = annPl(); if (S.cur || S.q.length) { annClear(); if (ONL.on && ONL.host) { try { NET.send({ t: 'ann', c: 1 }); } catch (e) {} } } }
 function annNet(d) {   // the guest: the host's exact line
   if (d.c) return annClear();
   if (SETTINGS.announcers === false || CO) return;
-  ANN_S.q = []; annStart({ who: d.w, key: d.k, i: d.i, v: d.v || null, pri: d.p || 1, hold: !!d.h }, annNow());
+  ANN_S.q = []; annStart({ who: d.w, key: d.k, i: d.i, n: d.n >= 0 ? d.n : null, v: d.v || null, pri: d.p || 1, hold: !!d.h }, annNow());
 }
 // --- announcers: the live hooks (each event site makes one call; lines are neutral, both teams)
 const ANN_POP = { 'HURDLE': ['hurdle', 2], 'BOOM!': ['bigHit', 3], 'KNOCKOUT': ['bigHit', 3], 'KNOCKED OUT OF BOUNDS': ['bigHit', 3], 'PANCAKE': ['pancake', 0.5],
@@ -2420,36 +2498,60 @@ const ANN_POP = { 'HURDLE': ['hurdle', 2], 'BOOM!': ['bigHit', 3], 'KNOCKOUT': [
   'LAYOUT GRAB!': ['diveCatch', 3, 1], 'SHOESTRING GRAB': ['diveCatch', 3, 1], 'CAUGHT IN TRAFFIC': ['traffic', 2],
   'BROKEN UP': ['pbu', 1.5], 'BATTED DOWN': ['batted', 1.5], 'TIPPED': ['tip', 1.5], 'DROPPED': ['drop', 1.5],
   'INTERCEPTED': ['pick', 4], 'DIVING PICK': ['pickBig', 4.5], 'ONE-HANDED PICK': ['pickBig', 4.5], 'SPECTACULAR PICK!': ['pickBig', 4.5],
-  'PUNCHED OUT': ['strip', 3.5], 'STRIPPED': ['strip', 3.5], 'BLOCKED': ['blocked', 4.5], 'NEW RECORD!': ['record', 5] };
+  'PUNCHED OUT': ['strip', 3.5], 'STRIPPED': ['strip', 3.5], 'BLOCKED': ['blocked', 4.5], 'NEW RECORD!': ['record', 5], 'BROKE FREE': ['breakFree', 2.5, 0, 1] };   // ([key, pri, catch, new: annRnd only])
+// (fixes job) a play's tallies (ANN_S.pl): br = broken tackles, hu = hurdles, mv = moves by kind, live calls said once a play (free / race / last)
+const annPl = () => ({ br: 0, hu: 0, mv: null, free: false, race: false, last: false, col: false, spin: false, cross: false });
 function annPopup(p, text) {   // (popup(): every callout's text, drawn or not)
   const e = ANN_POP[text]; if (!e || !annGate()) return;
   const P = ANN_S.pl;
   if (e[2]) P.one = true;
   if (e[0] === 'tip') P.tip = true;
   if (e[0] === 'hurdle' && p) P.hurdleX = p.x;
-  annSay(annBig(e[0], p), { pri: e[1], add: e[0] === 'record', vars: p && p.num != null ? { num: p.num } : null });
+  const v = Object.assign(p && p.num != null ? { num: p.num } : {}, annWho(p));
+  if (e[3]) { if (e[0] === 'breakFree') { if (P.free) return; P.free = true; } return annSayOwn(e[0], { pri: e[1], vars: v }); }
+  annSay(annBig(e[0], p), { pri: e[1], add: e[0] === 'record', vars: v });
+  if (e[0] === 'hurdle' && ++P.hu >= 2) annSayOwn('hurdle2', { pri: e[1] + 1, vars: v });   // (a second hurdle on one run: cuts in over the first call)
 }
-function annMiss(c, kind, ico) {   // (missReel: a tackler beaten by a move; ico = iconic)
+function annMiss(c, kind, ico, d) {   // (missReel: a tackler beaten by a move; ico = iconic; d = the man beaten)
   if (!c || !annGate()) return;
-  if (c === qb && (state === 'drop' || state === 'pocket')) return annSay('escape', { pri: ico ? 3 : 2 });
+  const v = annWho(c, d), P = ANN_S.pl;
+  if (c === qb && (state === 'drop' || state === 'pocket')) { annSay('escape', { pri: ico ? 3 : 2, vars: v }); if (kind === 'spin' && !P.spin) { P.spin = true; annSayOwn('sackSpin', { pri: ico ? 3.5 : 2.5, vars: v }); } return; }   // (spinning off the sack: its own call over the escape)
   if (!(c.hasBall || c === runner)) return;
-  const P = ANN_S.pl; P.br++; if (ico) P.ico = true;
-  if (ico) return annSay('ico_' + kind, { pri: 4 });
-  if (P.br >= 3) return annSay('break3', { pri: P.br > 3 ? 3.5 : 3 });
-  if (P.br === 2) return annSay('break2', { pri: 2 });
-  annSay(kind === 'plain' ? 'break' : kind, { pri: kind === 'truck' ? 2 : 1 });
+  P.br++; if (ico) P.ico = true; if (kind !== 'plain') (P.mv || (P.mv = {}))[kind] = (P.mv[kind] || 0) + 1;
+  if (ico) return annSay('ico_' + kind, { pri: 4, vars: v });
+  if (P.br >= 3) { annSay('break3', { pri: P.br > 3 ? 3.5 : 3, vars: v }); if (P.mv && Object.keys(P.mv).length >= 2) annSayOwn('movesMany', { pri: P.br > 3 ? 4 : 3.5, vars: { ...v, n: P.br } }); return; }   // (moves of two or more kinds on one run: named)
+  if (P.br === 2) return annSay('break2', { pri: 2, vars: v });
+  annSay(kind === 'plain' ? 'break' : kind, { pri: kind === 'truck' ? 2 : 1, vars: v });
+}
+// (fixes job) live calls while the ball is live, once a play each (annRnd only): two defenders colliding (separatePlayers' overlap branch), and from
+// updateCarrier: a footrace (open field, nobody ahead, a chaser close behind) / the last man to beat (one defender left between him and the goal line)
+function annCollide(a, b, dx, dy, d) {
+  const P = ANN_S.pl; if (P.col || !annGate() || !(state === 'run' || state === 'flight' || state === 'loose' || state === 'picked')) return;
+  const cl = ((a.vx || 0) - (b.vx || 0)) * dx / d + ((a.vy || 0) - (b.vy || 0)) * dy / d;   // (closing speed along the line between them)
+  if (cl < ANN.colSpd * YD || a.engaged || b.engaged) return;
+  P.col = true; annSayOwn('collide', { pri: 2.5, vars: { d: annName(a) } });
+}
+function annRunTick(c) {
+  const P = ANN_S.pl; if ((P.race && P.last) || !c.hasBall || c.team !== 'off' || state !== 'run' || !annGate()) return;
+  const past = (c.x - los) / YL; if (past < ANN.lastYd) return;
+  let ahead = 0, man = null, near = false;
+  for (const d of allPlayers()) { if (d.team === c.team || d.action === 'down') continue; if (d.x > c.x) { ahead++; man = d; } else if (c.x - d.x < ANN.raceGap * YD && Math.abs(d.y - c.y) < ANN.raceGap * YD) near = true; }
+  if (!P.last && ahead === 1) { P.last = true; return annSayOwn('lastMan', { pri: 2.5, vars: { p: annName(c), d: annName(man) } }); }
+  if (!P.race && ahead === 0 && near && past >= ANN.raceYd) { P.race = true; annSayOwn('footrace', { pri: 2.5, vars: { p: annName(c) } }); }
 }
 function annThrow(P, t) {   // (throwBall: the release)
   if (!annGate() || !P || !t) return;
   ANN_S.pl.thr = { x: P.x, y: P.y };   // (where it was thrown from: an incompletion is judged along this line)
   if ((t.x - P.x) / YL >= ANN.deepYd) { ANN_S.pl.deep = true; annSay('deep', { pri: 1.5, hold: true, who: 'A' }); }
   else annSay('throw', { pri: 0, who: 'A', odds: 0.45 });
+  if (!ANN_S.pl.cross && ((P.act && P.act.cross) || handLat(P) < -THROW_LOOK.cross)) { ANN_S.pl.cross = true; annSayOwn('crossBody', { pri: 1.6, vars: annWho(P) }); }   // (thrown across his body)
 }
 function annCatch(r) {   // (catchBall, in bounds)
   if (!annGate()) return;
-  if (ball.tipped) return annSay('tipCatch', { pri: 6 });
-  const st = r && r.catchFx && ANN_CST[r.catchFx.style]; if (st) return annSay(annBig(st, r), { pri: 2.5 });   // (v0.74 the catch looks with no callout of their own; a popup's call (pri 3) still wins)
-  annSay(ANN_S.pl.deep ? 'deepCatch' : 'catch', { pri: ANN_S.pl.deep ? 2 : 0.5, who: 'A' });
+  const v = annWho(r);
+  if (ball.tipped) return annSay('tipCatch', { pri: 6, vars: v });
+  const st = r && r.catchFx && ANN_CST[r.catchFx.style]; if (st) return annSay(annBig(st, r), { pri: 2.5, vars: v });   // (v0.74 the catch looks with no callout of their own; a popup's call (pri 3) still wins)
+  annSay(ANN_S.pl.deep ? 'deepCatch' : 'catch', { pri: ANN_S.pl.deep ? 2 : 0.5, who: 'A', vars: v });
 }
 function annPlayBase(text, next, kind, ko, pen) {   // (annPlayEnd: the base result line, or a crazy play's)
   const P = ANN_S.pl, T = String(text || ''), g = Number.isFinite(next) ? Math.round((next - los) / YL) : 0, o = { add: true, vars: { gain: Math.abs(g) } };
@@ -2609,6 +2711,7 @@ function annReelColor(c) {   // B's colour line from what the clip's record real
   if (ap.some(e => e.k === 'block')) opts.push({ k: 'reel_block' });
   if (c.def) opts.push({ k: 'reel_dfx' });
   if (c.who) opts.push({ k: 'reel_who', v: { who: String(c.who).split(' ').slice(-1)[0] } });
+  { const mw = c.who && !c.lg ? hsMoveWord(c) : null; if (mw) opts.push({ k: 'reel_named', v: { who: String(c.who).split(' ').filter(w => !ANN_SUFFIX.test(w)).slice(-1)[0], move: mw } }); }   // (fixes job: B on the man and his move)
   return opts.length && Math.random() < 0.8 ? opts[Math.floor(Math.random() * opts.length)] : null;   // (now and then the old general line, so the mix stays fresh)
 }
 function annReelClip(c) {
@@ -2618,6 +2721,8 @@ function annReelClip(c) {
   const o = { pri: 1, add: true, wait: true };
   if (hl.again) return annPut('reel_again', { ...o, who: 'B' });
   const k = c.lg ? 'lg' : /TOUCHDOWN|PICK SIX|SCOOP|RETURN TD/.test(c.title || '') ? 'td' : ANN_REEL_K[c.kind] || 'gain';
+  const who = !c.lg && c.who ? String(c.who).split(' ').filter(w => !ANN_SUFFIX.test(w)).slice(-1)[0] : null, move = who ? hsMoveWord(c) : null;
+  if (who && move) return annOwn(() => annPut('reel_named', { ...o, who: 'A', vars: { who, move } }));   // (the man and the move, by name: the booth's own random numbers)
   annPut('reel_' + k, { ...o, who: 'A' });
 }
 function annReelTick(t0, t1, fr) {
@@ -2661,7 +2766,7 @@ function annDraw() {
   if (S.fcDark !== dk) { for (let j = 0; j < 2; j++) { freeCanvas(S.fc[j]); S.fc[j] = null; } if (S.card) { freeCanvas(S.card.b); freeCanvas(S.card.f); S.card = null; } annFreeLine(c); S.fcDark = dk; }   // (dark mode flipped: everything is baked again)
   const out = c.hold ? 1 : 1 - cClamp((now - (c.end + ANN.hold)) / ANN.fade); if (out <= 0) { S.rect = null; return; }
   const kt = !pvpOn() && typeof keyTipsShown === 'function' && !!keyTipsShown();   // (v0.73: key tips up = top middle under the scoreboard, kept on screen)
-  let x = PAUSE_BTN.x; const y = kt ? TOP_BAR + ANN.midPad + (TOUCH ? ANN.touchY : 0) : (pvpOn() ? LEFT_TO_BTN.y + LEFT_TO_BTN.h + ANN.pvpGap : TOP_BAR + ANN.pad) + (TOUCH ? ANN.touchY : 0),   /* (two players: under the left timeout / audible buttons) */ pc = lite ? 1 : cBack((now - S.popAt) / ANN.pop);
+  let x = PAUSE_BTN.x; const y = Math.max(bannerUp() ? TOP_BAR + ANN.bannerY : 0, kt ? TOP_BAR + ANN.midPad + (TOUCH ? ANN.touchY : 0) : (pvpOn() ? LEFT_TO_BTN.y + LEFT_TO_BTN.h + ANN.pvpGap : TOP_BAR + ANN.pad) + (TOUCH ? ANN.touchY : 0)),   /* (a banner up: the box sits under it) */   /* (two players: under the left timeout / audible buttons) */ pc = lite ? 1 : cBack((now - S.popAt) / ANN.pop);
   // bake the faces / card / bubble HERE, at the screen's own scale: baked inside the pop-in's scale (tiny on its first frames) they came out blurry and stayed so
   { const m = DM_P.getTransform.call(ctx), s0 = Math.round(Math.hypot(m.a, m.b) * 8) / 8 || 1, stale = cv => cv && cv._s < s0 - 0.01;
     for (let j = 0; j < 2; j++) if (stale(S.fc[j])) { freeCanvas(S.fc[j]); S.fc[j] = null; }
@@ -2770,6 +2875,7 @@ const ARC_FX = {
   'hometown.visit': [['mood', 6]], 'hometown.honor': [['mood', 10], ['fans', 0.02], ['tv', 1.03]],
   'yips.cold': [['mood', -8]], 'yips.snap': [['mood', 12]], 'yips.deeper': [['mood', -6]], 'qbrace.keeps': [['mood', 6]], 'qbrace.swap': [['mood', -6], ['mood', 6, 'o']],   // (your team's sagas: mood / team mood / fans only)
   'mentor.bond': [['mood', 6], ['mood', 6, 'o']], 'mentor.feud': [['mood', -5], ['mood', -5, 'o']], 'lastride.mile': [['mood', 8]], 'chase.record': [['mood', 8], ['fans', 0.02]], 'chase.near': [['mood', -4]],
+  'washed.talk': [['mood', -6], ['tv', 0.92]], 'washed.reborn': [['mood', 12], ['tv', 1.1]], 'washed.done': [['mood', -6], ['tv', 0.85]], 'redemption.low': [['mood', -5]], 'redemption.back': [['mood', 12], ['tv', 1.1]], 'redemption.gone': [['mood', -6]],   // (fixes job: the stat sagas)
   'luck.back': [['teamMood', 1]], 'luck.gone': [['teamMood', -1]], 'kid.home': [['fans', 0.02]], 'run.ball': [['teamMood', 2]], 'tank.fight': [['teamMood', 1]], 'tank.fold': [['teamMood', -2]], 'critic.sorry': [['teamMood', 1]],
 };
 function arcFx(arc, stage) {
@@ -2834,6 +2940,15 @@ const saveSettings = () => {
   if (mine) try { autosaveSoon(); } catch (e) {}   // (a changed setting also saves the franchise: never from the menu, where it would stamp the defaults onto the last save)
 };
 let setScope = false;
+let setKeep = null;   // (a scrimmage of the loaded franchise (noCount: the matchup screen's SCRIMMAGE, a practice drill) runs on the menu defaults: the franchise's own settings wait here)
+function setScopeMove(s) {   // frame(): inSave() changed to s
+  if (!s) { setKeep = season && exhibition && !exhibition.world ? { set: JSON.parse(JSON.stringify(SETTINGS)), qs: QUARTER_SECS, season } : null; useDefaults(); QUARTER_SECS = SETTINGS.quarterMin * 60; return; }
+  const K = setKeep; setKeep = null;
+  if (!K || K.season !== season || exhibition) return;   // (only the same franchise, the scrimmage over)
+  for (const k of Object.keys(SETTINGS)) if (!(k in K.set) && !GLOBAL_SET.includes(k)) delete SETTINGS[k];   // (the scrimmage's own exDiff goes; the global ones changed meanwhile stay)
+  for (const k of Object.keys(K.set)) if (!GLOBAL_SET.includes(k)) SETTINGS[k] = K.set[k];
+  QUARTER_SECS = K.qs;
+}
 // difficulty (franchise only; it never touches your team, only the other one):
 // def = their defenders' speed / ball skills, rz = spread steps added to every rating of theirs on the field,
 // sim = star edge for their simulated drives, hit = their hit stick / knockout odds x, fum = fumbles they force x,
@@ -2960,7 +3075,8 @@ const DIFF_MASTERS = [
   { id: 'hi', label: 'HELP AND INFORMATION', keys: ['astThrow', 'astDef', 'info', 'audibles'] },
 ];
 const DIFF_MIDS = DIFF_MASTERS.map(M => M.id);
-const DYN_IDS = ['pp', 'pr', 'cp', 'cr', 'pk', 'ck'];   // (the masters adaptive judges; rc / hi / GAME RULES follow their average)
+const DYN_IDS = ['pp', 'pr', 'cp', 'cr'];   // (the masters adaptive judges; hi / GAME RULES follow their average)
+const DYN_PIN = ['pk', 'ck', 'rc'];         // (special teams: adaptive leaves them at PRO, D 0.5 = a no-op, and never judges kicks)
 let DIFF_MENU = false;   // (the difficulty page drawn in the menus: adaptive shows its default start, not a franchise's masters)
 for (const M of DIFF_MASTERS) for (const k of M.keys) { const s = DIFF_SLIDERS.find(q => q.key === k); if (s) s.m = M.id; }
 const diffMastersAt = D => Object.fromEntries(DIFF_MIDS.map(id => [id, D]));
@@ -2990,7 +3106,7 @@ const diffNearest = D => DIFF_NAMES.reduce((a, k) => Math.abs(DIFF_D[k] - D) < M
 // the resolved value of every slider right now (custom: the chosen one, else neutral)
 const diffLim = (s, v) => Math.max(s.lo, Math.min(s.hi, v));   // (clamped to the slider's range, never rounded: a neutral stays exactly neutral)
 // a master's D: preset / dynamic = the mode's one D (phase 4 splits dynamic), custom = DIFFV.masters (0.5 if unset)
-const diffMasterD = (id, m = diffMode(), D = diffD(), ms = diffLive().masters) => m === 'custom' ? (ms && ms[id] != null ? diffMLim(ms[id]) : 0.5) : m === 'dynamic' && !DIFF_MENU && DYN_IDS.includes(id) ? dynMD(id) : D;   // (adaptive: each judged master its own D)
+const diffMasterD = (id, m = diffMode(), D = diffD(), ms = diffLive().masters) => m === 'custom' ? (ms && ms[id] != null ? diffMLim(ms[id]) : 0.5) : m === 'dynamic' && !DIFF_MENU && DYN_IDS.includes(id) ? dynMD(id) : m === 'dynamic' && DYN_PIN.includes(id) ? 0.5 : D;   // (adaptive: each judged master its own D, special teams pinned at PRO)
 // one slider's value: custom = a hand-set value, else its master's D (GAME RULES: n); preset / dynamic = at the mode's D
 const diffValOf = (s, m = diffMode(), D = diffD(), sl = diffLive().sliders, ms = diffLive().masters) => m === 'custom'
   ? (sl[s.key] != null ? diffLim(s, sl[s.key]) : s.m ? diffSliderAt(s, diffMasterD(s.m, m, D, ms)) : s.n) : diffSliderAt(s, s.m ? diffMasterD(s.m, m, D, ms) : D);
@@ -3103,6 +3219,7 @@ function dynNews(before) {   // (a preset boundary crossed: said on the home scr
 // Phases: year 1 = learning (small steps, never over 0.5), then testing until dyn.ev reaches testGames, then settled (anchor + roster term, small steps).
 const DYN_M = {
   year1Cap: 0.05, year1Max: 0.5, testCap: 0.15, testGames: 17, settleCap: 0.03, settlePull: 0.5,
+  cpuMax: 0.8, cpuStepK: 0.5, cpuIds: ['cp', 'cr'],   // the CPU offense's masters (= how hard your defense has it): never over cpuMax (no overdrive), each step x cpuStepK
   bigM: 0.6, spread: 0.25, shareSnaps: 30, follow: 0.25,   // follow = share of the gap a never-judged master closes toward the judged ones' average each game; bigM = a big surprise (|tanh|); spread = most a master sits from the average; shareSnaps = PLAYER offense plays of a fully played game
   full: { pp: 25, pr: 15, cp: 8, cr: 8, pk: 3, ck: 3 },   // live sample for a full step: pass plays, runs, CPU drives (cp / cr), kicks
   valve: { m: 0.7, of: 5, need: 4, calm: 0.4, calmN: 3 },   // settled: |m| over m in need of the last `of` judged games = testing-size steps again, until calmN in a row under calm
@@ -3120,10 +3237,10 @@ function dynLiveNote(text, next, kind, pp) {   // (from pstPlay: one live play i
   const bt = DYN_BT; DYN_BT = 0;
   if (tut || exhibition || !season || LG_SAND || (typeof stSimming !== 'undefined' && stSimming) || typeof game === 'undefined' || !game) return;
   const L = game.dynLive || (game.dynLive = { p: dynSide(), c: dynSide(), kp: { t: 0, m: 0, b: 0, pn: 0, py: 0 }, kc: { t: 0, m: 0, b: 0, pn: 0, py: 0 }, side: null, end: true });
-  const s = aiOff() ? 'c' : 'p', S = L[s], K = L[s === 'p' ? 'kp' : 'kc'];
-  if (kind === 'fg' || kind === 'fgmiss') { K.t++; if (kind === 'fg') { K.m++; if (patMode === null) S.pts += 3; } else if (/block/i.test(text)) K.b++; if (patMode === null) L.end = true; return; }
+  const s = aiOff() ? 'c' : 'p', S = L[s];
+  if (kind === 'fg' || kind === 'fgmiss') { if (kind === 'fg' && patMode === null) S.pts += 3; if (patMode === null) L.end = true; return; }   // (kicks are not judged: only the points and the drive's end count)
   if (patMode !== null) return;   // (two-point tries are not judged)
-  if (kind === 'punt') { const m = /(\d+) yards?/.exec(text); K.pn++; if (m) K.py += +m[1]; L.end = true; return; }
+  if (kind === 'punt') { L.end = true; return; }
   if (L.side !== s || L.end) S.dr++;
   L.side = s; L.end = false;
   const td = kind === 'td', yds = kind === 'turnover' || !Number.isFinite(td ? FIELD : next) ? 0 : Math.round(((td ? FIELD : next) - los) / YL);
@@ -3137,13 +3254,14 @@ function dynLiveNote(text, next, kind, pp) {   // (from pstPlay: one live play i
 function dynPfresh() { return { A: null, AS: 0, h: [], mode: 'test', n: 0 }; }   // (hoisted: diffNew uses it at load)
 function dynFix(dy) {   // (old saves / new states: every judged master, its own state)
   if (!dy.M || typeof dy.M !== 'object') dy.M = {};
+  for (const id of DYN_PIN) { delete dy.M[id]; if (dy.P) delete dy.P[id]; }   // (old saves judged the kicks: those entries go)
   for (const id of DYN_IDS) if (!isFinite(dy.M[id])) dy.M[id] = isFinite(dy.D) ? dy.D : DYN.start;
   if (!dy.P || typeof dy.P !== 'object') dy.P = {};
   for (const id of DYN_IDS) { const P = dy.P[id]; if (!P || !Array.isArray(P.h)) dy.P[id] = dynPfresh(); }
   if (!isFinite(dy.ev)) dy.ev = 0;
   return dy;
 }
-const dynMD = id => { const M = DIFFV.dyn.M; return Math.max(DYN.lo, Math.min(DYN.hi, (M && isFinite(M[id]) ? M[id] : DIFFV.dyn.D) + dynPO())); };   // (a master's D right now: the playoffs add to each)
+const dynMD = id => { const M = DIFFV.dyn.M; return Math.max(DYN.lo, Math.min(DYN_M.cpuIds.includes(id) ? Math.min(DYN.hi, DYN_M.cpuMax) : DYN.hi, (M && isFinite(M[id]) ? M[id] : DIFFV.dyn.D) + dynPO())); };   // (the CPU offense's masters stop at cpuMax, playoffs included)   // (a master's D right now: the playoffs add to each)
 const dynAvg = dy => DYN_IDS.reduce((t, id) => t + dy.M[id], 0) / DYN_IDS.length;
 const dynPhase = dy => (LEAGUE.year || 1) === 1 ? 'learn' : (dy.ev || 0) < DYN_M.testGames ? 'test' : 'settled';
 function dynUnit(id) {   // unit stars edge: PLAYER offense vs CPU defense (pp / pr), CPU offense vs PLAYER defense (cp / cr); kicking has none
@@ -3165,13 +3283,11 @@ function dynJudge(L, M, edge = dynUnit) {   // -> { id: { n (sample), w, exp, ac
   if (p.ca) one('pr', p, yc(p, X.pr), p.ca, -1, p.ca / pP);
   if (cA) one('cp', c, ny(c), c.dr, 1, cA / cP);
   if (c.ca) one('cr', c, yc(c, X.cr), c.dr, 1, c.ca / cP);
-  if (L.kp.t) one('pk', null, L.kp.m / L.kp.t, L.kp.t, -1, 0);
-  if (L.kc.t) one('ck', null, L.kc.m / L.kc.t, L.kc.t, 1, 0);
   return out;
 }
 function dynClampM(dy, yr1) {   // spread around the average, the limits, year 1's ceiling; dyn.D = the average
   const Q = DYN_M, a = dynAvg(dy);
-  for (const id of DYN_IDS) dy.M[id] = dynCl(dynCl(dy.M[id], a - Q.spread, a + Q.spread), DYN.lo, yr1 ? Math.min(DYN.hi, Q.year1Max) : DYN.hi);
+  for (const id of DYN_IDS) dy.M[id] = dynCl(dynCl(dy.M[id], a - Q.spread, a + Q.spread), DYN.lo, Math.min(yr1 ? Math.min(DYN.hi, Q.year1Max) : DYN.hi, Q.cpuIds.includes(id) ? Q.cpuMax : DYN.hi));
   dy.D = dynAvg(dy);
 }
 function dynAfterGame(blue, red, simmed) {
@@ -3198,7 +3314,7 @@ function dynAfterGame(blue, red, simmed) {
         P.h.push(j.m); if (P.h.length > Q.valve.of) P.h.shift(); P.n++;
       }
       if (phase === 'settled' && P.mode !== 'retest' && P.A != null) st += (P.A + DYN.team.k * (dynStarsNow(id) - P.AS) - M[id]) * Q.settlePull;   // (settled: anchor + roster)
-      step[id] = st;
+      step[id] = Q.cpuIds.includes(id) ? st * Q.cpuStepK : st;   // (the CPU offense moves in smaller steps)
     }
     if (loss) {   // (a loss: single masters may rise, the average may not)
       let pos = 0, neg = 0; for (const id of DYN_IDS) if (step[id] > 0) pos += step[id]; else neg += step[id];

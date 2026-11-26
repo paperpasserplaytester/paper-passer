@@ -1439,7 +1439,8 @@ const ANN_SIT = { lateS: 120, lastS: 10, short: 2, long: 7, blow: 21, comeback: 
   ctx: { odds: 0.35, bigOdds: 0.85, big: ['ctx_lead', 'ctx_gwd', 'ctx_tie', 'ctx_poss1', 'ctx_turnLate'], longN: 10, one: 1.2, two: 2.4 } };   // context colour after the result: odds, possessions-left cut-offs
 // (ANN.showY = v0.74 the halftime / pregame cards: the booth's card top, canvas px)
 const ANN_REF = { near: 1.5, goodOdds: 0.35, flagOdds: 0.5, doubt: { d: 0.25, penDpi: 0.45, penOpi: 0.45, penRough: 0.4, penHold: 0.3 }, many: 4 };   // v0.74 officials: a close correct spot within near YL gets a good-spot line at goodOdds; flag colour odds and doubt share per foul; halftime "lots of flags"
-const ANN = { sit: ANN_SIT, ref: ANN_REF, showY: 610, cps: 30, gap: 0.55, hold: 2.1, fade: 0.45, holdMax: 3.2, maxQ: 2, recent: 24, minLines: 12, slide: 0.32, pop: 0.22,
+const ANN = { nameOdds: 0.5, colSpd: 4, raceYd: 15, raceGap: 3, lastYd: 10, bannerY: 82,   // (fixes job) nameOdds = share of lines that use the man's name; colSpd = yd/s two defenders close at to be a collision; raceYd / lastYd = yd past the line for a footrace / last-man call, raceGap = yd a chaser trails within; bannerY = px under the top bar the box drops to while a banner is up
+  sit: ANN_SIT, ref: ANN_REF, showY: 610, cps: 30, gap: 0.55, hold: 2.1, fade: 0.45, holdMax: 3.2, maxQ: 2, recent: 24, minLines: 12, slide: 0.32, pop: 0.22,
   colorOdds: { 0: 0.15, 1: 0.3, 2: 0.55, 3: 0.75 }, crazy: 5, longTd: 50, deepYd: 25,
   pad: 8, midPad: 10, pvpGap: 10, touchY: 34, card: 64, face: 21, size: 17, bigSize: 22, maxW: 300, shake: 1.6,   // (midPad: v0.73 top-middle spot under the scoreboard while the key tips are up)
   reelEnd: 3.4, reelGap: 0.9,
@@ -2485,6 +2486,31 @@ const AGING = {
   recede: 0.45, recedeAt: { pl: [31, 37], co: [42, 58] },   // share whose hairline goes, and the age range it goes in
   weather: [0.75, 1.3],   // how fast lines / bags come (x the years past each stage)
   glOdds: 0.55, jawOdds: 0.3,   // coaches: share who need glasses late / get a heavier jaw
+};
+// player decline + longer careers (engine in 09-season `// --- player decline`). SETTINGS.decline 'off' | 'mine' | 'league' (none = 'mine'), per save.
+// Mileage p.mi (0-999) = how hard his body has been used; age past his position's prime end decides when decline may start, mileage how fast.
+const DECLINE = {
+  prime: 30,                 // prime end = this + RETIRE_POS[group] (+ KICKER_LATE for K): RB 27, CB 28, QB 33, K 36
+  mi: { game: 1, hurtK: 1.5, sat: 0.5, med: 0.08, tr: 0.1, max: 999,   // a full game = game; x hurtK when he played under INJURY.whyCond; + sat a week out hurt; - med a Medical level / - tr a Bone Setter level
+        cpuGame: 0.8, cpuStar: [4, 8, 12, 15, 16], seed: 11, seedK: [0.5, 0.75, 1, 1.15, 1.25] },   // other teams: x cpuGame a game on file (no file: cpuStar by stars); old saves seed (age - 22) x seed x seedK by stars
+  roll: { base: 0.22, perYr: 0.1, miRef: 90, miK: 0.006, max: 0.92,   // chance a year past prime = base + perYr x (years past - 1), x (1 + miK x mileage over miRef)
+          moraleK: [1.3, 0.7], condK: [[80, 0.9], [60, 1], [0, 1.15]],   // morale 0 -> 100 = x 1.3 -> 0.7; season-average condition band
+          loss: [1, 2], yrMax: 3, attr: 0.15, attrMax: 1, kK: 0.25, paidK: 0.4,   // ceiling points lost (cap a year); attr = odds 1 attribute point goes once the ceiling is under him
+          phys: ['spd', 'str', 'agi', 'sta', 'bal', 'acc', 'pow'], never: ['awr', 'cov', 'poi'] },   // physical first; awareness-type never
+  rust: { weeks: 6, pts: [1, 2], game: 0.6, week: 0.25 },   // out 6+ weeks: a -1 / -2 dip on every attribute (like condShift), worn off a game played / a week
+  seasonInj: { odds: 0.3, pts: [1, 3] },   // a season-ending injury: an extra permanent ceiling roll on top of injuryPotential
+  force: null,               // test: 'roll' = every eligible player rolls a hit, 'letter' = the retirement letter shows every tab
+  ext: {                     // longer careers (extOptions / retireShift): years taken off his retire age, odds, costs
+    ring: 1, rec: 1, mentor: 0.75,           // automatic (yours + 'league' CPU): ring chasing (made the playoffs, no title with this team), near a career record, mentoring a kid
+    top: 0.35, topStars: 3.5, topAge: 32,    // just won the Paper Bowl: this share of old stars go out on top (retire age past topAge)
+    recNear: 1,                              // a career record within this many seasons of his pace
+    mentorGap: 3, mentorGrow: 0.15, mentorMi: 0.5,   // kid at least mentorGap years younger with a higher ceiling; his growth x (1 + mentorGrow); the mentor's mileage x mentorMi
+    oneMore: { cost: [3, 5, 8, 12, 16], base: 0.35, morale: 0.4, starter: 0.15, team: 0.3, max: 0.9 },   // credits by stars; odds = base + morale (-0.5..+0.5 x) + starter + team win% x
+    farewell: { stars: 4, yrs: 8, odds: 0.35, morale: 6 },   // offered before the season to a 4+ star or 8+ years with you whose retire odds are at least `odds`; team morale + this
+    lon: { max: 2, xp: [60, 90, 130, 180, 240] },   // LONGEVITY PROGRAM: bank XP by stars for one year off his retire age, max 2
+    unret: { stars: 3, yrs: 1, weeks: 6, odds: 0.12, pay: 0.6 },   // a 3+ star gone within a year phones (odds a week) on a 6+ week injury at his spot; salary = his ask x pay, 1 year
+  },
+  ask: true,                 // your retirees wait for the retirement letter (dlLettersShow); false = they go at once
 };
 const ageHash = (s, salt) => { let h = 2166136261 ^ salt; for (const ch of String(s || '')) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return ((h >>> 0) % 100000) / 100000; };
 function agingGenes(f, name) {   // his own clock, from his name (or the face itself when nameless)
@@ -3853,7 +3879,6 @@ function wearRest() { ABIL_ST.drive++; wearFreshArm = true; for (const [k, v] of
 const XF_RULES = Object.fromEntries(Object.entries(ABIL_DEFS).filter(([, d]) => d.tier === 'X').map(([k, d]) => [k, { on: d.on || [], off: d.off || [], clutch: !!d.clutch }]));
 const XF_FLOW = {
   again: 1.5, againMax: 2,     // after a knockout he needs again x the trigger to come back (compounds per knockout, at most againMax times)
-  half: 0.5,                   // halftime: a lit star drops to this share of his trigger (half-charged) instead of staying on
   drain: 0.25,                 // a turnover: every star on that team loses this share of his progress
   clutchS: 120, clutchPts: 8,  // clutch stars (def `clutch`) turn on by themselves in the last clutchS NFL seconds of Q4 (or OT) within clutchPts
   prime: 0.5,                  // playoffs / Paper Bowl: every star starts the game with this share of his trigger (Prime Time holders get their Ability)
@@ -3906,7 +3931,7 @@ function xfTurnOn(s, x) {
 }
 // something happened to star `s` (see the event names in ABIL_DEFS' on / off conditions)
 function xfEvent(s, e, v = 0) {
-  if (!s || s.tier !== 'X' || xf1v1() || tut || LG_SAND) return;
+  if (!s || s.tier !== 'X' || xf1v1() || tut || LG_SAND || pracLive()) return;
   const R = XF_RULES[s.ability]; if (!R) return;
   const x = xfs(s);
   if (x.dr !== ABIL_ST.drive) { x.dr = ABIL_ST.drive; R.on.forEach((c, i) => { if (c.drive) x.c[i] = 0; }); R.off.forEach((c, i) => { if (c.drive) x.o[i] = 0; }); }
@@ -3920,8 +3945,8 @@ function xfProg(s) {
   const k = xfNeedK(x);
   return Math.min(1, Math.max(0, ...R.on.map((c, i) => { const n = xfNeed(c, k), v = x.c[i]; return c.all ? (v ? c.e.reduce((t, e) => t + Math.min(1, (v[e] || 0) / n), 0) / c.e.length : 0) : (v || 0) / n; })));
 }
-// halftime: lit stars drop to half-charged
-function xfHalftime() { if (ABIL_ST.half) return; ABIL_ST.half = true; for (const t of [MATCH.you, MATCH.opp]) for (const s of ROSTER[t] || []) if (s.xf && s.xf.on) { xfOff(s, false); xfCharge(s, XF_FLOW.half); } }
+// halftime: nothing happens to a star factor any more (a lit star stays on: he only goes off for his own reason, XF_RULES' off conditions)
+function xfHalftime() { if (ABIL_ST.half) return; ABIL_ST.half = true; }
 // a turnover by team key k: its stars lose some progress
 function xfTurnover(k) {
   for (const s of ROSTER[k] || []) { const x = s.xf; if (!x || x.on || !Array.isArray(x.c)) continue;
@@ -4038,7 +4063,7 @@ function xfLive(text, next, kind) {
   if (kind === 'turnover') { if (rz) for (const r of recs) E(r, 'rzFail'); xfTurnover(offKey); }
   if (pass) for (const r of [...recs, ...(rb.route ? [rb] : [])]) if (r !== tgt && r !== playCatcher) E(r, 'idle');
   // Bell Cow: carries this drive
-  if (runner === rb && isRunPlay && rb.src) { const s = rb.src; if (s.bcD !== ABIL_ST.drive) { s.bcD = ABIL_ST.drive; s.bcN = 0; } s.bcN++; }
+  if (runner === rb && isRunPlay && rb.src && !noCount()) { const s = rb.src; if (s.bcD !== ABIL_ST.drive) { s.bcD = ABIL_ST.drive; s.bcN = 0; } s.bcN++; }
   if (!aiOff() && !sacked) {   // weekly goals (coaching goals block)
     if (kind === 'td') goalEvent('td');
     if (caught) { goalEvent('catch', yds); goalEvent('air', xfAir); }

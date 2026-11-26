@@ -3082,14 +3082,14 @@ function moraleShiftAll(d) { if (moraleOn()) { for (const s of ROSTER[MATCH.you]
 // an on-field event: p = the player it happened to (field player); the scorer / QB also moves the rest of the team
 function moraleEvent(p, ev) {
   const s = p && p.src;
-  if (!moraleOn() || !yoursEntry(s)) return;
+  if (!moraleOn() || !yoursEntry(s) || noCount()) return;   // (a practice drill / a scrimmage: morale untouched)
   s.morale = Math.max(MORALE.lo, Math.min(MORALE.hi, moraleRaw(s) + MORALE.ev[ev]));
   let team = MORALE.ev[ev + 'Team'];
   if (team < 0 && stT('Peacekeeper')) team *= TRAIT_BY.Peacekeeper.v[0];   // (Peacekeeper: one man's bad moment doesn't spread as far)
   if (team) for (const o of ROSTER[MATCH.you]) if (o !== s) o.morale = Math.max(MORALE.lo, Math.min(MORALE.hi, moraleRaw(o) + team));
   moraleSync();
 }
-function moraleDecayPlay() { moraleDecay(MORALE.decayPlay); }
+function moraleDecayPlay() { if (!noCount()) moraleDecay(MORALE.decayPlay); }   // (a practice drill / a scrimmage: morale untouched)
 // (v0.30, the Player Lounge: morale rests at moraleBase(), above 50 with lounge levels, and climbs back to it faster from below)
 const moraleBase = () => MORALE.neutral + FAC_FX.lounge.base * facLvl('lounge') + originK('morale') + stV("Players' Coach") + (stT('Peacekeeper') >= 2 ? TRAIT_BY.Peacekeeper.chem : 0);   // (+ a LOCKER ROOM LEADER origin early on; + staff traits)
 function moraleDecay(k) {
@@ -3183,7 +3183,8 @@ function rehabStep(s, games = 1) {   // a game (or week) of rehab: the meter fil
   s.rehab = Math.min(1, rehabOf(s) + Math.max(0, RECOVERY.rehabGame + RECOVERY.rehabStar * (trainerStars(unitSide(s)) - RECOVERY.trainerBase) + RECOVERY.rehabMed * (med - 1)) * games);
 }
 function injuryBegin(s) { s.rehab = 0; s.limited = false; }   // (a new injury starts rehab over)
-function injuryReturn(s, sev, notes) {   // the layoff is over: a bad / severe one comes back LIMITED until the rehab meter is full; coming back lifts morale once
+function injuryReturn(s, sev, notes) {
+  declineRustOn(s);   // (player decline: a long layoff comes back rusty)   // the layoff is over: a bad / severe one comes back LIMITED until the rehab meter is full; coming back lifts morale once
   if (sev >= RECOVERY.limitedFrom && rehabOf(s) < 1) { s.limited = true; if (notes) notes.push(`${s.short}: back LIMITED (rehab ${Math.round(rehabOf(s) * 100)}%)`); }
   moraleShift(s, RECOVERY.returnMorale);
 }
@@ -3557,6 +3558,7 @@ function rosterCard(p, bb, team, kr, extra) {
       ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(extra, px + pw - ew / 2 - 6, py + ph - 17);
     }
   });
+  dlRosterTag(p, bb, team);   // (player decline: MENTOR sticker / the kid's apple)
 }
 
 // --- roster formation view ------------------------------------------------------------------------------
@@ -3751,6 +3753,7 @@ function drawFormView(team) {
   const hp0 = hoverPt, bp0 = btnPress, panning = FVS.press && FVS.press.moved;
   hoverPt = hp0 && inBtn(hp0, B) && !FVS.dd && !panning ? fvToView(hp0.x, hp0.y) : null;
   btnPress = bp0 && inBtn(bp0, B) && !panning ? { ...bp0, ...fvToView(bp0.x, bp0.y) } : null;
+  dlFormLines(team, FVS.lay.L, people, C, false);   // (player decline: mentor <-> kid pencil line, under the cards)
   try {
     for (const c of FVS.lay.L) {
       const k = keys[c.i], cur = people[c.i], cands = fvCands(team, pg, c.i, cur, holder), idx = 0, p = cur;
@@ -3777,6 +3780,7 @@ function drawFormView(team) {
     }
   } finally { hoverPt = hp0; btnPress = bp0; }
   FVS.hits.push(...ctl);   // (buttons over cards: checked first)
+  dlFormLines(team, FVS.lay.L, people, C, true);   // (player decline: a bench mentor's tag under the kid)
   ctx.restore();
   {   // how to move around (bottom right, across from AUTO)
     const tip = TUI.on || IS_MOBILE ? 'PINCH TO ZOOM  ·  DRAG TO PAN' : 'SCROLL TO ZOOM  ·  LEFT CLICK TO PAN';

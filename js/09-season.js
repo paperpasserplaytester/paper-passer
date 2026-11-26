@@ -1418,9 +1418,9 @@ function askRaw(p) {
 const KICKER_LATE = 6;   // kickers play this many years longer than everyone else
 const RETIRE_POS = { QB: 3, K: 0, OL: 1, TE: 0, S: 0, LB: -1, DL: -1, WR: -1, CB: -2, RB: -3 };   // years added to the age he retires by: a QB goes on longer, a back or a corner is done sooner (K also gets KICKER_LATE below)
 const RETIRE_INJ = 1.5;   // a badly hurt player (inj severity 2, or still out) ages this many extra years toward retirement
-const retireAge = p => p.age - (p.group === 'K' ? KICKER_LATE : 0) - (RETIRE_POS[p.group] || 0) + (p.inj && (p.inj.sev >= 2 || p.inj.weeks > 6) ? RETIRE_INJ : 0);   // (a kicker retires like a player 6 years younger)
-const retireOdds = p => {
-  const age = retireAge(p);
+const retireAge0 = p => p.age - (p.group === 'K' ? KICKER_LATE : 0) - (RETIRE_POS[p.group] || 0) + (p.inj && (p.inj.sev >= 2 || p.inj.weeks > 6) ? RETIRE_INJ : 0);   // (a kicker retires like a player 6 years younger)
+const retireAge = p => retireAge0(p) - retireShift(p);   // (player decline: longer-career extenders, 0 when decline is off)
+const retireOdds = (p, age = retireAge(p)) => {
   if (age < 34) return 0;
   return Math.min(0.95, (0.12 + 0.17 * (age - 34)) * (p.stars >= 4 ? 0.75 : p.stars <= 2 ? 1.2 : 1));
 };
@@ -1471,16 +1471,20 @@ function offLeague() {
   // your head coach's stars now come from XP (coachGame / goals), not from a yearly roll; a playoff trip or title pays a bonus
   { const bonus = (po && po.seed && po.seed[me] ? COACH.playoff : 0) + (po && po.champ === me ? COACH.champ : 0);
     if (bonus) coachXP({ hc: bonus, oc: bonus / 2, dc: bonus / 2 }); }
+  DL_EXT = null;   // (player decline: this year's ring / record / mentor reads, built fresh)
   for (const k of Object.keys(ROSTER).filter(k => NFL[k])) {
     const R = ROSTER[k];
     for (const p of [...R]) {
       if (p.salary == null || p.rookie && p.signed) continue;
       const exp = p.years <= 1 && !p.signed, o = retireOdds(p);
       const early = k !== me && p.group !== 'K' && retireAge(p) >= AI_SETBACK.retireAge && Math.random() < AI_SETBACK.retire * (retireAge(p) - AI_SETBACK.retireAge + 1);   // (a computer team's vet walks away early, under contract or not)
-      if (early || (exp && Math.random() < o) || (!exp && retireAge(p) >= 37 && Math.random() < o * 0.6)) {   // too old: retires
+      if (declineGoes(p, k) || early || (exp && Math.random() < o) || (!exp && retireAge(p) >= 37 && Math.random() < o * 0.6)) {   // too old: retires
+        if (k === me && declineAsk(p, k)) continue;   // (player decline: the retirement letter decides)
+        declineGone(p, k);
         (k === me ? OFF.retiredYou : OFF.retiredLg).push({ p, k, text: `${p.name} (${p.tag}, age ${p.age}) retired` });
         postRetire(p, k); vacate(k, p); continue;
       }
+      if (exp) declineExtNote(p, k);
       if (!exp) continue;
       if (k === me && p.walk && contractsOn()) { delete p.walk; faRelease(p, me); vacate(me, p); continue; }   // (PLAYER DEALS > LET HIM WALK)
       if (k === me) { delete p.walk; p.ask = askOf(p); OFF.expiring.push(p); continue; }
@@ -1498,6 +1502,7 @@ function offLeague() {
   OFF.retiredLg.sort((a, b) => b.p.stars - a.p.stars);
   for (let i = 0; i < FA_EXTRA; i++) FA_POOL.push(genFreeAgent());
   for (let i = 0; i < FA_KICKERS; i++) FA_POOL.push(genFreeAgent('K'));
+  dlLettersShow();   // (player decline: one retirement letter per retiring player of yours)
 }
 // extra free agents who were never on a roster here: all kinds of positions, mostly average (3 stars), some better, some worse
 const FA_EXTRA = 36, FA_STARS = [[1, 0.14], [1.5, 0.1], [2, 0.2], [2.5, 0.16], [3, 0.2], [3.5, 0.11], [4, 0.06], [4.5, 0.02], [5, 0.01]];   // (4 and 5 stars are rare; halves allowed)
@@ -2175,13 +2180,14 @@ function draftRound() {   // the next round's slots (false = that was the last r
   return true;
 }
 function draftPass(e) {   // you pass on the slot on the clock (a round with no pick made carries one to next year, once)
-  const D = OFF.draft;
+  const D = OFF.draft; saveFreeze(); autosaveSoon();   // (v0.75: a save still packing keeps the draft as it was; every pick autosaves)
   if (!D.used && D.carryR !== D.round) { D.carryR = D.round; LEAGUE.carry.push(D.round); xpAdd(D.year + 1, D.round); }
   e.skip = 1; D.turn = false; D.pi++;
 }
 function draftStep() {
   const D = OFF.draft, me = season.team;
   if (!D || D.done || D.turn) return false;
+  saveFreeze();   // (v0.75: a sim pick is no input: a save still packing takes its text first, so it holds whole picks)
   if (D.pi >= draftCur().length && !draftRound()) return false;
   const e = draftCur()[D.pi];
   if (!e) return true;   // (an empty round: on to the next one)
@@ -2193,7 +2199,7 @@ function draftStep() {
   }
   const p = draftAI(e.k);
   if (p) { e.p = draftSlim(p); e.n = D.n; } else e.skip = 1;
-  draftPop = { r: D.round, i: D.pi, t0: performance.now() }; D.pi++; D.viewR = D.round;
+  draftPop = { r: D.round, i: D.pi, t0: performance.now() }; D.pi++; D.viewR = D.round; autosaveSoon();   // (debounced: a running sim saves once it settles)
   return true;
 }
 function draftSim(now) {   // to your pick / the end: one computer pick every DRAFT_GRID.simGap s, each popping in (draftSimTick from the board's draw); now = all at once (the old loop)
@@ -2234,9 +2240,21 @@ function draftReown() {   // a trade made mid-draft: the slots still to come sho
   if (D.turn && !e.me) { D.turn = false; D.sel = null; if (D.view === 'pool') D.view = 'board'; }   // (you traded the pick on the clock away: the board shows who has it now)
   else if (!D.turn && e.me && !D.skipAll && D.passR !== D.round) draftTurnOn(true);   // (you traded for the pick on the clock)
 }
+// v0.75: a draft in progress is saved pick by pick (buildSave's off.draft) and a load lands on the same pick. D.mine = names (re-linked
+// to the ROSTER entries on load, never a second copy); D.sel / draftPop / draftSimQ are never saved (a running sim is not resumed).
+const draftSaving = () => !!(OFF && OFF.draft && !OFF.draft.done && !OFF.draftDone);
+function draftSaveOf(D) { if (!D || D.done) return undefined; const o = Object.assign({}, D); o.mine = D.mine.map(p => p.name); o.sel = null; return o; }
+function draftLoadOf(o) {   // false = not loadable (the caller falls back to free agency)
+  if (!o || !o.pool || !o.plans || !season) return false;
+  const R = ROSTER[season.team] || [], D = Object.assign({}, o);
+  D.mine = (o.mine || []).map(n => R.find(p => p.name === n)).filter(Boolean);
+  D.sel = null; D.view = D.view === 'pool' && D.turn ? 'pool' : 'board'; D.viewR = D.viewR || D.round;
+  OFF.draft = D; draftPop = null; draftSimQ = null;   // (D.turn comes back as saved: no bell, draftTurnOn is not called)
+  return true;
+}
 function draftTurnOn(v) { const D = OFF.draft; if (v && !D.turn && !D.skipAll) try { sndRec('bell', 0.8, { ms: 1400, fade: 500, tag: 'dr' }); } catch (e) {} D.turn = v; }
 function draftTake(p) {   // you pick him
-  const D = OFF.draft, me = season.team, R = ROSTER[me], e = draftCur()[D.pi];
+  const D = OFF.draft, me = season.team, R = ROSTER[me], e = draftCur()[D.pi]; saveFreeze(); autosaveSoon();
   D.pool.splice(D.pool.indexOf(p), 1);
   p.drafted = true; delete p.scout; delete p.bd; D.n++; D.mine.push(p); postWire('draft', p, me, { n: D.n }); try { postDrafted(p, me); } catch (e) {}
   uniqueNum(R, p); R.splice(depthAt(R, p), 0, p);
@@ -2313,7 +2331,6 @@ function drawDraftCell(c, r) {
   ctx.restore();
 }
 function drawDraftBoard() {
-  if (draftSimQ) draftSimTick();
   const D = OFF.draft, e = draftCur()[D.pi], r = D.viewR = Math.max(1, Math.min(D.round || 1, D.viewR || D.round || 1));
   ctx.fillStyle = RES.line; ctx.font = 'bold 36px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('NFL DRAFT', W / 2, 38);
@@ -2345,6 +2362,7 @@ function drawDraft() {
   if (!OFF || !OFF.draft || !season) { results.screen = 'home'; return; }
   const D = OFF.draft, me = season.team;
   draftFix(D);
+  if (draftSimQ) draftSimTick();   // (the sim runs whatever the draft screen shows: the board, the prospects or a card)
   paperBg();
   if (D.sel) { drawDraftPage(D.sel); return; }
   if (D.view !== 'pool') { drawDraftBoard(); return; }
@@ -2382,7 +2400,7 @@ function drawDraftPage(p) {
 function draftClick(pt) {
   const D = OFF.draft, me = season.team;
   draftFix(D);
-  if (draftSimQ) { draftSim(true); return; }   // (a sim running pick by pick: any click finishes the rest at once; nothing else reacts)
+  if (draftSimQ && !D.sel && D.view !== 'pool' && !inBtn(pt, DRAFT_VIEW_BTN)) { draftSim(true); return; }   // (a sim running pick by pick: a click on the board finishes the rest at once; the prospects / a card / PROSPECTS keep working while it runs)
   if (D.sel) {
     const p = D.sel;
     if (helpClick(pt, p)) return;
@@ -2802,11 +2820,12 @@ function recalcTeamStars() {
 }
 const NO_NAME_MAX = 4.5;   // the most stars a side can have with a no-name (unrostered) starter in its lineup
 // --- side rating: one base formula for every team, offense and defense, every mode, the whole career (never relative to other teams, never the difficulty)
-// raw = P x starters' stars (weighted by SIDE_W; an empty slot = max(best backup - emptyCut, empty)) + C x coordinator + H x 3 + D x depth
+// raw = P x starters' stars (weighted by SIDE_W; an empty slot = empty, a whole group missing = hole for each slot and the side capped at holeCap) + C x coordinator + H x 3 + D x depth
 //       + hcK x (head coach - 3) + ability bonus (per starter by tier, capped) + veterans - rookies - injured starters
 // stars = clamp 1-5 (half stars) of SIDE_SCALE.mid + (raw - SIDE_SCALE.base) x SIDE_SCALE.per. Potential is never counted.
 const SIDE_MIX = { P: 0.55, C: 0.18, H: 0.07, D: 0.12, hcK: 0.08, depthAll: true,   // (v0.46: stricter, depth / coordinator / head coach count more; stock league: median 2.5-3, one 4.5, no 5)
-                   empty: 1.2, emptyCut: 0.75, noDepth: 1,
+                   empty: 1.2, hole: 0, noDepth: 1,                   // an empty starting slot: empty = a no-name fill-in (stock rosters name only 2 OL / 2 DL / 2 LB), hole = its whole group is missing
+                   holeCap: 3, holes: ['QB', 'OL', 'DL', 'LB', 'CB', 'S'],   // a side with no healthy man at one of these groups is capped at holeCap stars
                    ab: { X: 0.1, S: 0.05, F: 0.02 }, abMax: 0.35,   // ability tiers of the starters (X = a Star Factor)
                    vetYrs: 6, vet: 0.025, vetMax: 0.15,              // starters with vetYrs+ years in the league
                    rook: 0.04, rookMax: 0.2,                         // rookie starters
@@ -2824,12 +2843,13 @@ function sideRating(t, off, unrounded) {
   const side = off ? 'off' : 'def', R = ROSTER[t] || [], M = SIDE_MIX;
   const grp = g => R.filter(p => p.group === (g === 'P' ? 'K' : g));
   const at = g => grp(g).filter(p => !isOut(p)).sort((a, b) => b.stars - a.stars);
-  let sum = 0, wt = 0, ab = 0, vet = 0, rook = 0, inj = 0;
+  let sum = 0, wt = 0, ab = 0, vet = 0, rook = 0, inj = 0, hole = false;
   for (const g of SIDE_SLOTS[side]) {
-    const ps = at(g), n = SIDE_W[g].length, back = ps[n];
+    const ps = at(g), n = SIDE_W[g].length;
+    if (!ps.length && M.holes.includes(g)) hole = true;
     SIDE_W[g].forEach((w, i) => {
       const p = ps[i];
-      sum += w * (p ? p.stars : Math.max((back ? back.stars : 0) - M.emptyCut, M.empty)); wt += w;
+      sum += w * (p ? p.stars : ps.length ? M.empty : M.hole); wt += w;
       if (!p || g === 'P') return;
       if (p.ability && M.ab[p.tier]) ab += M.ab[p.tier];
       const yp = typeof yrsPro === 'function' ? yrsPro(p) : 3;
@@ -2843,8 +2863,8 @@ function sideRating(t, off, unrounded) {
   const D = dg.reduce((s, g) => { const b = at(g)[SIDE_W[g].length]; return s + (b ? b.stars : M.noDepth); }, 0) / dg.length;
   const raw = M.P * (sum / wt) + M.C * C + M.H * 3 + M.D * D + M.hcK * (H - 3)
             + Math.min(ab, M.abMax) + Math.min(vet, M.vetMax) - Math.min(rook, M.rookMax) - Math.min(inj, M.injMax);
-  if (unrounded) return raw;
-  const s = SIDE_SCALE.mid + (raw - SIDE_SCALE.base) * SIDE_SCALE.per;
+  if (unrounded) return hole ? Math.min(raw, SIDE_SCALE.base + (M.holeCap - SIDE_SCALE.mid) / SIDE_SCALE.per) : raw;
+  const s = Math.min(hole ? M.holeCap : 5, SIDE_SCALE.mid + (raw - SIDE_SCALE.base) * SIDE_SCALE.per);
   return Math.max(1, Math.min(5, Math.round(s * 2) / 2));
 }
 // the other teams sign free agents, best first (good ones go fast: odds by stars); odds = a table by stars, perTeam = most signings each
@@ -2929,6 +2949,7 @@ function offAIPickups(me) {
 function leagueWeek(me) {
   try { conWeek(); } catch (e) { console.warn('contracts', e); }   // (another team may call for one of your staff)
   try { boardWeek(); } catch (e) { console.warn('board', e); }   // (the draft board: this week's prospect form)
+  try { unretWeek(); } catch (e) { console.warn('unretire', e); }   // (player decline: a recent retiree may call)
   for (const k of Object.keys(ROSTER)) for (const q of ROSTER[k]) if (q.susp > 0) q.susp--;   // (saga suspensions: one game served a week)
   if (FA_POOL.length < 10) for (let i = 0; i < 14; i++) FA_POOL.push(genFreeAgent());
   for (const k of Object.keys(ROSTER).filter(k => NFL[k] && k !== me)) {
@@ -2959,6 +2980,7 @@ function talentSpot(p) {   // v0.64 Talent Spotter: +0.5 potential once for each
 }
 function offTick() {   // a year goes by: contracts, ages
   if (season && xpcOn()) for (const p of ROSTER[season.team] || []) talentSpot(p);
+  const myR = new Set(season ? ROSTER[season.team] || [] : []);   // (player decline: yours vs the league)
   for (const p of [...Object.values(ROSTER).flat(), ...FA_POOL]) {
     if (p.fresh) delete p.fresh;   // (just drafted: no year older, no growth yet)
     else {
@@ -2966,12 +2988,14 @@ function offTick() {   // a year goes by: contracts, ages
       try { faceAge(p.face, p.age, p.name, 'pl'); } catch (e) {}   // (v0.66: picture day: lines, bags, grey, hairline move up with the years)
       // growth toward potential: the young gain a share of the room they have left (the most at 21-23), nobody past 28
       const room = ptsOf(p) - scoreOf(p), k = p.age <= 23 ? 0.4 : p.age <= 26 ? 0.3 : p.age <= 28 ? 0.15 : 0;
-      if (room > 0 && k) { shiftAttrs(p, Math.min(room, Math.round(room * Math.min(0.9, k * pracGrow(p)) + Math.random() * 1.5))); rate(p); }
+      if (room > 0 && k) { shiftAttrs(p, Math.min(room, Math.round(room * Math.min(0.9, k * pracGrow(p) * mentorGrowK(p)) + Math.random() * 1.5))); rate(p); }
+      declineYear(p, myR.has(p));   // (player decline: past prime end, a yearly roll)
     }
     if (p.signed) delete p.signed; else if (p.salary != null && !p.from) p.years = Math.max(1, p.years - 1);
     p.signStars = p.stars; p.perfXP = 0; p.perfG = 0;   // (the next ask is measured from here)
   }
   aiSetbacks();
+  if (declineOn()) try { recalcTeamStars(); } catch (e) { console.warn('decline stars', e); }
   pracOffseason();   // (construction goes on; young players may gain potential)
   try { ageStaffYear(); } catch (e) { console.warn('ageStaffYear', e); }
 }
@@ -3000,13 +3024,239 @@ function aiSetbacks() {
     if (p.group === 'K' || !p.raw) continue;
     const yrs = yrsPro(p);
     if (yrs <= A.bustYrs && ptsOf(p) > scoreOf(p) + 2 && Math.random() < A.bust) { p.potPts = scoreOf(p); hit(p, A.bustDrop * Math.random()); p.bust = true; }   // (a bust: what he is now is all he'll be)
-    else if ((p.age || 25) >= A.cliffAge && Math.random() < A.cliff * (1 + 0.25 * ((p.age || 25) - A.cliffAge))) hit(p, rint(...A.cliffDrop));
+    else if (!declineLeague() && (p.age || 25) >= A.cliffAge && Math.random() < A.cliff * (1 + 0.25 * ((p.age || 25) - A.cliffAge))) hit(p, rint(...A.cliffDrop));
     if (p.stars >= A.wreckStars && Math.random() < A.wreck) hit(p, rint(...A.wreckDrop), A.wreckPot);   // (a career-altering injury: slower and weaker for good)
   }
   for (let i = 0; i < A.collapse && teams.length; i++) {   // (a few teams get it all at once: their best men age, get hurt and leave in one year)
     const k = teams.splice(Math.floor(Math.random() * teams.length), 1)[0];
     [...ROSTER[k]].filter(p => p.group !== 'K' && p.raw).sort((a, b) => b.stars - a.stars).slice(0, A.collapseHits).forEach(p => hit(p, rint(...A.collapseDrop), 2));
   }
+}
+// --- player decline (tunables DECLINE in 01-tuning) ---------------------------------------
+// Past his position's prime end a player may lose ceiling each offseason (mileage + age, x morale / condition); under his score an
+// attribute point may go. 'off' = none of this runs (no extra Math.random), 'mine' = your team (the CPU keeps aiSetbacks' cliff),
+// 'league' = every team (replaces the cliff). Roster-entry fields, written only when used: mi (mileage), dl / da (ceiling / attribute
+// points lost), dcv ([condition sum, games] this season), dlOut (weeks out on this injury), rust (a temporary -n on every attribute).
+const declineMode = () => { const m = SETTINGS.decline; return m === 'off' || m === 'league' ? m : 'mine'; };
+const DL_MODES = ['off', 'mine', 'league'], DL_MODE_TXT = { off: 'OFF', mine: 'MY TEAM', league: 'LEAGUE' };   // (settings PLAYER AGING)
+const declineOn = () => !!season && !exhibition && !tut && declineMode() !== 'off';
+const declineLeague = () => declineOn() && declineMode() === 'league';
+const declineFor = team => declineOn() && (declineMode() === 'league' || team === season.team);
+const primeEnd = p => DECLINE.prime + (RETIRE_POS[p.group] || 0) + (p.group === 'K' ? KICKER_LATE : 0);
+const dlStarI = p => Math.max(0, Math.min(4, Math.round(p.stars || 1) - 1));
+const miOf = p => p.mi != null ? p.mi : Math.round(Math.max(0, (p.age || 22) - 22) * DECLINE.mi.seed * DECLINE.mi.seedK[dlStarI(p)]);   // (an old save: a veteran's mileage from his years, never written until he adds some)
+const miAdd = (p, n) => { if (n > 0) p.mi = Math.min(DECLINE.mi.max, Math.round((miOf(p) + n) * 10) / 10); };
+const rustOf = s => s && s.rust && declineOn() ? Math.round(s.rust) : 0;
+// after each of your real games (openResults, before injuriesAfterGame's loop): mileage from his snap share, condition tally, rust wearing off
+function declineAfterGame(passed) {
+  if (!declineFor(MATCH.you) || pracLive()) return;
+  const M = DECLINE.mi, cut = 1 - M.med * facLvl('med');
+  const rest = new Set(rrOn() ? recSlots().filter(x => x.kind === 'rest').map(x => x.s) : []);   // (a week in a recovery room REST slot adds none)
+  for (const s of yourStars()) {
+    const k = Math.max(0, cut - M.tr * stT('Bone Setter', unitSide(s))) * mentorMiK(s);
+    if (s.inj && s.inj.weeks != null && s.missed) { s.dlOut = (s.dlOut || 0) + passed; miAdd(s, M.sat * passed * k); continue; }
+    if (s.missed) continue;
+    const sh = Math.max(0, (playShareK(s) - COND_PLAY.min) / (1 - COND_PLAY.min));
+    if (!rest.has(s)) miAdd(s, M.game * sh * (condOf(s) < INJURY.whyCond ? M.hurtK : 1) * k);
+    const v = s.dcv || (s.dcv = [0, 0]); v[0] += condOf(s); v[1]++;
+    if (s.rust) { s.rust = Math.max(0, s.rust - DECLINE.rust.game - DECLINE.rust.week * (passed - 1)); if (!s.rust) delete s.rust; }
+  }
+}
+// back from an injury (injuryReturn): out DECLINE.rust.weeks or more = rust
+function declineRustOn(s) {
+  const out = s.dlOut || 0; delete s.dlOut;
+  if (out >= DECLINE.rust.weeks && declineFor(MATCH.you) && yoursEntry(s)) s.rust = rint(...DECLINE.rust.pts);
+}
+// a season-ending injury (injuryPotential): a small extra permanent roll
+function declineSeasonInj(s) {
+  if (!s.inj || !s.inj.season || s.inj.dlR || !declineFor(MATCH.you) || !yoursEntry(s)) return;
+  s.inj.dlR = 1;
+  if (Math.random() < DECLINE.seasonInj.odds) declineCeil(s, rint(...DECLINE.seasonInj.pts));
+}
+// the ceiling drops n points; once it is under his score, maybe an attribute point goes (physical first, awareness-type never). Returns [ceiling lost, attribute points lost]
+function declineCeil(p, n) {
+  const R = DECLINE.roll, c0 = ptsOf(p), c1 = c0 - n, dA = []; let da = 0;
+  if (c1 < scoreOf(p) && Math.random() < R.attr) {
+    const A = ATTRS[p.group].filter(a => !R.never.includes(a) && p.raw[a] > 1).sort((x, y) => (R.phys.includes(y) - R.phys.includes(x)) || p.raw[y] - p.raw[x]);
+    for (let i = 0; i < Math.min(R.attrMax, A.length); i++) { p.raw[A[i]]--; p.at[A[i]]--; da++; dA.push(A[i]); }
+  }
+  p.potPts = Math.max(c1, scoreOf(p)); p.potential = starsOfScore(p.potPts); rate(p);
+  const lost = Math.max(0, c0 - ptsOf(p));
+  if (lost) p.dl = (p.dl || 0) + lost;
+  if (da) p.da = (p.da || 0) + da;
+  return [lost, da, dA];
+}
+// other teams ('league'): one mileage add a year from the season's games on file
+function declineCpuMi(p) {
+  const L = LPST[p.name]; let g = 0;
+  if (L && L.games) for (const x of L.games) if ((x.yr || 0) === LEAGUE.year) g += x.gp || 1;
+  return (g ? g * DECLINE.mi.cpuGame : DECLINE.mi.cpuStar[dlStarI(p)]) * mentorMiK(p);
+}
+// the yearly roll (offTick, after growth): only past prime end
+function declineYear(p, mine) {
+  if (!season || !(mine ? declineFor(season.team) : declineLeague())) return;
+  const R = DECLINE.roll, v = p.dcv, cond = v && v[1] ? v[0] / v[1] : 75;
+  delete p.dcv;
+  if (!mine) miAdd(p, declineCpuMi(p));
+  const past = p.age - primeEnd(p), s0 = p.stars;
+  if (past <= 0 || p.fw === LEAGUE.year) { if (mine && rustOf(p)) dlPhysNote(p, true, null, s0); return; }   // (a farewell tour: no decline that year)
+  let ch = Math.min(R.max, (R.base + R.perYr * (past - 1)) * (1 + R.miK * Math.max(0, miOf(p) - R.miRef)));
+  if (mine) ch *= (R.moraleK[0] + (R.moraleK[1] - R.moraleK[0]) * Math.max(0, Math.min(1, moraleOf(p) / MORALE.hi))) * R.condK.find(b => cond >= b[0])[1];
+  if (p.group === 'K') ch *= R.kK;
+  if (p.potBuys) ch *= R.paidK;   // (potential bought with XP: still rolls, at lower odds; potFixed alone is just an upgraded man)
+  dlPhysNote(p, mine, DECLINE.force === 'roll' || Math.random() < ch ? declineCeil(p, Math.min(R.yrMax, rint(...R.loss))) : null, s0);
+}
+// PHYSICALS rows (OFF.phys: yours past prime or rusty, other teams' 4+ star men who lost something in 'league')
+function dlPhysNote(p, mine, r, s0) {
+  if (!OFF) return;
+  const P = OFF.phys || (OFF.phys = { mine: [], lg: [] }), row = { p, dl: r ? r[0] : 0, a: r ? r[2] : [], rust: mine ? rustOf(p) : 0 };
+  if (mine) P.mine.push(row);
+  else if (r && (r[0] || r[1]) && s0 >= 4) { row.k = Object.keys(ROSTER).find(k => NFL[k] && ROSTER[k].includes(p)) || null; P.lg.push(row); }
+}
+// --- longer careers (tunables DECLINE.ext) -------------------------------------------------
+// Automatic (your team, and every team in 'league'): ring chasing, record chasing, mentoring = years off his retire age (retireShift).
+// Your choices: ONE MORE YEAR (retirement letter), FAREWELL TOUR (preseason), LONGEVITY PROGRAM (bank XP), UNRETIREMENT (a phone call).
+// Fields: p.lon (longevity years bought), p.oneMore (tried), p.fw (farewell season), p.dlx (times an extender kept him), LEAGUE.dlGone / dlCall.
+let DL_EXT = null;   // { yr, L, m: Map(entry -> { k, ring, rec, mentor (kid's name), kid (mentor's name) }) }, never saved: rebuilt from the rosters
+const dlStarter = (R, p) => R.filter(q => q.group === p.group && q !== p && (q.stars > p.stars || q.stars === p.stars && R.indexOf(q) < R.indexOf(p))).length < (STARTERS[p.group] || 1);
+function declineExt() {
+  if (DL_EXT && DL_EXT.yr === LEAGUE.year && DL_EXT.L === LEAGUE) return DL_EXT.m;
+  const m = new Map(), E = DECLINE.ext, pbw = rbk().pbw || {}, near = new Set();
+  try {
+    for (const c of RB_CATS) if (c.sc === 'c') {   // (record chasing: a live career entry within recNear seasons of his pace from the #1)
+      const l = rbList(c, 'L'), top = l[0];
+      if (top) for (const e of l) if (e !== top && e.y >= 1 && e.n !== top.n) { const yrs = Math.max(1, LEAGUE.year - (e.y0 || e.y) + 1); if (Math.abs(top.v - e.v) <= Math.abs(e.v / yrs) * E.recNear) near.add(e.n); }
+    }
+  } catch (e) { console.warn('decline records', e); }
+  for (const k of Object.keys(ROSTER).filter(k => NFL[k])) {
+    const R = ROSTER[k], ring = !!(po && po.seed && po.seed[k]) && po.champ !== k;
+    for (const p of R) m.set(p, { k, ring: ring && !(pbw[p.name] || {})[k], rec: near.has(p.name), mentor: null, kid: null });
+    for (const v of R) {   // (mentor: past prime, not a starter, a younger same-group teammate with a higher ceiling)
+      if (!(v.age > primeEnd(v)) || dlStarter(R, v)) continue;
+      let best = null;
+      for (const q of R) if (q.group === v.group && q !== v && (q.age || 22) <= (v.age || 30) - E.mentorGap && (q.potential || 0) > (v.potential || 0) && !m.get(q).kid && (!best || q.potential > best.potential)) best = q;
+      if (best) { m.get(v).mentor = best.name; m.get(best).kid = v.name; }
+    }
+  }
+  DL_EXT = { yr: LEAGUE.year, L: LEAGUE, m };
+  return m;
+}
+const dlExtOf = p => { if (!declineOn()) return null; const x = declineExt().get(p); return x && declineFor(x.k) ? x : null; };
+function retireShift(p) {   // years off his retire age (0 when decline is off: retireAge is then exactly the old one)
+  if (!season || declineMode() === 'off' || exhibition || tut) return 0;
+  const E = DECLINE.ext, x = dlExtOf(p);
+  return (p.lon || 0) + (x ? (x.ring ? E.ring : 0) + (x.rec ? E.rec : 0) + (x.mentor ? E.mentor : 0) : 0);
+}
+const mentorGrowK = p => { const x = dlExtOf(p); return x && x.kid ? 1 + DECLINE.ext.mentorGrow : 1; };
+const mentorMiK = p => { const x = dlExtOf(p); return x && x.mentor ? DECLINE.ext.mentorMi : 1; };
+// the retire loop (offLeague): a farewell tour ends for certain; a champion's old star may go out on top
+function declineGoes(p, k) {
+  if (!declineFor(k)) return false;
+  if (p.fw != null && p.fw <= LEAGUE.year) return true;
+  const E = DECLINE.ext;
+  return !!(po && po.champ === k) && p.stars >= E.topStars && retireAge0(p) >= E.topAge && Math.random() < E.top;
+}
+function declineExtNote(p, k) {   // an extender kept him this year (counted for the numbers / his card)
+  if (!declineFor(k) || !retireShift(p)) return;
+  if (retireOdds(p, retireAge0(p)) > retireOdds(p)) p.dlx = (p.dlx || 0) + 1;
+}
+// your retirees: wait for the letter (DECLINE.ask) instead of going at once. OFF.retireAsk = [{ p, k, opts }]
+function declineAsk(p, k) {
+  if (!DECLINE.ask || !declineFor(k) || p.fw != null) return false;
+  (OFF.retireAsk = OFF.retireAsk || []).push({ p, k, opts: extOptions(p, 'retire') });
+  return true;
+}
+function retireLetGo(p) {   // the letter's LET HIM GO (or skipped): the old retirement
+  const me = season.team, L = OFF.retireAsk || [], i = L.findIndex(x => x.p === p);
+  if (i >= 0) L.splice(i, 1);
+  OFF.retiredYou.push({ p, k: me, text: `${p.name} (${p.tag}, age ${p.age}) retired` });
+  declineGone(p, me); postRetire(p, me); vacate(me, p);
+}
+function retireStay(p) {   // he stays one more year: through the normal expiring flow with a 1-year ask
+  const L = OFF.retireAsk || [], i = L.findIndex(x => x.p === p);
+  if (i >= 0) L.splice(i, 1);
+  p.dlx = (p.dlx || 0) + 1;
+  if (p.years <= 1 && !p.signed) { delete p.walk; p.ask = askOf(p); p.ask.years = 1; if (OFF.stage && OFF.stage !== 'resign') { p.salary = p.ask.salary; p.years = 1; p.signed = true; } else OFF.expiring.push(p); }   // (past the re-sign page: signed at his 1-year ask)
+}
+const retireAskAll = () => { for (const x of [...(OFF.retireAsk || [])]) retireLetGo(x.p); };   // (skip every letter)
+// what fits him: [{ id, cost (credits) | xp, odds }] for when = 'retire' (the letter) | 'pre' (preseason) | 'xp' (the bank)
+function extOptions(p, when = 'retire') {
+  const E = DECLINE.ext, out = [], x = dlExtOf(p), si = dlStarI(p);
+  if (!declineOn() || !x) return out;
+  const all = DECLINE.force === 'letter';   // (test: every tab on the letter)
+  if (when === 'retire') {
+    if (!p.oneMore || all) out.push({ id: 'oneMore', cost: E.oneMore.cost[si], odds: oneMoreOdds(p) });
+    if (x.ring || all) out.push({ id: 'ring' });
+    if (x.rec || all) out.push({ id: 'record' });
+    if (x.mentor || all) out.push({ id: 'mentor', kid: x.mentor });
+  }
+  if (when === 'pre' && farewellFits(p)) out.push({ id: 'farewell' });
+  if (when === 'xp' && p.age > primeEnd(p) && (p.lon || 0) < E.lon.max) out.push({ id: 'lon', xp: E.lon.xp[si] });
+  return out;
+}
+function oneMoreOdds(p) {
+  const O = DECLINE.ext.oneMore, me = season.team, R = ROSTER[me] || [], T = (seasonTable() || {})[me];
+  return Math.max(0, Math.min(O.max, O.base + O.morale * (moraleOf(p) - MORALE.neutral) / MORALE.hi + (dlStarter(R, p) ? O.starter : 0) + (T ? O.team * winPct(T) : 0)));
+}
+function extOneMore(p) {   // ONE MORE YEAR: pay, one try ever. true = he signs for one year, false = no, null = can't
+  const cost = DECLINE.ext.oneMore.cost[dlStarI(p)];
+  if (p.oneMore || LEAGUE.coins < cost) return null;
+  LEAGUE.coins -= cost; p.oneMore = 1;
+  const ok = Math.random() < oneMoreOdds(p);
+  if (ok) retireStay(p);
+  return ok;
+}
+function extChase(p, id) {   // RING / RECORD / MENTOR tabs on the letter: he stays (the reason is already in his odds)
+  if (!extOptions(p, 'retire').some(o => o.id === id)) return false;
+  retireStay(p); return true;
+}
+// FAREWELL TOUR: before the season, a 4+ star or 8+ years with you whose retire odds are high
+const yrsWith = p => p.yw != null ? p.yw : yrsPro(p);   // (no join year on file: his years in the league)
+function farewellFits(p) {
+  const F = DECLINE.ext.farewell;
+  return p.fw == null && p.group !== 'K' && (p.stars >= F.stars || yrsWith(p) >= F.yrs) && retireOdds(p, retireAge0(p) + 1) >= F.odds;
+}
+const farewellCands = () => declineFor(season && season.team) ? (ROSTER[season.team] || []).filter(farewellFits) : [];
+function extFarewell(p) {
+  if (!farewellFits(p)) return false;
+  p.fw = LEAGUE.year;
+  for (const s of ROSTER[season.team] || []) if (s !== p) moraleShift(s, DECLINE.ext.farewell.morale);
+  return true;
+}
+// LONGEVITY PROGRAM: bank XP for one year off his retire age (xpcBuy pays and confirms)
+function extLongevity(p) {
+  const o = extOptions(p, 'xp').find(x => x.id === 'lon');
+  if (!o) return false;
+  xpcBuy(o.xp, 'LONGEVITY PROGRAM?', wrapLines(`${p.name}: one more year before he thinks about retiring.`, 50), () => { p.lon = (p.lon || 0) + 1; DL_CARD.grow = { p, t0: uiNow() }; });
+  return true;
+}
+// UNRETIREMENT: your 3+ star retirees are remembered a year; a long injury at his spot may bring a call (LEAGUE.dlCall)
+function declineGone(p, k) {
+  if (p.fw != null && season && k === season.team) try { postNote('farewellEnd', { p: p.name, team: pTeam(k), yrs: Math.max(1, yrsWith(p)) }, { w: 9, team: k }); } catch (e) { console.warn('post', e); }
+  if (!season || k !== season.team || !declineFor(k) || p.stars < DECLINE.ext.unret.stars) return;
+  (LEAGUE.dlGone = LEAGUE.dlGone || []).push({ p, yr: LEAGUE.year });
+}
+function unretWeek() {
+  const U = DECLINE.ext.unret, me = season && season.team;
+  if (!LEAGUE.dlGone || !LEAGUE.dlGone.length) return;
+  LEAGUE.dlGone = LEAGUE.dlGone.filter(g => LEAGUE.year - g.yr <= U.yrs);
+  if (!me || !declineFor(me) || LEAGUE.dlCall || season.offseason) return;
+  const R = ROSTER[me] || [];
+  for (const g of LEAGUE.dlGone) {
+    if (!R.some(s => s.group === g.p.group && s.inj && s.inj.weeks >= U.weeks)) continue;
+    if (Math.random() < U.odds) { LEAGUE.dlCall = { p: g.p, yr: LEAGUE.year }; return; }
+  }
+}
+function unretAnswer(yes) {   // YES: he joins for the rest of the season if the cap allows (false = no room), then retires for good
+  const c = LEAGUE.dlCall, me = season.team; if (!c) return null;
+  delete LEAGUE.dlCall;
+  LEAGUE.dlGone = (LEAGUE.dlGone || []).filter(g => g.p !== c.p);
+  if (!yes) return null;
+  const p = c.p, sal = Math.max(CAP.minPay, Math.round(askOf(p).salary * DECLINE.ext.unret.pay * 10) / 10);
+  if (payroll(me) + sal > capOf(me)) return false;
+  p.salary = sal; p.years = 1; p.signed = true; delete p.inj; delete p.from; p.fw = LEAGUE.year;
+  const R = ROSTER[me]; R.splice(depthAt(R, p), 0, p); recalcTeamStars(); postWire('sign', p, me);
+  return true;
 }
 function offStaff(me) {   // coordinators' contracts: an extension, or he's gone and a new one is hired
   const msgs = [];
@@ -3055,6 +3305,7 @@ function offOffers() {
 }
 function offFinishFA() {
   const me = season.team;
+  retireAskAll();   // (player decline: a letter nobody answered = he retires)
   offAIPickups(me);
   try { postIssue('off'); } catch (e) { console.warn('post', e); }
   starsByAverage = true;
@@ -3069,6 +3320,7 @@ function offFinishFA() {
   results.screen = 'home';
   lines.push('YOUR TEAM:');
   if (retired.length) retired.forEach(t => lines.push(`  ${t}.`)); else lines.push('  Nobody retired.');
+  dlPhysLine(lines);
   staff.forEach(t => lines.push(`  ${t}`));
   const swaps = LEAGUE.tradeNews.splice(0).slice(0, 3);
   const findP = (nm, k) => (ROSTER[k] || []).find(q => q.name === nm);
@@ -3083,6 +3335,7 @@ function offFinishFA() {
     { name: 'COORDINATORS', lines: staff.length ? staff.flatMap(t => wrapLines(t, 90)) : ['No changes on your staff.'], cards: [] },
     { name: 'AROUND THE LEAGUE', lines: lg.length ? ['Stars who retired around the league.'] : ['No stars retired.'], cards: lg.map(r => ({ p: r.p, team: r.k, sub: `${r.k}  RETIRED`, retire: true })) },
     { name: 'LEAGUE TRADES', lines: swaps.length ? swaps.flatMap(t => wrapLines(t, 90)) : ['No big trades.'], cards: tcards }];
+  dlPhysShow();   // (player decline: the PHYSICALS clipboard, before the new-season list)
   catPopShow({ title: `NEW SEASON  ${nflYear()}`, cats, noOpen: true, done: () => { results.screen = 'offers'; offTip('offers'); } });
 }
 function offFinish(team) {

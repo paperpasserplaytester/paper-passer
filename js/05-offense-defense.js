@@ -802,6 +802,7 @@ function updateReceiver(r, dt) {
 }
 
 function updateCarrier(c, top, dt) {
+  if (!(ANN_S.pl.race && ANN_S.pl.last)) annRunTick(c);   // (the announcers' live calls: reads only)
   // run play: the back hasn't got it yet; he takes the handoff at the mesh or catches the pitch
   if (c.awaiting) return updateMesh(c, dt, top);
   // held keys: stiff arm (Q), truck (C), sprint (A), protect the ball (G: no stiff arm / truck)

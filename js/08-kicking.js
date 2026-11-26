@@ -3368,6 +3368,7 @@ const SIM_BOX_BTNS = [{ id: 'offdrive', label: 'NEXT OFF DRIVE', w: 160, h: 48 }
                       { id: 'half', label: 'SIM TO HALF', w: 160, h: 48 }, { id: 'end', label: 'SIM TO END', w: 160, h: 48 }];
 
 function proceed() {
+  if (PDR && PDR.wait > 0) return;   // (a practice drill: the next rep comes on its own clock, pracDrillTick)
   if (game.fastRunoff) return;   // the clock is spinning down: the next play comes when it's done
   if (state === 'kickoff') return;   // (a kickoff is lined up / in the air: a stray continue must not fall through to their drive and skip it)
   if (REV || revWait) return;   // (v0.68: a booth review / challenge is on: the next play waits for its stamp)
@@ -4307,7 +4308,7 @@ let goalToast = null;     // { text, t0 }: a finished goal's alert (a green plaq
 const pmItems = () => ['resume', ...(season && !exhibition && !tut ? ['goals'] : []), ...(chalOK() ? ['challenge'] : []), 'replay', ...(state !== 'sim' && !tut ? ['sim'] : []), ...(dcShown() ? ['dc'] : []), ...(tut ? ['reset'] : []), ...(!tut ? ['leave'] : [])];
 // RESET GAME (debug tools on, not the tutorial) is its own button bottom left of the sheet, not a binder tab; the tutorial keeps its SKIP / END tab
 const PM_RESET = { x: 34, y: 0, w: 210, h: 52, fs: 20 };
-const pmResetOn = () => !tut && !SETTINGS.hideTools;
+const pmResetOn = () => !tut && !SETTINGS.hideTools && !pracLive();   // (no RESET GAME in a practice drill)
 const pmResetRect = () => tut ? pmRect('reset') : (PM_RESET.y = H - FIELD_BOT - 34 - PM_RESET.h, PM_RESET);
 // --- tracing paper (pause: looks only) a translucent sheet with a baked fibre texture slides down over the frozen field in TRACE.slide real s;
 // the pause items are binder tabs down its right edge (pmRect), the sub-screens are drawn on it. Online pause (drawOnlineOverlay) uses the sheet too.
@@ -4503,6 +4504,7 @@ function resumeGame() {
   applyPlayCfg(S.pre.play);
 }
 function leaveGame() {
+  if (pracLive()) { pracDrillEnd(true); return; }   // (LEAVE PRACTICE: the session ends with what was scored, back to the practice screen)
   if (twoP && twoP.flipped) flipSides();   // (two players: back to Player 1's side first)
   endReplay();   // (leaving mid-replay: the tape's teams / weather / players go back first)
   // (franchise safety net: still on the other team's side after that (their drive, a mirrored kick / punt return, a replay) = swap back, so you never leave as them)
@@ -4584,7 +4586,7 @@ const KEYBINDS = [
   ['Space', 'Next play (after the 5-second runoff) / pause the replay (no longer snaps)'],
   ['T', 'Timeout once the play is over (stops the runoff)'],
   ['Esc', 'Pause menu (resume, reset, sim ahead)'],
-  ['Enter / Space, Esc', 'Halftime show: next segment, skip the whole show (SETTINGS > HALFTIME SHOW turns segments on / off)'],
+  ['Enter, hold Esc', 'Halftime show: next segment, skip the whole show (SETTINGS > HALFTIME SHOW turns segments on / off)'],
   ['Enter / click, Backspace, Space', 'Halftime highlights: next clip, previous clip, pause (the NEXT button = next segment)'],
   ['Click the Star Factors tip', 'Show / hide the Star Factors panel (what turns each star\'s Star Factor on and off); it stays that way in every game'],
   ['Click the player names tip', 'Show / hide the player names before the snap (stays that way in every game)'],
@@ -4878,6 +4880,7 @@ function draw() {
     for (const te of recs.filter(r => r.teBlock)) { const sd = Math.sign(te.y - MID) || 1; drawBlockArt(te, te.x - 1.6 * YD, te.y + sd * 0.9 * YD); }
   }   // (no play art once the ball is snapped, a back who stays in to block included)
   if (!(rec && rec.replaying)) drawRushArt();   // (special teams: your rushers' lanes at the kicker / punter before the snap)
+  if (PDR) pracDrillWorld();   // (a practice drill's chalk: line / box, 12)
   // flashing yellow ring under whoever is carrying the ball
   // (any man holding it, the QB in the pocket included: yellow for you, white for the computer; two players: both yellow)
   const carrierNow = (state === 'run' || state === 'picked' || state === 'drop' || state === 'pocket' || state === 'kickoff') &&
@@ -4962,12 +4965,13 @@ function draw() {
   if (PURSUIT.debug) pdbDraw();
   drawImpacts();
   cine = cinemaOn() || reelOn() || coldHud() || pclipOn();   // (CINEMATIC highlights and the halftime / end-of-game reel: nothing drawn over the field or the players)
-  if ((state === 'pre' || (rec && rec.replaying)) && !tossing() && tipHeld('names') && (!cine || (reelOn() && hlFront()))) drawNameTags();   // (v0.62: a held names tip shows them over a reel too)   // (Y hides / shows them in a replay too)
+  if ((state === 'pre' || (rec && rec.replaying)) && !tossing() && tipHeld('names') && !cine) drawNameTags();   // (fixes job: no plain name text over a reel any more: the reel circles its man, drawHsRing)   // (v0.62: a held names tip shows them over a reel too)   // (Y hides / shows them in a replay too)
   if (!tossing() && !cine) drawStarMarks();
   if (!cine) drawPopups();
   if (pt) pt = perfMark('d.tags', pt);
   if (kickAim) drawKickReticle('arc');   // (the kick's arc: over the players and everything else on the field)
   drawHsFreeze();   // (the halftime reel's freeze frame: the man of the play of the half, circled)
+  drawHsRing();     // (fixes job: every reel clip's main man, circled at his moment with his name)
   } catch (e) { drawFail(e); } finally { while (ctxDepth > d0) ctx.restore(); }   // (v0.74: a throw inside the field clip used to leave the clip on for good: the guest lost the top bar)
   if (pt) pt = perfMark('d.overlay', pt);
   wxDraw();
@@ -5096,9 +5100,9 @@ function draw() {
     ctx.font = 'bold 18px monospace';
     drawSimButton(FINAL_BTN, true);
   }
-  if (state === 'pre' && fourthPending && !paused && !aiOff() && ONL.on && !onlIAmOff()) {   // online: the offense decides; the defense just waits (no buttons it can't press)
-    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(-PAD, 0, W + 2 * PAD, H - FIELD_BOT);   // (the dim covers the top bar too)
-    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = 'bold 28px monospace'; ctx.fillText('OFFENSE IS CHOOSING...', W / 2, H / 2);
+  if (state === 'pre' && fourthPending && !paused && !aiOff() && ONL.on && !onlIAmOff()) {   // online: the offense decides; the defense sees a small note, no dim (it can still switch men)
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 4; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 20px monospace';
+    ctx.strokeText('OFFENSE IS CHOOSING...', W / 2, TOP_BAR + 28); ctx.fillText('OFFENSE IS CHOOSING...', W / 2, TOP_BAR + 28);
   } else if (state === 'pre' && fourthPending && !paused && !aiOff()) {
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(-PAD, 0, W + 2 * PAD, H - FIELD_BOT);
@@ -5157,6 +5161,7 @@ function draw() {
   }
   if (tut && !paused) drawTutorial();
   if (oo && !paused && !(rec && rec.replaying)) drawOO();
+  if (PDR && !paused && !(rec && rec.replaying)) pracDrillHud();   // (a practice drill's whiteboard strip, 12)
   if (celT && !paused && !(rec && rec.replaying)) drawCelT();   // (test mode: the celebration panel)
   if (injuryShowing() && !paused) drawInjuryCall();
   if (REV) refRevDraw();   // (v0.68 a booth review / challenge: its caption, then STANDS / REVERSED)
@@ -5181,7 +5186,7 @@ function draw() {
       ctx.font = '14px monospace'; ctx.fillStyle = traceInk(true); ctx.fillText('press Esc to resume', W / 2, P.back.y + 72);
     } else if (resetAsk && !tut) {   // confirm: this throws the game away (resetAsk === 'leave': back to the matchup screen)
       pauseSim = false;
-      ctx.fillText(resetAsk === 'leave' ? 'LEAVE THIS GAME?' : 'RESET THIS GAME?', W / 2, P.resume.y - 40);
+      ctx.fillText(resetAsk === 'leave' ? (pracLive() ? 'LEAVE PRACTICE?' : 'LEAVE THIS GAME?') : 'RESET THIS GAME?', W / 2, P.resume.y - 40);
       ctx.font = '14px monospace'; ctx.fillStyle = traceInk(true); ctx.fillText('the score and progress of this game are lost', W / 2, P.resume.y - 16); ctx.font = 'bold 20px monospace';
       ctx.save(); menuBtn(P.resume, 'NO, KEEP PLAYING', IN_GAME_PAPER.green, 20); ctx.restore();
       ctx.save(); menuBtn(P.reset, resetAsk === 'leave' ? 'YES, LEAVE' : 'YES, RESET', IN_GAME_PAPER.red, 20); ctx.restore();
@@ -5215,7 +5220,7 @@ function draw() {
       if (pmItems().includes('dc')) { const on = !!dcWhich(); tab('dc', 'SUBS', on ? IN_GAME_PAPER.yellow : IN_GAME_PAPER.off, on); }   // (before the snap only)
       if (pmItems().includes('reset')) tab('reset', tut.saved && tut.saved.screen === 'start' ? 'END TUTORIAL' : 'SKIP TUTORIAL', IN_GAME_PAPER.red);
       if (pmResetOn()) { ctx.save(); menuBtn(pmResetRect(), 'RESET GAME', IN_GAME_PAPER.red, PM_RESET.fs); ctx.restore(); }
-      if (!tut) tab('leave', 'LEAVE GAME', leaveOK() ? IN_GAME_PAPER.red : IN_GAME_PAPER.off, leaveOK());
+      if (!tut) tab('leave', pracLive() ? 'LEAVE PRACTICE' : 'LEAVE GAME', leaveOK() ? IN_GAME_PAPER.red : IN_GAME_PAPER.off, leaveOK());
       const lr = pmRect(pmItems().slice(-1)[0]);
       ctx.font = '14px monospace'; ctx.fillStyle = traceInk(true); ctx.fillText(TOUCH ? '' : 'press Esc to resume', lr.x + lr.w / 2, lr.y + lr.h + 22);
     }

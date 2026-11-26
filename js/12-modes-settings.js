@@ -685,10 +685,10 @@ const OO_FORCE = {
   reel: Object.keys(REEL_ST),
 };
 // the three men of a QUICK PLAY 1v1 on the field this play: QB, the offensive man (outside WR / slot / RB) and his defender (CB / safety / LB)
-const ooPl = c => ({ qb, off: c.kind === 'rb' ? rb : c.kind === 'slot' ? (recs.find(r => r.pos === 'SLOT') || recs[recs.length - 1]) : (recs.find(r => r.pos === 'WR') || recs[0]),
-  def: c.kind === 'wr' ? cbT : c.kind === 'slot' ? sT : lbM });
+const ooPl = c => c.kind === 'ol' ? { qb, off: ols[0], def: dl[0] } : ({ qb, off: c.kind === 'rb' ? rb : c.kind === 'slot' ? (recs.find(r => r.pos === 'SLOT') || recs[recs.length - 1]) : (recs.find(r => r.pos === 'WR') || recs[0]),
+  def: c.kind === 'wr' ? cbT : c.kind === 'slot' ? sT : lbM });   // (ol = practice PASS RUSH DUEL: the left tackle against the end over him)
 function ooSetup() {
-  if (!(exhibition && (exhibition.test || exhibition.ov))) { oo = null; return; }
+  if (!(exhibition && (exhibition.test || exhibition.ov || exhibition.prac))) { oo = null; return; }
   const m = oo.mode, c = oo.cfg, P = c ? ooPl(c) : null;
   oo.bench = [];
   for (const p of [...dl, ...back7]) p.sucker = false;
@@ -712,6 +712,13 @@ function ooSetup() {
     const r = P ? P.off : recs[0];
     oo.bench.push(...dl, ...ols, rb, ...recs.filter(o => o !== r), ...lone(D));
     setPath(r, TUT_ROUTES.fade, 1); r.teBlock = false; manOn(r);
+  } else if (m === 'rings') oo.bench.push(...dl, ...back7);
+  else if (m === '7on7') oo.bench.push(...dl, ...ols);   // (practice 7-ON-7: no linemen; oo.drive = the ball moves on, endPlay's 1v1 respot is skipped)   // (practice TARGET RINGS: no defense, everyone runs his route)
+  else if (m === 'pocket') { oo.bench.push(...back7, rb, ols[4]); dl[3].x = los + PRAC_DRILL.pocket.off * YL; }   // (practice POCKET DRILL: the line against the four up front, the right tackle out = his end is the free rusher, lined up off the ball)
+  else if (m === 'duel') {   // (practice PASS RUSH DUEL: you are the end, one tackle in front of you, the QB holds it)
+    const O = P ? P.off : ols[0], R = P ? P.def : dl[0];
+    oo.bench.push(...ols.filter(o => o !== O), rb, ...recs, ...dl.filter(d => d !== R), ...back7);
+    ud = null; udIdx = Math.max(0, defenders().indexOf(R));
   }
   for (const p of oo.bench) if (p === rb || recs.includes(p)) { p.route = null; p.path = []; if (p !== rb) p.teBlock = true; else p.passBlock = true; }
   ooPark();
@@ -2138,7 +2145,7 @@ const INJURY = {
   play: 0.1,                                           // ratings lost at 0 condition (less above it)
   sevOdds: [0.62, 0.28, 0.1], sevShift: 0.35,          // mild / bad / severe at full condition; poor condition shifts toward severe
   hurt: [0.9, 0.78, 0.62],                             // ratings x while playing hurt
-  reinjure: [0.15, 0.3, 0.5],                          // chance per hit while playing hurt (x1.5 for a hit stick)
+  reinjure: [0.15, 0.3, 0.5],                          // (unused: a man playing hurt can't be injured again; kept for old references)
   weeks: [[0, 0], [0, 2], [2, 4]],                     // weeks out (min, max); 0 = just the rest of this game (benched, he's back next week)
   max: 5, maxKept: 7,                                  // most weeks out: benched / kept playing
   ironAt: 4, ironK: 0.8,                               // iron man: this many straight games played without going red or getting hurt = weekly condition cost x ironK
@@ -2158,7 +2165,7 @@ const yourStars = off => (ROSTER[MATCH.you] || []).filter(s => !off || OFF_GROUP
 function simDefHit(p, kind) { if (p && injuriesOn() && ROSTER[MATCH.you].includes(p) && !isOut(p) && !p.restGame) p.cond = Math.max(0, condOf(p) - INJURY.cond[kind]); }
 const condOf = s => Math.round(s.cond ?? 100);
 const COND_EDGE = { hi: 90, lo: 30, cap: 20 };   // condition 90+ = every attribute +1 (never past cap), under 30 = every attribute -1
-const condShift = s => !s || !injuriesOn() ? 0 : condOf(s) >= COND_EDGE.hi ? 1 : condOf(s) < COND_EDGE.lo ? -1 : 0;
+const condShift = s => !s || !injuriesOn() ? 0 : (condOf(s) >= COND_EDGE.hi ? 1 : condOf(s) < COND_EDGE.lo ? -1 : 0) - rustOf(s);
 const condAt = (s, form = 1) => { const sh = condShift(s); return form === 1 && !sh ? s.at : Object.fromEntries(Object.entries(s.at).map(([k, v]) => [k, typeof v === 'number' ? Math.min(COND_EDGE.cap, v + sh) * form : v])); };
 const condFactor = s => 1 + INJURY.condK * (1 - condOf(s) / 100) ** 2;
 const isOut = s => !exhibition && !tut && !!(s.benchNext || s.outGame || s.susp > 0 || (SETTINGS.injuries && s.inj && s.inj.weeks > 0));
@@ -2192,14 +2199,7 @@ function injuryHit(p, kind, how) {
   if (injuryCall || s.outGame) return;
   const z = wearZone(p), snow = wxSnow(), why = injuryWhy(s, z, kind, how, snow, !!s.inj), stack = injuryStack(s, z, kind);
   const tired = WEAR.zoneInj[z] * (1 + WXF.inj * snow) * diffX('injK');   // (difficulty: injuryK; legs zone: red legs get hurt; so does a man on a frozen field)
-  if (s.inj) {   // playing hurt: one more hit can make it worse (and he's done for the day)
-    const fresh = INJURY.hit[kind] * condFactor(s), re = INJURY.reinjure[s.inj.sev] * (kind === 'stick' ? 1.5 : 1) * (s.treatK || 1) * (stT('Bone Setter') >= 2 ? TRAIT_BY['Bone Setter'].hurt : 1);   // (Bone Setter II: lower playing-hurt risk)   // (treatK: the recovery room's TREATMENT last week)   // (Medical takes away the extra risk of playing hurt, down to a healthy man's odds)
-    if (Math.random() < (fresh + (re - fresh) * (1 - Math.min(1, FAC_FX.med.again * facLvl('med')))) * tired) {
-      s.inj.re = true; s.inj.sev = Math.min(2, s.inj.sev + 1); s.outGame = true; s.inj.why = why; s.inj.stack = Math.max(s.inj.stack || 0, stack);
-      injuryCall = { p, s, re: true, why }; popup(p, 'REINJURED', '#ff6b6b'); injuryAuto();
-    }
-    return;
-  }
+  if (s.inj) return;   // playing hurt: a man who is already injured can't be injured again (the condition loss above still counts)
   // (difficulty makes big hits likelier, but never injuries: the hit-stick / sack odds are divided back out)
   if (Math.random() < INJURY.hit[kind] * condFactor(s) * tired * (1 - FAC_FX.med.hit * facLvl('med')) / (INJURY.diffHit.includes(kind) ? (diffLvl().hit || 1) : 1)) {
     s.inj = { sev: rollSev(s, stack), weeks: null, kept: false, re: false, why, stack }; if (seasonEnder(s.inj.sev, true)) s.inj.season = true; injuryBegin(s);
@@ -2230,6 +2230,7 @@ function injuriesNewGame() {
 const POT_LOSS = { chance: [0.35, 0.6, 0.9], max: [2, 4, 7], none: 0.04, stackK: [0.5, 1, 1.3] };   // stackK = x chance by stacked factors (0 / 1 / 2+) on your in-game injuries: clean ones are kinder
 function injuryPotential(s, sev, stack) {
   s.injN = (s.injN || 0) + 1;   // (every new injury counts against his trade value: injury prone)
+  declineSeasonInj(s);   // (player decline: a season-ender may also take ceiling for good)
   if (Math.random() >= POT_LOSS.chance[sev] * (stack == null ? 1 : POT_LOSS.stackK[Math.min(2, stack)])) return 0;
   const now = scoreOf(s); let loss = Math.random() < POT_LOSS.none ? 0 : Math.min(ptsOf(s) - now, 1 + Math.floor(Math.random() * POT_LOSS.max[sev]));
   if (yoursEntry(s)) loss = Math.round(loss * (1 - FAC_FX.med.pot * facLvl('med')));   // (your medical staff saves some of it)
@@ -2248,6 +2249,7 @@ function playShareK(s) {
 }
 function injuriesAfterGame(passed) {
   const notes = [];
+  declineAfterGame(passed);   // (player decline: mileage, condition tally, rust)
   for (const s of yourStars()) {
     if (SETTINGS.injuries) {
       const inj = s.inj;
@@ -2342,14 +2344,16 @@ const PRAC_SES = {
   load: [45, 75, 100],                                // cumulative load after a unit's 1st / 2nd / 3rd full session of the week
   grade: { gold: 1.25, silver: 1, bronze: 0.75 },     // XP multiplier by the session's grade
   units: ['off', 'def', 'kick', 'punt', 'ret'],
-  roll: { gold: 0.7, silver: 0.3, starK: 0.08 },     // placeholder grade (pracSesGrade until drills exist): score = random + starK x (unit avg stars - 3); >= gold / >= silver / bronze
+  cut: { gold: 0.7, silver: 0.4 },                    // a drill session's grade: the mean of its rep scores (0..1, unplayed reps = 0) >= gold / >= silver / else bronze
+  heroK: 1.25,                                         // XP x for the man you controlled in the session's drills
 };
 // mentors: a veteran (vetYrs+ years in the league, healthy) coaches players under menteeYrs years in his group. Each mentor adds each x his value (stars/awareness mix), best `max` count, total capped at cap
 const MENTOR = { vetYrs: 5, menteeYrs: 5, max: 2, each: 0.15, cap: 0.25, starsW: 0.5, awrW: 0.5, minMood: 25 };   // minMood: a player in poor mood (below this) can be neither mentor nor mentoree
 // bench: non-starters x xp XP; a group's non-starters (average stars minus base, x perStar, 0..cap) lift that group's starters' XP. No bench or a weak one = no bonus
 const BENCH_DEV = { xp: 1.2, base: 2.5, perStar: 0.12, cap: 0.2 };
 // position battles (one practice week): per group chance, a starter vs a non-starter within gap stars, at most maxWeek a week; winner = weighted roll (rating, awareness, condition, luck), gains minBoost-maxBoost stars of attribute points (1 star = 10 attribute points) as far as his potential allows; hist = results kept
-const BATTLE = { chance: 0.3, gap: 1, maxWeek: 2, minBoost: 0.5, maxBoost: 1, hist: 10, wRate: 1, wAwr: 0.5, wCond: 0.4, luck: 0.35, bigStars: 3, overK: 0.6 };   // overK = share of a battle boost a player at his ceiling still gets (pracOverCeil, max 15 an attribute)
+const BATTLE = { chance: 0.3, gap: 1, maxWeek: 2, minBoost: 0.5, maxBoost: 1, hist: 10, wRate: 1, wAwr: 0.5, wCond: 0.4, luck: 0.35, bigStars: 3, overK: 0.6,
+  rep: { n: 3, bias: 0.5 } };   // rep = a watched / played battle: n reps each man; the bar starts at bias x (2 x the starter's rating share - 1) and each rep moves it by the score gap / n (the side ahead at the end wins)   // overK = share of a battle boost a player at his ceiling still gets (pracOverCeil, max 15 an attribute)
 const PRAC_GROUPS = ['QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'CB', 'S'];
 const FAC_MAX = 7;   // facility levels (the campus art tops out at 5; 6 and 7 add gold stars over the building)
 const PRAC_FAC = {
@@ -2397,6 +2401,7 @@ function prac() {
   if (!Array.isArray(P.focus)) P.focus = [];
   if (!Array.isArray(P.hist)) P.hist = [];
   if (!P.pairs) P.pairs = {};
+  if (!Array.isArray(P.bat)) P.bat = [];   // (next week's planned battles: [{ g, a, b, yr }] by name, a = the starter; pracBattlePlan)
   if (P.report === undefined) P.report = null;
   if (P.unseen == null) P.unseen = false;
   if (!P.rec) P.rec = { slots: [], touched: false };   // (the recovery room's weekly slots)
@@ -2485,11 +2490,6 @@ function pracSesCalc(s, unit, len, cx, c0 = pracSesCount(unit)) {
   const side = pracSesSide(s), L0 = pracSesLoadAt(c0), L1 = pracSesLoadAt(c0 + pracSesW(len)), a = pracCalc(s, side, L0, cx), b = pracCalc(s, side, L1, cx);
   return { xp: b.xp - a.xp, cd: b.cd - a.cd, risk: Math.max(0, b.risk - a.risk), L0, L1 };
 }
-function pracSesGrade(unit) {   // placeholder until the drills (prompt 2): a roll from the unit's ratings
-  const L = pracSesUnit(unit), R = PRAC_SES.roll, st = L.length ? L.reduce((t, s) => t + s.stars, 0) / L.length : 3;
-  const sc = Math.random() + R.starK * (st - 3);
-  return sc >= R.gold ? 'gold' : sc >= R.silver ? 'silver' : 'bronze';
-}
 const pracSesLeft = () => Math.max(0, PRAC_SES.max - prac().ses.done.length);
 function pracInjure(s) {   // a practice injury (sessions and the automatic week). Returns the report line.
   const sev = rollSev(s);
@@ -2498,28 +2498,335 @@ function pracInjure(s) {   // a practice injury (sessions and the automatic week
   return `${s.short} (${sevName(s.inj)}): hurt in practice, out ${injWk(s.inj)}`;
 }
 // run one session NOW (click handlers only, never a draw): XP + condition + the injury roll for the whole unit. Returns what happened, or null.
-function pracSesRun(unit, len = 'full', grade = null) {
+function pracSesRun(unit, len = 'full', grade = null, hero = null, who = null) {   // (grade: from the drills, pracDrillEnd; hero = the roster entry you controlled: x PRAC_SES.heroK XP; who = the men a drill had on the field: RETURN)
   const P = prac(), S = P.ses;
   if (!season || S.done.length >= PRAC_SES.max || !PRAC_SES.units.includes(unit)) return null;
-  grade = grade || pracSesGrade(unit);
+  grade = grade || 'silver';
   const cx = pracCtx(), c0 = pracSesCount(unit, P), gk = PRAC_SES.grade[grade] || 1, men = [], ups = [], hurt = [];
   const rest = new Set(rrOn() ? recSlots().filter(x => x.kind === 'rest').map(x => x.s) : []);   // (recovery room REST: no practice)
-  for (const s of pracSesUnit(unit)) {
+  for (const s of who && who.length ? who : pracSesUnit(unit)) {
     if ((s.inj && s.inj.weeks > 0) || rest.has(s)) continue;
-    const c = pracSesCalc(s, unit, len, cx, c0), cond0 = condOf(s);
-    if (upgGain(s, c.xp * gk)) ups.push(s.name);
+    const c = pracSesCalc(s, unit, len, cx, c0), cond0 = condOf(s), hk = s === hero ? PRAC_SES.heroK : 1;
+    if (upgGain(s, c.xp * gk * hk)) ups.push(s.name);
     let line = null;
     if (SETTINGS.injuries) {
       s.cond = Math.max(0, Math.min(100, cond0 + c.cd));
       if (pracInjOn() && !s.inj && Math.random() < c.risk) { line = pracInjure(s); hurt.push(line); }
     }
-    men.push({ s, xp: c.xp * gk * UPG.xpK, cd: condOf(s) - cond0, hurt: line });
+    men.push({ s, xp: c.xp * gk * hk * UPG.xpK, hero: hk > 1, cd: condOf(s) - cond0, hurt: line });
   }
   S.done.push({ unit, grade, len });
   if (hurt.length) { S.hurt = [...(S.hurt || []), ...hurt]; autoPromote(MATCH.you); }
   if (ups.length) LEAGUE.upgNew = [...new Set([...(LEAGUE.upgNew || []), ...ups])];
   recalcTeamStars(); autosaveSoon();
   return { unit, grade, len, men, ups, hurt };
+}
+// --- practice drills (a session is played: a scrimmage of YOUR team started from the practice screen, both sides cast from your roster,
+// nothing counts while pracLive(); the reps run on the game step: endPlay -> pracDrillRep, update -> pracDrillTick -> pracDrillNext / pracDrillEnd)
+// PDR = { unit, len, drills, di (drill on), rep (reps played of it), sc[di] = [rep scores 0..1], hero (roster entry you control), wait (game s to the next rep),
+//        hud / hudKey (the baked whiteboard strip), set / qs (the franchise's SETTINGS / QUARTER_SECS, put back at the end) }
+const PRAC_DRILL = { wait: 1.6, hud: { x: 12, y: 8, w: 300, h: 92, gap: 8 },   // wait = game s from a rep's whistle to the next rep; hud = the strip (y below the top bar; gap = px right of the key tips box while it shows)
+  yacYd: 20,                        // 1V1 ROUTES: a catch = 0.5, + yards after it / yacYd (from the pass's target spot, ball.tx)
+  runYd: 12, brokeK: 0.2,           // GAUNTLET: yards / runYd x (1 - brokeK), + brokeK for a broken tackle
+  markYd: 5, markFade: 8,           // ANGLE TACKLE: the chalk line markYd past the line; a tackle past it loses 1 / markFade a yard
+  ladder: [25, 32, 39, 46, 53],     // ACCURACY LADDER: field goal length of each kick (yd)
+  puntFrom: 45, box: 10, boxOut: 20, // COFFIN CORNER: punt from your own 45; dead inside the box (yd from their goal) = 1, down to 0.4 at boxOut, 0 by boxOut + 25
+  retYd: 15,                        // RETURN: return yards / retYd; a fair catch or touchback = 0.2
+  ring: { at: 11, r: 2, off: 0.3, fade: 4 },
+  two: { secs: 120, from: 25, yardK: 0.6, hold: 4 },   // 7-ON-7 TWO-MINUTE: one drive from your own `from` with secs on the clock; a TD = 1, else yardK x the share of the field gained; hold = the throw clock (s: no rush, so the play is dead after it)
+  pick: { pbu: 0.7, inc: 0.4, tkl: 0.3 },   // PICK DRILL: a pick = 1, your hand on it = pbu, any other incompletion / no throw = inc, a catch you tackle = tkl less a 30th a yard
+  duel: { fast: 2, slow: 4.5, reach: 1.3 },   // PASS RUSH DUEL: at the QB (within reach yd) by fast s from the snap = 1, down to 0 at slow s (the rep ends there)
+  pocket: { scrYd: 10, scrMax: 0.5, inc: 0.1, off: 4 },   // POCKET DRILL: a catch = 1; past the line = a scramble worth up to scrMax at scrYd (the rep ends there), an incompletion = inc, a sack 0; off = yd the free rusher lines up off the ball   // TARGET RINGS: the ring sits `at` yd along each route, radius r yd; a catch outside it = off, down to 0 fade yd further out
+  stall: 5,                         // game s a kick unit may take to run on before everyone is put on his spot (pracDrillTick)
+  repMax: 25,                       // game s a rep may run (snap or no snap) before it ends with no result, scored 0 (a drill's own `cap` overrides it)
+  chalk: 'rgba(255,255,255,0.8)' };
+let PDR = null;
+const pracLive = () => !!(exhibition && exhibition.prac);   // (the drill sandbox: the looks a drill goes without (celebrations, replays, highlights, announcers) and STAR FACTOR read this)
+const noCount = () => !!(exhibition && !exhibition.world);   // (a game on the loaded franchise's own rosters that counts for nothing: a practice drill or the matchup screen's plain SCRIMMAGE; every gate that keeps it out of the season (morale, goals, ability counters on roster entries) reads this. A main-menu exhibition has its own stock world)
+const pdrMe = () => exhibition && exhibition.saved && exhibition.saved.you || MATCH.you;   // (your franchise: MATCH.you is the other side while a kick is mirrored / you defend)
+const pdBest = grp => { const R = ROSTER[pdrMe()] || []; return R.find(s => s.group === grp && !isOut(s)) || R.find(s => s.group === grp) || null; };
+const pdrSpot = (yd, d, togo) => { nextLos = yd * YL; nextDown = d; nextLtg = Math.min(FIELD, nextLos + togo * YL); };
+function pdrNew() { oo = null; celTOff(); simMode = 'none'; results = null; newGame(); STATS = newStats(); game.kickPending = null; }   // (a drill's first rep: startTest's own start, for the drills that place the ball themselves)
+function pdrUnflip() { if (twoP && twoP.flipped) flipSides(); twoP = null; }   // (before every rep: back on your own side; a defense rep / a mirrored punt flips again)
+function pdrDef() { if (!twoP) twoP = { flipped: false, to: 3, ai: true }; twoPlayerBall(25, []); }   // (a defense rep after the first: startTest's oo-db / oo-tackle without newGame)
+const pdrRet = () => { const l0 = FIELD - 35 * YL; startKickoff({ los: l0, punterX: Math.min(FIELD + ENDZONE - YL, l0 + PUNT.depth * YL), land: FIELD - 80 * YL, ltg: l0 - 10 * YL }); };   // (startTest 'pr': their punt from their 35)
+const pdrOwn = s => s && (ROSTER[pdrMe()] || []).includes(s) ? s : null;
+function pdrOO(first, mode, def) {   // (a drill on the 1v1 engine with its own bench, ooSetup's mode; def = the computer has the ball)
+  if (first) { pdrNew(); oo = { mode, bench: [], force: {}, defOn: !!def, play: def ? 'pass' : null, target: null, cfg: exhibition && exhibition.ov || null }; }
+  if (def) pdrDef(); else { pdrSpot(25, 1, 10); reset(); }
+}
+function pdrRingOf(p, out) {   // (TARGET RINGS: the spot PRAC_DRILL.ring.at yd along his route)
+  if (!p || !p.route || !p.path || !p.path.length || p.teBlock || p.passBlock) return;
+  let x0 = p.x, y0 = p.y, left = PRAC_DRILL.ring.at * YL;
+  for (const [x, y] of p.path) { const L = Math.hypot(x - x0, y - y0); if (L >= left) { const k = left / L; out.push({ p, x: x0 + (x - x0) * k, y: y0 + (y - y0) * k }); return; } left -= L; x0 = x; y0 = y; }
+  out.push({ p, x: x0, y: y0 });
+}
+function pdrRings(P) { const out = P.rings || (P.rings = []); out.length = 0; for (let i = 0; i < recs.length; i++) pdrRingOf(recs[i], out); pdrRingOf(rb, out); }   // (at the setup and once at the snap: a hot route moves a ring)
+const pdrCarrier = () => { for (let i = 0; i < recs.length; i++) if (recs[i].hasBall) return recs[i]; return rb && rb.hasBall ? rb : null; };
+function pdrPocketTick(P) {   // (POCKET DRILL, each step: a catch ends the rep (nobody covers him); the QB scrambling past the line ends it scr yd out)
+  if (state === 'run') { const c = pdrCarrier(); if (c) { pracDrillRep('Complete', c.x, '', { caught: true }); return; } }
+  if (qb && runner === qb && state === 'run' && qb.x - los >= PRAC_DRILL.pocket.scrYd * YL) pracDrillRep('Scramble', qb.x, '', { qbRan: true });
+}
+function pdrDuelTick(P) {   // (PASS RUSH DUEL, each step: your end at the QB, or the clock past `slow`, ends the rep)
+  if (state !== 'drop' && state !== 'pocket') return;
+  if (ai) ai.throwAt = 99;   // (he never lets it go: the rep is the rush alone)
+  const D = PRAC_DRILL.duel, R = defenders()[udIdx];
+  if (R && qb && Math.hypot(R.x - qb.x, R.y - qb.y) <= D.reach * YD) pracDrillRep('Got there', los, '', { home: clock });
+  else if (clock > D.slow) pracDrillRep('Held up', los, '', { home: 99 });
+}
+function pdrRingTick(P) {   // (TARGET RINGS, each step: rings again at the snap; a catch scores the rep where it was made: no defense means nobody would ever tackle him)
+  if (state === 'pre') { P.ringSnap = 0; return; }
+  if (!P.ringSnap) { pdrRings(P); P.ringSnap = 1; }
+  const c = state === 'run' ? pdrCarrier() : null; if (!c) return;
+  const R = PRAC_DRILL.ring; let d = Infinity;
+  for (let i = 0; i < P.rings.length; i++) if (P.rings[i].p === c) d = Math.hypot(c.x - P.rings[i].x, c.y - P.rings[i].y) / YD;
+  pracDrillRep('Caught', c.x, '', { caught: true, ring: d <= R.r ? 1 : Math.max(0, R.off * (1 - (d - R.r) / R.fade)) });
+}
+// { id, unit, name, reps, tip, cast() -> { kind, qb, off, def } (the 1v1 cast, oo.cfg; none = the situation's own men), hero(cast) (called after the first setup), setup(first), score(result) -> 0..1, mark / box = chalk drawn by pracDrillWorld }
+// result (pracDrillRep, from endPlay) = { text, next, kind, yds (gain from the line), caught (a receiver has it), yac, broke (a broken tackle this play), ret (return yards, null = no return) }
+const PRAC_DRILLS = [
+  { id: 'routes', unit: 'off', name: '1V1 ROUTES', reps: 3, tip: 'Beat your man, then run.',
+    cast: () => ({ kind: 'wr', qb: pdBest('QB'), off: pdBest('WR'), def: pdBest('CB') }), hero: c => c.off,
+    setup: first => { if (first) startTest('oo-wr'); else { pdrSpot(25, 1, 10); reset(); } },
+    score: r => !r.caught ? 0 : r.kind === 'td' ? 1 : Math.min(1, 0.5 + Math.max(0, r.yac) / PRAC_DRILL.yacYd) },
+  { id: 'gauntlet', unit: 'off', name: 'GAUNTLET', reps: 3, tip: 'Make him miss. Find yards.',
+    cast: () => ({ kind: 'rb', qb: pdBest('QB'), off: pdBest('RB'), def: pdBest('LB') }), hero: c => c.off,
+    setup: first => { if (first) startTest('oo-run'); else { pdrSpot(25, 1, 10); reset(); } },
+    score: r => r.kind === 'td' ? 1 : /INTERCEPT|incomplete|FUMBLE/i.test(r.text) ? 0 : Math.min(1, Math.max(0, r.yds) / PRAC_DRILL.runYd * (1 - PRAC_DRILL.brokeK) + (r.broke ? PRAC_DRILL.brokeK : 0)) },
+  { id: 'rings', unit: 'off', name: 'TARGET RINGS', reps: 4, tip: 'Drop it in the chalk ring.', rings: true,
+    cast: () => ({ kind: 'wr', qb: pdBest('QB'), off: pdBest('WR'), def: pdBest('CB') }), hero: c => c.qb,
+    setup: first => { pdrOO(first, 'rings'); pdrRings(PDR); }, tick: pdrRingTick,
+    score: r => r.ring != null ? r.ring : 0 },   // (lob or bullet: only where he caught it counts; an incompletion / a QB run = 0)
+  { id: 'pocket', unit: 'off', name: 'POCKET DRILL', reps: 3, tip: 'Dodge him. Throw before the line.',
+    cast: () => ({ kind: 'wr', qb: pdBest('QB'), off: pdBest('WR'), def: pdBest('CB') }), hero: c => c.qb,
+    setup: first => pdrOO(first, 'pocket'), tick: pdrPocketTick,
+    score: r => { const D = PRAC_DRILL.pocket; return r.caught ? 1 : r.qbRan ? D.scrMax * Math.max(0, Math.min(1, r.yds / D.scrYd)) : /incomplete/i.test(r.text) ? D.inc : 0; } },   // (a sack, a pick, a fumble = 0)
+  { id: 'duel', unit: 'def', name: 'PASS RUSH DUEL', reps: 3, tip: 'Beat him. Get to the QB.',
+    cast: () => ({ kind: 'ol', qb: pdBest('QB'), off: pdBest('OL'), def: pdBest('DL') }), hero: c => c.def,
+    setup: first => { pdrOO(first, 'duel', true); oo.hold = true; }, tick: pdrDuelTick,   // (oo.hold: their QB stands in, aiPocket's tutorial hold)
+    score: r => { const D = PRAC_DRILL.duel, t = r.home != null ? r.home : /SACK/i.test(r.text) ? clock : 99; return Math.max(0, Math.min(1, (D.slow - t) / (D.slow - D.fast))); } },
+  { id: 'twomin', unit: 'off', name: '7-ON-7 TWO-MINUTE', reps: 1, tip: 'Score before the clock hits zero.', cap: 400,
+    cast: () => ({ kind: 'wr', qb: pdBest('QB'), off: pdBest('WR'), def: pdBest('CB') }), hero: c => c.qb,
+    setup: first => { pdrOO(first, '7on7'); oo.drive = true; game.secs = PRAC_DRILL.two.secs; },
+    tick: () => { if (state === 'pre' && game.secs <= 0) pracDrillRep('Out of time', los, '', {}); else if ((state === 'drop' || state === 'pocket') && clock > PRAC_DRILL.two.hold) endPlay('Held it too long  -  dead ball', los, ''); },   // (the clock ran out between plays; the 7-on-7 throw clock)
+    drive: r => !(r.kind === 'td' || r.kind === 'turnover' || /INTERCEPT|FUMBLE/i.test(r.text) || (down >= 4 && !(r.next >= lineToGain)) || !(r.next > 0) || game.secs <= 0),   // (true = the drive goes on)
+    score: r => { const D = PRAC_DRILL.two, x0 = D.from * YL, x = r.kind === 'turnover' || /INTERCEPT|FUMBLE/i.test(r.text) || !Number.isFinite(r.next) ? los : Math.max(los, r.next); return r.kind === 'td' ? 1 : D.yardK * Math.max(0, Math.min(1, (x - x0) / (FIELD - x0))); } },
+  { id: 'lockdown', unit: 'def', name: 'LOCKDOWN', reps: 3, tip: 'Stick to him. Swat it away.',
+    cast: () => ({ kind: 'wr', qb: pdBest('QB'), off: pdBest('WR'), def: pdBest('CB') }), hero: c => c.def,
+    setup: first => { if (first) startTest('oo-db'); else pdrDef(); },
+    score: r => /INTERCEPT|PICK/i.test(r.text) ? 1 : /incomplete/i.test(r.text) ? 0.8 : r.kind === 'td' ? 0 : r.caught ? Math.max(0, 0.3 - Math.max(0, r.yds) / 30) : 0.5 },
+  { id: 'pick', unit: 'def', name: 'PICK DRILL', reps: 3, tip: 'Read his eyes. Go get it.',
+    cast: () => ({ kind: 'slot', qb: pdBest('QB'), off: pdBest('TE') || pdBest('WR'), def: pdBest('S') }), hero: c => c.def,
+    setup: first => { if (first) startTest('oo-db'); else pdrDef(); },   // (the 1V1 screen's slot vs safety: you cover him man to man, the throw comes your way)
+    score: r => { const D = PRAC_DRILL.pick; return /INTERCEPT|PICK/i.test(r.text) ? 1 : /incomplete/i.test(r.text) ? (r.pbu ? D.pbu : D.inc) : r.kind === 'td' ? 0 : r.caught ? Math.max(0, D.tkl - Math.max(0, r.yds) / 30) : D.inc; } },
+  { id: 'angle', unit: 'def', name: 'ANGLE TACKLE', reps: 3, tip: 'Drop him before the chalk.', mark: true,
+    cast: () => ({ kind: 'rb', qb: pdBest('QB'), off: pdBest('RB'), def: pdBest('LB') }), hero: c => c.def,
+    setup: first => { if (first) startTest('oo-tackle'); else pdrDef(); },
+    score: r => r.kind === 'td' ? 0 : r.kind === 'turnover' ? 1 : r.yds <= PRAC_DRILL.markYd ? 1 : Math.max(0, 1 - (r.yds - PRAC_DRILL.markYd) / PRAC_DRILL.markFade) },
+  { id: 'ladder', unit: 'kick', name: 'ACCURACY LADDER', reps: 5, tip: 'Every kick backs up. Stay true.',
+    hero: () => pdrOwn(kickerFor(pdrMe(), 'fg')),
+    setup: first => { if (first) pdrNew(); const L = PRAC_DRILL.ladder; pdrSpot(117 - L[Math.min(L.length - 1, PDR ? PDR.rep : 0)], 4, 10); reset(); startFieldGoal(); },   // (117 - length = the line: 10 yd of end zone + 7 to the hold)
+    score: r => r.kind === 'fg' ? 1 : 0 },
+  { id: 'coffin', unit: 'punt', name: 'COFFIN CORNER', reps: 3, tip: 'Pin it inside the chalk box.', box: true,
+    hero: () => pdrOwn(kickerFor(pdrMe(), 'punt')),
+    setup: first => { if (first) pdrNew(); pdrSpot(PRAC_DRILL.puntFrom, 4, 8); reset(); startMyPunt(); },   // (startTest 'punt': the real punt, mirrored onto the computer's code: next = yd from THEIR goal)
+    score: r => { if (r.kind === 'td' || /TOUCHBACK|BLOCK|TACKLED|no punt/i.test(r.text) || !Number.isFinite(r.next)) return 0; const D = PRAC_DRILL, d = r.next / YL; return d <= D.box ? 1 : d <= D.boxOut ? 1 - 0.6 * (d - D.box) / (D.boxOut - D.box) : Math.max(0, 0.4 - (d - D.boxOut) / 25); } },
+  { id: 'return', unit: 'ret', name: 'RETURN', reps: 3, tip: 'Catch it clean. Hit the hole.',
+    hero: () => pdrOwn(rb && rb.src), men: () => { const R = ROSTER[pdrMe()] || [], out = []; for (const p of allPlayers()) if (p.src && R.includes(p.src) && !out.includes(p.src)) out.push(p.src); return out; },   // (men: who the session trains = your men on the field for the punt return, read after the first setup)
+    setup: first => { if (first) pdrNew(); pdrSpot(25, 1, 10); reset(); pdrRet(); },
+    score: r => r.ret == null ? (/fair catch|TOUCHBACK/i.test(r.text) ? 0.2 : 0) : r.kind === 'td' ? 1 : Math.min(1, Math.max(0, r.ret) / PRAC_DRILL.retYd) },
+];
+const pracDrillPool = unit => PRAC_DRILLS.filter(d => d.unit === unit || d.unit === 'all');
+function pracDrillStart(unit, len, ids) {   // click handler only (the picker's QUICK / FULL); ids = these drills only (probes, battles)
+  if (PDR || !season || pracSesLeft() <= 0 || !PRAC_SES.units.includes(unit)) return false;
+  const pool = ids ? PRAC_DRILLS.filter(d => ids.includes(d.id)) : pracDrillPool(unit).slice(), n = len === 'quick' ? 1 : 3, drills = [];
+  while (pool.length && drills.length < n) drills.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  return pracDrillBegin(unit, len, drills);
+}
+function pracDrillBegin(unit, len, drills, bat) {   // (a session's drills, or a battle's reps: bat = { g, a, b, p0, play } from pracBattleGo)
+  if (!drills.length) return false;
+  PDR = { unit, len, drills, di: -1, rep: 0, sc: [], hero: null, wait: 0, rt: 0, hud: null, hudKey: null, set: JSON.parse(JSON.stringify(SETTINGS)), qs: QUARTER_SECS, bat: bat || null };
+  startExhibition('prac');   // (from !== 'start': your franchise's ROSTER stays)
+  exhibition.prac = { unit, len }; exhibition.wx = 0;   // (clear skies: no weather in a drill)
+  MATCH.you = exhibition.saved.you; MATCH.opp = Object.keys(NFL).find(k => k !== MATCH.you); MATCH.home = 'you'; defaultKits();   // (the other side: a stock team's kit, your men cast into it through oo.cfg.cast)
+  pracDrillNext();
+  return true;
+}
+function pdClean() {   // before every rep: nothing held, no try / kickoff / runoff left over, a fresh clock
+  heldClear('ai'); heldClear('kb'); aim = null; paused = false; resetAsk = false;
+  patMode = null; patNext = false; fourthPending = false; kickoffNext = false; pendingSim = null; simMode = 'none';
+  game.kickPending = null; game.runoff = 0; game.fastRunoff = false; game.secs = QUARTER_SECS; game.quarter = 1; game.pendingQuarter = false;
+}
+function pracDrillNext() {   // the next rep, the next drill, or the end (game step / click only)
+  const P = PDR; if (!P) return;
+  P.wait = 0; P.rt = 0;
+  let d = P.drills[P.di];
+  if (P.di >= 0 && P.rep < d.reps) { pdrUnflip(); pdClean(); d.setup(false); return; }
+  P.di++; P.rep = 0;
+  if (P.di >= P.drills.length) { pracDrillEnd(false); return; }
+  d = P.drills[P.di];
+  pdrUnflip();
+  const c = d.cast ? d.cast() : null;
+  exhibition.ov = c ? { kind: c.kind, cast: { qb: c.qb, off: c.off, def: c.def } } : null;   // (the 1v1 cast: placeRoster puts these men on those spots)
+  pdClean(); d.setup(true);
+  P.hero = d.hero ? d.hero(c) || null : null;   // (after the setup: a returner is only known once the unit is on the field)
+  if (d.men && !P.men) P.men = d.men();
+}
+function pracDrillRep(text, next, kind, o) {   // from endPlay (the step): the rep's score; the next rep comes PRAC_DRILL.wait game s later (o = result fields a probe forces)
+  const P = PDR; if (!P || P.di < 0 || P.wait > 0) return;
+  const d = P.drills[P.di], yds = Number.isFinite(next) ? (next - los) / YL : 0, end = kind === 'td' ? FIELD : next;
+  let car = null; for (const p of allPlayers()) if (p.hasBall) { car = p; break; }
+  const caught = !!(car && car !== qb && car.team === 'off' && recs.includes(car));
+  const r = { text: String(text || ''), next, kind, yds, caught, yac: caught && Number.isFinite(end) && Number.isFinite(ball.tx) ? (end - ball.tx) / YL : 0, broke: !!celebFlags.miss, pbu: !!celebFlags.pbu, qbRan: runner === qb && Number.isFinite(next) && next > los,
+    ret: rb && rb.retFromPid === runPid && rb.retFrom != null && Number.isFinite(end) ? (end - rb.retFrom) / YL : null };
+  if (o) Object.assign(r, o);
+  if (d.drive && !r.cap && d.drive(r)) return;   // (a drive drill: this play didn't end the drive, the game plays on)
+  let s = 0; if (!r.cap) try { s = +d.score(r) || 0; } catch (e) { s = 0; }   // (cap = the rep ran out of time: 0)
+  (P.sc[P.di] || (P.sc[P.di] = [])).push(Math.max(0, Math.min(1, s)));
+  P.rep++; P.wait = PRAC_DRILL.wait;
+  heldClear('ai');
+}
+function pracDrillTick(dt) {   // top of update(): true = this step moved to the next rep / ended the session (the rest of the step is skipped)
+  const P = PDR; if (!P) return false;
+  if (!(P.wait > 0)) {   // (a kick unit's run-on that never sets: everyone to his spot, as the formation jog's FM_MAX_WAIT does before a snap; seen on a CPU punt after a blocked punt rep)
+    if (kickoff && kickoff.forming) { if ((P.fm = (P.fm || 0) + dt) > PRAC_DRILL.stall) { P.fm = 0; for (const p of allPlayers()) if (p.fmTo) { const t = p.fmTo; p.x = t.x; p.y = t.y; p.fmTo = null; p.vx = p.vy = 0; p.moving = false; } } }
+    else P.fm = 0;
+    const d = P.drills[P.di];
+    if (d && d.cpu) udInputAt = -1e12;   // (a battle rep the computer runs: your defender is the computer's from the snap, whatever is pressed)
+    if (d && d.tick) d.tick(P, dt);   // (a drill's own per-step check: a catch through a ring, a scramble, the rusher home; may score the rep itself)
+    if (!(P.wait > 0) && (P.rt += dt) > (d && d.cap || PRAC_DRILL.repMax)) pracDrillRep('Out of time', los, '', { cap: true });
+    return false;
+  }
+  P.wait -= dt;
+  if (P.wait > 0) return false;
+  pracDrillNext(); return true;
+}
+const pdScore = P => { const tot = P.drills.reduce((t, d) => t + d.reps, 0); let sum = 0; for (const a of P.sc) if (a) for (const v of a) sum += v; return tot ? sum / tot : 0; };   // (unplayed reps = 0)
+function pracDrillEnd(left) {   // the last rep's whistle, or LEAVE PRACTICE (left): back to the practice screen, the session paid by its score
+  const P = PDR; if (!P) return null;
+  PDR = null; if (P.hud) P.hud.width = P.hud.height = 0;
+  const score = pdScore(P), C = PRAC_SES.cut, grade = score >= C.gold ? 'gold' : score >= C.silver ? 'silver' : 'bronze';
+  heldClear('ai'); heldClear('kb'); heldClear('touch'); pdrUnflip();
+  for (const k of Object.keys(SETTINGS)) if (!(k in P.set) && !GLOBAL_SET.includes(k)) delete SETTINGS[k];   // (the scrimmage swapped the franchise's settings for the defaults, and made its own exDiff: back as they were)
+  for (const k of Object.keys(P.set)) if (!GLOBAL_SET.includes(k)) SETTINGS[k] = P.set[k];
+  QUARTER_SECS = P.qs;
+  endReplay(); rec = null; aim = null; simGame = false; simFast = null; sim = null; simStop = false; simMode = 'none';
+  paused = false; pauseSim = false; resetAsk = false; oo = null;
+  newGame(); STATS = newStats(); state = 'pre'; game.over = true;
+  let record = { w: 0, l: 0, t: 0 };
+  try { record = { ...record, ...JSON.parse(localStorage.getItem(RECORD_KEY) || '{}') }; } catch (e) {}
+  results = { record, screen: 'practice' };
+  endExhibition('practice'); pstExhibitionOff();
+  pracOpen(P.bat ? 'battles' : 'field');
+  if (P.bat) return pracBattleDone(P, left);   // (a battle pays no session: the winner's boost)
+  const res = pracSesRun(P.unit, P.len, grade, P.hero, P.men);
+  if (res) { res.score = score; res.left = !!left; PR.unit = res.unit; PR.land = { t: uiNow(), i: prac().ses.done.length - 1, res }; PR.pv = null; }
+  return res;
+}
+// the HUD: a small whiteboard strip under the top bar (drill, rep dots, score bar, the tip). Baked; rebuilt only when the drill / rep / dark mode changes
+function pracDrillHud() {
+  const P = PDR; if (!P || P.di < 0) return;
+  const d = P.drills[P.di], sc = P.sc[P.di] || [], dk = darkOn(), H = PRAC_DRILL.hud, k = P.hudKey;
+  const x = keyTipsShown() ? PAUSE_BTN.x + (TOUCH ? KEY_TIPS.wTouch : KEY_TIPS.w) + H.gap : H.x;   // (beside the key tips box while it is up, never over it)
+  if (!P.hud || !k || k[0] !== P.di || k[1] !== sc.length || k[2] !== dk || k[3] !== x) {
+    if (P.hud) P.hud.width = P.hud.height = 0;
+    const y = TOP_BAR + H.y;
+    P.hud = ctxBake(x - 2, y - 2, H.w + 8, H.h + 8, () => pdHudPaint(d, sc, x, y, H));
+    P.hudKey = [P.di, sc.length, dk, x];
+  }
+  const c = P.hud; ctx.drawImage(c, c._x, c._y, c._w, c._h);
+}
+function pdHudPaint(d, sc, x, y, H) {
+  const C = PRAC_SES.cut, w = H.w, h = H.h;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.28)'; ctx.fillRect(x + 4, y + 5, w, h);
+  ctx.fillStyle = '#f6f6f1'; ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#9aa0a8'; ctx.lineWidth = 5; ctx.strokeRect(x + 2.5, y + 2.5, w - 5, h - 5);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#1f3f8a'; ctx.font = 'bold 19px monospace'; ctx.fillText(d.name, x + 14, y + 20, w - 28);
+  for (let i = 0; i < d.reps; i++) {
+    const cx = x + 22 + i * 22, cy = y + 45;
+    ctx.beginPath(); ctx.arc(cx, cy, 7, 0, 2 * Math.PI);
+    if (i < sc.length) { ctx.fillStyle = sc[i] >= C.gold ? '#2f8a46' : sc[i] >= C.silver ? '#c99a1b' : '#c0392b'; ctx.fill(); }
+    ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = 2; ctx.stroke();
+  }
+  const bx = x + 22 + d.reps * 22, bw = Math.max(40, x + w - 16 - bx), m = sc.length ? sc.reduce((t, v) => t + v, 0) / sc.length : 0;
+  ctx.fillStyle = '#e2dcc6'; ctx.fillRect(bx, y + 39, bw, 12);
+  ctx.fillStyle = m >= C.gold ? '#2f8a46' : m >= C.silver ? '#c99a1b' : '#c0392b'; ctx.fillRect(bx, y + 39, bw * m, 12);
+  ctx.strokeStyle = '#2a2a2a'; ctx.lineWidth = 1.5; ctx.strokeRect(bx, y + 39, bw, 12);
+  ctx.fillStyle = '#333'; ctx.font = '15px monospace'; ctx.fillText(d.tip, x + 14, y + 70, w - 28);
+  ctx.restore();
+}
+// the drill's chalk on the turf (draw(), world space, right after the play art): ANGLE TACKLE's line markYd past the line, COFFIN CORNER's box inside their 10. Looks only
+const PDR_DASH = [0.9 * YD, 0.6 * YD];   // (one array: the chalk is drawn every frame)
+function pracDrillWorld() {
+  const P = PDR; if (!P || P.di < 0 || (rec && rec.replaying)) return;
+  const d = P.drills[P.di], D = PRAC_DRILL; if (!d.mark && !d.box && !d.rings) return;
+  ctx.save(); ctx.strokeStyle = D.chalk; ctx.lineWidth = 0.35 * YD; ctx.setLineDash(PDR_DASH);
+  if (d.rings) { const R = P.rings || []; for (let i = 0; i < R.length; i++) { ctx.beginPath(); ctx.arc(R[i].x, R[i].y, D.ring.r * YD, 0, 2 * Math.PI); ctx.stroke(); } }
+  else if (d.mark) { const x = los + D.markYd * YL; ctx.beginPath(); ctx.moveTo(x, Y_MIN); ctx.lineTo(x, Y_MAX); ctx.stroke(); }
+  else { ctx.strokeRect(0, Y_MIN, D.box * YL, Y_MAX - Y_MIN); ctx.fillStyle = 'rgba(255,255,255,0.10)'; ctx.fillRect(0, Y_MIN, D.box * YL, Y_MAX - Y_MIN); }
+  ctx.restore();
+}
+// --- practice battles (a planned battle watched or played: the drill runner, both men from one group, each runs the same rep against the same man of the other unit)
+// group -> [WATCH drill, his spot in it, PLAY drill, his spot in it] (spot = the 1v1 cast's qb / off / def). WATCH reps are the computer against the computer (a defense
+// drill: the computer has the ball and your defender is the computer's); a PLAY rep of the man you picked is his group's own drill, run by you. null = no drill: the weighted roll (a coin)
+const BAT_REPS = { WR: ['lockdown', 'off', 'routes', 'off'], TE: ['pick', 'off', 'routes', 'off'], CB: ['lockdown', 'def', 'lockdown', 'def'], S: ['pick', 'def', 'pick', 'def'],
+  RB: ['angle', 'off', 'gauntlet', 'off'], LB: ['angle', 'def', 'angle', 'def'], OL: ['duel', 'off', 'duel', 'off'], DL: ['duel', 'def', 'duel', 'def'], QB: ['ringsCpu', 'qb', 'rings', 'qb'] };
+let PDR_RINGS_CPU = null;   // (TARGET RINGS with the computer's QB: 'rings' with the computer on the ball)
+const pdrBase = id => id === 'ringsCpu' ? PDR_RINGS_CPU || (PDR_RINGS_CPU = { ...PRAC_DRILLS.find(d => d.id === 'rings'), id: 'ringsCpu', setup: first => { pdrOO(first, 'rings', true); pdrRings(PDR); } }) : PRAC_DRILLS.find(d => d.id === id);
+const pdrSide = d => d.rings ? 'qb' : d.unit;   // (whose rep a drill scores: its own score is for this spot, the other spot gets 1 - it)
+function pracBatDrill(bt, side, mine) {   // one rep of a battle: the man on `side` ('a' / 'b'); mine = you run it (PLAY, your man)
+  const s = bt[side], T = BAT_REPS[bt.g], base = pdrBase(mine ? T[2] : T[0]), spot = mine ? T[3] : T[1], inv = spot !== pdrSide(base);
+  return { id: 'bat-' + base.id, unit: base.unit, name: `${bt.g} BATTLE: ${s.short}`, reps: 1, side, cpu: !mine, base, rings: base.rings, mark: base.mark, tick: base.tick, cap: base.cap,
+    get tip() { return pracBatTip(); },
+    cast: () => { const c = base.cast(); c[spot] = s; return c; }, hero: () => null,
+    setup: () => {   // (same drill as the rep before: the cast is swapped, no newGame; another drill: its own first setup)
+      const P = PDR, prev = P.di > 0 ? P.drills[P.di - 1] : null;
+      if (oo) oo.cfg = exhibition.ov;
+      base.setup(!prev || prev.base !== base);
+    },
+    score: r => { const v = +base.score(r) || 0; return inv ? 1 - v : v; } };
+}
+function pracBatLead(P) {   // > 0 = the starter (a) is ahead: the bar's start, then each rep's score gap
+  const bt = P.bat; let v = BATTLE.rep.bias * (2 * bt.p0 - 1);
+  for (let i = 0; i < P.drills.length; i++) { const a = P.sc[i]; if (a && a.length) v += (P.drills[i].side === 'a' ? 1 : -1) * a[0] / BATTLE.rep.n; }
+  return v;
+}
+const pracBatTip = () => { const P = PDR, bt = P && P.bat; if (!bt) return ''; const l = pracBatLead(P); return `${(l >= 0 ? bt.a : bt.b).short} is ahead.`; };
+function pracBattleGo(i, play) {   // click handler only: WATCH (play null) or PLAY as 'a' / 'b'. Returns true when the reps start
+  const P = prac(), x = P.bat[i], bt = x && pracBattleOf(x);
+  if (!bt || PDR || !season) return false;
+  const T = BAT_REPS[bt.g], wa = pracBattleW(bt.a), wb = pracBattleW(bt.b);
+  bt.p0 = wa + wb > 0 ? wa / (wa + wb) : 0.5; bt.play = play; bt.x = x;
+  if (!T || !T[0] || (play && !T[2])) { pracBattleClose(bt, null); return false; }   // (no drill for this group: the weighted roll, the coin)
+  const drills = [];
+  for (let k = 0; k < BATTLE.rep.n; k++) for (const sd of ['a', 'b']) drills.push(pracBatDrill(bt, sd, play === sd));
+  return pracDrillBegin(OFF_GROUPS.includes(bt.g) ? 'off' : 'def', 'quick', drills, bt);
+}
+function pracBattleDone(P, left) {   // pracDrillEnd of a battle: LEAVE PRACTICE = still open; else the side ahead wins
+  if (left) return null;
+  const bt = P.bat, l = pracBatLead(P), win = l >= 0 ? bt.a : bt.b;
+  chore('pracBattle', () => { pracBattleClose(bt, win, P); return false; });   // (the boost's upgrades cost 8-20 ms: a chore, not the step that ends the reps, which already pays newGame)
+  return null;
+}
+function pracBattleClose(bt, winner, P) {   // settle a watched / played battle (winner null = the roll: no drill), stamp it, ask START HIM? if the backup won
+  const C = prac(), me = MATCH.you;
+  C.bat = C.bat.filter(x => x !== bt.x);
+  const rec = pracBattleSettle(bt, winner, true);
+  rec.by = !P ? 'coin' : bt.play ? 'play' : 'watch';
+  if (P) { rec.reps = { a: [], b: [] }; P.drills.forEach((d, i) => rec.reps[d.side].push(+(((P.sc[i] || [])[0]) || 0).toFixed(2))); }
+  autoPromote(me); recalcTeamStars(); autosaveSoon();
+  PR.stamp = { t: uiNow(), rec };
+  if (rec.win === bt.b.name) offPopShow({ title: 'START HIM?', lines: ['He won the battle. Give him the job?'], btns: [{ label: 'NOT YET' }, { label: 'START HIM', green: true, on: () => pracStartHim(rec) }] });
+  return rec;
+}
+function pracStartHim(rec) {   // START HIM?: the backup who won takes the loser's place on the depth chart
+  const R = ROSTER[MATCH.you] || [], i = R.findIndex(s => s.name === rec.win), j = R.findIndex(s => s.name === rec.lose);
+  if (i < 0 || j < 0 || j > i) return;
+  const t = R[i]; R[i] = R[j]; R[j] = t;
+  rec.took = true; rec.line += ' and took the starting job';
+  recalcTeamStars(); autosaveSoon();
 }
 // --- recovery room
 // The Recovery Center's weekly slots (career.prac.rec = { slots: [{ name, kind }], touched }): REST (healthy: no practice that week, a big
@@ -2588,7 +2895,8 @@ function pracWeek(passed = 1) {
     }
   }
   if (got.length) LEAGUE.upgNew = [...new Set([...(LEAGUE.upgNew || []), ...got])];
-  const battles = pracBattles();   // (after the XP and injuries, on the roster as it stands)
+  const battles = pracBattleDue();   // (last week's planned battles nobody watched or played: the old weighted roll, on the roster as it stands)
+  pracBattlePlan();   // (next week's, so they can be watched or played on the BATTLES tab)
   // the mentors at work this week (new pairings are news)
   const pairs = pracPairs(), seen = P.pairs; let newPair = false;
   for (const x of pairs) { const k = x.m.name + '>' + x.e.name; if (!seen[k]) { seen[k] = 1; newPair = true; } }
@@ -2636,25 +2944,48 @@ function pracOverCeil(p, pts) {
   if (given) { p.potFixed = true; p.potCaps = null; p.stars = starsOfScore(scoreOf(p)); p.potPts = Math.max(p.potPts || 0, scoreOf(p)); p.potential = starsOfScore(p.potPts); autosaveSoon(); }
   return given;
 }
-// this week's battles (max one a group, BATTLE.maxWeek a week). Returns [{ line, win, lose, ... }] and logs them in career.prac.hist
-function pracBattles() {
-  const P = prac(), me = MATCH.you, cx = pracCtx(), out = [];
-  const cond = s => SETTINGS.injuries ? condOf(s) / 100 : 1, w = s => BATTLE.wRate * scoreOf(s) / ATTR_TOTAL + BATTLE.wAwr * pracAwr(s) + BATTLE.wCond * cond(s) + BATTLE.luck * Math.random();
+// a man's battle weight (the old roll's `w(s)` without its luck term): rating, awareness, condition
+const pracBattleW = s => BATTLE.wRate * scoreOf(s) / ATTR_TOTAL + BATTLE.wAwr * pracAwr(s) + BATTLE.wCond * (SETTINGS.injuries ? condOf(s) / 100 : 1);
+// next week's battles (max one a group, BATTLE.maxWeek a week, the old chance / pair rules): career.prac.bat = [{ g, a, b, yr }] by name
+function pracBattlePlan() {
+  const P = prac(), cx = pracCtx(), out = [];
   for (const g of PRAC_GROUPS.slice().sort(() => Math.random() - 0.5)) {
     if (out.length >= BATTLE.maxWeek) break;
     if (Math.random() >= BATTLE.chance) continue;
     const pr = pracBattlePairs(g, cx); if (!pr.length) continue;
-    const [a, b] = pick(pr), wa = w(a), wb = w(b), winner = Math.random() * (wa + wb) < wa ? a : b, loser = winner === a ? b : a;
-    const want = Math.round((BATTLE.minBoost + Math.random() * (BATTLE.maxBoost - BATTLE.minBoost)) * 2 * STAR_HALF / SCORE_K), in1 = pracBoost(winner, want);
-    const got = in1 + pracOverCeil(winner, want - in1), stars = got * SCORE_K / (2 * STAR_HALF);   // (past his ceiling he still grows, a bit less: BATTLE.overK)
-    resortGroup(me, g);   // (a backup who passed the starter takes the job)
-    const big = Math.max(a.stars, b.stars) >= BATTLE.bigStars, took = cx.st.has(loser) && !startersOf(me).has(loser);
-    const line = `${g} battle: ${winner.short} beat ${loser.short}${got ? `, +${stars.toFixed(1)} stars` : ' (no room to grow)'}${took ? ' and took the starting job' : ''}`;
-    const rec = { g, win: winner.name, lose: loser.name, stars, got, took, big, wk: season ? season.week : 0, yr: LEAGUE.year, line };
-    P.hist.unshift(rec); P.hist.length = Math.min(P.hist.length, BATTLE.hist);
-    out.push(rec);
-    if (big) (LEAGUE.pracNews = LEAGUE.pracNews || []).push(rec);   // (v0.52: the whole record: the home popup draws both cards)
+    const [a, b] = pick(pr); out.push({ g, a: a.name, b: b.name, yr: LEAGUE.year });
   }
+  P.bat = out;
+  return out;
+}
+// a planned battle's two men as they are now ({ g, a, b } roster entries), or null: hurt, traded or cut = dropped
+function pracBattleOf(x) {
+  const R = ROSTER[MATCH.you] || [], f = n => R.find(s => s.name === n && s.group === x.g);
+  const a = x && x.yr === LEAGUE.year ? f(x.a) : null, b = a ? f(x.b) : null;
+  return a && b && !isOut(a) && !isOut(b) ? { g: x.g, a, b } : null;
+}
+// settle one battle (bt = { g, a, b } roster entries): winner null = the old weighted roll. keep = a watched / played battle: the depth order stays (START HIM? asks).
+// The boost / ceiling / resort / history / news are the old pracBattles code. Returns the history record.
+function pracBattleSettle(bt, winner, keep) {
+  const P = prac(), me = MATCH.you, cx = pracCtx(), { g, a, b } = bt, w = s => pracBattleW(s) + BATTLE.luck * Math.random();
+  if (!winner) { const wa = w(a), wb = w(b); winner = Math.random() * (wa + wb) < wa ? a : b; }
+  const loser = winner === a ? b : a, R = ROSTER[me], at = keep ? R.map((s, i) => s.group === g ? i : -1).filter(i => i >= 0) : null, was = at && at.map(i => R[i]);
+  const want = Math.round((BATTLE.minBoost + Math.random() * (BATTLE.maxBoost - BATTLE.minBoost)) * 2 * STAR_HALF / SCORE_K), in1 = pracBoost(winner, want);
+  const got = in1 + pracOverCeil(winner, want - in1), stars = got * SCORE_K / (2 * STAR_HALF);   // (past his ceiling he still grows, a bit less: BATTLE.overK)
+  if (keep) at.forEach((i, j) => { R[i] = was[j]; });   // (the boost's upgrades re-sorted the group: put it back, START HIM? decides)
+  else resortGroup(me, g);   // (a backup who passed the starter takes the job)
+  const big = Math.max(a.stars, b.stars) >= BATTLE.bigStars, took = cx.st.has(loser) && !startersOf(me).has(loser);
+  const line = `${g} battle: ${winner.short} beat ${loser.short}${got ? `, +${stars.toFixed(1)} stars` : ' (no room to grow)'}${took ? ' and took the starting job' : ''}`;
+  const rec = { g, win: winner.name, lose: loser.name, stars, got, took, big, wk: season ? season.week : 0, yr: LEAGUE.year, line };
+  P.hist.unshift(rec); P.hist.length = Math.min(P.hist.length, BATTLE.hist);
+  if (big) (LEAGUE.pracNews = LEAGUE.pracNews || []).push(rec);   // (v0.52: the whole record: the home popup draws both cards)
+  return rec;
+}
+// pracWeek: every planned battle still open is settled by the old roll (ignoring battles changes nothing). Returns the records
+function pracBattleDue() {
+  const P = prac(), me = MATCH.you, out = [];
+  for (const x of P.bat) { const bt = pracBattleOf(x); if (bt) out.push(pracBattleSettle(bt, null)); }
+  P.bat = [];
   if (out.length) { autoPromote(me); recalcTeamStars(); }
   return out;
 }
@@ -3290,6 +3621,10 @@ const TOUR_STEPS = {
     { scr: 'board', rect: () => ({ x: 670, y: 560, w: 570, h: 56 }), text: 'One shot. Make it count.',
       more: 'MAKE OFFER is one roll at the CHANCE shown. If he says no he will not talk again this year, and stars are pickier. Underpay a signed coach and another team may poach him.' },
   ],
+  pencil: [   // player decline: the first time one of your players' career pencils shows wear (his card)
+    { scr: 'roster', rect: () => DL_CARD.rect || { x: 0, y: 0, w: 1, h: 1 }, text: 'Old legs wear his pencil down.',
+      more: 'The pencil is his career. A long one is a young player. The bare wood starts where his spot can begin to slow down. Tooth marks are mileage, a worn eraser is points lost to age, a pink smudge is rust after a long layoff. Click it for the numbers.' },
+  ],
   xp: [   // the XP bank, the first time a player banks spare XP (home screen)
     { scr: 'home', enter: () => xpcFlip(true), rect: () => HOME_COIN, text: 'Maxed-out players bank spare XP here.',
       more: 'XP BANK (the other face of the credits box: click it to flip): a player who has reached his potential can\'t use his XP any more, so after every game his spare XP is banked here instead.' },
@@ -3312,7 +3647,7 @@ const TOUR_STEPS = {
     { scr: 'practice', enter: () => { PR.tab = 'field'; }, rect: () => PRAC_SES.units.map((u, i) => prMag(i)), text: 'Tap a unit to see them.',
       more: 'Each magnet is a unit: offense, defense, kicking, punting, returns. Its players are pinned below with their XP bar, condition bar and a green arrow when an upgrade is close. Hover a magnet to preview a session.' },
     { scr: 'practice', enter: () => { PR.tab = 'field'; }, rect: () => PR.pick ? [PR_PICK] : [PR_START], can: () => pracSesLeft() > 0 && !!season, doBase: () => prac().ses.done.length, do: b => prac().ses.done.length > b, text: 'Run a session. Earn a sticker.',
-      more: 'START PRACTICE: pick a unit, then QUICK (1 drill) or FULL (3 drills). The unit gets XP right away and loses a little condition. Each extra session of the same unit that week gives less.' },
+      more: 'START PRACTICE: pick a unit, then QUICK (1 drill) or FULL (3 drills) and play them. The better the drills go, the better the sticker and the XP. The unit also loses a little condition. Each extra session of the same unit that week gives less. LEAVE PRACTICE in the pause menu ends it early.' },
     { scr: 'practice', enter: () => { PR.tab = 'field'; }, rect: () => [0, 1, 2].map(i => ({ x: PR_BOARD.slotX + (i - 1) * PR_BOARD.slotGap - PR_BOARD.slotR, y: PR_BOARD.slotY - PR_BOARD.slotR, w: PR_BOARD.slotR * 2, h: PR_BOARD.slotR * 2 })), text: 'Three a week. Gold pays most.',
       more: 'Three sessions a week. A gold sticker gives the most XP, bronze the least. They reset after every game.' },
     { scr: 'practice', enter: () => { PR.tab = 'field'; }, rect: () => PR_AUTO, text: 'Skipped units can practice themselves.',
@@ -3340,7 +3675,9 @@ const TOUR_STEPS = {
   ],
   pracBattles: [
     { scr: 'practice', enter: () => { PR.tab = 'battles'; }, rect: () => ({ x: 30, y: 84, w: 600, h: 530 }), text: 'Close battles. Winner gets better.',
-      more: 'HEATED COMPETITIONS: a starter and a backup close in rating battle in practice. The winner gains, the loser can sulk.' },
+      more: "THIS WEEK'S BATTLES: a starter and a backup close in rating battle in practice. The winner gains, the loser can sulk. The bar shows who is favored." },
+    { scr: 'practice', enter: () => { PR.tab = 'battles'; }, rect: () => { const r = prBatRows(); if (!r.length) return { x: 30, y: 84, w: 600, h: 530 }; const b = prBatBtns(0); return [b.watch, b.a, b.b]; }, text: 'Settle it yourself.',
+      more: 'WATCH: three quick reps each, the computer plays both men. PLAY: you take one of them. The man ahead on the bar after the reps wins the boost, and if the backup wins you can start him. Leave it alone and the battle is settled at the end of the week.' },
     { scr: 'practice', enter: () => { PR.tab = 'battles'; }, rect: () => ({ x: 650, y: 84, w: 600, h: 530 }), text: 'Every result lands right here.',
       more: "Recent battle results are logged here. MENTOR PAIRS moved to the COACHES' OFFICE." },
   ],
@@ -3356,7 +3693,7 @@ const TOUR_STEPS = {
     { scr: 'practice', enter: () => { PR.tab = 'field'; }, rect: () => PR_TAB_BTNS, text: 'Your practice field. Run sessions here.',
       more: 'WELCOME TO PRACTICE. Run up to three sessions a week on the FIELD. Tap the ? on any page to replay its tips.' },
     { scr: 'practice', enter: () => { PR.tab = 'field'; }, rect: () => PR.pick ? [PR_PICK] : [PR_START], can: () => pracSesLeft() > 0 && !!season, doBase: () => prac().ses.done.length, do: b => prac().ses.done.length > b, text: 'Start one. Pick a unit.',
-      more: 'START PRACTICE: pick a unit, then QUICK or FULL. The XP lands right away and the sticker shows how it went.' },
+      more: 'START PRACTICE: pick a unit, then QUICK or FULL and play the drills. The sticker shows how it went and the XP lands with it.' },
     { scr: 'practice', enter: () => { PR.tab = 'week'; }, rect: () => [{ x: 30, y: 84, w: 600, h: 530 }, { x: 650, y: 84, w: 600, h: 530 }], text: "Last week's report card.",
       more: 'REPORT: the last practice week: XP earned, upgrades ready, injuries, battles and mentors.' },
     { scr: 'practice', enter: () => { PR.tab = PR.office = 'plan'; }, rect: () => [PR_CARD.off, PR_CARD.def], text: 'Quiet settings live in here.',
@@ -3416,6 +3753,7 @@ function tourWatch() {   // the first time a tutorial's screen is open in this f
   if (career.tutOff) return;   // (the questionnaire's SHOW PAGE TOURS: off)
   const t = career.tut || {};
   if (!t.xp && results.screen === 'home' && xpcOn() && xpBank() >= 1 && !coinFly.length) { tourStart('xp'); return; }   // (the first XP in the bank: what it is and where it is spent)
+  if (!t.pencil && results.screen === 'roster' && rosterView.sel && DL_CARD.worn) { tourStart('pencil'); return; }   // (player decline: a worn career pencil)
   if (!t.pracAll && results.screen === 'practice' && PR.tab !== 'fac') tourStart('pracAll');
   else if (!t.prac && results.screen === 'practice' && PR.tab === 'fac') tourStart('prac');
   else if (!t.trade && !TR.awSel && (results.screen === 'trade' || results.screen === 'tradeb')) tourStart('trade');   // (not when a weekly-award card opened the trade page)
@@ -3432,7 +3770,7 @@ function tourQClick(pt) {   // true when the "?" was hit
   if (!id || !inBtn(pt, id === 'trade' && scr === 'trade' ? TR_HELP_BTN : id.startsWith('prac') || id === 'scouts' ? PRAC_Q_BTN : id === 'hire' ? HIRE_Q_BTN : TOUR_Q_BTN)) return false;
   tourStart(id, true); return true;
 }
-const TOUR_NAMES = { trade: 'TRADES', prac: 'FACILITIES', home: 'YOUR FRANCHISE', deals: 'CONTRACTS', carDiff: 'DIFFICULTY', locker: 'LOCKER ROOM', hire: 'HIRING', xp: 'XP BANK', scouts: 'SCOUTS' };
+const TOUR_NAMES = { trade: 'TRADES', prac: 'FACILITIES', home: 'YOUR FRANCHISE', deals: 'CONTRACTS', carDiff: 'DIFFICULTY', locker: 'LOCKER ROOM', hire: 'HIRING', xp: 'XP BANK', scouts: 'SCOUTS', pencil: 'PLAYER AGING' };
 const tourDo = st => !!(st && st.do && (!st.can || st.can()));   // (a do-it-to-advance step: no NEXT, the lit rects take clicks, done = it moves on by itself)
 function tourHandSpot(rects, pad) {   // where the pointing hand goes: under the first lit rect, over it near the bottom, inside a huge one; returns its tip + box
   const r = rects[0]; if (!r) return null;
@@ -3571,6 +3909,7 @@ function pracClick(pt) {
   if (PR.tab === 'field' && pracFieldClick(pt)) return;   // (the picker is modal: it takes every click while open)
   if (PR.tab !== 'fac') for (const b of PR_TAB_BTNS) if (inBtn(pt, b)) { PR.tab = b.k === 'office' ? PR.office : b.k; PR.drag = null; return; }
   if (prOffice()) for (const b of PR_SUB) if (inBtn(pt, b)) { PR.tab = PR.office = b.k; PR.drag = null; return; }
+  if (PR.tab === 'battles') { pracBattlesClick(pt); return; }
   if (PR.tab === 'groups') {   // FOCUS toggles (up to PRAC_FOCUS.max groups)
     const P = prac();
     for (const b of PR_FOCUS_BTNS) if (inBtn(pt, b)) {
@@ -3892,20 +4231,65 @@ function drawPracGroups() {
   if (PR.msg && performance.now() - PR.msg.t < 3000) prT(PR.msg.text, 640, 596, '#c81b1b', 16, 800, 'center');
   else prT('Focus trains a group harder (more XP, wear and injury risk); every other group gets a bit less.', 640, 596, RES.dim, 13, 1150, 'center');
 }
+// the BATTLES tab: this week's planned battles (two cards, the tug-of-war bar, WATCH / PLAY) and past results as stamped cards. Still unless a stamp is landing
+const PR_BAT = { y0: 134, rowH: 236, cw: 176, ch: 168, ax: 48, bx: 436, barX: 236, barW: 178, barY: 62, barH: 24, stampMs: 420,
+  past: { x: 668, y: 128, w: 280, h: 112, gx: 292, gy: 118, cols: 2, rows: 4 } };
+const prBatBtns = r => { const B = PR_BAT, y = B.y0 + r * B.rowH; return { watch: { x: B.barX + B.barW / 2 - 64, y: y + 104, w: 128, h: 48 }, a: { x: B.ax, y: y + B.ch + 6, w: B.cw, h: 40 }, b: { x: B.bx, y: y + B.ch + 6, w: B.cw, h: 40 } }; };
+const prBatRows = () => { const out = []; prac().bat.forEach((x, i) => { const bt = pracBattleOf(x); if (bt && out.length < 2) out.push({ i, bt }); }); return out; };
 function drawPracBattles() {
-  const P = prac(), cx = pracCtx();
-  resPanel(30, 84, 600, 530, [['HEATED COMPETITIONS', 24]], RES.bright);
-  let y = 144, any = false;
-  for (const g of PRAC_GROUPS) {
-    const pr = pracBattlePairs(g, cx).sort((p, q) => Math.abs(p[0].stars - p[1].stars) - Math.abs(q[0].stars - q[1].stars))[0];
-    if (!pr) continue;
-    any = true; prT(`${g.padEnd(3)} ${pr[0].short} ${prSt(pr[0].stars)}  vs  ${pr[1].short} ${prSt(pr[1].stars)}`, 54, y, RES.line, 16, 540); y += 30;
-  }
-  if (!any) prT('No close competitions right now.', 54, y, RES.dim, 16);
-  prT(`A starter and a backup within ${BATTLE.gap} star${BATTLE.gap === 1 ? '' : 's'} can battle in practice.`, 54, 590, RES.dim, 12, 540);
+  const P = prac(), B = PR_BAT, rows = prBatRows();
+  resPanel(30, 84, 600, 530, [["THIS WEEK'S BATTLES", 24]], RES.bright);
+  rows.forEach((r, k) => {
+    const y = B.y0 + k * B.rowH, bt = r.bt, wa = pracBattleW(bt.a), wb = pracBattleW(bt.b), T = BAT_REPS[bt.g], btn = prBatBtns(k);
+    pracBatCard(bt.a, B.ax, y, '#3a6fd8', 'STARTER'); pracBatCard(bt.b, B.bx, y, '#d0473a', 'BACKUP');
+    prT(`${bt.g} BATTLE`, B.barX + B.barW / 2, y + 30, RES.line, 16, B.barW, 'center');
+    pracBatBar(B.barX, y + B.barY, B.barW, B.barH, wa + wb > 0 ? wa / (wa + wb) : 0.5, !(T && T[0]));
+    menuBtn(btn.watch, 'WATCH', RES.bright, 20); menuBtn(btn.a, 'PLAY', RES.bright, 18); menuBtn(btn.b, 'PLAY', RES.bright, 18);
+  });
+  if (!rows.length) { prT('No battles this week.', 54, 160, RES.dim, 16); prT('Close rivals get one most weeks.', 54, 190, RES.dim, 14); }
+  prT(`A starter and a backup within ${BATTLE.gap} star${BATTLE.gap === 1 ? '' : 's'} can battle in practice.`, 54, 600, RES.dim, 12, 540);
   resPanel(650, 84, 600, 530, [['RECENT RESULTS', 24]], RES.bright);
   if (!P.hist.length) prT('no battles yet', 674, 146, RES.dim, 14);
-  P.hist.slice(0, 18).forEach((h, i) => prT(`WK${h.wk} ${h.line}`, 674, 140 + i * 25, h.big ? '#2e8b57' : RES.line, 13, 560));
+  const Q = B.past, st = PR.stamp;
+  let k = 1; if (st) { const e = Math.min(1, (uiNow() - st.t) / B.stampMs); if (e < 1) { menuMoving = true; k = 1 + 1.6 * (1 - e) * (1 - e); } else PR.stamp = null; }   // (a fresh stamp lands: paints only while it moves)
+  P.hist.slice(0, Q.cols * Q.rows).forEach((h, i) => pracBatPast(h, Q.x + (i % Q.cols) * Q.gx, Q.y + Math.floor(i / Q.cols) * Q.gy, Q.w, Q.h, st && st.rec === h ? k : 1));
+}
+function pracBatCard(s, x, y, col, tag) {   // one man of a planned battle
+  const B = PR_BAT, w = B.cw, h = B.ch;
+  ctx.fillStyle = 'rgba(40,25,5,0.2)'; ctx.fillRect(x + 4, y + 5, w, h);
+  ctx.fillStyle = RES.bg; ctx.fillRect(x, y, w, h); ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.strokeRect(x, y, w, h);
+  prT(tag, x + w / 2, y + 14, col, 11, w - 12, 'center');
+  drawPortrait(s, x + w / 2, y + 70, 2.1, MATCH.you);
+  prT(s.short, x + w / 2, y + 128, RES.line, 15, w - 12, 'center');
+  prT(`${s.group}  ${prSt(s.stars)}`, x + w / 2, y + 150, RES.dim, 13, w - 12, 'center');
+}
+function pracBatBar(x, y, w, h, p, coin) {   // the tug-of-war rope: p = the starter's (left) share; coin = no drill for this group (the weighted roll decides)
+  ctx.fillStyle = '#d0473a'; ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = '#3a6fd8'; ctx.fillRect(x, y, w * p, h);
+  ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
+  const kx = x + w * p; ctx.fillStyle = '#f2c230'; ctx.fillRect(kx - 4, y - 6, 8, h + 12); ctx.strokeRect(kx - 4, y - 6, 8, h + 12);   // the knot
+  if (coin) { ctx.fillStyle = '#f2c230'; ctx.beginPath(); ctx.arc(kx, y - 22, 13, 0, 7); ctx.fill(); ctx.stroke(); ctx.beginPath(); ctx.arc(kx, y - 22, 8, 0, 7); ctx.stroke(); }
+}
+function pracBatPast(h, x, y, w, hh, k) {   // a stamped result card: the winner's face, who he beat, the stamp (k = its scale while it lands)
+  const R = ROSTER[MATCH.you] || [], s = R.find(q => q.name === h.win), lo = R.find(q => q.name === h.lose), col = h.took ? '#2e8b57' : '#c0392b';
+  ctx.fillStyle = 'rgba(40,25,5,0.18)'; ctx.fillRect(x + 3, y + 4, w, hh);
+  ctx.fillStyle = RES.bg; ctx.fillRect(x, y, w, hh); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, w, hh);
+  if (s) drawPortrait(s, x + 40, y + hh / 2, 1.3, MATCH.you);
+  const tx = x + 80, tw = w - 170;
+  prT(s ? s.short : h.win, tx, y + 24, RES.line, 15, tw);
+  prT(`beat ${lo ? lo.short : h.lose}`, tx, y + 48, RES.dim, 13, tw);
+  prT(`WK${h.wk}  ${h.g}`, tx, y + 72, RES.dim, 12, tw);
+  if (h.by) prT(h.by === 'play' ? 'PLAYED' : h.by === 'watch' ? 'WATCHED' : 'COIN', tx, y + 94, RES.dim, 11, tw);
+  ctx.save(); ctx.translate(x + w - 52, y + hh / 2); ctx.rotate(-0.2); ctx.scale(k, k);
+  ctx.globalAlpha = Math.max(0, Math.min(1, 2.4 - k)); ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.strokeRect(-44, -24, 88, 48);
+  prT(h.took ? 'STARTER' : 'WON', 0, -8, col, h.took ? 14 : 18, 82, 'center');
+  prT(h.got ? `+${h.stars.toFixed(1)}★` : 'MAXED', 0, 12, col, 13, 82, 'center');
+  ctx.restore();
+}
+function pracBattlesClick(pt) {   // WATCH / PLAY (click handler: the reps start here)
+  const rows = prBatRows();
+  for (let k = 0; k < rows.length; k++) { const b = prBatBtns(k), i = rows[k].i; if (inBtn(pt, b.watch)) return pracBattleGo(i, null); if (inBtn(pt, b.a)) return pracBattleGo(i, 'a'); if (inBtn(pt, b.b)) return pracBattleGo(i, 'b'); }
+  return false;
 }
 // --- practice field (the FIELD tab: sessions on a whiteboard)
 const PR_UNIT = { off: ['OFFENSE', '#3a6fd8', 'OFF'], def: ['DEFENSE', '#d0473a', 'DEF'], kick: ['KICKING', '#e09a1a', 'K'], punt: ['PUNTING', '#8a5ad0', 'P'], ret: ['RETURNS', '#2e9b5a', 'KR'] };
@@ -4043,9 +4427,9 @@ function pracFieldClick(pt) {   // true = handled (the picker eats every click w
   if (PR.pick) {
     PRAC_SES.units.forEach((u, i) => { if (inBtn(pt, prPickUnit(i))) PR.pick.unit = u; });
     for (let i = 0; i < 2; i++) { const b = prPickLen(i); if (inBtn(pt, b)) {
-      const res = pracSesRun(PR.pick.unit, b.len);   // (the roll, the XP and the condition happen here, never in a draw)
-      if (res) { PR.unit = res.unit; PR.land = { t: uiNow(), i: P.ses.done.length - 1, res }; PR.pv = null; }
-      PR.pick = null; return true;
+      const u = PR.pick.unit; PR.pick = null; PR.unit = u;
+      pracDrillStart(u, b.len);   // (the drills are played; the XP and the condition are paid at their end, pracDrillEnd -> pracSesRun)
+      return true;
     } }
     if (!inBtn(pt, PR_PICK)) PR.pick = null;
     return true;
@@ -4165,7 +4549,7 @@ function drawInjuryCall() {
     menuBtn(INJ_BTNS.ok, 'OK', RES.bright, 26);
     return;
   }
-  ctx.fillText(`KEEP HIM IN: plays at ${Math.round(INJURY.hurt[sev] * 100)}%, ${Math.round(INJURY.reinjure[sev] * 100)}% reinjury risk per hit, longer layoff`, W / 2, 352);
+  ctx.fillText(`KEEP HIM IN: plays at ${Math.round(INJURY.hurt[sev] * 100)}%, longer layoff`, W / 2, 352);
   ctx.fillText(szn ? 'BENCH HIM: out for the rest of the season, playoffs included' : `BENCH HIM: out for this game${hi ? `, then ${lo === hi ? lo : `${lo}-${hi}`} more week${hi > 1 ? 's' : ''}` : ''}`, W / 2, 378);
   ctx.fillText(`condition ${condOf(s)}%`, W / 2, 404);
   const canKeep = keepAllowed(s);
@@ -4262,7 +4646,7 @@ const SET_MAIN = { x: 240, y: 50, w: 800, h: 620 };
 const SET_CAT_ROWS = {
   controls: ['autoSw', 'zoom', 'swap'],   // (+ the keybinds list; swap = touch only, with TOUCH_HELP instead of the keys)
   rules: ['qtr', 'inj', 'pinj', 'wx', 'morale', 'flags', 'booth', 'dir'],
-  franchise: ['scouts', 'deals', 'simDef', 'spd', 'setup'],
+  franchise: ['scouts', 'deals', 'decline', 'simDef', 'spd', 'setup'],
   sound: ['vol', 'ann'],   // (vol = volDn + the bar + volUp)
   shows: ['ht', 'pg', 'rep', 'recPop', 'batPop', 'taunt', 'post', 'ktips'],
   graphics: ['bri', 'lite', 'fps', 'dark', 'side', 'flash'] };   // (bri = briDn + the brightness bar + briUp)
@@ -4282,7 +4666,7 @@ const SET_RESET = { x: 256, y: 618, w: 210, h: 36, sure: 3 };   // RESET TO DEFA
 let setResetAt = 0;   // (when the first click armed it)
 const SET_RESET_MAP = {   // row key -> the SETTINGS keys it puts back to SETTINGS_FACTORY (missing there = deleted); difficulty keeps its own page and RESET
   autoSw: ['autoSwitch'], zoom: ['camZoom'], swap: ['swapSides'], inj: ['injuries'], pinj: ['pracInjuries'], wx: ['weather'], morale: ['morale'],
-  flags: ['penalties', 'exPenalties'], booth: ['booth', 'exBooth'], dir: ['driveDir'], qtr: ['quarterMin'], scouts: ['scouts'], deals: ['contracts'],
+  flags: ['penalties', 'exPenalties'], booth: ['booth', 'exBooth'], dir: ['driveDir'], qtr: ['quarterMin'], scouts: ['scouts'], deals: ['contracts'], decline: ['decline'],
   simDef: ['simDefense'], spd: ['simST'], ann: ['announcers'], rep: ['replays'], recPop: ['hideRecPop'], ktips: ['hideKeyTips'], batPop: ['hideBattlePop'], taunt: ['taunts'],
   post: ['post'], lite: ['liteMode'], fps: ['fps'], dark: ['darkMode'], side: ['sideline'], flash: ['flashes'], volDn: ['volume'], briDn: ['brightness'],
   ht: ['halftime', 'ht'], pg: ['pregame', 'pg'], keys: ['binds'] };
@@ -4315,7 +4699,7 @@ const SET_ROW_TEXT = {   // each row's NAME: VALUE (the old button labels on one
   wx: () => `WEATHER: ${SETTINGS.weather !== false ? 'ON' : 'OFF'}`, morale: () => `MORALE: ${SETTINGS.morale !== false ? 'ON' : 'OFF'}`,
   flags: () => `PENALTIES: ${refSet('penalties') ? 'ON' : 'OFF'}`, booth: () => `BOOTH REVIEW: ${refSet('booth') ? 'ON' : 'OFF'}`,
   dir: () => `DRIVE DIRECTION: ${DRIVE_DIRS[SETTINGS.driveDir || 'left'].toUpperCase()}`,
-  scouts: () => `SCOUTS: ${SETTINGS.scouts !== false ? 'ON' : 'OFF'}`, deals: () => `CONTRACTS: ${SETTINGS.contracts !== false ? 'MANAGE' : 'AUTO'}`,
+  scouts: () => `SCOUTS: ${SETTINGS.scouts !== false ? 'ON' : 'OFF'}`, deals: () => `CONTRACTS: ${SETTINGS.contracts !== false ? 'MANAGE' : 'AUTO'}`, decline: () => `PLAYER AGING: ${DL_MODE_TXT[declineMode()]}`,
   simDef: () => `SIMULATE DEFENSE: ${SETTINGS.simDefense ? 'ON' : 'OFF'}`, spd: () => `SIMULATE KICKS: ${SETTINGS.simST ? 'ON' : 'OFF'}`, setup: () => 'SETUP QUESTIONS',
   ann: () => `ANNOUNCERS: ${SETTINGS.announcers === false ? 'OFF' : 'ON'}`,
   ht: () => 'HALFTIME SHOW', pg: () => 'PREGAME SHOW', rep: () => `REPLAYS: ${SETTINGS.replays}`,
@@ -4350,7 +4734,7 @@ const GFX_SHORT = { AUTO: 'AUTO', PERFORMANCE: 'PERF', QUALITY: 'QUAL' };   // (
 const gfxNext = () => LITE_MODES[(LITE_MODES.indexOf(gfxMode()) + 1) % LITE_MODES.length];
 const SL_MODES = ['ALL', 'CREW', 'OFF'];     // SETTINGS.sideline (sideline people: everyone / the chain crew only / nobody; missing = ALL)
 // settings opened from a game's pause menu: the ones that change the game being played are locked until it ends
-const SET_GAME_LOCK = ['setup', 'flags', 'booth', 'inj', 'pinj', 'wx', 'diff', 'dir', 'simDef', 'spd', 'morale', 'qtr', 'scouts', 'deals', 'post', 'save', 'load'];   // (perf job: DEBUG is this device's own: open in a game)
+const SET_GAME_LOCK = ['setup', 'flags', 'booth', 'inj', 'pinj', 'wx', 'diff', 'dir', 'simDef', 'spd', 'morale', 'qtr', 'scouts', 'deals', 'decline', 'post', 'save', 'load'];   // (perf job: DEBUG is this device's own: open in a game)
 const setInGame = () => !results && typeof game !== 'undefined' && !!game && !game.over;
 const SET_TIP_Y = 598;   // the main page's one-line tip / note (popups: SET_POP.tipY)
 const SET_TIPS = {   // hover tips: ONE short line each, copy rules (plain, no parentheses / semicolons); functions = different text on / off
@@ -4364,6 +4748,7 @@ const SET_TIPS = {   // hover tips: ONE short line each, copy rules (plain, no p
   booth: () => refSet('booth') ? 'BOOTH REVIEW: close calls get a second look.' : 'BOOTH REVIEW: off. Every spot is perfect.',
   taunt: () => (SETTINGS.taunts || 'NORMAL') === 'OFF' ? 'TAUNTS: off. Nobody taunts.' : 'TAUNTS: how often a celebration gets cheeky.',
   deals: () => SETTINGS.contracts !== false ? 'CONTRACTS: you make every deal.' : 'CONTRACTS: auto. The game handles deals.',
+  decline: () => ({ off: 'PLAYER AGING: off. Nobody slows down.', mine: 'PLAYER AGING: your vets wear down with age.', league: 'PLAYER AGING: every team wears down.' })[declineMode()],
   scouts: () => SETTINGS.scouts !== false ? 'SCOUTS: hire two to sharpen draft reads.' : 'SCOUTS: off. Just the plain SCOUT button.',
   simDef: () => SETTINGS.simDefense ? 'SIMULATE DEFENSE: their drives play themselves.' : 'SIMULATE DEFENSE: off. You play defense.',
   autoSw: () => 'AUTO SWITCH: grab the defender nearest the ball.',
@@ -4933,6 +5318,7 @@ function settingsClick(p) {
   }
   else if (inBtn(p, B.zoom)) SETTINGS.camZoom = SETTINGS.camZoom === false;
   else if (inBtn(p, B.spd)) SETTINGS.simST = !SETTINGS.simST;
+  else if (inBtn(p, B.decline)) SETTINGS.decline = DL_MODES[(DL_MODES.indexOf(declineMode()) + 1) % DL_MODES.length];   // (OFF / MY TEAM / LEAGUE)
   else if (inBtn(p, B.deals)) SETTINGS.contracts = SETTINGS.contracts === false;   // (off = AUTO: the game runs every contract)
   else if (inBtn(p, B.scouts)) SETTINGS.scouts = SETTINGS.scouts === false;   // (off: the draft's plain SCOUT button only, no scouts to hire / assign)
   else if (inBtn(p, B.morale)) { SETTINGS.morale = SETTINGS.morale === false; moraleSync(); }   // (off: every player reads 50 and nothing moves it; the attribute panel still shows)
@@ -4989,7 +5375,7 @@ function buildSave() { choreFlush('buildSave');
                  live: !results && !game.over && preSnap ? preSnap : suspended && suspended.pre || null,   // (a game you left stays in THIS save: autosaves from the menus keep it)
                  liveDiff: suspended ? suspended.diff || null : null,
                  // (after the draft: where the offseason is, so a load picks up at free agency instead of starting it over)
-                 off: season && season.offseason && OFF && OFF.draftDone ? { tut: OFF.tut, shown: OFF.shown, confDone: OFF.confDone, retiredYou: OFF.retiredYou, retiredLg: OFF.retiredLg, leagueDone: OFF.leagueDone, draftDone: true } : null };
+                 off: season && season.offseason && OFF && (OFF.draftDone || draftSaving()) ? { tut: OFF.tut, shown: OFF.shown, confDone: OFF.confDone, retiredYou: OFF.retiredYou, retiredLg: OFF.retiredLg, leagueDone: OFF.leagueDone, draftDone: !!OFF.draftDone, draft: OFF.draftDone ? undefined : draftSaveOf(OFF.draft) } : null };   // (v0.75: a draft in progress too, pick by pick: draftSaveOf / draftLoadOf in 09)
   return data;
 }
 
@@ -5583,7 +5969,8 @@ function loadFromSlot(i) { choreFlush('loadFromSlot'); SAVE_FP = {};   // (v0.72
     try { record = { ...record, ...JSON.parse(localStorage.getItem(RECORD_KEY) || '{}') }; } catch (e) {}
     results = { record, screen: 'home' };
     game.over = true;   // (PLAY starts a fresh game)
-    if (d.off && season.offseason) { OFF = Object.assign(offNew(), d.off); results.screen = 'fa'; }   // (saved after the draft: back to free agency)
+    if (d.off && season.offseason) { const dr = d.off.draft; OFF = Object.assign(offNew(), d.off); delete OFF.draft; results.screen = 'fa';   // (saved after the draft: back to free agency)
+      if (!d.off.draftDone) { delete OFF.draftDone; if (dr && draftLoadOf(dr)) results.screen = 'draft'; } }   // (saved mid-draft: back on the same pick)
   }
 }
 
@@ -5985,7 +6372,7 @@ const QS_PAGES = [   // id, tab label, tab colour, the coach's line
   { id: 'help',    tab: 'HELP',     col: '#ddf5c4', say: 'Need a hand finding your way around?' },
   { id: 'sign',    tab: 'SIGN',     col: '#f6d6ff', say: "Looks good. Sign it and let's go win some games!" },
 ];
-const QS_REC = { simDefense: false, contracts: true, scouts: true, injuries: true, weather: true, taunts: 'NORMAL', replays: 'BIG PLAYS', tours: true, penalties: true, booth: true };   // USE RECOMMENDED (this save's answers; GENERAL's device-wide ones are left as they are)
+const QS_REC = { simDefense: false, contracts: true, scouts: true, injuries: true, weather: true, taunts: 'NORMAL', replays: 'BIG PLAYS', tours: true, penalties: true, booth: true, decline: 'mine' };   // USE RECOMMENDED (this save's answers; GENERAL's device-wide ones are left as they are)
 const QS_TAB = i => { const st = Math.min(72, Math.floor(612 / qsPages().length)); return { x: QS_BOARD.x + QS_BOARD.w - 6, y: 96 + i * st, w: 66, h: st - 6 }; };   // (9 tabs with the locker: a little tighter so the last ends on the board)
 const QS_BTN = { back: { x: 338, y: 630, w: 136, h: 54 }, rec: { x: 524, y: 630, w: 196, h: 54 }, next: { x: 768, y: 630, w: 136, h: 54 } };
 const QS_CARD = (i, y = 200, h = 300) => ({ x: 350 + i * 284, y, w: 262, h });
@@ -6118,6 +6505,9 @@ const QS_DEMO = {
       for (const wx of [-14, 14]) { ctx.beginPath(); ctx.arc(cx + wx, cy + 4, 4, 0, 7); ctx.fillStyle = RES.line; ctx.fill(); }
     }
   },
+  pencilOff(x, y, w, h, t) { dlPencilDemo(x, y, w, h, t, 0); },   // (player aging: the career pencil)
+  pencil(x, y, w, h, t) { dlPencilDemo(x, y, w, h, t, 1); },
+  pencilLg(x, y, w, h, t) { dlPencilDemo(x, y, w, h, t, 2); },
   tough(x, y, w, h, t) {   // a tackle, then he pops right up
     qsTurf(x, y, w, h); const u = (t % 3) / 3, cy = y + h * 0.62, meet = Math.min(1, u / 0.3), px = x + w * 0.5;
     const down = u > 0.3 && u < 0.6 ? Math.min(1, (u - 0.3) * 8) : u >= 0.6 ? Math.max(0, 1 - (u - 0.6) * 10) : 0;
@@ -6213,9 +6603,13 @@ const qsCardsOf = id => ({   // rows of [left, right] choices: { demo, name, lin
     { q: 'Scouting', y: 400, h: 180, c: [
       { demo: 'scouts', name: 'HIRE SCOUTS', line: 'Two scouts narrow down what each prospect really is.', on: () => SETTINGS.scouts !== false, set: () => qsSet('scouts', true), rec: true },
       { demo: 'simple', name: 'SIMPLE', line: 'One fuzzy grade per prospect. No staff to manage.', on: () => SETTINGS.scouts === false, set: () => qsSet('scouts', false) }] }],
-  realism: [{ q: 'Injuries', y: 196, h: 268, c: [
+  realism: [{ q: 'Injuries', y: 192, h: 180, c: [
     { demo: 'hurt', name: 'INJURIES ON', line: 'Big hits can knock players out for plays, games or weeks.', on: () => SETTINGS.injuries !== false, set: () => qsSet('injuries', true), rec: true },
-    { demo: 'tough', name: 'INJURIES OFF', line: 'Everyone always gets right back up.', on: () => SETTINGS.injuries === false, set: () => qsSet('injuries', false) }] }],
+    { demo: 'tough', name: 'INJURIES OFF', line: 'Everyone always gets right back up.', on: () => SETTINGS.injuries === false, set: () => qsSet('injuries', false) }] },
+    { q: 'Player aging', y: 400, h: 180, c: [
+      { demo: 'pencilOff', name: 'OFF', line: 'Nobody slows down. Only retirement ends a career.', on: () => declineMode() === 'off', set: () => qsSet('decline', 'off') },
+      { demo: 'pencil', name: 'MY TEAM', line: 'Your vets wear down with age and mileage.', on: () => declineMode() === 'mine', set: () => qsSet('decline', 'mine'), rec: true },
+      { demo: 'pencilLg', name: 'WHOLE LEAGUE', line: 'Every team ages the same way yours does.', on: () => declineMode() === 'league', set: () => qsSet('decline', 'league') }] }],
   refs: [{ q: 'Tap a card to turn it on or off', y: 220, h: 330, c: [   // (two toggles, not a left / right pick)
     { demo: 'flag', name: 'PENALTIES', line: 'Hold, grab or hit late and the flag flies.', on: () => SETTINGS.penalties !== false, set: () => qsSet('penalties', SETTINGS.penalties === false), rec: true },
     { demo: 'booth', name: 'BOOTH REVIEW', line: 'Close spots get a second look. Challenge the rest.', on: () => SETTINGS.booth !== false, set: () => qsSet('booth', SETTINGS.booth === false), rec: true }] }],

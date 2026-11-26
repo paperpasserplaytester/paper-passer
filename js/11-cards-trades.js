@@ -204,15 +204,8 @@ function drawPlayerCard(team, p, kr) {
     ctx.save(); ctx.translate(C.noteR.x + C.noteR.w / 2, C.noteR.y + C.noteR.h + 54); ctx.rotate(-0.06); ctx.strokeStyle = '#c0392b'; ctx.fillStyle = '#c0392b'; ctx.lineWidth = 3;
     ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; const sw = ctx.measureText('AT PEAK').width + 20; ctx.strokeRect(-sw / 2, -13, sw, 26); ctx.fillText('AT PEAK', 0, 1); ctx.restore();
   }
-  // age curve: growth years, prime, retirement risk (from offTick / retireOdds)
-  const ax = C.noteL.x + 12, aw = C.noteL.w - 24, ay = C.noteL.y + C.noteL.h + 16, ah = 24, ageY = a => a <= CARD_AGE.grow ? 0.35 + 0.65 * (a - CARD_AGE.from) / (CARD_AGE.grow - CARD_AGE.from) : a < CARD_AGE.late - 4 ? 1 : Math.max(0.15, 1 - 0.85 * (a - (CARD_AGE.late - 4)) / (CARD_AGE.to - CARD_AGE.late + 4));
-  const aX = a => ax + aw * (Math.max(CARD_AGE.from, Math.min(CARD_AGE.to, a)) - CARD_AGE.from) / (CARD_AGE.to - CARD_AGE.from);
-  ctx.strokeStyle = RES.dim; ctx.lineWidth = 2; ctx.beginPath();
-  for (let a = CARD_AGE.from; a <= CARD_AGE.to; a++) { const x = aX(a), y = ay + ah - ah * ageY(a); a === CARD_AGE.from ? ctx.moveTo(x, y) : ctx.lineTo(x, y); } ctx.stroke();
-  ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.arc(aX(p.age), ay + ah - ah * ageY(Math.max(CARD_AGE.from, Math.min(CARD_AGE.to, p.age))), 5, 0, Math.PI * 2); ctx.fill();
-  const ro = retireOdds(p), phase = p.age <= CARD_AGE.grow ? 'STILL GROWING' : p.age < CARD_AGE.late ? 'IN HIS PRIME' : 'LATE CAREER';
-  ctx.fillStyle = RES.line; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(`AGE ${p.age}: ${phase}`, ax, ay + ah + 16, aw);
-  if (ro > 0) ctx.fillText(ro < 0.15 ? 'RETIREMENT POSSIBLE' : ro < 0.35 ? 'RETIREMENT LIKELY' : ro < 0.6 ? 'RETIREMENT VERY LIKELY' : 'ABOUT TO RETIRE', ax, ay + ah + 34, aw);
+  // career pencil: growth, prime, decline, mileage, points lost, rust (dlCardPencil, the player decline screens at the end of this file)
+  dlCardPencil(p, C.noteL.x + 12, C.noteL.w - 24, C.noteL.y + C.noteL.h + 16, own);
 
   // left note: age, size, contract, value
   cardNote(C.noteL, -C.tilt, (w) => {
@@ -2490,7 +2483,7 @@ function goalXpBank(cr) {
   return add;
 }
 function goalEvent(ev, val = 1) {
-  if (LG_SAND) return;   // (a league tape being made)
+  if (LG_SAND || noCount()) return;   // (a league tape being made; a practice drill / a scrimmage)
   const g = goalsEnsure();
   const simming = state === 'sim' || simGame || simFast || simMode === 'offense';
   const defEv = DEF_EVS.has(ev);
@@ -2730,7 +2723,7 @@ function xpNudge() {
     const i = rosterPs(me).indexOf(c); if (i >= 0) { rosterView.page = Math.floor(i / ROSTER_CARDS.length); rosterView.sel = i; } xpNudgeAt = performance.now(); };
   offPopShow({ title: 'XP BANK', demo: { k: 'xpHalf', stars: c.potential }, xpBig: bank, player: { p: c, k: me, open: go }, lines: [`POTENTIAL +½★  ${xpcPotPrice(c)} XP`], btns: [{ label: 'LATER' }, { label: 'UPGRADE', green: true, on: go }] });
 }
-const xpcPotOpen = p => starsOfScore(ptsOf(p)) < XPC.pot.max && ptsOf(p) < ATTR_TOTAL;
+const xpcPotOpen = p => (starsOfScore(ptsOf(p)) < XPC.pot.max || p.dl > 0) && ptsOf(p) < ATTR_TOTAL;   // (p.dl = ceiling lost to decline: buyable back past the usual limit)
 const xpcPotPrice = p => Math.ceil(XPC.pot.base * Math.pow(XPC.pot.grow, (starsOfScore(ptsOf(p)) - 1) * 2) * (1 + XPC.pot.again * (p.potBuys || 0)));
 const xpcBoxes = p => { const caps = potAttrs(p, ptsOf(p)); return (ATTRS[p.group] || []).reduce((n, a) => n + Math.max(0, caps[a] - Math.round(p.raw[a])), 0); };   // empty boxes left under his potential
 const xpcUpgOpen = p => xpcBoxes(p) > (p.upg || 0);   // (a box must be left for it once his waiting upgrades are spent)
@@ -2747,9 +2740,9 @@ function xpcBuy(price, title, lines, go, demo) {   // pay `price` from the bank,
 }
 function xpcBoostPot(p) {
   if (!xpcPotOpen(p)) return;
-  const to = Math.min(ATTR_TOTAL, ptsOf(p) + STAR_HALF);
+  const back = p.dl > 0 ? Math.min(p.dl, STAR_HALF) : 0, to = Math.min(ATTR_TOTAL, ptsOf(p) + (back || STAR_HALF));   // (lost to decline: that much back first, not counted in potBuys)
   xpcBuy(xpcPotPrice(p), 'BOOST HIS POTENTIAL?', wrapLines(`${p.name}: potential ${starsOfScore(ptsOf(p))} to ${starsOfScore(to)} stars.`, 50), () => {
-    p.potPts = to; p.potFixed = true; p.potCaps = null; p.potential = starsOfScore(to); p.potBuys = (p.potBuys || 0) + 1;   // (potFixed: ptsOf keeps the ceiling exactly here; an injury can still take potential away, injuryPotential)
+    p.potPts = to; p.potFixed = true; p.potCaps = null; p.potential = starsOfScore(to); if (back) { p.dl -= back; if (p.dl <= 0) delete p.dl; } else p.potBuys = (p.potBuys || 0) + 1;   // (potFixed: ptsOf keeps the ceiling exactly here; an injury can still take potential away, injuryPotential)
     if (p.ask != null) p.ask = askOf(p);   // (an expiring contract's ask; trade value and the ask are worked out live everywhere else)
     recalcTeamStars();
   });
@@ -2813,9 +2806,10 @@ function xpcChoices(p) {
   const to = xpcTierTo(p), tierWhy = to ? xpcTierWhy(p) : p.ability ? 'TOP TIER ALREADY' : 'NO ABILITY YET';
   const L = [
     { t: to === 'X' ? 'ADD A STAR FACTOR' : 'ADD AN ABILITY', sub: p.ability ? `${abilName(p.ability)} goes up a tier` : 'He needs a fit first', price: to ? xpcTierPrice(p) : 0, why: tierWhy, star: to === 'X', go: () => xpcTierUp(p) },
-    { t: 'MORE POTENTIAL', sub: 'Half a star more to grow into', price: xpcPotPrice(p), why: xpcPotOpen(p) ? '' : 'POTENTIAL MAXED', go: () => xpcBoostPot(p) },
+    { t: 'MORE POTENTIAL', sub: p.dl > 0 ? 'Buy back what age took' : 'Half a star more to grow into', price: xpcPotPrice(p), why: xpcPotOpen(p) ? '' : 'POTENTIAL MAXED', go: () => xpcBoostPot(p) },
     { t: 'ADD XP', sub: 'One +1 to spend on an attribute', price: xpcUpgPrice(p), why: xpcUpgOpen(p) ? '' : 'NO EMPTY BOX LEFT', go: () => xpcQuickUpg(p) },
   ];
+  { const o = extOptions(p, 'xp').find(x => x.id === 'lon'); if (o) L.push({ t: 'LONGEVITY PROGRAM', sub: 'One more year in his pencil', price: o.xp, why: '', go: () => extLongevity(p) }); }   // (player decline: past prime, max DECLINE.ext.lon.max)
   for (const c of L) if (!c.why && xpBank() < c.price) c.why = `NEEDS ${c.price} XP`;
   return L;
 }
@@ -2861,6 +2855,7 @@ function drawXpcCard(p) {   // the glow on the UPGRADE tab when the XP nudge sen
 }
 const xpcTierShown = p => !!xpcTierTo(p) && !xpcTierWhy(p);   // (a player needs an ability before a star factor: FIT -> ABILITY -> STAR FACTOR)
 function xpcCardClick(pt, p) {   // true if the UPGRADE button took the click
+  if (dlPencilClick(pt)) return true;   // (the career pencil's MORE / LESS)
   if (!xpcCanBuy()) return false;
   if (inBtn(pt, XPC_ONE_BTN)) { xpcOneOpen(p); return true; }
   return false;
@@ -2897,6 +2892,7 @@ function homeNews() {
   const up = LEAGUE.upgNew || [], tr = LEAGUE.tradeNews || [];
   if (loadQuiet) { loadQuiet = false; LEAGUE.upgCoins = 0; LEAGUE.xpNew = 0; LEAGUE.xpSim = 0; coinFly = []; coinPending = 0; xpPending = 0; payToFly = 0; payFrom = null; }   // (v0.70: opened from the load screen: already banked, no tokens fly)
   try { celFineNews(); } catch (e) { console.warn('fines', e); }   // (v0.51: celebration fines from the last game)
+  try { dlHomeNews(); } catch (e) { console.warn('decline news', e); }   // (player decline: the farewell tour note, the unretirement phone)
   if (LEAGUE.upgCoins) {   // maxed-out players paid credits: explained the first time only, then they just fly from the ROSTER button to the credits box
     const n = LEAGUE.upgCoins; LEAGUE.upgCoins = 0;
     if (!LEAGUE.maxedTipSeen) { LEAGUE.maxedTipSeen = 1; offPopShow({ title: 'MAXED-OUT PLAYERS', lines: wrapLines(`Players with no potential left turned their XP into ${n} credits.`, 54) }); }
@@ -2982,6 +2978,8 @@ const TRADE = {
   peak: { QB: [27, 35], RB: [23, 27], WR: [24, 30], TE: [25, 30], OL: [25, 31], DL: [24, 30], LB: [24, 29], CB: [24, 30], S: [24, 30], K: [26, 38] },   // [grows toward his potential until, declines after] by position
   grow: 0.3, decline: { RB: 0.5, QB: 0.3, K: 0.2, def: 0.4 },   // stars a year gained before the peak (never past his potential) / lost after it
   retire: [35, 0.2],                                          // chance a year he retires: 0 up to this age (retireAge; QBs 3 later), + this for every year past it
+  ownFloorSt: 4,                                              // a contract year never counts below zero for a man rated this many stars or more (that year) who is in his prime (age <= his group's peak end)
+  negFut: 0.15,                                               // share of any other FUTURE contract year's surplus that counts when it is negative (a team can cut him; this season counts in full)
   floor: 0.5, tight: 0.9,                                     // the least a player is worth; x for an incoming player whose salary is more than the team's cap room
   slotGames: 8,                                               // projected draft slot: team rating at week 0, all record after this many games (redone once a week: projSlots)
   pos: { QB: [1.9, 1.5], EDGE: [1.25, 1.2], OT: [1.2, 1.1], WR: [1.1, 1.1], CB: [1.1, 1.1], DT: [1, 1], S: [0.85, 0.8], LB: [0.85, 0.8], G: [0.85, 0.7], TE: [0.8, 0.8], RB: [0.65, 0.6], K: [0.2, 0.15] },   // [value x, fair-salary x] (the draft board ranks by the first too)
@@ -3026,13 +3024,14 @@ function tvPlayer(p, m) {
   const best = Math.max(...ATTRS[p.group].map(a => p.raw[a])), M = m || TRADE.mode.neutral, [pv, ps] = TRADE.pos[tradeKey(p)];
   const mixSt = tvMix(p), PS = perfShift(p);   // (PS.shift = how he is playing, in stars: strongest now, fading by TV_PERF.fade a year)
   const [a0, a1] = TRADE.peak[p.group] || [24, 30], dec = TRADE.decline[p.group] || TRADE.decline.def, pot = Math.max(mixSt, p.potential || p.stars), ra = retireAge(p) - (p.group === 'QB' ? 3 : 0);
-  let v = 0, v0 = 0, alive = 1, st = mixSt;   // (v0 = the same without his play: the guard below)
-  const yearV = (s, own) => { s = Math.max(0.5, Math.min(5, s)); const net = lerpTab(TRADE.prod, s) * pv - (own ? payOf(p) : lerpTab(TRADE.pay, s) * ps) * TRADE.payTV; return !own && net <= 0 ? 0 : (own ? 1 : TRADE.resign) * net; };   // (nobody re-signs a man who isn't worth it)
+  let v = 0, v0 = 0, alive = 1, st = mixSt, age = p.age;   // (v0 = the same without his play: the guard below)
+  const yearV = (s, own, y) => { s = Math.max(0.5, Math.min(5, s)); const net = lerpTab(TRADE.prod, s) * pv - (own ? payOf(p) : lerpTab(TRADE.pay, s) * ps) * TRADE.payTV; return !own && net <= 0 ? 0 : own && net < 0 && s >= TRADE.ownFloorSt && age <= a1 ? 0 : (own ? (y && net < 0 ? TRADE.negFut : 1) : TRADE.resign) * net; };   // (nobody re-signs a man who isn't worth it; a star in his prime is never a minus while he is under contract)
   for (let y = 0; y < TRADE.horizon; y++) {
-    if (y) { const age = p.age + y; st = age <= a0 ? Math.min(pot, st + TRADE.grow) : age > a1 ? st - dec : st; alive *= 1 - Math.min(0.9, Math.max(0, (ra + y - TRADE.retire[0]) * TRADE.retire[1])); }
+    age = p.age + y;
+    if (y) { st = age <= a0 ? Math.min(pot, st + TRADE.grow) : age > a1 ? st - dec : st; alive *= 1 - Math.min(0.9, Math.max(0, (ra + y - TRADE.retire[0]) * TRADE.retire[1])); }
     const own = y < (p.years || 1), k = (y ? Math.pow(M.disc, y) : M.now) * alive;
-    v += yearV(st + PS.shift * Math.pow(TV_PERF.fade, y), own) * k;
-    if (PS.shift) v0 += yearV(st, own) * k;
+    v += yearV(st + PS.shift * Math.pow(TV_PERF.fade, y), own, y) * k;
+    if (PS.shift) v0 += yearV(st, own, y) * k;
   }
   v = Math.max(TRADE.floor, v);
   if (PS.shift) { v0 = Math.max(TRADE.floor, v0); v = Math.max(v0 * (1 - TV_PERF.maxMove), Math.min(v0 * (1 + TV_PERF.maxMove), v)); }   // (a man paid about what he produces would swing wildly on a small shift)
@@ -4831,3 +4830,325 @@ function drawSwapIcon(cx, cy) {
   }
 }
 
+// --- player decline screens (tunables DL_LOOK; engine in 09-season `// --- player decline` / `// --- longer careers`) ---------------
+// The card pencil (career left, prime, mileage, points lost, rust), PHYSICALS (offseason clipboard), the retirement letter (tear-off tabs),
+// the farewell tour note, the unretirement phone, the mentor tags. Popups are offPop customs (uiModal behind them), clocks read uiNow().
+const DL_LOOK = { body: '#f2c230', stripe: '#d9a514', wood: '#e8c79a', lead: '#3a3a3a', eraser: '#e88a9a', band: '#b9bfc4', cap: '#cfd6dc', smudge: 'rgba(232,120,150,0.4)',
+  red: '#c0392b', green: '#2e8b3e', board: '#a87a4a', paper: '#fffdf5',
+  startAge: 21, endOdds: 36, biteMi: 50, biteMax: 8, erase: 0.15, grow: 0.7, letterIn: 0.6, file: 0.6, tear: 0.5, ringS: 3, physRows: 8 };
+const DL_CARD = { more: false, rect: null, worn: false, grow: null };
+const dlEndAge = p => p.age + Math.max(0, DL_LOOK.endOdds - retireAge(p));   // (the age his retire odds turn high: the pencil's point)
+const dlEase = k => k <= 0 ? 0 : k >= 1 ? 1 : k * k * (3 - 2 * k);
+// a yellow school pencil from x to x + L, h tall: o = { cone (share of the length that is the sharpened wood), bites, erase (1 full .. 0.2), rust, lon (extender caps), seed }
+function dlPencil(x, y, L, h, o) {
+  const D = DL_LOOK, eW = Math.max(h * 0.3, h * 1.1 * (o.erase == null ? 1 : o.erase)), fW = h * 0.75, lead = h * 0.45, tx = x + L, bx = x + eW + fW;
+  const cx0 = Math.max(bx + 2, tx - Math.max(h * 1.3, (L - eW - fW) * (o.cone || 0)));
+  ctx.save(); ctx.lineWidth = 1.5; ctx.strokeStyle = RES.line; ctx.lineJoin = 'round';
+  if (o.rust) { ctx.fillStyle = D.smudge; ctx.beginPath(); ctx.ellipse(x - h * 0.5, y + h * 0.6, h * 0.9, h * 0.5, -0.3, 0, Math.PI * 2); ctx.fill(); }
+  for (let i = (o.lon || 0) - 1; i >= 0; i--) { const cw = h * 0.6 * (i + 1) + eW * 0.7; ctx.fillStyle = D.cap; ctx.fillRect(x - h * 0.6 * (i + 1), y - 2, cw, h + 4); ctx.strokeRect(x - h * 0.6 * (i + 1), y - 2, cw, h + 4); }
+  ctx.fillStyle = D.eraser; ctx.beginPath(); ctx.moveTo(x + h * 0.25, y); ctx.lineTo(x + eW, y); ctx.lineTo(x + eW, y + h); ctx.lineTo(x + h * 0.25, y + h); ctx.quadraticCurveTo(x, y + h / 2, x + h * 0.25, y); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = D.band; ctx.fillRect(x + eW, y - 1, fW, h + 2); ctx.strokeRect(x + eW, y - 1, fW, h + 2);
+  ctx.beginPath(); for (let i = 1; i < 3; i++) { ctx.moveTo(x + eW + fW * i / 3, y - 1); ctx.lineTo(x + eW + fW * i / 3, y + h + 1); } ctx.stroke();
+  ctx.fillStyle = D.body; ctx.fillRect(bx, y, cx0 - bx, h); ctx.fillStyle = D.stripe; ctx.fillRect(bx, y + h * 0.36, cx0 - bx, h * 0.28); ctx.strokeRect(bx, y, cx0 - bx, h);
+  ctx.fillStyle = D.wood; ctx.beginPath(); ctx.moveTo(cx0, y); ctx.lineTo(tx - lead, y + h * 0.33); ctx.lineTo(tx - lead, y + h * 0.67); ctx.lineTo(cx0, y + h); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = D.body; ctx.beginPath(); ctx.moveTo(cx0, y); for (let i = 0; i < 3; i++) ctx.quadraticCurveTo(cx0 + h * 0.35, y + h * (i + 0.5) / 3, cx0, y + h * (i + 1) / 3); ctx.closePath(); ctx.fill(); ctx.stroke();   // (where the paint ends)
+  ctx.fillStyle = D.lead; ctx.beginPath(); ctx.moveTo(tx - lead, y + h * 0.33); ctx.lineTo(tx, y + h / 2); ctx.lineTo(tx - lead, y + h * 0.67); ctx.closePath(); ctx.fill();
+  ctx.lineWidth = 1.2;
+  for (let i = 0; i < (o.bites || 0); i++) {   // tooth marks (mileage): spread along the paint, from his name so they never move
+    const k = ((o.seed || 0.37) * 7.3 + i * 0.618) % 1, mx = bx + 5 + (cx0 - bx - 10) * k;
+    ctx.beginPath(); ctx.arc(mx, y, h * 0.17, 0, Math.PI); ctx.stroke(); ctx.beginPath(); ctx.arc(mx + 3, y + h, h * 0.14, Math.PI, Math.PI * 2); ctx.stroke();
+  }
+  ctx.restore();
+}
+function dlApple(x, y, r) {   // a teacher's apple on a desk line (the kid with a mentor)
+  ctx.save(); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(x - r * 1.8, y + r * 1.05); ctx.lineTo(x + r * 1.8, y + r * 1.05); ctx.stroke();
+  ctx.fillStyle = DL_LOOK.red; ctx.beginPath(); ctx.arc(x - r * 0.35, y, r * 0.75, 0, Math.PI * 2); ctx.arc(x + r * 0.35, y, r * 0.75, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#6b4a1e'; ctx.beginPath(); ctx.moveTo(x, y - r * 0.6); ctx.lineTo(x + r * 0.2, y - r * 1.2); ctx.stroke();
+  ctx.fillStyle = DL_LOOK.green; ctx.beginPath(); ctx.ellipse(x + r * 0.55, y - r * 1.05, r * 0.45, r * 0.22, -0.5, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+// the player card's career pencil (replaced the age-curve hill): x, w = the slot, y = its top. own = your player (wear shown when decline is on)
+function dlCardPencil(p, ax, aw, ay, own) {
+  const D = DL_LOOK, on = !!own && declineOn(); let end = dlEndAge(p);
+  const G = DL_CARD.grow;
+  if (G && G.p === p) { const k = (uiNow() - G.t0) / 1000 / D.grow; if (k < 1) { end -= 1 - dlEase(k); menuMoving = true; } else DL_CARD.grow = null; }   // (LONGEVITY PROGRAM: the pencil grows)
+  const lonW = (p.lon || 0) * 18 * 0.6, span = Math.max(1, end - D.startAge), left = Math.max(0, end - p.age), pe = primeEnd(p), h = 18;
+  const L = (aw - 8 - lonW) * Math.max(0.12, Math.min(1, left / span)), cone = left > 0 ? Math.max(0, Math.min(1, (end - Math.max(p.age, pe)) / left)) : 1;
+  const lost = (p.dl || 0) + (p.da || 0), bites = on ? Math.min(D.biteMax, Math.floor(miOf(p) / D.biteMi)) : 0, rust = on ? rustOf(p) : 0;
+  dlPencil(ax + 4 + lonW, ay + 3, L, h, { cone, bites, erase: on ? Math.max(0.2, 1 - D.erase * lost) : 1, rust: rust > 0, lon: p.lon || 0, seed: nameHash(p.name) });
+  const x = on ? dlExtOf(p) : null;
+  if (x && x.kid) dlApple(ax + 4 + lonW + L + 16, ay + 10, 7);
+  if (on && p.fw === LEAGUE.year) {   // farewell tour ribbon
+    ctx.save(); ctx.fillStyle = '#2d4f7a'; ctx.fillRect(ax + aw - 132, ay - 20, 132, 18); ctx.fillStyle = '#fff'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('FAREWELL TOUR', ax + aw - 66, ay - 11); ctx.restore();
+  }
+  const ro = retireOdds(p), phase = p.age <= 28 && p.potential > p.stars ? 'STILL GROWING' : p.age <= pe ? 'IN HIS PRIME' : ro < 0.35 ? 'WEARING DOWN' : 'LAST LEGS';
+  let l1 = `AGE ${p.age}: ${phase}`, l2 = ro > 0 ? (ro < 0.15 ? 'RETIREMENT POSSIBLE' : ro < 0.35 ? 'RETIREMENT LIKELY' : ro < 0.6 ? 'RETIREMENT VERY LIKELY' : 'ABOUT TO RETIRE') : '';
+  if (on && DL_CARD.more) { l1 = `MILEAGE ${Math.round(miOf(p))}  PRIME UNTIL ${pe}`; l2 = `LOST ${p.dl || 0} CEILING  ${p.da || 0} POINTS${rust ? `  RUST -${rust}` : ''}`; }
+  ctx.fillStyle = RES.line; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(l1, ax, ay + 40, on ? aw - 52 : aw); if (l2) ctx.fillText(l2, ax, ay + 58, aw);
+  if (on) { ctx.fillStyle = RES.dim; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'right'; ctx.fillText(DL_CARD.more ? 'LESS' : 'MORE', ax + aw, ay + 40); }
+  DL_CARD.rect = on ? { x: ax, y: ay - 2, w: aw, h: 50 } : null;
+  DL_CARD.worn = on && (lost > 0 || rust > 0 || bites > 0);
+}
+const dlPencilClick = pt => !!(DL_CARD.rect && inBtn(pt, DL_CARD.rect) && (DL_CARD.more = !DL_CARD.more, true));
+// questionnaire demo: 0 = off (the pencil only gets shorter), 1 = yours wears down, 2 = two teams' pencils wear down
+function dlPencilDemo(x, y, w, h, t, mode) {
+  ctx.save(); ctx.fillStyle = '#e9dcc0'; ctx.fillRect(x, y, w, h);
+  const u = (t % 4) / 4, rows = mode === 2 ? [0.38, 0.68] : [0.52];
+  rows.forEach((ry, i) => {
+    const uu = (u + i * 0.3) % 1, L = w * 0.82 * (1 - 0.5 * uu);
+    dlPencil(x + w * 0.1, y + h * ry - 9, L, 18, { cone: 0.2 + 0.6 * uu, bites: mode ? Math.floor(uu * 6) : 0, erase: mode ? 1 - 0.8 * uu : 1, seed: 0.21 + i * 0.4 });
+  });
+  ctx.restore();
+}
+// MENTOR sticker on the vet's roster card, an apple on the kid's (roster cards: rosterCard)
+function dlRosterTag(p, bb, team) {
+  if (!bb || !declineFor(team)) return;
+  const x = dlExtOf(p); if (!x) return;
+  if (x.mentor) {
+    const w = 70, h = 30; ctx.save(); ctx.translate(bb.x + 6 + w / 2, bb.y - 6 + h / 2); ctx.rotate(-0.08);
+    ctx.fillStyle = '#fff'; ctx.fillRect(-w / 2, -h / 2, w, h); ctx.fillStyle = DL_LOOK.red; ctx.fillRect(-w / 2, -h / 2, w, 11);
+    ctx.strokeStyle = 'rgba(120,100,70,0.5)'; ctx.lineWidth = 1; ctx.strokeRect(-w / 2, -h / 2, w, h);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff'; ctx.font = 'bold 8px monospace'; ctx.fillText('HELLO', 0, -h / 2 + 6);
+    ctx.fillStyle = DL_LOOK.red; ctx.font = 'bold 13px monospace'; ctx.fillText('MENTOR', 0, 6); ctx.restore();
+  }
+  if (x.kid) dlApple(bb.x + bb.w - 16, bb.y + 14, 7);
+}
+// a popup's dim + modal; returns nothing
+const dlDim = () => { ctx.fillStyle = 'rgba(20,14,6,0.5)'; ctx.fillRect(0, 0, W, H); uiModal(); };
+const dlCustom = (draw, click) => ({ draw, click, wheel() {}, arrows() {} });
+function dlCardView(S) {   // a clicked row's player page (only BACK works), like the retirement cards
+  popBtnDraw = true; cardStatsOnly = true;
+  try { paperBg(); drawPlayerCard(S.view.team, S.view.p, null); } catch (e) { S.view = null; }
+  cardStatsOnly = false; popBtnDraw = false;
+}
+// --- PHYSICALS (offseason: who lost a step, who held up, who is rusty) ---
+function dlPhysShow() {
+  const P = OFF && OFF.phys; if (!P || !season) return;
+  const me = season.team, R = ROSTER[me] || [], mine = P.mine.filter(r => R.includes(r.p)), lg = declineLeague() ? P.lg.filter(r => r.k).slice(0, 24) : [];
+  if (!mine.length && !lg.length) return;
+  const sc = r => r.dl + r.a.length * 2 + (r.rust ? 0.5 : 0);
+  mine.sort((a, b) => sc(b) - sc(a)); lg.sort((a, b) => sc(b) - sc(a));
+  const S = { tab: mine.length ? 0 : 1, page: 0, view: null, tabs: [mine, lg], rows: [], b: {} };
+  offPopShow({ title: 'PHYSICALS', custom: dlCustom(() => dlPhysDraw(S), pt => dlPhysClick(S, pt)) });
+}
+function dlPhysLine(lines) {   // the new-season summary: one line (a fully simmed offseason still says it)
+  const P = OFF && OFF.phys; if (!P || !season) return;
+  const R = ROSTER[season.team] || [], n = P.mine.filter(r => R.includes(r.p) && (r.dl || r.a.length)).length;
+  if (n) lines.push(`  PHYSICALS: ${n} vet${n > 1 ? 's' : ''} lost a step.`);
+}
+const DL_PHYS = { x: 300, y: 28, w: 680, h: 664, rowY: 160, rowH: 56 };
+function dlPhysDraw(S) {
+  if (S.view) return dlCardView(S);
+  const D = DL_LOOK, B = DL_PHYS, list = S.tabs[S.tab], per = D.physRows, pages = Math.max(1, Math.ceil(list.length / per));
+  dlDim();
+  ctx.save();
+  ctx.fillStyle = 'rgba(40,25,5,0.35)'; ctx.fillRect(B.x + 6, B.y + 8, B.w, B.h);
+  ctx.fillStyle = D.board; ctx.fillRect(B.x, B.y, B.w, B.h); ctx.strokeStyle = '#6b4a24'; ctx.lineWidth = 2; ctx.strokeRect(B.x, B.y, B.w, B.h);
+  const px = B.x + 24, py = B.y + 40, pw = B.w - 48, ph = B.h - 60;
+  ctx.fillStyle = RES.bright; ctx.fillRect(px, py, pw, ph); ctx.strokeStyle = 'rgba(120,100,70,0.45)'; ctx.lineWidth = 1; ctx.strokeRect(px, py, pw, ph);
+  ctx.fillStyle = '#9aa3ab'; ctx.fillRect(B.x + B.w / 2 - 70, B.y + 16, 140, 40); ctx.strokeStyle = '#5d656c'; ctx.strokeRect(B.x + B.w / 2 - 70, B.y + 16, 140, 40);   // the clip
+  ctx.fillStyle = '#f3e3a0'; ctx.fillRect(px, py, 30, ph); ctx.strokeStyle = RES.line; ctx.lineWidth = 1;   // height-chart ruler
+  ctx.beginPath(); for (let yy = py + 6; yy < py + ph; yy += 10) { const big = ((yy - py - 6) / 10) % 5 === 0; ctx.moveTo(px + 30, yy); ctx.lineTo(px + 30 - (big ? 14 : 7), yy); } ctx.stroke();
+  ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 30px monospace'; ctx.fillText('PHYSICALS', px + pw / 2 + 15, py + 34);
+  ctx.restore();
+  S.b.tabs = [];
+  if (S.tabs[1].length) ['YOUR TEAM', 'AROUND THE LEAGUE'].forEach((t, i) => { const b = S.b.tabs[i] = { x: px + 60 + i * 280, y: py + 62, w: 260, h: 36 }; if (S.tabs[i].length) menuBtn(b, t, S.tab === i ? SEL : RES.bright, 16); });
+  S.rows = [];
+  list.slice(S.page * per, S.page * per + per).forEach((r, i) => {
+    const y = B.rowY + 10 + i * B.rowH, team = r.k || season.team, rb = { x: px + 40, y, w: pw - 50, h: B.rowH - 4, r };
+    S.rows.push(rb);
+    ctx.save(); ctx.strokeStyle = 'rgba(120,140,190,0.35)'; ctx.beginPath(); ctx.moveTo(px + 36, y + B.rowH - 2); ctx.lineTo(px + pw - 8, y + B.rowH - 2); ctx.stroke(); ctx.restore();
+    try { drawPortrait(r.p, px + 62, y + 46, 1.45, team); } catch (e) {}
+    ctx.fillStyle = RES.line; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = 'bold 18px monospace'; ctx.fillText(r.p.name, px + 96, y + 17, 250);
+    ctx.fillStyle = RES.dim; ctx.font = 'bold 13px monospace'; ctx.fillText(`${r.k ? r.k + ' ' : ''}${r.p.tag || r.p.group}  AGE ${r.p.age}`, px + 96, y + 37, 250);
+    let mx = px + 370;
+    for (let j = 0; j < r.dl; j++, mx += 22) dlArrow(mx, y + 26, DL_LOOK.red);   // (a ceiling point)
+    for (const a of r.a) { dlArrow(mx, y + 26, DL_LOOK.red); ctx.fillStyle = DL_LOOK.red; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'left'; ctx.fillText(a.toUpperCase(), mx + 10, y + 27); mx += 52; }
+    if (r.rust) { dlBandAid(mx + 18, y + 26); mx += 52; }
+    if (!r.dl && !r.a.length && !r.rust) dlCheck(px + 382, y + 26);
+  });
+  S.b.prev = pages > 1 && S.page > 0 ? { x: px + 40, y: py + ph - 56, w: 80, h: 44 } : null;
+  S.b.next = pages > 1 && S.page < pages - 1 ? { x: px + pw - 260, y: py + ph - 56, w: 80, h: 44 } : null;
+  if (S.b.prev) menuBtn(S.b.prev, '<', RES.bright, 22);
+  if (S.b.next) menuBtn(S.b.next, '>', RES.bright, 22);
+  S.b.done = { x: px + pw - 170, y: py + ph - 56, w: 160, h: 44 }; menuBtn(S.b.done, 'DONE', '#9be09b', 20);
+}
+function dlArrow(x, y, c) { ctx.save(); ctx.strokeStyle = c; ctx.fillStyle = c; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(x, y - 12); ctx.lineTo(x, y + 6); ctx.stroke(); ctx.beginPath(); ctx.moveTo(x - 6, y + 3); ctx.lineTo(x, y + 12); ctx.lineTo(x + 6, y + 3); ctx.closePath(); ctx.fill(); ctx.restore(); }
+function dlCheck(x, y) { ctx.save(); ctx.strokeStyle = DL_LOOK.green; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(x - 10, y); ctx.lineTo(x - 2, y + 9); ctx.lineTo(x + 14, y - 11); ctx.stroke(); ctx.restore(); }
+function dlBandAid(x, y) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(-0.35); ctx.fillStyle = '#e8b98a'; ctx.strokeStyle = 'rgba(120,80,40,0.6)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.ellipse(0, 0, 22, 8, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.fillStyle = '#f6dcc0'; ctx.fillRect(-7, -6, 14, 12);
+  ctx.fillStyle = 'rgba(120,80,40,0.5)'; for (const dx of [-15, -11, 11, 15]) { ctx.beginPath(); ctx.arc(dx, 0, 1.2, 0, Math.PI * 2); ctx.fill(); } ctx.restore();
+}
+function dlPhysClick(S, pt) {
+  if (S.view) { if (inBtn(pt, BACK_BTN)) S.view = null; return; }
+  const b = S.b;
+  if (b.done && inBtn(pt, b.done)) { offPopClose(); return; }
+  if (b.prev && inBtn(pt, b.prev)) { S.page--; return; }
+  if (b.next && inBtn(pt, b.next)) { S.page++; return; }
+  for (let i = 0; i < (b.tabs || []).length; i++) if (b.tabs[i] && S.tabs[i].length && inBtn(pt, b.tabs[i])) { S.tab = i; S.page = 0; return; }
+  const r = S.rows.find(x => inBtn(pt, x));
+  if (r) S.view = { p: r.r.p, team: r.r.k || season.team };
+}
+// --- the retirement letter (one per retiring player of yours: OFF.retireAsk) ---
+const dlLettersShow = () => { for (const x of OFF.retireAsk || []) offPopShow({ title: 'A LETTER', custom: dlLetterCtl(x.p) }); };
+const DL_LETTER = { x: 360, y: 70, w: 560, h: 430, tabH: 54, env: { x: 400, y: 520, w: 480, h: 170 } };
+const DL_TAB = { oneMore: 'ONE MORE YEAR', ring: 'CHASE A RING', record: 'CHASE THE RECORD', mentor: 'MENTOR THE KID', go: 'LET HIM GO' };
+function dlLetterCtl(p) {
+  const S = { p, t0: 0, opts: null, torn: null, res: null, resT: 0, b: {} };
+  return dlCustom(() => dlLetterDraw(S), pt => dlLetterClick(S, pt));
+}
+function dlLetterDraw(S) {
+  const D = DL_LOOK, Lr = DL_LETTER, E = Lr.env, p = S.p, now = uiNow();
+  if (!S.t0) { S.t0 = now; S.opts = [...extOptions(p, 'retire').filter(o => DL_TAB[o.id]), { id: 'go' }]; }
+  dlDim();
+  const kIn = dlEase((now - S.t0) / 1000 / D.letterIn), kOut = S.res === 'go' || S.res === 'no' ? dlEase((now - S.resT) / 1000 / D.file - 0.8) : 0;
+  if (kIn < 1 || (S.res && (now - S.resT) / 1000 < D.file + 1)) menuMoving = true;
+  const ly = E.y - (E.y - Lr.y) * kIn + (E.y - Lr.y) * kOut, x = Lr.x, w = Lr.w, h = Lr.h;
+  ctx.save();
+  ctx.fillStyle = '#d9c38f'; ctx.fillRect(E.x, E.y, E.w, E.h); ctx.strokeStyle = 'rgba(90,60,20,0.6)'; ctx.lineWidth = 1.5; ctx.strokeRect(E.x, E.y, E.w, E.h);   // envelope back
+  ctx.beginPath(); ctx.rect(0, 0, W, E.y + 40); ctx.clip();   // (the letter slides out of the envelope's mouth)
+  ctx.fillStyle = 'rgba(40,25,5,0.25)'; ctx.fillRect(x + 6, ly + 7, w, h);
+  ctx.fillStyle = RES.bright; ctx.fillRect(x, ly, w, h); ctx.strokeStyle = 'rgba(120,100,70,0.45)'; ctx.lineWidth = 1; ctx.strokeRect(x, ly, w, h);
+  ctx.strokeStyle = 'rgba(120,150,210,0.35)'; ctx.beginPath(); for (let yy = ly + 70; yy < ly + h - Lr.tabH - 10; yy += 34) { ctx.moveTo(x + 20, yy); ctx.lineTo(x + w - 20, yy); } ctx.stroke();
+  const yrs = Math.max(1, yrsPro(p));
+  ctx.fillStyle = RES.line; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.font = 'italic bold 22px monospace';
+  ['Coach,', `${yrs} seasons. My legs say it is time.`, 'Thank you for every snap.', `- ${p.name}`].forEach((t, i) => ctx.fillText(t, x + 30, ly + 64 + i * 34 + (i === 3 ? 34 : 0), w - 170));
+  const fx = x + w - 120, fy = ly + 24;   // yearbook photo, paper-clipped
+  ctx.fillStyle = '#fff'; ctx.fillRect(fx, fy, 96, 112); ctx.strokeStyle = 'rgba(120,100,70,0.5)'; ctx.strokeRect(fx, fy, 96, 112);
+  try { drawPortrait(p, fx + 48, fy + 96, 2.6, season.team); } catch (e) {}
+  ctx.strokeStyle = '#8f99a3'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(fx + 30, fy + 26); ctx.lineTo(fx + 30, fy - 10); ctx.arc(fx + 37, fy - 10, 7, Math.PI, 0); ctx.lineTo(fx + 44, fy + 16); ctx.stroke();
+  if (S.res === 'go' || S.res === 'no') {   // he signs the yearbook
+    ctx.strokeStyle = '#1d3a8a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(fx + 8, fy + 92); ctx.bezierCurveTo(fx + 30, fy + 60, fx + 40, fy + 110, fx + 58, fy + 80); ctx.bezierCurveTo(fx + 66, fy + 70, fx + 78, fy + 100, fx + 90, fy + 84); ctx.stroke();
+  }
+  const ty = ly + h - Lr.tabH, n = S.opts.length, tw = w / n;
+  ctx.setLineDash([5, 4]); ctx.strokeStyle = RES.dim; ctx.beginPath(); ctx.moveTo(x, ty); ctx.lineTo(x + w, ty); ctx.stroke(); ctx.setLineDash([]);
+  S.b.tabs = [];
+  S.opts.forEach((o, i) => {
+    const tx = x + i * tw, torn = S.torn && S.torn.i === i, kt = torn ? dlEase((now - S.torn.t0) / 1000 / D.tear) : 0, broke = o.id === 'oneMore' && LEAGUE.coins < o.cost;
+    ctx.save(); if (torn) { ctx.translate(tx + tw / 2, ty + Lr.tabH / 2 + 260 * kt * kt); ctx.rotate(0.6 * kt); ctx.translate(-(tx + tw / 2), -(ty + Lr.tabH / 2)); ctx.globalAlpha = 1 - kt; }
+    ctx.fillStyle = broke ? '#e4e0d6' : RES.bright; ctx.fillRect(tx + 1, ty + 1, tw - 2, Lr.tabH - 2);
+    if (i) { ctx.setLineDash([3, 3]); ctx.strokeStyle = RES.dim; ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(tx, ty + Lr.tabH); ctx.stroke(); ctx.setLineDash([]); }
+    ctx.fillStyle = broke ? RES.dim : o.id === 'go' ? DL_LOOK.red : RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `bold ${n > 3 ? 12 : 14}px monospace`;
+    ctx.fillText(DL_TAB[o.id], tx + tw / 2, ty + (o.cost ? 18 : 27), tw - 8);
+    if (o.cost) { ctx.font = 'bold 12px monospace'; ctx.fillText(`${o.cost} CREDITS`, tx + tw / 2, ty + 38, tw - 8); }
+    ctx.restore();
+    if (!torn) S.b.tabs[i] = { x: tx, y: ty, w: tw, h: Lr.tabH, o, broke };
+  });
+  if (S.res && S.res !== 'go') {   // the stamp
+    const txt = S.res === 'no' ? 'HE SAID NO' : 'ONE MORE YEAR', k = Math.min(1, (now - S.resT) / 250);
+    ctx.save(); ctx.translate(x + w / 2 - 50, ly + h / 2 - 10); ctx.rotate(-0.18); ctx.scale(2 - k, 2 - k); ctx.globalAlpha = k;
+    ctx.strokeStyle = DL_LOOK.red; ctx.fillStyle = DL_LOOK.red; ctx.lineWidth = 4; ctx.font = 'bold 34px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const sw = ctx.measureText(txt).width + 30; ctx.strokeRect(-sw / 2, -28, sw, 56); ctx.fillText(txt, 0, 2); ctx.restore();
+  }
+  ctx.restore();
+  ctx.fillStyle = '#e6d3a0'; ctx.beginPath(); ctx.moveTo(E.x, E.y + 40); ctx.lineTo(E.x + E.w / 2, E.y + E.h * 0.7); ctx.lineTo(E.x + E.w, E.y + 40); ctx.lineTo(E.x + E.w, E.y + E.h); ctx.lineTo(E.x, E.y + E.h); ctx.closePath(); ctx.fill();   // envelope front
+  ctx.strokeStyle = 'rgba(90,60,20,0.6)'; ctx.lineWidth = 1.5; ctx.stroke();
+  S.b.skip = S.res ? null : { x: 1060, y: 40, w: 170, h: 48 };
+  S.b.ok = S.res ? { x: W / 2 - 90, y: 632, w: 180, h: 54 } : null;
+  if (S.b.skip) menuBtn(S.b.skip, 'SKIP', RES.bright, 18);
+  if (S.b.ok) menuBtn(S.b.ok, 'OK', '#9be09b', 22);
+}
+function dlLetterClick(S, pt) {
+  const b = S.b, p = S.p;
+  if (b.ok && inBtn(pt, b.ok)) { offPopClose(); return; }
+  if (b.skip && inBtn(pt, b.skip)) { retireLetGo(p); offPopClose(); return; }
+  if (S.res || (uiNow() - S.t0) / 1000 < DL_LOOK.letterIn) return;
+  const i = (b.tabs || []).findIndex(t => t && inBtn(pt, t)); if (i < 0) return;
+  const t = b.tabs[i]; if (t.broke) return;
+  let res;
+  if (t.o.id === 'go') { retireLetGo(p); res = 'go'; }
+  else if (t.o.id === 'oneMore') { const r = extOneMore(p); if (r == null) return; res = r ? 'more' : 'no'; if (!r) retireLetGo(p); }
+  else { if (!extChase(p, t.o.id)) return; res = 'more'; }
+  S.torn = { i, t0: uiNow() }; S.res = res; S.resT = uiNow();
+}
+// --- home screen: the farewell tour note (preseason) and the unretirement phone ---
+function dlHomeNews() {
+  if (!season || !declineFor(season.team) || season.offseason) return;
+  if (LEAGUE.dlCall && !LEAGUE.dlCall.shown) { LEAGUE.dlCall.shown = 1; offPopShow({ title: 'PHONE', custom: dlPhoneCtl() }); }
+  if (!season.played && LEAGUE.fwAsk !== LEAGUE.year) {
+    LEAGUE.fwAsk = LEAGUE.year;
+    const c = farewellCands().sort((a, b) => b.stars - a.stars)[0];
+    if (c) offPopShow({ title: 'FAREWELL TOUR', custom: dlFarewellCtl(c) });
+  }
+}
+function dlFarewellCtl(p) {
+  const S = { b: {} }, N = { x: 410, y: 150, w: 460, h: 330 };
+  return dlCustom(() => {
+    dlDim();
+    cardNote(N, -0.03, (w, h) => {
+      try { drawPortrait(p, 80, 150, 3, season.team); } catch (e) {}
+      ctx.fillStyle = RES.line; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = 'bold 22px monospace'; ctx.fillText(p.name, 150, 70, w - 165);
+      ctx.font = 'bold 15px monospace'; ctx.fillStyle = '#5a4a20'; ctx.fillText(`${p.tag || p.group}  AGE ${p.age}`, 150, 98, w - 165);
+      ctx.font = 'italic bold 18px monospace'; ctx.fillStyle = RES.line; wrapLines('One last season. Then he hangs them up.', 22).forEach((l, i) => ctx.fillText(l, 150, 140 + i * 24, w - 165));
+    });
+    S.b.yes = { x: N.x + 250, y: N.y + N.h - 80, w: 180, h: 54 }; S.b.no = { x: N.x + 40, y: N.y + N.h - 80, w: 180, h: 54 };
+    menuBtn(S.b.no, 'NOT YET', RES.bright, 20); menuBtn(S.b.yes, 'ACCEPT', '#9be09b', 20);
+  }, pt => {
+    if (inBtn(pt, S.b.yes || {})) {
+      if (extFarewell(p)) try { postNote('farewell', { p: p.name, team: pTeam(season.team), yrs: Math.max(1, yrsWith(p)) }, { w: 9, team: season.team }); } catch (e) { console.warn('post', e); }
+      offPopClose();
+    } else if (inBtn(pt, S.b.no || {})) offPopClose();
+  });
+}
+function dlPhoneCtl() {
+  const S = { t0: 0, ans: false, res: null, rang: false, b: {} }, P = { x: W / 2 - 90, y: 210, w: 180, h: 150 };
+  return dlCustom(() => {
+    const c = LEAGUE.dlCall || S.c, now = uiNow(); if (!S.t0) { S.t0 = now; S.c = c; }
+    if (!S.rang) { S.rang = true; try { sndRec('phone', 0.8); } catch (e) {} }
+    dlDim();
+    if (!S.ans) {
+      const t = (now - S.t0) / 1000, ring = t < DL_LOOK.ringS, sh = ring ? Math.sin(t * 40) * 4 * (Math.floor(t * 2) % 2 ? 0 : 1) : 0;
+      if (ring) menuMoving = true;
+      ctx.save(); ctx.translate(P.x + P.w / 2 + sh, P.y + P.h / 2); ctx.fillStyle = '#3a3a3a'; ctx.strokeStyle = '#111'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(-70, 60); ctx.lineTo(-50, -10); ctx.lineTo(50, -10); ctx.lineTo(70, 60); ctx.closePath(); ctx.fill(); ctx.stroke();   // body
+      ctx.beginPath(); ctx.ellipse(0, -30, 82, 18, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();   // handset
+      ctx.fillStyle = '#ddd'; ctx.beginPath(); ctx.arc(0, 26, 22, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#3a3a3a'; for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4.6 - 0.4; ctx.beginPath(); ctx.arc(Math.cos(a) * 14, 26 + Math.sin(a) * 14, 3.2, 0, Math.PI * 2); ctx.fill(); }
+      if (ring) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; for (const s of [-1, 1]) for (let i = 1; i <= 2; i++) { ctx.beginPath(); ctx.arc(0, -20, 90 + i * 16, s > 0 ? -0.5 : Math.PI - 0.5, s > 0 ? 0.5 : Math.PI + 0.5); ctx.stroke(); } }
+      ctx.restore();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('Pick up the phone', W / 2, P.y + P.h + 50);
+      return;
+    }
+    const N = { x: 410, y: 160, w: 460, h: 320 };
+    cardNote(N, 0.02, (w) => {
+      try { drawPortrait(c.p, 80, 150, 3, season.team); } catch (e) {}
+      ctx.fillStyle = RES.line; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = 'bold 22px monospace'; ctx.fillText(c.p.name, 150, 70, w - 165);
+      ctx.font = 'italic bold 18px monospace';
+      wrapLines(S.res === 'cap' ? 'No cap room. He wishes you luck.' : 'I still have it, Coach. Need me?', 22).forEach((l, i) => ctx.fillText(l, 150, 120 + i * 24, w - 165));
+    });
+    S.b = S.res ? { ok: { x: W / 2 - 90, y: N.y + N.h - 80, w: 180, h: 54 } } : { no: { x: N.x + 40, y: N.y + N.h - 80, w: 180, h: 54 }, yes: { x: N.x + 250, y: N.y + N.h - 80, w: 180, h: 54 } };
+    if (S.b.ok) menuBtn(S.b.ok, 'OK', RES.bright, 20); else { menuBtn(S.b.no, 'NO', RES.bright, 20); menuBtn(S.b.yes, 'YES', '#9be09b', 20); }
+  }, pt => {
+    if (!S.ans) { if (inBtn(pt, { x: P.x - 40, y: P.y - 40, w: P.w + 80, h: P.h + 80 })) S.ans = true; return; }
+    if (S.b.ok && inBtn(pt, S.b.ok)) { offPopClose(); return; }
+    if (S.b.yes && inBtn(pt, S.b.yes)) { const r = unretAnswer(true); if (r === false) S.res = 'cap'; else offPopClose(); return; }
+    if (S.b.no && inBtn(pt, S.b.no)) { unretAnswer(false); offPopClose(); }
+  });
+}
+// the formation view (depth chart): a pencil line from a mentored kid's card to his mentor's; a mentor who isn't on this page = a MENTOR tag
+// with his name under the kid's card (view units, inside drawFormView's zoom; looks only, no hit areas)
+function dlFormLines(team, L, people, C, over) {   // over false = the lines (drawn before the cards: only the gaps show), true = the bench mentors' tags
+  if (!declineFor(team)) return;
+  const at = new Map(); for (const c of L) { const p = people[c.i]; if (p) at.set(p, c); }
+  ctx.save(); ctx.strokeStyle = RES.line; ctx.lineCap = 'round';
+  try { for (const [p, c] of at) {
+    const x = dlExtOf(p); if (!x || !x.kid) continue;
+    const v = (ROSTER[team] || []).find(q => q.name === x.kid), vc = v && at.get(v), kx = c.bb.x + C.w / 2, ky = c.bb.y + C.h + 54;
+    if (vc) {   // both on the page: a sketched curve card centre to card centre (twice, a hair apart: pencil)
+      if (over) continue;
+      const ax = c.bb.x + C.w / 2, ay = c.bb.y + C.h / 2, bx = vc.bb.x + C.w / 2, by = vc.bb.y + C.h / 2, d = Math.hypot(bx - ax, by - ay) || 1, mx = (ax + bx) / 2 + (by - ay) / d * 40, my = (ay + by) / 2 - (bx - ax) / d * 40;
+      for (const o of [0, 3]) { ctx.globalAlpha = o ? 0.35 : 0.8; ctx.lineWidth = o ? 2.5 : 4; ctx.beginPath(); ctx.moveTo(ax + o, ay); ctx.quadraticCurveTo(mx + o, my, bx - o, by); ctx.stroke(); }
+      ctx.globalAlpha = 1;
+    } else if (over) {   // the mentor is on the bench: his tag hangs off the kid's card
+      const w = 150, h = 40, tx = kx - w / 2, ty = ky + 26;
+      ctx.globalAlpha = 0.8; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(kx, ky - 4); ctx.lineTo(kx + 3, ty); ctx.stroke(); ctx.globalAlpha = 1;
+      ctx.fillStyle = '#fff'; ctx.fillRect(tx, ty, w, h); ctx.fillStyle = DL_LOOK.red; ctx.fillRect(tx, ty, w, 14);
+      ctx.strokeStyle = 'rgba(120,100,70,0.5)'; ctx.lineWidth = 1; ctx.strokeRect(tx, ty, w, h); ctx.strokeStyle = RES.line;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff'; ctx.font = 'bold 11px monospace'; ctx.fillText('MENTOR', kx, ty + 7);
+      ctx.fillStyle = DL_LOOK.red; ctx.font = 'bold 17px monospace'; ctx.fillText(String(x.kid).split(' ').slice(-1)[0].toUpperCase(), kx, ty + 27, w - 10);
+    }
+  } } catch (e) { console.warn('mentor lines', e); } finally { ctx.restore(); }   // (back to the start depth on any path)
+}

@@ -308,6 +308,7 @@ function endPlay(text, next, kind) {
   let pen = !wasKickoff && (rbpPenalty(kind, next) || flagPenalty(kind, next) || kproPenalty());
   if (hadFlag && !pen) { flagPen = null; rbpPen = null; try { penWaved(); } catch (e) {} text += "  -  flag picked up"; }   // (the top bar says it too)   // (run-block holding: the play comes back, replay the down; v0.68 pass-pro holding / pass interference / roughing (flagPenalty); a kick rusher offside: 5 yards, kick it again)
   if (pen && !pen.dead && !pq && penAsk(text, next, kind, pen)) return;   // (v0.68 a live-ball foul: parked on game.penQ until the fouled side chooses)
+  if (pracLive()) pracDrillRep(text, next, kind);   // (a practice drill: the rep's score; its next rep comes from the step, 12's practice drills)
   if (pq) { pen = pick === 'accept' ? pq.pen : null; game.penDeclined = pick !== 'accept'; game.penPick = null; game.penQ = null; if (!pen) text += '  -  flag declined'; }
   if (pen) { text = pen.text; next = los; kind = ''; if (pen.dead || !pq) try { let ln = ''; try { ln = penResLine(penOut({ pen }), penMine()); } catch (e) {} penBanner(pen, null, ln); } catch (e) {} }   // (v0.70: a dead-ball flag says what and on whom too; v0.73 + what it means now, and a live foul settled without a choice gets one too)   // (v0.70: a dead-ball flag says what and on whom too)
   else celebWhistle(text, kind);   // (celebrations: a blocked kick, a pick, a recovery, a sack)
@@ -470,7 +471,7 @@ function endPlay(text, next, kind) {
     game.penDeclined = false;
   } catch (e) {}
   try { refReviewAfter(); } catch (e) { console.warn(e); }   // (v0.68 booth review / an open ruling to challenge)
-  if (oo) { nextLos = 25 * YL; nextDown = 1; nextLtg = nextLos + 10 * YL; if (!aiOff()) pendingSim = null; }   // (1v1 test: every rep starts from the same spot, the ball never advances)
+  if (oo && !oo.drive) { nextLos = 25 * YL; nextDown = 1; nextLtg = nextLos + 10 * YL; if (!aiOff()) pendingSim = null; }   // (1v1 test: every rep starts from the same spot, the ball never advances)
   if (oo && oo.cfg) celebOoEnd(text, kind, (next - los) / YL);   // (a 1v1 rep: its winner celebrates)
   if (tut) { if (kind === 'fg') tutEvent('fg'); else if (kind === 'punt') tutEvent('punt', 'kickoff'); else if (twoP && twoP.koOnly) tutEvent('kickoff');   // (the real kickoff: its live return ends the lesson, then the sides go back)
     if (twoP && twoP.koOnly) tut.koUnflip = true;   // (flipped back at the next reset: flipping now would swap every player's kit mid-play)
@@ -1535,7 +1536,7 @@ function sackCall() {
   if (SL.on) slFlash(2);   // (sideline cameras)
   if (sackPid === runPid || tut) return;
   sackPid = runPid;
-  annSay('sack', { pri: 3 });   // (the announcers)
+  annSay('sack', { pri: 3, vars: annWho(qb, typeof lastTkl !== 'undefined' && lastTkl && lastTkl.team !== qb.team ? lastTkl : null) });   // (the announcers)
   if (rec && !rec.replaying) rec.big = true;
   crowdCheer(SACK_CROWD, aiOff() ? 'you' : 'opp', false, true);
 }

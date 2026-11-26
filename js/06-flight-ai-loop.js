@@ -1163,7 +1163,7 @@ function defKeyDown(e) {
   if (state === 'picked' && ud && ud.hasBall && udCtl(ud) && ['KeyR', 'KeyF', 'KeyC', 'KeyQ', 'KeyE', 'KeyV', 'Tab'].includes(c)) { returnMove(c); return true; }   // the return: R spin, F juke, C truck, Q stiff arm, E hurdle, V / Tab dive (the pylon near the corner)
   if (c === 'KeyQ' && state === 'pre') { defAudible(); return true; }   // Q: the defensive audible
   if (c === 'KeyO' || c === 'KeyQ' || c === 'KeyE') { switchDefender(c === 'KeyE', c === 'KeyO'); if (tut) tutEvent('dswitch'); return true; }
-  if (state === 'pre') { if (c === 'Space' && ai) ai.t = 99; return true; }
+  if (state === 'pre') return true;   // (the CPU snaps on its own clock: Space never hurries its snap)
   if (!ud || ud.action === 'down') return true;
   if (c === 'KeyC' || c === 'KeyV' || c === 'KeyG') ud.reqLag = lagRew();   // (online guest: the range is also measured on the picture he saw, lagDist in userTackle. The window still counts from the press reaching the host: the rewound range already covers his delay)
   if (c === 'KeyC') ud.hitReq = clock;       // C: the hit stick
@@ -2403,7 +2403,7 @@ function aiStiffNear(c) {
 }
 function aiPocket() {
   const keys = HELD.ai;   // (perf job: the computer's own held keys, folded into the real keys by heldSync)
-  const hold = tut && tutStep() && tutStep().hold;   // (the tutorial's rush steps: no throwing early, whatever the pressure)
+  const hold = (tut && tutStep() && tutStep().hold) || (oo && oo.hold);   // (the tutorial's rush steps / practice PASS RUSH DUEL: no throwing early, whatever the pressure)
   const e = cpuEdge();
   let heat = pressure();
   if (!hold && !tut && aiCollapsing()) heat = Math.max(heat, AI_QB.collapseHeat);   // (a collapsing pocket counts as heavy pressure: he gets out / lets it go)
@@ -2769,6 +2769,7 @@ function separatePlayers(dt) {
     }
     if (d >= R) continue;
     if (d < 0.01) { dx = 0; dy = i % 2 ? 1 : -1; d = 1; }
+    if (a.team === 'def' && b.team === 'def' && !ANN_S.pl.col) annCollide(a, b, dx, dy, d);   // (the announcers: two defenders running into each other; reads only)
     let push = (R - Math.hypot(b.x - a.x, b.y - a.y)) * (soft ? Math.min(1, COLLIDE.softEase * dt) : k) * (a.team === b.team ? COLLIDE.team : 1);
     push = Math.min(push, (sk === 'clip' ? COLLIDE.clipMax : soft ? COLLIDE.softMax : COLLIDE.hardMax) * YD * dt);   // (a drift apart at a capped speed, never a teleport: a slow frame used to separate the whole overlap at once)
     const nx = dx / d, ny = dy / d;
@@ -2861,6 +2862,7 @@ function update(dt) {
   if (dt <= 0) return;
   let ut = SETTINGS.perfHud ? PERF_NOW() : 0;   // (FRAME TIMES: u.* parts of the game step, perfDump(); 0 = off, every mark below is skipped)
   heldSync();   // (perf job: keys / dkeys = what every owner holds, at the top of every game step)
+  if (PDR && pracDrillTick(dt)) return;   // (a practice drill: the next rep / the session's end, on the game clock)
   // (perf job phase 4: no DIFF_FRAME bump per game step any more: the kept diffLvl row is reused while diffSig is unchanged; frame() still bumps it once a frame for sliders edited in place)
   if (tut && tut.defAsk) return;   // (the tutorial's "play defense or sim it?" card: nothing moves until you pick)
   if (wxDelayUp()) return;   // (the lightning delay card: everything waits)

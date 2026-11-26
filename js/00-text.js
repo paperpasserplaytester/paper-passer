@@ -41,6 +41,10 @@ const NEWS = {
                body: ['The {team} cut ties with {name}. An interim takes over while they search.', '{name} is out. The {team} are looking for a new {role}.'] },
   coachMove: { head: ['{team} Name {name} New {role}', 'Coaching Carousel: {name} Lands With {team}', '{team} Change Coordinators'],
                body: ['{old} is gone and {name} ({stars}-star) takes over as {role} for {team}.', 'The coaching carousel keeps spinning: {name} replaces {old} in {team}.'] },
+  farewell: { head: ['{p} Begins His Farewell Tour', 'One Last Ride for {p}', '{team} Star {p} Says This Season Is His Last'],
+              body: ['After {yrs} seasons, {p} says this one is his last. Every stadium will want to say goodbye.', '{p} ({team}) announced his farewell tour. Expect standing ovations on the road.'] },
+  farewellEnd: { head: ['{p} Takes His Final Bow', 'Curtain Falls on {p}', 'Farewell, {p}'],
+                 body: ['{p} has played his last game for {team}. The farewell tour is over and so is a fine career.', 'The tour ends. {p} walks away from {team} after {yrs} seasons.'] },
   fine: { head: ['League Office Not Amused', '{p} Lighter in the Wallet After Sunday', 'Fined: {p} Pays for the Celebration', '{team} Star Hit With a Fine', 'The Bill Arrives for {p}'],
           body: ['{p} ({team}) has been fined for his celebration. The league calls it unsportsmanlike; {p} calls it worth every penny.', 'A hefty fine lands on {p} after his celebration. The {team} say they will talk to him. Nobody expects it to work.',
                  'The league office reviewed the tape and did not laugh. {p} of the {team} is fined.', 'Word from the league: {p} crossed the line with that celebration. The fine is not small.'] },
@@ -85,6 +89,29 @@ poWin: { big: true, head: ['{team} Advance: {opp} Fall {sc} in the Playoffs', 'P
               body: ['The Post printed "{w}" and {coach} signed off on it. {team} lost {sc}, and the clipping is already taped to a rival locker.', 'Bold words, bad Sunday. "{w}" turned into a {sc} loss, and the fans have the issue framed for the wrong reasons.'] },
   off: { head: ['The Offseason Edition', 'Offseason Notebook: Who Moved, Who Stayed', 'Between Seasons: The Big Picture'],
          body: ['Contracts, the draft and free agency reshaped the league.', 'The dust has settled on a busy offseason.'] },
+  // (fixes job) stat stories from existing stat lines: {p} = the man, {team}, {line} = his numbers, {n} = games, {o} = the man behind him
+  statSlump: { head: ['{p} Stuck in a Slump', 'Where Did {p} Go?', 'Cold Spell for {p}', '{p} Searching for Answers'],
+    body: ['{p} has gone quiet over his last {n} games: {line}. {team} need more from their {posL}.', 'Nothing is falling for {p} lately. {line} over his last {n} games has the whispers starting.', 'The numbers are hard to ignore for {p}: {line} in his last {n} games.'] },
+  statHot: { head: ['{p} Is on Fire', 'Nobody Can Stop {p}', '{p} Heating Up', 'Hot Streak: {p} Rolls On'],
+    body: ['{p} has been unstoppable over his last {n} games: {line}. {team} keep feeding him.', 'Ride the hot hand. {p} posted {line} over his last {n} games.', 'Opponents are running out of ideas for {p}: {line} in his last {n} games.'] },
+  statFumbles: { head: ['{p} Has a Ball Security Problem', 'Another Turnover for {p}', '{p} Keeps Giving It Away', 'Butterfingers? {p} Under the Microscope'],
+    body: ['{p} has {n} turnovers in his last few games. Coaches say it is fixable. Fans are less patient.', 'The ball keeps hitting the turf around {p}: {n} turnovers lately. Two hands, please.', 'Turnovers are piling up for {p}, {n} of them over his recent games.'] },
+  statUnder: { head: ['{p} Not Playing Like a Star', 'Is {p} Overrated?', '{p} Falling Short', 'Questions Grow Around {p}'],
+    body: ['On paper {p} is one of the best. On the field it has been {line}. {team} expected more.', '{p} has been playing well below his billing: {line} this season.', 'Rated as a star, playing like a backup. {p} sits at {line}.'] },
+  statOver: { head: ['{p} Is Making Noise', 'Backup {p} Turning Heads', 'Who Is {p}? Fans Want to Know', '{p} Earning a Bigger Role'],
+    body: ['Nobody expected much from {p}. Then he put up {line}. The coaches noticed.', '{p} keeps showing up when called on: {line}. Fans want to see more.', 'A depth player is playing like a starter. {p} has {line} so far.'] },
+  fansBench: { head: ['Fans to Coach: Bench {p}', '"Sit Him Down!" Fans Turn on {p}', 'Calls Grow to Start {o} Over {p}', 'Boo Birds Circle {p}'],
+    body: ['The mailbag is full. Fans want {p} on the bench and {o} on the field after {line}.', 'One fan wrote: "I love {p}, but give {o} a shot." Plenty more said the same.', 'After {line}, the crowd chanted for {o}. {p} heard every word.'] },
+  fansStart: { head: ['Fans Want More of {p}', '"Start {p}!" Rings Out', 'Petition to Start {p} Gains Steam', 'The People Have Spoken: Play {p}'],
+    body: ['The letters keep coming: put {p} in the starting lineup. Numbers like {line} are hard to argue with.', 'Fans say {p} has earned a start. The man ahead of him, {o}, has not been as sharp.', 'A homemade sign said it all: START {p}. His numbers back it up.'] },
+  decideWin: { big: true, head: ['{p} Wins It for {team}', '{p} Delivers When It Counts', 'Clutch! {p} Seals It', 'Hero Time: {p} Comes Through'],
+    body: ['With {clock} on the clock came the play that decided it: {what}. {team} beat {opp} by {m}.', 'It came down to one play. {p}: {what}, with {clock} left. Final margin: {m}.', 'Fans will talk about it all week. {what}, {clock} to go, {p} the hero.'] },
+  decideLoss: { big: true, head: ['One Play Haunts {team}', 'Late Mistake Sinks {team}', '{p} Wants That One Back', 'Heartbreak for {team}'],
+    body: ['With {clock} left, {what}. {opp} won by {m}, and the phones lit up all night.', 'It was right there. Then {what} with {clock} to go. {team} lost by {m}.', 'Fans were furious after {what} with {clock} left. A {m} point loss to {opp}.'] },
+  decideBeaten: { big: true, head: ['{p} Breaks {team} Hearts', '{opp} Steal One Late', 'Stunned: {p} Beats {team}', 'So Close for {team}'],
+    body: ['With {clock} left, {what}. {opp} won by {m} and {team} were left staring at the scoreboard.', '{p} played the villain: {what} with {clock} to go. A {m} point loss.', '{team} had it until {what}. Fans want to know how it slipped away by {m}.'] },
+  decideLeague: { head: ['{p} Decides It for {team}', 'Late Heroics From {p}', 'Last-Minute Drama in {team} Win', '{p} Saves the Day'],
+    body: ['Around the league: {p} made the deciding play for {team}, beating {opp} by {m}.', '{p} came up big late as {team} edged {opp} by {m}.', '{team} needed one play and {p} made it. Final margin over {opp}: {m}.'] },
 };
 const NEWS_WIRE = { trade: '{text}', sign: '{team} sign {pos} {p} ({stars}★)', cut: '{team} release {pos} {p} ({stars}★)', draft: '{team} draft {pos} {p} (No. {n})', retire: '{pos} {p} retires ({team})', hof: '{p} inducted into the Hall of Fame', injury: '{team} place {pos} {p} on injured list ({n} wks)', injSeason: '{team} lose {pos} {p} for the season', arc: '{text}' };
 const RUMORS = ['Sources say {team} could be shopping a veteran {posL} before the deadline.', 'Is {p} unhappy in {team}? Nobody will say, but nobody is denying it.', 'A scout from {team} was spotted at three straight {posL} workouts.', 'Word around the league: {team} are not done making moves.', 'Hear {p} may be asking for a new deal. Details are thin.', 'The grapevine says {team} are eyeing a free-agent {posL}.', 'One anonymous assistant claims {team} have a trick play they have not shown yet.', 'Whispers of a coaching shake-up in {team} are probably nothing. Probably.'];
@@ -93,6 +120,13 @@ const LETTERS = [
   ['Dear Post, great win! Tell the kicker I said hi.', 'Big Lou'], ['Dear Post, please stop printing the weather. It rained on my tailgate.', 'Dale in the lot'], ['Dear Post, our corners play too far off. Somebody tell them.', 'Coach Pete (age 9)'],
   ['Dear Post, the crowd is the best part of the game and you know it.', 'Section 112'], ['Dear Post, how about fewer punts, more fireworks?', 'Tammy from the cheap seats'], ['Dear Post, I keep my scrapbook of your headlines. The old ones were better.', 'Walt, retired'],
 ];
+// (fixes job) a fan letter about one man (postStatStories: the public's call). {p} = him, {o} = the man behind him / ahead of him on the depth chart
+const LETTERS_FANS = {
+  bench: [['Dear Post, I have seen enough of {p}. Give {o} a chance before my blood pressure gives out.', 'Ray in {city}'], ['Dear Post, bench {p}. That is the whole letter.', 'A tired fan'],
+          ['Dear Post, my grandson asked why {p} is still starting. I had no answer.', 'Grandpa Joe'], ['Dear Post, {o} could not do worse than {p}. Just saying.', 'Section 214']],
+  start: [['Dear Post, start {p}. The kid can play. Everybody can see it but the coaches.', 'Deb from {city}'], ['Dear Post, I bought a {p} jersey before anyone knew his name. Start him!', 'Early adopter'],
+          ['Dear Post, {p} is better than {o} right now. Put him in.', 'Coach Pete (age 9)'], ['Dear Post, every time {p} plays something good happens. Start him already.', 'Marla, row 7']],
+};
 const LETTERS_MOOD = { hi: [['Dear Post, I have never been prouder. Keep it up!', 'Rosa in {city}']], lo: [['Dear Post, I am cancelling my subscription. Okay, no I am not. But I am mad!', 'Frank in {city}']] };
 const ADS = [['GRIDIRON GRILL', 'Wings so good they get penalized. Two for one on game day.'], ['TURF & TIMBER', 'Fine lumber and fake grass. Since 1957.'], ['FOURTH & INCHES INSURANCE', 'We cover you when the other team does not.'], ['BIG MOE\'S TIRES', 'Our prices are tackled low!'],
   ['HAIL MARY\'S BAKERY', 'Pie so good it needs a replay review.'], ['SIDELINE SODA', 'Taste the two-minute drill.'], ['END ZONE FLOORING', 'Touchdown-quality tile. Free estimates.'], ['PAPER PASSER PENCILS', 'Number 2 in the league. Number 1 in your hand.']];
@@ -439,6 +473,26 @@ const ARCS = {
           { l: 'BIN IT', bin: true, say: 'bin the letter', t: 'Into the basket. It misses. You pick it up and bin it again.', fx: [['fans', -0.01]], def: true }] } },
       home: { end: true, good: true, h: ['Hometown Kid {p} Comes Home!', '{p} Is a {team} Player: The Town Celebrates'], b: ['The petition people are throwing a parade. It is a small parade, but it is loud.'] },
       away: { end: true, h: ['Heartbreak: {p} Goes Somewhere Else', '{p} Will Wear Another Team\'s Colors'], b: ['The town will root for him anyway, just not on Sundays against you.'] },
+    } },
+  // (fixes job) stat sagas: a stage with `form` moves on by his next games' stat lines (arcForm: 'up' / 'down' / 'flat'), not by the dice
+  washed: { name: 'Is He Washed?', w: 1.2, who: 'washed', min: 3, first: 'talk', bridge: null, fin: ['reborn', 'fade'],
+    st: {
+      talk: { h: ['Is {p} Washed?', 'Critics Say {p} Has Lost a Step', '{p} Hears the Whispers'], b: ['The numbers have dipped and the talk shows smell blood. {p} says he has plenty left.', 'Once a sure thing, {p} has looked ordinary. Fans are asking if the end is near.'], wait: [2, 3], form: { up: 'answer', down: 'benched', flat: 'doubt' } },
+      doubt: { h: ['Jury Still Out on {p}', '{p} Neither Here Nor There'], b: ['Another so-so stretch for {p}. Nobody is sure which way this goes.'], wait: [2, 3], form: { up: 'answer', down: 'benched', flat: 'fade' } },
+      answer: { h: ['{p} Answers His Critics', 'Not Done Yet: {p} Bounces Back'], b: ['{p} let his play do the talking. The washed talk got very quiet.'], wait: [2, 3], form: { up: 'reborn', down: 'benched', flat: 'reborn' } },
+      benched: { big: true, h: ['{p} Loses Snaps as Slide Continues', 'Lowest Point Yet for {p}'], b: ['The slide kept going and the coaches noticed. {p} says he will fight his way back.'], wait: [2, 4], form: { up: 'reborn', down: 'done', flat: 'fade' } },
+      reborn: { end: true, good: true, h: ['{p} Proves the Doubters Wrong', 'Washed? Not {p}'], b: ['The same people who wrote him off are now asking for his jersey. {p} is back.'] },
+      fade: { end: true, h: ['{p} Settles Into a Smaller Role', 'Quiet Days for {p}'], b: ['No collapse, no comeback. {p} is just a little less than he used to be.'] },
+      done: { end: true, bad: true, h: ['The Decline of {p}', '{p} Is Not the Player He Was'], b: ['It is hard to watch. The {posL} the league feared is gone, and {p} knows it.'] },
+    } },
+  redemption: { name: 'The Redemption Tour', w: 1, who: 'redeem', min: 2.5, first: 'low', bridge: null, fin: ['back', 'gone'],
+    st: {
+      low: { h: ['{p} Hits Rock Bottom', 'Tough Times for {p}'], b: ['After a rough run, {p} told reporters he is going back to basics. Extra film, extra reps.'], wait: [2, 3], form: { up: 'spark', down: 'low2', flat: 'grind' } },
+      low2: { h: ['Still No Answers for {p}', '{p} Keeps Grinding Through It'], b: ['Another hard week for {p}. Teammates say he is the first one in every morning.'], wait: [2, 3], form: { up: 'spark', down: 'gone', flat: 'grind' } },
+      grind: { h: ['{p} Putting in the Work', 'Signs of Life From {p}'], b: ['Not flashy yet, but {p} looks more like himself. The work is showing.'], wait: [2, 3], form: { up: 'spark', down: 'low2', flat: 'spark' } },
+      spark: { h: ['{p} Is Back on Track', 'There He Is: {p} Delivers'], b: ['A big week from {p} had the crowd on its feet. The redemption tour is on.'], wait: [2, 3], form: { up: 'back', down: 'grind', flat: 'back' } },
+      back: { end: true, good: true, h: ['{p} Completes His Comeback', 'Redemption for {p}'], b: ['From rock bottom to one of the best on the field. {p} wrote his own comeback story.'] },
+      gone: { end: true, bad: true, h: ['{p} Never Found It Again', 'The Comeback That Was Not'], b: ['The redemption story never came. {p} will have to start over somewhere.'] },
     } },
 };
 const EVENTS = [
@@ -852,9 +906,31 @@ const DRAFT_SCHOOLS = ['BAYOU STATE', 'GREAT LAKES TECH', 'NORTH PRAIRIE', 'COAS
   'CEDAR FALLS STATE', 'GULF SHORE', 'HIGH PLAINS', 'MILL CREEK', 'CANYON STATE', 'LAKESHORE', 'EAST TIMBER', 'COPPER MOUNTAIN', 'RIVERBEND', 'STONE HARBOR', 'BLUE MESA', 'WEST DELTA', 'GRANITE STATE TECH',
   'MAGNOLIA', 'SILVER LAKE', 'FORT ASH', 'PALMETTO BAY', 'BIG SKY NORTH', 'CAPITAL CITY', 'THREE RIVERS', 'SAGEBRUSH', 'MAPLE GROVE', 'SOUTH RIDGE', 'TIDEWATER', 'ELK RAPIDS', 'SUNCOAST', 'BLACK HILLS TECH', 'WINDWARD'];
 const CHANGELOG = [
+  { v: "v0.75", secs: [
+    ["PLAYERS GET OLD", [
+      "Past his position's prime, a player can lose some of his ceiling each offseason. Backs and corners slow down first, quarterbacks and kickers last. Heavy mileage, a bad mood and a worn-down season make it come sooner.",
+      "Once his ceiling drops under him, he may lose a point of speed or strength. Awareness never fades. Ceiling lost to age can be bought back with MORE POTENTIAL, past the usual limit.",
+      "Six weeks or more out hurt brings him back rusty for a few games. A season-ending injury can take a little ceiling for good.",
+      "Settings > FRANCHISE > PLAYER AGING: OFF, MY TEAM (the default) or LEAGUE (every team ages the same way, in place of the old random veteran slumps).",
+    ]],
+    ["THE CAREER PENCIL", [
+      "The age chart on a player card is now a school pencil: its length is the career he has left, the bare wood starts where he can slow down, tooth marks are mileage, a worn eraser is points lost, a pink smudge is rust. Click it for the numbers.",
+      "PHYSICALS: a doctor's clipboard each offseason shows who lost a step, who held up and who is rusty, plus the league's stars in LEAGUE mode.",
+    ]],
+    ["LONGER CAREERS", [
+      "When one of your players decides to retire, his letter arrives: tear a tab to try ONE MORE YEAR for credits, chase a ring or a record, stay on as a mentor, or let him go.",
+      "Vets chasing a ring or a record, or mentoring a younger player at their spot, put off retirement. A mentored kid grows a little faster. A champion's old star may go out on top.",
+      "FAREWELL TOUR: before the season a longtime star can make it his last. The team gets a lift, he doesn't slow down that year, and the Post covers the start and the end.",
+      "LONGEVITY PROGRAM: spend bank XP for one more year before a vet thinks about retiring. A recent retiree may also phone when a long injury hits his spot.",
+    ]],
+  ] },
   { v: "v0.74", secs: [
     ["PRACTICE IS NOW SESSIONS", [
-      "Up to 3 sessions a week on the new FIELD tab: pick a unit (offense, defense, kicking, punting or returns), QUICK or FULL, and the XP lands right away with a gold, silver or bronze sticker. Each extra session of the same unit that week gives less.",
+      "Up to 3 sessions a week on the new FIELD tab: pick a unit (offense, defense, kicking, punting or returns), QUICK (1 drill) or FULL (3 drills), and play them. The better your reps, the better the sticker: gold, silver or bronze, and the XP that comes with it. The man you control gets a little extra. Each extra session of the same unit that week gives less.",
+      "12 drills: 1V1 ROUTES, GAUNTLET, TARGET RINGS, POCKET DRILL and 7-ON-7 TWO-MINUTE on offense, LOCKDOWN, ANGLE TACKLE, PASS RUSH DUEL and PICK DRILL on defense, ACCURACY LADDER, COFFIN CORNER and RETURN on special teams. RETURN trains the men who were on the field.",
+      "LEAVE PRACTICE in the pause menu ends a session early with what you scored so far. Nothing in a drill counts toward the season.",
+      "Position battles are set a week ahead on the BATTLES tab: WATCH three quick reps each, or PLAY as one of the men. The bar shows who is ahead, the winner gets the boost, and if the backup wins you get START HIM?. Leave one alone and it is settled at the end of the week as before.",
+      "Fixed: a SCRIMMAGE from the matchup screen no longer changes your players' morale, your franchise settings or STAR FACTOR ability counters.",
       "Kickers, punters, gunners and returners can now train in the kicking, punting and returns units.",
       "AUTO-RUN: a unit you skip practices by itself at 60% of its slider (the AUTO toggle next to START PRACTICE). AUTO off = skipped units rest: no XP, no wear, no practice injury.",
       "New tabs FIELD, BATTLES, REPORT and COACHES' OFFICE: the office holds the auto-run pace, trainers, focus groups and mentor pairs.",
@@ -898,8 +974,31 @@ const CHANGELOG = [
       "Online: picking teams in the lobby always ends with both players seeing the same matchup.",
       "Online: the guest's picture is steadier, with fewer hitches and quicker answers to your presses, and updates twice as often on a good connection.",
       "Online: sideline people never pop in or out where either player can see them."
-    ]]
-  ] },
+    ]],
+      ["THE BOOTH KNOWS NAMES", [
+      "The announcers call players by name (a man without one is his number), and call the run as it happens: two hurdles, a pile of moves, a spin out of a sack, two defenders crashing, a throw across the body, breaking free, a footrace, one man left to beat.",
+      "Halftime reel: the booth names the man and the move on each clip, his head gets a pencil ring with his name on a paper tag, the camera sits closer and moves more, and a long quiet run cuts ahead to just before the score.",
+      "The booth's box drops under a banner instead of hiding behind it.",
+    ]],
+    ["THE POST READS THE STATS", [
+      "New stories from real stat lines, yours and the league's: slumps, hot streaks, turnover trouble, stars playing under their billing and backups playing over theirs.",
+      "The fans speak up: bench the starter who is sinking, start the backup who is rolling, in the paper and in the letters.",
+      "Two new sagas, IS HE WASHED? and THE REDEMPTION TOUR, move on by how he plays in his next games.",
+      "A close game you played gets its deciding play on the front page: the late fumble, the go-ahead score, the kick at the gun, with praise or outcry to match.",
+    ]],
+    ["FIXES AND TUNING", [
+      "Draft: a pick-by-pick sim keeps going while you look at prospects or a card, and BACK works while it runs.",
+      "On defense Space no longer snaps the CPU's ball. Space does nothing in the halftime show.",
+      "AROUND THE LEAGUE is off by default in the halftime show (the settings row turns it on).",
+      "A lit STAR FACTOR stays on through halftime. A man already playing hurt can't be hurt again.",
+      "Celebrations: a scorer who dropped the ball no longer dunks with an empty hand while the ball sits in the end zone.",
+      "BOOTH REVIEW's red frame fits wide phone screens.",
+      "Adaptive difficulty leaves kicking and returns at PRO and goes easier on the CPU offense.",
+      "Team stars: a side missing a whole group (no healthy safety, say) tops out at 3 stars.",
+      "A star in his prime is never a minus in trade value while he is under contract, and the later years of a pricey deal count much less for anyone (a team can cut him): no more star running backs going for next to nothing.",
+      "Online: the defense can switch men while the offense picks on 4th down or after a touchdown, by key or tap, and only the chooser sees the choice.",
+    ]],
+] },
   { v: "v0.73", secs: [
     ["ONLINE + OFFICIALS POLISH", [
       "Online: the guest's taps on SET AIM and the onside / PAT switch now work whatever device each player is on, and so do the audible and timeout buttons.",
@@ -907,6 +1006,13 @@ const CHANGELOG = [
       "Online guest: after a play the players cut straight to the new line-up instead of zooming across the field.",
       "Officials walk and run smoothly: no more sudden turnarounds or stride pops when they change course.",
       "DEBUG: FIELD BLIT and TICK PATHS switches for hunting the thin white hash line on phones.",
+    ]],
+    ["CELEBRATIONS, SIDE-ON", [
+      "44 more moves play side-on half the time (golf swing, axe, bat, shopping cart, lawnmower, the worm, the moonwalk, most taunts at a man...), and he turns to the camera with a pivot step when a move needs it.",
+      "Props: snow and breath in the cold, a trash bag dumped on him, a zipper over the facemask, an axe with wood chips, a bat, a bell, a phone and more.",
+      "New pick-pocket: he tiptoes up to the man he took it from and finds the ball in his back pocket.",
+      "Fixed: wall moves no longer show double-wide arms, and goal post moves stay side-on with the hug wrapped round the pad.",
+      "The tucked ball fits the side-on jersey: high on the ribs, the glove on its nose.",
     ]],
     ["SCRIMMAGE", [
       "Scrimmages can use a CUSTOM difficulty: set it in the settings' difficulty page.",
@@ -3292,4 +3398,51 @@ const ANN_MORE = {
   cel_big: { A: 'Huge celebration!|They are going wild!|Pandemonium!|What a scene!|Everyone is up!|Wild party!|Unbelievable scene!|Number {num} going wild!',
     B: 'You can feel the energy.|Building is shaking.|Huge moment, huge party.|Pure joy.|They needed that.|Unforgettable scene.|Emotions everywhere.|What a moment.' },
 // ANN_MORE end
+  // (fixes job) the run as it happens: {p} = the ball carrier by name ("number 24" when he has no name), {d} = the defender, {n} = a count
+  hurdle2: { A: '{p} clears two of them!|Over one, over another!|Two hurdles on one run!|He jumps them both!|{p} goes over the pile!|Double hurdle!|Up and over, twice!|{p} is a hurdler today!|Two men leapt!|Over two tacklers!',
+    B: 'That is track and field out there.|Two hurdles in one run? Come on.|{p} has springs in those shoes.|Nobody wants to go low on him now.|I have never seen that in a game.|Somebody check his legs for wings.' },
+  movesMany: { A: '{p} will not go down!|Move after move!|{n} moves on one run!|{p} is dancing out there!|Another one! And another!|He keeps making them miss!|{p} again! And again!|This run will not end!|A whole bag of moves!|{n} men beaten!',
+    B: 'That is a highlight all by itself.|{p} just put on a clinic.|Every move in the book on one run.|The tacklers are getting dizzy.|You cannot coach that stuff.|{p} is playing a different game.' },
+  sackSpin: { A: '{p} spins out of the sack!|Spun right off him!|He spins away!|A spin and he is free!|{p} twirls out of it!|Spins out of trouble!|Off the hit with a spin!|What a spin by {p}!|Spun free!',
+    B: 'That spin saved the drive.|He had no business getting out of that.|{p} would not go down.|The rusher had him and lost him.|Quarterbacks do not spin like that.|Pure escape artist.' },
+  collide: { A: 'They ran into each other!|Two defenders collide!|Teammates crash!|Ouch, friendly fire!|They knock each other over!|Two of them bump heads!|Defenders collide out there!|A crash in the secondary!|They wiped each other out!',
+    B: 'Somebody call for the ball next time.|That is going to be on the film session.|Both of them wanted the same guy.|Communication, fellas.|They will laugh about that later.|Not the hit they had in mind.' },
+  crossBody: { A: 'Across his body!|{p} throws it across himself!|A cross-body throw!|Back across the field!|He flings it across!|Throwing against the grain!|Across the body, on the run!|{p} wings it back across!|Off-platform throw!',
+    B: 'Coaches hate that throw until it works.|That takes a big arm.|{p} likes to live dangerously.|Not in any playbook I know.|Risky, but look at the ball.|Only a few guys can make that throw.' },
+  breakFree: { A: '{p} breaks free!|He is loose!|Out in the open!|Nobody near him!|{p} is gone!|He slips out of the pile!|Broken free!|Open grass for {p}!|Into the clear!|He is out!',
+    B: 'Somebody has to catch him now.|{p} found the crease.|The defense lost him.|That is daylight.|Once he is out, good luck.|The whole field just opened up.' },
+  footrace: { A: 'It is a footrace!|{p} against the chaser!|Race to the end zone!|Who has the wheels?|Footrace down the sideline!|{p} turns on the jets!|Running for daylight!|Pure speed now!|He is being chased down!',
+    B: 'This is where speed kills.|I would not bet against {p} here.|The angle decides this one.|Legs are burning now.|Nothing fancy, just run.|That defender took a great angle.' },
+  lastMan: { A: 'One man to beat!|{p} sees one guy left!|Only {d} is left!|Last line of defense!|It is {p} against {d}!|One defender between him and six!|Last man standing!|Beat this guy and he is gone!|One more to beat!',
+    B: 'Make this man miss and it is over.|{d} has to make this tackle.|This is the whole game right here.|One on one in the open field.|The safety is the last hope.|Big moment for {d}.' },
+  // (fixes job) the reel names the man and the move: {who} = his name, {move} = what he did
+  reel_named: { A: 'Watch {who} on this {move}.|Here is {who} and that {move}.|{who} and the {move}.|Look at {who} on the {move}.|This {move} by {who}.|Remember {who} and this {move}?|Eyes on {who}, here comes the {move}.|{who} with the {move}.',
+    B: 'That {move} by {who} was something.|{who} sold that {move} perfectly.|Best {move} of the half, {who}.|You do not teach that {move}.|{who} made that {move} look easy.|What a {move} from {who}.' },
+};
+
+// --- name variants (fixes job): the same events as ANN_LINES with the man's name, merged into them at load by 02 like ANN_MORE (annPick's bag mixes both).
+// {p} = the man the event is about, {d} = the defender on it; a man with no real name reads "number 24", so every line must work with a number.
+const ANN_NAMED = {
+  break: { A: '{p} breaks one!|{p} shakes him off!|Missed tackle on {p}!|{p} slips through!|Cannot bring down {p}!|{p} stays up!', B: '{p} runs angry.|Tough to tackle, that {p}.|{p} will not go down easy.|You have to wrap up {p}.' },
+  juke: { A: '{p} jukes him!|{p} makes him miss!|Shake and bake by {p}!|{p} leaves him grabbing air!|{p} with the cut!', B: '{p} has quick feet.|{d} bit on that one.|{p} broke his ankles.|That cut by {p} was nasty.' },
+  spin: { A: '{p} spins away!|Spin move by {p}!|{p} spins out of it!|{p} twirls free!|A spin from {p}!', B: '{p} loves that spin.|{d} grabbed nothing but air.|That spin by {p} was smooth.|Pure balance from {p}.' },
+  truck: { A: '{p} runs him over!|{p} trucks {d}!|{p} lowers the shoulder!|Right through {d}!|{p} flattens him!', B: '{p} wanted that contact.|{d} will feel that tomorrow.|Do not stand in front of {p}.|{p} ran through that tackle.' },
+  stiff: { A: 'Stiff arm by {p}!|{p} shoves him away!|{p} with the stiff arm!|{p} pushes {d} off!|Get away from me, says {p}!', B: '{p} has a mean stiff arm.|{d} got a face full of glove.|That arm is a weapon for {p}.|{p} kept him at bay.' },
+  hurdle: { A: '{p} hurdles him!|{p} goes airborne!|Over the top, {p}!|{p} leaps over {d}!|{p} jumps him!', B: '{p} has hops.|{d} went low and lost.|Did you see the height on {p}?|That is athletic stuff from {p}.' },
+  bigHit: { A: '{d} lays the wood!|Huge hit by {d}!|{d} lights him up!|{d} unloads on him!|What a shot by {d}!', B: '{d} brought the thunder.|{p} will feel that one.|That is why {d} is out there.|Clean, hard and loud from {d}.' },
+  sack: { A: '{d} gets the sack!|Sacked by {d}!|{d} brings him down!|{d} gets home!|{p} goes down, {d} with the sack!', B: '{d} was in the backfield all day.|{p} never saw {d} coming.|Great rush by {d}.|{d} won that rep easily.' },
+  escape: { A: '{p} escapes!|{p} slips the sack!|{p} gets away!|Not yet, says {p}!|{p} wriggles free!', B: '{p} is hard to bring down.|{p} has a sixth sense back there.|Great pocket feel from {p}.|{p} keeps the play alive.' },
+  catch: { A: '{p} with the catch.|Caught by {p}.|{p} hauls it in.|{p} pulls it down.|Complete to {p}.|{p} grabs it.', B: '{p} has good hands.|Nice route by {p}.|{p} was open there.|Easy pitch and catch to {p}.' },
+  deepCatch: { A: '{p} hauls in the bomb!|{p} goes up and gets it!|Deep ball to {p}!|{p} runs under it!|{p} brings in the long one!', B: '{p} got behind them.|{p} tracked that perfectly.|What a ball to {p}.|{p} is a deep threat all day.' },
+  oneHand: { A: 'One hand by {p}!|{p} snags it with one!|{p} reaches out with one hand!|What a grab by {p}!', B: '{p} has glue on that glove.|One hand, no problem for {p}.|{p} made that look easy.|That is a poster for {p}.' },
+  diveCatch: { A: '{p} lays out!|Diving grab by {p}!|{p} dives and gets it!|{p} stretches out!', B: '{p} went full extension.|What effort from {p}.|{p} would not let that hit the turf.|{p} sold out for that one.' },
+  toeTap: { A: '{p} gets both feet down!|Toe tap by {p}!|{p} keeps his feet in!|{p} drags the toes!', B: '{p} knows where the line is.|Great body control from {p}.|{p} made that look like ballet.|Sideline awareness, {p}.' },
+  drop: { A: '{p} drops it!|Off the hands of {p}!|{p} cannot hang on!|Dropped by {p}!', B: '{p} wants that one back.|{p} took his eyes off it.|That should be a catch for {p}.|{p} has to bring that in.' },
+  pbu: { A: '{d} breaks it up!|{d} gets a hand on it!|Broken up by {d}!|{d} knocks it away!', B: '{d} was right there.|Great coverage by {d}.|{d} read that all the way.|{d} played the hands perfectly.' },
+  pick: { A: '{d} picks it off!|Intercepted by {d}!|{d} jumps the route!|{d} takes it away!|{d} with the pick!', B: '{d} read his eyes.|{d} was sitting on that route.|Huge play by {d}.|{d} just changed this game.' },
+  strip: { A: '{d} strips it!|{d} punches it out!|{d} rips it loose!|Ball out, {d}!', B: '{d} went for the ball.|{p} has to protect it.|{d} was hunting that ball.|Great hustle by {d}.' },
+  fumble: { A: '{p} fumbles!|{p} coughs it up!|Loose ball, {p} lost it!|{p} puts it on the ground!', B: '{p} has to hold on.|Two hands on it, {p}.|{p} will hear about that.|Costly drop of the ball by {p}.' },
+  td: { A: '{p} scores!|Touchdown, {p}!|{p} takes it in!|{p} finds the end zone!|Six for {p}!|{p} is in!', B: '{p} would not be denied.|What a play by {p}.|{p} has been huge today.|That is why {p} gets the ball.' },
+  bigGain: { A: 'Big gain for {p}!|{p} rips off a big one!|{p} chews up yards!|{p} breaks a long one!', B: '{p} found room.|The blocking set up {p}.|{p} is rolling now.|{p} is too much for them.' },
+  first: { A: 'First down, {p}!|{p} moves the chains!|{p} gets the first!|{p} picks up the first down.', B: '{p} fought for that.|{p} knows where the sticks are.|Clutch move by {p}.|{p} keeps the drive going.' },
 };
