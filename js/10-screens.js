@@ -816,7 +816,7 @@ const BTN_LABEL_MAT = {   // label (newlines read as spaces, ▸ and "(n)" dropp
   'DRAFT BOARD': BM('cork'), 'PROSPECTS': BM('cork'), 'BOARD': BM('cork'), 'HALL OF FAME': BM('foil', 'star'), 'THE POST': BM('news'),
   'YES': BM('stamp', 'check'), 'LEAVE': BM('stamp', 'check'), 'ACCEPT': BM('stamp', 'check'),
   'NO': BM('redpen', 'btnX'), 'STAY': BM('stamp', 'check'), 'DELETE': BM('redpen', 'btnX'),
-  'SIM': BM('dice', 'dice'), 'SIM GAME': BM('dice', 'dice'), 'SIM OFFENSE': BM('dice', 'dice'), 'SIM DEFENSE': BM('dice', 'dice'),
+  'SIM': BM('dice', 'dice'), 'SIM GAME': BM('dice', 'dice'), 'SIM OFFENSE': BM('dice', 'dice'), 'SIM DEFENSE': BM('dice', 'dice'), 'CPU DEFENSE': BM('dice', 'dice'),
   // category tier: the torn scrap + a job stripe (+ an icon where an obvious one exists)
   'SCRIMMAGE': BM('card', 'btnWhistle', 'go'), '1V1': BM('card', null, 'go'), 'CAREER': BM('idcard'), 'TUTORIAL': BM('card', null, 'go'),
   'HIGHLIGHTS': BM('card', 'btnFilm', 'go'), 'IMPORT HIGHLIGHTS': BM('card', 'btnFilm', 'go'), 'PRACTICE': BM('playbook', 'btnCone'), 'FACILITIES': BM('blueprint'),
@@ -2471,7 +2471,7 @@ const LGV_ME = 'rgba(255,226,90,0.55)';   // (your team's row)
 function lgvOpen() { LGV.wk = Math.min(SEASON_WEEKS, Math.max(1, season.week)); results.screen = 'league'; }
 const lgvGames = w => w >= 1 && w <= SEASON_WEEKS ? season.sched[w - 1] : [];
 function lgvByes(w) { const on = new Set(); lgvGames(w).forEach(g => { on.add(g.h); on.add(g.a); }); return Object.keys(NFL).filter(k => !on.has(k)); }
-const lgvDivs = (conf, T) => DIVS.map((d, i) => ({ d, list: divTeams(conf, i).map(k => T[k]).sort(byRecord) }));
+const lgvDivs = (conf, T) => DIVS.map((d, i) => ({ d, list: standSort(divTeams(conf, i).map(k => T[k]), T, 'div') }));
 const lgvSeeds = (conf, T) => po && po.seeds ? po.seeds[conf].map(k => (po.T || T)[k] || T[k]) : playoffSeeds(conf, T);   // (the bracket's seeds once it exists: never a second rule)
 function drawLeague() {
   if (!season) { results.screen = 'home'; return; }
@@ -2490,14 +2490,15 @@ function lgvStandings(conf, T, me) {   // the conference's 4 divisions, 2 x 2, e
   lgvDivs(conf, T).forEach(({ d, list }, i) => {
     const x = 60 + (i % 2) * 600, y = 96 + Math.floor(i / 2) * 262, w = 560, ry = openSection(x, y, w, `${conf} ${d}`);
     ctx.fillStyle = RES.line; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center';
-    ['W', 'L', 'T'].forEach((h, j) => ctx.fillText(h, x + 430 + j * 50, y + 12));
+    ['W', 'L', 'T'].forEach((h, j) => ctx.fillText(h, x + 370 + j * 46, y + 12)); ctx.fillText('DIV', x + 515, y + 12);   // (big job: the division record, the first tiebreak after head-to-head)
     list.forEach((t, j) => {
       const ty = ry + 30 + j * 48;
       if (t.k === me) { ctx.fillStyle = LGV_ME; ctx.fillRect(x - 6, ty - 22, w + 12, 44); }
       drawLogo(t.k, x + 22, ty, 36);
       ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'left';
-      ctx.fillText(`${NFL[t.k].city} ${NFL[t.k].nick}`.toUpperCase(), x + 50, ty, 340);
-      ctx.textAlign = 'center'; [t.w, t.l, t.t].forEach((v, k) => ctx.fillText(String(v), x + 430 + k * 50, ty));
+      ctx.fillText(`${NFL[t.k].city} ${NFL[t.k].nick}`.toUpperCase(), x + 50, ty, 290);
+      ctx.textAlign = 'center'; [t.w, t.l, t.t].forEach((v, k) => ctx.fillText(String(v), x + 370 + k * 46, ty));
+      ctx.font = 'bold 18px monospace'; ctx.fillText(divRec(t), x + 515, ty, 80);
     });
   });
 }
@@ -2771,7 +2772,7 @@ function drawHome() {
     ctx.fillStyle = RES.dim; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'left'; ctx.fillText(showSeeds ? 'DIVISION ›' : 'SEEDS ›', P.x + tw + 18, P.y + 13);
     ctx.fillStyle = RES.line; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center';
     ['W', 'L', 'T'].forEach((h, j) => ctx.fillText(h, P.x + 306 + j * 50, P.y + 12));
-    const list = showSeeds ? playoffSeeds(conf, T) : divTeams(conf, DIVS.indexOf(div.slice(4))).map(k => T[k]).sort(byRecord);
+    const list = showSeeds ? playoffSeeds(conf, T) : standSort(divTeams(conf, DIVS.indexOf(div.slice(4))).map(k => T[k]), T, 'div');
     const step = showSeeds ? 22 : 40, y0 = ry + (showSeeds ? 16 : 24);
     list.forEach((t, i) => {
       const y = y0 + i * step;

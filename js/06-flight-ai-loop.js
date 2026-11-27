@@ -2755,7 +2755,8 @@ function separatePlayers(dt) {
     // (a blocker locked up on his man is never moved by a teammate: a back or receiver running past slides round him instead of
     //  shoving him off his block and dragging him along on the route)
     if (a.team === b.team && !!a.engaged !== !!b.engaged) { if (a.engaged) { ma = 1; mb = 0; } else { ma = 0; mb = 1; } }
-    if (!soft && a.cx != null && b.cx != null && dx * (b.cx - a.cx) + dy * (b.cy - a.cy) < 0) {   // (flipped sides since last frame: did the paths cross inside the bodies?)
+    const cm = a.team === b.team && (a === runner || b === runner) && state === 'run' ? (a === runner ? a : b) : null;   // (big job: the ball carrier against his own teammate)
+    if (!soft && !cm && a.cx != null && b.cx != null && dx * (b.cx - a.cx) + dy * (b.cy - a.cy) < 0) {   // (flipped sides since last frame: did the paths cross inside the bodies?)
       const px = b.cx - a.cx, py = b.cy - a.cy, sx = dx - px, sy = dy - py, s2 = sx * sx + sy * sy;
       const t = s2 ? Math.max(0, Math.min(1, -(px * sx + py * sy) / s2)) : 0;
       if (Math.hypot(px + sx * t, py + sy * t) < R * COLLIDE.tunnel) {
@@ -2773,6 +2774,7 @@ function separatePlayers(dt) {
     let push = (R - Math.hypot(b.x - a.x, b.y - a.y)) * (soft ? Math.min(1, COLLIDE.softEase * dt) : k) * (a.team === b.team ? COLLIDE.team : 1);
     push = Math.min(push, (sk === 'clip' ? COLLIDE.clipMax : soft ? COLLIDE.softMax : COLLIDE.hardMax) * YD * dt);   // (a drift apart at a capped speed, never a teleport: a slow frame used to separate the whole overlap at once)
     const nx = dx / d, ny = dy / d;
+    if (cm) { const o = cm === a ? b : a, mc = cm === a ? mb / (ma + mb) : ma / (ma + mb); if (mc > 0) { carrierSlip(cm, o, push * mc); if (mc >= 1) continue; push *= 1 - mc; if (cm === a) mb = 0; else ma = 0; } }   // (big job: he slips past his own man sideways, never shoved back into him: the old undo + push bounced him off a blocker's back every frame)
     a.x -= nx * push * mb / (ma + mb); a.y -= ny * push * mb / (ma + mb);
     b.x += nx * push * ma / (ma + mb); b.y += ny * push * ma / (ma + mb);
     // two men running at each other slide round one another (opposite sides) instead of grinding head-on into each other
@@ -2785,6 +2787,16 @@ function separatePlayers(dt) {
   }
   qbRbGap(dt);
   for (const p of all) { clampField(p); p.cx = p.x; p.cy = p.y; }
+}
+// (big job) a ball carrier overlapping a teammate moves only across his own run, toward the side he is already on (kept in c.slipS while dead ahead, so it never flips frame to frame)
+function carrierSlip(c, o, push) {
+  const sp = Math.hypot(c.vx || 0, c.vy || 0), ux = sp > 0.5 * YD ? c.vx / sp : 1, uy = sp > 0.5 * YD ? c.vy / sp : 0, tx = -uy, ty = ux;
+  let nx = c.x - o.x, ny = c.y - o.y; const nd = Math.hypot(nx, ny) || 1; nx /= nd; ny /= nd;
+  const lat = nx * tx + ny * ty;
+  if (Math.abs(lat) * nd > OWN_AVOID.lock * YD) c.slipS = Math.sign(lat); else if (!c.slipS) c.slipS = (c.y > MID ? -1 : 1) * (Math.sign(ty) || 1);   // (dead ahead with no side yet: toward the middle of the field)
+  const back = nx * ux + ny * uy; if (back < 0) { nx -= back * ux; ny -= back * uy; }   // (never back against his own run)
+  let m = Math.hypot(nx, ny); if (m < OWN_AVOID.slipMin) { nx = tx * c.slipS; ny = ty * c.slipS; m = 1; }
+  c.x += nx / m * push; c.y += ny / m * push;
 }
 // v0.59: the QB and the back keep a small gap (they clip through each other in the backfield, see colSkip): a soft sideways step apart, each a little,
 // never during the mesh / pitch, never the QB while YOUR movement keys steer him, never the back off the man he is blocking or while he carries it
@@ -3769,7 +3781,8 @@ function mirrorFor() {
     if (state === 'sim' && fixedMirror != null) return fixedMirror;   // (the sim box keeps the field as it was: sim's side flip no longer shows for a frame)
     // (online: each player's DRIVE setting is for HIS drive. twoP.flipped is "the guest has the ball", so on the guest's device his own drive is the unflipped one: each screen can be
     // mirrored its own way, the host translates the guest's taps / keys into its own frame, see onlFlip)
-    const mineFlip = ONL.on && ONL.guest ? !(twoP && twoP.flipped) : !!(twoP && twoP.flipped);
+    const cpuDef2 = !!(twoP && !twoP.ai && !twoP.def && !ONL.on);   // (big job: two players taking turns against CPU DEFENSE: whoever has the ball drives the DRIVE way, so the field flips at each change of possession)
+    const mineFlip = cpuDef2 ? false : ONL.on && ONL.guest ? !(twoP && twoP.flipped) : !!(twoP && twoP.flipped);
     return fixedMirror = (d === 'left' ? -1 : 1) * (mineFlip ? -1 : 1);
   }
   const m = MATCH.home === 'you' ? -1 : 1;

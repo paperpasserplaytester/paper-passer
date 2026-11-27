@@ -4,7 +4,7 @@
 // undefined. Added one by one, every man walked his own path through the engine's shape tree and every new branch threw the optimized game code
 // back to the slow tiers ("dependent prototype chain changed", ~135 times in 8 plays: the boxed numbers that were most of update()'s garbage).
 // An undefined property reads exactly like a missing one; nothing checks for them with `in` (the online snapshot skips undefined values).
-const PLAYER_LAZY = ['engaged', 'reach', 'cx', 'sideTo', 'sx', 'sy', 'gs', 'fetchBall', 'fetched', 'downMiss', 'cpuJumpRoll', 'scrRoll', 'isPasser', 'screenStay', 'pulling', 'released',
+const PLAYER_LAZY = ['slipS', 'engaged', 'reach', 'cx', 'sideTo', 'sx', 'sy', 'gs', 'fetchBall', 'fetched', 'downMiss', 'cpuJumpRoll', 'scrRoll', 'isPasser', 'screenStay', 'pulling', 'released',
   'pullHold', 'ranPid', 'ranYd', 'cy', 'stride', 'overShoulder', 'tipArms', 'tipK', 'sprPid', 'sprVy', 'sprVx', 'mpx', 'mpy', 'mvx', 'mvy', 'stLoop', 'stCrash',
   'countered', 'helped', 'tryAt', 'olHit', 'chaseKey', 'stuntHold', 'chip', 'pPid', 'pC', 'pAx', 'pAy', 'pHd', 'hy', 'hipOn', 'qbRead', 'paBiteUntil', 'rType', 'hipT',
   'hsy', 'wrAt', 'lockedTo', 'userJump', 'passX0', 'pancakeTried', 'pancakeAt', 'missK', 'settling', 'stopT', 'jamFightOn', 'handfight', 'rbl', 'rbp', 'coast', 'assign',
@@ -1480,7 +1480,7 @@ function newGame() {
   fillMorale();   // (every roster entry has morale / rehab fields)
   depthSync(MATCH.you);   // (your locked depth-chart men lead their groups again, so startersOf / the sims agree with the chart)
   if (twoP && twoP.flipped) flipSides();   // (quit mid-game: back to Player 1's side first)
-  twoP = exhibition && exhibition.two && !tut ? { flipped: false, to: 3, def: !SETTINGS.simDefense } : (simMode === 'offense' || (!SETTINGS.simDefense && simMode !== 'defense')) && !tut ? { flipped: false, to: 3, ai: true, simO: simMode === 'offense' } : null;   // (def: the other player defends live, IJKL / U / O, unless the settings' SIM DEFENSE is on; ai: you play their drives on defense)
+  twoP = exhibition && exhibition.two && !tut ? { flipped: false, to: 3, def: !SETTINGS.simDefense && !simDefLocked() } : (simMode === 'offense' || (!SETTINGS.simDefense && simMode !== 'defense')) && !tut ? { flipped: false, to: 3, ai: true, simO: simMode === 'offense' } : null;   // (def: the other player defends live, IJKL / U / O, unless the settings' SIM DEFENSE is on; ai: you play their drives on defense)
   moveWear = { juke: 1, spin: 1, truck: 1, stiff: 1 }; lastMove = null; moveStreak = 0;
   SA_GAME = {};   // (stiff-arm wins this game, per runner: smart tacklers adapt, see saAdapt)
   halfHold = false;

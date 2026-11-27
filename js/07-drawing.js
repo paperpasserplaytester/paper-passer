@@ -980,9 +980,12 @@ function slTrap(u, w) {   // (an official's walk, v0.70) share of the way covere
 function slTrapV(u, w) { const T = w.T, a0 = w.a0, a1 = w.a1, v0 = w.v0 || 0, vm = (w.L / YD - v0 * a0 / 2) / (T - a0 / 2 - a1 / 2); return u < a0 ? v0 + (vm - v0) * u / a0 : u < T - a1 ? vm : a1 ? vm * Math.max(0, T - u) / a1 : vm; }   // (yd/s u s into the walk)
 const slRefBackT = w => w.ff && Math.sign(w.tx - w.fx) === -w.ff && Math.abs(w.tx - w.fx) > YD ? 1 : 0;   // (this leg is a backpedal)
 function slRefBack(w, u) { const b = slRefBackT(w); if (w.pb === undefined) return b; const e = Math.max(0, Math.min(1, u / REF.crew.gait.blend)); return w.pb + (b - w.pb) * e * e * (3 - 2 * e); }   // (v0.71 backpedal share, eased from the last leg's)
+function slRefPhF(w, un, G) { const v = slTrapV(un, w), k = Math.max(0, Math.min(1, (v - G.walkV) / (G.runV - G.walkV))), bn = w.pb === undefined ? slRefBackT(w) : slRefBack(w, un); return v / ((G.cyc[0] + (G.cyc[1] - G.cyc[0]) * k) * (1 + (G.backK - 1) * bn)); }   // (stride cycles a second, un s into the walk)
 function slRefPh(w, u, G, back) {   // v0.70 stride cycles done u s into the walk = the integral of speed / stride length (stride grows with speed), so the feet never slide while he speeds up or slows down; v0.71 + w.ph0 = the phase the last leg had, so a re-aim never restarts the step
-  const N = 10, du = Math.max(0, Math.min(u, w.T)) / N; let c = 0;
-  for (let n = 0; n < N; n++) { const un = (n + 0.5) * du, v = slTrapV(un, w), k = Math.max(0, Math.min(1, (v - G.walkV) / (G.runV - G.walkV))), bn = w.pb === undefined ? slRefBackT(w) : slRefBack(w, un); c += v * du / ((G.cyc[0] + (G.cyc[1] - G.cyc[0]) * k) * (1 + (G.backK - 1) * bn)); }   // (v0.73 the backpedal share per sample: steps already taken never slide while it blends)
+  // big job: integrated on a fixed time grid (REF.crew.gait.phDt) + the part step, so the samples already taken never move as u grows: the phase only ever grows smoothly (the old 10 samples spread over 0..u slid across the ramp's corners every frame)
+  const U = Math.max(0, Math.min(u, w.T)), d = G.phDt, n = Math.floor(U / d); let c = 0;
+  for (let j = 0; j < n; j++) c += slRefPhF(w, (j + 0.5) * d, G) * d;
+  const rem = U - n * d; if (rem > 0) c += slRefPhF(w, n * d + rem / 2, G) * rem;
   return (w.ph0 || 0) + SL_PI2 * c;
 }
 function slRefGait(Q, P, w, wd, arms) {   // (v0.70) an official's own jog / run: stride length, leg and arm swing, knee lift, lean and bob all grow with his speed now; a backpedal (facing kept against the way he goes) leans back on short steps
@@ -2243,8 +2246,9 @@ function refAnim(i, o) {   // a new anim record; a flag he threw stays on it unt
   if (o && a && a.rb && !o.rb && state === 'done') o.rb = a.rb;   // (and the relay's ball path, until the next play)
   slEvent(i, 1, o);
 }
-function refGo(i, tx, ty, v, ff, t0 = SL.now) {   // a steady-pace walk from where he is now to (tx, ty); returns when he gets there
-  const p = refAt(i), L = Math.hypot(tx - p.x, ty - p.y); if (L < 1) return t0;
+function refGo(i, tx, ty, v, ff, t0 = SL.now) {   // a steady-pace walk from where he is at t0 to (tx, ty); returns when he gets there
+  const wNow = SL.W[i], runNow = t0 > SL.now + 1e-6 && wNow && !wNow.pa && wNow.T > 0 && SL.now >= wNow.t0 && SL.now < wNow.t0 + wNow.T;   // (big job: still on a leg now and the new one starts later: he keeps running that leg until t0, the new record is put down then)
+  const p = refAt(i, t0), L = Math.hypot(tx - p.x, ty - p.y); if (L < 1) return t0;
   const T = L / (v * YD), G = REF.crew.gait, w0 = SL.W[i], moving = w0 && !w0.pa && w0.T > 0 && t0 > w0.t0 && t0 < w0.t0 + w0.T;
   let v0 = 0, ph0 = 0, pb;   // (v0.71 already on the move: the new leg starts at the speed, stride phase and backpedal share he has now, eased to the new pace over carry x acc)
   if (moving && w0.a0 !== undefined) { const u = t0 - w0.t0; v0 = slTrapV(u, w0); pb = slRefBack(w0, u); ph0 = slRefPh(w0, u, G, pb) % SL_PI2;
@@ -2254,7 +2258,9 @@ function refGo(i, tx, ty, v, ff, t0 = SL.now) {   // a steady-pace walk from whe
   let T2 = T;   // (v0.73 a re-aim while moving cruises at the pace itself: the leg's time is fitted to it, so the speed never pulses above / below on every re-aim)
   if (moving && v0 > 0) { const cr = (L / YD - (v0 + v) * a0 / 2 - v * a1 / 2) / v; if (cr >= 0) T2 = cr + a0 + a1; }
   else if (!(v0 > 0) && T < G.acc + G.dec) { a0 = G.acc; a1 = G.dec; const ve = Math.min(v, 2 * (L / YD) / (a0 + a1)); T2 = L / YD / ve + (a0 + a1) / 2; }   // (v0.73 a short step from a stand: full ramps at a lower top speed, never a 0 -> 8 -> 0 yd/s hop in a fifth of a second)
-  slEvent(i, 0, { fx: p.x, fy: p.y, tx, ty, t0, T: T2, L, d0: 0, d1: 0, fs: ff || p.f, fe: ff || (tx >= p.x ? 1 : -1), rt: 0, ln: 1, ff: ff || 0, a0, a1, v0, ph0, pb });
+  const W0 = { fx: p.x, fy: p.y, tx, ty, t0, T: T2, L, d0: 0, d1: 0, fs: ff || p.f, fe: ff || (tx >= p.x ? 1 : -1), rt: 0, ln: 1, ff: ff || 0, a0, a1, v0, ph0, pb };
+  if (runNow) refQ(t0, () => { if (SL.W[i] === wNow) slEvent(i, 0, W0); });   // (the old way put it down at once: he froze where he stood until t0, then set off again from a stand = the run 'reset')
+  else slEvent(i, 0, W0);
   return t0 + T2;
 }
 function refFace(i, f, t0) { const p = refAt(i); slEvent(i, 0, { fx: p.x, fy: p.y, tx: p.x, ty: p.y, t0, T: 0, L: 0, d0: 0, d1: 0, fs: f, fe: f, rt: 0 }); }

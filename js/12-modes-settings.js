@@ -2139,11 +2139,11 @@ const INJURY = {
   whyCond: 60,                                         // condition under this shows WORN DOWN in the cause (under COND_EDGE.lo = LOW CONDITION)
   stackSev: 0.12,                                      // severity shift toward severe per stacked factor (red legs, low condition, playing hurt, a dangerous hit)
   maxStack: 8, stackWk: 1,                             // with 2+ stacked factors: most weeks out / extra weeks per stacked factor past the first
-  condK: 6,                                            // ...x (1 + condK x (1 - condition)^2): 7x at 0
+  condK: 2.5,                                          // ...x (1 + condK x (1 - condition)^2): 3.5x at 0 (was 6 = 7x)
   post: 0.004,                                         // after a game, per star who played (same condition factor)
   cond: { tackle: 2, stick: 6, sack: 3, qbOpen: 4, blind: 5, moveFail: 4 }, weekly: 5, weeklyRnd: 2,   // condition lost per hit / per game played (+ 0..weeklyRnd more: it wears down overall)
   play: 0.1,                                           // ratings lost at 0 condition (less above it)
-  sevOdds: [0.62, 0.28, 0.1], sevShift: 0.35,          // mild / bad / severe at full condition; poor condition shifts toward severe
+  sevOdds: [0.62, 0.28, 0.1], sevShift: 0.25,          // mild / bad / severe at full condition; poor condition shifts toward severe
   hurt: [0.9, 0.78, 0.62],                             // ratings x while playing hurt
   reinjure: [0.15, 0.3, 0.5],                          // (unused: a man playing hurt can't be injured again; kept for old references)
   weeks: [[0, 0], [0, 2], [2, 4]],                     // weeks out (min, max); 0 = just the rest of this game (benched, he's back next week)
@@ -2352,8 +2352,8 @@ const MENTOR = { vetYrs: 5, menteeYrs: 5, max: 2, each: 0.15, cap: 0.25, starsW:
 // bench: non-starters x xp XP; a group's non-starters (average stars minus base, x perStar, 0..cap) lift that group's starters' XP. No bench or a weak one = no bonus
 const BENCH_DEV = { xp: 1.2, base: 2.5, perStar: 0.12, cap: 0.2 };
 // position battles (one practice week): per group chance, a starter vs a non-starter within gap stars, at most maxWeek a week; winner = weighted roll (rating, awareness, condition, luck), gains minBoost-maxBoost stars of attribute points (1 star = 10 attribute points) as far as his potential allows; hist = results kept
-const BATTLE = { chance: 0.3, gap: 1, maxWeek: 2, minBoost: 0.5, maxBoost: 1, hist: 10, wRate: 1, wAwr: 0.5, wCond: 0.4, luck: 0.35, bigStars: 3, overK: 0.6,
-  rep: { n: 3, bias: 0.5 } };   // rep = a watched / played battle: n reps each man; the bar starts at bias x (2 x the starter's rating share - 1) and each rep moves it by the score gap / n (the side ahead at the end wins)   // overK = share of a battle boost a player at his ceiling still gets (pracOverCeil, max 15 an attribute)
+const BATTLE = { chance: 0.3, gap: 1, maxWeek: 2, minBoost: 0.3, maxBoost: 0.6, rateShare: 0.25, hist: 10, wRate: 1, wAwr: 0.5, wCond: 0.4, luck: 0.35, bigStars: 3, overK: 0.6,
+  rep: { n: 3, bias: 0.5 } };   // (big job: a win = minBoost..maxBoost stars in all, rateShare of it to his rating now, the rest to his potential only)   // rep = a watched / played battle: n reps each man; the bar starts at bias x (2 x the starter's rating share - 1) and each rep moves it by the score gap / n (the side ahead at the end wins)   // overK = share of a battle boost a player at his ceiling still gets (pracOverCeil, max 15 an attribute)
 const PRAC_GROUPS = ['QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'CB', 'S'];
 const FAC_MAX = 7;   // facility levels (the campus art tops out at 5; 6 and 7 add gold stars over the building)
 const PRAC_FAC = {
@@ -2928,7 +2928,7 @@ function pracBoost(p, pts) {
   let given = 0;
   for (; given < pts; given++) {
     const pot = ptsOf(p), caps = potAttrs(p, pot);
-    const a = ATTRS[p.group].filter(x => p.raw[x] < 15 && scoreOf(p) < pot && caps[x] > Math.round(p.raw[x])).sort((x, y) => (caps[y] - p.raw[y]) - (caps[x] - p.raw[x]))[0];
+    const a = ATTRS[p.group].filter(x => p.raw[x] < 15 && !spdCapped(p, x) && scoreOf(p) < pot && caps[x] > Math.round(p.raw[x])).sort((x, y) => (caps[y] - p.raw[y]) - (caps[x] - p.raw[x]))[0];
     if (!a) break;
     p.upg = had + 1; p.upgAttr = null;
     if (!upgradeAttr(MATCH.you, p, a)) break;
@@ -2940,7 +2940,7 @@ function pracBoost(p, pts) {
 function pracOverCeil(p, pts) {
   let k = Math.round(Math.max(0, pts) * BATTLE.overK), given = 0;
   const A = [...ATTRS[p.group]].sort((x, y) => p.raw[y] - p.raw[x]);
-  for (let g = 0; k > 0 && g < 100; g++) { const a = A[g % A.length]; if (p.raw[a] + 1 > 15) { if (A.every(x => p.raw[x] + 1 > 15)) break; continue; } p.raw[a]++; p.at[a]++; k--; given++; }
+  for (let g = 0; k > 0 && g < 100; g++) { const a = A[g % A.length], full = x => p.raw[x] + 1 > 15 || spdCapped(p, x); if (full(a)) { if (A.every(full)) break; continue; } p.raw[a]++; p.at[a]++; k--; given++; }
   if (given) { p.potFixed = true; p.potCaps = null; p.stars = starsOfScore(scoreOf(p)); p.potPts = Math.max(p.potPts || 0, scoreOf(p)); p.potential = starsOfScore(p.potPts); autosaveSoon(); }
   return given;
 }
@@ -2970,13 +2970,15 @@ function pracBattleSettle(bt, winner, keep) {
   const P = prac(), me = MATCH.you, cx = pracCtx(), { g, a, b } = bt, w = s => pracBattleW(s) + BATTLE.luck * Math.random();
   if (!winner) { const wa = w(a), wb = w(b); winner = Math.random() * (wa + wb) < wa ? a : b; }
   const loser = winner === a ? b : a, R = ROSTER[me], at = keep ? R.map((s, i) => s.group === g ? i : -1).filter(i => i >= 0) : null, was = at && at.map(i => R[i]);
-  const want = Math.round((BATTLE.minBoost + Math.random() * (BATTLE.maxBoost - BATTLE.minBoost)) * 2 * STAR_HALF / SCORE_K), in1 = pracBoost(winner, want);
+  const all = Math.round((BATTLE.minBoost + Math.random() * (BATTLE.maxBoost - BATTLE.minBoost)) * 2 * STAR_HALF / SCORE_K), want = Math.round(all * BATTLE.rateShare);
+  const p0 = ptsOf(winner); winner.potPts = Math.min(ATTR_TOTAL, p0 + (all - want) * SCORE_K); winner.potential = starsOfScore(winner.potPts);   // (big job: most of a win raises his ceiling, never potFixed)
+  const pot = Math.max(0, winner.potPts - p0) / (2 * STAR_HALF), in1 = pracBoost(winner, want);
   const got = in1 + pracOverCeil(winner, want - in1), stars = got * SCORE_K / (2 * STAR_HALF);   // (past his ceiling he still grows, a bit less: BATTLE.overK)
   if (keep) at.forEach((i, j) => { R[i] = was[j]; });   // (the boost's upgrades re-sorted the group: put it back, START HIM? decides)
   else resortGroup(me, g);   // (a backup who passed the starter takes the job)
   const big = Math.max(a.stars, b.stars) >= BATTLE.bigStars, took = cx.st.has(loser) && !startersOf(me).has(loser);
-  const line = `${g} battle: ${winner.short} beat ${loser.short}${got ? `, +${stars.toFixed(1)} stars` : ' (no room to grow)'}${took ? ' and took the starting job' : ''}`;
-  const rec = { g, win: winner.name, lose: loser.name, stars, got, took, big, wk: season ? season.week : 0, yr: LEAGUE.year, line };
+  const line = `${g} battle: ${winner.short} beat ${loser.short}${got ? `, ▲${stars.toFixed(1)}★` : ''}${pot > 0.01 ? `, ▲${pot.toFixed(1)}★ potential` : ''}${took ? ', starter' : ''}`;
+  const rec = { g, win: winner.name, lose: loser.name, stars, pot, got, took, big, wk: season ? season.week : 0, yr: LEAGUE.year, line };
   P.hist.unshift(rec); P.hist.length = Math.min(P.hist.length, BATTLE.hist);
   if (big) (LEAGUE.pracNews = LEAGUE.pracNews || []).push(rec);   // (v0.52: the whole record: the home popup draws both cards)
   return rec;
@@ -4282,8 +4284,9 @@ function pracBatPast(h, x, y, w, hh, k) {   // a stamped result card: the winner
   if (h.by) prT(h.by === 'play' ? 'PLAYED' : h.by === 'watch' ? 'WATCHED' : 'COIN', tx, y + 94, RES.dim, 11, tw);
   ctx.save(); ctx.translate(x + w - 52, y + hh / 2); ctx.rotate(-0.2); ctx.scale(k, k);
   ctx.globalAlpha = Math.max(0, Math.min(1, 2.4 - k)); ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.strokeRect(-44, -24, 88, 48);
-  prT(h.took ? 'STARTER' : 'WON', 0, -8, col, h.took ? 14 : 18, 82, 'center');
-  prT(h.got ? `+${h.stars.toFixed(1)}★` : 'MAXED', 0, 12, col, 13, 82, 'center');
+  prT(h.took ? 'STARTER' : 'WON', 0, -12, col, h.took ? 13 : 16, 82, 'center');
+  prT(h.got ? `▲${h.stars.toFixed(1)}★` : h.pot ? 'NOW -' : 'MAXED', 0, 5, col, 12, 82, 'center');   // (big job: the rating gain, then the potential gain)
+  if (h.pot) prT(`▲${h.pot.toFixed(1)} POT`, 0, 18, col, 11, 82, 'center');
   ctx.restore();
 }
 function pracBattlesClick(pt) {   // WATCH / PLAY (click handler: the reps start here)
@@ -4677,7 +4680,7 @@ function setResetAll() {   // every setting on the settings pages back to its de
     for (const sk of list) { if (sk in SETTINGS_FACTORY) SETTINGS[sk] = JSON.parse(JSON.stringify(SETTINGS_FACTORY[sk])); else { delete SETTINGS[sk]; if (!inSave() || GLOBAL_SET.includes(sk)) delete SETTINGS_DEF[sk]; } }   // (saveSettings only copies keys that exist: a removed one must leave the stored defaults too)
   }
   if (!lock) { QUARTER_SECS = SETTINGS.quarterMin * 60; if (typeof game !== 'undefined' && game && game.secs > QUARTER_SECS) game.secs = QUARTER_SECS; }
-  if (SETTINGS.simDefense !== sd0 && !ONL.on) {   // (as the SIMULATE DEFENSE row does)
+  if (SETTINGS.simDefense !== sd0 && !ONL.on) {   // (as the CPU DEFENSE row does)
     if (!twoP || (twoP.ai && !twoP.flipped)) twoP = SETTINGS.simDefense || tut ? null : { flipped: false, to: 3, ai: true };
     else if (!twoP.ai) twoP.def = !SETTINGS.simDefense;
   }
@@ -4700,7 +4703,7 @@ const SET_ROW_TEXT = {   // each row's NAME: VALUE (the old button labels on one
   flags: () => `PENALTIES: ${refSet('penalties') ? 'ON' : 'OFF'}`, booth: () => `BOOTH REVIEW: ${refSet('booth') ? 'ON' : 'OFF'}`,
   dir: () => `DRIVE DIRECTION: ${DRIVE_DIRS[SETTINGS.driveDir || 'left'].toUpperCase()}`,
   scouts: () => `SCOUTS: ${SETTINGS.scouts !== false ? 'ON' : 'OFF'}`, deals: () => `CONTRACTS: ${SETTINGS.contracts !== false ? 'MANAGE' : 'AUTO'}`, decline: () => `PLAYER AGING: ${DL_MODE_TXT[declineMode()]}`,
-  simDef: () => `SIMULATE DEFENSE: ${SETTINGS.simDefense ? 'ON' : 'OFF'}`, spd: () => `SIMULATE KICKS: ${SETTINGS.simST ? 'ON' : 'OFF'}`, setup: () => 'SETUP QUESTIONS',
+  simDef: () => `CPU DEFENSE: ${simDefLocked() || SETTINGS.simDefense ? 'ON' : 'OFF'}`, spd: () => `SIMULATE KICKS: ${SETTINGS.simST ? 'ON' : 'OFF'}`, setup: () => 'SETUP QUESTIONS',
   ann: () => `ANNOUNCERS: ${SETTINGS.announcers === false ? 'OFF' : 'ON'}`,
   ht: () => 'HALFTIME SHOW', pg: () => 'PREGAME SHOW', rep: () => `REPLAYS: ${SETTINGS.replays}`,
   recPop: () => `RECORD POPUPS: ${SETTINGS.hideRecPop ? 'OFF' : 'ON'}`, ktips: () => `KEY TIPS: ${SETTINGS.hideKeyTips ? 'OFF' : 'ON'}`, batPop: () => `BATTLE POPUPS: ${SETTINGS.hideBattlePop ? 'OFF' : 'ON'}`,
@@ -4734,6 +4737,8 @@ const GFX_SHORT = { AUTO: 'AUTO', PERFORMANCE: 'PERF', QUALITY: 'QUAL' };   // (
 const gfxNext = () => LITE_MODES[(LITE_MODES.indexOf(gfxMode()) + 1) % LITE_MODES.length];
 const SL_MODES = ['ALL', 'CREW', 'OFF'];     // SETTINGS.sideline (sideline people: everyone / the chain crew only / nobody; missing = ALL)
 // settings opened from a game's pause menu: the ones that change the game being played are locked until it ends
+// (big job) a two-player SCRIMMAGE on a phone always has CPU DEFENSE on: the two take turns on offense against the computer's defense (never online: it plays its own way)
+const simDefLocked = () => !!(TOUCH && typeof exhibition !== 'undefined' && exhibition && exhibition.two && !(typeof ONL !== 'undefined' && ONL.on));
 const SET_GAME_LOCK = ['setup', 'flags', 'booth', 'inj', 'pinj', 'wx', 'diff', 'dir', 'simDef', 'spd', 'morale', 'qtr', 'scouts', 'deals', 'decline', 'post', 'save', 'load'];   // (perf job: DEBUG is this device's own: open in a game)
 const setInGame = () => !results && typeof game !== 'undefined' && !!game && !game.over;
 const SET_TIP_Y = 598;   // the main page's one-line tip / note (popups: SET_POP.tipY)
@@ -4750,7 +4755,7 @@ const SET_TIPS = {   // hover tips: ONE short line each, copy rules (plain, no p
   deals: () => SETTINGS.contracts !== false ? 'CONTRACTS: you make every deal.' : 'CONTRACTS: auto. The game handles deals.',
   decline: () => ({ off: 'PLAYER AGING: off. Nobody slows down.', mine: 'PLAYER AGING: your vets wear down with age.', league: 'PLAYER AGING: every team wears down.' })[declineMode()],
   scouts: () => SETTINGS.scouts !== false ? 'SCOUTS: hire two to sharpen draft reads.' : 'SCOUTS: off. Just the plain SCOUT button.',
-  simDef: () => SETTINGS.simDefense ? 'SIMULATE DEFENSE: their drives play themselves.' : 'SIMULATE DEFENSE: off. You play defense.',
+  simDef: () => simDefLocked() ? 'CPU DEFENSE: always on for two players on a phone.' : SETTINGS.simDefense ? 'CPU DEFENSE: the computer plays their drives.' : 'CPU DEFENSE: off. You play defense.',
   autoSw: () => 'AUTO SWITCH: grab the defender nearest the ball.',
   morale: () => 'MORALE: big plays and games swing your players.',
   pinj: () => 'PRACTICE INJURIES: players can get hurt in practice.',
@@ -4948,7 +4953,7 @@ function drawSettingsMain() {
   resPanel(SET_MAIN.x, SET_MAIN.y, SET_MAIN.w, SET_MAIN.h, [['SETTINGS', null]], RES.bright);
   const B = SET_BTNS;
   const Y = IN_GAME_PAPER.yellow;   // (the settings buttons are yellow, to stand out from the white panels)
-  { const lock = setInGame(); for (const k of SET_GAME_LOCK) B[k].lockGrey = lock; }   // opened from the pause menu: what would change this game is a flat grey scrap that doesn't move (menuBtn)
+  { const lock = setInGame(); for (const k of SET_GAME_LOCK) B[k].lockGrey = lock; if (simDefLocked()) B.simDef.lockGrey = true; }   // (big job: two players on a phone = CPU DEFENSE locked on)   // opened from the pause menu: what would change this game is a flat grey scrap that doesn't move (menuBtn)
   menuBtn(B.save, 'SAVE GAME', canSave() ? Y : '#a9a9a9', 24, null, canSave());
   menuBtn(B.load, 'LOAD GAME', hasSave() && !tut ? Y : '#a9a9a9', 24, null, hasSave() && !tut);
   for (const c of SET_CATS) {   // the category objects, each laid a little crooked on the desk
@@ -5282,6 +5287,7 @@ function setVolStep(up, key = 'volume') {   // - / + = 10 at a time, from wherev
 function settingsClick(p) {
   if (QS && !QS.full) { qsClick(p); return; }
   if (!diffUI) setCatLayout();
+  if (!diffUI && !dbgUI && !spdUI && !htUI && simDefLocked() && setCatKeys().includes('simDef') && inBtn(p, SET_BTNS.simDef)) { note('ON FOR TWO PLAYERS ON A PHONE'); return; }   // (big job)
   if (!diffUI && !dbgUI && !spdUI && !htUI && setInGame() && SET_GAME_LOCK.some(k => setCatKeys().includes(k) && inBtn(p, SET_BTNS[k]))) { note('LOCKED DURING A GAME'); return; }
   if (diffUI) { diffClick(p); return; }
   if (dbgUI) { debugClick(p); return; }
@@ -5437,7 +5443,7 @@ const SYNC = { owner: 'paperpasserplaytester', repo: 'paper-passer-saves', branc
   every: 60,                    // seconds between auto syncs while the page is visible (push if this device changed, else check for a newer cloud save)
   timeout: 25,                  // seconds a GitHub request may take before it is given up (so SIGNING IN... can't hang forever)
   user: /^[a-z0-9_]{3,16}$/, minPass: 6,
-  light: ['pocketPasser.settings', 'pocketPasser.koTipSeen', 'pocketPasser.offTut', 'pocketPasser.draftTut', 'pocketPasser.coach', 'pocketPasser.coldDone'] };   // keys that don't count as "this device has data" when signing in
+  light: ['pocketPasser.settings', 'pocketPasser.koTipSeen', 'pocketPasser.offTut', 'pocketPasser.draftTut', 'pocketPasser.coach', 'pocketPasser.coldDone', 'pocketPasser.introDone'] };   // keys that don't count as "this device has data" when signing in
 const SYNC_KEY = 'pocketPasser.account';   // this device's sign-in (never synced)
 // v0.70: syncDirty = a pocketPasser.* key (other than the sign-in) was written or removed since syncNow last bundled; a clean check skips the bundle + hash and only asks the cloud.
 // Set by a hook on localStorage's setItem / removeItem, so no write can be missed. Starts true: the first check after a load always bundles
@@ -6687,7 +6693,7 @@ function qsPageBody(id, t, now) {
 }
 const qsAnswers = () => [   // the sign page's checklist: [label, answer]
   ...(QS.full ? [['Favorite team', NFL[career.team] ? NFL[career.team].nick : '-'], ['Hiring', (QS_HIRE.find(h => h.id === (career.hire || 'surprise')) || QS_HIRE[3]).short]] : []),
-  ["Their drives", SETTINGS.simDefense ? 'SIM' : 'PLAY DEFENSE'], ['Contracts', SETTINGS.contracts === false ? 'AUTOMATIC' : 'NEGOTIATE'], ['Scouting', SETTINGS.scouts === false ? 'SIMPLE' : 'SCOUTS'],
+  ["Their drives", SETTINGS.simDefense ? 'CPU DEFENSE' : 'PLAY DEFENSE'], ['Contracts', SETTINGS.contracts === false ? 'AUTOMATIC' : 'NEGOTIATE'], ['Scouting', SETTINGS.scouts === false ? 'SIMPLE' : 'SCOUTS'],
   ['Injuries', SETTINGS.injuries === false ? 'OFF' : 'ON'], ['Weather', SETTINGS.weather === false ? 'OFF' : 'ON'], ['Penalties', SETTINGS.penalties === false ? 'OFF' : 'ON'], ['Booth review', SETTINGS.booth === false ? 'OFF' : 'ON'], ['Taunts', SETTINGS.taunts || 'NORMAL'], ['Replays', SETTINGS.replays],
   ['Volume', `${Math.round(SETTINGS.volume * 100)}%`], ['Dark mode', SETTINGS.darkMode ? 'ON' : 'OFF'], ['Graphics', gfxMode()], ['Sideline', SETTINGS.sideline || 'ALL'], ['Page tours', QS.tours ? 'ON' : 'OFF'],
 ];

@@ -768,7 +768,7 @@ const KPRO = {
   rushOff: 1.0, backOff: 1.9, backGap: 1.5,           // rushers: YL past the line; the three behind: YL back, yd apart
   point: 1.5,                                         // the block point: yards along the field (YL) in front of the ball's spot, on its path
   set: 0.45, stepIn: 0.3, anchor: 4.5, slide: 0.85,    // protection: yd the line sets back, yd each man steps down inside, his speed (yd/s), the most (yd) he ever slides
-  edgeMax: 2, clean: 0.0055, cleanK: 0.9, cleanAt: [0.3, 0.7],   // beaten clean: odds at even ratings, e^(cleanK x rating edge); seconds after the snap he is through. v0.56: the main way a block happens (a man beaten late or off the edge cannot reach the block point in time): tuned with all 11 rushing to about 2.2% FG / 1% PAT live (measured 1k each in test mode, the meters held a moment like a real kick: a kick snapped the instant the unit sets catches the rush still settling and blocks far less)
+  edgeMax: 2, clean: 0.0071, cleanK: 0.9,   /* big job: 0.0055 -> 0.0071 and patClean 0.55 -> 0.33 after the full-speed rush (blocks FG 2.0% / PAT 0.9%, 2 seeds x 1k) */ cleanAt: [0.3, 0.7],   // beaten clean: odds at even ratings, e^(cleanK x rating edge); seconds after the snap he is through. v0.56: the main way a block happens (a man beaten late or off the edge cannot reach the block point in time): tuned with all 11 rushing to about 2.2% FG / 1% PAT live (measured 1k each in test mode, the meters held a moment like a real kick: a kick snapped the instant the unit sets catches the rush still settling and blocks far less)
   drive: 0.75, dbl: 1.6, driveMax: 4.6, driveVar: [0.5, 1.6],   // a bull rush: yd/s the blocker gives at even strength; x when doubled (MIDDLE); most yd given; each drive's own luck (x from - to)
   // the block battle (the line's logic): shed = s [base, + random] until he beats his man at even ratings (x e^(-shedK x rating edge), never under shedMin unless beaten clean);
   // moveK = x the line's own move / answer / counter seconds (RUSH.shed, RUSH.react, RUSH.switchGain); switchAt = s into a stalled block he counters; soft / longarm = x the
@@ -783,7 +783,7 @@ const KPRO = {
   jumpAt: 0.2, jumpFwd: 2.4, jumpBack: 2.8,                          // the MIDDLE jumper goes up this long before the kick, carrying this far forward
   hand: 0.55, ballR: 3,                               // a block: his hands within hand yd of where the ball passes, the ball no more than ballR (S units) over his reach
   peel: 3, keep: 1.6,                                 // a man who missed runs on to a spot peel yd to the side; nobody comes within keep yd of the kicker / holder
-  patClean: 0.55,                                     // extra points: x the clean-win odds (a short, quick operation)
+  patClean: 0.33,                                     // extra points: x the clean-win odds (a short, quick operation)
   late: { p: 0.07, hands: 0.35, secs: [0.15, 0.4], pat: 0.6 },   // a slow operation (a high snap, a bobbled hold): odds at an average holder, less / more per point of his hands rating edge; seconds it costs; x on extra points. The rush keeps coming while the kicker waits: this is when an overload gets home
   // the rush call's weights: a normal field goal, one of longYd+ yards, an extra point. No fakes exist, so nobody guards one: every call sends all eleven.
   // MIDDLE = push + jumper on a guard; EDGE = a free man off the wing; OVER = an overload (the center gets a man of his own, a free man outside: one more than the side can block);
@@ -1238,7 +1238,7 @@ function kproTick(dt) {   // every frame of a placekick (true = it was blocked: 
   // --- the rush
   for (const r of kick.rush) {
     if (r.action) { updateAction(r, dt); if (r.kp.jf && r.action === 'jump') r.x -= r.kp.jf * dt; continue; }
-    const R = r.kp, b = r.kickBlocker, bk = snap ? kproBurst(R, kick.t) : 1, top = Math.min(10.5 * YD, r.top || K.top * YD) * (R.wide ? K.widenSlow : 1) * bk;
+    const R = r.kp, b = r.kickBlocker, bk = snap ? kproBurst(R, kick.t) : 1, top = (r.top || K.top * YD) * bk;   // (big job: every rusher at his own full top speed, no 10.5 yd/s cap, no widenSlow)
     if (snap && kick.t < (R.rt || 0)) { r.vx = r.vy = 0; r.moving = false; continue; }   // (not off the ball yet)
     if (!R.free && snap && kick.t >= r.kickBeat) {   // off his block: the next protector over may pick him up once (never a clean win, never yours), else he is through
       const nb = b && r !== me && !R.quick && !R.reTried && R.role === 'line' ? kproReblock(r, b, bp, [...P.line, ...P.wings], kick.t) : null;
@@ -1247,11 +1247,11 @@ function kproTick(dt) {   // every frame of a placekick (true = it was blocked: 
       else { R.free = true; r.engaged = false; if (r !== me) kproWon(r, b, bp, kick.t); }
     }
     if (R.role === 'back') {   // (no job: a step up, hands ready. Every call gives the men behind the line a job now; kept as a fallback)
-      go(r, los + (K.backOff - 0.4) * YL, r.y, 2.5 * YD, 8 * YD); r.face = -1; R.up = kproUp(r, R, bp, kickT, flight); continue;
+      go(r, los + (K.backOff - 0.4) * YL, r.y, top, K.accel * YD); r.face = -1; R.up = kproUp(r, R, bp, kickT, flight); continue;
     }
     if (R.role === 'scoop') {   // the scoop man: trails the pile toward the block point, eyes on the ball, ready for anything that comes off a hand
       const J = K.backJobs, lead = kick.rush.filter(o => o.kp.role === 'line').reduce((m, o) => Math.min(m, o.x), r.x);
-      go(r, Math.max(lead + J.scoopBack * YD, bp.x + 1.5 * YD), r.y + (bp.y - r.y) * 0.3, J.scoopV * YD, 12 * YD); r.face = -1; R.up = kproUp(r, R, bp, kickT, flight); continue;
+      go(r, Math.max(lead + J.scoopBack * YD, bp.x + 1.5 * YD), r.y + (bp.y - r.y) * 0.3, top, K.accel * YD);   // (big job: sprints to his spot, was J.scoopV) r.face = -1; R.up = kproUp(r, R, bp, kickT, flight); continue;
     }
     if (snap && R.hold && kick.t < (R.rt || 0) + R.hold) { r.vx = r.vy = 0; r.moving = false; r.face = -1; continue; }   // (the looper: lets the rush go first)
     if (R.role === 'jump') {   // MIDDLE: through the gap behind the two men driving the guard, up with both hands as the ball is struck
@@ -1363,7 +1363,7 @@ function kproPuntTick(k, dt, t0, runUp) {
   // --- the rush (toward higher x)
   for (const q of P.R) {
     if (q.action) continue;   // (updateKickoff runs everyone's dives and leaps)
-    const o = q.kp, b = o.blk, bk = kproBurst(o, P.t), top = Math.min(10.5 * YD, q.top || K.top * YD) * bk;
+    const o = q.kp, b = o.blk, bk = kproBurst(o, P.t), top = (q.top || K.top * YD) * bk;   // (big job: no 10.5 yd/s cap)
     q.face = 1;
     if (P.t < (o.rt || 0)) { q.vx = q.vy = 0; q.moving = false; continue; }   // (not off the ball yet)
     if (!o.free && b && P.t >= o.at) {   // off his block: the next man on the line may pick him up once, else he is through
@@ -4561,7 +4561,7 @@ const KEYBINDS_MOBILE = [
   ['PROTECT (hold)', 'Both arms on the ball, almost no fumbles, but slower and no moves'],
   ['KNEEL / FAIR', 'Kneel for a touchback or fair catch on a kick'],
   ['Tap the field (after the whistle)', 'Your player celebrates his score or big play, when he has one ready'],
-  ['PLAYING DEFENSE (settings: SIM DEFENSE off)', ''],
+  ['PLAYING DEFENSE (settings: CPU DEFENSE off)', ''],
   ['Joystick', 'Move your defender. Anyone can blitz: run him through the line toward the QB'],
   ['SWITCH / tap a player', 'Switch to the defender nearest the ball'],
   ['DIVE', 'Dive tackle from a few yards off'],
@@ -4626,7 +4626,7 @@ const KEYBINDS = [
   ['D', 'Back up (run backwards)'],
   ['On a run', 'Be patient: hitting the hole early lets blocks break sooner'],
   ['Click, either button (after the whistle)', 'Celebrate: your player celebrates his score or big play (the other team celebrates by itself); another click or any key skips one'],
-  ['PLAYING DEFENSE (settings: SIM DEFENSE off)', ''],
+  ['PLAYING DEFENSE (settings: CPU DEFENSE off)', ''],
   ['WASD', 'Move your defender. Anyone can blitz: run him through the line toward the QB'],
   ['E', 'Switch to the defender nearest the ball (where it is headed while it is in the air)'],
   ['O', 'Same as E: switch defenders'],
@@ -4642,7 +4642,7 @@ const KEYBINDS = [
   ['R', 'Spin off a block / jump for the ball'],
   ['R (ball in the air)', 'Jump for the ball: time it to arrive with the ball and a pick is almost sure; a mistimed one can still knock it away'],
   ['X (held off by a stiff arm)', 'Chop at the arm when the white ring flashes: a good chop helps you tear it off and wrap up; a mistimed one gives the runner the edge'],
-  ['TWO PLAYERS (scrimmage, SIM DEFENSE off)', ''],
+  ['TWO PLAYERS (scrimmage, CPU DEFENSE off)', ''],
   ['Left side of the matchup screen', 'WASD and the keys above, on offense and defense'],
   ['Right side: IJKL', 'Move (offense or defense)'],
   ['Right side, defense', 'Y jump for the ball, U switch, B dive tackle, H secure tackle, N hit stick, O one-hander in the air, M audible'],
@@ -5082,8 +5082,6 @@ function draw() {
   ctx.strokeText(ddTxt, W / 2, H - BOT_BAR * 0.33); ctx.fillText(ddTxt, W / 2, H - BOT_BAR * 0.33);
   if (!cine && !inRp && celebPromptHere()) { const t = `${TOUCH ? 'DOUBLE TAP' : 'RIGHT CLICK'}  -  CELEBRATE`; ctx.save(); ctx.fillStyle = '#ffffff'; ctx.strokeText(t, W / 2, H - BOT_BAR - 14); ctx.fillText(t, W / 2, H - BOT_BAR - 14); ctx.restore(); }   // (one of your players has a celebration ready)
   if (pt) pt = perfMark('d.pause', pt);
-  if (!tut && state !== 'sim' && state !== 'kick' && !lightGfx() && !cine) { drawStarHud(); drawNamesTip(); }
-  if (pt) pt = perfMark('d.stars', pt);
   if (!cine && state !== 'sim') drawKeyTips();   // (key tips, top left)
   if (pt) pt = perfMark('d.keytips', pt);
   if (!inRp && (state === 'kick' || (state === 'kickoff' && kick && kick.userKo))) drawKickMeters();
@@ -5124,6 +5122,8 @@ function draw() {
     for (const b of UI_BTNS) if (b && b.w) ctx.rect(b.x - 4, b.y - 4, b.w + 8, b.h + 8);
     ctx.clip('evenodd'); drawDefOverlay(); ctx.restore();
   }   // (online: only the defender sees his assignment)   // (two players: no play art while the offense picks punt / kick / go for it)
+  if (!tut && state !== 'sim' && state !== 'kick' && !lightGfx() && !cine) { drawStarHud(); drawNamesTip(); }   // (big job: after the defense's assignment / blitz art, so the STAR FACTOR tips always sit on top of it)
+  if (pt) pt = perfMark('d.stars', pt);
   if (ONL.on && !paused && !bannerUp() && !fourthPending && patMode !== 'choose' && !(rec && rec.replaying) && ['pre', 'drop', 'pocket', 'flight', 'run', 'picked', 'loose', 'fumble'].includes(state)) {   // online: a white circle under the offense's player, a yellow one under the defense's, on both screens
     const z = camZ(), ring = (p, col) => {
       if (!p || !ringFree(p)) return;

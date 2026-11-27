@@ -764,12 +764,12 @@ function drawDefAsk() {
   ctx.fillText('PLAY DEFENSE?', W / 2, card.y + 50);
   ctx.font = 'bold 17px monospace';
   ['On defense you drive one defender on the other team\'s drives:', 'cover receivers, rush the QB, jump for passes, make tackles,',
-   'and carry any interception back yourself.', '', 'SIM DEFENSE lets the computer play their drives for you instead:',
+   'and carry any interception back yourself.', '', 'CPU DEFENSE lets the computer play their drives for you instead:',
    'their possessions are simulated in a moment and the defense',
    'lessons are skipped. (Change it any time in Settings.)'].forEach((l, i) => ctx.fillText(l, W / 2, card.y + 100 + i * 26));
   tourBtnDraw = true;
   menuBtn(DEF_ASK.play, 'PLAY DEFENSE', IN_GAME_PAPER.green, 22);
-  menuBtn(DEF_ASK.sim, 'SIM DEFENSE', IN_GAME_PAPER.blue, 22);
+  menuBtn(DEF_ASK.sim, 'CPU DEFENSE', IN_GAME_PAPER.blue, 22);
   tourBtnDraw = false;
   ctx.restore();
 }

@@ -1651,7 +1651,7 @@ const DIVE_FEEL = { min: 0.55, fullSpeed: 8 * YD };   // reach: x the lunge stan
 // a dive for the ball is never longer than lunge yd and never aims more than oob yd past a sideline (balls sailing out of bounds made players "teleport" after them)
 const DIVE_CAP = { lunge: 4.5, oob: 1.2 };
 const DIVE_BODY = { r: 0.7 };   // yd: a tackle dive that reaches a blocker's body (not the carrier's) stops there, missed
-const REV_DIVE = { cut: 0.45 };   // diving back against his own momentum: up to this much less reach (x), any dive
+const REV_DIVE = { cut: 0.45, side: 0.45 };   // diving back against his own momentum: up to this much less reach (x), any dive; side = share of that a dive straight across his run pays (big job: sideways is not free)
 function diveLaunch(p, ux, uy) {
   const vx = p.vx || 0, vy = p.vy || 0, sp = Math.hypot(vx, vy), cos = sp > 0.3 * YD ? (vx * ux + vy * uy) / sp : 0;
   const carry = sp * (cos >= 0 ? DIVE.plant + (1 - DIVE.plant) * cos : DIVE.plant * (1 + cos));
@@ -1705,7 +1705,8 @@ function startDive(p, tx, ty, dur, lunge, arrive) {
   lunge *= (DIVE_FEEL.min + (1 - DIVE_FEEL.min) * mom) * (forBall ? 1 + DIVE_PACE.reach * mom : 1);
   if (forBall) { ty = Math.max(-DIVE_CAP.oob * YD, Math.min(FW + DIVE_CAP.oob * YD, ty)); lunge = Math.min(lunge, DIVE_CAP.lunge * YD); }   // (a ball sailing out of bounds: he lays out toward the sideline, not off into the crowd)
   {   // a man running one way can't turn on a dime and lay out the other way: the farther back against his speed, the shorter the dive (his launch speed drops too: diveLaunch)
-    const rx = tx - p.x, ry = ty - p.y, rd = Math.hypot(rx, ry) || 1, opp = sp > 0.5 * YD ? Math.max(0, -((p.vx || 0) * rx + (p.vy || 0) * ry) / (sp * rd)) : 0, f = opp * Math.min(1, sp / DIVE_FEEL.fullSpeed);
+    const rx = tx - p.x, ry = ty - p.y, rd = Math.hypot(rx, ry) || 1, cs = sp > 0.5 * YD ? ((p.vx || 0) * rx + (p.vy || 0) * ry) / (sp * rd) : 1, opp = Math.max(0, -cs), across = Math.sqrt(Math.max(0, 1 - cs * cs));
+    const f = Math.min(1, opp + REV_DIVE.side * across) * Math.min(1, sp / DIVE_FEEL.fullSpeed);   // (big job: across his run costs part of it too)
     if (f > 0) lunge *= 1 - REV_DIVE.cut * f;
   }
   const dx = tx - p.x, dy = ty - p.y, d = Math.hypot(dx, dy) || 1, L = Math.min(d, lunge), ux = dx / d, uy = dy / d;
@@ -1826,7 +1827,7 @@ function retReverse(p, fwd, dt) {   // fwd: how much his heading points upfield 
 const DB_STATES = ['pre', 'drop', 'pocket', 'flight', 'loose', 'run'];
 // the top speed steer really lets him run when asked for `top`: no coverage bonus or lead takes a defender past the top speed his attributes give him, and
 // the yards he has run this play wear it down (runFade). The pursuit math (pursuitPoint) reads the same number, so nobody plans an angle at a speed he hasn't got
-const steerTop = (p, top) => (p.team === 'def' && p !== ud && p.top && ['CB', 'S', 'LB'].includes(p.role) && DB_STATES.includes(state) ? Math.min(top, effTop(p, p.top)) : top) * runFade(p);
+const steerTop = (p, top) => Math.min(p.team === 'def' && p !== ud && p.top && ['CB', 'S', 'LB'].includes(p.role) && DB_STATES.includes(state) ? Math.min(top, effTop(p, p.top)) : top, spdCapTop(p)) * runFade(p);   // (big job: never past SPEED_ABS.cap)
 function steer(p, tx, ty, top, accel, dt) {
   top = steerTop(p, top);
   { const t = { x: tx, y: ty }; oobAim(p, t); tx = t.x; ty = t.y; }   // (the AI tries to stay in bounds; nothing physical stops anyone at the line)
@@ -1970,7 +1971,8 @@ function speedSetK(p) {
   const pvp = twoP && !twoP.ai, mine = pvp || p.team === (aiOff() ? 'def' : 'off');
   return mine ? spdK.me : spdK.cpu;
 }
-const effTop = (p, base) => base * (p.show ? showSpeedK(p) : 1) * speedSetK(p) * (p.spdMult || 1) * (xfAttrK(p, 'spd') ? 1 + XF_BOOST.spdPer * XF_BOOST.amt : 1) * abilSpdK(p) * (0.9 + 0.1 * p.stam) * (1 - p.slow) * (1 - p.fatigue) * (1 - WEAR.speed * (p.wear || 0)) * (p.fresh > 0 ? 1 + WEAR.fresh.top : 1) * Math.max(1, moraleMulP(p)) * limitedSpeedP(p) * (isRunPlay && !tut && (p === rb || ols.includes(p)) ? 1 - runHeat() * RUN_STREAK.spd : 1);   // (run after run tires the back and the line; low morale never slows a franchise player below scrimmage speed; fired up still helps)
+const effTop = (p, base) => Math.min(spdCapTop(p), effTop0(p, base));   // (big job: the speed cap sits on the final top speed, so no boost goes round it)
+const effTop0 = (p, base) => base * (p.show ? showSpeedK(p) : 1) * speedSetK(p) * (p.spdMult || 1) * (xfAttrK(p, 'spd') ? 1 + XF_BOOST.spdPer * XF_BOOST.amt : 1) * abilSpdK(p) * (0.9 + 0.1 * p.stam) * (1 - p.slow) * (1 - p.fatigue) * (1 - WEAR.speed * (p.wear || 0)) * (p.fresh > 0 ? 1 + WEAR.fresh.top : 1) * Math.max(1, moraleMulP(p)) * limitedSpeedP(p) * (isRunPlay && !tut && (p === rb || ols.includes(p)) ? 1 - runHeat() * RUN_STREAK.spd : 1);   // (run after run tires the back and the line; low morale never slows a franchise player below scrimmage speed; fired up still helps)
 function tire(p, base, dt) {
   p.stam = Math.max(0, p.stam - STAMINA_DRAIN * dt * Math.min(1, Math.hypot(p.vx, p.vy) / base));
   if (!(p.falterUntil && clock < p.falterUntil)) p.slow = Math.max(0, p.slow - BREAK_RECOVER * dt);   // (no recovering while still stumbling: that was a speed boost mid-stumble)
@@ -2004,9 +2006,8 @@ function autoBreak(c, d) {
   const sp = Math.hypot(c.vx, c.vy), vx = sp > YD ? c.vx : c.face * 4 * YD, vy = sp > YD ? c.vy : 0;
   if (d.action === 'dive' && !d.hitStick && Math.random() < HURDLE.chance) {
     c.action = 'hurdle';
-    c.act = { t: 0, dur: HURDLE.dur, vx, vy, h: HURDLE.h, style: hurdleStyle(false) };
+    c.act = { t: 0, dur: HURDLE.dur, vx, vy, h: HURDLE.h, style: hurdleStyle(false), wing: false };   // (wings once he is in the air)
     moveLookPick(c, 'hurdle', c.act);   // (looks only)
-    hurdleWings(c, false);
   }
   // (no automatic jukes / spins / stiff arms / trucks: those only come from the player's keys)
 }
@@ -2119,6 +2120,7 @@ function updateAction(p, dt) {
     a.t += dt;
     p.x += a.vx * dt; p.y += a.vy * dt;
     p.z = airZ(a.t, a.H);
+    if (a.wing != null && p.z > 0) { const w = a.wing; a.wing = null; hurdleWings(p, w); }   // (big job: the wings only once he has left the ground; a hurdle cut off before that shows none)
     // a hurdle with no space: the man in front gets a hand on him in the air - he comes down hard, ball loose
     if (a.user && !a.space && !a.hit && a.mid && state === 'run' && runner === p && Math.hypot(a.mid.x - p.x, a.mid.y - p.y) <= CONTACT * 1.4) {
       a.hit = true;

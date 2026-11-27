@@ -693,7 +693,7 @@ function teamTips(kind) {
   const W2 = t => wrapLines(t, 54);
   if (kind === 'cond') return [
     { t: 'CONDITION', demo: { k: 'cond1' }, lines: ['Fresh legs. Hits and games wear it.'], more: (`How fresh and healthy your players are, 0-100%. Each player has his own; the TEAM number is their average. Hits wear it down during a game (tackle -${INJURY.cond.tackle}, sack -${INJURY.cond.sack}, hit stick -${INJURY.cond.stick}) and every game played costs about ${INJURY.weekly}-${INJURY.weekly + INJURY.weeklyRnd} more.`) },
-    { t: 'WHAT IT DOES', demo: { k: 'cond2' }, lines: ['Tired players play worse and get hurt.'], more: (`Ratings: a player loses up to ${Math.round(INJURY.play * 100)}% of his ratings as his condition falls toward 0. ${COND_EDGE.hi}%+ gives every attribute +1; under ${COND_EDGE.lo}% gives every attribute -1. Injuries: the odds of getting hurt rise sharply as condition drops (up to ${1 + INJURY.condK}x at 0%), and hurt players get worse injuries. Only matters with injuries on.`) },
+    { t: 'WHAT IT DOES', demo: { k: 'cond2' }, lines: ['Tired players play worse and get hurt.'], more: (`Ratings: a player loses up to ${Math.round(INJURY.play * 100)}% of his ratings as his condition falls toward 0. ${COND_EDGE.hi}%+ gives every attribute +1; under ${COND_EDGE.lo}% gives every attribute -1. Injuries: the odds of getting hurt rise as condition drops (up to ${1 + INJURY.condK}x at 0%), and hurt players get worse injuries. Only matters with injuries on.`) },
     { t: 'UPS AND DOWNS', demo: { k: 'condUD' }, lines: ['Rest fills the tank. Every hit drains it.'], more: (`Raises it: sitting a game (back to full), a light practice week, a better medical facility and trainers. Lowers it: every game played (about ${INJURY.weekly}-${INJURY.weekly + INJURY.weeklyRnd}), sacks (-${INJURY.cond.sack}), hit sticks (-${INJURY.cond.stick}), tackles (-${INJURY.cond.tackle}) and heavy practice weeks.`) },
     { t: 'HOW TO RAISE IT', demo: { k: 'cond3' }, lines: ['Rest them. Train lighter. Upgrade medical.'], more: ('Players who sit out a game come back fully rested. During the week, PRACTICE sets the load: a lighter load lets condition recover, a heavy one wears players down (older players more). Better trainers, a CONDITIONING specialist, the Physio trait and a higher medical facility level all bring condition back faster. Timeouts in a game shake off some in-game fatigue.') },
   ];
@@ -1210,7 +1210,7 @@ function drawStaff() {
   const tw = ctx.measureText(title).width / 2;
   drawLogo(team, W / 2 - tw - 40, 44, 50); drawLogo(team, W / 2 + tw + 40, 44, 50);
   if (xpcOn()) coinBox(STAFF_COIN.x, STAFF_COIN.y, LEAGUE.coins, RES.bright);   // (credits / XP bank: click to flip)
-  if (staffView.sel == null && ygOn()) menuBtn(YGOALS_BTN, 'YEARLY\nGOALS', RES.bright, 15);   // (this season's 5 yearly goals)
+  if (staffView.sel == null && ygOn()) menuBtn(YGOALS_BTN, 'YEARLY\nGOALS', IN_GAME_PAPER.yellow, 17);   // (this season's 5 yearly goals: the weekly GOALS tab's yellow, top left)
   if (staffView.sel == null) {
     if (foOn()) { ctx.save(); ctx.fillStyle = 'rgba(214,190,140,0.75)'; for (const [x, r] of [[FO_TITLE_BTN.x + 30, -0.5], [FO_TITLE_BTN.x + FO_TITLE_BTN.w - 30, 0.5]]) { ctx.save(); ctx.translate(x, FO_TITLE_BTN.y + 6); ctx.rotate(r); ctx.fillRect(-26, -9, 52, 18); ctx.restore(); } ctx.restore(); }   // (the title is a label strip taped to the drawer front)
     drawFoDrawer(FOT.tab === 'staff' || !contractsOn());
@@ -1720,7 +1720,7 @@ function drawBookDef(c, ed) {
   ctx.restore();
   if (!BOOK_SLOTS.some(s => jobs[s] === 'DEEP')) { ctx.save(); ctx.translate(D.x + D.w - 110, D.y + 50); ctx.rotate(0.1); ctx.fillStyle = '#ff6b6b'; ctx.fillRect(-90, -24, 180, 48); ctx.fillStyle = '#ffffff'; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center'; ctx.fillText('NO DEEP HELP', 0, 1); ctx.restore(); }
   ctx.textAlign = 'left'; ctx.fillStyle = RES.dim; ctx.font = 'bold 12px monospace';
-  ctx.fillText(SETTINGS.simDefense ? 'JOB EDITS NEED PLAY DEFENSE (SETTINGS)' : ed ? 'TAP A DEFENDER: PENCIL A NEW JOB (TAP AGAIN TO CYCLE / ERASE)' : 'HIS JOBS', D.x, D.y + D.h + 6, D.w);
+  ctx.fillText(SETTINGS.simDefense ? 'JOB EDITS NEED CPU DEFENSE OFF (SETTINGS)' : ed ? 'TAP A DEFENDER: PENCIL A NEW JOB (TAP AGAIN TO CYCLE / ERASE)' : 'HIS JOBS', D.x, D.y + D.h + 6, D.w);
   covs.forEach((k, i) => {
     const b = bookRow(i), mk = c.book && c.book.m[k];
     menuBtn(b, '', k === BK.call ? '#fff3a0' : RES.bright, 14, bb => {
@@ -2535,7 +2535,7 @@ const YGOAL_DEFS = [
   { id: 'ic', k: ['ic'], pg: 0.9, cr: 6, def: true, text: n => `${n} interceptions` },
 ];
 const YGOAL_BY = Object.fromEntries(YGOAL_DEFS.map(d => [d.id, d]));
-const YGOALS_BTN = { x: 1028, y: 14, w: 86, h: 52 };   // (front office: just left of the coin box at COIN_SPOT, right of the title)
+const YGOALS_BTN = { x: 30, y: 4, w: 112, h: 80 };   // (front office: the top left corner, BACK's height; left of the title (x 260) and above the folder tabs (y 86))
 const ygOn = () => !!(season && !exhibition && !tut && LEAGUE && career && xpcOn());
 function ygGames() { const me = season.team; return season.sched.filter(wk => wk.some(g => g.h === me || g.a === me)).length || 17; }
 function ygEnsure() {
@@ -2664,7 +2664,7 @@ function drawUpgPops(p) {   // just-spent upgrades on this page: the new box pop
     }
   }
 }
-const upgOpen = (p, a) => !(results && rosterReturn === 'draft' && results.screen !== 'home') && (p.upg || 0) > 0 && (p.upgAttr == null || p.upgAttr === a) && p.raw[a] < 15 && scoreOf(p) < ptsOf(p) && potAttrs(p, ptsOf(p))[a] > Math.round(p.raw[a]);   // (only where his potential leaves an empty box)
+const upgOpen = (p, a) => !(results && rosterReturn === 'draft' && results.screen !== 'home') && (p.upg || 0) > 0 && (p.upgAttr == null || p.upgAttr === a) && p.raw[a] < 15 && !spdCapped(p, a) && scoreOf(p) < ptsOf(p) && potAttrs(p, ptsOf(p))[a] > Math.round(p.raw[a]);   // (only where his potential leaves an empty box)
 function upgCash(p) {   // a waiting upgrade he has no potential left to spend on: its XP goes to the XP bank instead
   while ((p.upg || 0) > 0 && !upgSpendable(p)) { p.upg--; p.upgAttr = null; xpBankAdd(upgCost(p)); }
 }
@@ -2924,7 +2924,7 @@ function homeNews() {
   if (pn.length && !SETTINGS.hideBattlePop) {
     const me = MATCH.you, cats = pn.slice(0, 4).map(b => { if (typeof b === 'string') return { name: 'PRACTICE BATTLE', lines: wrapLines(b, 80) };
       const w = plOf(b.win, me), l = plOf(b.lose, me); if (!w || !l) return { name: `${b.g} BATTLE`, lines: wrapLines(b.line || '', 80) };
-      return { name: `${b.g} BATTLE`, lines: b.got ? [`+${b.stars.toFixed(1)} STARS${b.took ? '  -  TAKES THE STARTING JOB' : ''}`] : [b.took ? 'TAKES THE STARTING JOB' : ''], feat: { vs: [{ p: w, team: me, win: true }, { p: l, team: me, win: false }], label: b.g } }; });
+      return { name: `${b.g} BATTLE`, lines: [[b.got ? `▲${b.stars.toFixed(1)}★ NOW` : '', b.pot ? `▲${b.pot.toFixed(1)}★ POTENTIAL` : '', b.took ? 'STARTER' : ''].filter(Boolean).join('   ')], feat: { vs: [{ p: w, team: me, win: true }, { p: l, team: me, win: false }], label: b.g } }; });
     catPopShow({ title: 'PRACTICE BATTLES', cats, hide: 'hideBattlePop' });
   }
   LEAGUE.pracNews = [];

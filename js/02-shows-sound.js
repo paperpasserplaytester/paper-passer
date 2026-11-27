@@ -44,6 +44,7 @@ function tapeFill(o, p, K) {
   o.mom = p.mom; o.faceShow = p.faceShow; o.breakFx = p.breakFx ? tapeKT(p.breakFx, K && K.breakFx, 'kind') : null; o.relFx = p.relFx ? tapeShift(p.relFx, K && K.relFx, 't') : null; o.headTop = p.headTop ? tapeShift(p.headTop, K && K.headTop, 't') : null; o.catchFx = p.catchFx ? tapeShift(p.catchFx, K && K.catchFx, 't') : null;
   o.mvFx = p.mvFx ? tapeShift(p.mvFx, K && K.mvFx, 't') : null; o.mlTight = p.mlTight; o.saLook = p.saLook || null; o.saT1 = p.saT1 != null ? rec.t - (clock - p.saT1) : null; o.saHeld = p.saHeld || null; o.saTx = p.saTx;
   o.saTy = p.saTy; o.saTz = p.saTz; o.saLoss = p.saLoss ? tapeKT(p.saLoss, K && K.saLoss, 'k') : null; o.lid = p.lid ? tapeShift(p.lid, K && K.lid, 't') : null; o.cel = p.cel ? tapeShift(p.cel, K && K.cel, 't0') : null; o.show = showTape(p.show);
+  o.refToss = p.refToss || 0; o.refTossK = p.refTossK || 0; o.armsUp = !!p.armsUp;   // (big job: the hand-off to an official and kick-block hands are on the tape too: a replay used to keep the live arm up the whole way)
   o.showLast = p.showLast || null; o.showEnd = p.showEnd != null ? rec.t - (clock - p.showEnd) : null; o.falterUntil = rec.t + ((p.falterUntil || 0) - clock); o.stumbleRec = p.stumbleRec != null ? rec.t - (clock - p.stumbleRec) : null;
   return o;
 }
@@ -898,7 +899,7 @@ function hsCollect(r) {
   if (m.score < HLREEL.minScore || !htOn('highlights') || !hsOn()) { r.hsJob = null; return; }
   const { lowH, lowG, inH, inG } = hsWhere(m, m.score);
   if (!inH && !inG) { r.hsJob = null; return; }
-  const e = { score: m.score, title: m.title, label: r.label || '', kind: m.kind, who: m.who, stat: m.stat, fav: m.fav, apex: m.apex || [], def: !!m.def, shows: r.played ? 1 : 0, air: m.air, ci: m.ci, type: m.type };   // (air / ci / type: the Post's photos pick their frame from them)   // (shows: the live instant replay already showed it once; one that plays after this is counted in startReplay via r.hsClip)
+  const e = { score: m.score, title: m.title, label: r.label || '', kind: m.kind, who: m.who, stat: m.stat, fav: m.fav, apex: m.apex || [], def: !!m.def, shows: r.played ? 1 : 0, air: m.air, ci: m.ci, type: m.type, stk: m.stk || null, stv: m.stv || null };   // (air / ci / type: the Post's photos pick their frame from them)   // (shows: the live instant replay already showed it once; one that plays after this is counted in startReplay via r.hsClip)
   r.hsClip = e;
   if (SETTINGS.replays !== 'NONE' && r.cast && r.castLive && r.frames && r.frames.length >= 10) { try { Object.assign(e, hsTape(r, m)); } catch (err) {} }
   if (e.frames && e.frames.length < 10) delete e.frames;   // (nothing usable on the tape: a title card at most, never a clip)
@@ -2563,6 +2564,7 @@ function annPlayBase(text, next, kind, ko, pen) {   // (annPlayEnd: the base res
   const td = kind === 'td' || /TOUCHDOWN/.test(T) || pick6 || scoop || retTd, tdYd = Math.max(1, Math.round((FIELD - los) / YL));
   const add = td ? 6 : kind === 'fg' ? 3 : 0, late = game.quarter >= 4 && game.secs <= lateS(120), zero = game.quarter >= 4 && game.secs <= 0;
   const swing = late && add && !pick6 && !scoop && game.blue <= game.red && game.blue + add >= game.red;
+  { const st = annStakes(T, next, kind, ko, td, pick6, scoop, blk); if (st) { if (rec && rec.hs && !rec.replaying) { rec.hs.stk = st.k; rec.hs.stv = st.v; } return annSayOwn(st.k, { ...o, pri: 6, vars: st.v }); } }   // (big job: the stakes come first, at crazy priority: the big bubble)
   let crazy = null;
   if (td) crazy = pick6 ? 'pickSix' : scoop && blk ? 'blockTd' : scoop ? 'scoopScore' : P.br >= 3 ? 'breaksTd' : P.ico ? 'icoTd' : P.hurdleX != null && FIELD - P.hurdleX < 6 * YL ? 'hurdleTd'
     : P.one ? 'oneTd' : zero ? 'buzzer' : swing ? 'clutch' : retTd ? 'retTd' : !ko && tdYd >= ANN.longTd ? 'longTd' : null;
@@ -2583,6 +2585,46 @@ function annPlayBase(text, next, kind, ko, pen) {   // (annPlayEnd: the base res
   if (next > los && next + BALL_TIP >= lineToGain) return annSay(g >= 15 ? 'bigGain' : 'first', { ...o, pri: 1.5 });
   if (down >= 4) return annSay('downs', { ...o, pri: 3 });
   annSay(g >= 15 ? 'bigGain' : g >= 4 ? 'gain' : g >= 1 ? 'short' : g === 0 ? 'noGain' : 'loss', { ...o, pri: 1 });
+}
+// (big job) the stakes: a late, close play's own call (ANN_LINES stk_*), from the snap's situation (ANN_S.sit) and the score now. Booth randoms only (annRnd).
+const ANN_STK_BIG = ['stk_turnSave', 'stk_walkoff', 'stk_otWin', 'stk_goAhead', 'stk_kickWin', 'stk_4thStop', 'stk_comeback', 'stk_pick6Flip'];   // (deciding moments: a playoff / Paper Bowl version now and then)
+const ANN_DN = ['', 'first', 'second', 'third', 'fourth'];
+function annClockTxt() { const t = Math.max(0, Math.ceil(game.secs - 1e-6)); return t >= 60 ? clockStr(t) : t === 1 ? '1 second' : t + ' seconds'; }
+function annStakes(T, next, kind, ko, td, pick6, scoop, blk) {
+  const s = ANN_S.sit; if (!s || ko || patMode !== null) return null;
+  const off = annOffT(), def = off === 'blue' ? 'red' : 'blue', was = s.mar, now = game[off] - game[def], late = s.late || s.ot, close = Math.abs(was) <= 8;
+  const turn = kind === 'turnover' || pick6 || (scoop && td), first = Number.isFinite(next) && next > los && next + BALL_TIP >= lineToGain;
+  let k = null;
+  if (turn) { if (pick6 && was > 0 && now < 0 && s.q >= 3) k = 'stk_pick6Flip'; else if (late && close) k = was <= 0 ? 'stk_turnSave' : 'stk_turnLife'; }
+  else if (td || kind === 'fg') {
+    const fg = kind === 'fg';
+    if (late) {
+      if (s.ot && now > 0) k = 'stk_otWin';
+      else if (game.quarter >= 4 && game.secs <= 0 && now > 0 && was <= 0) k = fg ? 'stk_kickWin' : 'stk_walkoff';
+      else if (was <= 0 && now > 0) k = s.come ? 'stk_comeback' : fg ? 'stk_kickWin' : 'stk_goAhead';
+      else if (was < 0 && now === 0) k = fg ? 'stk_kickTie' : 'stk_tie';
+    } else if (was < 0 && now > 0 && s.come && s.q >= 3) k = 'stk_comeback';
+  }
+  else if (kind === 'fgmiss' && late && was <= 0 && was >= -3 && !blk) k = 'stk_kickMiss';
+  else if (late && was <= 0 && was >= -8 && !kind) { if (/SACKED/.test(T) && down >= 3) k = 'stk_sackSave'; else if (down >= 4 && !first) k = 'stk_4thStop'; }
+  if (!k) return null;
+  if (ANN_STK_BIG.includes(k) && s.po && annRnd() < 0.5) k = MATCH.playoff && po && po.round >= PO_ROUNDS.length - 1 ? 'stk_bowl' : 'stk_po';
+  const man = kind === 'fg' ? rb : runner || playCatcher || qb, dm = turn ? (xfPicker || xfHit) : xfHit;
+  const v = { clock: game.secs > 0.5 ? annClockTxt() : null, sc: Math.max(game.blue, game.red) + ' to ' + Math.min(game.blue, game.red), lead: Math.abs(turn ? was : now) || 1, dn: ANN_DN[Math.min(4, down)] + ' and ' + Math.max(1, s.dist) };
+  const pn = annName(man), dn = dm && dm.team !== (man && man.team) ? annName(dm) : null; if (pn) v.p = pn; if (dn) v.d = dn;
+  return { k, v };
+}
+// (big job) FAREWELL TOUR: his last home game of the regular season (p.fw = this year), said once a game the first time he makes a play
+function annLastHome(p) {
+  const s = p && p.src; if (!s || s.fw !== LEAGUE.year || !season || exhibition || MATCH.playoff || season.week > SEASON_WEEKS) return false;
+  const k = xfTeam(s); if (!k) return false;
+  const g = gameOf(season.week, k); if (!g || g.h !== k) return false;
+  for (let w = season.week + 1; w <= SEASON_WEEKS; w++) { const n = gameOf(w, k); if (n && n.h === k) return false; }
+  return true;
+}
+function annFarewell() {
+  const G = annG(); if (G.fw) return;
+  for (const p of [runner, playCatcher, xfHit, qb]) if (p && annLastHome(p)) { G.fw = 1; return annSayOwn('stk_farewell', { who: 'A', pri: 2, add: true, wait: true, vars: { p: annName(p) } }); }
 }
 function annIncKey(T) {   // over / under / wide: the ball's landing spot vs the intended man, along the throw's own line (world coords, so a mirrored or flipped drive reads the same)
   const P = ANN_S.pl, r = tgt, A = ANN;
@@ -2637,6 +2679,7 @@ function annPlayEnd(text, next, kind, ko, pen) {   // (endPlay) the base call, t
   const offT = annOffT(), was = s0.mar;   // (the margin at the snap: endPlay runs after the points are added)
   annPlayBase(text, next, kind, ko, pen);
   if (pen) { annFlagCount(pen); if (pen.others) annSay('penMore', { who: 'B', pri: 2, add: true, wait: true }); return; }
+  if (patMode === null && !ko) try { annFarewell(); } catch (e) {}   // (big job: LAST HOME GAME, queued behind the play's call)
   if (patMode !== null || (ANN_S.cur && ANN_S.cur.pri >= ANN.crazy)) { if (patMode === null) annDriveEnd(kind, T, ko); return; }
   const sack = /SACKED/.test(T), first = !kind && !ko && Number.isFinite(next) && next > los && next + BALL_TIP >= lineToGain, d = G.dr;
   if (d && !ko) { d.n++; d.yd += g; if (first) { d.fd++; G.fd3++; } else G.fd3 = 0; G.sk = sack ? G.sk + 1 : 0; }
@@ -2722,6 +2765,7 @@ function annReelClip(c) {
   if (hl.again) return annPut('reel_again', { ...o, who: 'B' });
   const k = c.lg ? 'lg' : /TOUCHDOWN|PICK SIX|SCOOP|RETURN TD/.test(c.title || '') ? 'td' : ANN_REEL_K[c.kind] || 'gain';
   const who = !c.lg && c.who ? String(c.who).split(' ').filter(w => !ANN_SUFFIX.test(w)).slice(-1)[0] : null, move = who ? hsMoveWord(c) : null;
+  if (c.stk && ANN_LINES[c.stk]) return annOwn(() => annPut(c.stk, { ...o, who: 'A', vars: c.stv || null }));   // (big job: a late, close moment keeps its stakes call)
   if (who && move) return annOwn(() => annPut('reel_named', { ...o, who: 'A', vars: { who, move } }));   // (the man and the move, by name: the booth's own random numbers)
   annPut('reel_' + k, { ...o, who: 'A' });
 }
@@ -2905,7 +2949,7 @@ function sagaPop(a) {
   const def = arcDef(a), lines = [], dots = [];
   for (const h of a.hist) { dots.push(lines.length); lines.push(...wrapLines(`${h.wk >= 30 ? 'OFFSEASON' : 'WEEK ' + h.wk}, ${pstYear(h.yr)}: ${h.h}`, 54)); if (h.c) lines.push(...wrapLines(`   YOUR CALL: ${h.c}`, 54)); else if (h.auto) lines.push('   (it decided itself: nobody answered)'); }
   lines.push('', a.end ? 'THIS SAGA IS OVER.' : 'STILL DEVELOPING: more to come.');
-  if (a.fx && a.fx.length) { lines.push('', 'WHAT IT CHANGED:'); for (const t of a.fx) lines.push(...wrapLines('- ' + t, 54)); }
+  if (a.fx && a.fx.length && showOutcomes()) { lines.push('', 'WHAT IT CHANGED:'); for (const t of a.fx) lines.push(...wrapLines('- ' + t, 54)); }
   return scrollPop({ title: sagaTitle(def.name), lines, saga: { dots, end: !!a.end }, btns: [{ label: 'OK' }] });   // (saga = the pencil timeline down the left: a dot per entry)
 }
 // (EVENTS = the midweek decisions: a text table in js/00-text.js)
@@ -2924,6 +2968,7 @@ if (SETTINGS.liteMode === 'ON') SETTINGS.liteMode = 'PERFORMANCE'; else if (SETT
 // Settings scopes: SETTINGS_DEF = the defaults (main menu / exhibitions / a new franchise, kept in localStorage); SETTINGS = the working copy.
 // Inside a franchise save (inSave) the working copy is that save's own (stored in its world.settings); only GLOBAL_SET (volume, replays) is shared by all.
 const GLOBAL_SET = ['volume', 'replays', 'hideTools', 'darkMode', 'cinema', 'liteMode', 'fps', 'sideline', 'taunts', 'perfHud', 'netSim', 'flashes', 'announcers', 'hideKeyTips', 'keyTipsShut'];
+const showOutcomes = () => !SETTINGS.hideTools;   // (big job: a decision's numbers / stakes / what it changed only show with the extra tools on, for debug; the story text always prints)
 // per-device settings: their own key, never in SETTINGS / franchise saves, and cloud sync skips it. mobile = the MOBILE MODE override (unset = on for phones / tablets, off for PCs)
 const DEVICE_KEY = 'pocketPasser.device';
 const DEVICE = (() => { try { return JSON.parse(localStorage.getItem(DEVICE_KEY) || '{}') || {}; } catch (e) { return {}; } })();
@@ -3224,9 +3269,9 @@ const DYN_M = {
   full: { pp: 25, pr: 15, cp: 8, cr: 8, pk: 3, ck: 3 },   // live sample for a full step: pass plays, runs, CPU drives (cp / cr), kicks
   valve: { m: 0.7, of: 5, need: 4, calm: 0.4, calmN: 3 },   // settled: |m| over m in need of the last `of` judged games = testing-size steps again, until calmN in a row under calm
   ex: {   // expected = base + star x unit-stars edge -/+ perD x (D - 0.5) (about a third of what D really does); surprise / scale -> tanh
-    pp: { base: 6, star: 1.5, perD: 2.0, scale: 8 },                       // PLAYER net yards a pass play: (yds + 20 TD - 45 INT + sack yds) / (att + sacks)
+    pp: { base: 5.4, star: 1.5, perD: 2.0, scale: 8 },                     // PLAYER net yards a pass play: (yds + 20 TD - 45 INT + sack yds) / (att + sacks)
     pr: { base: 4.4, star: 0.5, perD: 1.0, scale: 3, bt: 3, fl: 20 },      // PLAYER yards a carry, + bt yd a broken tackle, - fl a fumble lost
-    cp: { base: 6, star: 1.5, perD: 2.0, scale: 8 },                       // the same for the CPU offense (a better CPU day = worse for the PLAYER)
+    cp: { base: 5.4, star: 1.5, perD: 2.0, scale: 8 },                     // the same for the CPU offense (a better CPU day = worse for the PLAYER)
     cr: { base: 4.4, star: 0.5, perD: 1.0, scale: 3, bt: 3, fl: 20 },
     pk: { base: 0.85, perD: 0.06, scale: 0.2 },                            // field goal / extra point make rate (a block is a miss)
     ck: { base: 0.85, perD: 0.06, scale: 0.2 },

@@ -386,20 +386,83 @@ function seasonSkipLoop(w, withStats) {
 // standings: everyone's W / L / T and points for / against so far
 function seasonTable() {
   const T = {};
-  for (const k of Object.keys(NFL)) T[k] = { k, w: 0, l: 0, t: 0, pf: 0, pa: 0 };
+  for (const k of Object.keys(NFL)) T[k] = { k, w: 0, l: 0, t: 0, pf: 0, pa: 0, dw: 0, dl: 0, dt: 0, cw: 0, cl: 0, ct: 0, g: [] };   // (d* = division record, c* = conference record, g = { o: opponent, r: 1 / 0.5 / 0 } per game: the tiebreakers)
   for (const wk of season.sched) for (const g of wk) if (g.hs != null) {
-    const H = T[g.h], A = T[g.a];
+    const H = T[g.h], A = T[g.a]; if (!H || !A) continue;
     H.pf += g.hs; H.pa += g.as; A.pf += g.as; A.pa += g.hs;
-    if (g.hs > g.as) { H.w++; A.l++; } else if (g.hs < g.as) { H.l++; A.w++; } else { H.t++; A.t++; }
+    const r = g.hs > g.as ? 1 : g.hs < g.as ? 0 : 0.5, dv = NFL[g.h].conf === NFL[g.a].conf, cf = tbConf(g.h) === tbConf(g.a);
+    if (r === 1) { H.w++; A.l++; } else if (r === 0) { H.l++; A.w++; } else { H.t++; A.t++; }
+    if (dv) { if (r === 1) { H.dw++; A.dl++; } else if (r === 0) { H.dl++; A.dw++; } else { H.dt++; A.dt++; } }
+    if (cf) { if (r === 1) { H.cw++; A.cl++; } else if (r === 0) { H.cl++; A.cw++; } else { H.ct++; A.ct++; } }
+    H.g.push({ o: g.a, r }); A.g.push({ o: g.h, r: 1 - r });
   }
   return T;
 }
 const winPct = r => (r.w + r.t / 2) / Math.max(1, r.w + r.l + r.t);
-const byRecord = (a, b) => winPct(b) - winPct(a) || (b.pf - b.pa) - (a.pf - a.pa) || b.pf - a.pf;
-// a conference's 7 playoff seeds: the 4 division winners (1-4), then the 3 best of the rest (wild cards)
+const byRecord = (a, b) => winPct(b) - winPct(a) || (b.pf - b.pa) - (a.pf - a.pa) || b.pf - a.pf;   // (plain order: the Paper Bowl host; standings use standSort)
+// --- NFL tiebreakers (big job): standSort(rows, T, kind) = seasonTable rows in standings order. kind 'div' = inside one division
+// (head-to-head, division record, common games, conference record, strength of victory, strength of schedule, points), 'wc' = across
+// divisions: seeding and wild cards (only the best of each division's tied teams takes part; head-to-head only if one swept / was swept,
+// or two teams that played, conference record, common games (4+), victory, schedule, points). A group of 3+ is cut by the first step that
+// splits it; the leaders restart from the top, and once one team is pulled out the rest start over (TB_STEPS).
+const tbConf = k => NFL[k].conf.slice(0, 3);
+const tbPct = (w, l, t) => (w + t / 2) / Math.max(1, w + l + t);
+function tbVs(r, has) { let w = 0, l = 0, t = 0; for (const g of r.g) if (has(g.o)) { if (g.r === 1) w++; else if (g.r === 0) l++; else t++; } return { p: tbPct(w, l, t), n: w + l + t }; }
+function tbOpp(r, T, won) { let w = 0, l = 0, t = 0; for (const g of r.g) if (!won || g.r === 1) { const o = T[g.o]; if (o) { w += o.w; l += o.l; t += o.t; } } return tbPct(w, l, t); }
+const tbIn = rows => k => rows.some(q => q.k === k);
+const TB_STEPS = {
+  h2h: (rows, T, kind) => {
+    if (rows.length === 2 || kind === 'div') { const v = rows.map(r => tbVs(r, k => k !== r.k && tbIn(rows)(k))); return v.every(x => x.n) ? v.map(x => x.p) : null; }
+    const beat = (a, b, res) => { const gs = a.g.filter(g => g.o === b.k); return gs.length && gs.every(g => g.r === res); };   // (3+ across divisions: a sweep only)
+    const sw = rows.find(a => rows.every(b => b === a || beat(a, b, 1))); if (sw) return rows.map(r => r === sw ? 1 : 0);
+    const lo = rows.find(a => rows.every(b => b === a || beat(a, b, 0))); return lo ? rows.map(r => r === lo ? 0 : 1) : null;
+  },
+  div: rows => rows.map(r => tbPct(r.dw, r.dl, r.dt)),
+  conf: rows => rows.map(r => tbPct(r.cw, r.cl, r.ct)),
+  common: (rows, T, kind) => {
+    let C = null; for (const r of rows) { const s = new Set(r.g.map(g => g.o)); C = C ? new Set([...C].filter(o => s.has(o))) : s; }
+    for (const r of rows) C.delete(r.k);
+    const v = rows.map(r => tbVs(r, k => C.has(k))); return v.every(x => x.n >= (kind === 'wc' ? 4 : 1)) ? v.map(x => x.p) : null;
+  },
+  sov: (rows, T) => rows.map(r => tbOpp(r, T, true)),
+  sos: (rows, T) => rows.map(r => tbOpp(r, T, false)),
+  pd: rows => rows.map(r => r.pf - r.pa),
+  pf: rows => rows.map(r => r.pf),
+};
+const TB_ORDER = { div: ['h2h', 'div', 'common', 'conf', 'sov', 'sos', 'pd', 'pf'], wc: ['h2h', 'conf', 'common', 'sov', 'sos', 'pd', 'pf'] };
+function tbPick(rows, T, kind) {   // the best of a group level on win %
+  for (let guard = 0; guard < 40; guard++) {
+    if (kind === 'wc') {   // (one per division: that division's own tiebreak decides who represents it)
+      const by = {}; for (const r of rows) (by[NFL[r.k].conf] = by[NFL[r.k].conf] || []).push(r);
+      const reps = Object.values(by).map(L => L.length > 1 ? tbPick(L, T, 'div') : L[0]); if (reps.length < rows.length) rows = reps;
+    }
+    if (rows.length === 1) return rows[0];
+    let cut = null;
+    for (const id of TB_ORDER[kind]) {
+      const v = TB_STEPS[id](rows, T, kind); if (!v) continue;
+      const best = Math.max(...v), keep = rows.filter((r, i) => v[i] >= best - 1e-9);
+      if (keep.length < rows.length) { cut = keep; break; }
+    }
+    if (!cut) return rows.reduce((a, b) => (b.k < a.k ? b : a));   // (level on everything: by name, so it never changes frame to frame)
+    if (cut.length === 1) return cut[0];
+    rows = cut;
+  }
+  return rows[0];
+}
+function standSort(list, T, kind) {
+  const left = list.filter(Boolean).sort((a, b) => winPct(b) - winPct(a)), out = [];
+  while (left.length) {
+    const top = winPct(left[0]), tied = left.filter(r => Math.abs(winPct(r) - top) < 1e-9);
+    const p = tied.length > 1 ? tbPick(tied, T, kind) : tied[0];
+    out.push(p); left.splice(left.indexOf(p), 1);
+  }
+  return out;
+}
+const divRec = r => `${r.dw}-${r.dl}${r.dt ? '-' + r.dt : ''}`;
+// a conference's 7 playoff seeds: the 4 division winners (1-4), then the 3 best of the rest (wild cards), NFL tiebreakers
 function playoffSeeds(conf, T = seasonTable()) {
-  const winners = DIVS.map((_, d) => divTeams(conf, d).map(k => T[k]).sort(byRecord)[0]).sort(byRecord);
-  const wild = Object.values(T).filter(r => NFL[r.k].conf.startsWith(conf) && !winners.includes(r)).sort(byRecord).slice(0, 3);
+  const winners = standSort(DIVS.map((_, d) => standSort(divTeams(conf, d).map(k => T[k]), T, 'div')[0]), T, 'wc');
+  const wild = standSort(Object.values(T).filter(r => NFL[r.k].conf.startsWith(conf) && !winners.includes(r)), T, 'wc').slice(0, 3);
   return [...winners, ...wild];
 }
 // CLINCHED only when no more than 6 other teams in the conference can still finish level with or above his current wins (he is in even if he loses out);

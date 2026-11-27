@@ -401,7 +401,7 @@ const accelK = p => { const r = (p.spdRel ?? p.spdMult ?? 1) - 1; return Math.ma
 // One speed scale for QBs, RBs, WRs, TEs, LBs, CBs and safeties: a SPEED rating means the same top speed at any of those
 // spots (15 = at15, each point under it perPt slower), wherever the man lines up (a TE at fullback, a corner returning a kick, a
 // linebacker covering one). Linemen (OL / DL) and kickers keep their within-position scale. rbBoost = x for backs (1 = the same as everyone)
-const SPEED_ABS = { at15: 10.1 * YD, perPt: 0.03, rbBoost: 1, groups: ['QB', 'RB', 'WR', 'TE', 'CB', 'S', 'LB'] };
+const SPEED_ABS = { at15: 10.1 * YD, perPt: 0.03, rbBoost: 1, groups: ['QB', 'RB', 'WR', 'TE', 'CB', 'S', 'LB'], cap: 16 };   // (big job) cap = the most SPEED points anyone runs at, after every boost (spdCapTop: effTop / steerTop); upgrades stop there too (spdCapped)
 const WR_RECOVER = 0.6;        // per second: a receiver's jam slowdown wears off this fast once he's free
 const CUT_SLOW = 0.5;          // speed kept through a hard cut
 const CUT_REACCEL = { accel: 0.65, base: 0.15, sharp: 0.35 };   // after a cut: accel multiplier, and seconds of it (sharper = longer)
@@ -965,15 +965,15 @@ const SMACK = { chance: 0.12, jumped: 0.3, pushed: 0.18 };
 // incomplete) at chance (x basket when he's cradled it over the shoulder)
 const PUNCH = { range: 1.6, chance: 0.12, basket: 0.4 };   // DB rips it out right as it's caught (pushed = punching at it after a push-off)
 const OPEN_RANGE = 2.5 * YD;
-const CONTESTED = 0.52;          // one defender on him at the catch (multiplier)...
+const CONTESTED = 0.47;          // (big job defense step 2: was 0.52) one defender on him at the catch (multiplier)...
 const CONTESTED_SECURE = 0.66;   // ...when he secures it (S)
 const CONTESTED_DOUBLE = { normal: 0.28, secure: 0.4, extra: 0.7 };   // two or more on him (extra = x for each defender past two)
 const CONTEST_PICK = 0.2;      // a contested ball he can't hang onto: chance the DB on him comes down with it
-const CONTEST_RANGE = 1.3 * YD;
+const CONTEST_RANGE = 1.55 * YD;   // (big job defense step 2: was 1.3)
 // pass breakups: contest = chance the defender on the receiver at the catch knocks it away; lob / bullet = chance a
 // defender who gets to the ball in flight gets a hand on it; slack = how much farther from the ball than the
 // receiver he can be and still play it (yards)
-const PBU = { contest: 0.4, lob: 0.5, bullet: 0.53, slack: 0.7 * YD };   // (a little worse in the air overall)
+const PBU = { contest: 0.46, lob: 0.5,   /* big job defense step 2: contest was 0.4 */  bullet: 0.53, slack: 0.7 * YD };   // (a little worse in the air overall)
 const BULLET_PICK = 0.75;   // a bullet is harder to pick off: x on a defender's interception odds
 
 const DEFLECT_RANGE = 1.3 * YD;
@@ -995,8 +995,9 @@ const RUN_CATCH = { prob: 0.9, keep: 1 };   // Shift with the ball in the air: c
 // v0.58: blend = s each showboat look eases in from the run / the look before it, and back out to the run when it ends (looks only); behindYd = no backpedal /
 // back-in finish with a defender this close behind him
 const SHOW = { blend: 0.22, behindYd: 8, gap: 350, keep: 0.9, cycle: 1.1, speed: 0.9, fumK: 4, fumBase: 0.25, hitK: 1.5, hype: 0.15, fineK: 3, slowTo: 0.35, placeYd: 1.2, hurdleYd: 6 };
-const HURDLE = { stack: 0.6, userClear: 0.24, tall: 0.12, chance: 0.14,   // userClear = odds a hurdle clears a defender in front (minus tall x his height above average)
- dur: 0.38, h: 16 * S, shrug: 0.5, userDur: 0.5, userH: 22 * S, minGap: 1.5, maxGap: 4.5, cooldown: 1.5, airFumble: 0.3,
+const HURDLE = { stack: 0.6, userClear: 0.24,   // (big job: minGap / maxGap 1.5 / 4.5 -> 2.2 / 3.6 = a narrower window to time it in)
+  tall: 0.12, chance: 0.14,   // userClear = odds a hurdle clears a defender in front (minus tall x his height above average)
+ dur: 0.38, h: 16 * S, shrug: 0.5, userDur: 0.5, userH: 22 * S, minGap: 2.2, maxGap: 3.6, cooldown: 1.5, airFumble: 0.3,
  hitStickK: 1.5, heavy: 0.12, maxClear: 2, overChance: 0.45, backFumble: 1.6, tallMe: 0.1, fumbleK: 0.576 };   // tallMe = per height step of the hurdler, more clears; fumbleK = scale on fumbles when tackled mid-hurdle   // maxClear = most defenders one hurdle can clear; overChance = odds each close defender is actually cleared (else he tackles); backFumble = fumble multiplier on a spin-hurdle   // plain broken tackle vs a diving tackler: hurdle out of it (chance); otherwise shrug-step sideways (shrug chance)
 // the computer's receivers leaping on their own: base + ctc x (catching - 1) = odds he's a jumper this play; reach = x catch radius a leap covers;
 // contest = yards a defender has to be from the ball to count as a contested catch; oneDive = share of long lay-outs taken one-handed (x catching)
@@ -1100,7 +1101,7 @@ const DB_TURN = { open: 4, openVx: 0.6, plantVx: 0.35, cross: 0.45, crossGap: 1.
                   enter: 0.9, run: 5, edge: 0.9, read: 0.35, pass: 0.3,                                // zone: x zone radius that counts as "in his zone" / yd behind a runner he still turns to run with / x leash = the zone edge (pass-off) / s to read the QB before eyes go to the man / s from the edge to sitting back down (both / coverage x awareness)
                   stem: 0.7, stemDepth: 3, match: 0.25, stumbleHips: 1.3, paRead: 0.8,                  // Cover 4 pattern match: #1 (the safety's #2) running vertical at >= stem x WR_TOP past stemDepth yd = turn and run man; s to read it (/ coverage x awareness) / x stumble odds on a double move while his hips are turned / play action: bite chance / (coverage sell rating ^ paRead)
                   debug: false };                                                                  // true = draw each DB's assignment, hips and head target
-const COVER = { deepCushion: 3, attachGap: 0.28, zoneBlend: 0.95, manLead: 0.55, manSpeed: 1.07, breakRatio: 0.6, breakLead: 0.7, safetyLead: 0.8 };
+const COVER = { deepCushion: 3, attachGap: 0.28, zoneBlend: 0.95, manLead: 0.7, manSpeed: 1.18, breakRatio: 0.72, breakLead: 1.0, safetyLead: 0.8 };   // (big job defense steps 1-2: manLead 0.55, manSpeed 1.07, breakRatio 0.6, breakLead 0.7 before)
 // pre-snap: a receiver counts as covered if a defender is within lateral yards of him and no deeper than depth
 // yards off the ball; otherwise one rotates over him, shade yards inside
 const ROTATE = { lateral: 4.5, depth: 9, shade: 1 };
@@ -1304,14 +1305,18 @@ function thirdDownOn() {   // Third Down Specialist: this down counts (3rd and l
 // online game reads its own exPenalties / exBooth (default off; online = the host's). Off in the tutorial, the cold open, 1v1 and test mode (unless REF.force).
 // Odds below are x diffX('flags') x the penalty's own slider (flHold / flDpi / flOpi / flRough / flOff / flFalse, GAME RULES sliders in DIFF_SLIDERS).
 const REF = {
-  rate: 0.6,   // v0.73 master on every penalty (x flagK: the called roll of live fouls, pre-snap / kick offside happening); 1 = the old rate. REF.edge / REF.miss / REF.force don't read it
+  rate: 0.4,   // (big job: was 0.6) v0.73 master on every penalty (x flagK: the called roll of live fouls, pre-snap / kick offside happening); 1 = the old rate. REF.edge / REF.miss / REF.force don't read it
   force: null,   // TEST ONLY: 'hold' | 'pphold' | 'dpi' | 'edge' | 'opi' | 'rough' | 'false' | 'offside' | 'encroach' | 'dhold' | 'spot' | 'spotGoal' | 'knock' = make it happen on the next chance (null = off)
   miss: 0.02,    // a real foul that no official flags (very rare)
   // v0.73 bad calls are fringe cases, never dice: a clear foul (severity >= clear) is always called by an official who can see it; a subtle one (below clear) is missed
   // miss[0] (beside an official) .. miss[1] (far away) of the time, more the subtler it is. Only a BORDERLINE play (just under a foul's line, flagEdge in 05) can be flagged
   // wrongly: wrong x (1 + (farK - 1) x how far the nearest official is) x the flags slider. Borderline bands: dpi = s before REF.dpi.early, opi = yd/s under REF.opi.v,
   // rough = s before REF.rough.late, hold = share of run-block pancakes that look like a takedown; s = the borderline look's severity range (soft looks). force 'edge' = TEST a borderline DPI flag
-  edge: { clear: 0.4, miss: [0.04, 0.35], wrong: 0.012, farK: 3, dpi: 0.12, opi: 0.35, rough: 0.12, hold: 0.35, s: [0.05, 0.3] },
+  // (big job) big = a live foul is only CALLED when its look is a big one the player can see: his man's reaction in v (PEN_VARS victim ids), or one of own (kind.variant: no victim reaction),
+  // or a pre-snap / procedure foul (proc); a small look plays and is a no-call. user = a man the player steers is never fouled by a roll: dpiV / opiV = x the contact speed that makes it HIS foul
+  big: { on: true, v: ['rip', 'spun', 'dragged', 'flung', 'floored'], own: ['tackle.wrap', 'rough.drive', 'rough.low'], proc: ['false', 'offside', 'encroach'] },
+  user: { dpiV: 1.5, opiV: 1.5, aim: 0.5 },   // aim = how squarely his held direction must point at the other man (cos)
+  edge: { clear: 0.4, miss: [0.04, 0.35], wrong: 0.002, farK: 3, dpi: 0.12, opi: 0.35, rough: 0.12, hold: 0.35, s: [0.05, 0.3] },
   flagCam: { lead: 0.7, hold: 1.3, fall: 0.9, push: 1.9, pan: 0.85 },   // v0.70 a flagged play's replay (always a BIG PLAY): s before the foul the camera starts pushing in on it, s held, s easing back to the play; zoom x push, share of the way panned to the foul
   look: { on: true, dur: { pphold: 0.85, hold: 0.85, dpi: 0.65, opi: 0.55, rough: 0.6, grab: 0.8, tackle: 0.75, false: 0.5, offside: 0.5, encroach: 0.6, guilty: 1.1, point: 0.9, slow: 1.6 } },   // (x 0.7 + 0.6 x his severity)
   // v0.70 two rolls a foul: it HAPPENS (its look always plays, severity s rolled in sev[kind]), then it is CALLED (v0.73: REF.edge decides; near / far = the official's
@@ -1367,7 +1372,7 @@ const REF = {
     sig: 0.35, flagFly: 0.5, flagAt: 0.22,     // s after the whistle the signals start; a flag's flight s; s into the throw it leaves the hand
     stripes: { n: 3, nFar: 2 },   // an official's shirt: n black stripes close up (nFar far off, lod 0-1) between white ones, every band the same width
     shape: { torso: 0.84, shoulder: 1.12 },
-    gait: { acc: 0.35, dec: 0.3, walkV: 1.6, runV: 6.6, cyc: [1.5, 2.9], leg: [0.42, 0.85], kn: [0.08, 0.7], arm: [0.3, 0.95], armFwd: 0.25, el: [0.2, 1.5], lean: [0.04, 0.2], bob: 0.3, backK: 0.6, backLean: 0.1, blend: 0.45, carry: 0.6 },   // v0.71 blend = s a backpedal <-> run look eases over on a new leg; carry = share of acc a re-aimed leg takes to go from the speed he had to the new one   // an official's gait (v0.70): s to speed up / slow down at each end of a walk; walkV..runV yd/s = walk..full run; [walk, run] stride cycle yd, leg / arm swing, knee bend, elbow, lean; bob = run bounce; backpedal = steps x backK, leaning back   // an official's torso width x / shoulders x hips (a slimmer, squarer block like a player's; others use SL_FIG.shoulder)
+    gait: { acc: 0.35, dec: 0.3, walkV: 1.6, runV: 6.6, cyc: [1.5, 2.9], leg: [0.42, 0.85], kn: [0.08, 0.7], arm: [0.3, 0.95], armFwd: 0.25, el: [0.2, 1.5], lean: [0.04, 0.2], bob: 0, phDt: 1 / 24, backK: 0.6, backLean: 0.1, blend: 0.45, carry: 0.6 },   // v0.71 blend = s a backpedal <-> run look eases over on a new leg; carry = share of acc a re-aimed leg takes to go from the speed he had to the new one   // an official's gait (v0.70): s to speed up / slow down at each end of a walk; walkV..runV yd/s = walk..full run; [walk, run] stride cycle yd, leg / arm swing, knee bend, elbow, lean; bob = run bounce; backpedal = steps x backK, leaning back   // an official's torso width x / shoulders x hips (a slimmer, squarer block like a player's; others use SL_FIG.shoulder)
     build: { tall: [0.93, 1.08], wide: [0, 0.45] } },  // each official's seeded height (x his scale) and build width (P.bw 0 lean .. 1 heavy)
 };
 const flagsTest = () => !!REF.force;
@@ -1722,8 +1727,9 @@ const redZone = () => patMode === 'two' || los >= FIELD - REDZONE_D.yards * YL;
 // pursuit-angle prediction: sim step/horizon s, sideline margin, runner-velocity smoothing per frame, angle error on non-runs;
 // chase / lastLine = pursuit speed x top speed (the last man back finds an extra gear)
 const FACE_TURN = { lat: 0.2 };   // setVelocity: a man only turns to face the other way once that share of his speed runs along the field (running almost straight sideways, a tiny x wobble used to flip him back and forth: the run-play jitter)
-const PURSUIT = { step: 0.05, horizon: 3.5, edge: 0.6 * YD, smooth: 0.2, passAngle: [1, 1.06], chase: 1, lastLine: 1.05, through: 0.45, runAngle: [0.97, 1.1],   // through = s of running he aims past the meeting point (never eases up on arrival); runAngle = the angle range on designed runs (>= ~1: they cut him off, never trail)
-                  dbHorizon: 5, dbErr: 0.1, boost: 1.05, accel: 1.15,
+const PURSUIT = { step: 0.05, horizon: 3.5, edge: 0.6 * YD, smooth: 0.2, passAngle: [1.05, 1.11], chase: 1, lastLine: 1.05, through: 0.45, runAngle: [0.97, 1.1],   // through = s of running he aims past the meeting point (never eases up on arrival); runAngle = the angle range on designed runs (>= ~1: they cut him off, never trail)
+                  dbHorizon: 5, dbErr: 0.05, boost: 1.05,   // (big job defense steps 1-2: passAngle [1, 1.06], dbErr 0.1 before)
+                  accel: 1.15,
                   // the angle itself (pursuitPoint): lag = share of the ground he loses getting up to speed TOWARD the meeting point that the math allows for (0 = the old
                   // angle: it assumed full speed at once, so a man who had to turn round arrived behind the carrier); leadMax = the most yd ahead of the carrier anyone aims;
                   // lev = yd to his own side of the meeting point a man in front of the carrier comes in at (his near hip: never across his face, so the cutback behind
@@ -1854,11 +1860,11 @@ const ROUTE_COLORS = ['#ffffff', '#ffd94a', '#7fe3ff', '#ff9ed2'];
 const RB_COLOR = '#b7ff7a';   // every back's route art and pick circle: the halfback, the fullback, both split backs
 
 // Each position sees the play differently: lag = how stale his read of the
-// receivers is, react = how long before he breaks on a throw.
+// receivers is, react = how long before he breaks on a throw. (big job defense step 2: lag / react about 20% quicker; were CB 0.11 / 0.24, S 0.2 / 0.16, LB 0.19 / 0.14)
 const DEF_ROLES = {
-  CB: { lag: 0.11, react: 0.24, zoneTop: 9.8 * YD, top: 10 * YD,  accel: 18 * YD, pickTry: 0.7,  reachZ: 44 * S, runRead: 0.6 },
-  S:  { lag: 0.2,  react: 0.16, zoneTop: 9.6 * YD, top: 9.6 * YD, accel: 16 * YD, pickTry: 0.74, reachZ: 44 * S, runRead: 0.42 },  // eyes on the QB
-  LB: { lag: 0.19, react: 0.14, zoneTop: 8.5 * YD, top: 9.0 * YD, accel: 15 * YD, pickTry: 0.65,  reachZ: 44 * S, runRead: 0.2, big: true },   // (coverage backers: quicker reads and breaks, a longer reach)
+  CB: { lag: 0.09, react: 0.19, zoneTop: 9.8 * YD, top: 10 * YD,  accel: 18 * YD, pickTry: 0.7,  reachZ: 44 * S, runRead: 0.6 },
+  S:  { lag: 0.16, react: 0.13, zoneTop: 9.6 * YD, top: 9.6 * YD, accel: 16 * YD, pickTry: 0.74, reachZ: 44 * S, runRead: 0.42 },  // eyes on the QB
+  LB: { lag: 0.15, react: 0.11, zoneTop: 8.5 * YD, top: 9.0 * YD, accel: 15 * YD, pickTry: 0.65,  reachZ: 44 * S, runRead: 0.2, big: true },   // (coverage backers: quicker reads and breaks, a longer reach)
   DE: { top: 7.9 * YD, accel: 12 * YD, rush: 7.0 * YD, push: 1.8 * YD, big: true },   // (a bit faster, but win fewer of the block fights: DL_SHED)
   DT: { top: 7.0 * YD, accel: 10 * YD, rush: 6.0 * YD, push: 1.3 * YD, big: true },
 };
@@ -3952,12 +3958,12 @@ function xfTurnover(k) {
   for (const s of ROSTER[k] || []) { const x = s.xf; if (!x || x.on || !Array.isArray(x.c)) continue;
     x.c = x.c.map(v => v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([e, n]) => [e, n * (1 - XF_FLOW.drain)])) : (v || 0) * (1 - XF_FLOW.drain)); }
 }
-// before each snap: clutch stars light themselves late in a close game
-function xfClutch() {
+// before each snap: clutch stars light themselves late in a close game, only on the unit about to take the field (oKey = the team with the ball: live it is always MATCH.you, BLUE)
+function xfClutch(oKey = MATCH.you) {
   if (tut || xf1v1() || !game || game.over || game.quarter < 4 || game.secs > lateS(XF_FLOW.clutchS) || Math.abs((game.blue || 0) - (game.red || 0)) > XF_FLOW.clutchPts) return;
   for (const t of [MATCH.you, MATCH.opp]) for (const s of ROSTER[t] || []) {
     const R = s.tier === 'X' && XF_RULES[s.ability], x = R && xfs(s);
-    if (!R || !R.clutch || x.on || x.cl || isOut(s)) continue;
+    if (!R || !R.clutch || x.on || x.cl || isOut(s) || OFF_GROUPS.includes(s.group) !== (t === oKey)) continue;   // (big job: an RB used to light while his team was on defense)
     x.cl = true; xfTurnOn(s, x);
   }
 }
@@ -4089,7 +4095,7 @@ let xfSimming = false;   // (true inside xfSim: a simulated play)
 function xfSim(oKey, dKey, a) { xfSimming = true; try { return xfSimRun(oKey, dKey, a); } finally { xfSimming = false; } }
 function xfSimRun(oKey, dKey, a) {
   if (game.quarter >= 3) xfHalftime();   // (simmed drives never pass through nextPeriod)
-  xfClutch();
+  xfClutch(oKey);
   const live = k => (ROSTER[k] || []).filter(s => !isOut(s));
   const O = live(oKey), D = live(dKey), G = (L, ...g) => L.filter(s => g.includes(s.group));
   const rp = L => L.length ? pick(L) : null, E = (s, e, v) => xfEvent(s, e, v), F = XF_FLOW, g = a.gain;
@@ -4239,6 +4245,8 @@ const absTop = p => {
 // what base speed his spdMult is measured against right now: the QB / the back off their run speeds, everyone else off his spot's topBase
 // (effTop(p, speedRef(p)) = his real top speed). setAbsSpeed re-reads it: call it again whenever a man changes spots (fbCarry)
 const speedRef = p => p === qb ? QB_RUN : p === rb ? RB_RUN : p.topBase;
+const spdCapTop = p => p && SPEED_ABS.groups.includes(p.grp) ? SPEED_ABS.at15 * (1 + SPEED_ABS.perPt * (SPEED_ABS.cap - 15)) * (p.grp === 'RB' ? SPEED_ABS.rbBoost : 1) : Infinity;   // (big job: the fastest a man on the shared scale may run, boosts and Star Factors included)
+const spdCapped = (p, a) => a === 'spd' && p && SPEED_ABS.groups.includes(p.group) && p.at && p.at.spd + 1 > SPEED_ABS.cap + 1e-9;   // (no speed upgrade past the cap; a man already above keeps his number but runs at the cap)
 function setAbsSpeed(p) { const abs = absTop(p), ref = speedRef(p); if (abs && ref) p.spdMult = abs / ref; return abs; }
 const ownTop = p => { const ref = speedRef(p); return ref && absTop(p) ? effTop(p, ref) : Infinity; };   // (Infinity: not on the shared scale)
 // a SPEED rating step with the difficulty's rating shift taken out: nothing about how fast a man runs or gets going moves with the difficulty preset

@@ -126,7 +126,7 @@ const coachName = () => [career.first, career.last].filter(Boolean).join(' ') ||
 const mkStory = (k, t, b, s, big, extra) => ({ k, t, b, s: s || null, big: !!big, ...extra });
 const withLogo = (st, team) => { st.lg = team; return st; };
 function postStandings() {   // [[team, w, l, t, pf, pa]] for your division + the conference's seven seeds
-  const T = seasonTable(), me = season.team, div = Object.keys(NFL).filter(k => NFL[k].conf === NFL[me].conf).map(k => T[k]).sort(byRecord);
+  const T = seasonTable(), me = season.team, div = standSort(Object.keys(NFL).filter(k => NFL[k].conf === NFL[me].conf).map(k => T[k]), T, 'div');
   let seeds = []; try { seeds = playoffSeeds(NFL[me].conf.slice(0, 3), T).map(r => [r.k, r.w, r.l, r.t]); } catch (e) {}
   return { div: div.map(r => [r.k, r.w, r.l, r.t, r.pf, r.pa]), seeds, conf: NFL[me].conf };
 }
@@ -204,7 +204,7 @@ function postCands(kind, r, ctxo) {   // every story the week could print: { w, 
     const w = strk.filter(x => x[1] >= POST.streakMin).sort((a, b) => b[1] - a[1] || (b[0] === me) - (a[0] === me))[0], l = strk.filter(x => x[1] <= -POST.streakMin).sort((a, b) => a[1] - b[1] || (b[0] === me) - (a[0] === me))[0];
     if (w) { const sl = { team: pTeam(w[0]), n: w[1] }; add(3 + w[1] * 0.3 + (w[0] === me ? 2 : 0), withLogo(mkStory('streakW', gram('streakW', 'head', sl, r), gram('streakW', 'body', sl, r)), w[0])); }
     if (l) { const sl = { team: pTeam(l[0]), n: -l[1] }; add(3 - l[1] * 0.3 + (l[0] === me ? 2 : 0), withLogo(mkStory('streakL', gram('streakL', 'head', sl, r), gram('streakL', 'body', sl, r)), l[0])); }
-    if (wk >= 3) { const lead = Object.keys(NFL).filter(k => NFL[k].conf === NFL[me].conf).map(k => T[k]).sort(byRecord)[0], sl = { team: pTeam(lead.k), div: NFL[me].conf, rec: recStr(lead) }; add(3, withLogo(mkStory('lead', gram('lead', 'head', sl, r), gram('lead', 'body', sl, r)), lead.k)); }
+    if (wk >= 3) { const lead = standSort(Object.keys(NFL).filter(k => NFL[k].conf === NFL[me].conf).map(k => T[k]), T, 'div')[0], sl = { team: pTeam(lead.k), div: NFL[me].conf, rec: recStr(lead) }; add(3, withLogo(mkStory('lead', gram('lead', 'head', sl, r), gram('lead', 'body', sl, r)), lead.k)); }
     const aw = (LEAGUE.awards || []).find(a => a.yr === yr && a.wk === wk), pw = aw && (aw.off && aw.off.mine ? aw.off : aw.def && aw.def.mine ? aw.def : aw.off || aw.def);
     if (pw) {
       const f = findPlayer(pw.name), s = f ? snapOf(f.p, f.team, pw.mine) : { n: pw.name, g: pw.grp, ps: pw.tag, s: 3, a: 26, f: null, t: pw.team, real: true, mine: pw.mine };
@@ -457,7 +457,8 @@ function postAnswer(E, o, opt = {}) {
   let good = true; try { good = postFx(o.fx || [], E, r, out); } finally { postRollK = 1; }
   moraleSync();
   const bars = postBarDiff(before, postBarSnap(E)), title = postFill(D.title, E.slots), lab = postFill(o.l, E.slots);
-  const txt = o.t ? postFill(o.t, E.slots) : (good ? 'It worked out for you.' : 'It did not go your way.') + (out.length ? ' ' + out.join(' ') : '');
+  const say = showOutcomes() ? out : out.filter(t => !/^You gained|XP went into the bank/.test(t)).map(t => t.replace(/\s*\([+-]?[\d.]+%?\)/g, ''));   // (big job: no numbers in the follow-up unless the extra tools are on)
+  const txt = o.t ? postFill(o.t, E.slots) : (good ? 'It worked out for you.' : 'It did not go your way.') + (say.length ? ' ' + say.join(' ') : '');
   const coach = career.last ? 'Coach ' + career.last : coachName(), chose = opt.auto ? (opt.arc ? `${coach} never weighed in, so the story ran its own course.` : `${coach} never weighed in, so it was decided for the team.`) : `${coach} chose to ${postSay(o, E)}.`;
   if (D.verb === 'press' && !opt.auto) P.quote = { t: postFill(o.q || o.l, E.slots), by: coach };   // (your answer is next issue's pull quote)
   if (D.arc) {
@@ -473,7 +474,7 @@ function postAnswer(E, o, opt = {}) {
     postNote('evt', { t: title, b: `${postFill(D.body, E.slots)} ${chose} ${txt}`.trim() }, { w: 7, team: season.team });   // (a real story in the next issue)
   }
   P.ev = null; autosaveSoon();
-  return { txt, bars, good, spent: coins0 - LEAGUE.coins, rolls: E.rolls, auto: !!opt.auto };
+  return { txt, bars: showOutcomes() ? bars : [], good, spent: coins0 - LEAGUE.coins, rolls: E.rolls, auto: !!opt.auto };
 }
 // a new issue: an unanswered item resolves itself (sagas by their normal weighted next, events by the option marked def, or the last); ASK ME LATER buys one more issue
 function postAutoResolve() {
@@ -710,6 +711,7 @@ function postCardPopDraw() {
 }
 // stake chips from an option's effects: credits (coin + number), up / down arrows with what moves, a dice for any roll
 function pcChipList(o, E) {
+  if (!showOutcomes()) { const c = postCost(o); return c ? [{ c: -c }] : []; }   // (big job: no stakes shown, only what a choice costs you)
   const L = [], lab = f => f[0] === 'morale' ? 'TEAM' : f[0] === 'fans' ? 'FANS' : f[0] === 'appr' ? 'OWNER' : f[0] === 'cond' ? 'LEGS' : f[0] === 'xp' ? 'XP' : f[0] === 'unit' ? (f[1] === 'off' ? 'OFFENSE' : 'DEFENSE') : pcShort(f[1] === 'o' ? E.o : E.star);
   for (const f of o.fx || []) {
     if (f[0] === 'roll') L.push({ d: true });

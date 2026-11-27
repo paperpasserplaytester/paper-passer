@@ -9,7 +9,8 @@
 
 // --- cold open: tunables
 const COLD = {
-  key: 'pocketPasser.coldDone',          // set when the cold open ends or is skipped
+  key: 'pocketPasser.coldDone',          // set when the cold open ends or is skipped (it plays the first time START YOUR FRANCHISE is pressed)
+  intro: 'pocketPasser.introDone',       // the first launch's intro = only the ending (C5: the throw, the rip, the stamp); set when it ends or is skipped
   room: { laugh: 0.55, tap: 0.55, tick: 0.55 },   // the classroom's cues, x their game level (the cold open only; the bed itself = COLD_SND.classroom's gain)
   tipTouch: { spin: -190, bullet: -200 }, // phones: the SPIN / BULLET tips' x from the QB (negative = the other side from the laptop tips, away from the throwing thumb)
   under: { you: 'BUF', opp: 'MIA' },     // the real rosters underneath (bodies only: no names, logos or colours of theirs are ever shown)
@@ -101,18 +102,22 @@ let coldHand = null; // after it ends: the pointing hand beside FRANCHISE on the
 const coldLive = () => !!(CO && CO.pl && CO.pl.live);   // a scripted play is running the engine right now
 const coldHud = () => !!CO;                              // (draw(): no scoreboard, names, buttons or text over the dream's field)
 const coldSeen = () => { try { return !!localStorage.getItem(COLD.key); } catch (e) { return true; } };
+const introSeen = () => { try { return !!localStorage.getItem(COLD.intro); } catch (e) { return true; } };
 const coldScene = () => COLD_SCENES[CO.i];
 const cClamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
 const cEase = k => { k = cClamp(k); return k * k * (3 - 2 * k); };
 const cOut = k => 1 - (1 - cClamp(k)) ** 3;
 const cBack = k => { k = cClamp(k); const s = 1.9; return 1 + (s + 1) * (k - 1) ** 3 + s * (k - 1) ** 2; };   // (overshoots a little, then settles: a note slapped down)
-function coldStart() {
+// mode: 'intro' = the first launch: only the ending (no dream game, the world is never touched), then the locked start screen;
+// 'fr' = the first START YOUR FRANCHISE: s1 ... c4, then a page turn onto the quick sign card (no C5, no stamp); none = the debug replay (all of it, never locks)
+function coldStart(mode) {
   if (CO || (typeof ONL !== 'undefined' && ONL.on) || !results || results.screen !== 'start') return;
-  coldHand = null; quickMenu = false; paused = false; showKeys = false;
+  coldHand = null; coldIntro = null; quickMenu = false; paused = false; showKeys = false;
   const act = !!(navigator.userActivation && navigator.userActivation.hasBeenActive);
-  CO = { first: !coldSeen(), i: act ? 0 : -1, t: 0, T: 0, last: performance.now(), rate: 0, rateTo: 0, fired: 0, back: results, pl: null, q: null, fx: null, board: null, cam: null, roll: 0,
-         beat: null, amb: null, shot: null, snd: new Set(), keys: {}, skipAt: 0, ptr: null };
-  coldDreamOn();
+  CO = { first: mode === 'intro' && !slotMetas().some(m => m), mode: mode || null, i: act ? 0 : -1, t: 0, T: 0, last: performance.now(), rate: 0, rateTo: 0, fired: 0, back: results, pl: null, q: null, fx: null, board: null, cam: null, roll: 0,
+         beat: null, amb: null, shot: null, snd: new Set(), keys: {}, skipAt: 0, ptr: null, nfl: {} };
+  if (mode === 'intro') { CO.warm = true; results = null; }   // (no field or stands to build: the intro never shows the game. results = null: draw() runs, so coldDraw does)
+  else coldDreamOn();
   coldNext();
 }
 // the dream game: a scrimmage with the stock world underneath, the two teams wearing the dream's looks, max rain, 21-24 with 0:41 left
@@ -135,7 +140,8 @@ function coldFresh() {   // the pre-drawn field and stands are keyed by team: bo
 }
 function coldEnd(skipped) {
   if (!CO) return;
-  try { localStorage.setItem(COLD.key, '1'); if (CO.first) localStorage.setItem(COLD_LOCK, '1'); } catch (e) {}   // (the lock: first launch only, skipped or not; the debug replay never re-locks)
+  const mode = CO.mode;
+  try { if (mode === 'intro') { localStorage.setItem(COLD.intro, '1'); if (CO.first) localStorage.setItem(COLD_LOCK, '1'); } else localStorage.setItem(COLD.key, '1'); } catch (e) {}   // (the lock: the first launch's intro only, skipped or not; the debug replay never re-locks)
   for (const s of CO.snd) fadeSfx(s, 350);
   coldAmb(null);
   for (const k of Object.keys(CO.nfl)) NFL[k] = CO.nfl[k];
@@ -144,19 +150,27 @@ function coldEnd(skipped) {
   rec = null; lastRec = null; highlights = []; aim = null; paused = false; popups = []; celebReset();
   const back = CO.back, rip = !skipped && CO.ripOut;
   // skipped: the dream's last frame is kept for a moment, as the sheet that turns away off the start screen (drawStart, coldWipe.c)
-  const sheet = skipped && CO.skipG && CO.skipG.width && CO.T - (CO.skipGT || -9) < 0.3 ? CO.skipG : null;
-  for (const c of [CO.grab, CO.shot, CO.xg, CO.xf && CO.xf.c, CO.fx && CO.fx.snap, CO.soft, sheet ? null : CO.skipG]) try { if (c) freeCanvas(c); } catch (e) {}   // (its copies of the screen are not kept)
+  // 'fr' (not skipped): C4's last frame (coldEnding grabs it) is the sheet that turns away off the quick sign card
+  const sheet = skipped && CO.skipG && CO.skipG.width && CO.T - (CO.skipGT || -9) < 0.3 ? CO.skipG : !skipped && mode === 'fr' && CO.xg && CO.xg.width && CO.T - (CO.xgT || -9) < 0.3 ? CO.xg : null;
+  for (const c of [CO.grab, CO.shot, CO.xg, CO.xf && CO.xf.c, CO.fx && CO.fx.snap, CO.soft, CO.skipG]) try { if (c && c !== sheet) freeCanvas(c); } catch (e) {}   // (its copies of the screen are not kept)
   if (sheet) { coldWipe = { t0: performance.now(), c: sheet }; try { sndRec('flip', 0.9); } catch (e) {} }
   CO = null;
-  restoreWorld(); Object.assign(MATCH, exhibition.saved); applyKits(); exhibition = null; teamPick = null;
-  coldFresh();
-  newGame(); STATS = newStats(); pgPending = false; state = 'pre'; game.over = true;
+  if (mode !== 'intro') {   // (the intro never touched the world)
+    restoreWorld(); Object.assign(MATCH, exhibition.saved); applyKits(); exhibition = null; teamPick = null;
+    coldFresh();
+    newGame(); STATS = newStats(); pgPending = false; state = 'pre'; game.over = true;
+  }
   results = back; results.screen = 'start';
+  coldHand = null;
+  if (mode === 'fr') { newCareerScreen(); lastPage = pageKey(); return; }   // (the second way out: straight onto the quick sign card, no stamp, no coldIntro)
   lastPage = pageKey();   // (no page crumple: the cold open has its own way out)
-  coldHand = null; coldIntro = { t0: performance.now(), rip: rip || null, skip: !!skipped };   // (the start screen comes in: drawStart's wrapper)
+  coldIntro = { t0: performance.now(), rip: rip || null, skip: !!skipped };   // (the start screen comes in: drawStart's wrapper)
 }
 function coldNext() {   // on to the next scene
   CO.i++; CO.t = 0; CO.fired = -1; CO.q = null; CO.sk = null;
+  if (CO.mode) { const n = COLD_SCENES[CO.i], id = n && n.id;   // (the intro: the gate, then straight to C5; the franchise's: ends after C4)
+    if (CO.mode === 'intro' && n && id !== 'gate' && id !== 'c5') CO.i = COLD_SCENES.findIndex(s => s.id === 'c5');
+    if (CO.mode === 'fr' && id === 'c5') return coldEnd(false); }
   const sc = coldScene();
   if (!sc) return coldEnd(false);
   CO.sc = sc;
@@ -622,7 +636,7 @@ function coldDraw(gameDraw) {
 // is this scene within a frame or two of its end, with a scene change (COLD_XF) waiting after it?
 function coldEnding() {
   const sc = CO.sc, nx = COLD_SCENES[CO.i + 1], L = CO.pl;
-  if (!nx || !COLD_XF[nx.id] || CO.fx) return false;
+  if (!(CO.mode === 'fr' && sc.id === 'c4' ? 1 : nx && COLD_XF[nx.id]) || CO.fx) return false;   // (the franchise's C4 turns away off the sign card)
   if (sc.dur) return CO.t >= sc.dur - 0.07;
   return !!(sc.play && L && L.done && L.ph === 'after' && L.t >= L.P.hold - 0.07 && coldSayDone(0.07));
 }
@@ -1957,6 +1971,10 @@ COLD_ENTER.c5 = () => {
 };
 COLD_TICK.c5 = (sc, dt) => {
   COLD_TICK.c1(sc, dt);
+  if (CO.mode === 'intro') {   // (no C4 to pay the ending's first-use costs under: they go in the doodle's first beats instead)
+    if (!CO.warmS && CO.t > 0.05) { CO.warmS = 1; try { deskBg(); startBake(); } catch (e) {} }
+    else if (CO.warmS === 1 && CO.t > 0.35) { CO.warmS = 2; try { const c = ctxBake(0, 0, 32, 32, () => { ctx.save(); drawStartBtns(); ctx.restore(); }); freeCanvas(c); } catch (e) {} }
+  }
   const E = CO.end, C = COLD_END, A = E && E.A; if (!E) return;
   if (A) { clock += dt; try { if (A.action) updateAction(A, dt); } catch (e) { A.action = null; } A.x = A.y = A.z = 0; A.vx = A.vy = 0; }   // (the library's way: one man, ticked by hand, drawn on the page)
   E.boil = cK(CO.t, C.alive[0], C.alive[1] - C.alive[0]) * (1 - cK(CO.t, C.throw + C.release + 0.2, 0.3));
@@ -2133,6 +2151,20 @@ function coldPeel(R, u) {
     ctx.restore();
   }
 }
+// skipped / the franchise's way out: the dream's last picture is a sheet of paper lifted off the screen under it: it swings up and away to the left, over the whole screen
+function coldWipeDraw(now) {
+  const k = (now - coldWipe.t0) / COLD_WIPE.skip;
+  if (k >= 1 || !coldWipe.c) { if (coldWipe.c) freeCanvas(coldWipe.c); coldWipe = null; return; }
+  const ww = W + 2 * PAD, e = cEase(k), lift = cOut(cClamp(k / 0.25));
+  ctx.save();
+  ctx.fillStyle = `rgba(10,12,20,${0.5 * (1 - e)})`; ctx.fillRect(-PAD, 0, ww, H);   // (the screen comes up out of the dark under it)
+  ctx.translate(-PAD, H); ctx.rotate(-0.5 * e * e); ctx.translate(-(ww + 160) * e * e, -H - 30 * lift * (1 - e));   // (hinged at the bottom left corner)
+  ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(14 * lift, 18 * lift, ww, H);
+  ctx.drawImage(coldWipe.c, 0, 0, ww, H);
+  ctx.fillStyle = `rgba(251,248,238,${0.35 * lift})`; ctx.fillRect(0, 0, ww, H);   // (a paper wash: it reads as a page, not as the game)
+  ctx.strokeStyle = 'rgba(30,30,40,0.7)'; ctx.lineWidth = 3; ctx.strokeRect(0, 0, ww, H);
+  ctx.restore();
+}
 (function () {
   const d = drawStart, c = startClick;
   drawStart = function () {
@@ -2188,27 +2220,17 @@ function coldPeel(R, u) {
       ctx.save(); ctx.globalAlpha = cClamp(t / (coldHand.slide ? C.handIn : 0.4)); ctx.translate(sl, 0);
       coldPrompt('press', { x: b.x + b.w - (lk ? 6 : 30), y: b.y + b.h / 2 - 4 }, { t, label: 'Start your career.', labelAt: { x: b.x + b.w + (lk ? 200 : 170), y: b.y + b.h / 2 } }); ctx.restore();
     }
-    if (coldWipe) {   // skipped: the dream's last picture is a sheet of paper lifted off the start screen: it swings up and away to the left, over the whole screen
-      const k = (now - coldWipe.t0) / COLD_WIPE.skip;
-      if (k >= 1 || !coldWipe.c) { if (coldWipe.c) freeCanvas(coldWipe.c); coldWipe = null; }
-      else {
-        const ww = W + 2 * PAD, e = cEase(k), lift = cOut(cClamp(k / 0.25));
-        ctx.save();
-        ctx.fillStyle = `rgba(10,12,20,${0.5 * (1 - e)})`; ctx.fillRect(-PAD, 0, ww, H);   // (the start screen comes up out of the dark under it)
-        ctx.translate(-PAD, H); ctx.rotate(-0.5 * e * e); ctx.translate(-(ww + 160) * e * e, -H - 30 * lift * (1 - e));   // (hinged at the bottom left corner)
-        ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(14 * lift, 18 * lift, ww, H);
-        ctx.drawImage(coldWipe.c, 0, 0, ww, H);
-        ctx.fillStyle = `rgba(251,248,238,${0.35 * lift})`; ctx.fillRect(0, 0, ww, H);   // (a paper wash: it reads as a page, not as the game)
-        ctx.strokeStyle = 'rgba(30,30,40,0.7)'; ctx.lineWidth = 3; ctx.strokeRect(0, 0, ww, H);
-        ctx.restore();
-      }
-    }
+    if (coldWipe) coldWipeDraw(now);
   };
+  // the quick sign card (career.quick): the franchise's cold open turns away off it
+  const q = drawQuickCareer; drawQuickCareer = function (...a) { const r = q.apply(this, a); if (coldWipe) coldWipeDraw(performance.now()); return r; };
   startClick = function (p) {
     if (coldIntro && !coldIntro.handOn) return;   // (nothing until the hand is there)
     if (!quickMenu && !SETTINGS.hideTools && inBtn(p, COLD_BTN) && !coldLocked()) { coldStart(); return; }
     if (coldLocked()) {   // only FRANCHISE, the settings gear, ACCOUNT (a returning player's saves) and the debug stack work
-      if (inBtn(p, COLD_FR_BTN) || inBtn(p, START_BTNS.fr)) { coldHand = null; return c({ x: START_BTNS.fr.x + START_BTNS.fr.w / 2, y: START_BTNS.fr.y + START_BTNS.fr.h / 2 }); }
+      if (inBtn(p, COLD_FR_BTN) || inBtn(p, START_BTNS.fr)) { coldHand = null;
+        if (!coldSeen() && !slotMetas().some(m => m)) { coldStart('fr'); if (CO) return; }   // (the first START YOUR FRANCHISE: the whole cold open, then the sign card)
+        return c({ x: START_BTNS.fr.x + START_BTNS.fr.w / 2, y: START_BTNS.fr.y + START_BTNS.fr.h / 2 }); }
       const o = coldBtns().find(q => q.lock && inBtn(p, q.b)); if (o) { coldWig = { b: o.b, t0: performance.now() }; return; }
       if (inBtn(p, START_BTNS.diff) || inBtn(p, ACCT_BTN)) return c(p);
       return;
@@ -2223,8 +2245,9 @@ function coldPeel(R, u) {
 function coldGoto(id) { if (!CO) coldStart(); const i = COLD_SCENES.findIndex(s => s.id === id); if (i < 0) return; if (CO.amb) coldAmb(null); CO.board = CO.board || {}; CO.board.hide = false; CO.i = i - 1; coldNext(); }
 // the very first launch: straight into the cold open (never while joining an online game from a link)
 try {
-  if (slotMetas().some(m => m)) { localStorage.setItem(COLD.key, '1'); localStorage.removeItem(COLD_LOCK); }   // (saves already here, e.g. a cloud pull reloaded the page: no cold open, no lock)
+  if (slotMetas().some(m => m)) { localStorage.setItem(COLD.key, '1'); localStorage.setItem(COLD.intro, '1'); localStorage.removeItem(COLD_LOCK); }   // (saves already here, e.g. a cloud pull reloaded the page: no intro, no cold open, no lock)
+  if (coldSeen()) localStorage.setItem(COLD.intro, '1');   // (saw the whole cold open before the intro was split off: not again)
   try { coldUnPend = localStorage.getItem(COLD_UNLOCKED) === '1'; } catch (e) {}
-  if (coldSeen() && coldLocked()) coldHand = { t0: performance.now() };
+  if (introSeen() && coldLocked()) coldHand = { t0: performance.now() };
 } catch (e) {}
-try { if (!coldSeen() && results && results.screen === 'start' && !(typeof ONL !== 'undefined' && ONL.on) && !/[?&#]join=/i.test(location.href)) coldStart(); } catch (e) { console.warn('cold open', e); CO = null; }
+try { if (!introSeen() && results && results.screen === 'start' && !(typeof ONL !== 'undefined' && ONL.on) && !/[?&#]join=/i.test(location.href)) coldStart('intro'); } catch (e) { console.warn('cold open', e); CO = null; }

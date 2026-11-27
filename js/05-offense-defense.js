@@ -66,7 +66,7 @@ const lookingAt = d => d.eyes || (d.man ? 'receiver' : 'qb');
 const lagOf = d => d.lag * (lookingAt(d) === 'receiver' ? 0.6 : lookingAt(d) === 'qb' ? 1.15 : 1) / covOf(d);   // (better cover men read it sooner)
 // coverage quality x: the difficulty, how good the whole defense is, star cover men (star linebackers most of all),
 // and a corner who won his jam at the line (d.cov is set per play in rateDefense)
-const DEEP_COV = { bonus: 0.55, between: 0.7, trailK: 0.15 };   // trailK = x the "get between" step for a DB who trailed his man the whole route;   // better cover men stay with deep routes: extra speed x (covOf - 1) on a deep route; between = how much of the way (x skill) he gets between the receiver and a ball in the air
+const DEEP_COV = { bonus: 0.55, between: 1.0, trailK: 0.3 };   // (big job defense step 2: between 0.7, trailK 0.15 before)   // trailK = x the "get between" step for a DB who trailed his man the whole route;   // better cover men stay with deep routes: extra speed x (covOf - 1) on a deep route; between = how much of the way (x skill) he gets between the receiver and a ball in the air
 const COVER_SKILL = { team: 0.035, star: 0.06, lb: 1.8, jam: 2.1, speed: 0.5 };   // (jam: a won jam makes him much better in coverage the rest of the play)
 const ROUTE_END = { after: 0.8, deep: 0.5 };   // a receiver who has run his whole route (not a stop route) while the QB still holds it: after `after` s he goes deep (odds `deep`) or works toward the QB's side
 const COVER_FADE = { after: 2.5, per: 0.07, min: 0.55 };   // coverage skill x (1 - per) for every second a play runs past `after` s (floor min): the longer a play lasts, the worse the coverage
@@ -925,7 +925,7 @@ function updateCarrier(c, top, dt) {
 }
 
 // a ball carrier's own teammates in his path: look = yd ahead he reads, r = yd of body to clear, k = how hard he bends round (the heading he wants is kept)
-const OWN_AVOID = { look: 2.6, r: 1.15, k: 1.6 };
+const OWN_AVOID = { look: 2.6, r: 1.15, k: 1.6, lock: 0.25, slipMin: 0.3 };   // lock = yd off dead ahead inside which he keeps the side he picked (c.slipS: big job, no flip every frame)
 function blockerAvoid(c, d) {
   let nx = 0, ny = 0;
   const L = OWN_AVOID.look * YD, R = OWN_AVOID.r * YD;
@@ -935,7 +935,7 @@ function blockerAvoid(c, d) {
     if (along <= 0 || along > L) continue;
     const lat = -rx * d.y + ry * d.x;   // (+ = he's on my left of the heading)
     if (Math.abs(lat) >= R) continue;
-    const w = (1 - along / L) * (1 - Math.abs(lat) / R), side = lat > 0 ? -1 : lat < 0 ? 1 : (b.y > MID ? -1 : 1);   // (dead ahead: go round toward the middle of the field)
+    const w = (1 - along / L) * (1 - Math.abs(lat) / R), side = Math.abs(lat) > OWN_AVOID.lock * YD ? (lat > 0 ? -1 : 1) : (c.slipS ? c.slipS : (b.y > MID ? -1 : 1));   // (dead ahead: the side he already picked (c.slipS = his side of the man), else toward the middle of the field)
     nx += -d.y * side * w; ny += d.x * side * w;
   }
   if (!nx && !ny) return d;
@@ -1388,7 +1388,7 @@ function runAction(code) {
     moveLookPick(c, 'hurdle', c.act);   // (looks only)
     if (space && ahead && ahead.f <= HURDLED.near * YD) hurdledBy(c, ahead.o);   // (the man he's going over reacts under him)
     c.hurdleReady = clock + HURDLE.cooldown;
-    hurdleWings(c, !!(space && ahead));
+    c.act.wing = !!(space && ahead);   // (big job: the wings go up once he is off the ground: updateAction's hurdle branch)
     if (tut && space) tutEvent('hurdle');
   } else if ((code === 'KeyW' || code === 'KeyS') && !(c.jukeReady > clock)) {
     const side = code === 'KeyW' ? -1 : 1;
@@ -2061,6 +2061,7 @@ function flagCall(type, p, x, y, o = {}) {
   const s = forced ? 1 : o.s != null ? o.s : flagSev(o.look || type);
   if (!o.looked) penLook(p, o.look || type, o.v, s);   // (the foul you can see comes first; the official reacts to it)
   penTally(type, p, 'foul');
+  if (!forced && !flagBig(type, p, o.look)) { penTally(type, p, 'small'); return false; }   // (big job: a small look is a no-call, whatever the dice)
   if (forced) REF.force = null;
   else if (Math.random() >= flagSeen(type, s, x, y)) { penTally(type, p, 'missed'); return false; }   // (a subtle one nobody flagged)
   if (p) p.flagPid = runPid;
@@ -2070,6 +2071,18 @@ function flagCall(type, p, x, y, o = {}) {
   popup(p, 'FLAG', '#ffd23f');
   penTape(x, y); penAfter(p, o.v, x, y, type === 'rough');
   return true;
+}
+// (big job) the foul's drawn look is a big one (REF.big): what the player saw decides the call. A man the player steers: userSteered (no dice fouls, see flagRoute / flagFlight)
+function flagBig(type, p, look) {
+  const B = REF.big; if (!B.on || !REF.look.on || !p || B.proc.includes(type)) return true;
+  const kind = look || (type === 'dhold' ? (p.penK === 6 ? 'tackle' : 'grab') : type), a = (PEN_VARS[kind] || []).find(x => x[0] === p.penV);
+  if (!a) return true;   // (no look drawn: the old call)
+  return B.v.includes(a[3]) || B.own.includes(kind + '.' + a[0]);
+}
+const userSteered = p => !!p && typeof controlledPlayer === 'function' && controlledPlayer() === p && !(ONL.on && ONL.guest);
+function userInto(p, o) {   // (big job) the player is steering p into o right now (his held direction points at him): the only way your own man commits a contact foul
+  const K = aiOff() ? dkeys : keys, d = dirFrom(K.KeyW || K.ArrowUp, K.KeyS || K.ArrowDown, K.ArrowLeft, K.KeyD || K.ArrowRight); if (!d) return false;
+  const g = dist(p, o) || 1; return ((o.x - p.x) * d.x + (o.y - p.y) * d.y) / g > REF.user.aim;
 }
 // v0.73 a BORDERLINE play (just under a foul's line: REF.edge): a soft look always shows; very rarely an official flags it anyway (wrong call: ghost = true, so the booth / truth know).
 // Odds rise with the nearest official's distance; every official on the turf = no flag. TEST: REF.force 'edge' flags the next one (flagForceTick makes one on a pass)
@@ -2093,7 +2106,7 @@ function flagEdge(type, p, v, x, y) {
 { const tp0 = tryPancake; tryPancake = function (b, d, odds) { const was = d && d.action, r = tp0(b, d, odds); if (d && d.action && d.action !== was && state === 'run' && b && b.team === 'off' && d.team === 'def' && Math.random() < REF.edge.hold) flagEdge('hold', b, d, (b.x + d.x) / 2, (b.y + d.y) / 2); return r; }; }
 // v0.73 console tally (penTallyShow()): fouls that happened / were called / missed, borderline plays and wrong calls, by type and side (you = diffMineP). Never saved
 const PEN_TALLY = {};
-function penTally(type, p, what) { const k = type + ' ' + (p ? (diffMineP(p) ? 'you' : 'cpu') : '?'), t = PEN_TALLY[k] || (PEN_TALLY[k] = { foul: 0, called: 0, missed: 0, edge: 0, wrong: 0 }); t[what]++; }
+function penTally(type, p, what) { const k = type + ' ' + (p ? (diffMineP(p) ? 'you' : 'cpu') : '?'), t = PEN_TALLY[k] || (PEN_TALLY[k] = { foul: 0, called: 0, missed: 0, edge: 0, wrong: 0, small: 0 }); t[what]++; }
 function penTallyShow(clear) { const out = {}; for (const k of Object.keys(PEN_TALLY).sort()) out[k] = { ...PEN_TALLY[k] }; if (clear) for (const k in PEN_TALLY) delete PEN_TALLY[k]; return out; }
 // pass protection (the line's beaten moment, updateLine): a sloppy blocker grabs his man instead of letting him go (he loses a step): beaten and still reaching for him
 function ppHold(r, b) {
@@ -2111,7 +2124,7 @@ function flagRoute() {
   for (const r of recs) {
     if (!r || r.team !== 'off' || r.action || r === rb || r.x - los < D.past * YL) continue;
     for (const d of back7) {
-      if (d.action || d.dhPid === runPid || dist(d, r) > D.r * YD * (fd ? 2 : 1)) continue;
+      if (d.action || d.dhPid === runPid || dist(d, r) > D.r * YD * (fd ? 2 : 1) || (!fd && userSteered(d))) continue;   // (big job: never a dice hold on the man you steer)
       d.dhPid = runPid;
       if (!fd && Math.random() >= D.odds) continue;
       const tk = fd || Math.random() < D.tackle, s = flagSev(tk ? 'tackle' : 'grab');
@@ -2193,6 +2206,7 @@ function flagFlight(rem) {
     d.dpiPid = runPid;
     const closing = (((d.vx || 0) - (tgt.vx || 0)) * (tgt.x - d.x) + ((d.vy || 0) - (tgt.vy || 0)) * (tgt.y - d.y)) / (g || 1);
     if (closing < D.v * YD && fd !== 'dpi') continue;   // (running stride for stride is not contact)
+    if (userSteered(d) && fd !== 'dpi') { d.dpiPid = runPid; if (rem >= D.early && closing >= D.v * REF.user.dpiV * YD && userInto(d, tgt)) flagCall('dpi', d, (d.x + tgt.x) / 2, (d.y + tgt.y) / 2, { foul: true, v: tgt }); continue; }   // (big job: your man is flagged only for running through him early, no dice)
     const watch = d.eyes === 'ball' || (typeof watchingBall === 'function' && watchingBall(d)), odds = D.odds * (watch ? D.watch : 1);
     if (rem < D.early && fd !== 'dpi') { if (rem >= D.early - REF.edge.dpi && Math.random() < odds && flagEdge('dpi', d, tgt, (d.x + tgt.x) / 2, (d.y + tgt.y) / 2)) break; continue; }   // (contact as the ball arrives is a fair play on it; just before = borderline)
     if (flagCall('dpi', d, (d.x + tgt.x) / 2, (d.y + tgt.y) / 2, { odds, v: tgt })) break;
@@ -2201,6 +2215,7 @@ function flagFlight(rem) {
     const g = dist(d, tgt); if (g > O.r * YD * (fd === 'opi' ? 1.6 : 1)) continue;
     tgt.opiPid = runPid;
     const closing = (((tgt.vx || 0) - (d.vx || 0)) * (d.x - tgt.x) + ((tgt.vy || 0) - (d.vy || 0)) * (d.y - tgt.y)) / (g || 1);
+    if (userSteered(tgt) && fd !== 'opi') { if (closing >= O.v * REF.user.opiV * YD && userInto(tgt, d)) flagCall('opi', tgt, (d.x + tgt.x) / 2, (d.y + tgt.y) / 2, { foul: true, v: d }); break; }   // (big job: your receiver only for a hard push-off you steered him into)
     if (closing >= O.v * YD || fd === 'opi') flagCall('opi', tgt, (d.x + tgt.x) / 2, (d.y + tgt.y) / 2, { odds: O.odds, v: d });
     else if (closing >= (O.v - REF.edge.opi) * YD && Math.random() < O.odds) flagEdge('opi', tgt, d, (d.x + tgt.x) / 2, (d.y + tgt.y) / 2);   // (an arm out, not quite a push: borderline)
     break;
@@ -2209,7 +2224,7 @@ function flagFlight(rem) {
     if (r.roughPid === runPid || r.engaged || r.action) continue;
     if (dist(r, qb) > R.r * YD * (fd === 'rough' ? 2.5 : 1)) continue;
     r.roughPid = runPid;
-    if (fd !== 'rough' && (Math.hypot(r.vx || 0, r.vy || 0) < R.v * YD || Math.random() >= R.hit)) continue;   // (slow, or he pulls up)
+    if (fd !== 'rough' && (Math.hypot(r.vx || 0, r.vy || 0) < R.v * YD || (!userSteered(r) && Math.random() >= R.hit))) continue;   // (slow, or he pulls up; big job: yours pulls up only if you slowed him)
     lateHit(r);
     flagCall('rough', r, qb.x, qb.y, { foul: true, v: qb });
     break;
