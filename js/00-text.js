@@ -922,6 +922,7 @@ const CHANGELOG = [
       "Vets chasing a ring or a record, or mentoring a younger player at their spot, put off retirement. A mentored kid grows a little faster. A champion's old star may go out on top.",
       "FAREWELL TOUR: before the season a longtime star can make it his last. The team gets a lift, he doesn't slow down that year, and the Post covers the start and the end.",
       "LONGEVITY PROGRAM: spend bank XP for one more year before a vet thinks about retiring. A recent retiree may also phone when a long injury hits his spot.",
+      "The draft autosaves after every pick: load the franchise and you are back on the same pick.",
     ]],
   ] },
   { v: "v0.74", secs: [
