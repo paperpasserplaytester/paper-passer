@@ -1688,7 +1688,7 @@ function paperSfx() {
     for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (Math.random() < 0.08 ? 1 : 0.25) * (1 - i / d.length);
     const src = ac_.createBufferSource(), f = ac_.createBiquadFilter(), g = ac_.createGain();
     f.type = 'highpass'; f.frequency.value = 1800; g.gain.value = 0.18;
-    src.buffer = buf; src.connect(f); f.connect(g); g.connect(sfxOut(ac_)); src.start();
+    src.buffer = buf; src.connect(f); f.connect(g); g.connect(sfxOut(ac_, 'menu')); src.start();
   } catch (e) {}
 }
 function drawCrumple() {
@@ -1949,7 +1949,7 @@ window.addEventListener('pointerdown', e => {
   if (!hsShowOn() || e.button !== 0 || settingsOpen || slotUI) return;
   const p = pointerPos(e), zone = inBtn(p, hsHoldZone());
   if (!zone && e.pointerType !== 'touch') return;
-  if (!zone && (inBtn(p, HS_BAR.next) || overPauseButton(p) || tipRectAt(p))) return;   // (a finger on NEXT: the button's own tap)
+  if (!zone && (overPauseButton(p) || tipRectAt(p))) return;   // (a finger on NEXT: the button's own tap)
   e.stopImmediatePropagation();
   HSK.at = performance.now(); HSK.f = { id: e.pointerId, x: p.x, y: p.y, zone, moved: false }; HSK.ptr = p;
 }, true);
@@ -2525,7 +2525,7 @@ window.addEventListener('keydown', e => {
     if (!e.repeat || e.code === 'Escape') rebinding = null;
     return;
   }
-  if (!olKey(e) && !careerKey(e) && !trSearchKey(e) && !qsKey(e) && !coachKey(e) && !nickKey(e) && !staffNameKey(e)) {
+  if (!olKey(e) && !careerKey(e) && !trSearchKey(e) && !faSearchKey(e) && !setSearchKey(e) && !qsKey(e) && !coachKey(e) && !nickKey(e) && !staffNameKey(e)) {
     if (!onlKeyOk(e)) return;   // (v0.58: Ctrl / Cmd / Alt combos (tab switching...) and F-keys belong to the browser: never a game key, never preventDefault'd; the text fields above keep their own Ctrl+A / Ctrl+Backspace)
     const a = aliasKey(e), ev0 = heldEv; heldEv = { src: ev0 ? ev0.src : 'kb', phys: ev0 ? ev0.phys : e.code, a };   // (each hold remembers what its key was read as at the press: it is let go as that, whatever has changed since (the snap, the drive direction))
     try { onKeyDown(a); } finally { heldEv = ev0; }

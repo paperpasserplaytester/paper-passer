@@ -979,6 +979,32 @@ const CHANGELOG = [
       "You take over the new team's coordinators, trainers, scouts and buildings, exactly as its ad showed them. Your old staff and buildings stay behind.",
       "After a midseason move, your record and your pay only count the games you coached.",
     ]],
+    ["FAIRER SIMS AND COACHES", [
+      "Simmed drives and games: the difficulty now only nudges them. Your ratings and how the game has gone so far decide the rest.",
+      "Your head coach earns most of his XP at the end of the season: wins, points and playoff runs.",
+      "Every other team's head coach has his own star rating now, and it grows or changes over the years.",
+    ]],
+    ["ANNOUNCERS", [
+      "They talk slower and never cut themselves off mid-word.",
+      "Less \"last drive\" talk: each context line comes once a drive.",
+      "Team names in their calls, and season talk in quiet moments: record, streaks, the division, the playoff race, next week.",
+    ]],
+    ["DRAFT", [
+      "A prospect your scouts filed a report on, or called about, shows his potential right away.",
+      "Tap the phone on your pick: hear the call again, or ask your scouts who to take.",
+    ]],
+    ["SEARCH, SETTINGS AND SOUND", [
+      "One magnifier search on trades, free agents and settings. Settings search finds any setting, key or tip.",
+      "Sound sliders: MASTER, PLAYERS, CROWD, SFX, MENU and MUSIC.",
+      "TRADE DEADLINE can be turned off under FRANCHISE. ANNOUNCERS moved to SHOWS.",
+      "A ? on the negotiation screen walks through every part of a deal.",
+    ]],
+    ["SMALLER FIXES", [
+      "Rookies lose the ROOKIE tag after their first season, and just-drafted rookies show it on the roster.",
+      "Training your coach no longer asks first. No pregame show before your very first game. No NEXT button in the halftime show.",
+      "The defense hint strip and its key are gone. The head coach page's buttons sit together at the bottom.",
+      "The start screen's hand keeps pointing at FRANCHISE until you press it. The trade deadline text and its warning were a week off.",
+    ]],
   ] },
   { v: "v0.77", secs: [
     ["A GENTLER START", [
@@ -3616,6 +3642,17 @@ const ANN_MORE = {
   // (fixes job) the reel names the man and the move: {who} = his name, {move} = what he did
   reel_named: { A: 'Watch {who} on this {move}.|Here is {who} and that {move}.|{who} and the {move}.|Look at {who} on the {move}.|This {move} by {who}.|Remember {who} and this {move}?|Eyes on {who}, here comes the {move}.|{who} with the {move}.',
     B: 'That {move} by {who} was something.|{who} sold that {move} perfectly.|Best {move} of the half, {who}.|You do not teach that {move}.|{who} made that {move} look easy.|What a {move} from {who}.' },
+  // season talk in a lull before the snap (annLull, franchise games): {team} = your team, {rec} record, {n} streak / games, {place} division place, {opp} next opponent, {sc} last score
+  ssn_rec: { B: 'The {team} come in at {rec}.|{rec} on the year for the {team}.|A {rec} record so far for the {team}.|The {team} sit at {rec}.|{rec} is where the {team} stand.|Record check: the {team} are {rec}.|The {team} have gone {rec} this season.|{rec}, that is the season so far for the {team}.|The {team} walked in {rec}.|Season so far: {rec}.|At {rec}, the {team} know what they are.|{rec}. Every game counts from here.' },
+  ssn_winStreak: { B: 'The {team} have won {n} straight.|{n} wins in a row for the {team}.|A {n} game win streak on the line.|The {team} are rolling, {n} straight.|Nobody has beaten the {team} in {n} games.|{n} in a row. The {team} are hot.|Winners of {n} straight, the {team}.|The streak is at {n} for the {team}.|{n} straight wins and counting.|The {team} keep stacking wins, {n} in a row.|Hot streak: {n} games.|The {team} have not lost in {n}.' },
+  ssn_loseStreak: { B: 'The {team} have dropped {n} straight.|{n} losses in a row for the {team}.|The {team} need to stop the slide, {n} straight.|A rough patch: {n} losses running.|The {team} are searching, {n} straight losses.|{n} in a row went the wrong way.|The losing streak is at {n}.|The {team} have not won in {n}.|{n} straight defeats for the {team}.|Time to end a {n} game skid.|The {team} badly need this one after {n} losses.|{n} losses in a row. Pressure is on.' },
+  ssn_divTop: { B: 'The {team} lead the division.|First place belongs to the {team} right now.|Top of the division: the {team}.|The {team} are the team to catch in the division.|Division leaders, the {team}.|Nobody in the division is ahead of the {team}.|The {team} sit on top of the division.|First in the division, and they want to stay there.|The {team} own first place.|The division lead is theirs for now.|The rest of the division chases the {team}.|First place, the {team}.' },
+  ssn_divBack: { B: 'The {team} sit {place} in the division.|{place} in the division for the {team}.|The {team} are {place} in their division.|Division check: the {team} are {place}.|The {team} are chasing from {place}.|{place} place in the division right now.|The {team} need wins to climb from {place}.|Looking up from {place}, the {team}.|The {team} are in {place} in the division.|Division race: the {team} {place}.|Stuck in {place}, the {team} need this.|From {place}, the {team} want more.' },
+  ssn_poIn: { B: 'If the season ended today, the {team} are in.|The {team} hold a playoff spot.|Playoff picture: the {team} are in it.|The {team} are inside the playoff line.|A playoff spot is theirs to lose.|The {team} would make the playoffs today.|In the playoff field right now, the {team}.|The {team} are on track for the playoffs.|Playoff spot in hand, for now.|The {team} are holding on to a playoff seed.|Postseason is in sight for the {team}.|The {team} are in the dance as of today.' },
+  ssn_poOut: { B: 'The {team} are on the outside of the playoffs.|The {team} need help to make the playoffs.|Right now the {team} miss the playoffs.|Playoff picture: the {team} are just out.|The {team} are chasing a playoff spot.|Outside looking in, the {team}.|The {team} have work to do for a playoff seed.|No playoff spot yet for the {team}.|The {team} need wins to sneak in.|The playoff line is just ahead of the {team}.|The {team} are fighting for their season.|Every game is a must win for the {team}.' },
+  ssn_lastW: { B: 'The {team} won last week, {sc}.|Coming off a {sc} win.|Last week went their way, {sc}.|A {sc} win last time out.|The {team} beat them {sc} last week.|Fresh off a {sc} victory.|Last week: a {sc} win for the {team}.|The {team} took care of business last week, {sc}.|A {sc} win to build on.|Still riding that {sc} win.|Last game, a win, {sc}.|The {team} won {sc} last time.' },
+  ssn_lastL: { B: 'The {team} lost last week, {sc}.|Coming off a {sc} loss.|Last week stung, {sc}.|A {sc} loss last time out.|The {team} fell {sc} last week.|They want to bounce back from {sc}.|Last week: a {sc} loss for the {team}.|The {team} are looking to rebound after {sc}.|A {sc} loss still fresh.|Last game got away, {sc}.|They dropped it {sc} last time.|The {team} want to wash out that {sc} loss.' },
+  ssn_next: { B: 'Next week, the {opp}.|The {opp} are up next for the {team}.|After this, a date with the {opp}.|On deck: the {opp}.|Next on the schedule, the {opp}.|The {team} see the {opp} next week.|Coming up: the {opp}.|Next stop, the {opp}.|The {opp} wait next week.|One week from now: the {opp}.|Then it is the {opp}.|And next up, the {opp}.' },
 };
 
 // --- name variants (fixes job): the same events as ANN_LINES with the man's name, merged into them at load by 02 like ANN_MORE (annPick's bag mixes both).
@@ -3644,8 +3681,32 @@ const ANN_NAMED = {
   bigGain: { A: 'Big gain for {p}!|{p} rips off a big one!|{p} chews up yards!|{p} breaks a long one!', B: '{p} found room.|The blocking set up {p}.|{p} is rolling now.|{p} is too much for them.' },
   first: { A: 'First down, {p}!|{p} moves the chains!|{p} gets the first!|{p} picks up the first down.', B: '{p} fought for that.|{p} knows where the sticks are.|Clutch move by {p}.|{p} keeps the drive going.' },
 };
+// team-name variants (merged into ANN_NAMED at load in 02, used at about ANN.nameOdds): {off} / {def} = the offense / defense nickname, {offC} / {defC} = their city, {lead} = the team in front (missing when tied)
+const ANN_TEAM_NAMED = {
+  td: { A: 'Touchdown, {off}!|Six for the {off}!|The {off} punch it in!|{offC} scores!', B: 'The {off} make it look easy.|The {def} could not stop that.|Big moment for the {off}.|{offC} is on the board.' },
+  pick: { A: 'The {def} pick it off!|{def} take it away!|Picked by the {def}!', B: 'Huge takeaway for the {def}.|The {off} gave that one away.|The {def} were waiting on that.' },
+  fumble: { B: 'Ball security, {off}.|The {def} were swarming.|The {off} cannot afford that.' },
+  turnover: { B: 'The {def} get the ball back.|Momentum swings to the {def}.|The {off} give it away.|Now it is {def} ball.' },
+  downs: { A: 'The {def} hold on fourth!|{def} stuff it!', B: 'The {def} stood tall.|No dice for the {off}.|The {off} come up empty.' },
+  punt: { B: 'The {off} punt it away.|{def} ball coming up.|The {off} play the field.' },
+  safety: { B: 'Two points for the {def}.|The {def} pin them back.' },
+  ctx_lead: { B: 'The {lead} take the lead.|{lead} in front now.|And the {lead} are ahead.' },
+  ctx_turnLate: { B: 'That could sink the {off}.|The {def} may have just won it.' },
+  ctx_3out: { B: 'Three and out for the {off}.|The {def} get off the field.|Quick stop by the {def}.' },
+  ctx_longDrive: { B: 'The {off} are grinding.|Long march for the {off}.|The {def} are wearing down.' },
+  ctx_gwd: { B: 'This is the drive for the {off}.|The {off} need this one.|{offC} is holding its breath.' },
+  ctx_tie: { B: 'The {off} still need a score.|A field goal ties it for the {off}.' },
+  ctx_hold: { B: 'The {off} want to bleed the clock.|The {def} need a stop.|{offC} wants this one over.' },
+  ctx_poss1: { B: 'Maybe one more shot for the {off}.|The {def} need a stop right here.' },
+  ctx_poss2: { B: 'The {off} have time, not much.|The {def} cannot give up a big one.' },
+  stk_tie: { A: 'The {off} tie it!|{offC} has it all square!', B: 'The {off} would not go away.' },
+  stk_walkoff: { A: 'The {lead} walk it off!|{lead} win it at the gun!', B: 'What a finish for the {lead}.' },
+  stk_comeback: { A: 'The {lead} complete the comeback!', B: 'What a rally by the {lead}.|The {lead} never quit.' },
+  stk_po: { B: 'The {off} come up big when it counts.|Playoff football, and the {off} deliver.' },
+};
 // v0.75 scout calls on the draft phone ({p} = the prospect): one line each, coach voice
 const SCOUT_CALL_LINES = {
+  ask: ['You asked? I would go {p} here.', 'My pick for this spot is {p}.', '{p}. He fits what we need.', 'If it were me, {p}. No doubt.', 'Best fit on my board right now: {p}.'],
   take: ['Coach, take {p}. Trust me on this one.', '{p} is your guy. I have seen enough.', 'Grab {p} here. He fills your hole.', 'I would run to the podium with {p}.'],
   boom: ['{p} is a BOOM. Do not let him walk.', 'Take {p}. I stamped him BOOM myself.', 'BOOM all over {p}. Go get him.'],
   bust: ['Stay off {p}. I stamped him BUST.', 'Not {p}, Coach. He will not pan out.', 'I would pass on {p}. Trust the stamp.'],

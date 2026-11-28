@@ -556,8 +556,11 @@ function recClick(pt) {
 // --- coaching Hall of Fame: RETIRE on the head coach page snapshots him into CHOF (own key, per franchise slot), with an induction scene
 const chofView = { page: 0 }, CHOF_ANIM = { dark: 1200, plaque: 1400, hold: 3600 };   // ms: lights go down, the plaque drops in, then click to continue
 let chofAnim = null;   // { t0, e }
-const RETIRE_BTN = { x: 140, y: 625, w: 190, h: 80 };   // (clear of the BACK button at x 30-114, so Esc = BACK never hits it; BACK's height)
-const HC_FACE_BTN = { x: 346, y: 625, w: 150, h: 80 };   // head coach page: FACE = picture day (the coach creator, CANCEL restores)
+const HC_ROW = { cx: (114 + 760) / 2, gap: 18, y: 625, h: 80, w: [190, 150, 210], fs: 24 };   // head coach page bottom row: RETIRE / FACE / DEMAND TRADE centred as a group between BACK (ends x 114) and the MAIN ABILITY label (starts about x 770; HC_MAIN_BTN), BACK's height
+const RETIRE_BTN = { y: HC_ROW.y, w: HC_ROW.w[0], h: HC_ROW.h };
+const HC_FACE_BTN = { y: HC_ROW.y, w: HC_ROW.w[1], h: HC_ROW.h };   // head coach page: FACE = picture day (the coach creator, CANCEL restores)
+const MOVE_BTN = { y: HC_ROW.y, w: HC_ROW.w[2], h: HC_ROW.h };   // (head coach page: leave for another team, JOB MARKET, all year)
+{ let x = HC_ROW.cx - (HC_ROW.w[0] + HC_ROW.w[1] + HC_ROW.w[2] + 2 * HC_ROW.gap) / 2; for (const b of [RETIRE_BTN, HC_FACE_BTN, MOVE_BTN]) { b.x = Math.round(x); x += b.w + HC_ROW.gap; } }
 // a little box with a check mark when `on` (centered on y, left edge x, s px square); replaces the text [X] / [ ]
 function checkBox(x, y, s, on, col) {
   ctx.save(); ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
@@ -1236,9 +1239,9 @@ function drawStaff() {
   } else drawStaffFolder(team, staff);
   if (staffView.sel >= 1 && team === MATCH.you && season && !exhibition) menuBtn(STAFF_HIRE_BTN, 'HIRING BOARD', RES.bright, 20);
   if (staffView.sel >= 1 && team === MATCH.you && season && !exhibition && xpcOn() && unlOn('book')) menuBtn(BOOK_BTN, 'PLAYBOOK', '#fff3a0', 22);   // (v0.64: his binder)
-  if (staffView.sel === 0 && team === MATCH.you && season && !exhibition) { const ok = jobsOn() || !!season.offseason; menuBtn(MOVE_BTN, 'JOB MARKET', ok ? RES.bright : CARD_GRAY, 20, null, ok); }   // (v0.78: all year)
-  if (staffView.sel === 0 && team === MATCH.you && season && !exhibition) menuBtn(RETIRE_BTN, career.retired ? 'RETIRED' : 'RETIRE', career.retired ? CARD_GRAY : RES.bright, 20, null, !career.retired);
-  if (staffView.sel === 0 && team === MATCH.you && season && !exhibition && !career.retired) menuBtn(HC_FACE_BTN, 'FACE', RES.bright, 20);
+  if (staffView.sel === 0 && team === MATCH.you && season && !exhibition) { const ok = jobsOn() || !!season.offseason; menuBtn(MOVE_BTN, 'JOB MARKET', ok ? RES.bright : CARD_GRAY, HC_ROW.fs, null, ok); }   // (v0.78: all year)
+  if (staffView.sel === 0 && team === MATCH.you && season && !exhibition) menuBtn(RETIRE_BTN, career.retired ? 'RETIRED' : 'RETIRE', career.retired ? CARD_GRAY : RES.bright, HC_ROW.fs, null, !career.retired);
+  if (staffView.sel === 0 && team === MATCH.you && season && !exhibition && !career.retired) menuBtn(HC_FACE_BTN, 'FACE', RES.bright, HC_ROW.fs);
   if (redUI.on) drawRedPick();
   else menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
   if (foMsg && performance.now() - foMsg.t < 3500 && !NG) {   // a line about the last deal (signed / refused / locked)
@@ -1285,7 +1288,7 @@ function foRow(team) {
   const tot = FO_ROW_ON.length * R.w + Math.max(0, FO_ROW_ON.length - 1) * R.gap;
   FO_ROW_ON.forEach((b, i) => { b.x = Math.round(R.c - tot / 2 + i * (R.w + R.gap)); });
 }
-const MOVE_BTN = FA_BTN;   // (head coach page: leave for another team, offseason only)
+
 const HC_MAIN_BTN = { x: 990, y: 625, w: 260, h: 80 };   // (head coach page, bottom right, mirrors RETIRE: cycles the main ability)
 let staffNameOn = false;   // typing a new name for the open coordinator
 const STAFF_NAME_BTN = { x: 100, y: STAFF_L.nameY, w: 220, h: 40 }, STAFF_NAME_MAX = 22;
@@ -1311,7 +1314,7 @@ const PO_BTN = { sm: { x: 720, y: 290, w: 58, h: 48 }, sp: { x: 1040, y: 290, w:
 const foOn = () => xpcOn() && unlOn('league');   // your franchise only (v0.77: other teams' offices open with THE LEAGUE)
 function foFill(team) {   // another team's staff, filled in the first time it is looked at: a head coach, the coordinators' pay / age / specialty, two trainers, two scouts
   const s = STAFF[team], t = (s.tend || TEND_RAW[team] || 'P S M 3 0 O').split(' ');
-  if (!s.hc) s.hc = { name: `${pick(NAME_FIRST)} ${pick(NAME_LAST)}`, face: makeFace(Math.random, true) };
+  if (!s.hc || !s.hc.name) s.hc = Object.assign(s.hc || {}, { name: `${pick(NAME_FIRST)} ${pick(NAME_LAST)}`, face: makeFace(Math.random, true) });   // (v0.78: his stars may already be there: cpuHc)
   staffAged(s.hc, 'hc');   // (v0.66: other teams' head coaches get an age from their face; old saves too)
   for (const r of ['oc', 'dc']) { const p = s[r]; if (!p.spec) p.spec = r === 'oc' ? (t[0] === 'P' ? 'PASS-HEAVY' : 'RUN-HEAVY') : t[2] === 'L' ? 'COVERAGE' : t[2] === 'H' && t[4] === '1' ? 'BLITZ-HAPPY' : 'RUN-STOPPER'; hireFill(p, r); if (p.quirk === undefined) p.quirk = hireQuirk(r); }
   if (!s.tr) s.tr = { off: pracTrainerNew('off'), def: pracTrainerNew('def') };
@@ -2179,9 +2182,12 @@ function drawNegotiate() {
   const err = NG.check ? NG.check(NG.me, NG.on) : null;
   ctx.textAlign = 'center'; ctx.font = 'bold 19px monospace'; ctx.fillStyle = err ? '#c81b1b' : RES.line; ctx.fillText(err || NG.msg || (v >= N.signs ? 'THIS OFFER GETS SIGNED' : 'EACH COUNTER COSTS A TRY'), P.x + P.w / 2, P.y + 518, P.w - 60);
   ctx.fillStyle = RES.shade; ctx.fillRect(P.x + 16, P.y + P.h - 80, P.w - 32, 2);   // the bottom strip
+  menuBtn(NG_Q, '?', RES.bright, 30);   // (the deal's tour: TOUR_STEPS.negotiate)
   menuBtn(NG_B.walk, 'NOT NOW', RES.bright, 26); menuBtn(NG_B.meet, hc ? 'TAKE OFFER' : 'MEET ASK', RES.bright, 26); menuBtn(NG_B.send, 'SEND COUNTER', err ? CARD_GRAY : '#6cc070', 26, null, !err);
 }
+const NG_Q = { x: NG_P.x + NG_P.w - 62, y: NG_P.y + 6, w: 48, h: 48 };   // NEGOTIATE popup: the ? (top right of the panel, under the coin box)
 function ngClick(pt) {
+  if (inBtn(pt, NG_Q)) { tourStart('negotiate', true); return; }
   if (inBtn(pt, NG_B.walk)) { NG = null; return; }
   if (inBtn(pt, NG_B.meet)) { NG.me = { ...NG.ask }; if (ngInterest() < CONTRACT.neg.signs) NG.on = []; ngDone(); return; }   // (his terms as they stand; perks that he won't give are dropped)
   if (inBtn(pt, NG_B.send)) { ngSend(); return; }
@@ -2648,7 +2654,10 @@ BTN_LABEL_MAT['JOB MARKET'] = BM('jobad');
 // Coaches level on XP, not attributes: the head coach in half stars, coordinators in whole stars. XP comes from goals and from each
 // game: the result (head coach), how the offense played (OC) and how the defense played (DC), separately. State: career.goals, career.cxp.
 const GOAL = { base: 3, xp: 25, boost: 1.2, boostMax: 1.5, weights: [3, 3, 2, 1.5, 1] };   // xp = coach XP per goal level; weights = how often levels 1-5 are picked
-const COACH = { hcBase: 1000, hcPer: 500, coBase: 1500, coPer: 1500, win: 40, tie: 20, loss: 8, game: 30, playoff: 150, champ: 300, legend: 1.25, mentor: 1.1 };   // XP a half star (HC) / star (coordinator) costs = base + per x current stars; game = XP for a great game on one side
+const COACH = { hcBase: 1000, hcPer: 500, coBase: 1500, coPer: 1500, win: 40, tie: 20, loss: 8, game: 30, playoff: 150, champ: 300, legend: 1.25, mentor: 1.1,
+  hcGame: 0.35,   // v0.78: the head coach's share of a game's XP (most of his XP is the season payout now)
+  season: { base: 300, win: 18, pct: 120, pf: 0.1, pa: 0.1, min: 150 },   // the end-of-season payout: base + per win + x win % + per point scored - per point allowed (+ COACH.playoff / champ)
+  cpu: { lo: 1.5, hi: 4.5, retireAt: 4, retire: 0.12, newLo: 1.5, newHi: 3 } };   // other teams' head coaches: seeded stars, and a 4+ star coach may leave each year (a new one comes in)   // XP a half star (HC) / star (coordinator) costs = base + per x current stars; game = XP for a great game on one side
 const GOAL_DEFS = [   // per level 1-5: min = yards a play needs to count, n = how many (or the total, for cum)
   { id: 'catch', ev: 'catch', min: [10, 15, 20, 30, 30], n: [3, 4, 3, 2, 3], text: (m, n) => `MAKE ${n} CATCHES OF ${m}+ YARDS` },
   { id: 'rush', ev: 'rush', min: [5, 8, 10, 15, 20], n: [3, 3, 4, 3, 3], text: (m, n) => `RUSH ${n} TIMES FOR ${m}+ YARDS` },
@@ -2868,7 +2877,31 @@ function coachGame(blue, red) {   // a game of yours is over: XP by result, and 
   const offP = Math.max(0, Math.min(1.6, blue / 24) - 0.15 * o.reduce((n, s) => n + (s.int || 0) + (s.fum || 0), 0));
   const defP = Math.max(0, Math.min(1.5, 1.5 - red / 20)) + Math.min(0.5, d.reduce((n, s) => n + 0.2 * (s.int || 0) + 0.1 * ((s.sack || 0) + (s.ff || 0)), 0));
   const res = blue > red ? COACH.win : blue === red ? COACH.tie : COACH.loss;
-  coachXP({ hc: res + COACH.game * (offP + defP) / 2, oc: COACH.game * offP, dc: COACH.game * defP });
+  coachXP({ hc: (res + COACH.game * (offP + defP) / 2) * COACH.hcGame, oc: COACH.game * offP, dc: COACH.game * defP });
+}
+function coachSeasonXP(k, po) {   // a season's head coach payout for team k (record, win %, points for / against, playoffs, title), from the season's own table; null = no games
+  const T = seasonTable(), r = T[k]; if (!r) return null;
+  const g = r.w + r.l + r.t; if (!g) return null;
+  const S = COACH.season, xp = S.base + S.win * r.w + S.pct * (r.w + r.t / 2) / g + S.pf * r.pf - S.pa * r.pa + (po && po.seed && po.seed[k] ? COACH.playoff : 0) + (po && po.champ === k ? COACH.champ : 0);
+  return { xp: Math.max(S.min, Math.round(xp)), rec: recStr(r) };
+}
+function cpuHc(k) {   // another team's head coach (STAFF[k].hc), stars seeded COACH.cpu.lo-hi in half stars by a hash of the team the first time (old saves too)
+  const S = typeof STAFF !== 'undefined' && STAFF[k]; if (!S) return null;
+  const h = S.hc || (S.hc = {}), C = COACH.cpu;
+  if (h.stars == null) { h.stars = C.lo + Math.floor(bdHash(`hc:${k}:${h.name || ''}`) * ((C.hi - C.lo) * 2 + 1)) * 0.5; h.xp = 0; }
+  return h;
+}
+function cpuHcSeason(me, po) {   // end of a season: every other head coach gets the same payout and climbs; a 4+ star coach may leave for a new one (seeded lower)
+  const C = COACH.cpu;
+  for (const k of Object.keys(NFL)) {
+    if (k === me) continue;
+    const h = cpuHc(k), p = h && coachSeasonXP(k, po); if (!p) continue;
+    h.xp = (h.xp || 0) + p.xp;
+    while (h.stars < 5 && h.xp >= coachNeed('hc', h.stars)) { h.xp -= coachNeed('hc', h.stars); h.stars += 0.5; }
+    if (h.stars >= C.retireAt && bdHash(`hcgo:${k}:${LEAGUE.year}:${h.name || ''}`) < C.retire) {   // (moves on: a new coach, named by foFill when he is first looked at)
+      STAFF[k].hc = { stars: C.newLo + Math.floor(bdHash(`hcnew:${k}:${LEAGUE.year}`) * ((C.newHi - C.newLo) * 2 + 1)) * 0.5, xp: 0 };
+    }
+  }
 }
 function coachBar(x, y, w, role, c) {   // XP toward the next star under a coach's card / page
   const st = role === 'hc' ? hcStars(MATCH.you) : c.stars, X = (career.cxp || {})[role] || 0, max = st >= 5, need = coachNeed(role, st);
@@ -2987,11 +3020,11 @@ const xpcUpgPrice = p => Math.ceil(XPC.quick * upgCost(p));
 const xpcCoachStars = (c, role) => role === 'hc' ? hcStars(MATCH.you) : c.stars;
 const xpcCoachMax = (c, role) => xpcCoachStars(c, role) >= (role === 'hc' ? career.hcCeil || 5 : 5);
 const xpcCoachPrice = (c, role) => Math.ceil((role === 'hc' ? XPC.coach.hc : XPC.coach.co) * (1 + XPC.coach.grow * xpcCoachStars(c, role)));
-function xpcBuy(price, title, lines, go, demo) {   // pay `price` from the bank, then `go`; a large buy asks first (demo = { p, id }: shown as the ability popup with the new one's demo)
+function xpcBuy(price, title, lines, go, demo, noAsk) {   // pay `price` from the bank, then `go`; a large buy asks first unless noAsk (demo = { p, id }: shown as the ability popup with the new one's demo)
   if (!xpcCanBuy() || xpBank() < price) return;
   const from = spendRect(), run = () => { if (!xpSpend(price, from)) return; go(); upgradeSfx(); autosaveSoon(); };
   const cost = `Costs ${price} XP from the bank (you have ${Math.floor(xpBank())}).`, bb = [{ label: 'CANCEL' }, { label: 'BUY', green: true, on: run }];
-  if (price >= XPC.confirm) offPopShow(demo ? abilPop(demo.p, demo.id, { title, lines: [...lines, cost], btns: bb, from: demo.from }) : { title, lines: [...lines, cost], btns: bb });
+  if (price >= XPC.confirm && !noAsk) offPopShow(demo ? abilPop(demo.p, demo.id, { title, lines: [...lines, cost], btns: bb, from: demo.from }) : { title, lines: [...lines, cost], btns: bb });
   else run();
 }
 function xpcBoostPot(p) {
@@ -3009,7 +3042,7 @@ function xpcQuickUpg(p) {
 }
 function xpcTrain(c, role) {
   if (xpcCoachMax(c, role)) return;
-  xpcBuy(xpcCoachPrice(c, role), 'TRAIN YOUR COACH?', wrapLines(`${role === 'hc' ? 'Your head coach' : c.name} gets ${XPC.coach.chunk} coach XP toward his next star.`, 50), () => { coachXP({ [role]: XPC.coach.chunk }); recalcTeamStars(); });
+  xpcBuy(xpcCoachPrice(c, role), 'TRAIN YOUR COACH?', wrapLines(`${role === 'hc' ? 'Your head coach' : c.name} gets ${XPC.coach.chunk} coach XP toward his next star.`, 50), () => { coachXP({ [role]: XPC.coach.chunk }); recalcTeamStars(); }, null, true);   // (training never asks first)
 }
 // His ability up a tier (FIT -> ABILITY -> STAR FACTOR; the button sits on the STATUS note, under the ability). Goes through tierGive, like the red
 // star: the tier is on the roster entry (p.tier; p.xfBought = the year a Star Factor was bought), never in the generated SIGS data. Limits in XPC.tier;
@@ -3204,8 +3237,8 @@ function homeNews() {
     if (ready.length) catPopShow({ title: 'COACH UPGRADE READY', cats: ready.map(x => ({ name: x.t, lines: ['FRONT OFFICE > his page'], cards: [{ staff: x.c, team: MATCH.you }] })), noOpen: true }); }
   { const g = season && !season.offseason ? goalsEnsure() : null;   // this week's goals, announced once
     if (g && g.fresh) { g.fresh = false; if (!SETTINGS.hideGoalsTip) goalsShow('NEW WEEKLY GOALS', true); } }
-  if (season && !season.offseason) {   // the trade deadline: a heads-up three weeks out, and on the last week to deal
-    const left = TRADE.deadline - season.week, tag = `${LEAGUE.year}:${season.week}`;
+  if (season && !season.offseason && tradeDeadOn()) {   // the trade deadline: a heads-up three weeks out, and on the last week to deal
+    const left = TRADE.deadline - season.week + 1, tag = `${LEAGUE.year}:${season.week}`;
     if ((left === 1 || left === 3) && LEAGUE.ddAlert !== tag) {
       LEAGUE.ddAlert = tag;
       offPopShow({ title: 'TRADE DEADLINE', lines: [left === 1 ? 'Last week to trade. Deal now!' : `${left} weeks left to make trades.`], more: left === 1 ? 'This is the last week to make a trade. After this week\'s game the window closes until after the draft.' : `The trade deadline is ${left} weeks away: trades close after week ${TRADE.deadline - 1}.` });
@@ -3224,7 +3257,7 @@ function homeNews() {
 // --- trades (paper_passer_trade_logicv2.pdf) --------------------------------------------------------------
 // Every player and pick has a trade value (TV, in points). A team sees it through its own mode (contender / neutral / rebuilding) and a
 // deal goes through when what it gets beats what it gives by `accept` (a dice roll a little under), with both payrolls under the cap.
-// Windows: the offseason after the draft, and in-season until the deadline after week 9. Your picks: this draft and the next two.
+// Windows: the offseason after the draft, and in-season until the deadline after week 10 (TRADE.deadline; off in settings = no deadline). Your picks: this draft and the next two.
 const TRADE = {
   capNear: 4, capCredit: 2, capFix: { pay: 0.1, third: 0.2 },   // a deal both like that misses the cap by capNear $M or less: you can PAY capCredit credits per $M (a one-season cap credit) or RESTRUCTURE the incoming man; the computer pays one down itself at accept + capFix.pay, and moves one of its own to a third team at accept + capFix.third
   accept: 1.05, maybe: 0.92, dice: 4, lock: 1.5, deadline: 10, depth: 0.75, weekly: 3, offseason: 7, aiChance: 0.3, bigKeep: 0.75,   // bigKeep = odds a computer deal with a 4+ star player in it is called off anyway (big trades are rare)   // ratio for a yes / for a dice roll; the d6 needed; ratio a contender wants for a 4+ star QB; the last season.week trades are open; every extra incoming asset counts x depth; computer deals tried a week / in the offseason
@@ -3700,9 +3733,10 @@ function tradeClosed() {   // why trades are shut right now (null = open)
   if (!season) return 'NO SEASON';
   if (!unlOn('trade')) return 'NOT YET: TRADES OPEN NEXT SEASON';   // (v0.77: the UNLOCKS table)
   if (season.offseason) return null;   // (open through the whole offseason)
-  if (season.week > TRADE.deadline) return 'DEADLINE PASSED (AFTER WEEK 9)';
+  if (tradeDeadOn() && season.week > TRADE.deadline) return `DEADLINE PASSED (AFTER WEEK ${TRADE.deadline})`;   // (season.week = the week to play: open through week deadline's game)
   return null;
 }
+const tradeDeadOn = () => SETTINGS.deadline !== false;   // settings > FRANCHISE: TRADE DEADLINE on (old settings files have none: on); off = trades stay open all season, for everyone
 const bonusSpot = t => [...String(t)].reduce((s, c) => s + c.charCodeAt(0), 0) % 3 === 0;   // some computer teams carry an extra roster spot in a trade (a third of them, fixed per team)
 function tradeLegal(me, k, giveA, getA) {   // me sends giveA to k and gets getA: the cap and the rosters have to work out for both
   const pl = l => l.filter(a => a.kind === 'player').map(a => a.p), gp = pl(giveA), tp = pl(getA), tn = t => t === season.team ? 'YOUR TEAM' : `THE ${NFL[t].nick.toUpperCase()}`;
@@ -3773,7 +3807,7 @@ function tradeCounter(me, k, giveA, getA) {
 }
 // the other teams trade with each other: a seller offers a player or pick and the first partner asset both sides like goes
 function aiTrades(me, tries) {
-  if (!season || (!season.offseason && season.week > TRADE.deadline)) return;
+  if (!season || (!season.offseason && tradeDeadOn() && season.week > TRADE.deadline)) return;
   const teams = Object.keys(ROSTER).filter(k => NFL[k] && k !== me);
   for (let t = 0; t < tries; t++) {
     TCX = null;
@@ -4025,39 +4059,18 @@ try { TR_BM_SET = new Set(JSON.parse(localStorage.getItem(TR_BM_KEY)) || []); } 
 const TR_BM = ROSTER_CARDS.map(bb => ({ x: bb.x + 18, y: bb.y + 10, w: 30, h: 40 }));
 const TR_TABS = [1, 2, 3, 4].map(i => ({ x: 270 + i * 188, y: 640, w: 168, h: 58 }));   // the folder tabs: same size, clear of BACK and the ? tip (slot 0 = SEARCH, TR_SEARCH)
 // SEARCH (the first folder tab): typing a name filters the list to players whose name holds the text (any team, any case; side / position / team filters still apply)
-const TR_SEARCH = { tab: { x: 270, y: 640, w: 168, h: 58 }, box: { x: 270, y: 584, w: 400, h: 44 }, clr: { x: 626, y: 588, w: 36, h: 36 }, max: 18 };
-function trSearchDraw() {
-  const B = TR_SEARCH.box, q = TR.q || '', foc = !!TR.qFoc;
-  if (!foc && !q) return;
-  UI_BTNS.push(B);
-  ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(B.x + 3, B.y + 4, B.w, B.h);
-  ctx.fillStyle = '#fffdf4'; ctx.fillRect(B.x, B.y, B.w, B.h); ctx.strokeStyle = foc ? '#2f5fb8' : 'rgba(40,50,70,0.6)'; ctx.lineWidth = foc ? 3 : 2; ctx.strokeRect(B.x, B.y, B.w, B.h);
-  ctx.font = 'bold 20px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  ctx.fillStyle = q ? RES.line : 'rgba(60,60,70,0.45)'; ctx.fillText(q || 'type a name...', B.x + 14, B.y + B.h / 2 + 1, B.w - 70);
-  if (foc && Math.floor(performance.now() / 500) % 2 === 0) { const cx = B.x + 14 + (q ? Math.min(ctx.measureText(q).width, B.w - 70) : 0) + 2; ctx.fillStyle = RES.line; ctx.fillRect(cx, B.y + 10, 2, B.h - 20); }
-  ctx.restore();
-  if (q) menuBtn(TR_SEARCH.clr, 'x', RES.bright, 20);
-}
-function trSearchSet(v) { const q = String(v).replace(/[^A-Za-z '\-.]/g, '').slice(0, TR_SEARCH.max); if (q !== (TR.q || '')) { TR.q = q; TR.page = 0; TR.v++; } }
-function trSearchFocus(on) { TR.qFoc = on; KB_T = on ? { get: () => TR.q || '', set: trSearchSet, done: k => { if (k === 'Escape') trSearchSet(''); trSearchFocus(false); } } : null; if (KB_TOUCH) { if (!kbIn) kbSetup(); kbSync(); } }
+const TR_SEARCH = { tab: SRCH.btn, box: SRCH.box, max: 18 };   // (the magnifier top left beside OFFENSE / DEFENSE: srchDraw)
+const TR_SRCH = { st: null, k: 'q', f: 'qFoc', max: TR_SEARCH.max, on: () => { TR.page = 0; TR.v++; } };
+const trSrch = () => { TR_SRCH.st = TR; return TR_SRCH; };
+function trSearchDraw() { srchDraw(trSrch()); }
+function trSearchSet(v) { srchSet(trSrch(), v); }
+function trSearchFocus(on) { srchFocus(trSrch(), on); }
 // typing while the search field has the focus: true = the key was taken (so no game key fires)
 function trSearchKey(e) {
   if (!results || results.screen !== 'trade' || !TR.qFoc || TR.sel || teamPick) return false;
-  const q = TR.q || '';
-  if (e.key === 'Escape') { trSearchSet(''); trSearchFocus(false); }
-  else if (e.key === 'Enter') trSearchFocus(false);
-  else if (e.key === 'Backspace') trSearchSet((e.ctrlKey ? q.replace(/\s*[^\s]*\s*$/, '') : q.slice(0, -1)));
-  else if (!e.ctrlKey && !e.metaKey && e.key.length === 1) trSearchSet(q + e.key);
-  else if (e.key !== 'Tab') return false;
-  e.preventDefault(); return true;
+  return srchKey(trSrch(), e);
 }
-function trSearchClick(pt) {   // true = taken
-  if (inBtn(pt, TR_SEARCH.tab)) { trSearchFocus(!TR.qFoc); return true; }
-  if ((TR.q || TR.qFoc) && inBtn(pt, TR_SEARCH.clr) && TR.q) { trSearchSet(''); return true; }
-  if ((TR.q || TR.qFoc) && inBtn(pt, TR_SEARCH.box)) { trSearchFocus(true); return true; }
-  if (TR.qFoc) trSearchFocus(false);   // (a click anywhere else: the field lets go of the keys, the filter stays)
-  return false;
-}
+function trSearchClick(pt) { return srchClick(trSrch(), pt); }   // true = taken
 const TR_FLAG = ROSTER_CARDS.map(bb => ({ x: bb.x + 54, y: bb.y + 10, w: 84, h: 40 }));   // sticky flag spot (your own players)
 function trBookmark(p) {
   if (TR_BM_SET.has(p.name)) TR_BM_SET.delete(p.name); else TR_BM_SET.add(p.name);
@@ -4073,7 +4086,7 @@ function tradePartner(k) {   // a team was picked to trade with
 }
 function tradeStart(k, p) {   // TRADE FOR HIM (another team's player) / SHOP HIM (yours)
   const why = tradeClosed(), me = season.team;
-  if (why) { offPopShow({ title: 'TRADES CLOSED', lines: [`${why}.`], more: `${why}. Trades run until the deadline after week 9, and again after the draft.` }); return; }
+  if (why) { offPopShow({ title: 'TRADES CLOSED', lines: [`${why}.`], more: `${why}. Trades run until the deadline after week ${TRADE.deadline}, and again after the draft.` }); return; }
   if (k === me) { TR.pendingGive = [{ kind: 'player', p, team: me }]; teamPick = 'tradePartner'; pickConf = 'AFC'; return; }
   TR.pendingGive = null; tradePartner(k);
   TR.get = [{ kind: 'player', p, team: k }]; TR.tab = [0, 1]; TR.grp = ['ALL', p.group]; TR.pg = [0, Math.floor(Math.max(0, playersOf(k).filter(a => a.p.group === p.group).findIndex(a => a.p === p)) / (TBC.cols * TBC.rows))];
@@ -4102,8 +4115,8 @@ function drawTrade() {
   stampBtn(TR_NEW_BTN, 'NEW TRADE', '#c81b1b', !closed);
   // the window: a taped countdown note while it is open (weeks left before the deadline), a CLOSED stamp over the cards when shut
   if (!closed) {
-    const left = season.offseason ? 0 : TRADE.deadline - season.week + 1;
-    tapedNote(W / 2, 86, season.offseason ? 'OFFSEASON WINDOW OPEN' : left <= 1 ? 'LAST WEEK TO TRADE!' : `${left} WEEKS LEFT TO TRADE`, !season.offseason && left <= DESKFX.softWeeks ? '#c81b1b' : '#2e8b57', -0.02, 13);
+    const left = season.offseason ? 0 : tradeDeadOn() ? TRADE.deadline - season.week + 1 : 99;
+    tapedNote(W / 2, 86, season.offseason ? 'OFFSEASON WINDOW OPEN' : !tradeDeadOn() ? 'NO DEADLINE: OPEN ALL SEASON' : left <= 1 ? 'LAST WEEK TO TRADE!' : `${left} WEEKS LEFT TO TRADE`, !season.offseason && left <= DESKFX.softWeeks ? '#c81b1b' : '#2e8b57', -0.02, 13);
   }
   const pgL = list.slice(TR.page * OFFSEASON.perPage, (TR.page + 1) * OFFSEASON.perPage);
   cardOrder(pgL.length).forEach(i => {
@@ -4135,7 +4148,6 @@ function drawTrade() {
   }
   if (TR.pruneV !== TR.v) { TR.pruneV = TR.v; trPrune(); }
   const nSaved = (LEAGUE.savedTrades || []).length;   // (the four folder tabs along the bottom edge; counts are badges)
-  folderTab(TR_SEARCH.tab, 'SEARCH', TR.qFoc || TR.q ? '#fff3a0' : '#e6e0f2');
   folderTab(TR_TABS[0], 'SAVED', '#f3e3a0', nSaved, '#2e8b57');
   folderTab(TR_TABS[1], 'SUGGESTIONS', '#cfe3f5');
   folderTab(TR_TABS[2], 'ROSTER', '#d4e8cc');
@@ -4374,7 +4386,7 @@ function tradeClick(pt) {
   if (inBtn(pt, TR_TEAM_BTN)) { teamPick = 'tradeTeam'; pickConf = TR.team ? NFL[TR.team].conf.slice(0, 3) : 'AFC'; return; }
   if (inBtn(pt, TR_NEW_BTN)) {
     const why = tradeClosed();
-    if (why) { offPopShow({ title: 'TRADES CLOSED', lines: [`${why}.`], more: `${why}. Trades run until the deadline after week 9, and again after the draft.` }); return; }
+    if (why) { offPopShow({ title: 'TRADES CLOSED', lines: [`${why}.`], more: `${why}. Trades run until the deadline after week ${TRADE.deadline}, and again after the draft.` }); return; }
     TR.pendingGive = null; teamPick = 'tradePartner'; pickConf = 'AFC'; return;
   }
   if (inBtn(pt, TR_TABS[2])) { offOpenRoster(); return; }

@@ -1314,7 +1314,7 @@ function btnSndPick(p, mouse) {
   for (const b of UI_BTNS) if (b && b._snd && b.w && inBtn(p, b) && (!best || b.w * b.h < best.w * best.h)) best = b;
   if (best) btnSndQ = { k: best._snd.k, at: performance.now(), wait: mouse ? 0 : 200 };
 }
-function btnSndPlay(v) { const q = btnSndQ; btnSndQ = null; if (!q) return; try { const K = BTN_KIND[q.k]; if (K && K.snd) K.snd(v * BTN_FX.sndVol); } catch (e) {} }
+function btnSndPlay(v) { const q = btnSndQ; btnSndQ = null; if (!q) return; SFX_CH = 'menu'; try { const K = BTN_KIND[q.k]; if (K && K.snd) K.snd(v * BTN_FX.sndVol); } catch (e) {} SFX_CH = null; }   // (button sounds = the MENU channel)
 function drawStar(cx, cy, r, fill, stroke = '#0b1a3a', lw = 2) {
   ctx.beginPath();
   for (let i = 0; i < 10; i++) {
@@ -3348,6 +3348,49 @@ const backArrow = back => {
   ctx.lineTo(back.x + 64, back.y + 32); ctx.lineTo(back.x + 64, back.y + 48); ctx.lineTo(back.x + 42, back.y + 48);
   ctx.lineTo(back.x + 42, back.y + 60); ctx.closePath(); ctx.fill();
 };
+// --- search button: ONE magnifier, no text (trades, free agents, settings). A search = { st, k (the text's key on st), f (the focus key), on (after a change), max };
+// typing goes through the shared hidden input (KB_T) like every text field. The box opens beside the button; x clears it.
+const SRCH = { btn: { x: 232, y: 12, w: 62, h: 60 }, box: { x: 304, y: 20, w: 380, h: 44 }, max: 18 };
+const srchGlass = b => {   // the magnifier doodle (the one helper every search button draws with)
+  const s = b.h / 60, cx = b.x + b.w / 2 - 4 * s, cy = b.y + b.h / 2 - 4 * s;
+  ctx.save(); ctx.strokeStyle = b.ink || RES.line; ctx.lineCap = 'round'; ctx.lineWidth = 4 * s;
+  ctx.beginPath(); ctx.arc(cx, cy, 12 * s, 0, Math.PI * 2); ctx.stroke();
+  ctx.lineWidth = 7 * s; ctx.beginPath(); ctx.moveTo(cx + 9.5 * s, cy + 9.5 * s); ctx.lineTo(cx + 20 * s, cy + 20 * s); ctx.stroke(); ctx.restore();
+};
+const srchQ = S => S.st[S.k] || '';
+const srchClr = B => ({ x: B.x + B.w - 40, y: B.y + 4, w: 36, h: B.h - 8 });
+function srchSet(S, v) { const q = String(v).replace(/[^A-Za-z0-9 '\-.]/g, '').slice(0, S.max || SRCH.max); if (q !== srchQ(S)) { S.st[S.k] = q; if (S.on) S.on(q); } }
+function srchFocus(S, on) { S.st[S.f] = on; KB_T = on ? { get: () => srchQ(S), set: v => srchSet(S, v), done: k => { if (k === 'Escape') srchSet(S, ''); srchFocus(S, false); } } : null; if (KB_TOUCH) { if (!kbIn) kbSetup(); kbSync(); } }
+function srchDraw(S, b = SRCH.btn, B = SRCH.box) {
+  const q = srchQ(S), foc = !!S.st[S.f];
+  menuBtn(b, '', foc || q ? SEL : RES.bright, 20, srchGlass);
+  if (!foc && !q) return;
+  UI_BTNS.push(B);
+  ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(B.x + 3, B.y + 4, B.w, B.h);
+  ctx.fillStyle = '#fffdf4'; ctx.fillRect(B.x, B.y, B.w, B.h); ctx.strokeStyle = foc ? '#2f5fb8' : 'rgba(40,50,70,0.6)'; ctx.lineWidth = foc ? 3 : 2; ctx.strokeRect(B.x, B.y, B.w, B.h);
+  ctx.font = 'bold 20px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = q ? RES.line : 'rgba(60,60,70,0.45)'; ctx.fillText(q || 'type a name...', B.x + 14, B.y + B.h / 2 + 1, B.w - 70);
+  if (foc && Math.floor(uiNow() / 500) % 2 === 0) { menuMoving = true; const cx = B.x + 14 + (q ? Math.min(ctx.measureText(q).width, B.w - 70) : 0) + 2; ctx.fillStyle = RES.line; ctx.fillRect(cx, B.y + 10, 2, B.h - 20); }
+  ctx.restore();
+  if (q) menuBtn(srchClr(B), 'x', RES.bright, 20);
+}
+function srchClick(S, pt, b = SRCH.btn, B = SRCH.box) {   // true = taken
+  if (inBtn(pt, b)) { srchFocus(S, !S.st[S.f]); return true; }
+  const on = srchQ(S) || S.st[S.f];
+  if (on && srchQ(S) && inBtn(pt, srchClr(B))) { srchSet(S, ''); return true; }
+  if (on && inBtn(pt, B)) { srchFocus(S, true); return true; }
+  if (S.st[S.f]) srchFocus(S, false);   // (a click anywhere else: the field lets go of the keys, the filter stays)
+  return false;
+}
+function srchKey(S, e) {   // a key while the field has the focus: true = taken
+  const q = srchQ(S);
+  if (e.key === 'Escape') { srchSet(S, ''); srchFocus(S, false); }
+  else if (e.key === 'Enter') srchFocus(S, false);
+  else if (e.key === 'Backspace') srchSet(S, e.ctrlKey ? q.replace(/\s*[^\s]*\s*$/, '') : q.slice(0, -1));
+  else if (!e.ctrlKey && !e.metaKey && e.key.length === 1) srchSet(S, q + e.key);
+  else if (e.key !== 'Tab') return false;
+  e.preventDefault(); return true;
+}
 // the roster's team name is a button: it opens the swap screen to look at any team (their potential stays hidden)
 const viewTeam = () => rosterView.team || MATCH.you;
 const UPG_ALL_BTN = { x: 20, y: 14, w: 154, h: 56 };   // roster list, top left (the credits / XP boxes are top right): spends one ready upgrade (random attribute) for every player who has one
@@ -3539,7 +3582,7 @@ function rosterCard(p, bb, team, kr, extra) {
       else if (team === MATCH.you && season && !exhibition && condOf(p) < TIRED_COND) bandage(px + pw - 44, py + ph - 52, true);
     }
     if (p === kr) drawBookmark({ x: px + 8, y: py, w: 30, h: 40 }, true);
-    const tag = offDetail() ? (results.screen === 'draft' && p.scout ? 'SCOUTED' : p.rookie ? 'ROOKIE' : null) : injLabel(p) ? `INJ ${p.inj.weeks > 0 ? p.inj.weeks + ' WK' : ''}` : p.benchNext ? 'BENCHED' : p.backup && !depthTagOn(team, p) ? 'BACKUP' : null;   // hurt / sitting next game / not a starter (the roster shows his depth number instead)
+    const tag = offDetail() ? (results.screen === 'draft' && p.scout ? 'SCOUTED' : p.rookie ? 'ROOKIE' : null) : injLabel(p) ? `INJ ${p.inj.weeks > 0 ? p.inj.weeks + ' WK' : ''}` : p.benchNext ? 'BENCHED' : p.rookie ? 'ROOKIE' : p.backup && !depthTagOn(team, p) ? 'BACKUP' : null;   // hurt / sitting next game / not a starter (the roster shows his depth number instead)
     if (tag) {
       ctx.font = 'bold 16px monospace'; const w2 = ctx.measureText(tag).width + 12;
       ctx.fillStyle = tag === 'BENCHED' ? SEL : tag === 'BACKUP' ? '#6b6f78' : tag === 'SCOUTED' ? '#2e8b57' : '#c81b1b'; ctx.fillRect(px + 6, py + ph - 30, w2, 24);

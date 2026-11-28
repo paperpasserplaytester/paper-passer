@@ -359,7 +359,7 @@ function endPlay(text, next, kind) {
   const qbRan = !wasKickoff && !isRunPlay && patMode === null && !tut && runner === qb && qb.x > los;
   qbRunStreak = qbRan ? Math.min(QB_RUN_STREAK.max, qbRunStreak + 1) : Math.max(0, qbRunStreak - QB_RUN_STREAK.cool);
   if (!game.revRedo) pstSpecial(text, next, kind);
-  if (!wasKickoff && !(pen && pen.dead) && !game.revRedo) { recordPlayStats(text, next, kind); pstPlay(text, next, kind); }   // (a dead-ball flag is no play; v0.68 a touchdown given after review is not counted twice)
+  if (!wasKickoff && !(pen && pen.dead) && !game.revRedo) { recordPlayStats(text, next, kind); pstPlay(text, next, kind); if (patMode === null) simFormNote(aiOff() ? 'red' : 'blue', kind === 'turnover' || !Number.isFinite(next) ? 0 : (next - los) / YL, kind === 'turnover' ? 1 : 0, 1, 0); }   // (v0.78: the game so far, for simmed drives)   // (a dead-ball flag is no play; v0.68 a touchdown given after review is not counted twice)
   else playPass = null;
   recLive();   // (records that fell this play)
   hsScoreRec(text, next, kind);   // (the halftime reel: how good a highlight was it)

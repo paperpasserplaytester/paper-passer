@@ -1166,7 +1166,6 @@ function defKeyDown(e) {
   udInputAt = performance.now(); if (udAuto) udTakeBack();   // (any key: your defender is yours again, at once)
   if (state === 'kick' && kick && !kick.kickoff) return userKickRush(c);   // (their FG / PAT / punt: R leaps, V / Tab dives at it once your rusher is free)
   if (state === 'done' || state === 'sim' || state === 'kickoff' || state === 'kick') return false;
-  if (c === 'KeyN') { SETTINGS.defHints = !SETTINGS.defHints; saveSettings(); return true; }
   if (c === 'KeyX') { if (ftLet('rush')) saChop(); return true; }   // X: CHOP at the arm that's holding you off (in its window)
   if (state === 'picked' && ud && ud.hasBall && udCtl(ud) && ['KeyR', 'KeyF', 'KeyC', 'KeyQ', 'KeyE', 'KeyV', 'Tab'].includes(c)) { if (ftLet(FT_RET[c])) returnMove(c); return true; }   // the return: R spin, F juke, C truck, Q stiff arm, E hurdle, V / Tab dive (the pylon near the corner)
   if (c === 'KeyQ' && state === 'pre') { defAudible(); return true; }   // Q: the defensive audible
@@ -2678,14 +2677,6 @@ function drawDefOverlay(g) {
     }
   }
   ctx.restore();
-  if (!g && SETTINGS.defHints && state !== 'run' && !TOUCH) {   // (U hides this strip; no key tips on a phone)
-    ctx.save(); ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    const t = pvpDef() && !pvpRightOff() ? 'IJKL move  -  U switch player  -  Y jump for the ball  -  B dive tackle  H secure tackle  N hit stick  M audible'
-                       : `${tutText('{move}')} move  -  ${tutText('{hurdle}')} / ${tutText('{switchD}')} / click: switch player  -  ${tutText('{spin}')} jump / spin  -  ${tutText('{truck}')} hit stick (or knock the ball out of a receiver)  ${tutText('{dive}')} dive  ${tutText('{protect}')} secure tackle  ${tutText('{audibleD}')} audible  -  ${tutText('{hints}')} hides this`;
-    const tw = ctx.measureText(t).width + 20;
-    ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(W / 2 - tw / 2, H - BOT_BAR - 30, tw, 24);
-    ctx.fillStyle = '#fff'; ctx.fillText(t, W / 2, H - BOT_BAR - 18); ctx.restore();
-  }
   const [sx, sy] = sp(ud), fy = sy + FOOT * z;
   ctx.save();
   ctx.strokeStyle = '#ffd94a'; ctx.lineWidth = 3;
@@ -2890,7 +2881,7 @@ function update(dt) {  if (dt <= 0 || FT.ask) return;   // (field tutorial: the 
   if (tut && tut.defAsk) return;   // (the tutorial's "play defense or sim it?" card: nothing moves until you pick)
   if (wxDelayUp()) return;   // (the lightning delay card: everything waits)
   clock += dt;
-  if (ANN_S.cur) annTick();   // (the announcers' queue: real time)
+  if (ANN_S.cur) annTick(); else annLull();   // (the announcers' queue: real time; quiet = season talk)
   if (game && game.penQ) penTick();   // (v0.68 a flag waiting for its accept / decline)
   if (revWait) revTick();   // (v0.68 a booth review waiting for the play to end)
   if (SL.on) slTick(dt);   // (sideline people: their clock; hides the chain crew for kicks)

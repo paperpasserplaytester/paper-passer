@@ -75,6 +75,22 @@ const REMATCH_GAP = 4;             // division rivals preferably meet again this
 const SIM_BIG = 1.6;   // x the odds of a highlight play (a 18+ yd catch, an 11+ yd run) in a simmed drive
 const SIM_DIFF_ODDS = 0.3;   // how far the difficulty's coverage shifts the simmed incompletion odds (per 1.0 of relative cover)
 const SIM_DIFF = 2.2;  // how hard the difficulty's `sim` pushes the simulated drives (and a simmed game of yours)
+// v0.78 fair sims: the difficulty's share of a simmed drive's / game's edge is capped (a nudge, never the decider) and counted once (none when the difficulty already
+// replaced the other team's stars, oppStars); the edge the odds read is held to edgeMax. form = how this game has gone, blended in as real plays pile up (simForm)
+const SIM_FAIR = { cap: 1.2, edgeMax: 5, game: 1.2, odds: 1.3 };   // cap = most the difficulty adds to a drive's edge (stars), game = the same for SIM GAME's margin, odds = most the difficulty scales a simmed play's sack / pick / fumble odds (x or /)
+const SIM_FORM = { n: 30, blend: 0.5, k: 1.6, term: 2, ypp: 5.3, yppS: 1.6, ppd: 2.1, ppdS: 1.6, tpd: 0.12, tpdS: 0.15 };   // n = plays for half weight, blend = most weight the form gets, k = its size in stars; refs (league-ish per play / drive) and spreads
+const simDiffShare = (sim, cap = SIM_FAIR.cap) => diffLvl().stars ? 0 : Math.max(-cap, Math.min(cap, sim * SIM_DIFF));
+function simFormNote(side, yd, to, n, drv) {   // the game so far, per offense (live plays from endPlay, simmed drives from simulateDrive); game.sf goes with the game
+  if (typeof game === 'undefined' || !game) return;
+  const F = game.sf || (game.sf = { blue: { n: 0, yd: 0, to: 0, dr: 0 }, red: { n: 0, yd: 0, to: 0, dr: 0 }, last: null }), f = F[side];
+  if (!f) return; f.n += n; f.yd += yd; f.to += to; if (drv) f.dr += drv; else if (F.last !== side) f.dr++; F.last = drv ? null : side;
+}
+function simForm(side) {   // { e: this offense's showing in stars (yards a play, points a drive, turnovers a drive), c: 0-1 confidence by plays seen }
+  const F = game && game.sf && game.sf[side], S = SIM_FORM; if (!F || !F.n) return { e: 0, c: 0 };
+  const cl = v => Math.max(-S.term, Math.min(S.term, v)), dr = Math.max(1, F.dr);
+  const e = S.k * (cl((F.yd / F.n - S.ypp) / S.yppS) + cl(((game[side] || 0) / dr - S.ppd) / S.ppdS) - cl((F.to / dr - S.tpd) / S.tpdS)) / 3;
+  return { e, c: F.n / (F.n + S.n) };
+}
 const SIM_EDGE = { bad: 0.06, inc: 0.015, gain: 0.025, badOff: 0.6 };   // (badOff: scale on a negative edge, so bad offenses do a little better)
 const SIM_RUN_STREAK = 0.012;   // sim: per stacked step (1, 3, 6, 10, 15 over five straight runs), the share of yardage the next run loses
 // luck: each simulated drive gets a random swing of up to about +-drive stars of edge (a hot or cold series);
@@ -229,7 +245,7 @@ function simGameScore(g) {
   const H = teamStars(g.h), A = teamStars(g.a);
   // (a game of yours that is simmed: the difficulty helps / hurts the other team just as in a played game)
   const rv = season && !exhibition && (isRival(g.h) || isRival(g.a)) && (g.h === season.team || g.a === season.team) ? RIVAL.sim * (po && po.rounds && po.rounds.some(r => r.includes(g)) ? RIVAL.playoff : 1) : 0;   // (a rival's team is meaner in a simmed game too)
-  const dd = season && !tut ? (skipNormal ? DIFFICULTY.HARD.sim : diffLvl().sim) * SIM_DIFF + rv : 0, meH = season && g.h === season.team, meA = season && g.a === season.team;
+  const dd = season && !tut ? simDiffShare(skipNormal ? DIFFICULTY.HARD.sim : diffLvl().sim, SIM_FAIR.game) + rv : 0, meH = season && g.h === season.team, meA = season && g.a === season.team;
   const tk = k => season && !exhibition ? rbOf(k) * MGMT.tank : 0, th = tk(g.h), ta = tk(g.a);   // (a rebuilding team tanks: weaker in games, for a better pick)
   g.hs = simPoints(H.off - th + (meA ? dd : 0), A.def - ta + (meH ? dd : 0), true);
   g.as = simPoints(A.off - ta + (meH ? dd : 0), H.def - th + (meA ? dd : 0), false);
@@ -1496,7 +1512,7 @@ function rookieFor(old) {
   const parts = name.split(' '), skin = ['#6b4433', '#8a5a40', '#a8714f', '#c8906e', '#e0b49a'][Math.floor(Math.random() * 5)];
   const r = { tag: old.tag, group: old.group, num: old.num, name, short: `${name[0]}.${parts[1]}`, at, raw: { ...at }, age: rint(21, 23), salary: 1.0, years: 3, trade: 7,
     stars, potPts: Math.min(ATTR_TOTAL, score + rint(2, 14)), ht: old.ht + rint(-1, 1), wt: old.wt + rint(-8, 8), look: { skin, hair: '#17110d', style: 1 + Math.floor(Math.random() * 2), beard: Math.random() < 0.2 },
-    face: makeFace(Math.random), rookie: true, signed: true };
+    face: makeFace(Math.random), rookie: true, fresh: true, signed: true };
   r.potential = starsOfScore(r.potPts);
   giveAbility(r, true);
   return r;
@@ -1533,8 +1549,9 @@ function offLeague() {
   try { const L = conAutoExtend(me); if (L.length) (LEAGUE.conNews = LEAGUE.conNews || []).push(...L); } catch (e) { console.warn('auto extend', e); }   // (no contract touched all season: the front office keeps who it can, before the expiring list and offStaff)
   foRoll();   // (a new year: every computer front office is re-rolled, and who is rebuilding)
   // your head coach's stars now come from XP (coachGame / goals), not from a yearly roll; a playoff trip or title pays a bonus
-  { const bonus = (po && po.seed && po.seed[me] ? COACH.playoff : 0) + (po && po.champ === me ? COACH.champ : 0);
-    if (bonus) coachXP({ hc: bonus, oc: bonus / 2, dc: bonus / 2 }); }
+  { const bonus = (po && po.seed && po.seed[me] ? COACH.playoff : 0) + (po && po.champ === me ? COACH.champ : 0), sx = coachSeasonXP(me, po);   // (v0.78: the head coach's season payout holds his playoff / title bonus)
+    coachXP({ hc: sx ? sx.xp : bonus, oc: bonus / 2, dc: bonus / 2 }); if (sx && !exhibition) LEAGUE.hcSeason = `Head coach: +${sx.xp} XP for the ${sx.rec} season`;
+    try { cpuHcSeason(me, po); } catch (e) { console.warn('cpu coaches', e); } }
   DL_EXT = null;   // (player decline: this year's ring / record / mentor reads, built fresh)
   for (const k of Object.keys(ROSTER).filter(k => NFL[k])) {
     const R = ROSTER[k];
@@ -1868,7 +1885,11 @@ function pushpin(x, y, col) {
 const SIGN_BTN ={ x: 660, y: 618, w: 300, h: 62 };
 const FA_POSITIONS = ['ALL', 'QB', 'RB', 'WR', 'TE', 'OL', 'K', 'DL', 'LB', 'CB', 'S'];
 const FA_TITLE_BTN = { x: W / 2 - 220, y: 8, w: 440, h: 58 };   // the FREE AGENTS title: click to pick a position
+const FA_SRCH = { st: null, k: 'q', f: 'qFoc', on: () => { OFF.fa.page = 0; } };   // free agents: the magnifier (srchDraw) filters the list by name
+const faSrch = () => { FA_SRCH.st = OFF.fa; return FA_SRCH; };
+function faSearchKey(e) { return !!(results && results.screen === 'fa' && OFF && OFF.fa && OFF.fa.qFoc && !OFF.fa.sel && !teamPick) && srchKey(faSrch(), e); }
 const faList = () => FA_POOL.filter(p => OFF.fa.filter === 'all' || OFF_GROUPS.includes(p.group) === (OFF.fa.filter === 'off'))
+  .filter(p => !OFF.fa.q || p.name.toLowerCase().includes(OFF.fa.q.toLowerCase()))
   .filter(p => !OFF.fa.pos || OFF.fa.pos === 'ALL' || p.group === OFF.fa.pos)
   .sort(OFF.fa.sort === 'value' ? (a, b) => faWorth(b) - faWorth(a) || b.stars - a.stars
     : OFF.fa.sort === 'cheap' ? (a, b) => a.salary - b.salary || b.stars - a.stars
@@ -1946,6 +1967,7 @@ function drawFA() {
   coinBox(COIN_SPOT.x, COIN_SPOT.y - 8, LEAGUE.coins, RES.bright);   // (signing costs credits: they show on the list too)
   menuBtn(FA_TITLE_BTN, `${F.pos && F.pos !== 'ALL' ? F.pos : 'FREE AGENTS'} ${F.dd ? '▴' : '▾'}`, F.dd ? SEL : RES.bright, 30);
   menuBtn(FA_SIDE_BTNS[0].b, F.filter === 'off' ? 'OFFENSE' : F.filter === 'def' ? 'DEFENSE' : 'ALL', F.filter !== 'all' ? SEL : RES.bright, 22);   // (one button: ALL > OFFENSE > DEFENSE)
+  srchDraw(faSrch());
   if (!F.browse) menuBtn(FA_TRADES_BTN, 'TRADES', RES.bright, 22);   // (trades are open all offseason)
   FA_TAB_BTNS.forEach(t => {   // position index tabs along the top
     const on = (F.pos || 'ALL') === t.pos, dim = F.filter !== 'all' && t.pos !== 'ALL' && OFF_GROUPS.includes(t.pos) !== (F.filter === 'off'), b = t.b;
@@ -2055,6 +2077,7 @@ function faClick(pt) {
   if (ss) { F.sort = F.sort === ss.k ? 'rate' : ss.k; F.page = 0; return; }
   if (!F.browse && inBtn(pt, FA_TRADES_BTN)) { tradeOpen('fa'); return; }
   if (inBtn(pt, FA_DD)) { F.dd = true; return; }
+  if (srchClick(faSrch(), pt)) return;
   if (inBtn(pt, FA_SIDE_BTNS[0].b)) {
     F.filter = F.filter === 'off' ? 'def' : F.filter === 'def' ? 'all' : 'off'; F.page = 0;
     if (F.pos && F.pos !== 'ALL' && F.filter !== 'all' && OFF_GROUPS.includes(F.pos) !== (F.filter === 'off')) F.pos = 'ALL';
@@ -2219,6 +2242,7 @@ function draftAI(k) {
 }
 function offToDraft() {
   const C = scoutClass(); if (!C.bd) boardInit(C); LEAGUE.nextClass = null; if (scoutsOn()) scoutDraftDay(C.pool);   // (the class the league watched all season, in board order)
+  for (const p of C.pool) scoutKnown(p);   // (reports and calls from the season: shown at once)
   const D = OFF.draft = { pool: C.pool, q: C.q, label: C.label, gk: C.gk, id: C.id, bd: 1, wk: C.wk, order: draftOrder(), round: 0, n: 0, log: [], mine: [], shown: {}, page: 0, side: null, sel: null, plans: {}, pi: 0, view: 'board', tut: !!OFF.tut, carry: LEAGUE.carry || [] };
   LEAGUE.carry = []; D.year = LEAGUE.year;
   D.slot = D.order.indexOf(season.team);
@@ -2328,7 +2352,7 @@ function draftLoadOf(o) {   // false = not loadable (the caller falls back to fr
 function draftTurnOn(v) { const D = OFF.draft, bell = v && !D.turn && !D.skipAll; if (bell) try { sndRec('bell', 0.8, { ms: 1400, fade: 500, tag: 'dr' }); } catch (e) {} D.turn = v; if (bell) draftCallTurn(true); }
 // --- scout calls (v0.75, scouts on only): a scout phones during your pick. D.call = { side, kind ('take' / 'boom' / 'bust'), name, rung }, D.calls = calls made per side,
 // D.callAt = the pick a call was made on (one call a pick), D.bustAsk = BUST prospects already warned about; all saved with the draft. The phone sits on the desk (DRAFT_PHONE).
-const DRAFT_PHONE = { x: 1222, y: 84, s: 24 }, CALL_P = { x: 250, y: 200, w: 780, h: 290 };
+const DRAFT_PHONE = { x: 1222, y: 84, s: 24, hit: 36 }, CALL_P = { x: 250, y: 200, w: 780, h: 290 };
 const CALL_OK = { x: CALL_P.x + CALL_P.w - 190, y: CALL_P.y + CALL_P.h - 70, w: 160, h: 50 }, CALL_SHOW = { x: CALL_P.x + CALL_P.w - 370, y: CALL_P.y + CALL_P.h - 70, w: 160, h: 50 };
 let draftCallT = null, draftCallBell = false;   // (ui clock the call first showed, and whether your pick's bell rang first: never saved, a load shows the call without a second ring)
 function draftCallMax(sc) {   // calls this scout makes in a draft, by stars (SCOUT.call.per) + a hashed share
@@ -2339,9 +2363,34 @@ function draftCallOk(side) {
   const D = OFF.draft; if (!scoutsOn() || D.skipAll || D.call || D.done || D.callAt === `${D.round}:${D.pi}`) return false;
   return ((D.calls || {})[side] || 0) < draftCallMax(scoutsOf(season.team)[side]);
 }
+function scoutKnown(p, called) {   // what my scouts already know: a filed report (p.rep) or a scout's call (p.call) = his potential shown at once (p.scout, so SCOUT reads SCOUTED and costs nothing), read much tighter than the SCOUT button's guess; the noise is a hash of his name (no random numbers)
+  if (!p || p.scout || p.drafted || !scoutsOn() || !(p.rep || p.call || called)) return p ? p.scout || null : null;
+  const sc = scoutFor(p); if (!sc) return null;
+  const k = Math.min(scoutErrK(sc, p), SCOUT.repErr * (1 - SCOUT.repStar * (sc.stars - 1))), s0 = scoreOf(p);
+  const pts = Math.max(s0, Math.min(ATTR_TOTAL, ptsOf(p) + Math.round((bdHash(`sk1:${p.name}`) + bdHash(`sk2:${p.name}`) - 1) * DRAFT.scoutErr * k)));
+  return (p.scout = { pts, val: draftValue(s0, pts), by: 'scout' });
+}
 function draftCallSet(side, kind, p, bell) {
+  scoutKnown(p, true);   // (the man a scout phones about: his potential shows at once)
   const D = OFF.draft; D.call = { side, kind, name: p.name, rung: 0 }; D.calls = D.calls || {}; D.calls[side] = (D.calls[side] || 0) + 1; D.callAt = `${D.round}:${D.pi}`;
   draftCallT = null; draftCallBell = !!bell; draftSimQ = null;
+  D.lastCall = { at: D.callAt, c: { side, kind, name: p.name } };   // (this pick's call: a tap on the phone shows it again)
+}
+function draftPhoneTap() {   // on your pick, a tap on the phone: this pick's call again, or ask: each scout answers from his side (draftChoice = talent through his grades + your needs), the better fit first; asking uses up no calls
+  const D = OFF.draft, at = `${D.round}:${D.pi}`;
+  draftCallT = null; draftCallBell = false;
+  if (D.lastCall && D.lastCall.at === at) { D.call = Object.assign({ rung: 0 }, D.lastCall.c); return; }
+  const S = scoutsOf(season.team), ans = [], o = { n: D.n + 1, round: D.round };
+  for (const side of ['off', 'def']) {
+    if (!S[side]) continue;
+    const pool = D.pool.filter(p => !p.drafted && OFF_GROUPS.includes(p.group) === (side === 'off') && !(p.call === 'bust' && p.callS === side));
+    const p = pool.length ? draftChoice(season.team, pool, [], D.gk, false, o) : null; if (p) ans.push({ side, p });
+  }
+  if (!ans.length) return;
+  if (ans.length > 1 && draftChoice(season.team, [ans[0].p, ans[1].p], [], D.gk, false, o) === ans[1].p) ans.reverse();
+  const mk = a => { scoutKnown(a.p, true); return { side: a.side, kind: 'ask', name: a.p.name, rung: 0 }; };
+  D.call = mk(ans[0]); if (ans[1]) D.call.alt = mk(ans[1]);
+  D.lastCall = { at, c: D.call };
 }
 function draftCallTurn(bell) {   // your pick came up: one scout may call with his man (seen on his side; draftChoice for your team = talent through your scout's grades + your needs)
   const D = OFF.draft, S = scoutsOf(season.team), left = Math.max(1, DRAFT.rounds - D.round + 1); let best = null;
@@ -2401,7 +2450,7 @@ function draftCallClick(pt) {
   const D = OFF.draft, c = D.call, s = draftCallT == null ? 0 : (uiNow() - draftCallT) / 1000;
   if (s < (draftCallBell ? SCOUT.call.bellGap : 0) + SCOUT.call.openS) return;
   if (inBtn(pt, CALL_SHOW) && c.kind !== 'bust') { const p = D.pool.find(q => q.name === c.name); D.call = null; if (p) { D.sel = p; D.selK = null; } return; }
-  if (inBtn(pt, CALL_OK)) D.call = null;
+  if (inBtn(pt, CALL_OK)) { D.call = c.alt || null; if (c.alt) draftCallT = null; }   // (asked: the other scout's answer next)
 }
 function draftTake(p) {   // you pick him
   const D = OFF.draft, me = season.team, R = ROSTER[me], e = draftCur()[D.pi]; saveFreeze(); autosaveSoon();
@@ -2554,6 +2603,7 @@ function draftClick(pt) {
   const D = OFF.draft, me = season.team;
   draftFix(D);
   if (D.call) { draftCallClick(pt); return; }   // (a scout on the phone: only his buttons)
+  if (D.turn && scoutsOn() && !D.sel && Math.abs(pt.x - DRAFT_PHONE.x) < DRAFT_PHONE.hit && Math.abs(pt.y - DRAFT_PHONE.y) < DRAFT_PHONE.hit) { draftPhoneTap(); return; }   // (your pick: the phone)
   if (draftSimQ && !D.sel && D.view !== 'pool' && !inBtn(pt, DRAFT_VIEW_BTN)) { draftSim(true); return; }   // (a sim running pick by pick: a click on the board finishes the rest at once; the prospects / a card / PROSPECTS keep working while it runs)
   if (D.sel) {
     const p = D.sel;
@@ -2993,7 +3043,7 @@ const SIDE_SLOTS = { off: ['QB', 'RB', 'WR', 'TE', 'OL', 'K', 'P'], def: ['DL', 
 const SIDE_DEPTH = { off: ['OL', 'WR', 'RB'], def: ['DL', 'CB', 'LB'] };
 // (formulaOn: from a franchise's second season on; only the player-card note and other season rules read it now, the side rating is always the formula)
 function formulaOn() { return !!season && !exhibition && (LEAGUE.year || 1) > 1; }
-function hcStars(t) { return season && !exhibition && t === season.team ? (career.hcStars != null ? career.hcStars : 0.5) : 3; }
+function hcStars(t) { if (season && !exhibition && t === season.team) return career.hcStars != null ? career.hcStars : 0.5; const h = season && !exhibition && NFL[t] ? cpuHc(t) : null; return h ? h.stars : 3; }   // (v0.78: other teams' head coaches have their own stars, cpuHc)
 function sideRating(t, off, unrounded) {
   const side = off ? 'off' : 'def', R = ROSTER[t] || [], M = SIDE_MIX;
   const grp = g => R.filter(p => p.group === (g === 'P' ? 'K' : g));
@@ -3140,6 +3190,7 @@ function offTick() {   // a year goes by: contracts, ages
   for (const p of [...Object.values(ROSTER).flat(), ...FA_POOL]) {
     if (p.fresh) delete p.fresh;   // (just drafted: no year older, no growth yet)
     else {
+      if (p.rookie) delete p.rookie;   // (his first season is behind him: no longer a ROOKIE)
       p.age++;
       try { faceAge(p.face, p.age, p.name, 'pl'); } catch (e) {}   // (v0.66: picture day: lines, bags, grey, hairline move up with the years)
       // growth toward potential: the young gain a share of the room they have left (the most at 21-23), nobody past 28
@@ -3479,6 +3530,7 @@ function offFinishFA() {
   lines.push('YOUR TEAM:');
   if (retired.length) retired.forEach(t => lines.push(`  ${t}.`)); else lines.push('  Nobody retired.');
   dlPhysLine(lines);
+  if (LEAGUE.hcSeason) { lines.push(`  ${LEAGUE.hcSeason}.`); delete LEAGUE.hcSeason; }   // (v0.78: the head coach's season payout)
   staff.forEach(t => lines.push(`  ${t}`));
   const swaps = LEAGUE.tradeNews.splice(0).slice(0, 3);
   const findP = (nm, k) => (ROSTER[k] || []).find(q => q.name === nm);

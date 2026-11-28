@@ -1436,6 +1436,7 @@ const CONTRACT = {
 };
 // XP bank (your franchise only, never scrimmage / 1v1 / online / test mode / tutorial): players at their potential bank their spare XP, and the bank
 // buys development. Bank + display: xpBankAdd / coinBox / flyXP (10-screens); spending: xpc* in the player upgrades block (11-cards-trades).
+const ROOKIE_OLD = 24;   // loading an old save: a ROOKIE this age or older is past his first season (draft ages are 21-23) and loses the tag
 const XPC = {
   rate: 0.5,                                 // bank XP per point of spare XP a player at his potential earns
   cap: 0,                                    // most the bank can hold (0 = no cap)
@@ -1470,14 +1471,15 @@ const BB = BOT_BAR / 40;
 // colorOdds = chance B answers, by priority (always at crazy+); crazy = priority of the crazy plays (big shaky text);
 // pad = px under the top bar (two players: pvpGap = px under the left timeout / audible buttons), touchY = extra px down on touch (clear of the stick), card = face card px, face = face radius px, size / bigSize = text px, maxW = widest bubble
 const ANN_SIT = { lateS: 120, lastS: 10, short: 2, long: 7, blow: 21, comeback: 14, drive: 0.22, driveW: 3, setOdds: 0.55, always: ['sit_last', 'sit_gwdWin', 'sit_gwdTie', 'sit_4s', 'sit_4l', 'sit_ot'],   // v0.74 announcer situations: clock in NFL s (lateS), yd buckets, possessions = time left / average drive (drive x QUARTER_SECS blended with driveW drives)
-  ctx: { odds: 0.35, bigOdds: 0.85, big: ['ctx_lead', 'ctx_gwd', 'ctx_tie', 'ctx_poss1', 'ctx_turnLate'], longN: 10, one: 1.2, two: 2.4 } };   // context colour after the result: odds, possessions-left cut-offs
+  ctx: { odds: 0.35, bigOdds: 0.85, big: ['ctx_lead', 'ctx_gwd', 'ctx_tie', 'ctx_turnLate'], every: ['ctx_sack2', 'ctx_fd3'], longN: 10, one: 1.2, two: 2.4 } };   // context colour after the result: odds, possessions-left cut-offs
 // (ANN.showY = v0.74 the halftime / pregame cards: the booth's card top, canvas px)
 const ANN_REF = { near: 1.5, goodOdds: 0.35, flagOdds: 0.5, doubt: { d: 0.25, penDpi: 0.45, penOpi: 0.45, penRough: 0.4, penHold: 0.3 }, many: 4 };   // v0.74 officials: a close correct spot within near YL gets a good-spot line at goodOdds; flag colour odds and doubt share per foul; halftime "lots of flags"
 const ANN = { nameOdds: 0.5, colSpd: 4, raceYd: 15, raceGap: 3, lastYd: 10, bannerY: 82,   // (fixes job) nameOdds = share of lines that use the man's name; colSpd = yd/s two defenders close at to be a collision; raceYd / lastYd = yd past the line for a footrace / last-man call, raceGap = yd a chaser trails within; bannerY = px under the top bar the box drops to while a banner is up
-  sit: ANN_SIT, ref: ANN_REF, showY: 610, cps: 30, gap: 0.55, hold: 2.1, fade: 0.45, holdMax: 3.2, maxQ: 2, recent: 24, minLines: 12, slide: 0.32, pop: 0.22,
+  sit: ANN_SIT, ref: ANN_REF, showY: 610, cps: 19, gap: 0.8, hold: 2.8, fade: 0.45, holdMax: 4.2, maxQ: 2, cutPri: 5,   // (cps = letters a second; cutPri = a line still being written is only cut by a call this big (ANN.crazy level), smaller ones queue behind it or drop) recent: 24, minLines: 12, slide: 0.32, pop: 0.22,
   colorOdds: { 0: 0.15, 1: 0.3, 2: 0.55, 3: 0.75 }, crazy: 5, longTd: 50, deepYd: 25,
   pad: 8, midPad: 10, pvpGap: 10, touchY: 34, card: 64, face: 21, size: 17, bigSize: 22, maxW: 300, shake: 1.6,   // (midPad: v0.73 top-middle spot under the scoreboard while the key tips are up)
   reelEnd: 3.4, reelGap: 0.9,
+  lull: 5, lullStreak: 2, lullDivGp: 2, lullPoWeeks: 5, ordinal: ['first', 'second', 'third', 'fourth', 'fifth'],   // season talk (annLull): s of quiet before the snap, the shortest streak worth a line, games played before the division place, the last weeks with playoff-picture lines
   reelCps: 15, reelWord: 0.45, reelAirQuick: 1.0, reelAirHang: 1.9,   // halftime reel only: slower handwriting, a line stays up at least reelWord s a word before the next one, air time (s) for the quick / hang colour lines
   overYd: 1.5, wideYd: 2.5 };   // incompletions: past / short of the target by more than overYd along the throw = over / underthrown, more than wideYd across it (and more across than along) = wide   // halftime reel: B's comment comes reelEnd s before a clip's last frame, never sooner than reelGap s after its last moment
 

@@ -1048,9 +1048,9 @@ let hsSkipNext = false;   // Esc on the halftime banner / card: the show is skip
 let showEscAt = -1e9;  // when Esc last skipped a pregame / halftime show
 function hsSkip() { if (!HT) return; showEscAt = performance.now(); HT.skip = true; hsNext(); }
 function hsTick() { if (HT && !hl && performance.now() - HT.t0 > (HT.pre ? HALFTIME.preSecs : HALFTIME.cardSecs) * 1000) hsAdvance(); }   // (the pregame cards move on by themselves after preSecs; a click anywhere skips one)
-const HS_BAR = { next: { x: W - 340, y: H - 36, w: 190, h: 32 }, skip: { x: W - 140, y: H - 36, w: 120, h: 32 } };
-const hsBarHit = pt => inBtn(pt, HS_BAR.next) || inBtn(pt, HS_BAR.skip);
-function hsBarClick(pt) { if (inBtn(pt, HS_BAR.next)) hsNext(); }   // (SKIP is a hold now: HSK)
+const HS_BAR = { skip: { x: W - 140, y: H - 36, w: 120, h: 32 } };
+const hsBarHit = pt => inBtn(pt, HS_BAR.skip);
+function hsBarClick(pt) { }   // (no NEXT / FINISH button any more: cards move on by themselves, a click anywhere = next, SKIP is a hold: HSK)
 // hold to skip the pregame / halftime show, the cold open's way (COLD.skip: time, zone, touch size, a still finger): hold the bottom right corner,
 // hold Esc, or on touch a finger held still anywhere. A tap never skips (it is still NEXT). Pointer logic in 14 (before TAP_DEFER), tick from frame().
 const HSK = { at: 0, f: null, ptr: null };   // at = when the hold began (0 = none), f = the pointer holding { id, x, y, zone, moved }, ptr = where it is (the ring round it)
@@ -1077,7 +1077,7 @@ function holdRingDraw(o) {
 function drawHsBar() {
   ctx.save();
   paperStrip(H - BOT_BAR - 2, BOT_BAR + 12);   // (paper theme: a torn notebook strip, not the dark game bar)
-  if (!HT.pre) menuBtn(HS_BAR.next, HT.i < HT.segs.length - 1 ? 'NEXT ▸' : 'FINISH', IN_GAME_PAPER.blue, 16);
+
   ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.line;
   ctx.fillText(`${HT.pre ? 'PREGAME' : 'HALFTIME'} SHOW ${HT.i + 1} / ${HT.segs.length}     ${hl && hl.mode === 'half' ? 'CLICK / ENTER next clip     BACKSPACE previous' : 'CLICK ANYWHERE FOR THE NEXT SCREEN'}`, W / 2 - 120, H - BOT_BAR / 2, W - 400);
   hsHoldDraw();
@@ -1660,6 +1660,7 @@ function pgTry() {
   if (!pgPending || results || HT || hl || slotUI) return;
   pgPending = false;
   if (!hsOn() || simGame || simFast || SETTINGS.pregame === false || (exhibition && exhibition.testId) || game.over) return;
+  if (season && !exhibition && (LEAGUE.firstRun === 'game' && !LEAGUE.firstPlayed || LEAGUE.ft && LEAGUE.ft.g === 1)) return;   // (a franchise's first ever game / the field tutorial's game 1: straight to the kickoff)
   const segs = [], add = (key, k, fn) => { if (!pgOn(key)) return; let d = null; try { d = fn(); } catch (e) { console.warn('pregame ' + k, e); } if (d) segs.push({ k, data: d }); };
   add('historic', 'hist', pgHist); add('qb', 'qb', pgQB); add('def', 'def', pgDef); add('match', 'match', pgMatch);
   if (!segs.length) return;
@@ -2423,6 +2424,14 @@ function annWho(t, d) {   // { p: the man with the ball / the event's man on off
   if (v.p == null) delete v.p; if (v.d == null) delete v.d;
   return v;
 }
+if (typeof ANN_NAMED !== 'undefined' && typeof ANN_TEAM_NAMED !== 'undefined') for (const k in ANN_TEAM_NAMED) for (const w of ['A', 'B']) { const t = ANN_TEAM_NAMED[k][w]; if (!t) continue; const m = ANN_NAMED[k] || (ANN_NAMED[k] = {}); m[w] = m[w] ? (typeof m[w] === 'string' ? m[w] : m[w].join('|')) + '|' + t : t; }   // (team-name variants join the name variants)
+const annTc = s => String(s).toLowerCase().replace(/\b[a-z]/g, c => c.toUpperCase());   // ('NEW YORK' -> 'New York', '49ERS' -> '49ers')
+function annTeamV(v) {   // the team tokens ({off} {def} {offC} {defC} {lead}) on top of a line's own vars; nothing for a team with no NFL entry
+  const o = annOffT(), d = o === 'blue' ? 'red' : 'blue', K = { blue: MATCH.you, red: MATCH.opp }, out = {};
+  const put = (n, k) => { const t = NFL[K[k]]; if (t) { out[n] = annTc(t.nick); out[n + 'C'] = annTc(t.city); } };
+  put('off', o); put('def', d); if (game.blue !== game.red) { const t = NFL[K[game.blue > game.red ? 'blue' : 'red']]; if (t) out.lead = annTc(t.nick); }
+  return v ? Object.assign(out, v) : out;
+}
 const ANN_NT = {};   // (the name variants' tokens, like ANN_TK)
 for (const k in (typeof ANN_NAMED !== 'undefined' ? ANN_NAMED : {})) for (const w of ['A', 'B']) { const m = ANN_NAMED[k][w]; if (m) { const L = ANN_NAMED[k][w] = typeof m === 'string' ? m.split('|') : m; ANN_NT[k + '.' + w] = L.map(t => { const x = t.match(/\{(\w+)\}/g); return x ? x.map(y => y.slice(1, -1)) : null; }); } }
 function annNamed(key, who, v) {   // a name variant for this line now and then (annRnd only): its index, or -1
@@ -2448,7 +2457,7 @@ function annPick(key, who, v) {   // a line no one has heard lately: the bag is 
 function annSay(key, o = {}) { if (annGate()) annPut(key, o); }
 function annPut(key, o = {}) {
   const L = ANN_LINES[key]; if (!L || (o.odds != null && annR() > o.odds)) return;
-  const S = ANN_S, now = annNow(), pri = o.pri != null ? o.pri : 1, v = o.vars || null, lines = [];
+  const S = ANN_S, now = annNow(), pri = o.pri != null ? o.pri : 1, v = annTeamV(o.vars || null), lines = [];
   if (o.who !== 'B' && L.A) { const i = annPick(key, 'A', v); if (i >= 0) lines.push({ who: 'A', key, i }); }
   const cOdds = pri >= ANN.crazy ? 1 : ANN.colorOdds[Math.max(0, Math.min(3, Math.floor(pri)))];
   if (o.who !== 'A' && L.B && (o.who === 'B' || !lines.length || annR() < cOdds)) { const i = annPick(key, 'B', v); if (i >= 0) lines.push({ who: 'B', key, i }); }
@@ -2457,7 +2466,9 @@ function annPut(key, o = {}) {
   const c = S.cur;
   if (c && c.hold) { c.hold = false; c.end = Math.max(c.end, now); if (pri >= c.pri || now >= c.end) { S.q = lines.slice(1); return annStart(lines[0], now); } }   // (the held line's result replaces it)
   const busy = c && now < annDone(c) + ANN.gap;
-  if (!busy || (pri > c.pri && !o.wait)) { S.q = lines.slice(1); return annStart(lines[0], now); }   // (o.wait: never cut the line that is up, queue behind it or drop)
+  const cut = !!c && pri > c.pri && !o.wait && (now >= c.end || pri >= ANN.cutPri);   // (a line still being written is never cut mid-word by a small priority gap: only a clearly bigger call)
+  if (!busy || cut) { S.q = lines.slice(1); return annStart(lines[0], now); }   // (o.wait: never cut the line that is up, queue behind it or drop)
+  if (pri > c.pri && !o.wait) { S.q = lines.concat(S.q.filter(q => q.pri >= pri)).slice(0, ANN.maxQ); return; }   // (bigger, but not big enough to cut: next up)
   if (!o.add) return;
   S.q = S.q.filter(q => q.who === 'A' && q.pri >= pri).concat(lines).slice(0, ANN.maxQ);
 }
@@ -2479,7 +2490,28 @@ function annTick() {   // the queue (from update(), only while a line is up, and
   const S = ANN_S, c = S.cur; if (!c) return; const now = annNow();
   if (c.hold) { if (now > c.at + ANN.holdMax) { c.hold = false; c.end = Math.max(c.end, now); } else return; }
   if (S.q.length) { if (now >= annDone(c) + ANN.gap) annStart(S.q.shift(), now); }
-  else if (annGone(c, now)) { annFreeLine(c); S.cur = null; }
+  else if (annGone(c, now)) { annFreeLine(c); S.cur = null; S.qt = now; }   // (S.qt = quiet since: annLull)
+}
+function annLull() {   // (update(), while no line is up) season talk: after ANN.lull s of quiet before the snap with nothing queued, B may say one season line (once a drive, franchise games only, never in the last two minutes, only facts the data has)
+  const S = ANN_S, now = annNow();
+  if (state !== 'pre' || S.q.length || S.qt == null) { S.qt = now; return; }
+  if (now - S.qt < ANN.lull) return;
+  S.qt = now;
+  if (!annGate() || !season || exhibition || tut || season.offseason || MATCH.playoff || game.over || patMode !== null || game.quarter >= 5 || (game.quarter >= 4 && game.secs <= lateS(ANN_SIT.lateS))) return;
+  const d = annG().dr; if (!d || d.ssn) return; d.ssn = 1;
+  const me = season.team, nk = k => NFL[k] ? annTc(NFL[k].nick) : null, team = nk(me); if (!team) return;
+  const T = seasonTable(), r = T[me], opts = [], gp = r ? r.w + r.l + r.t : 0;
+  if (gp > 0) opts.push(['ssn_rec', { rec: recStr(r) }]);
+  const st = LEAGUE.streak || 0; if (Math.abs(st) >= ANN.lullStreak) opts.push([st > 0 ? 'ssn_winStreak' : 'ssn_loseStreak', { n: Math.abs(st) }]);
+  if (gp >= ANN.lullDivGp) { const cf = NFL[me].conf, div = standSort(Object.keys(T).filter(k => NFL[k] && NFL[k].conf === cf).map(k => T[k]), T, 'div'), i = div.indexOf(r);
+    if (i === 0) opts.push(['ssn_divTop', {}]); else if (i > 0) opts.push(['ssn_divBack', { place: i === div.length - 1 ? 'last' : ANN.ordinal[i] }]); }
+  if (season.week > SEASON_WEEKS - ANN.lullPoWeeks) { const seeds = playoffSeeds(NFL[me].conf.slice(0, 3), T); opts.push([seeds.includes(r) ? 'ssn_poIn' : 'ssn_poOut', {}]); }
+  const lg = season.last && season.last < season.week ? gameOf(season.last) : null;
+  if (lg && lg.hs != null) { const mine = lg.h === me ? lg.hs : lg.as, them = lg.h === me ? lg.as : lg.hs; if (mine !== them) opts.push([mine > them ? 'ssn_lastW' : 'ssn_lastL', { sc: `${Math.max(mine, them)}-${Math.min(mine, them)}` }]); }
+  const ng = gameOf(season.week + 1), opp = ng && (ng.h === me ? ng.a : ng.h); if (opp && NFL[opp]) opts.push(['ssn_next', { opp: nk(opp) }]);
+  if (!opts.length) return;
+  const [k, v] = opts[Math.floor(annRnd() * opts.length)]; v.team = team;
+  annSayOwn(k, { who: 'B', pri: 0.5, vars: v, wait: true });   // (own random stream: the game's Math.random untouched)
 }
 function annFreeLine(c) { if (c && c.bub) { freeCanvas(c.bub.b); freeCanvas(c.bub.t); c.bub = null; } }
 function annClear(free) {
@@ -2670,7 +2702,7 @@ function annSetup() {   // reset(): a line before the snap on the downs that mat
   const k = s.last ? 'sit_last' : s.ot && !n ? 'sit_ot' : (s.gw === 'win' || s.gw === 'tie') && !n ? (s.gw === 'win' ? 'sit_gwdWin' : 'sit_gwdTie')
     : s.two && G.two !== s.q ? 'sit_two' : s.down === 4 ? (s.db === 's' ? 'sit_4s' : 'sit_4l') : s.zone === 'goal' && !G.goal ? 'sit_goal'
     : s.down === 3 ? 'sit_3' + s.db : s.zone === 'red' && !G.red ? 'sit_red' : null;
-  if (!k) return;
+  if (!k || (k === 'sit_last' && annOnce(s.dr, k))) return;   // (the last-play setup line once a drive)
   if (k === 'sit_two') G.two = s.q; if (k === 'sit_goal') G.goal = 1; if (k === 'sit_red') G.red = 1;
   annSay(k, { pri: 1, add: true, wait: true, odds: ANN.sit.always.includes(k) ? 1 : ANN.sit.setOdds });
 }
@@ -2688,13 +2720,15 @@ function annPlayEnd(text, next, kind, ko, pen) {   // (endPlay) the base call, t
   if (annRefSpot()) return;
   if (ANN_S.q.some(l => l.who === 'B')) return;
   const s = annSit(), now = game[offT] - game[offT === 'blue' ? 'red' : 'blue'], C = ANN.sit.ctx;
-  const k = s0.late && was <= 0 && now > 0 ? 'ctx_lead' : kind === 'turnover' && s0.late && Math.abs(was) <= 8 ? 'ctx_turnLate'
+  let k = s0.late && was <= 0 && now > 0 ? 'ctx_lead' : kind === 'turnover' && s0.late && Math.abs(was) <= 8 ? 'ctx_turnLate'
     : kind === 'punt' && d && d.n <= 3 && !d.fd ? 'ctx_3out' : G.sk >= 2 ? 'ctx_sack2' : G.fd3 === 3 ? 'ctx_fd3' : first && d && d.n >= C.longN ? 'ctx_longDrive'
     : !end && s.gw === 'win' ? 'ctx_gwd' : !end && s.gw === 'tie' ? 'ctx_tie' : !end && s.gw === 'hold' ? 'ctx_hold'
     : s.q === 4 && s.poss <= C.one ? 'ctx_poss1' : s.q === 4 && s.poss <= C.two ? 'ctx_poss2' : s.two && !end ? 'ctx_clock'
     : s.come && end ? 'ctx_come' : s.blow ? 'ctx_blow' : s.shut ? 'ctx_shut' : s.wx ? 'ctx_wx' : s.po ? 'ctx_po' : null;
+  if (k && annOnce(d, k)) k = null;   // (the same context line at most once a drive: it used to repeat on every play of a late drive)
   if (k) annSay(k, { who: 'B', pri: 1.2, add: true, wait: true, odds: C.big.includes(k) ? C.bigOdds : C.odds });
 }
+function annOnce(d, k) { if (!d || ANN.sit.ctx.every.includes(k)) return false; const m = d.said || (d.said = {}); if (m[k]) return true; m[k] = 1; return false; }   // true = this drive already had line k (ANN.sit.ctx.every = keys allowed each time)
 function annDriveEnd(kind, T, ko) {   // true = the drive is over (its time goes into the average)
   const G = annG(); if (ko) return false;
   const over = kind === 'td' || kind === 'fg' || kind === 'fgmiss' || kind === 'punt' || kind === 'turnover' || /TOUCHDOWN|SAFETY|PICK SIX|DOWNS/i.test(T);
@@ -2956,7 +2990,7 @@ function sagaPop(a) {
 }
 // (EVENTS = the midweek decisions: a text table in js/00-text.js)
 
-const SETTINGS = { weather: true, simDefense: false, scouts: true, contracts: true, autoSwitch: false, defHints: true, injuries: true, pracInjuries: true, difficulty: 'NORMAL', diffMode: 'preset', volume: 1, replays: 'BIG PLAYS', starHud: true, hideNames: false, hitboxes: false, hideTools: true, morale: true, quarterMin: 2, halftime: true, ht: { highlights: true, league: true, historic: true, qb: true, def: true, match: true }, pregame: true, pg: { historic: true, qb: true, def: true, match: true }, binds: {}, darkMode: false, cinema: false, simST: false, perfHud: false, netSim: 'OFF' };   // perfHud = the frame-time readout (DEBUG > FRAME TIMES, see PERF_HUD)   // cinema = CINEMATIC highlight reels (no UI over the field)   // simST = SIM SPECIAL TEAMS: your kickoffs, punts, field goals and kick returns are simulated (off = you play them)   // darkMode = grey menus (see `// --- dark mode`)   // quarterMin = minutes per quarter (1-8); binds = { action: key code } overrides (see BIND_ACTIONS)   // starHud = the Star Factor tips panel (H toggles; stays hidden in every game until H)
+const SETTINGS = { weather: true, simDefense: false, scouts: true, contracts: true, deadline: true, vol: { players: 1, crowd: 1, sfx: 1, menu: 1, music: 1 }, autoSwitch: false, defHints: true, injuries: true, pracInjuries: true, difficulty: 'NORMAL', diffMode: 'preset', volume: 1, replays: 'BIG PLAYS', starHud: true, hideNames: false, hitboxes: false, hideTools: true, morale: true, quarterMin: 2, halftime: true, ht: { highlights: true, league: true, historic: true, qb: true, def: true, match: true }, pregame: true, pg: { historic: true, qb: true, def: true, match: true }, binds: {}, darkMode: false, cinema: false, simST: false, perfHud: false, netSim: 'OFF' };   // perfHud = the frame-time readout (DEBUG > FRAME TIMES, see PERF_HUD)   // cinema = CINEMATIC highlight reels (no UI over the field)   // simST = SIM SPECIAL TEAMS: your kickoffs, punts, field goals and kick returns are simulated (off = you play them)   // darkMode = grey menus (see `// --- dark mode`)   // quarterMin = minutes per quarter (1-8); binds = { action: key code } overrides (see BIND_ACTIONS)   // starHud = the Star Factor tips panel (H toggles; stays hidden in every game until H)
 const SETTINGS_FACTORY = JSON.parse(JSON.stringify(SETTINGS));   // (the defaults, before the saved settings load: settings' RESET TO DEFAULTS)
 try { Object.assign(SETTINGS, JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}); } catch (e) {}
 SETTINGS.hitboxes = false; COLLIDE.show = false;   // (debug only: never saved or loaded, so it can't come back on by itself; the settings button / ` key flip it for this session)
@@ -2969,7 +3003,7 @@ if (!REPLAY_MODES.includes(SETTINGS.replays)) SETTINGS.replays = 'BIG PLAYS';   
 if (SETTINGS.liteMode === 'ON') SETTINGS.liteMode = 'PERFORMANCE'; else if (SETTINGS.liteMode === 'OFF') SETTINGS.liteMode = 'QUALITY';   // (the old performance-mode values; see gfxMode)
 // Settings scopes: SETTINGS_DEF = the defaults (main menu / exhibitions / a new franchise, kept in localStorage); SETTINGS = the working copy.
 // Inside a franchise save (inSave) the working copy is that save's own (stored in its world.settings); only GLOBAL_SET (volume, replays) is shared by all.
-const GLOBAL_SET = ['volume', 'replays', 'hideTools', 'darkMode', 'cinema', 'liteMode', 'fps', 'sideline', 'taunts', 'perfHud', 'netSim', 'flashes', 'announcers', 'hideKeyTips', 'keyTipsShut', 'coachNotes', 'notesOff'];
+const GLOBAL_SET = ['volume', 'vol', 'replays', 'hideTools', 'darkMode', 'cinema', 'liteMode', 'fps', 'sideline', 'taunts', 'perfHud', 'netSim', 'flashes', 'announcers', 'hideKeyTips', 'keyTipsShut', 'coachNotes', 'notesOff'];
 const showOutcomes = () => !SETTINGS.hideTools;   // (big job: a decision's numbers / stakes / what it changed only show with the extra tools on, for debug; the story text always prints)
 // per-device settings: their own key, never in SETTINGS / franchise saves, and cloud sync skips it. mobile = the MOBILE MODE override (unset = on for phones / tablets, off for PCs)
 const DEVICE_KEY = 'pocketPasser.device';
@@ -3474,10 +3508,19 @@ const VOL = () => document.hidden ? 0 : SETTINGS.volume;   // (off the tab: sile
 // duck = 1 in play, 0 while paused: every sound is multiplied by it, gliding between over DUCK.out / DUCK.in seconds
 let duck = 1;
 const DUCK = { out: 0.8, in: 0.5 };
-function sfxOut(a) {
+// v0.78 sound channels: MASTER (SETTINGS.volume) x one of players / crowd / sfx / menu / music (SETTINGS.vol, settings SOUND; music has nothing yet)
+const volCh = ch => { const v = SETTINGS.vol && SETTINGS.vol[ch]; return v == null ? 1 : v; };
+const volOf = ch => VOL() * volCh(ch);
+let SFX_CH = null;   // a caller's channel for every sound it starts (btnSndPlay = 'menu'); null = each sound's own
+const SND_CH_RE = { crowd: /cheer|boo|crowd|ooh|disappoint|laugh|classroom/, players: /footstep|tackle|catch|grunt/, menu: /crumple|paper|pencil|eraser|tear|flip|swoosh|press|click|tap|tick|upgrade/ };
+function sndChOf(src) { if (SFX_CH) return SFX_CH; const s = String(src); for (const k in SND_CH_RE) if (SND_CH_RE[k].test(s)) return k; return 'sfx'; }   // a recorded file's channel, by its name
+function sfxOut(a, ch = 'sfx') {   // a synthesized sound's output: its channel's gain, into the master
   if (!a.master) { a.master = a.createGain(); a.master.connect(a.destination); }
   a.master.gain.value = SETTINGS.volume * duck;
-  return a.master;
+  const c = SFX_CH || ch, G = a.chG || (a.chG = {});
+  let g = G[c]; if (!g) { g = G[c] = a.createGain(); g.connect(a.master); }
+  g.gain.value = volCh(c);
+  return g;
 }
 const SFX = { whistle: 'audio/whistle.mp3', cheer: 'audio/cheer.mp3', boo: 'audio/boo.mp3', crowd: 'audio/crowd.mp3', endWhistle: 'audio/endwhistle.mp3' };
 // --- recorded cues (v0.45): the cold open's recordings, reused in the game where one beats a synthesized sound. Each = [file, gain]: the files
@@ -3588,6 +3631,7 @@ const sfxCtl = {};
 const SFX_TOUCH = { layers: 2, re: /#(big|road|climax)/ };   // v0.62 phones: at most this many extra crowd layers (#big / #road / #climax copies) play at once (a busy touchdown had ~11 media elements live)
 const SFX_SLEW = { up: 0.45, down: 0.8 };   // how fast (volume per second) a playing clip's loudness glides to a new level
 function playSfx(src, vol, maxMs, fadeMs, fadeInMs = 0, startAt = 0, rate = 1) {   // startAt: seconds into the clip to begin (a different stretch of it each time); rate: playback speed (pitch follows it)
+  vol = (vol == null ? 1 : vol) * volCh(sndChOf(src));   // (v0.78: its channel's slider)
   if (TOUCH && SFX_TOUCH.re.test(src)) { let n = 0; for (const c of sfxLive) if (c.src && SFX_TOUCH.re.test(c.src) && !c.a.paused) n++; if (n >= SFX_TOUCH.layers) return; }   // (v0.62: phones: many media elements at once stutter on iOS)
   if (sbufOn()) { const bc = sbufStart(src, vol, maxMs, fadeMs, fadeInMs, startAt, rate); if (bc) return bc;   // (v0.70: decoded buffer; else the element below)
     if (TOUCH && !SBUF.skip.test(src) && liveNow()) { perfNote('sfx skipped ' + src.split('#')[0].replace('audio/', '')); return null; } }   // (v0.74: a phone mid-play: a cue not decoded yet is skipped, a media element's start cost ~33 ms; throwSfx falls back to its synthesized whoosh)
@@ -3783,7 +3827,7 @@ function impactSfx({ noiseDur, noiseFreq, noiseQ, noiseVol, thumpHz, thumpDur, t
   band.type = 'bandpass'; band.frequency.value = noiseFreq; band.Q.value = noiseQ;
   ng.gain.setValueAtTime(0.0001, t); ng.gain.linearRampToValueAtTime(noiseVol, t + 0.004);   // (a few ms of attack: a gain that jumps straight to full clicks on phones)
   ng.gain.exponentialRampToValueAtTime(0.0001, t + noiseDur);
-  src.connect(band); band.connect(ng); ng.connect(sfxOut(a));
+  src.connect(band); band.connect(ng); ng.connect(sfxOut(a, 'players'));
   src.start(t, Math.random() * 0.5); src.stop(t + noiseDur + 0.02);
   const o = a.createOscillator(), og = a.createGain();
   o.type = 'sine';
@@ -3791,7 +3835,7 @@ function impactSfx({ noiseDur, noiseFreq, noiseQ, noiseVol, thumpHz, thumpDur, t
   o.frequency.exponentialRampToValueAtTime(thumpHz * 0.45, t + thumpDur);
   og.gain.setValueAtTime(0.0001, t); og.gain.linearRampToValueAtTime(thumpVol, t + 0.004);
   og.gain.exponentialRampToValueAtTime(0.0001, t + thumpDur);
-  o.connect(og); og.connect(sfxOut(a));
+  o.connect(og); og.connect(sfxOut(a, 'players'));
   o.start(t); o.stop(t + thumpDur + 0.02);
 }
 // recorded clips for catches, tackles and the ball hitting the turf: a random [kind, start, end] (seconds into the
@@ -3835,7 +3879,7 @@ function clipSfx([kind, s, e], vol, rate = 1) {   // rate = playback speed (pitc
   const fade = Math.min(CLIP_FADE[kind] || 0.06, len * 0.6);
   g.gain.setValueAtTime(vol, t + len - fade);
   g.gain.linearRampToValueAtTime(0, t + len);
-  src_.connect(g); g.connect(sfxOut(a));
+  src_.connect(g); g.connect(sfxOut(a, kind === 'catch' || kind === 'tackle' ? 'players' : 'sfx'));
   src_.start(t, s, e - s);
   return true;
 }
@@ -3904,7 +3948,7 @@ function endWhistle(triple) {
   try {
     const [s, e] = END_WHISTLES[2];
     const a = new Audio(SFX.endWhistle);
-    sfxGain(a, 0.8 * VOL());
+    sfxGain(a, 0.8 * volOf('sfx'));
     a.addEventListener('loadedmetadata', () => { a.currentTime = s; a.play().catch(() => {}); }, { once: true });
     a.addEventListener('timeupdate', () => { if (a.currentTime >= e) a.pause(); });
   } catch (err) { /* no audio available */ }
@@ -3933,7 +3977,7 @@ function throwSfx(bullet) {
   g.gain.setValueAtTime(0.0001, t);
   g.gain.exponentialRampToValueAtTime(bullet ? 0.5 : 0.3, t + dur * 0.25);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  src.connect(band); band.connect(g); g.connect(sfxOut(a));
+  src.connect(band); band.connect(g); g.connect(sfxOut(a, 'sfx'));
   src.start(t); src.stop(t + dur + 0.02);
   impactSfx(THROW_REL);   // release
 }
@@ -4101,7 +4145,7 @@ function sweepSfx(f0, f1, f2, dur, vol, q = 1.4, key) {   // band-passed noise s
   src.buffer = noiseBuf; src.loop = true; band.type = 'bandpass'; band.Q.value = q;
   band.frequency.setValueAtTime(f0, t); band.frequency.exponentialRampToValueAtTime(f1, t + dur * 0.4); band.frequency.exponentialRampToValueAtTime(f2, t + dur);
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(Math.max(0.001, vol), t + dur * 0.3); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  src.connect(band); band.connect(g); g.connect(sfxOut(a));
+  src.connect(band); band.connect(g); g.connect(sfxOut(a, 'players'));
   src.start(t, Math.random() * 0.5); src.stop(t + dur + 0.02);
 }
 function toneSfx(type, parts, dur, vol, key) {   // parts: [Hz, level, Hz at the end (a slide)]
@@ -4113,7 +4157,7 @@ function toneSfx(type, parts, dur, vol, key) {   // parts: [Hz, level, Hz at the
     const o = a.createOscillator(), g = a.createGain();
     o.type = type; o.frequency.setValueAtTime(hz, t); if (end) o.frequency.exponentialRampToValueAtTime(end, t + dur);
     g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(Math.max(0.001, vol * lv), t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + dur * (0.5 + 0.5 * lv));
-    o.connect(g); g.connect(sfxOut(a)); o.start(t); o.stop(t + dur + 0.02);
+    o.connect(g); g.connect(sfxOut(a, 'players')); o.start(t); o.stop(t + dur + 0.02);
   }
 }
 const CELEB_SFX = {
@@ -4421,7 +4465,7 @@ function updateCrowd(dt) {
     for (const e of crowdAmb) {
       if (e.paused) continue;
       const d = isFinite(e.duration) ? e.duration : Infinity, t = e.currentTime;
-      sfxGain(e, Math.max(0, Math.min(1, crowdVol * VOL() * duck * Math.sqrt(Math.max(0, Math.min(1, (t - (e.startAt || 0)) / xf, (d - t) / xf))))));
+      sfxGain(e, Math.max(0, Math.min(1, crowdVol * volOf('crowd') * duck * Math.sqrt(Math.max(0, Math.min(1, (t - (e.startAt || 0)) / xf, (d - t) / xf))))));
     }
   } catch (e) { /* no audio available */ }
 }

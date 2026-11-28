@@ -1980,14 +1980,14 @@ function wxAudio() {
   const on = sndOn() && wxLive() && !(rec && rec.replaying && rec.paused);   // (a paused replay silences the weather too)
   if (!sndOn()) { if (results && !paused && dt) { for (const el of [wxRainEl, wxWindEl]) if (el) wxLoopEl(el, 0, dt * WX_SND.menuK); return; } silenceLoops(); return; }   // (v0.70: off to a menu = faded out; a pause / hidden tab still stops dead)
   // rain: an HTML audio loop (works from a file too)
-  const want = on ? WXI.rain * WX_SND.rain * VOL() * duck * crowdDuck() : 0;   // (crowdDuck: under a celebration's crowd pop)
+  const want = on ? WXI.rain * WX_SND.rain * volOf('sfx') * duck * crowdDuck() : 0;   // (crowdDuck: under a celebration's crowd pop)
   if (want > 0.002 && !wxRainEl) { try { wxRainEl = new Audio('audio/rain.mp3'); wxRainEl.loop = true; wxRainEl.volume = 0; } catch (e) {} }
   if (wxRainEl) wxLoopEl(wxRainEl, want, dt);
   // wind: the recorded loop, same mph curve x a slow gust (performance mode: no wind)
   const gt = now / 1000, gust = 0.7 + 0.25 * Math.sin(gt * 0.6) + 0.15 * Math.sin(gt * 1.9 + 1);
   const windK = on && !liteGame() && WXI.mph > 7 ? Math.min(1, (WXI.mph - 7) / 27) * gust : 0;
   if (windK > 0.002 && !wxWindEl) { try { wxWindEl = new Audio('audio/wind.mp3'); wxWindEl.loop = true; wxWindEl.volume = 0; wxWindEl.onerror = () => { wxWindEl._bad = true; }; } catch (e) {} }
-  if (wxWindEl && !wxWindEl._bad) { wxLoopEl(wxWindEl, windK * WX_SND.wind * VOL() * duck * crowdDuck(), dt); return; }
+  if (wxWindEl && !wxWindEl._bad) { wxLoopEl(wxWindEl, windK * WX_SND.wind * volOf('sfx') * duck * crowdDuck(), dt); return; }
   const a = actx && actx.state === 'running' ? actx : null;
   if (!a || !noiseBuf) return;
   if (!wxAud) {
@@ -1995,7 +1995,7 @@ function wxAudio() {
     const src = a.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
     const wf = a.createBiquadFilter(); wf.type = 'bandpass'; wf.frequency.value = 400; wf.Q.value = 0.8;
     const wg = a.createGain(); wg.gain.value = 0;
-    src.connect(wf); wf.connect(wg); wg.connect(sfxOut(a));
+    src.connect(wf); wf.connect(wg); wg.connect(sfxOut(a, 'sfx'));
     src.start();
     wxAud = { wf, wg };
   }
@@ -2053,13 +2053,13 @@ function stepAudio() {
   }
   [[me, STEPS.vol], [other, STEPS.vol * STEPS.other]].forEach(([p, base], i) => {
     const s = spd(p), airborne = p && (p.z > 2 * S || p.action === 'dive' || p.action === 'slide' || p.action === 'down');
-    const want = p && !airborne && s > STEPS.min ? base * Math.min(1, (s - STEPS.min) / 4) * VOL() * duck : 0;
+    const want = p && !airborne && s > STEPS.min ? base * Math.min(1, (s - STEPS.min) / 4) * volOf('players') * duck : 0;
     if (stepBuf && actx && actx.state === 'running') {   // the loop as a Web Audio buffer: sample-exact loop points on zero crossings, nothing is seeked (the HTML element's seek back to the loop start was the click)
       let n = stepWA[i];
       if (!n && want > 0.002) {
         const src = actx.createBufferSource(), g = actx.createGain();
         src.buffer = stepBuf.buf; src.loop = true; src.loopStart = stepBuf.from; src.loopEnd = stepBuf.to; g.gain.value = 0;
-        src.connect(g); g.connect(sfxOut(actx));
+        src.connect(g); g.connect(sfxOut(actx, 'players'));
         src.start(0, stepBuf.from + Math.random() * (stepBuf.to - stepBuf.from));
         n = stepWA[i] = { src, g };
       }
@@ -3592,6 +3592,24 @@ const TOUR_STEPS = {
       more: 'PUT MY NAME OUT brings more calls, but word can leak and your owner will not like it. DEMAND A MOVE lets you buy your way into any team: their coach gets fired, the price grows with how good and how safe that job is.' },
     { scr: 'jobs', rect: () => [{ x: 150, y: 560, w: 980, h: 140 }], text: 'Pulled offers land down here.',
       more: 'Every offer that was withdrawn or filled is kept with the real reason stapled to it.' }],
+  negotiate: [   // the NEGOTIATE popup's ? (NG_Q): one step per part of the deal; no scr = stays on the page under the popup
+    { rect: () => [{ x: NG_P.x + 30, y: NG_P.y + 100, w: 540, h: 220 }], text: 'His ask sits on the left.',
+      more: 'The left column is what he (or the owner, for your own deal) wants: years, pay a year and a signing bonus. MEET ASK signs it as it stands.' },
+    { rect: () => [{ x: NG_P.x + 620, y: NG_P.y + 149, w: 540, h: 46 }], text: 'Fewer years, less risk.',
+      more: 'YEARS: a short deal is cheap to walk away from. A long one locks in his price, good for a young star, bad for an old one.' },
+    { rect: () => [{ x: NG_P.x + 620, y: NG_P.y + 207, w: 540, h: 46 }], text: 'Lower pay keeps cap room.',
+      more: 'PAY: every step down saves cap space, but he cools off. Push too far and he stops listening.' },
+    { rect: () => [{ x: NG_P.x + 620, y: NG_P.y + 265, w: 540, h: 46 }], text: 'A bonus warms him up.',
+      more: 'SIGNING BONUS: paid once, in credits. It buys a lot of interest without touching his yearly pay.' },
+    { rect: () => NG_CHIPS, text: 'Extras he likes, cheap for you.',
+      more: 'INCENTIVES: you pay them only if he hits the goal. For your own deal these are PERKS: each one costs some goodwill with the owner.' },
+    { rect: () => [{ x: NG_P.x + 30, y: NG_P.y + 396, w: 1140, h: 44 }], text: 'His agent changes the haggling.',
+      more: 'The line under the extras is his agent and his mood. Some agents push back hard, some take a fair deal quickly.' },
+    { rect: () => [{ x: NG_P.x + 30, y: NG_P.y + 450, w: 1140, h: 52 }], text: 'Green means he signs.',
+      more: 'INTEREST: the arrow is how much he likes your counter right now. COLD walks, WARM talks, SIGNS means it gets signed. The dots are your tries: every counter uses one.' },
+    { rect: () => [NG_B.send], text: 'Send it and see.',
+      more: 'SEND COUNTER makes your offer. NOT NOW walks away for now. MEET ASK takes his terms as they are.' },
+  ],
   deals: [   // the front office's filing drawer (MANAGE CONTRACTS on)
     { scr: 'staff', enter: () => { staffView.sel = null; FOT.tab = 'staff'; }, rect: () => FO_TAB_BTNS, text: 'Coaches, your deal, player deals.',
       more: 'CONTRACTS: the front office is a filing drawer with three tabs. STAFF is your coaches, MY CONTRACT is your own deal, PLAYER DEALS is where you extend players before they hit free agency. Rather not deal with any of it? SETTINGS > DEALS: AUTO hands every contract back to the game.' },
@@ -3744,7 +3762,7 @@ function tourStart(id, replay) {
   if (!career.tut) career.tut = {};
   career.tut[id] = true; if (!replay) autosaveSoon();
   tour = { id, steps, i: 0, btns: {}, saved: { scr, sel: TR.sel, page: TR.page, partner: TR.partner, give: TR.give.slice(), get: TR.get.slice(), tab: TR.tab.slice(), pg: TR.pg.slice() } };
-  TR.sel = null; TR.dd = false; teamPick = null;
+  if (id !== 'negotiate') { TR.sel = null; TR.dd = false; teamPick = null; }   // (the NEGOTIATE popup's tour leaves the page under it alone)
   tourGo(0);
 }
 function tourGo(i) {
@@ -3812,7 +3830,7 @@ function tourQClick(pt) {   // true when the "?" was hit
   if (!id || !inBtn(pt, id === 'trade' && scr === 'trade' ? TR_HELP_BTN : id.startsWith('prac') || id === 'scouts' ? PRAC_Q_BTN : id === 'hire' ? HIRE_Q_BTN : TOUR_Q_BTN)) return false;
   tourStart(id, true); return true;
 }
-const TOUR_NAMES = { bookDef: 'DEFENSE BINDER', trade: 'TRADES', prac: 'FACILITIES', home: 'YOUR FRANCHISE', deals: 'CONTRACTS', carDiff: 'DIFFICULTY', locker: 'LOCKER ROOM', hire: 'HIRING', xp: 'XP BANK', scouts: 'SCOUTS', pencil: 'PLAYER AGING' };
+const TOUR_NAMES = { negotiate: 'NEGOTIATING', bookDef: 'DEFENSE BINDER', trade: 'TRADES', prac: 'FACILITIES', home: 'YOUR FRANCHISE', deals: 'CONTRACTS', carDiff: 'DIFFICULTY', locker: 'LOCKER ROOM', hire: 'HIRING', xp: 'XP BANK', scouts: 'SCOUTS', pencil: 'PLAYER AGING' };
 const tourDo = st => !!(st && st.do && (!st.can || st.can()));   // (a do-it-to-advance step: no NEXT, the lit rects take clicks, done = it moves on by itself)
 function tourHandSpot(rects, pad) {   // where the pointing hand goes: under the first lit rect, over it near the bottom, inside a huge one; returns its tip + box
   const r = rects[0]; if (!r) return null;
@@ -4645,7 +4663,7 @@ const BIND_ACTIONS = [
   ['audibleD', 'Defensive audible', 'KeyQ', 'KeyQ', 'def pre'], ['switchQ', 'Switch defender (Q)', 'KeyQ', 'KeyQ', 'def !pre'],
   ['switchD', 'Switch defender', 'KeyO', 'KeyO', 'def'], ['switchE', 'Switch defender (E)', 'KeyE', 'KeyE', 'def'],
   ['hit', 'Hit stick', 'KeyC', 'KeyC', 'def'], ['diveD', 'Dive tackle', 'KeyV', 'KeyV', 'def'], ['secure', 'Secure tackle', 'KeyG', 'KeyG', 'def'],
-  ['jumpD', 'Jump / spin off a block', 'KeyR', 'KeyR', 'def'], ['strip', 'One-hander in the air', 'KeyF', 'KeyF', 'def'], ['hints', 'Defense hints', 'KeyN', 'KeyN', 'def'],
+  ['jumpD', 'Jump / spin off a block', 'KeyR', 'KeyR', 'def'], ['strip', 'One-hander in the air', 'KeyF', 'KeyF', 'def'],
   ['chop', 'Chop a stiff arm (held off)', 'KeyX', 'KeyX', 'def'],
 ];
 const bindKeyOf = a => { const b = SETTINGS.binds && SETTINGS.binds[a[0]]; return b === undefined ? a[2] : b === 'None' ? null : b; };   // (a row's key now: null = none)
@@ -4668,7 +4686,7 @@ const BIND_GROUPS = [   // the CONTROLS list's groups, in order (a BIND_ACTIONS 
   ['GAME', ['snap', 'timeout']],
   ['PASSING', ['audible', 'bullet']],
   ['RUNNING WITH THE BALL', ['stiff', 'truck', 'spin', 'hurdle', 'dive', 'diveTab', 'protect']],
-  ['DEFENSE', ['audibleD', 'switchQ', 'switchD', 'switchE', 'hints']],
+  ['DEFENSE', ['audibleD', 'switchQ', 'switchD', 'switchE']],
   ['TACKLING AND PLAYING THE BALL', ['hit', 'diveD', 'secure', 'jumpD', 'strip', 'chop']]];
 const BIND_ROWS = (() => {   // the list top to bottom: { h: header } or { i: BIND_ACTIONS index }, each with y = its offset in the list
   const seen = new Set(), out = [];
@@ -4690,13 +4708,14 @@ const SET_MAIN = { x: 240, y: 50, w: 800, h: 620 };
 const SET_CAT_ROWS = {
   controls: ['autoSw', 'zoom', 'swap'],   // (+ the keybinds list; swap = touch only, with TOUCH_HELP instead of the keys)
   rules: ['qtr', 'inj', 'pinj', 'wx', 'morale', 'flags', 'booth', 'dir'],
-  franchise: ['scouts', 'deals', 'decline', 'simDef', 'spd', 'notes', 'setup'],
-  sound: ['vol', 'ann'],   // (vol = volDn + the bar + volUp)
-  shows: ['ht', 'pg', 'rep', 'recPop', 'batPop', 'taunt', 'post', 'ktips'],
+  franchise: ['scouts', 'deals', 'deadline', 'decline', 'simDef', 'spd', 'notes', 'setup'],
+  sound: ['vol', 'volP', 'volC', 'volS', 'volM', 'volMu'],   // (vol = volDn + the bar + volUp = MASTER; the rest = one bar per channel, SETTINGS.vol)
+  shows: ['ht', 'pg', 'rep', 'recPop', 'batPop', 'taunt', 'post', 'ktips', 'ann'],
   graphics: ['bri', 'lite', 'fps', 'dark', 'side', 'flash'] };   // (bri = briDn + the brightness bar + briUp)
-const SET_BARS = { vol: 'volume', bri: 'brightness' };   // bar rows: row id -> SETTINGS key (0-1, shown 0-100%; - / + = 10, a click or drag on the bar = any value)
+const SET_BARS = { vol: 'volume', bri: 'brightness', volP: 'vol.players', volC: 'vol.crowd', volS: 'vol.sfx', volM: 'vol.menu', volMu: 'vol.music' };
+const SET_BAR_NAME = { volume: 'MASTER', brightness: 'BRIGHTNESS', 'vol.players': 'PLAYERS', 'vol.crowd': 'CROWD', 'vol.sfx': 'SFX', 'vol.menu': 'MENU', 'vol.music': 'MUSIC' };   // (the bar's label)   // bar rows: row id -> SETTINGS key (0-1, shown 0-100%; - / + = 10, a click or drag on the bar = any value)
 const SET_ROW_KEYS = [...new Set(Object.values(SET_CAT_ROWS).flat().flatMap(k => SET_BARS[k] ? [k + 'Dn', k + 'Up'] : [k]))];
-const setRowOf = k => /^(vol|bri)(Dn|Up)$/.test(k) ? k.slice(0, 3) : k;   // (a bar's - / + key -> its row id)
+const setRowOf = k => { const m = /^(.+)(Dn|Up)$/.exec(k); return m && SET_BARS[m[1]] ? m[1] : k; };   // (a bar's - / + key -> its row id)
 const SET_CAT_W = 165, SET_CAT_H = 110;
 const SET_CATS = [   // [id, label, x, y, tilt, material]; diff = SET_BTNS.diff
   ['controls', 'CONTROLS', 280, 180, -0.05, BM('playbook', 'btnCone')], ['diff', 'DIFFICULTY', 465, 180, 0.03, null],   // (no material: its own dial card, diffGaugeFace)
@@ -4710,9 +4729,9 @@ const SET_RESET = { x: 256, y: 618, w: 210, h: 36, sure: 3 };   // RESET TO DEFA
 let setResetAt = 0;   // (when the first click armed it)
 const SET_RESET_MAP = {   // row key -> the SETTINGS keys it puts back to SETTINGS_FACTORY (missing there = deleted); difficulty keeps its own page and RESET
   autoSw: ['autoSwitch'], zoom: ['camZoom'], swap: ['swapSides'], inj: ['injuries'], pinj: ['pracInjuries'], wx: ['weather'], morale: ['morale'],
-  flags: ['penalties', 'exPenalties'], booth: ['booth', 'exBooth'], dir: ['driveDir'], qtr: ['quarterMin'], scouts: ['scouts'], deals: ['contracts'], decline: ['decline'],
+  flags: ['penalties', 'exPenalties'], booth: ['booth', 'exBooth'], dir: ['driveDir'], qtr: ['quarterMin'], scouts: ['scouts'], deals: ['contracts'], deadline: ['deadline'], decline: ['decline'],
   simDef: ['simDefense'], spd: ['simST'], ann: ['announcers'], rep: ['replays'], recPop: ['hideRecPop'], ktips: ['hideKeyTips'], notes: ['coachNotes'], batPop: ['hideBattlePop'], taunt: ['taunts'],
-  post: ['post'], lite: ['liteMode'], fps: ['fps'], dark: ['darkMode'], side: ['sideline'], flash: ['flashes'], volDn: ['volume'], briDn: ['brightness'],
+  post: ['post'], lite: ['liteMode'], fps: ['fps'], dark: ['darkMode'], side: ['sideline'], flash: ['flashes'], volDn: ['volume', 'vol'], briDn: ['brightness'],
   ht: ['halftime', 'ht'], pg: ['pregame', 'pg'], keys: ['binds'] };
 function setResetAll() {   // every setting on the settings pages back to its default (in a game: the locked ones stay)
   const lock = setInGame(), sd0 = SETTINGS.simDefense; let kept = 0;
@@ -4728,11 +4747,11 @@ function setResetAll() {   // every setting on the settings pages back to its de
   moraleSync(); slSetting(); buildRemap(); fpsCap.lock = false; fpsCap.over = 0; rebinding = null;
   saveSettings(); note(kept ? 'RESET. GAME SETTINGS STAY LOCKED' : 'SETTINGS RESET');
 }   // (on the main page; everything else lives in a category popup)
-const SET_POP = { x: 330, y: 70, w: 620, h: 580, rowX: 370, rowW: 540, top: 138, row: 40, gap: 8, qtrH: 58, tipY: 560, done: { x: 370, y: 584, w: 540, h: 46 } };
+const SET_POP = { x: 330, y: 70, w: 620, h: 580, rowX: 370, rowW: 540, top: 138, row: 40, gap: 8, tight: 9, gapT: 5, qtrH: 58, tipY: 560, done: { x: 370, y: 584, w: 540, h: 46 } };
 const SET_POP_KEYS = { x: 240, y: 50, w: 800, h: 628, tipY: 150, done: { x: 760, y: 622, w: 240, h: 44 }, keyX: 280, keyW: 700, bar: 996 };   // (the CONTROLS popup)
 const SET_BTNS = {
   save: { x: 300, y: 104, w: 320, h: 46 }, load: { x: 660, y: 104, w: 320, h: 46 },
-  diff: SET_CATS[1], dbg: { x: 950, y: 618, w: 74, h: 36 },
+  diff: SET_CATS[1], dbg: { x: SET_MAIN.x + SET_MAIN.w - 92, y: SET_MAIN.y + 12, w: 74, h: 36 },   // (DEBUG top right: the search magnifier took its old spot)
 };
 for (const k of SET_ROW_KEYS) SET_BTNS[k] = { x: -9999, y: -9999, w: 540, h: 40 };
 let setCat = null;   // the open category popup: null | 'controls' | 'rules' | 'franchise' | 'sound' | 'shows' | 'graphics'
@@ -4743,7 +4762,7 @@ const SET_ROW_TEXT = {   // each row's NAME: VALUE (the old button labels on one
   wx: () => `WEATHER: ${SETTINGS.weather !== false ? 'ON' : 'OFF'}`, morale: () => `MORALE: ${SETTINGS.morale !== false ? 'ON' : 'OFF'}`,
   flags: () => `PENALTIES: ${refSet('penalties') ? 'ON' : 'OFF'}`, booth: () => `BOOTH REVIEW: ${refSet('booth') ? 'ON' : 'OFF'}`,
   dir: () => `DRIVE DIRECTION: ${DRIVE_DIRS[SETTINGS.driveDir || 'left'].toUpperCase()}`,
-  scouts: () => `SCOUTS: ${SETTINGS.scouts !== false ? 'ON' : 'OFF'}`, deals: () => `CONTRACTS: ${SETTINGS.contracts !== false ? 'MANAGE' : 'AUTO'}`, decline: () => `PLAYER AGING: ${DL_MODE_TXT[declineMode()]}`,
+  scouts: () => `SCOUTS: ${SETTINGS.scouts !== false ? 'ON' : 'OFF'}`, deals: () => `CONTRACTS: ${SETTINGS.contracts !== false ? 'MANAGE' : 'AUTO'}`, deadline: () => `TRADE DEADLINE: ${SETTINGS.deadline !== false ? 'ON' : 'OFF'}`, decline: () => `PLAYER AGING: ${DL_MODE_TXT[declineMode()]}`,
   simDef: () => `CPU DEFENSE: ${simDefLocked() || SETTINGS.simDefense ? 'ON' : 'OFF'}`, spd: () => `SIMULATE KICKS: ${SETTINGS.simST ? 'ON' : 'OFF'}`, setup: () => 'SETUP QUESTIONS',
   ann: () => `ANNOUNCERS: ${SETTINGS.announcers === false ? 'OFF' : 'ON'}`,
   ht: () => 'HALFTIME SHOW', pg: () => 'PREGAME SHOW', rep: () => `REPLAYS: ${SETTINGS.replays}`,
@@ -4764,13 +4783,13 @@ function setCatLayout() {   // park every row, then lay the open category's rows
     if (TUI.on) Object.assign(B.swap, { x: K.keyX, y: 570, w: K.keyW, h: 40 });
     return;
   }
-  let y = P.top;
+  let y = P.top; const gap = SET_CAT_ROWS[setCat].length >= P.tight ? P.gapT : P.gap;   // (a long list closes up so its last row stays above the tip line)
   for (const k of SET_CAT_ROWS[setCat]) {
-    if (SET_BARS[k]) { Object.assign(B[k + 'Dn'], { x: P.rowX, y, w: 60, h: P.row }); Object.assign(B[k + 'Up'], { x: P.rowX + P.rowW - 60, y, w: 60, h: P.row }); y += P.row + P.gap; continue; }
+    if (SET_BARS[k]) { Object.assign(B[k + 'Dn'], { x: P.rowX, y, w: 60, h: P.row }); Object.assign(B[k + 'Up'], { x: P.rowX + P.rowW - 60, y, w: 60, h: P.row }); y += P.row + gap; continue; }
     const h = k === 'qtr' ? P.qtrH : P.row;
     Object.assign(B[k], { x: P.rowX, y, w: P.rowW, h });
     if (k === 'qtr') { QTR_BAR.x = P.rowX + 60; QTR_BAR.w = P.rowW - 120; }
-    y += h + P.gap;
+    y += h + gap;
   }
 }
 const FPS_MODES = ['AUTO', '30', '60'];   // SETTINGS.fps = FRAME RATE (phones: FPS_CAP / fpsInterval in 14; computers are never capped)
@@ -4796,6 +4815,7 @@ const SET_TIPS = {   // hover tips: ONE short line each, copy rules (plain, no p
   booth: () => refSet('booth') ? 'BOOTH REVIEW: close calls get a second look.' : 'BOOTH REVIEW: off. Every spot is perfect.',
   taunt: () => (SETTINGS.taunts || 'NORMAL') === 'OFF' ? 'TAUNTS: off. Nobody taunts.' : 'TAUNTS: how often a celebration gets cheeky.',
   deals: () => SETTINGS.contracts !== false ? 'CONTRACTS: you make every deal.' : 'CONTRACTS: auto. The game handles deals.',
+  deadline: () => SETTINGS.deadline !== false ? `Trades shut after week ${TRADE.deadline}.` : 'No deadline. Trade all season long.',
   decline: () => ({ off: 'PLAYER AGING: off. Nobody slows down.', mine: 'PLAYER AGING: your vets wear down with age.', league: 'PLAYER AGING: every team wears down.' })[declineMode()],
   scouts: () => SETTINGS.scouts !== false ? 'SCOUTS: hire two to sharpen draft reads.' : 'SCOUTS: off. Just the plain SCOUT button.',
   simDef: () => simDefLocked() ? 'CPU DEFENSE: always on for two players on a phone.' : SETTINGS.simDefense ? 'CPU DEFENSE: the computer plays their drives.' : 'CPU DEFENSE: off. You play defense.',
@@ -4962,12 +4982,75 @@ function speedClick(p) {
 function drawSettings() {
   drawSettingsMain();
   setPopDraw = true;   // (the popup's own buttons animate; the page behind it holds still)
-  if (setCat && !diffUI) drawSetCat();   // (a category popup: HALF TIME / PRE GAME open their page on top of it)
+  if (!setCat && !diffUI && !dbgUI && !spdUI && !htUI) setSrchDraw();   // (the search: main page only)
+  if (setCat && !diffUI) { drawSetCat(); setLitDraw(); }   // (a category popup: HALF TIME / PRE GAME open their page on top of it)
   if (spdUI && !diffUI) drawSpeedSet();
   if (dbgUI && !diffUI) drawDebug();
   if (htUI && !diffUI) drawHtSettings();
   setPopDraw = false;
 }
+// --- settings search: the magnifier on the settings page (where DEBUG was; DEBUG is top right). ONE index, built on first use, from every settings row (SET_ROW_TEXT + SET_TIPS,
+// category from SET_CAT_ROWS), the keybinds (BIND_ACTIONS), the difficulty sliders' labels and the tips (OFF_TIPS / DRAFT_TIPS with COACH_TIPS, the tours by TOUR_NAMES).
+// Typing = a short ranked list (name match first, then tip text). A setting opens its category with the row lit, a keybind = CONTROLS at that row, a slider = the difficulty page,
+// a tip = its card (title, line, the long text). In a game, locked settings show grey with the lock.
+const SETQ = { q: '', qFoc: false, idx: null, res: [], card: null, lit: null, max: 6, litS: 2.5,
+  btn: { x: 950, y: 612, w: 74, h: 44 }, box: { x: 560, y: 612, w: 380, h: 44 }, row: 40, rowW: 464 };
+const SETQ_S = { st: SETQ, k: 'q', f: 'qFoc', max: 24, on: () => setSrchRun() };
+const setTxt = v => { try { return String(typeof v === 'function' ? v() : v || ''); } catch (e) { return ''; } };
+function setSrchIndex() {   // built once: { n (name), t (tip text), kind set / key / diff / tip, cat, k, i, card }
+  if (SETQ.idx) return SETQ.idx;
+  const X = [], catOf = {}; for (const c in SET_CAT_ROWS) for (const k of SET_CAT_ROWS[c]) catOf[k] = c;
+  for (const k in catOf) { const n = SET_BARS[k] ? SET_BAR_NAME[SET_BARS[k]] + (SET_BARS[k].startsWith('vol') ? ' VOLUME' : '') : setTxt(SET_ROW_TEXT[k]).split(':')[0]; if (n) X.push({ n, t: setTxt(SET_TIPS[k]), kind: 'set', cat: catOf[k], k }); }
+  BIND_ACTIONS.forEach((a, i) => X.push({ n: a[1].toUpperCase(), t: 'Keybind', kind: 'key', cat: 'controls', i }));
+  for (const s of DIFF_SLIDERS) if (s.label) X.push({ n: s.label, t: `Difficulty slider: ${s.group || ''}`, kind: 'diff' });
+  const tipT = (T) => { for (const k in T) { const r = T[k], c = coachTip(r[3] || k); X.push({ n: setTxt(r[0]), t: setTxt(r[1]) + ' ' + setTxt(r[2]), kind: 'tip', card: { title: setTxt(r[0]), lines: [setTxt(r[1])], more: setTxt(r[2]), tip: c && c.t } }); } };
+  tipT(OFF_TIPS); tipT(DRAFT_TIPS);
+  for (const k in TOUR_NAMES) { const S = TOUR_STEPS[k] || []; X.push({ n: TOUR_NAMES[k], t: S.map(s => setTxt(s.text)).join(' '), kind: 'tip', card: { title: TOUR_NAMES[k], lines: S.slice(0, 4).map(s => setTxt(s.text)), more: S.map(s => setTxt(s.more)).filter(Boolean).join(' ') } }); }
+  for (const e of X) { e.nl = e.n.toLowerCase(); e.tl = e.t.toLowerCase(); }
+  return (SETQ.idx = X);
+}
+function setSrchRun() {   // the ranked list: name starts with it, a word of the name starts with it, the name has it, then the tip text has it
+  const q = SETQ.q.trim().toLowerCase(); SETQ.res = []; if (!q) return;
+  const sc = e => e.nl.startsWith(q) ? 0 : e.nl.includes(' ' + q) ? 1 : e.nl.includes(q) ? 2 : e.tl.includes(q) ? 3 : 9;
+  SETQ.res = setSrchIndex().map(e => [sc(e), e]).filter(r => r[0] < 9).sort((a, b) => a[0] - b[0] || a[1].n.length - b[1].n.length).slice(0, SETQ.max).map(r => r[1]);
+}
+const setSrchRow = i => ({ x: SETQ.box.x + SETQ.box.w + SETQ.btn.w - SETQ.rowW + 10, y: SETQ.box.y - (i + 1) * (SETQ.row + 4) - 4, w: SETQ.rowW, h: SETQ.row });
+const setSrchLocked = e => e.kind === 'set' && setInGame() && SET_GAME_LOCK.includes(e.k);
+function setSrchDraw() {   // (drawSettings, main page only)
+  srchDraw(SETQ_S, SETQ.btn, SETQ.box);
+  SETQ.res.forEach((e, i) => {
+    const b = setSrchRow(i), lk = setSrchLocked(e), tag = e.kind === 'set' ? SET_CATS.find(c => c.id === e.cat).label : e.kind === 'key' ? 'CONTROLS' : e.kind === 'diff' ? 'DIFFICULTY' : 'TIP';
+    menuBtn(b, `${lk ? '🔒 ' : ''}${e.n}  -  ${tag}`, lk ? CARD_GRAY : IN_GAME_PAPER.yellow, 15);
+  });
+  if (SETQ.card) setSrchCard();
+}
+function setSrchCard() {   // a tip's card over the page: title, its line(s), the coach's note, the long text; any click closes it
+  const C = SETQ.card, P = { x: 300, y: 110, w: 680, h: 460 };
+  ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(0, 0, W, H); uiModal();
+  resPanel(P.x, P.y, P.w, P.h, [[C.title, null]], RES.bright);
+  ctx.save(); ctx.fillStyle = RES.line; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; let y = P.y + 70;
+  ctx.font = `bold 22px ${HAND_FONT}`; for (const l of C.lines) for (const r of wrapLines(l, 52)) { ctx.fillText(r, P.x + 30, y); y += 28; }
+  if (C.tip) { ctx.fillStyle = RES.dim; ctx.fillText(C.tip, P.x + 30, y + 6); y += 40; }
+  ctx.font = 'bold 14px monospace'; ctx.fillStyle = RES.dim; for (const r of wrapLines(C.more || '', 78).slice(0, 14)) { ctx.fillText(r, P.x + 30, y); y += 19; }
+  ctx.restore();
+}
+function setSrchClick(p) {   // true = taken (main page only)
+  if (SETQ.card) { SETQ.card = null; return true; }
+  const i = SETQ.res.findIndex((e, j) => inBtn(p, setSrchRow(j)));
+  if (i >= 0) { const e = SETQ.res[i]; srchFocus(SETQ_S, false);
+    if (e.kind === 'set' || e.kind === 'key') { setCat = e.cat; bindScroll = 0; SETQ.lit = { k: e.k, i: e.i, t: uiNow() };
+      if (e.kind === 'key') { const r = BIND_ROWS.find(r => r.i === e.i); if (r) bindScroll = Math.max(0, Math.min(bindMax(), r.y - 80)); } }
+    else if (e.kind === 'diff') diffUI = { scroll: 0, sel: 0 };
+    else SETQ.card = e.card;
+    return true; }
+  return srchClick(SETQ_S, p, SETQ.btn, SETQ.box);
+}
+function setLitDraw() {   // (drawSetCat) the row a search opened, outlined for a moment
+  const L = SETQ.lit; if (!L) return; const s = (uiNow() - L.t) / 1000; if (s > SETQ.litS) { SETQ.lit = null; return; }
+  const b = L.k ? SET_BTNS[L.k] || SET_BTNS[L.k + 'Dn'] : KEY_BTNS[L.i]; if (!b) return;
+  menuMoving = true; ctx.save(); ctx.strokeStyle = '#e8b400'; ctx.lineWidth = 5; ctx.globalAlpha = 0.6 + 0.4 * Math.sin(s * 9); ctx.strokeRect(b.x - 4, b.y - 4, (L.k && SET_BARS[L.k] ? SETQ.rowW + 76 : b.w) + 8, b.h + 8); ctx.restore();
+}
+function setSearchKey(e) { return !!(typeof settingsOpen !== 'undefined' && settingsOpen && SETQ.qFoc && !setCat) && srchKey(SETQ_S, e); }
 // the halftime show's settings page (HALFTIME SHOW in settings): the master switch and one per segment (SETTINGS.halftime / SETTINGS.ht)
 let htUI = false;
 const HT_SEGS = [['highlights', 'HIGHLIGHTS'], ['league', 'AROUND THE LEAGUE'], ['historic', 'HISTORIC STATS'], ['qb', 'QB COMPARISON'], ['def', 'DEFENSE COMPARISON'], ['match', 'MATCHUP SPOTLIGHT']];
@@ -5047,15 +5130,16 @@ function diffGaugeFace(q) {
 }
 // the bar between a - and a + (volume / brightness; main page and the SOUND / GRAPHICS popups)
 const setBarRect = (dn, up) => { const x = dn.x + dn.w + 16; return { x, y: dn.y + 2, w: up.x - x - 16, h: dn.h - 4 }; };
-const setBarVal = key => SETTINGS[key] ?? (key === 'brightness' ? 0.5 : 1);
+const setBarVal = key => key.startsWith('vol.') ? volCh(key.slice(4)) : SETTINGS[key] ?? (key === 'brightness' ? 0.5 : 1);
+function setBarSet(key, v) { if (key.startsWith('vol.')) SETTINGS.vol = Object.assign({}, SETTINGS.vol, { [key.slice(4)]: v }); else SETTINGS[key] = v; }   // (channel bars live in SETTINGS.vol)
 let barDrag = null;   // { key, dn, up } while a bar is being dragged (pointermove / pointerup in 14)
 function setBarFromX(d, x) {
   const r = setBarRect(d.dn, d.up), v = Math.round(Math.max(0, Math.min(1, (x - r.x) / r.w)) * 100) / 100;
-  if (v !== setBarVal(d.key)) SETTINGS[d.key] = v;
+  if (v !== setBarVal(d.key)) setBarSet(d.key, v);
 }
 function barDragEnd() { if (barDrag.key === 'volume') catchSfx(); barDrag = null; saveSettings(); }   // (a blip at the new volume once let go)
 function setBarHit(p, main) {   // the bar under a click, if any
-  const B = SET_BTNS, L = [['volume', B.volDn, B.volUp], ['brightness', B.briDn, B.briUp]];
+  const B = SET_BTNS, L = Object.keys(SET_BARS).map(r => [SET_BARS[r], B[r + 'Dn'], B[r + 'Up']]);
   if (main) L.push(['volume', SET_VOL_MAIN.dn, SET_VOL_MAIN.up], ['brightness', SET_BRI_MAIN.dn, SET_BRI_MAIN.up]);
   const h = L.find(([, dn, up]) => inBtn(p, setBarRect(dn, up)));
   return h ? { key: h[0], dn: h[1], up: h[2] } : null;
@@ -5067,7 +5151,7 @@ function setVolRow(dn, up, Y, key = 'volume') {
   ctx.fillStyle = RES.strip; ctx.fillRect(bx, by, bw * v, bh);
   ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(bx, by, bw, bh);
   ctx.fillStyle = RES.line; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(`${key.toUpperCase()} ${Math.round(v * 100)}%`, bx + bw / 2, by + bh / 2 + 1);
+  ctx.fillText(`${SET_BAR_NAME[key] || key.toUpperCase()} ${Math.round(v * 100)}%`, bx + bw / 2, by + bh / 2 + 1);
 }
 function setLocks(keys) {   // a padlock in the corner of each locked setting on screen
   if (!setInGame()) return;
@@ -5328,8 +5412,8 @@ function diffKey(e) {
   const r = diffRows[U.sel]; if (r) { if (r.y < DLIST.top) U.scroll -= DLIST.top - r.y; else if (r.y + r.h > DLIST.bottom) U.scroll += r.y + r.h - DLIST.bottom; }
 }
 function setVolStep(up, key = 'volume') {   // - / + = 10 at a time, from wherever the bar is
-  SETTINGS[key] = Math.round(Math.max(0, Math.min(1, setBarVal(key) + (up ? 0.1 : -0.1))) * 100) / 100;
-  if (key === 'volume') catchSfx();   // a blip at the new level
+  setBarSet(key, Math.round(Math.max(0, Math.min(1, setBarVal(key) + (up ? 0.1 : -0.1))) * 100) / 100);
+  if (key === 'volume' || key === 'vol.players') catchSfx();   // a blip at the new level
 }
 function settingsClick(p) {
   if (QS && !QS.full) { qsClick(p); return; }
@@ -5340,6 +5424,7 @@ function settingsClick(p) {
   if (dbgUI) { debugClick(p); return; }
   if (spdUI) { speedClick(p); return; }
   if (htUI) { htClick(p); return; }
+  if (!setCat && setSrchClick(p)) return;
   const B = SET_BTNS, main = !setCat, keysOn = setCat === 'controls' && !TUI.on;   // (main = the category page; keysOn = the CONTROLS popup's keybinds list)
   if (setCat) { const P = setCat === 'controls' ? SET_POP_KEYS : SET_POP; if (inBtn(p, P.done) || !inBtn(p, P)) { setCat = null; rebinding = null; return; } }
   else { const c = SET_CATS.find(q => q.id !== 'diff' && inBtn(p, q)); if (c) { setCat = c.id; bindScroll = 0; return; } }
@@ -5358,7 +5443,7 @@ function settingsClick(p) {
   else if (inBtn(p, B.wx)) SETTINGS.weather = SETTINGS.weather === false;   // (takes effect next game)
   else if (inBtn(p, B.dir)) { const k = Object.keys(DRIVE_DIRS); SETTINGS.driveDir = k[(k.indexOf(SETTINGS.driveDir || 'left') + 1) % k.length]; }
   else if (main && inBtn(p, B.diff)) diffUI = { scroll: 0, sel: 0 };
-  else if (inBtn(p, B.volDn) || inBtn(p, B.volUp)) setVolStep(inBtn(p, B.volUp));   // (the SOUND popup's row)
+  else if (setCat === 'sound' && SET_CAT_ROWS.sound.some(r => inBtn(p, B[r + 'Dn']) || inBtn(p, B[r + 'Up']))) { const r = SET_CAT_ROWS.sound.find(r => inBtn(p, B[r + 'Dn']) || inBtn(p, B[r + 'Up'])); setVolStep(inBtn(p, B[r + 'Up']), SET_BARS[r]); }   // (the SOUND popup's rows)
   else if (main && (inBtn(p, SET_VOL_MAIN.dn) || inBtn(p, SET_VOL_MAIN.up))) setVolStep(inBtn(p, SET_VOL_MAIN.up));   // (the main page's bar)
   else if (inBtn(p, B.briDn) || inBtn(p, B.briUp)) setVolStep(inBtn(p, B.briUp), 'brightness');   // (the GRAPHICS popup's row)
   else if (main && (inBtn(p, SET_BRI_MAIN.dn) || inBtn(p, SET_BRI_MAIN.up))) setVolStep(inBtn(p, SET_BRI_MAIN.up), 'brightness');
@@ -5372,6 +5457,7 @@ function settingsClick(p) {
   else if (inBtn(p, B.zoom)) SETTINGS.camZoom = SETTINGS.camZoom === false;
   else if (inBtn(p, B.spd)) SETTINGS.simST = !SETTINGS.simST;
   else if (inBtn(p, B.decline)) SETTINGS.decline = DL_MODES[(DL_MODES.indexOf(declineMode()) + 1) % DL_MODES.length];   // (OFF / MY TEAM / LEAGUE)
+  else if (inBtn(p, B.deadline)) SETTINGS.deadline = SETTINGS.deadline === false;   // (off = no trade deadline for anyone)
   else if (inBtn(p, B.deals)) SETTINGS.contracts = SETTINGS.contracts === false;   // (off = AUTO: the game runs every contract)
   else if (inBtn(p, B.scouts)) SETTINGS.scouts = SETTINGS.scouts === false;   // (off: the draft's plain SCOUT button only, no scouts to hire / assign)
   else if (inBtn(p, B.morale)) { SETTINGS.morale = SETTINGS.morale === false; moraleSync(); }   // (off: every player reads 50 and nothing moves it; the attribute panel still shows)
@@ -6008,7 +6094,7 @@ function loadFromSlot(i) { choreFlush('loadFromSlot'); SAVE_FP = {}; ftClearAsk(
   } else { resetWorld(); healAll(); }   // (an old save has no rosters in it: everyone starts fresh, from the stock league)
   for (const [i, v] of Object.entries(d.stars || {})) if (ROSTER[MATCH.you][i]) Object.assign(ROSTER[MATCH.you][i], v);
   fillMorale();   // (old saves: morale 50, no rehab, not limited)
-  for (const p of [...Object.values(ROSTER).flat(), ...(FA_POOL || [])]) { fill5(p); abilMigrate(p); }   // (saves from before the 5th attribute / the v0.36 abilities)
+  for (const p of [...Object.values(ROSTER).flat(), ...(FA_POOL || [])]) { fill5(p); abilMigrate(p); if (p.rookie && !p.fresh && (p.age || 22) >= ROOKIE_OLD) delete p.rookie; }   // (saves from before the 5th attribute / the v0.36 abilities; old saves never cleared ROOKIE: drafted at 21-23, so 24+ is past his first year)
   if (career.hcStars == null) career.hcStars = 0.5;
   career.prac = d.career.prac || null; career.tut = d.career.tut || {}; tour = null; PR.draft = null;   // (older saves: a fresh camp)
   staffMigrate();   // (v0.64: renamed traits)

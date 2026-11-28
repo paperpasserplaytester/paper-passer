@@ -2582,14 +2582,16 @@ function simulateDrive(startYd, team = 'RED') {
   let pos = startYd, down = 1, togo = 10, plays = 0, secs = 0;
   const oKey = team === 'RED' ? MATCH.opp : MATCH.you, dKey = team === 'RED' ? MATCH.you : MATCH.opp;
   // (the difficulty only ever helps the other team: their offense when they have it; oppStars = their difficulty stars)
-  const rawEdge = oppStars(oKey).off - oppStars(dKey).def +
-               XF_SIM * (xfLitCount(oKey, true) - xfLitCount(dKey, false)) +                                              // (X-Factors in the zone)
+  const fm = simForm(team === 'RED' ? 'red' : 'blue'), mix = fm.c * SIM_FORM.blend;   // (v0.78: how this game has gone for this offense, against this defense)
+  const rawEdge = (oppStars(oKey).off - oppStars(dKey).def +
+               XF_SIM * (xfLitCount(oKey, true) - xfLitCount(dKey, false))) * (1 - mix) + fm.e * mix +                  // (X-Factors in the zone; the ratings matchup blended with the game so far)
                (rnd() + rnd() + rnd() - 1.5) / 1.5 * SIM_LUCK.drive;                                               // (and luck)
   // (the difficulty goes on after the bad-offense softening, so it bites at full strength both ways, SIM_DIFF x)
   const UT = team === 'BLUE' && oKey === MATCH.you && !tut ? userSim() : null;
   const MS = UT ? simMatch(oKey, dKey) : null;   // (only your own simmed offense: the league's other games stay as they were)   // (your simmed offense plays the way you do: your tendencies and your recent form)
-  const edge = (rawEdge < 0 ? rawEdge * SIM_EDGE.badOff : rawEdge) + (team === 'RED' ? 1 : -1) * diffLvl().sim * SIM_DIFF + (UT ? UT.edge : 0)
+  const edge0 = (rawEdge < 0 ? rawEdge * SIM_EDGE.badOff : rawEdge) + (team === 'RED' ? 1 : -1) * simDiffShare(diffLvl().sim) + (UT ? UT.edge : 0)   // (v0.78: the difficulty's share capped and counted once)
     + A5.qb.sim * Math.max(-3, Math.min(3, (attr5((ROSTER[oKey] || []).find(p => p.group === 'QB'), 'awr', RATING_AVG.QB.awr - RATING.bench) - RATING_AVG.QB.awr) / RATING.spread));   // (a weak offense is hurt less than a strong one is helped; QB awareness: smarter drives)
+  const edge = Math.max(-SIM_FAIR.edgeMax, Math.min(SIM_FAIR.edgeMax, edge0));   // (the odds below scale with edge: held so no drive is a sure thing)
   const TO = UT ? { ...tendOf(oKey), fourth: UT.fourth } : tendOf(oKey), TD = tendOf(dKey);
   if (team === 'BLUE' && !tut && xpcOn() && quirkOf((STAFF[MATCH.you] || {}).oc, 'Gambler')) TO.fourth = Math.min(1, TO.fourth * STAFF_QUIRKS.Gambler.go);   // (a Gambler OC goes for it more)
   const qbSim = (ROSTER[oKey] || []).find(p => p.group === 'QB'), qbSpd = Math.max(0, ((qbSim && qbSim.at && qbSim.at.spd) || 5) - 5);
@@ -2708,7 +2710,7 @@ function simulateDrive(startYd, team = 'RED') {
     const c0call = TD.c0 && rnd() < TEND_C0.rate;   // (an all-out Cover 0 blitz: more sacks, but a big play if it's beaten)
     // (the difficulty, relative to NORMAL, also leans on the odds: only the other team gets the help. On their defense (your simmed offense)
     //  more sacks, picks and incompletions; on their offense fewer picks and more completions)
-    const dLv = diffLvl(), dN = DIFFICULTY.NORMAL, dCov = dLv.cover / dN.cover, dHit = Math.sqrt(dLv.hit / dN.hit);
+    const dLv = diffLvl(), dN = DIFFICULTY.NORMAL, oc = v => Math.max(1 / SIM_FAIR.odds, Math.min(SIM_FAIR.odds, v)), dCov = oc(dLv.cover / dN.cover), dHit = oc(Math.sqrt(dLv.hit / dN.hit));   // (v0.78: the difficulty's per-play odds held to SIM_FAIR.odds either way)
     const dSack = team === 'BLUE' ? dHit : 1 / dHit, dInt = team === 'BLUE' ? dCov : 1 / dCov, dInc = (team === 'BLUE' ? 1 : -1) * (dCov - 1) * SIM_DIFF_ODDS;
     const SS = simStaff(team, { down, togo, pos, hurry, play: plays }, c0call);   // (v0.64: your staff's traits / quirks in a simmed play)
     const sackP = (0.06 * TD.blitz * (1 - SIM_EDGE.bad * edge) + (c0call ? TEND_C0.sack : 0)) * dSack * FC.sack * (UT ? UT.sackK * MS.sackK : 1) * SS.sack, intP = sackP + ((shot ? 0.04 : 0.025) * (1 - SIM_EDGE.bad * edge) * dInt + (UT ? UT.intAdj + MS.intAdj : 0)) * SS.int;
@@ -2747,7 +2749,7 @@ function simulateDrive(startYd, team = 'RED') {
     if (!tut) desc = `${FC.tag} ${desc}`;
     // a fumble after the catch or on the run: the defense recovers it, or the offense falls back on it
     if (!flag && gain > 0 && !desc.includes('incomplete') && pos + gain < 100 &&
-        rnd() < (pass ? SIM_FUMBLE.catch : SIM_FUMBLE.run) * (1 - SIM_EDGE.bad * edge) * wxSimK('fum') * (team === 'RED' ? diffLvl().fum : 1)) {
+        rnd() < (pass ? SIM_FUMBLE.catch : SIM_FUMBLE.run) * (1 - SIM_EDGE.bad * edge) * wxSimK('fum') * (team === 'RED' ? Math.max(1 / SIM_FAIR.odds, Math.min(SIM_FAIR.odds, diffLvl().fum)) : 1)) {
       if (rnd() < SIM_FUMBLE.defRecover) { gain = Math.max(0, Math.round(gain * rnd())); desc = `FUMBLE! ${who(tk)} forces it out and ${D} recovers!`; flag = 'fumble'; }
       else { desc += ` FUMBLE! ${who(tk)} knocks it loose... but ${O} recovers it.`; flag = 'fumblekept'; }
     }
@@ -2850,6 +2852,7 @@ function simulateDrive(startYd, team = 'RED') {
                     clock: 'Time runs out' }[type];
   const red = team === 'RED';
   // (the clock's already been run down line by line: secs = 0; endClk / endQ = where the drive leaves it)
+  simFormNote(red ? 'red' : 'blue', pos - startYd, type === 'turnover' || type === 'deftd' ? 1 : 0, plays, 1);   // (the game so far: simmed drives count too)
   return { lines, type, team, offPts, defPts, nextYd, redPts: red ? offPts : defPts, bluePts: red ? defPts : offPts,
            blueYd: nextYd, secs: 0, endClk: Math.max(0, Math.round(clk)), endQ: q, summary, cps };
 }

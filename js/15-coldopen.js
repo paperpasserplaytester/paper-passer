@@ -808,7 +808,7 @@ coldWrap('updateCamera', (o, dt) => {
 });
 // input: the cold open takes every key and pointer first (window, capture). Only a throw drag in progress is let through to the game's own aim code
 function coldPtr(type, e) {
-  if (!CO) { if (coldHand && type === 'down' && !coldLocked()) coldHand = null; return; }   // (locked: the hand stays until FRANCHISE is pressed)
+  if (!CO) return;   // (the hand beside FRANCHISE stays until FRANCHISE itself is pressed: every other button works, the hand keeps pointing)
   if (type === 'down' && coldGateGo()) { e.stopImmediatePropagation(); return; }   // (the gate: any press, before anything that could throw)
   let p; try { p = pointerPos(e); } catch (err) { return; }
   CO.ptr = p;
