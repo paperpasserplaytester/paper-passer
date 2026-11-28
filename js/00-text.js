@@ -984,6 +984,12 @@ const CHANGELOG = [
       "Your head coach earns most of his XP at the end of the season: wins, points and playoff runs.",
       "Every other team's head coach has his own star rating now, and it grows or changes over the years.",
     ]],
+    ["SHARPER SCREENS, LIVELIER CROWD", [
+      "Menus are drawn as sharp as the game, and nothing resizes when you go from a menu into a game.",
+      "Menu taps never get stuck, and a tap during a page turn no longer lands on the next page.",
+      "Smaller sound files, and the rain loops without a gap.",
+      "The crowd follows the game: it gets tense on big downs, goes quiet after a home mistake, boos a bad flag and roars for the big ones.",
+    ]],
     ["ANNOUNCERS", [
       "They talk slower and never cut themselves off mid-word.",
       "Less \"last drive\" talk: each context line comes once a drive.",

@@ -2976,7 +2976,7 @@ function refRevTick() {
   if (r.ph === 'still' && now - r.t0 > RV.still * 1000) { r.ph = 'stamp'; r.ts = now; }
   if (r.ph !== 'stamp') return;
   const e = (now - r.ts) / 1000;
-  if (!r.done && e > 0.25) { r.done = true; try { refRevApply(); } catch (er) { console.warn(er); } try { CELEB_SFX.stomp(1); } catch (er) {} }
+  if (!r.done && e > 0.25) { r.done = true; try { refRevApply(); } catch (er) { console.warn(er); } try { crowdRev(r); } catch (er) {} try { CELEB_SFX.stomp(1); } catch (er) {} }
   if (e > RV.stamp) REV = null;
 }
 function refRevDraw() {   // (end of draw(), screen) the slate and the stamp (refRevTick moves the review along)
@@ -3670,7 +3670,7 @@ function fieldCacheDraw() {   // true = the static field was drawn from the cach
   const m = ctx.getTransform(), on = Math.abs(m.a);
   if (m.b || m.c || !(on > 0) || !m.d) return false;
   const M0 = FIELD_CACHE.pad * YD, w0 = FIELD + 2 * (ENDZONE + M0), h0 = FW + 2 * M0;
-  const s0 = Math.min(Math.ceil(RK * FIELD_CACHE.zoom / FIELD_CACHE.step - 1e-6) * FIELD_CACHE.step, Math.sqrt(FIELD_CACHE.maxPx / (w0 * h0)), PHONE_TEST.blit === 'CAP 4096' ? Math.floor(4096 / Math.max(w0, h0) * 1e4) / 1e4 : Infinity);
+  const s0 = Math.min(Math.ceil((fieldWarmRK || RK) * FIELD_CACHE.zoom / FIELD_CACHE.step - 1e-6) * FIELD_CACHE.step, Math.sqrt(FIELD_CACHE.maxPx / (w0 * h0)), PHONE_TEST.blit === 'CAP 4096' ? Math.floor(4096 / Math.max(w0, h0) * 1e4) / 1e4 : Infinity);
   // (phase 5, the phone's white lines: a pattern tile or the margin landing on a half pixel left a seam in Safari's rasteriser. The scale is nudged down to a
   // multiple of 1 / gcd(paper tile, marker tile) and the margins up to whole cache pixels, so every tile join is on a whole pixel. DEBUG > FIELD BLIT: OLD SCALE / NO PAPER = the old numbers)
   const old = PHONE_TEST.blit === 'OLD SCALE' || PHONE_TEST.blit === 'NO PAPER', u = fieldTileGcd();
@@ -7417,7 +7417,7 @@ function celebFineRoll(q, h, mv, id) {
   const p = C.odds * k * Math.pow(C.repeatK, past) * (mine ? 1 : C.cpuK);
   if (Math.random() >= p) return;
   if (mine) game.celFined = 1;
-  F.push({ name, move: id, wk: season ? season.week : 0, yr, cr: past ? 3 : rude || show ? 2 : 1, cpu: mine ? 0 : 1, team: MATCH[celebFav(h)] });
+  F.push({ name, move: id, wk: season ? season.week : 0, yr, cr: past ? 3 : rude || show ? 2 : 1, cpu: mine ? 0 : 1, team: mine ? meK() : meK() === MATCH.you ? MATCH.opp : MATCH.you });   // (sound job D3: celebFav is the real you, MATCH is flipped on their drives)
 }
 // --- v0.51 lead-ins and exits: clips in the move key format the hero of a solo move plays in the lead-in (cel.pr) and the wind-down (cel.po) instead of
 // the plain blend (prWaveOver: before a cast move). Picked in celebBegin (celebPrePick), drawn by celebPose (celebClipPose), travel in celebPlace (dx along his
@@ -8574,8 +8574,9 @@ function celebFxMen(list, ac, live) {   // live: not a replay / the library (tho
   for (const p of list) {
     const c = p.cel, mv = c && celebMvOf(c);
     if (!mv) continue;
+    // (fav in MATCH's terms, by p.team as celebHome: crowdCeleb / celebSfx compare it to MATCH.home, which is flipped on their drives; celebFav is the real you)
     const key = c.id + '|' + c.i + '|' + p.team + '|' + p.num, u = (ac - c.t0) * (c.rate || 1), t = Math.max(0, Math.min(mv.secs, celebWarp(mv, c, u)));
-    const Wp = celebWarpOf(mv, c.hy), hero = !c.i && !c.rx, hy = c.hy || 0, fav = celebFav(p), ev = c.ev === 'td' && p.team === 'def' ? 'pick6' : c.ev;
+    const Wp = celebWarpOf(mv, c.hy), hero = !c.i && !c.rx, hy = c.hy || 0, fav = p.team === 'off' ? crowdOffFav() : crowdDefFav(), ev = c.ev === 'td' && p.team === 'def' ? 'pick6' : c.ev;
     let s = celebFxSt.get(key);
     if (!s || u < s.u - 0.02 || u > s.u + 0.3) {   // first seen, or the clock jumped: start from here
       s = { u, t, lift: 0, top: 0, h: null, pk: t >= Wp.pk, n: celebFxN };
@@ -8591,7 +8592,7 @@ function celebFxMen(list, ac, live) {   // live: not a replay / the library (tho
     for (const [bt, sfx] of celebBeatsOf(celebRole(mv, c))) if (bt + g > t0 && bt + g <= t) { celebSfx(sfx, fav); if (!c.i && String(sfx).slice(0, 5) === 'smash' && celebParts()) impacts.push({ x: p.x + p.face * 1.5 * YD, y: p.y - 14 * S, t: 0 }); }
     s.top = Math.max(s.top, lift);
     if (s.lift > CELEB_SND.landAt && lift <= CELEB_SND.landAt && s.top >= CELEB_SND.landLift) {   // back on his feet (or his back) after a jump / flip
-      clipSfx(pickOf(TACKLE_CLIPS.reg), CELEB_SND.landVol * (s.top >= CELEB_SND.landBig ? 1.6 : 1));
+      clipSfx(sndPick(TACKLE_CLIPS.reg), CELEB_SND.landVol * (s.top >= CELEB_SND.landBig ? 1.6 : 1));
       s.top = 0;
     }
     s.lift = lift;
@@ -11789,6 +11790,7 @@ function callTimeout(cpu = false, defense = false) {   // defense: two players, 
   if (!cpu && !mine) timeoutRecover(); else if (cpu) timeoutRecover(true);   // (your timeout: a breather and a steadier locker room; theirs: their men catch their breath)
   const left = mine ? twoP.to : game.timeouts, nm = teamName(mine ? 'RED' : 'BLUE');
   try { annTimeout(left); } catch (e) {}   // (v0.74 the announcers)
+  try { crowdTimeout(); } catch (e) {}   // (sound job E: the crowd's lull)
   if (tut) tutEvent('timeout');
   showBanner(`TIMEOUT  -  ${nm}`.toUpperCase(), '#ffffff', '#1b2a3a', `${left} left this half`);
   crowdCheer(0.2);

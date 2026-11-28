@@ -704,10 +704,12 @@ function hsCrowd(k) {
 }
 // the reel's crowd pops: each moment of a clip gets the reaction it would get live (HLREEL.pop: level, a touchdown / turnover layers two clips,
 // a big hit or a move draws the ooh), for the team it was good for (the home crowd cheers its own, boos / groans the other)
+// (sound job D4: a clip's fav is the real you; the halftime show runs before proceed's unflip, so on a half that ended on their drive MATCH is still flipped)
+const hsFavNow = f => (twoP && twoP.flipped ? (f === 'you' ? 'opp' : 'you') : f);
 function hsPop(c, k) {
   if (c.lg) return;   // (v0.52: another game's play: your crowd doesn't react to it)
   const P = HLREEL.pop[k] || HLREEL.pop.def;
-  try { if (P[2]) { oohAt = -1e9; oohSfx(P[0] * 0.8); } crowdCheer(P[0], c.fav || 'you', false, true, !!P[1]); } catch (e) {}
+  try { if (P[2]) { oohAt = -1e9; oohSfx(P[0] * 0.8); } crowdCheer(P[0], hsFavNow(c.fav || 'you'), false, true, !!P[1]); } catch (e) {}
 }
 function hsPops(t0, t1, fr) {
   const c = hl.list[hl.i]; if (!c || rec.paused) return;
@@ -2657,7 +2659,7 @@ function annLastHome(p) {
 }
 function annFarewell() {
   const G = annG(); if (G.fw) return;
-  for (const p of [runner, playCatcher, xfHit, qb]) if (p && annLastHome(p)) { G.fw = 1; return annSayOwn('stk_farewell', { who: 'A', pri: 2, add: true, wait: true, vars: { p: annName(p) } }); }
+  for (const p of [runner, playCatcher, xfHit, qb]) if (p && annLastHome(p)) { G.fw = 1; try { crowdOvation(p.team === 'off' ? crowdOffFav() : crowdDefFav()); } catch (e) {} return annSayOwn('stk_farewell', { who: 'A', pri: 2, add: true, wait: true, vars: { p: annName(p) } }); }
 }
 function annIncKey(T) {   // over / under / wide: the ball's landing spot vs the intended man, along the throw's own line (world coords, so a mirrored or flipped drive reads the same)
   const P = ANN_S.pl, r = tgt, A = ANN;
@@ -2675,7 +2677,7 @@ function annInjury(p, s, out) {   // (slExit / a mild one kept in: one line per 
 // --- announcers: the situation (v0.74). ONE object a play (ANN_S.sit), built pre-snap in annReset and refreshed in annPlayEnd: never per frame. Per-game
 // tallies on ANN_S.g (drive, streaks, flags, reviews; cleared by annClear(true) = newGame). Tunables ANN.sit / ANN.ref (01). Both teams, neutral lines.
 function annG() { const S = ANN_S; return S.g || (S.g = { dr: null, newDr: true, sc: '', fd3: 0, sk: 0, ds: [], min: { blue: 0, red: 0 }, fl: { blue: 0, red: 0 }, rev: 0, rx: 0, bad: 0, good: 0, show: '', refSaid: false, truth: null, two: 0, red: 0, goal: 0 }); }
-const annOffT = () => (aiOff() ? 'red' : 'blue');
+const annOffT = () => (tut && tut.defOn ? 'red' : 'blue');   // (sound job D2: flipSides swaps game.blue / red with the ball, so blue is the offense on the field; only the tutorial's defense is not flipped)
 const annClock = () => (Math.min(game.quarter, 5) - 1) * QUARTER_SECS + (QUARTER_SECS - game.secs);
 const annSecsLeft = () => Math.max(0, game.quarter > 4 ? game.secs : (4 - game.quarter) * QUARTER_SECS + game.secs);
 function annPossLeft() {   // possessions left for EACH team: time left / this game's average drive (blended toward ANN.sit.drive x QUARTER_SECS until drives are in)
@@ -3503,6 +3505,10 @@ function hcMainK(lv, side) {
   for (const key in a.k) if (o[key] != null) o[key] *= a.k[key];
   return o;
 }
+// sound job D0: the sound and crowd code below never draws from the game's Math.random (how many rolls a cheer takes depended on the crowd's level and
+// the volume, so sound could move every play after it). One seeded sound-only stream, the pattern of drawRnd (01).
+const SND_RNG = { s: 0x51d2c3a7 };
+function sndRnd() { let t = SND_RNG.s = (SND_RNG.s + 0x6D2B79F5) >>> 0; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }
 // master volume: HTML audio multiplies by it; synthesized sounds go through one gain node
 const VOL = () => document.hidden ? 0 : SETTINGS.volume;   // (off the tab: silent)
 // duck = 1 in play, 0 while paused: every sound is multiplied by it, gliding between over DUCK.out / DUCK.in seconds
@@ -3572,11 +3578,11 @@ function sndRec(k, v = 1, o = {}) {
 // a celebration whoosh: whoosh2 or now and then the softer whoosh1, at a rate (pitch) and level picked from SND_USE.whoosh, never the same pick twice running
 let whooshLast = -1;
 function celebWhoosh(v = 1) {
-  const W_ = SND_USE.whoosh, n = W_.steps * 2; let i = Math.floor(Math.random() * n);
-  if (i === whooshLast) i = (i + 1 + Math.floor(Math.random() * (n - 1))) % n;
+  const W_ = SND_USE.whoosh, n = W_.steps * 2; let i = Math.floor(sndRnd() * n);
+  if (i === whooshLast) i = (i + 1 + Math.floor(sndRnd() * (n - 1))) % n;
   whooshLast = i;
-  const soft = Math.random() < W_.soft, step = i % W_.steps, rate = W_.rate[0] + (W_.rate[1] - W_.rate[0]) * (step + Math.random()) / W_.steps;
-  return sndRec(soft ? 'whoosh1' : 'whoosh2', 0.8 * v * (W_.vol[0] + Math.random() * (W_.vol[1] - W_.vol[0])), { fade: 60, tag: 'w', rate });
+  const soft = sndRnd() < W_.soft, step = i % W_.steps, rate = W_.rate[0] + (W_.rate[1] - W_.rate[0]) * (step + sndRnd()) / W_.steps;
+  return sndRec(soft ? 'whoosh1' : 'whoosh2', 0.8 * v * (W_.vol[0] + sndRnd() * (W_.vol[1] - W_.vol[0])), { fade: 60, tag: 'w', rate });
 }
 function sndWarm() {   // (SND_USE.warm: the element each fast cue will play through, made and loading before its first use)
   try { for (const [k, tag] of SND_USE.warm) { const src = COLD_SND[k][0] + (tag ? '#' + tag : ''); if (!sfxPlaying[src]) { const a = sfxPlaying[src] = new Audio(src); a.preload = 'auto'; a.load(); } } } catch (e) {}
@@ -3585,15 +3591,15 @@ function sndWarm() {   // (SND_USE.warm: the element each fast cue will play thr
 // time (SND_USE.crumpleAt = where the slices start, crumpleMs / crumpleFade = how long one plays and fades), never the same slice twice running
 let crumpleLast = -1;
 function crumpleSfx(v = 1) {
-  const A = SND_USE.crumpleAt; let i = Math.floor(Math.random() * A.length);
-  if (A.length > 1 && i === crumpleLast) i = (i + 1 + Math.floor(Math.random() * (A.length - 1))) % A.length;
+  const A = SND_USE.crumpleAt; let i = Math.floor(sndRnd() * A.length);
+  if (A.length > 1 && i === crumpleLast) i = (i + 1 + Math.floor(sndRnd() * (A.length - 1))) % A.length;
   crumpleLast = i;
-  return sndRec('crumple', v * (0.9 + Math.random() * 0.2), { ms: SND_USE.crumpleMs, fade: SND_USE.crumpleFade, at: A[i] });
+  return sndRec('crumple', v * (0.9 + sndRnd() * 0.2), { ms: SND_USE.crumpleMs, fade: SND_USE.crumpleFade, at: A[i] });
 }
 let wetSfxAt = 0;
 function wetSfx(v = 1, kind = 'hit') {   // a body hitting soaked turf: tackles, dive landings and slides in rain games (now and then: SND_USE.wetOdds)
   if (typeof WXI === 'undefined' || !game || !game.wx || game.over || !wxLive() || !sndOn() || WXI.rain < SND_USE.wetFrom || performance.now() - wetSfxAt < SND_USE.wetGap) return;
-  if (Math.random() >= (SND_USE.wetOdds[kind] || SND_USE.wetOdds.hit)) return;
+  if (sndRnd() >= (SND_USE.wetOdds[kind] || SND_USE.wetOdds.hit)) return;
   wetSfxAt = performance.now(); sndRec('splash', v * Math.min(1, 0.5 + 0.5 * WXI.rain), { fade: 200 });
 }
 // popups that are the defense's good play (the rest are yours)
@@ -3603,6 +3609,25 @@ const OPP_POPUPS = new Set(['BOOM!', 'SACKED', 'INTERCEPTED', 'KNOCKOUT', 'KNOCK
 // scramble = s of the QB extending the play for full scramble hype (capped at scrambleMax)
 // tense = extra hum in a close, late game (full at max tension), red = extra hum in the red zone (full at the goal line), redZone = yards out it starts
 const CROWD_SFX = { tense: 0.14, red: 0.12, redZone: 20, base: 0.27, peak: 0.8, quiet: 0.17, xfade: 2.5, rise: 0.55, fall: 0.15, run: 20, deep: 35, scramble: 4, scrambleMax: 0.7, turn: 0.6, turnClose: 40 };   // turn / turnClose = a returned turnover's swell (v0.70)
+// sound job part E: the crowd logic's tunables (// --- crowd logic, after updateCrowd). on false = the old flat crowd exactly. fade = s a scene cross-fades; cut = s the
+// layers take to drop at the snap; release = crowdCheer / crowdGroan level x (1 + release x the snap's tension); lag = ms a reaction waits [min, max], bigAt = a
+// reaction this big gets a second layer stagger ms later; wallAt / hushAt / restAt = tension / restless a scene starts at; buzzPlays = plays of a home drive for
+// the buzz; blow = points for party / exodus; waveS / lullYell = s between waves / lone shouts; stunMs / lullMs = how long a stunned / lull lasts; carryS = s of
+// carry a full-size home play leaves, carryLvl = the hum it holds (share of peak); bigGain = yd of a big gain; victoryS / exodusPoS = NFL s left for the victory
+// roar / a playoff exodus; ten = tension (adds; late / two / last / ot / close / blow multiply; x (stakes0 + stakes x the game's stakes)); mom = momentum pushes
+// (decay = share lost a play); rest = restless per failure; energy = start (base + mood + stakes), eased by ease / s toward + mom x momentum, + late, + come, -
+// exodus; eBed0 + eBed x energy = the bed in a normal scene; ctx = the game's context (stakes0 neutral, po0 the first playoff round, late from week lateFrom,
+// rec = the records' pull, div, mood from win% / streak, road0 + roadRival + roadBowl = the visiting fans' share); ev* = a reaction's level x stakes / momentum /
+// a comeback; the rest = scene levels.
+const CROWD_AI = { on: true, fade: 1.5, cut: 0.15, release: 0.5, lag: [80, 250], bigAt: 0.7, stagger: 300, wallAt: 0.2, hushAt: 0.22, restAt: 0.6, buzzPlays: 6, blow: 17,
+  waveS: 25, lullYell: 20, yellOdds: 0.25, yellV: 0.25, stunMs: 6000, lullMs: 6000, carryS: 7, carryLvl: 0.45, bigGain: 20, victoryS: 40, exodusPoS: 120, booGap: 20000,
+  jeerAdd: 0.3, rivalBoo: 1.15, wallUp: 0.5, hushDip: 0.55, kickBig: 0.9, kickTen: 0.55, injuryLvl: 0.06, victoryLvl: 0.6, stompV: 0.5, shushE: 0.55, shushV: 0.6, koPop: 0.6,
+  eBed0: 0.75, eBed: 0.5, split: 0.6, murMs: 2500, failLullMs: 4000, garbage: 31, koBig: 1, koAway: 0.35, ovMs: 7000, ovFade: 3000, ovV: 0.7, ovShortMs: 2200, ovShortV: 0.3, evStakes0: 0.85, evStakes: 0.3, evMom: 0.25, comeK: 1.25,
+  ten: { base: 0.1, d3: 0.25, d4: 0.4, short: 0.1, long: -0.08, goal: 0.15, goalDown: 0.05, red: 0.15, gw: 0.15, late: 1.35, two: 1.15, last: 1.5, ot: 1.5, close: 1.25, blow: 0.1, stakes0: 0.8, stakes: 0.5 },
+  mom: { decay: 0.15, score: 0.35, take: 0.4, sack: 0.15, stop: 0.3, out3: 0.2, big: 0.2 },
+  rest: { fail: 0.3, sack: 0.15 },
+  energy: { base: 0.35, mood: 0.25, stakes: 0.3, ease: 0.05, mom: 0.2, late: 0.2, come: 0.25, exodus: 0.4 },
+  ctx: { stakes0: 0.3, po0: 0.6, late: 0.4, lateFrom: 10, rec: 0.4, div: 0.15, moodWp: 0.3, moodSk: 0.04, road0: 0.15, roadRival: 0.1, roadBowl: 0.35 } };
 // reactions scale min..max with how much the moment matters (gameImpact); stack = louder per back-to-back big play;
 // hype = how built-up a play has to get before its end earns a cheer or a groan; road = the road team's fans
 // (and the buzz for the road team's big plays) x the home crowd's volume
@@ -3633,7 +3658,8 @@ const SFX_SLEW = { up: 0.45, down: 0.8 };   // how fast (volume per second) a pl
 function playSfx(src, vol, maxMs, fadeMs, fadeInMs = 0, startAt = 0, rate = 1) {   // startAt: seconds into the clip to begin (a different stretch of it each time); rate: playback speed (pitch follows it)
   vol = (vol == null ? 1 : vol) * volCh(sndChOf(src));   // (v0.78: its channel's slider)
   if (TOUCH && SFX_TOUCH.re.test(src)) { let n = 0; for (const c of sfxLive) if (c.src && SFX_TOUCH.re.test(c.src) && !c.a.paused) n++; if (n >= SFX_TOUCH.layers) return; }   // (v0.62: phones: many media elements at once stutter on iOS)
-  if (sbufOn()) { const bc = sbufStart(src, vol, maxMs, fadeMs, fadeInMs, startAt, rate); if (bc) return bc;   // (v0.70: decoded buffer; else the element below)
+  const tr = crowdTrim(src);   // (sound job D2: the crowd clip's level trim, CROWD_CLIP; 1 for everything else)
+  if (sbufOn()) { const bc = sbufStart(src, vol, maxMs, fadeMs, fadeInMs, startAt, rate, tr); if (bc) return bc;   // (v0.70: decoded buffer; else the element below)
     if (TOUCH && !SBUF.skip.test(src) && liveNow()) { perfNote('sfx skipped ' + src.split('#')[0].replace('audio/', '')); return null; } }   // (v0.74: a phone mid-play: a cue not decoded yet is skipped, a media element's start cost ~33 ms; throwSfx falls back to its synthesized whoosh)
   try {
     // one audio element per clip, reused (a new Audio every play left hundreds of media players waiting on GC in Chrome); a re-trigger while it still plays
@@ -3649,10 +3675,10 @@ function playSfx(src, vol, maxMs, fadeMs, fadeInMs = 0, startAt = 0, rate = 1) {
     else a.pause();
     try { a.currentTime = startAt > 0 ? startAt : 0; } catch (e) {}
     try { a.preservesPitch = a.mozPreservesPitch = a.webkitPreservesPitch = false; a.playbackRate = rate; } catch (e) {}   // (always set: the element is reused)
-    sfxGain(a, fadeInMs ? 0 : Math.min(1, vol * VOL()));
+    sfxGain(a, fadeInMs ? 0 : Math.min(1, vol * tr * VOL()));
     const p = a.play();
     if (p && p.catch) p.catch(() => {});
-    const ctl = sfxCtl[src] = a._ctl = { src, a, vol, maxMs, t0: performance.now(), fadeMs: fadeMs, fadeIn: fadeInMs, startAt, rate };
+    const ctl = sfxCtl[src] = a._ctl = { src, a, vol, maxMs, t0: performance.now(), fadeMs: fadeMs, fadeIn: fadeInMs, startAt, rate, tr };
     sfxLive.add(ctl);
     return ctl;
   } catch (e) { /* no audio available */ }
@@ -3661,6 +3687,8 @@ function playSfx(src, vol, maxMs, fadeMs, fadeInMs = 0, startAt = 0, rate = 1) {
 const sfxLive = new Set();
 function sfxTick() {
   if (sbufQ.length && !sbufBusy) sbufPump();   // (decodes waiting for the dead ball)
+  if (sbufRaw.length && !liveNow()) { const f = sbufRaw.shift(), b = sbufRaw.shift(); sbufReady(f, b); }   // (v0.79: one raw decode shaped a frame, never mid-play)
+  if (bedQ.length) bedTick();
   if (!sfxLive.size) return;
   const nowT = performance.now();
   for (const ctl of sfxLive) {
@@ -3680,7 +3708,7 @@ function sfxTick() {
     const dtS = Math.min(0.1, (nowT - (ctl.lastT || nowT)) / 1000);
     ctl.lastT = nowT;
     ctl.cur = ctl.cur == null ? ctl.vol : ctl.cur + Math.max(-SFX_SLEW.down * dtS, Math.min(SFX_SLEW.up * dtS, ctl.vol - ctl.cur));
-    sfxGain(a, ctl.cur * fin * fout * early * VOL() * duck);
+    sfxGain(a, ctl.cur * (ctl.tr || 1) * fin * fout * early * VOL() * duck);
   }
 }
 
@@ -3703,7 +3731,7 @@ function ac() {
       try { actx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' }); } catch (e) { actx = new (window.AudioContext || window.webkitAudioContext)(); }
       noiseBuf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate);
       const ch = noiseBuf.getChannelData(0);
-      for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
+      for (let i = 0; i < ch.length; i++) ch[i] = sndRnd() * 2 - 1;
       loadClips(actx); sndWarm(); sbufWarm();
     }
     if (actx.state !== 'running' && actx.state !== 'closed') { const r = actx.resume(); if (r && r.catch) r.catch(() => {}); }   // (iOS also leaves it 'interrupted' after a call / app switch)
@@ -3752,7 +3780,7 @@ function sfxVolShim() {
 let sfxRoute = null;
 const SFX_GAIN = { tc: 0.012 };   // s: the GainNode's ease toward each new level
 function sfxGainSet(g, v) { try { const c = g.context; if (Math.abs(g.gain.value - v) < 0.002) return; g.gain.cancelScheduledValues(c.currentTime); g.gain.setTargetAtTime(v, c.currentTime, SFX_GAIN.tc); } catch (e) { g.gain.value = v; } }
-function sfxGain(a, v) { if (!a) return; v = Math.max(0, Math.min(1, +v || 0)); a.volume = v; }   // (the volume setter routes + eases when the shim is on)
+function sfxGain(a, v) { if (!a) return; v = Math.max(0, +v || 0); if (!a._bed) v = Math.min(a._cap || 1, v); a.volume = v; }   // (_cap: a decoded crowd clip whose CROWD_CLIP trim is above 1)   // (v0.79: a bed loop's handle takes a gain above 1)   // (the volume setter routes + eases when the shim is on)
 sfxVolCheck();
 // --- sound buffers (v0.70 phones): starting a media element (pause, seek, play, routed through createMediaElementSource) stalled iOS 300+ ms when a touchdown
 // started several. playSfx plays short recordings from AudioBuffers decoded once (a BufferSource per play, like clipSfx); the returned "element" is a stand-in
@@ -3760,9 +3788,9 @@ sfxVolCheck();
 // on: 'auto' = touch + iOS, true / false = forced. sr = decode rate (hi = files kept at 48 kHz), monoS = longer files are mixed to mono, cap = s kept of a long bed
 // (a start past half of it wraps into the first half), skip = loops / beds that stay on media elements, warm = decoded when audio starts (the rest on first use:
 // that play still goes through the element). Decoding never starts during a live play (sbufPump waits). sbufReport() = decoded sizes.
-const SBUF = { on: 'auto', sr: 32000, hi: /\/(cheer|boo|ooh|whistle|upgrade)\.mp3$/, monoS: 5, cap: { 'audio/disappointed.mp3': 16, 'audio/chant.mp3': 16, 'audio/eraser.mp3': 3, 'audio/pencil.mp3': 3 },
-  skip: /\/(crowd2?|rain|wind|classroom|footsteps|endwhistle)\./, attack: 0.006, stop: 0.008,
-  warm: ['whoosh1', 'whoosh2', 'thud', 'ground', 'hitcrack', 'smack', 'whistle', 'cheer', 'cheer2.wav', 'cheer3', 'boo', 'boo2', 'jeer', 'disappointed', 'ooh', 'gasp', 'chant', 'boulder',   // (v0.74: the in-play cues first)
+const SBUF = { on: 'auto', sr: 32000, hi: /\/(cheer|boo|ooh|whistle|endwhistle|upgrade)\.mp3$/, monoS: 5, cap: { 'audio/disappointed.mp3': 16, 'audio/chant.mp3': 16, 'audio/eraser.mp3': 3, 'audio/pencil.mp3': 3 },
+  skip: /\/(crowd2?|rain|wind|classroom|footsteps)\./, attack: 0.006, stop: 0.008,
+  warm: ['whoosh1', 'whoosh2', 'thud', 'ground', 'hitcrack', 'smack', 'whistle', 'endwhistle', 'cheer', 'cheer2', 'cheer3', 'boo', 'boo2', 'jeer', 'disappointed', 'ooh', 'gasp', 'chant', 'boulder',   // (v0.74: the in-play cues first)
     'clang', 'highfive', 'shush', 'shush2', 'stamp', 'register', 'yell', 'splash', 'crumple', 'click', 'upgrade',
     'eraser', 'pencil', 'tear', 'tap', 'flip', 'swoosh'] };   // (v0.72: the menu buttons' page sounds: never warmed, so their first play of a session went through a media element, ~33 ms on a phone; eraser / pencil kept to 3 s, their slices wrap)
 const sbuf = {}, sbufSz = {}, sbufQ = []; let sbufBusy = false;
@@ -3773,15 +3801,18 @@ function sbufPump() {
   if (sbufBusy || !sbufQ.length || !actx || liveNow() || window.BENCH && window.BENCH.sbufHold) return;   // (BENCH.sbufHold: the bench holds the decoder back, T-SND)
   sbufBusy = true; const f = sbufQ.shift();
   const done = () => { sbufBusy = false; sbufPump(); };
-  fetch(f).then(r => r.ok ? r.arrayBuffer() : Promise.reject(r.status)).then(ab => sbufDecode(ab, f)).then(b => { sbuf[f] = sbufShape(b, f); done(); }, () => { sbuf[f] = null; done(); });
+  fetch(f).then(r => r.ok ? r.arrayBuffer() : Promise.reject(r.status)).then(ab => sbufDecode(ab, f)).then(b => { if (liveNow()) sbufRaw.push(f, b); else sbufReady(f, b); done(); }, () => { sbuf[f] = null; done(); });
 }
+// v0.79: a decode that lands during a live play is kept raw and shaped at the next dead ball (sbufShape copies / mixes the whole file); one a frame (sfxTick)
+const sbufRaw = [];
+function sbufReady(f, b) { sbuf[f] = sbufShape(b, f); bedFire(f); }
 function sbufDecode(ab, f) {
-  let c = actx; try { const OC = window.OfflineAudioContext || window.webkitOfflineAudioContext; c = new OC(1, 1, SBUF.hi.test(f) ? 48000 : SBUF.sr); } catch (e) {}
+  let c = actx; if (sbufOn() || !bedFiles.has(f)) try { const OC = window.OfflineAudioContext || window.webkitOfflineAudioContext; c = new OC(1, 1, SBUF.hi.test(f) ? 48000 : SBUF.sr); } catch (e) {}   // (v0.79: a bed loop on a laptop keeps its quality: decoded at the context's own rate)
   perfDecN++; perfBlk.dec = 1; const done = () => { perfDecN--; perfBlk.dec = 1; };   // (FRAME TIMES: a decode in flight is tagged on the spike line)
   const pr = new Promise((res, rej) => { const p = c.decodeAudioData(ab, res, rej); if (p && p.then) p.then(res, rej); }); pr.then(done, done); return pr;
 }
 function sbufShape(b, f) {   // (cap a long bed, mix a long file to mono: done once, right after decoding)
-  const cap = SBUF.cap[f], len = cap ? Math.min(b.length, Math.round(cap * b.sampleRate)) : b.length, mono = b.numberOfChannels > 1 && b.duration > SBUF.monoS;
+  const cap = SBUF.cap[f], len = cap ? Math.min(b.length, Math.round(cap * b.sampleRate)) : b.length, mono = b.numberOfChannels > 1 && b.duration > SBUF.monoS && (sbufOn() || !bedFiles.has(f));
   if (len < b.length || mono) {
     const n = mono ? 1 : b.numberOfChannels, o = actx.createBuffer(n, len, b.sampleRate);
     for (let ch = 0; ch < n; ch++) { const d = o.getChannelData(ch); if (mono) { const k = 1 / b.numberOfChannels; for (let j = 0; j < b.numberOfChannels; j++) { const s = b.getChannelData(j); for (let i = 0; i < len; i++) d[i] += s[i] * k; } } else d.set(b.getChannelData(ch).subarray(0, len)); }
@@ -3791,28 +3822,124 @@ function sbufShape(b, f) {   // (cap a long bed, mix a long file to mono: done o
   return b;
 }
 function sbufReport() { let t = 0; const L = Object.keys(sbufSz).sort((a, b) => sbufSz[b] - sbufSz[a]).map(f => { t += sbufSz[f]; return f.slice(6) + ' ' + (sbufSz[f] / 1048576).toFixed(2); }); return { MB: +(t / 1048576).toFixed(2), files: L }; }
-function sbufStart(src, vol, maxMs, fadeMs, fadeInMs, startAt, rate) {   // (null = not decoded yet / no running context: playSfx uses the element)
+function sbufStart(src, vol, maxMs, fadeMs, fadeInMs, startAt, rate, trim = 1) {   // (null = not decoded yet / no running context: playSfx uses the element)
   const f = src.split('#')[0], b = sbuf[f];
   if (!b) { if (b === undefined) sbufWant(f); return null; }
   const c = ac(); if (!c) return null;
   const old = sfxCtl[src]; if (old && !old.a.paused && !old.a.ended && !old.fadeAt) { old.fadeAt = performance.now(); old.fadeMs2 = SFX_FIX.retrig; }
   const D = b.duration; if (SBUF.cap[f] && startAt > D * 0.5) startAt %= D * 0.5;
   startAt = Math.max(0, Math.min(startAt, D - 0.02));
-  const s = c.createBufferSource(), g = c.createGain(), v0 = fadeInMs ? 0 : Math.min(1, vol * VOL()), t0 = c.currentTime;
+  const s = c.createBufferSource(), g = c.createGain(), cap = Math.max(1, trim), v0 = fadeInMs ? 0 : Math.min(cap, vol * trim * VOL()), t0 = c.currentTime;
   s.buffer = b; s.playbackRate.value = rate; s.connect(g); g.connect(c.destination);
   g.gain.setValueAtTime(0, t0); if (v0) g.gain.linearRampToValueAtTime(v0, t0 + SBUF.attack);
   s.start(t0, startAt);
   let r = rate, tr = t0, pos = startAt;
-  const a = { duration: D, paused: false, ended: false, _sv: v0, _sb: 1,
+  const a = { duration: D, paused: false, ended: false, _sv: v0, _sb: 1, _cap: cap,
     get currentTime() { return pos + (c.currentTime - tr) * r; },
     get playbackRate() { return r; }, set playbackRate(v) { pos = this.currentTime; tr = c.currentTime; r = v; try { s.playbackRate.value = v; } catch (e) {} },
     get volume() { return this._sv; }, set volume(v) { this._sv = v; sfxGainSet(g, v); },
     pause() { if (this.paused) return; this.paused = true; try { const t = c.currentTime; g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(0, t, SBUF.stop); s.stop(t + SBUF.stop * 4); } catch (e) {} } };
   s.onended = () => { a.ended = a.paused = true; try { g.disconnect(); } catch (e) {} };
   sfxPlaying[src] = a;
-  const ctl = sfxCtl[src] = a._ctl = { src, a, vol, maxMs, t0: performance.now(), fadeMs, fadeIn: fadeInMs, startAt, rate };
+  const ctl = sfxCtl[src] = a._ctl = { src, a, vol, maxMs, t0: performance.now(), fadeMs, fadeIn: fadeInMs, startAt, rate, tr: trim };
   sfxLive.add(ctl);
   return ctl;
+}
+
+// --- bed loops (v0.79): the rain, the wind and the crowd's hum beds play from AudioBuffers decoded once (they were media elements on every device, each routed
+// through createMediaElementSource on iOS), through ONE helper:   h = bedLoop(file, o)
+//   o.xfade = s of the tail cross-faded (equal power) into the head so the loop has no seam (BED.xfade; 0 = the file already loops, e.g. wind.mp3);
+//   o.from / o.to = loop only that stretch of the file (a layer: a copy of the stretch is made, baked with its own cross-fade); o.once = play to the end, no loop
+//   (the crowd's two alternating beds); o.at = s into the loop (or the file, once) it starts from; o.vol = starting volume; o.lp = starting low-pass in Hz.
+// The handle is a stand-in for a media element: volume (may go above 1 on a buffer), paused, ended, play(at), pause(), currentTime, duration (NaN until decoded),
+// startAt, rate, lp(hz, tc) (eased low-pass; no argument = wide open), drop() (stop + forget). Chain: BufferSource (loop) -> BiquadFilter (lowpass) -> Gain ->
+// destination; the caller's volume is absolute (multiply volOf(channel) yourself, as with an element). Fetched + decoded once per file through sbufPump's queue
+// (never during a live play); phones decode at SBUF.sr in mono (sbufShape), laptops at the context's rate in stereo. Until the buffer exists the handle waits
+// silent and starts itself (bedTick); the fetch failing (file://) = the old media element (gain clamped at 1, lp does nothing, a stretch loops by seeking).
+// Never started through playSfx (the online wrapper would forward it): each device runs its own beds.
+const BED = { xfade: 1.5, rainXf: 2, lpTc: 0.25, open: 22000, q: 0.707 };
+const bedFiles = new Set(), bedBaked = {}, bedQ = [], BED_OK = Promise.resolve();
+function bedWant(f) { bedFiles.add(f); if (sbuf[f] === undefined) { sbuf[f] = 0; sbufQ.push(f); sbufPump(); } }
+function bedXf(d, s, j, X) { for (let i = 0; i < X; i++) { const k = i / X * Math.PI / 2; d[i] = d[i] * Math.sin(k) + s[j + i] * Math.cos(k); } }   // (d's head blended with s's tail from j: equal power)
+function bedBuf(h) {   // the buffer this handle plays (null = not ready); a stretch / the cross-fade is baked once, at a dead ball
+  if (h.buf) return h.buf;
+  const f = h.file, b = sbuf[f], o = h.o; if (!b || !actx) return null;
+  const sr = b.sampleRate, xf = o.xfade == null ? BED.xfade : o.xfade;
+  if (o.from != null || o.to != null) {
+    if (liveNow()) return null;
+    const i0 = Math.max(0, Math.round((o.from || 0) * sr)), i1 = Math.max(i0 + 2, Math.min(b.length, Math.round((o.to == null ? b.duration : o.to) * sr)));
+    const X = h.once ? 0 : Math.min(Math.round(xf * sr), (i1 - i0) >> 1), n = i1 - i0 - X, nb = actx.createBuffer(b.numberOfChannels, n, sr);
+    for (let ch = 0; ch < b.numberOfChannels; ch++) { const src = b.getChannelData(ch), d = nb.getChannelData(ch); d.set(src.subarray(i0, i0 + n)); if (X) bedXf(d, src, i0 + n, X); }
+    h.buf = nb; h.len = n / sr;
+  } else {
+    if (!h.once && xf > 0 && bedBaked[f] == null) {   // (baked in place, once: the file is only ever a bed)
+      if (liveNow()) return null;
+      const X = Math.min(Math.round(xf * sr), b.length >> 2); for (let ch = 0; ch < b.numberOfChannels; ch++) { const d = b.getChannelData(ch); bedXf(d, d, b.length - X, X); } bedBaked[f] = X;
+    }
+    h.buf = b; h.len = h.once ? b.duration : (b.length - (bedBaked[f] || 0)) / sr;
+  }
+  return h.buf;
+}
+function bedGo(h) {   // start the handle's sound if it should be playing and can (false = it waits in bedQ)
+  if (h._p || h.src || h.el) return true;
+  const f = h.file;
+  if (sbuf[f] === null || !actx && location.protocol === 'file:') return bedEl(h);   // (no fetch: the old element)
+  if (sbuf[f] === undefined && actx) bedWant(f);
+  const c = actx, b = bedBuf(h); if (!b || !c) return false;
+  const s = c.createBufferSource(), lf = c.createBiquadFilter(), g = c.createGain(), t = c.currentTime;
+  s.buffer = b; s.loop = !h.once; s.loopStart = 0; s.loopEnd = h.len; s.playbackRate.value = h._r;
+  lf.type = 'lowpass'; lf.frequency.value = h._lp; lf.Q.value = BED.q;
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(h._v, t + SBUF.attack);
+  s.connect(lf); lf.connect(g); g.connect(c.destination);
+  const at = Math.max(0, h.once ? Math.min(h.pos, h.len - 0.02) : h.pos % h.len);
+  s.start(t, at); h.src = s; h.lf = lf; h.g = g; h.t0 = t; h.p0 = at; h._end = false;
+  s.onended = () => { if (h.src === s) { h.src = null; h._end = true; h._p = true; } try { g.disconnect(); } catch (e) {} };
+  return true;
+}
+function bedEl(h) {
+  try {
+    const el = h.el = new Audio(h.file), o = h.o; el.loop = !h.once && o.to == null; el.preload = 'auto'; el.onerror = () => { h._bad = true; };
+    if (o.to != null && !h.once) el.addEventListener('timeupdate', () => { if (el.currentTime >= o.to) el.currentTime = o.from || 0; });
+    const at = (o.from || 0) + h.pos; if (at > 0) el.addEventListener('loadedmetadata', () => { try { el.currentTime = at; } catch (e) {} }, { once: true });
+    sfxGain(el, Math.min(1, h._v)); if (!h._p) { const r = el.play(); if (r && r.catch) r.catch(() => {}); }
+  } catch (e) { h._bad = true; }
+  return true;
+}
+function bedStop(h) {
+  const s = h.src, g = h.g; h.src = null;
+  if (s) try { const t = actx.currentTime; g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(0, t, SBUF.stop); s.stop(t + SBUF.stop * 4); } catch (e) {}
+}
+function bedTick() { for (let i = bedQ.length - 1; i >= 0; i--) { const h = bedQ[i]; if (h._p || bedGo(h)) { bedQ[i] = bedQ[bedQ.length - 1]; bedQ.pop(); } } }   // (sfxTick, only while one waits)
+function bedFire(f) { if (bedFiles.has(f) && bedQ.length) bedTick(); }
+function bedLoop(file, o = {}) {
+  bedFiles.add(file); if (actx) bedWant(file);
+  const h = { file, o, once: !!o.once, _bed: true, buf: null, len: NaN, src: null, lf: null, g: null, el: null, t0: 0, p0: 0, pos: o.at || 0, startAt: o.at || 0,
+    _v: o.vol || 0, _r: 1, _lp: o.lp || BED.open, _p: true, _end: false, _bad: false,
+    get volume() { return this._v; },
+    set volume(v) { v = Math.max(0, +v || 0); this._v = v; if (this.g) sfxGainSet(this.g, v); else if (this.el) sfxGain(this.el, Math.min(1, v)); },
+    get rate() { return this._r; },
+    set rate(v) { if (this.src) { this.pos = this.currentTime; this.p0 = this.pos; this.t0 = actx.currentTime; try { this.src.playbackRate.value = v; } catch (e) {} } else if (this.el) try { this.el.playbackRate = v; } catch (e) {} this._r = v; },
+    get paused() { return this.el ? this.el.paused : this._p; },
+    get ended() { return this.el ? this.el.ended : this._end; },
+    get duration() { return this.el ? this.el.duration : this.len; },
+    get currentTime() {
+      if (this.el) return this.el.currentTime - (this.o.from || 0);
+      if (!this.src) return this.pos;
+      const t = this.p0 + (actx.currentTime - this.t0) * this._r; return this.once ? Math.min(t, this.len) : t % this.len;
+    },
+    set currentTime(v) { if (this.el) { try { this.el.currentTime = v + (this.o.from || 0); } catch (e) {} return; } this.pos = v; if (this.src) { bedStop(this); bedGo(this); } },
+    lp(hz, tc) { this._lp = hz == null ? BED.open : Math.max(20, hz); if (this.lf) try { this.lf.frequency.setTargetAtTime(this._lp, actx.currentTime, tc == null ? BED.lpTc : tc); } catch (e) {} },
+    play(at) {
+      if (at != null) { this.pos = at; if (this.src) bedStop(this); if (this.el) try { this.el.currentTime = at + (this.o.from || 0); } catch (e) {} }
+      else if (this._end) this.pos = 0;
+      this._p = false; this._end = false;
+      if (this.el) { const r = this.el.play(); return r && r.catch ? r.catch(() => {}) : BED_OK; }
+      if (!bedGo(this) && !bedQ.includes(this)) bedQ.push(this);
+      return BED_OK;   // (a promise, as an element's play() gives: callers chain .catch)
+    },
+    pause() { if (this.el) { if (!this.el.paused) this.el.pause(); this._p = true; return; } if (this._p) return; this.pos = this.currentTime; this._p = true; bedStop(this); },
+    drop() { this.pause(); const i = bedQ.indexOf(this); if (i >= 0) bedQ.splice(i, 1); } };
+  return h;
 }
 
 const sfxLast = {};   // the same synthesized sound won't stack on itself: skipped until the last one has rung out
@@ -3828,7 +3955,7 @@ function impactSfx({ noiseDur, noiseFreq, noiseQ, noiseVol, thumpHz, thumpDur, t
   ng.gain.setValueAtTime(0.0001, t); ng.gain.linearRampToValueAtTime(noiseVol, t + 0.004);   // (a few ms of attack: a gain that jumps straight to full clicks on phones)
   ng.gain.exponentialRampToValueAtTime(0.0001, t + noiseDur);
   src.connect(band); band.connect(ng); ng.connect(sfxOut(a, 'players'));
-  src.start(t, Math.random() * 0.5); src.stop(t + noiseDur + 0.02);
+  src.start(t, sndRnd() * 0.5); src.stop(t + noiseDur + 0.02);
   const o = a.createOscillator(), og = a.createGain();
   o.type = 'sine';
   o.frequency.setValueAtTime(thumpHz, t);
@@ -3857,12 +3984,23 @@ const TACKLE_SND = { rate: 0.09, vol: 0.15, layerReg: 0.35, layerBig: 0.6, layer
 const TACKLE_POOL = { reg: [...TACKLE_CLIPS.reg.filter((c, i) => !TACKLE_SND.slapReg.includes(i)), ...TACKLE_SND.regRec], big: TACKLE_CLIPS.big.filter((c, i) => !TACKLE_SND.slapBig.includes(i)) };
 const CLIP_FADE = { catch: 0.06, hit: 0.06, tackle: 0.22 };   // seconds faded off the end of each kind of clip (a tackle rings out)
 // the strip is turned into an audio buffer once (when audio starts), so a clip plays the instant it's asked for and stops exactly on time
+// v0.79: done as a chore in slices (the whole strip in one go was an atob of 838 KB + a loop over every sample on the first touch); clipSfx's synthesized
+// stand-ins play until clipBuf exists. CLIP_SLICE = base64 characters decoded a step (a multiple of 8: whole 16-bit samples, never split)
 let clipBuf = null;
+const CLIP_SLICE = 65536;
 function loadClips(a) {
   try {
-    const d = window.CLIP_DATA, bin = atob(d.b64), n = bin.length >> 1, buf = a.createBuffer(1, n, d.sr), ch = buf.getChannelData(0);
-    for (let i = 0; i < n; i++) { const v = bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8); ch[i] = (v > 32767 ? v - 65536 : v) / 32768; }
-    clipBuf = buf;
+    const d = window.CLIP_DATA; if (!d || clipBuf || loadClips.on) return;
+    const B = d.b64, L = B.length, pad = B.endsWith('==') ? 2 : B.endsWith('=') ? 1 : 0, n = (L / 4 * 3 - pad) >> 1, buf = a.createBuffer(1, n, d.sr), ch = buf.getChannelData(0);
+    let pos = 0, i = 0; loadClips.on = true;
+    chore('loadClips', until => {
+      do {
+        const bin = atob(B.slice(pos, pos + CLIP_SLICE)); pos += CLIP_SLICE;
+        for (let k = 0; k + 1 < bin.length && i < n; k += 2, i++) { const v = bin.charCodeAt(k) | (bin.charCodeAt(k + 1) << 8); ch[i] = (v > 32767 ? v - 65536 : v) / 32768; }
+      } while (pos < L && performance.now() < until);
+      if (pos < L) return true;
+      clipBuf = buf; return false;
+    }, { keep: true });
   } catch (e) { /* no clips: the synthesized sounds stand in */ }
 }
 const clipLast = {};
@@ -3884,7 +4022,8 @@ function clipSfx([kind, s, e], vol, rate = 1) {   // rate = playback speed (pitc
   return true;
 }
 const pickOf = list => list[Math.floor(Math.random() * list.length)];
-const catchSfx = () => { if (!clipSfx(pickOf(CATCH_CLIPS), CLIP_VOL.catch)) impactSfx({ noiseDur: 0.07, noiseFreq: 1900, noiseQ: 1.1, noiseVol: 0.45, thumpHz: 230, thumpDur: 0.09, thumpVol: 0.35 }); };
+const sndPick = list => list[Math.floor(sndRnd() * list.length)];   // (pickOf on the sound stream: pickOf itself is shared with gameplay looks)
+const catchSfx = () => { if (!clipSfx(sndPick(CATCH_CLIPS), CLIP_VOL.catch)) impactSfx({ noiseDur: 0.07, noiseFreq: 1900, noiseQ: 1.1, noiseVol: 0.45, thumpHz: 230, thumpDur: 0.09, thumpVol: 0.35 }); };
 // big hits are much louder and heavier than a regular wrap-up
 // the crowd's "ooh": big hits, picks, and a touchdown against the home team (not twice within a couple of seconds)
 let oohAt = -1e9;
@@ -3899,11 +4038,11 @@ function oohSfx(vol = 0.6) {
 const tackLast = {};
 function tackPick(pool, key) {   // an entry of this pool that isn't the last one picked from it
   if (!pool.length) return null;
-  let i = Math.floor(Math.random() * pool.length);
-  if (TACKLE_SND.noRepeat && pool.length > 1 && i === tackLast[key]) i = (i + 1 + Math.floor(Math.random() * (pool.length - 1))) % pool.length;
+  let i = Math.floor(sndRnd() * pool.length);
+  if (TACKLE_SND.noRepeat && pool.length > 1 && i === tackLast[key]) i = (i + 1 + Math.floor(sndRnd() * (pool.length - 1))) % pool.length;
   tackLast[key] = i; return pool[i];
 }
-const tackSpread = r => 1 - r + 2 * r * Math.random();
+const tackSpread = r => 1 - r + 2 * r * sndRnd();
 const tackLayer = (list, v, key) => sndRec(tackPick(list, key), v * tackSpread(TACKLE_SND.vol), { fade: 140, tag: key, rate: tackSpread(TACKLE_SND.layerRate) });
 const tackleSfx = big => {
   if (big) oohSfx(0.5);
@@ -3911,7 +4050,7 @@ const tackleSfx = big => {
   const T = TACKLE_SND, pool = big ? TACKLE_POOL.big : TACKLE_POOL.reg, c = tackPick(pool, big ? 'big' : 'reg');
   const rec = typeof c === 'string';   // (a recording entry of the regular pool: TACKLE_SND.regRec)
   const ok = c && (rec ? sndRec(c, T.regAlone * tackSpread(T.vol), { fade: 140, tag: 'tr', rate: tackSpread(T.rate) }) : clipSfx(c, (big ? CLIP_VOL.big : CLIP_VOL.reg) * tackSpread(T.vol), tackSpread(T.rate)));
-  if (ok) { if (!rec && Math.random() < (big ? T.layerBig : T.layerReg)) tackLayer(big ? T.bigLayers : T.regLayers, big ? T.layerVolBig : T.layerVolReg, 'tl'); return; }
+  if (ok) { if (!rec && sndRnd() < (big ? T.layerBig : T.layerReg)) tackLayer(big ? T.bigLayers : T.regLayers, big ? T.layerVolBig : T.layerVolReg, 'tl'); return; }
   impactSfx({ noiseDur: big ? 0.3 : 0.14, noiseFreq: big ? 480 : 520, noiseQ: 0.8, noiseVol: big ? 1.5 : 0.45,
               thumpHz: (big ? 105 : 95) * tackSpread(T.rate), thumpDur: big ? 0.38 : 0.18, thumpVol: big ? 1.6 : 0.5 });
 };
@@ -3935,34 +4074,30 @@ const MATCH_SFX = { noiseDur: 0.22, noiseFreq: 700, noiseQ: 0.9, noiseVol: 0.9, 
 const matchBumpSfx = () => impactSfx(MATCH_SFX);
 const knockoutSfx = () => { tackleSfx(true); sndRec('hitcrack', SND_USE.koCrack, { fade: 120, tag: 'ko' }) || impactSfx(KO_SFX.crack); setTimeout(() => sndRec('boulder', SND_USE.koThud, { fade: 250, tag: 'ko' }) || impactSfx(KO_SFX.thud), KO_SFX.thudMs); };
 // contact sounds: a truck is a heavy hit (the big tackle clips + a low thump), a stiff arm a sharp pad slap
-const truckSfx = () => { if (!clipSfx(pickOf(TACKLE_CLIPS.big), CLIP_VOL.big * 0.85)) impactSfx({ noiseDur: 0.25, noiseFreq: 520, noiseQ: 0.8, noiseVol: 1.2, thumpHz: 110, thumpDur: 0.3, thumpVol: 1.3 }); };
-const handK = () => 1 - SND_USE.hand + 2 * SND_USE.hand * Math.random();   // (a hand hit's level, a little different each time)
+const truckSfx = () => { if (!clipSfx(sndPick(TACKLE_CLIPS.big), CLIP_VOL.big * 0.85)) impactSfx({ noiseDur: 0.25, noiseFreq: 520, noiseQ: 0.8, noiseVol: 1.2, thumpHz: 110, thumpDur: 0.3, thumpVol: 1.3 }); };
+const handK = () => 1 - SND_USE.hand + 2 * SND_USE.hand * sndRnd();   // (a hand hit's level, a little different each time)
 const stiffSfx = () => sndRec('thud', SND_USE.stiff * handK(), { fade: 60, ms: 200, tag: 'sa' }) || impactSfx({ noiseDur: 0.07, noiseFreq: 380, noiseQ: 0.8, noiseVol: 0.35, thumpHz: 120, thumpDur: 0.1, thumpVol: 0.45 });   // (v0.58: a soft pad thump, never the slap)
-// the end of the game: one of the three referee whistles in audio/endwhistle.mp3 ([start, end] seconds)
-const END_WHISTLES = [[0.2, 4.0], [6.75, 10.9], [15.0, 19.45]];
+// the end of the half / game: the referee's triple whistle in audio/endwhistle.mp3 ([start, end] seconds). v0.79: the file is cut to that one whistle with no
+// re-encode (the old 19.5 s file's 15.0-19.45 s; old 15.0 s = new 0.492 s in Chrome's decode, measured with tools/bench/snd/cut-check.js: 0 samples differ)
+const END_WHISTLES = [[0.492, 4.942]];
 // (the end of a quarter has no whistle of its own, just the normal one after the play; the half and the end of the game always get the triple whistle: endWhistle(true))
 function endWhistle(triple) {
   if (!triple || performance.now() - endWhistleAt < 4000) return;
   endWhistleAt = performance.now();
   fadeSfx(SFX.whistle, SFX_FIX.retrig);   // (never on top of the end-of-play blast)
-  try {
-    const [s, e] = END_WHISTLES[2];
-    const a = new Audio(SFX.endWhistle);
-    sfxGain(a, 0.8 * volOf('sfx'));
-    a.addEventListener('loadedmetadata', () => { a.currentTime = s; a.play().catch(() => {}); }, { once: true });
-    a.addEventListener('timeupdate', () => { if (a.currentTime >= e) a.pause(); });
-  } catch (err) { /* no audio available */ }
+  const W_ = END_WHISTLES[0];
+  playSfx(SFX.endWhistle, 0.8, (W_[1] - W_[0]) * 1000, 40, 0, W_[0]);   // (v0.79: one reused element / a decoded buffer on phones, never a new Audio a call)
 }
 // the center's snap: a quick slap of the ball into the QB's hands
 const snapSfx = () => impactSfx({ noiseDur: 0.06, noiseFreq: 1500, noiseQ: 1.0, noiseVol: 0.5, thumpHz: 200, thumpDur: 0.08, thumpVol: 0.4 });
 // a kick (kickoff, field goal, extra point): the deep thump of the foot through the ball
 // (one of the recorded ball-on-turf hits, loud; the synthesized thump if the clips aren't loaded)
-const kickSfx = () => { if (!clipSfx(pickOf(HIT_CLIPS), 1)) impactSfx({ noiseDur: 0.1, noiseFreq: 900, noiseQ: 0.9, noiseVol: 1.1, thumpHz: 140, thumpDur: 0.16, thumpVol: 1.4 }); };
+const kickSfx = () => { if (!clipSfx(sndPick(HIT_CLIPS), 1)) impactSfx({ noiseDur: 0.1, noiseFreq: 900, noiseQ: 0.9, noiseVol: 1.1, thumpHz: 140, thumpDur: 0.16, thumpVol: 1.4 }); };
 // a throw: the ball leaving the hand with a whoosh (recorded: whoosh1 lob / whoosh2 bullet, sharper and louder; also kicks); the synthesized
 // band-passed sweep only if the recording can't play
 const THROW_REL = { noiseDur: 0.04, noiseFreq: 2200, noiseQ: 1.2, noiseVol: 0.25, thumpHz: 260, thumpDur: 0.05, thumpVol: 0.2 };   // (the release's tiny tick)
 function throwSfx(bullet) {
-  if (sndRec(bullet ? 'whoosh2' : 'whoosh1', bullet ? SND_USE.throw.bullet : SND_USE.throw.lob, { fade: 60, tag: 'th', rate: 1 + (Math.random() * 2 - 1) * SND_USE.throwRate })) { impactSfx(THROW_REL); return; }
+  if (sndRec(bullet ? 'whoosh2' : 'whoosh1', bullet ? SND_USE.throw.bullet : SND_USE.throw.lob, { fade: 60, tag: 'th', rate: 1 + (sndRnd() * 2 - 1) * SND_USE.throwRate })) { impactSfx(THROW_REL); return; }
   const a = ac();
   if (!a) return;
   const t = a.currentTime, dur = bullet ? 0.28 : 0.4;
@@ -3986,7 +4121,7 @@ const dropSfx = () => impactSfx({ noiseDur: 0.09, noiseFreq: 1100, noiseQ: 0.9, 
 // (one clip per hit: harder hits are louder)
 const bounceSfx = v => {
   const k = Math.min(1, v / (260 * S));
-  if (clipSfx(pickOf(HIT_CLIPS), 0.4 + 0.5 * k)) return;
+  if (clipSfx(sndPick(HIT_CLIPS), 0.4 + 0.5 * k)) return;
   impactSfx({ noiseDur: 0.08, noiseFreq: 900, noiseQ: 0.9, noiseVol: 0.1 + 0.3 * k, thumpHz: 150 - 40 * k, thumpDur: 0.1 + 0.08 * k, thumpVol: 0.15 + 0.4 * k });
 };
 
@@ -4002,14 +4137,42 @@ function gameImpact() {
   return CROWD_IMPACT.min + (CROWD_IMPACT.max - CROWD_IMPACT.min) * (0.5 * late + 0.5 * close) * (0.5 + 0.5 * close);
 }
 // the home crowd's cheer is one of these clips (one still going is the one a back-to-back play builds on)
-const CHEERS = [SFX.cheer, 'audio/cheer2.wav', COLD_SND.cheer[0]];
+const CHEERS = [SFX.cheer, 'audio/cheer2.mp3', COLD_SND.cheer[0]];
 // a different stretch of a crowd clip each time: where to start (s) so a reaction of ms still fits inside it
-const CROWD_LEN = { 'cheer.mp3': 4.4, 'cheer2.wav': 9.8, 'cheer3.mp3': 12, 'boo.mp3': 3.1, 'boo2.mp3': 5.1, 'jeer.mp3': 4.8, 'gasp.mp3': 3.2, 'ooh.mp3': 2.6, 'chant.mp3': 26, 'crowd.mp3': 39.3, 'crowd2.mp3': 34.3, 'disappointed.mp3': 36.7 };
+// (sound job D2) ONE table for the crowd's clips, measured with ffmpeg (mono, dB RMS): len = s; body = [from, to] s, the stretch at full cry (a reaction
+// starts inside it: before, some started in their own fade-out); db = the file's overall level; trim = x on every play of the file (playSfx), so the
+// clips of a pool sit at one level: CHEERS at cheer.mp3's -16.7, BOOS at boo2's -20.2, ooh.mp3 up to gasp's -19.6 (above 1 only plays from a buffer:
+// a media element stops at 1); env (the two hum beds only) = their level every s seconds, which updateCrowd evens out to CROWD_BED.ref (a bed loop
+// takes a gain above 1). Part E's crowd logic reads it too.
+const CROWD_CLIP = {
+  'audio/cheer.mp3':        { len: 4.4,  body: [0.5, 2.5], db: -16.7, trim: 1 },
+  'audio/cheer2.mp3':       { len: 9.8,  body: [1, 6],     db: -18.2, trim: 1.189 },   // (+1.5 dB)
+  'audio/cheer3.mp3':       { len: 12,   body: [0, 11],    db: -14.1, trim: 0.741 },   // (-2.6 dB)
+  'audio/boo2.mp3':         { len: 5.1,  body: [0, 4.5],   db: -20.2, trim: 1 },
+  'audio/jeer.mp3':         { len: 4.8,  body: [1.5, 4],   db: -19.7, trim: 0.944 },   // (-0.5 dB: with boo2 in BOOS)
+  'audio/gasp.mp3':         { len: 3.2,  body: [0, 2],     db: -19.6, trim: 1 },
+  'audio/boo.mp3':          { len: 3.1,  body: [0.5, 1.5], db: -20.4, trim: 1 },
+  'audio/ooh.mp3':          { len: 2.6,  body: [0.5, 1.5], db: -29.0, trim: 2.951 },   // (+9.4 dB: it sat ~10 dB under the other reactions)
+  'audio/chant.mp3':        { len: 26,   body: [0, 20],    db: -20.9, trim: 1 },       // (5 dB down in its last 6 s)
+  'audio/disappointed.mp3': { len: 36.7, body: [0, 36.7],  db: -16.8, trim: 1 },
+  'audio/crowd.mp3':        { len: 39.3, body: [0, 39.3],  db: -38.3, trim: 1, env: { s: 3, db: [-37, -34, -35, -38, -39, -39, -38, -39, -40, -41, -42, -42, -43] } },
+  'audio/crowd2.mp3':       { len: 34.3, body: [0, 34.3],  db: -31.6, trim: 1, env: { s: 3, db: [-33, -34, -35, -31, -34, -32, -31, -31, -30, -28, -32] } },
+};
+const CROWD_BED = { ref: -34 };   // dB both hum beds are evened out to (about the power mean of the two files today, so the hum's average level stays where CROWD_SFX was tuned)
+for (const k in CROWD_CLIP) { const e = CROWD_CLIP[k].env; if (e) e.g = e.db.map(d => Math.pow(10, (CROWD_BED.ref - d) / 20)); }   // (gains, worked out once)
+const crowdClipOf = src => { const i = src.indexOf('#'); return CROWD_CLIP[i < 0 ? src : src.slice(0, i)]; };
+const crowdTrim = src => { const c = typeof src === 'string' && crowdClipOf(src); return c ? c.trim : 1; };
+function crowdEnv(file, t) {   // a bed's level correction at t s into the file (the step levels taken at each step's middle, eased between; no garbage: called every frame)
+  const c = CROWD_CLIP[file], e = c && c.env; if (!e) return 1;
+  const g = e.g, x = Math.max(0, Math.min(g.length - 1, t / e.s - 0.5)), i = Math.floor(x), f = x - i;
+  return i + 1 < g.length ? g[i] + (g[i + 1] - g[i]) * f : g[i];
+}
 const crowdLast = {};   // (v0.70) the last clip each pool played: never the same one twice in a row
-const crowdPick = (pool, tag) => { const base = c => c.replace(/#.*/, ''), opts = pool.filter(c => base(c) !== crowdLast[tag]), c = pickOf(opts.length ? opts : pool); crowdLast[tag] = base(c); return c; };
-const crowdStart = (src, ms) => {
-  const len = CROWD_LEN[src.replace(/#.*/, '').split('/').pop()] || 0;
-  return Math.random() * Math.max(0, len - ms / 1000 - 0.5);
+const crowdPick = (pool, tag) => { const base = c => c.replace(/#.*/, ''), opts = pool.filter(c => base(c) !== crowdLast[tag]), c = sndPick(opts.length ? opts : pool); crowdLast[tag] = base(c); return c; };
+const crowdStart = (src, ms) => {   // (sound job D2: inside the clip's body; a reaction longer than the body starts at its top and fades out past it)
+  const c = crowdClipOf(src); if (!c) return 0;
+  const lo = c.body[0], hi = c.body[1] - ms / 1000;
+  return hi > lo ? lo + sndRnd() * (hi - lo) : lo;
 };
 function pickCheer() {
   const live = CHEERS.find(c => sfxCtl[c] && !sfxCtl[c].a.paused && !sfxCtl[c].a.ended);
@@ -4030,18 +4193,23 @@ function booGate(level, huge) {
   if (key !== booKey) { booKey = key; booDrive = 0; }
   if (booDrive >= B.perDrive) return false;
   if (now - booLast > B.runMs) booRun = 0;
-  if (Math.random() > Math.pow(B.decay, booRun)) return false;
+  if (sndRnd() > Math.pow(B.decay, booRun)) return false;
   booDrive++; booRun++; booLast = now;
   booEnd = now + (1500 + level * 3500) * (huge ? CROWD_IMPACT.hugeLong : 1);
   return true;
 }
+// whose crowd a play belongs to, in MATCH's terms (what crowdCheer's fav === MATCH.home reads): flipSides swaps MATCH.you / home with the ball, so
+// 'you' is always the offense on the field, except the tutorial's defense lesson (tut.defOn: never flipped, you are the defense)
+const crowdDefFav = () => (tut && tut.defOn ? 'you' : 'opp');
+const crowdOffFav = () => (tut && tut.defOn ? 'opp' : 'you');
 function crowdCheer(level, fav = 'you', bad = false, sure = false, huge = false) {   // sure = skip the gate (a moment the crowd is already building to); huge = a touchdown / pick: two clips layered, longer
   if (indoorOn()) return;   // (v0.76: no crowd in the practice gym)
-  const home = fav === MATCH.home;
-  if ((!home && bad) || (results && !reelLoud())) return;   // (no crowd in the menus, but for the reel behind the result screen)
+  let home = fav === MATCH.home;
+  if ((!home && bad) || (results && !reelLoud())) return;
+  if (!home && crowdSplitOn()) { home = true; level *= CROWD_AI.split; crowdGroan(level * 0.6, false); }   // (sound job E5: the Paper Bowl's split house: a cheer from one half, the other half's groan under it)   // (no crowd in the menus, but for the reel behind the result screen)
   playCheered = true;
-  level = Math.min(1, level * gameImpact());
-  if (!sure && Math.random() > Math.min(1, (level - CHEER_GATE.floor) / CHEER_GATE.span)) { playCheered = false; return; }   // small plays pass in near silence: only the bigger ones bring the crowd in
+  level = Math.min(1, level * gameImpact() * crowdRel());   // (crowdRel: x 1 + CROWD_AI.release x the snap's tension; 1 when the crowd logic is off)
+  if (!sure && sndRnd() > Math.min(1, (level - CHEER_GATE.floor) / CHEER_GATE.span)) { playCheered = false; return; }   // small plays pass in near silence: only the bigger ones bring the crowd in
   const now = performance.now() / 1000;
   if (home) {
     crowdFx.until = Math.max(crowdFx.until, animNow() + 1400 + level * 3000);
@@ -4070,7 +4238,7 @@ function crowdCheer(level, fav = 'you', bad = false, sure = false, huge = false)
     if (!home) {   // the road fans keep cheering under the boos for as long as the moment lasts
       const road = CHEERS.map(c => c + '#road').find(k => live(sfxCtl[k]));
       if (road) { sfxCtl[road].vol = Math.min(1, ctl.vol * CROWD_IMPACT.road); sfxCtl[road].maxMs = Math.max(sfxCtl[road].maxMs, performance.now() - sfxCtl[road].t0 + ms); }
-      else { const rc = pickOf(CHEERS); playSfx(rc + '#road', ctl.vol * CROWD_IMPACT.road, ms, CROWD_IMPACT.fadeOut, 500, crowdStart(rc, ms + 1500)); }
+      else { const rc = sndPick(CHEERS); playSfx(rc + '#road', ctl.vol * CROWD_IMPACT.road, ms, CROWD_IMPACT.fadeOut, 500, crowdStart(rc, ms + 1500)); }
     }
     return;
   }
@@ -4088,7 +4256,7 @@ function crowdCheer(level, fav = 'you', bad = false, sure = false, huge = false)
     crowdFx.level = 1; crowdFx.until = Math.max(crowdFx.until, animNow() + 2500 + ms);
   }
   // the road team's fans in the corner cheer along under the boos (a separate, quieter copy of the cheer)
-  if (!home) { const rc = pickOf(CHEERS); playSfx(rc + '#road', vol * CROWD_IMPACT.road, ms, CROWD_IMPACT.fadeOut, 500, crowdStart(rc, ms + 1500)); }
+  if (!home) { const rc = sndPick(CHEERS); playSfx(rc + '#road', vol * CROWD_IMPACT.road, ms, CROWD_IMPACT.fadeOut, 500, crowdStart(rc, ms + 1500)); }
 }
 // A crowd's groan when its team's big play comes up empty (synthesized: a mass of voices sliding down).
 // hush = it's the home crowd: the whole place goes quiet for a beat
@@ -4121,7 +4289,7 @@ function crowdClimax(fav) {   // fav = 'you' | 'opp': whose moment it is
 function crowdMoment(text, kind) {   // (BLUE is always the side with the ball; the points of this play are not on the board yet)
   if (indoorOn()) return;   // (v0.76: no crowd in the practice gym)
   if (tut || game.over || patMode !== null) return;
-  const q = game.quarter, off = aiOff() ? 'opp' : 'you', def = aiOff() ? 'you' : 'opp', lead = game.red - game.blue;   // (lead: the defense's)
+  const q = game.quarter, off = crowdOffFav(), def = crowdDefFav(), lead = game.red - game.blue;   // (lead: the defense's)
   const stop = kind === 'turnover' || /INTERCEPT|PICK SIX|TURNOVER|on downs/i.test(String(text));
   if (stop && (q >= 5 || (q === 4 && game.secs <= lateS(CLIMAX.lateS))) && lead >= 0 && lead <= CLIMAX.margin) return crowdClimax(def);
   const add = kind === 'td' ? 6 : kind === 'fg' ? 3 : 0;
@@ -4130,8 +4298,8 @@ function crowdMoment(text, kind) {   // (BLUE is always the side with the ball; 
 function crowdFinal() {
   if (indoorOn()) return;   // (v0.76: no crowd in the practice gym)
   const d = game.blue - game.red;
-  if (!d || (game.quarter < 5 && Math.abs(d) > CLIMAX.margin)) return;
-  climaxAt = -1e9; crowdClimax((d > 0) === !aiOff() ? 'you' : 'opp');
+  if (!d || (game.quarter < 5 && Math.abs(d) > CLIMAX.margin)) { if (d) crowdAiFinal(d); return; }   // (sound job E: a final that is not close)
+  climaxAt = -1e9; crowdClimax(d > 0 ? 'you' : 'opp');   // (blue is MATCH.you's score, flipped or not)
 }
 // --- celebration sounds (synthesized: no audio files). A move's keys name them: [second, ease, pose, 'clap'] (or a list; 'name:x' = x times as loud).
 // celebSfx plays one: clap, snap, slap, thud (the ball-on-turf clip), stomp, clang, whoosh, scrape, grunt, hit / bighit (pads, with a camera jolt), boom
@@ -4146,7 +4314,7 @@ function sweepSfx(f0, f1, f2, dur, vol, q = 1.4, key) {   // band-passed noise s
   band.frequency.setValueAtTime(f0, t); band.frequency.exponentialRampToValueAtTime(f1, t + dur * 0.4); band.frequency.exponentialRampToValueAtTime(f2, t + dur);
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(Math.max(0.001, vol), t + dur * 0.3); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   src.connect(band); band.connect(g); g.connect(sfxOut(a, 'players'));
-  src.start(t, Math.random() * 0.5); src.stop(t + dur + 0.02);
+  src.start(t, sndRnd() * 0.5); src.stop(t + dur + 0.02);
 }
 function toneSfx(type, parts, dur, vol, key) {   // parts: [Hz, level, Hz at the end (a slide)]
   const a = ac(); if (!a) return;
@@ -4177,7 +4345,7 @@ const CELEB_SFX = {
   boom:    v => { sndRec('boulder', 0.7 * v, { fade: 250, tag: 'bm' }) || impactSfx({ noiseDur: 0.3, noiseFreq: 190, noiseQ: 0.6, noiseVol: 0.7 * v, thumpHz: 60, thumpDur: 0.4, thumpVol: 1.2 * v }); setTimeout(() => sweepSfx(3200, 5200, 2400, 0.55, 0.14 * v, 0.6, 'crackle'), 120); },
   shutter: v => { CELEB_SFX.snap(v); setTimeout(() => CELEB_SFX.snap(0.7 * v), 70); },   // (no shutter recording yet)
   flash:   v => CELEB_SFX.snap(0.6 * v),   // (no flash-pop recording yet: a soft snap)
-  marker:  v => sndRec('pencil', 1.2 * v, { ms: 500, fade: 160, at: Math.random() * SND_USE.penAt, tag: 'mk' }),   // (no marker recording yet: a pencil stretch)
+  marker:  v => sndRec('pencil', 1.2 * v, { ms: 500, fade: 160, at: sndRnd() * SND_USE.penAt, tag: 'mk' }),   // (no marker recording yet: a pencil stretch)
   boing:   () => {},   // (no recording yet: silent until one comes in)
   squeak:  () => {},   // (no recording yet: silent until one comes in)
   foam:    v => sndRec('thud', 0.6 * v, { fade: 80, tag: 'fm' }) || CELEB_SFX.thud(0.7 * v),   // (the soft thud recording; the ball thump if it can't play)
@@ -4189,7 +4357,7 @@ const CELEB_SFX = {
   swell:   (v, fav) => { crowdCheer(Math.min(1, v), fav, false, true); if (v >= 1) crowdChant(2); },   // (v0.51: the home crowd turned up, louder each time)
   pop:     (v, fav) => crowdPop(v, fav),
   post:    (v, fav) => postShake(v, fav),
-  pencil:  v => sndRec('pencil', v, { ms: SND_USE.pencilMs, fade: 160, at: Math.random() * SND_USE.penAt }),   // (v0.43: a pencil line scratched on paper)
+  pencil:  v => sndRec('pencil', v, { ms: SND_USE.pencilMs, fade: 160, at: sndRnd() * SND_USE.penAt }),   // (v0.43: a pencil line scratched on paper)
   bell:    v => sndRec('bell', 0.8 * v, { ms: 1400, fade: 500, tag: 'cb' }),   // (a bell rung: the recorded school bell)
   click:   v => sndRec('click', v, { tag: 'cc' }),   // (a key turned in a lock: the recorded click)
   chop:    v => { sndRec('whoosh2', 0.5 * v, { ms: 160, fade: 60, tag: 'ch' }) || sweepSfx(700, 2200, 500, 0.14, 0.2 * v, 1.4, 'chopw'); setTimeout(() => impactSfx({ noiseDur: 0.06, noiseFreq: 900, noiseQ: 1.2, noiseVol: 0.55 * v, thumpHz: 140, thumpDur: 0.1, thumpVol: 0.6 * v }), 90); },   // (an axe biting wood)
@@ -4237,7 +4405,7 @@ function crowdChant(bars) {   // the recorded rhythmic chant, bars x 4 beats of 
   setTimeout(() => {
     if (paused || crowdQuiet()) return;
     crowdFx.until = Math.max(crowdFx.until, animNow() + ms);   // (the stands move the whole stretch)
-    if (sndRec('chant', C.chantVol * SND_USE.chantK, { ms, fade: Math.min(1500, ms * 0.4), in: 300, at: Math.random() * Math.max(0, SND_USE.chantLen - ms / 1000 - 1) })) return;
+    if (sndRec('chant', C.chantVol * SND_USE.chantK, { ms, fade: Math.min(1500, ms * 0.4), in: 300, at: sndRnd() * Math.max(0, SND_USE.chantLen - ms / 1000 - 1) })) return;
     crowdChantSynth(bars);
   }, SND_USE.chantIn);
 }
@@ -4267,14 +4435,14 @@ function crowdCeleb(phase, hy, fav, ev) {
   else crowdCheer(Math.min(1, (C.pop0 + C.pop1 * hy) * K), fav, false, true, turn || hy >= C.layerAt);
   if (!home) oohSfx(0.4 + 0.3 * hy);   // (the road team's score: boos, the ooh, and its own fans' cheer under them: crowdCheer)
   else if (hy >= C.chantAt) crowdChant(Math.round(C.chantBars * (0.6 + hy)));
-  if (ev === 'poWin' || ev === 'bowlWin') for (let i = 0; i < C.fireworks; i++) setTimeout(() => { if (!crowdQuiet()) celebSfx('boom:' + (0.6 + 0.4 * Math.random())); }, 300 + i * 420 + 300 * Math.random());
+  if (ev === 'poWin' || ev === 'bowlWin') for (let i = 0; i < C.fireworks; i++) setTimeout(() => { if (!crowdQuiet()) celebSfx('boom:' + (0.6 + 0.4 * sndRnd())); }, 300 + i * 420 + 300 * sndRnd());
 }
 function crowdGroan(level, hush = true) {
   if (indoorOn()) return;   // (v0.76: no crowd in the practice gym)
   if (results) return;
   if (hush) { if (performance.now() - groanAt < GROAN_GAP) return; groanAt = performance.now(); }   // (not over and over)
   if (hush) hushUntil = animNow() + 2500;
-  level = Math.min(1, level * gameImpact());
+  level = Math.min(1, level * gameImpact() * crowdRel());
   if (hush) crowdFx.boo = Math.max(crowdFx.boo, animNow() + 1500 + 1500 * level);
   const key = hush ? DISAPPOINT : DISAPPOINT + '#road', ms = 2200 + 2200 * level, vol = (0.55 + 0.4 * level) * (hush ? 1 : CROWD_IMPACT.road);
   const ctl = sfxCtl[key];
@@ -4393,8 +4561,8 @@ function simOoh() {
   if ((youScored ? 'you' : 'opp') !== MATCH.home) oohSfx(0.6);
 }
 let crowdAmb = null, crowdVol = 0;
-const AMB_LEN = { [SFX.crowd]: 39, 'audio/crowd2.mp3': 34 };   // s (each loop starts at a random point in a random bed)
-const AMBIENTS = [SFX.crowd, 'audio/crowd2.mp3'], ambUrl = {};   // (each time the loop comes round, the next bed is one of these at random)
+const AMBIENTS = [SFX.crowd, 'audio/crowd2.mp3'];   // (each time the loop comes round, the next bed is one of these at random, from a random point)
+const crowdBed = f => bedLoop(f, { once: true, xfade: 0 });   // (v0.79: the two alternating beds are bed loops played once through: their own cross-fade below makes the seam)
 // a play that drags on (the QB keeps it alive, a long return, a scramble drill) keeps building the noise: past `at` s after the snap the hum
 // rises over `ramp` s up to `max`, then the crowd cheers (home) or boos (away) once
 const CROWD_LONG = { at: 4, ramp: 8, max: 0.65, burst: 0.55 };
@@ -4434,14 +4602,8 @@ function updateCrowd(dt) {
     }
     if (!crowdAmb) {
       if (!on) return;
-      crowdAmb = [new Audio(SFX.crowd), new Audio(SFX.crowd)]; crowdAmb.cur = 0;
-      // as a blob the clip always knows its length (some servers don't say, and the crossfade needs it)
-      fetch(SFX.crowd).then(r => r.blob()).then(bl => {
-        const u = ambUrl[SFX.crowd] = URL.createObjectURL(bl);
-        for (const e of crowdAmb) { const t = e.currentTime, playing = !e.paused; e.src = u; e.currentTime = t; if (playing) e.play().catch(() => {}); }
-      }).catch(() => {});
-      // (the other ambience beds, ready for when the loop comes round)
-      for (const s of AMBIENTS.slice(1)) fetch(s).then(r => r.blob()).then(bl => { ambUrl[s] = URL.createObjectURL(bl); }).catch(() => {});
+      crowdAmb = [crowdBed(SFX.crowd), crowdBed(SFX.crowd)]; crowdAmb.cur = 0;
+      for (const f of AMBIENTS) { bedFiles.add(f); if (actx) bedWant(f); }   // (every bed decoded ahead, ready for when the loop comes round)
     }
     const youHome = MATCH.home === 'you', fx = animNow() < crowdFx.until ? crowdFx.level : 0;
     const live = inGame ? liveHype() : 0, h = live * ((liveFav === 'you') === youHome ? 1 : -1);
@@ -4454,21 +4616,334 @@ function updateCrowd(dt) {
     const base = CROWD_SFX.base + CROWD_SFX.tense * Math.max(0, tense) + CROWD_SFX.red * red;
     let target = base + (CROWD_SFX.peak - base) * Math.max(h >= 0 ? h : -h * CROWD_IMPACT.road, fx);
     if (animNow() < hushUntil) target = CROWD_SFX.quiet;   // the groan: the place goes quiet for a beat
+    if (CROWD_AI.on || CROWD_ST.layOn || CROWD_ST.lp < 21900) target = crowdAiTick(dt, target, on, base);   // (sound job E: the crowd logic's scene, layers and snap latch; off = untouched)
     if (!on) target = 0;
     crowdVol += Math.max(-CROWD_SFX.fall * dt * (on ? 1 : 3), Math.min(CROWD_SFX.rise * dt, target - crowdVol));
-    const a = crowdAmb[crowdAmb.cur], b = crowdAmb[1 - crowdAmb.cur], xf = CROWD_SFX.xfade;
+    const a = crowdAmb[crowdAmb.cur], xf = CROWD_SFX.xfade; let b = crowdAmb[1 - crowdAmb.cur];
     if (crowdVol <= 0.001 && !on) { a.pause(); b.pause(); return; }
-    if (a.paused && !crowdAmb.wait) {
-      if (a.ended) a.currentTime = 0; crowdAmb.wait = true; a.play().then(() => crowdAmb.wait = false, () => crowdAmb.wait = false); }
+    if (a.paused) a.play();   // (an ended bed starts again from the top)
     const dur = a.duration;
-    if (isFinite(dur) && dur > 2 * xf && a.currentTime >= dur - xf && b.paused) { const s = pickOf(AMBIENTS); b.src = ambUrl[s] || s; b.startAt = Math.random() * Math.max(0, AMB_LEN[s] - 3 * xf - 8); b.currentTime = b.startAt; b.play().catch(() => {}); crowdAmb.cur = 1 - crowdAmb.cur; }
+    if (isFinite(dur) && dur > 2 * xf && a.currentTime >= dur - xf && b.paused) {
+      const s = sndPick(AMBIENTS), L = sbuf[s] ? sbuf[s].duration : 0;
+      if (b.file !== s) { b.drop(); b = crowdAmb[1 - crowdAmb.cur] = crowdBed(s); }
+      b.startAt = sndRnd() * Math.max(0, L - 3 * xf - 8); b.play(b.startAt); crowdAmb.cur = 1 - crowdAmb.cur;
+    }
     for (const e of crowdAmb) {
       if (e.paused) continue;
       const d = isFinite(e.duration) ? e.duration : Infinity, t = e.currentTime;
-      sfxGain(e, Math.max(0, Math.min(1, crowdVol * volOf('crowd') * duck * Math.sqrt(Math.max(0, Math.min(1, (t - (e.startAt || 0)) / xf, (d - t) / xf))))));
+      sfxGain(e, Math.max(0, Math.min(1, crowdVol * volOf('crowd') * duck * Math.sqrt(Math.max(0, Math.min(1, (t - (e.startAt || 0)) / xf, (d - t) / xf))))) * crowdEnv(e.file, t));   // (sound job D2: both beds evened out to CROWD_BED.ref; a decoded bed takes > 1, an element stops at 1)
     }
   } catch (e) { /* no audio available */ }
 }
+// --- crowd logic (sound job part E): a crowd that behaves like a real one, from the sounds the game already has. Three tables: the game's context
+// (CROWD_CTX, once a game: stakes, rival, mood, the Paper Bowl's split house, visiting fans), the snap's situation (CROWD_SIT, at each new snap and after
+// each play; annSit's formulas lifted, never called) and the state carried between plays (CROWD_ST: energy, momentum, restless, carry, tension). Scenes
+// (CROWD_SCENE) shape the hum between reactions (bed level x, low-pass, up to two looping layers cut from existing clips through bedLoop, never playSfx);
+// reactions (CROWD_EV) go through the existing crowd functions, CROWD_AI.lag ms late. Home / road in MATCH's terms only (crowdOffFav / crowdDefFav).
+// Sound and the stands' looks only: it reads the game, never writes it. Rolls: sndRnd only. CROWD_AI.on false = the old flat crowd exactly (tunables beside
+// CROWD_SFX). Online: scenes run on each device from the snapshot's state; one-shot reactions only on the host (they reach the guest as crowdCheer /
+// playSfx events). Off: tutorial, sims, the gym, menus, the muted reel, the cold open, league tapes, practice drills (crowdAiLive).
+const CROWD_CTX = { hk: '', ak: '', dirty: true, real: false, stakes: 0.3, rival: false, mood0: 0.5, split: false, road: 0.15, e0: 0.5 };
+const CROWD_SIT = { down: 1, dist: 10, db: 'm', toGo: 75, zone: 'mid', mar: 0, q: 1, secs: 0, late: false, two: false, last: false, ot: false, gw: '', blow: false,
+  shut: false, come: false, hOff: false, dSide: false, dPlays: 0, dYd: 0, dFd: 0, sk: 0 };
+const CROWD_ST = { energy: 0.5, momentum: 0, restless: 0, carry: 0, tension: 0, playTension: 0, scene: 'normal', bedK: 1, lp: 22000, st: '', hOffSnap: false, peak: 0,
+  stunUntil: 0, lullUntil: 0, minMar: 0, drought: false, cameBack: false, yellAt: 0, stompAt: 0, shushed: false, waveAt: 0, booAt: 0, nr: 0, nrAt: 0, layOn: false,
+  koPre: false, injOn: false, murUntil: 0, lastScore: '', t: 0, lastFire: '', lastFav: '' };
+// layers: a looping stretch inside each clip's CROWD_CLIP body (h = its bedLoop handle, made on first use; v = level now, t = this frame's target)
+const CROWD_LAY = {
+  wall:  { f: DISAPPOINT,        from: 6,   to: 16,  h: null, v: 0, t: 0 },   // the wall of noise (a crowd shouting)
+  chant: { f: COLD_SND.chant[0], from: 2,   to: 12,  h: null, v: 0, t: 0 },
+  roar:  { f: CHEERS[2],         from: 1,   to: 9,   h: null, v: 0, t: 0 },   // cheer3's body: buzz / victory
+  boo:   { f: BOO_REAL,          from: 0.3, to: 4.5, h: null, v: 0, t: 0 },   // restless
+  jeer:  { f: COLD_SND.jeer[0],  from: 1.5, to: 4,   h: null, v: 0, t: 0 },   // iceKick
+  road:  { f: CHEERS[1],         from: 1,   to: 6,   h: null, v: 0, t: 0 },   // the visiting fans (cheer2's body)
+};
+const CROWD_LAY_K = Object.keys(CROWD_LAY);
+// scenes: bed = x the hum's target, lp = low-pass Hz (22000 = open), a / b = layers with their levels, hop = the stands bounce (not in performance mode).
+// The dynamic parts (tension, energy, the visiting fans' share) are applied in crowdAiTick by name.
+const CROWD_SCENE = {
+  normal:    { bed: 1,    lp: 22000, a: '',     av: 0,    b: '',      bv: 0,    hop: 0 },
+  lull:      { bed: 0.55, lp: 900,   a: '',     av: 0,    b: '',      bv: 0,    hop: 0 },
+  defWall:   { bed: 1,    lp: 22000, a: 'wall', av: 0.1,  b: 'chant', bv: 0.12, hop: 0.25 },
+  offHush:   { bed: 1,    lp: 4500,  a: '',     av: 0,    b: '',      bv: 0,    hop: 0 },
+  carry:     { bed: 1,    lp: 22000, a: 'roar', av: 0.08, b: '',      bv: 0,    hop: 0.2 },
+  buzz:      { bed: 1.1,  lp: 22000, a: 'roar', av: 0.07, b: '',      bv: 0,    hop: 0 },
+  party:     { bed: 1.25, lp: 22000, a: 'chant', av: 0.12, b: '',     bv: 0,    hop: 0.2 },
+  restless:  { bed: 0.9,  lp: 2500,  a: 'boo',  av: 0.06, b: '',      bv: 0,    hop: 0 },
+  exodus:    { bed: 0.6,  lp: 1500,  a: 'road', av: 0.1,  b: '',      bv: 0,    hop: 0 },
+  stunned:   { bed: 0,    lp: 700,   a: 'road', av: 0.14, b: '',      bv: 0,    hop: 0 },
+  injury:    { bed: 0,    lp: 600,   a: '',     av: 0,    b: '',      bv: 0,    hop: 0 },
+  review:    { bed: 0.7,  lp: 1200,  a: '',     av: 0,    b: '',      bv: 0,    hop: 0 },
+  kickBuild: { bed: 1.3,  lp: 22000, a: 'roar', av: 0.06, b: '',      bv: 0,    hop: 0.2 },
+  iceKick:   { bed: 1,    lp: 22000, a: 'wall', av: 0.1,  b: 'jeer',  bv: 0.08, hop: 0.25 },
+  kickHush:  { bed: 1,    lp: 3000,  a: '',     av: 0,    b: '',      bv: 0,    hop: 0 },
+  victory:   { bed: 1.2,  lp: 22000, a: 'roar', av: 0.18, b: '',      bv: 0,    hop: 0.35 },
+};
+// reactions: event -> [the event's team is home, it is the road team], each [kind, level, whom the crowd backs: 'h' home / 'a' the visiting fans] or null.
+// Kinds (crowdAiFire): cheer, sarc (the sarcastic cheer: crowdCheer's bad flag), pop, groan, ooh (a murmur), boo (at its own team, low), jeer (at the officials:
+// through booGate). Only what the old crowd did not already do: sacks, kicks, stops, takeaways and touchdowns keep their own reactions (endPlay, sackCall, ...).
+const CROWD_EV = {
+  sack:    [['pop', 0.45, 'h'],   ['groan', 0.45, 'h']],   // home defense's sack / the home QB sacked
+  sack2:   [null,                 ['boo', 0.35, 'h']],     // the home QB sacked twice running: boos at its own team (sk2)
+  flag:    [['jeer', 0.6, 'h'],   ['cheer', 0.5, 'h']],    // the flag is ON the home team: boos at the officials / on the visitors: a cheer
+  offset:  [['ooh', 0.3, 'h'],    ['ooh', 0.3, 'h']],      // offsetting: a murmur
+  kick:    [['pop', 0.4, 'h'],    ['groan', 0.3, 'h']],    // a field goal / PAT made (the old cheer stays: this is on top)
+  kickMiss:[['groan', 0.5, 'h'],  null],                   // (the visitors' miss already gets the sarcastic cheer)
+  conv3l:  [null,                 ['groan', 0.5, 'h']],    // the visitors convert a third and long: the deflated groan
+  swing:   [['pop', 0.8, 'h'],    null],                   // a takeaway / score that flips the momentum to the home team: one tier more
+  fail:    [['boo', 0.3, 'h'],    null],                   // a home failure in a restless building
+  sarc1:   [['sarc', 0.4, 'h'],   null],                   // the first home first down after long futility
+  rev:     [['cheer', 0.75, 'h'], ['jeer', 0.6, 'h']],     // the review goes the home team's way / the visitors'
+  half:    [['cheer', 0.5, 'h'],  ['boo', 0.4, 'h']],      // off at the half ahead / behind by two scores
+  final:   [['cheer', 0.45, 'h'], ['jeer', 0.6, 'h']],     // a final that is not close: a polite cheer / boos (crowdFinal keeps the close ones)
+};
+const CROWD_Q = [{ at: 0, k: '', v: 0, f: '' }, { at: 0, k: '', v: 0, f: '' }, { at: 0, k: '', v: 0, f: '' }, { at: 0, k: '', v: 0, f: '' }, { at: 0, k: '', v: 0, f: '' }, { at: 0, k: '', v: 0, f: '' }];
+const CROWD_YELL_O = { ms: 1200, fade: 400, tag: 'ly' }, CROWD_SH_O = { fade: 200, tag: 'sh' }, CROWD_JEER_O = { ms: 3500, fade: 900, tag: 'aj' };
+const crowdAwayKey = () => (MATCH.home === 'you' ? MATCH.opp : MATCH.you);
+const crowdHomeMar = () => (MATCH.home === 'you' ? game.blue - game.red : game.red - game.blue);
+const crowdHost = () => !(typeof ONL !== 'undefined' && ONL.on && ONL.guest);
+function crowdAiLive() {   // the crowd logic runs (a game on the field with its crowd)
+  return CROWD_AI.on && !!game && !tut && !results && !showKeys && !indoorOn() && !crowdQuiet() && !LG_SAND && !(typeof CO !== 'undefined' && CO)
+    && !(typeof pracLive === 'function' && pracLive()) && state !== 'sim';
+}
+const crowdRel = () => (CROWD_AI.on && crowdAiLive() ? 1 + CROWD_AI.release * CROWD_ST.playTension : 1);   // (crowdCheer / crowdGroan: the play lands harder on a tense snap)
+const crowdSplitOn = () => CROWD_AI.on && CROWD_CTX.split && crowdAiLive();
+function crowdNewGame() {   // (newGame) a new game (or a save resumed: loadFromSlot runs newGame first): the context is rebuilt on the next frame, the state starts over
+  const S = CROWD_ST; CROWD_CTX.dirty = true;
+  S.momentum = 0; S.restless = 0; S.carry = 0; S.tension = 0; S.playTension = 0; S.peak = 0; S.stunUntil = 0; S.lullUntil = 0; S.minMar = 0; S.drought = false; S.cameBack = false;
+  S.st = ''; CROWD_SIT.dPlays = CROWD_SIT.dYd = CROWD_SIT.dFd = CROWD_SIT.sk = 0;
+  for (let i = 0; i < CROWD_Q.length; i++) CROWD_Q[i].at = 0;
+}
+function crowdCtxBuild() {   // once a game: keyed by the home team and the other team, never flipped
+  const C = CROWD_CTX, A = CROWD_AI.ctx; C.dirty = false; C.hk = homeKey(); C.ak = crowdAwayKey();
+  C.real = !!(typeof season !== 'undefined' && season && !(typeof exhibition !== 'undefined' && exhibition) && !(typeof ONL !== 'undefined' && ONL.on) && NFL[C.hk] && NFL[C.ak]);
+  C.stakes = A.stakes0; C.rival = false; C.mood0 = 0.5; C.split = false; C.road = A.road0;
+  if (C.real) try {
+    C.rival = NFL[C.hk].conf === NFL[C.ak].conf;
+    const T = seasonTable(), h = T[C.hk], a = T[C.ak], wp = r => r ? (r.w + r.t / 2) / Math.max(1, r.w + r.l + r.t) : 0.5;
+    if (MATCH.playoff && typeof po !== 'undefined' && po) { C.stakes = A.po0 + (1 - A.po0) * Math.min(1, (po.round || 0) / Math.max(1, PO_ROUNDS.length - 1)); C.split = po.round === PO_ROUNDS.length - 1; }
+    else C.stakes = Math.min(1, A.stakes0 * 0.5 + A.late * Math.max(0, Math.min(1, (season.week - A.lateFrom) / (SEASON_WEEKS - A.lateFrom))) + A.rec * Math.max(0, (wp(h) + wp(a)) / 2 - 0.4) + (C.rival ? A.div : 0));
+    const sk = Math.max(-5, Math.min(5, teamStreak(C.hk, Math.max(0, season.week - 1))));
+    C.mood0 = Math.max(0, Math.min(1, 0.5 + A.moodWp * (wp(h) - 0.5) * 2 + A.moodSk * sk));
+    C.road = A.road0 + (C.rival ? A.roadRival : 0) + (C.split ? A.roadBowl : 0);
+  } catch (e) {}
+  const E = CROWD_AI.energy; C.e0 = Math.max(0, Math.min(1, E.base + E.mood * C.mood0 + E.stakes * C.stakes));
+  CROWD_ST.energy = C.e0;
+}
+function crowdTension(S) {   // 0-1 for the coming snap
+  const W = CROWD_AI.ten, C = CROWD_CTX; let t = W.base;
+  if (S.down === 3) t += W.d3 + (S.db === 's' ? W.short : S.db === 'l' ? W.long : 0);
+  else if (S.down === 4) t += W.d4 + (S.db === 's' ? W.short : 0);
+  if (S.zone === 'goal') t += W.goal + W.goalDown * S.down;
+  else if (S.zone === 'red') t += W.red * (1 - S.toGo / 20);
+  if (S.gw) t += W.gw;
+  if (S.late) t *= W.late; if (S.two) t *= W.two; if (S.last) t *= W.last; if (S.ot) t *= W.ot;
+  if (S.q >= 4 && Math.abs(S.mar) <= 8) t *= W.close;
+  if (S.blow) t *= W.blow;
+  return Math.max(0, Math.min(1, t * (W.stakes0 + W.stakes * C.stakes)));
+}
+function crowdSitFill() {   // the snap's situation (annSit's formulas, in the home team's terms; no tallies of the announcers')
+  if (!game || los == null) return;
+  const S = CROWD_SIT, W = ANN_SIT, q = game.quarter, secs = game.secs, mar = crowdHomeMar(), hOff = crowdOffFav() === MATCH.home;
+  const dist = Math.max(0, Math.round((lineToGain - los) / YL)), toGo = Math.max(0, Math.round((FIELD - los) / YL)), goal = lineToGain >= FIELD - BALL_TIP;
+  const late = q >= 4 && secs <= lateS(W.lateS), om = hOff ? mar : -mar, need = -om;   // (om: the offense's margin)
+  CROWD_ST.minMar = Math.min(CROWD_ST.minMar, mar);
+  S.down = down; S.dist = dist; S.db = dist <= W.short ? 's' : dist >= W.long ? 'l' : 'm'; S.toGo = toGo;
+  S.zone = goal ? 'goal' : toGo <= 20 ? 'red' : toGo >= 90 ? 'deep' : toGo > 60 ? 'own' : 'mid';
+  S.mar = mar; S.q = q; S.secs = secs; S.late = late; S.two = (q === 2 || q === 4) && secs <= lateS(W.lateS); S.last = (q === 2 || q >= 4) && secs <= lateS(W.lastS); S.ot = q >= 5;
+  S.gw = (late || q >= 5) && need >= 0 && need <= 8 ? (need <= 6 ? 'win' : 'tie') : late && om > 0 && om <= 8 ? 'hold' : '';
+  S.blow = Math.abs(mar) >= W.blow; S.shut = q >= 3 && (game.blue === 0 || game.red === 0); S.come = CROWD_ST.minMar <= -W.comeback && mar >= -8;
+  S.hOff = hOff;
+  CROWD_ST.tension = crowdTension(S);
+}
+function crowdQ(k, v, fav) {   // a reaction, CROWD_AI.lag ms late (people, not a trigger); a big one gets a second, smaller layer CROWD_AI.stagger ms later
+  if (!crowdHost() || !k) return;
+  const A = CROWD_AI, t = performance.now() + A.lag[0] + sndRnd() * (A.lag[1] - A.lag[0]);
+  CROWD_ST.lastFire = k; CROWD_ST.lastFav = fav;
+  crowdQPut(t, k, v, fav); if (v >= A.bigAt) crowdQPut(t + A.stagger * (0.7 + 0.6 * sndRnd()), 'pop', v * 0.6, fav);
+}
+function crowdQPut(at, k, v, f) { for (let i = 0; i < CROWD_Q.length; i++) { const e = CROWD_Q[i]; if (e.at) continue; e.at = at; e.k = k; e.v = v; e.f = f; return; } }
+function crowdEv(name, teamHome, k = 1) {   // CROWD_EV[name] for the event's team (home or road), scaled by stakes, momentum and a comeback
+  const row = CROWD_EV[name], r = row && row[teamHome ? 0 : 1]; if (!r) return;
+  const S = CROWD_ST, C = CROWD_CTX, A = CROWD_AI, fav = r[2] === 'h' ? MATCH.home : (MATCH.home === 'you' ? 'opp' : 'you');
+  const lv = r[1] * k * (A.evStakes0 + A.evStakes * C.stakes) * (1 + A.evMom * Math.max(0, S.momentum)) * (CROWD_SIT.come ? A.comeK : 1);
+  crowdQ(r[0], Math.min(1, lv), fav);
+}
+function crowdAiFire(e) {
+  const k = e.k, v = e.v, f = e.f; e.at = 0;
+  if (k === 'cheer') crowdCheer(v, f, false, true);
+  else if (k === 'sarc') crowdCheer(v, f, true, true);
+  else if (k === 'pop') crowdPop(v, f);
+  else if (k === 'groan') crowdGroan(v);
+  else if (k === 'ooh') oohSfx(v);
+  else if (k === 'gasp') crowdOhh(v);
+  else if (k === 'ov') { const c = CHEERS[2], A = CROWD_AI, home = f === MATCH.home, ms = home ? A.ovMs : A.ovShortMs; playSfx(c + '#ov', home ? A.ovV : A.ovShortV, ms, home ? A.ovFade : 900, 600, crowdStart(c, Math.min(ms, 8000))); }   // (the long ovation: cheer3's body, long fade; a visitor's = a short polite one)
+  else if (k === 'boo') { const now = performance.now(); if (now - CROWD_ST.booAt < CROWD_AI.booGap) return; CROWD_ST.booAt = now; playSfx(BOO_REAL + '#ai', Math.min(1, v), 2600, 900, 300, crowdStart(BOO_REAL, 2600)); }
+  else if (k === 'jeer') { if (booGate(Math.min(1, (v + CROWD_AI.jeerAdd) * (CROWD_CTX.rival ? CROWD_AI.rivalBoo : 1)), false)) sndRec('jeer', v, CROWD_JEER_O); }
+}
+// (endPlay, right after annPlayEnd) the play's result: momentum, restless, carry, the drive, and the reactions the old crowd did not have
+function crowdPlayEnd(text, next, kind, ko, pen) {
+  if (!crowdAiLive()) return;
+  const S = CROWD_SIT, ST = CROWD_ST, A = CROWD_AI, M = A.mom, T = String(text || ''), hOff = ST.hOffSnap, was = S.mar, hm = crowdHomeMar(), pts = hm - was;
+  if (pen) { if (!pen.fouled) crowdEv('offset', true); else { const onH = (pen.fouled === 'off') !== hOff; crowdEv('flag', onH, onH ? 1 + 0.5 * ST.peak : 1); } return; }   // (a flag that wipes out a home big play: bigger boos)   // (fouled 'off' = the foul is on the defense)
+  if (ko || patMode !== null) {   // (a kickoff / punt return, a PAT: just its kick and the points)
+    if (patMode !== null && (kind === 'fg' || kind === 'fgmiss')) crowdEv(kind === 'fg' ? 'kick' : 'kickMiss', hOff, 0.6);
+    if (pts) { ST.momentum = Math.max(-1, Math.min(1, ST.momentum + (pts > 0 ? M.score : -M.score) * 0.3)); ST.lastScore = pts > 0 ? 'h' : 'a'; }
+    return;
+  }
+  const gain = Number.isFinite(next) ? (next - los) / YL : 0, sack = /SACKED/.test(T), take = kind === 'turnover' || /PICK SIX/i.test(T), downs = /DOWNS/i.test(T);
+  const td = kind === 'td' || /TOUCHDOWN/.test(T), first = !kind && Number.isFinite(next) && next + BALL_TIP >= lineToGain, big = !kind && gain >= A.bigGain;
+  const m0 = ST.momentum, sg = hOff ? 1 : -1;   // (sg: + = the offense is the home team)
+  let m = m0 * (1 - M.decay);
+  if (pts) m += pts > 0 ? M.score : -M.score;
+  if (take) m -= sg * M.take;
+  if (sack) m -= sg * M.sack;
+  if (kind === 'punt' || downs) { m -= sg * M.stop; if (S.dPlays <= 2 && !S.dFd) m -= sg * M.out3; }
+  if (big) m += sg * M.big;
+  ST.momentum = m = Math.max(-1, Math.min(1, m));
+  if ((take || pts) && m > 0 && m0 <= 0 && (take ? !hOff : pts > 0)) crowdEv('swing', true);   // (the swing to the home team: one tier more)
+  // the home team's failures in a row: restless; a home first down or score clears it (the first one after long futility gets a sarcastic cheer)
+  if (hOff) {
+    const fail = sack ? A.rest.sack : take || downs || kind === 'fgmiss' || (kind === 'punt' && (S.dPlays <= 2 || hm < 0)) ? A.rest.fail : 0;
+    if (fail) { ST.restless = Math.min(1, ST.restless + fail); if (ST.restless >= A.restAt) ST.drought = true; ST.lullUntil = Math.max(ST.lullUntil, performance.now() + A.failLullMs); }   // (a home failure: the building dips to a lull)
+    if (first || td || pts > 0) { if (ST.drought && first && !td) crowdEv('sarc1', true); ST.restless = 0; ST.drought = false; }
+    S.sk = sack ? S.sk + 1 : 0;
+  }
+  // near misses for the home team: a dropped pick by its defense, a deep home ball off the fingertips / dropped, a home kick off the post; then a murmur
+  const doink = /UPRIGHT|CROSSBAR/.test(T), nearM = !hOff && /Dropped the pick/.test(T) ? 'gasp' : hOff && !kind && ST.peak >= CROWD_IMPACT.hype && /^(Dropped!|Got a fingertip|Tipped)/.test(T) ? 'ooh' : hOff && doink ? (kind === 'fg' ? 'pop' : 'gasp') : '';
+  if (nearM) { crowdQ(nearM, nearM === 'pop' ? 0.6 : 0.7, MATCH.home); ST.murUntil = performance.now() + CROWD_AI.murMs; }
+  if (pts) ST.lastScore = pts > 0 ? 'h' : 'a';
+  // reactions the old crowd did not have
+  if (sack) { if (hOff && S.sk >= 2) crowdEv('sack2', false); else crowdEv('sack', !hOff); }
+  else if (hOff && ST.restless > A.restAt && (take || downs || kind === 'punt')) crowdEv('fail', true);
+  if (kind === 'fg') crowdEv('kick', hOff, Math.min(1, 0.6 + 0.4 * ST.playTension));
+  if (kind === 'fgmiss' && hOff) crowdEv('kickMiss', true);
+  if (!hOff && first && S.down === 3 && S.db === 'l') crowdEv('conv3l', false);
+  // carry (the last home roar still going at the next snap) and the visitors' big play (stunned)
+  const now = performance.now(), hGood = hOff ? td || big || (first && S.down >= 3) : take || downs || (sack && S.down >= 3), size = td || take ? 1 : big ? Math.min(1, gain / 40) : 0.5;
+  if (hGood) ST.carry = Math.max(ST.carry, A.carryS * size);
+  if (hOff ? take : td || big) ST.stunUntil = now + A.stunMs * (hOff || td ? 1 : 0.6);
+  if (S.come && !ST.cameBack) { ST.cameBack = true; ST.energy = Math.min(1, ST.energy + A.energy.come); }
+  // the drive so far (whose ball at the snap; over on a score, a turnover, a punt, a kick)
+  if (S.dSide !== hOff) { S.dSide = hOff; S.dPlays = S.dYd = S.dFd = 0; }
+  S.dPlays++; S.dYd += gain; if (first) S.dFd++;
+  if (td || take || downs || kind === 'punt' || kind === 'fg' || kind === 'fgmiss') S.dPlays = S.dYd = S.dFd = 0;
+  crowdSitFill();
+}
+function crowdOvation(fav) { if (crowdAiLive()) crowdQ('ov', fav === MATCH.home ? 1 : 0.5, fav); }   // (recLive / xfShowOn / annFarewell) a record, a STAR FACTOR, a farewell: fav = whose man, in MATCH's terms
+function crowdTimeout() { if (crowdAiLive()) CROWD_ST.lullUntil = performance.now() + CROWD_AI.lullMs; }   // (callTimeout) dead time: the lull
+function crowdPeriod() {   // (nextPeriod, the quarter already moved on) a break: the lull; at the half the home team walks off to a cheer or boos
+  if (!crowdAiLive()) return;
+  CROWD_ST.lullUntil = performance.now() + CROWD_AI.lullMs * 1.5;
+  if (game.quarter === 3) { const hm = crowdHomeMar(); if (hm > 0) crowdEv('half', true); else if (hm <= -9) crowdEv('half', false); }
+}
+function crowdRev(r) {   // (refRevTick, at the stamp) the ruling: the home team's way = a roar, against = boos at the officials (sides at the snap)
+  if (!crowdAiLive() || !r) return;
+  const offWay = r.kind === 'td' ? r.res !== 'REVERSED' : r.res === 'REVERSED' ? r.x > r.rx : null;
+  if (offWay === null) return crowdEv('offset', true);
+  crowdEv('rev', offWay === CROWD_ST.hOffSnap);
+}
+function crowdAiFinal(d) {   // (crowdFinal, a final that is not close) d = blue - red: a win = a polite cheer, a loss by 17+ = boos, else quiet
+  if (!crowdAiLive() || !crowdHost()) return;
+  const hm = MATCH.home === 'you' ? d : -d, f = MATCH.home;
+  if (hm > 0) crowdCheer(CROWD_EV.final[0][1], f, false, true);
+  else if (hm <= -CROWD_AI.blow && booGate(Math.min(1, CROWD_EV.final[1][1] + CROWD_AI.jeerAdd), false)) sndRec('jeer', CROWD_EV.final[1][1], CROWD_JEER_O);
+}
+const crowdLayCnt = c => { if (c.src && SFX_TOUCH.re.test(c.src) && !c.a.paused) CROWD_ST.nr++; };   // (phones: reaction layers playing now)
+function crowdScenePick(S, ST, C, now) {   // the scene for this frame, by priority (S = the snap's situation)
+  const A = CROWD_AI, pre = state === 'pre' || state === 'done';
+  if (typeof injuryShowing === 'function' && injuryShowing()) return 'injury';
+  if (typeof REV !== 'undefined' && REV) return 'review';
+  if (now < ST.stunUntil) return 'stunned';
+  if (now < ST.lullUntil) return 'lull';
+  if (now < ST.murUntil) return 'review';   // (the murmur after a near miss: the review's bed)
+  if (state === 'kickoff' && typeof kickoff !== 'undefined' && kickoff && LIVE_PRE_KO.test(kickoff.phase || '')) return 'kickBuild';
+  if (state === 'kick' && typeof kick !== 'undefined' && kick && !(kick.phase === 'snap' || kick.phase === 'flight')) return S.hOff ? 'kickHush' : 'iceKick';
+  if (!pre) return 'normal';   // (a live play: the old live swell has it)
+  if (S.hOff && S.q >= 4 && S.mar > 0 && S.secs <= lateS(A.victoryS)) return 'victory';
+  if (ST.carry > 0) return 'carry';
+  if (S.q >= 4 && Math.abs(S.mar) >= A.garbage && S.secs <= QUARTER_SECS * 0.5) return 'lull';   // (a blowout's garbage time)
+  if (!C.split && S.q >= 4 && S.mar <= -A.blow && (!MATCH.playoff || S.secs <= lateS(A.exodusPoS))) return 'exodus';
+  if (S.q >= 3 && S.mar >= A.blow) return 'party';
+  if (ST.restless > A.restAt) return 'restless';
+  if (!S.hOff && ST.tension > A.wallAt) return 'defWall';
+  if (S.hOff && !C.split && ST.tension > A.hushAt) return 'offHush';
+  if (S.hOff && (S.dPlays >= A.buzzPlays || S.zone === 'red' || S.zone === 'goal')) return 'buzz';
+  return 'normal';
+}
+// (updateCrowd, every frame) the snap latch, the scene, the bed's level / low-pass and the layers; returns the hum's new target. No garbage.
+function crowdAiTick(dt, target, on, base) {
+  const ST = CROWD_ST, S = CROWD_SIT, C = CROWD_CTX, A = CROWD_AI, now = performance.now(), live = on && crowdAiLive();
+  let sc = 'normal', lpT = 22000, bedK = 1, crit = false;
+  if (live) {
+    if (C.dirty || C.hk !== homeKey() || C.ak !== crowdAwayKey()) crowdCtxBuild();
+    if (state !== ST.st) {   // the snap latch: a new snap's situation on entering 'pre', its tension latched as it leaves
+      const prev = ST.st; ST.st = state;
+      if (state === 'pre') { crowdSitFill(); ST.shushed = false; ST.peak = 0; }
+      else if (prev === 'pre') { ST.playTension = ST.tension; ST.hOffSnap = S.hOff; }
+    }
+    if (!paused) {
+      const h = state !== 'pre' ? playHype : 0; if (h > ST.peak) ST.peak = h;
+      if (ST.carry > 0) ST.carry = Math.max(0, ST.carry - dt);
+      // energy: toward its start, momentum, a close late game, a comeback; down with the clock in an exodus (x the weather, as the pulse is)
+      const E = A.energy, ex = ST.scene === 'exodus' ? E.exodus * (1 - Math.min(1, S.secs / QUARTER_SECS)) : 0;
+      const et = Math.max(0, Math.min(1, (C.e0 + E.mom * ST.momentum + (S.late && Math.abs(S.mar) <= 8 ? E.late : 0) + (S.come ? E.come : 0) - ex) * (typeof wxPulseK === 'function' ? wxPulseK() : 1)));
+      ST.energy += (et - ST.energy) * Math.min(1, E.ease * dt);
+    }
+    sc = crowdScenePick(S, ST, C, now);
+    crit = S.down >= 3 || S.zone === 'goal' || S.last || (S.late && Math.abs(S.mar) <= 8);
+  }
+  if (sc !== ST.scene) ST.scene = sc;
+  const D = CROWD_SCENE[sc], ten = ST.tension, pre = state === 'pre';
+  for (let i = 0; i < CROWD_LAY_K.length; i++) CROWD_LAY[CROWD_LAY_K[i]].t = 0;
+  let av = D.av, bv = D.bv; lpT = D.lp; bedK = D.bed;
+  if (live) {
+    if (sc === 'normal') bedK = A.eBed0 + A.eBed * ST.energy;
+    else if (sc === 'defWall' || sc === 'iceKick') { bedK = 1 + A.wallUp * ten * (C.split ? 0.5 : 1); av *= (0.5 + ten) * (C.split ? 0.5 : 1); if (sc === 'defWall' && !crit) bv = 0; }
+    else if (sc === 'offHush' || sc === 'kickHush') { const t = sc === 'kickHush' ? (typeof bigKick === 'function' && bigKick() ? A.kickBig : A.kickTen) : ten; bedK = 1 - A.hushDip * t; lpT = Math.max(600, D.lp - 3500 * t); }
+    else if (sc === 'carry') target = Math.max(target, base + (CROWD_SFX.peak - base) * A.carryLvl * Math.min(1, ST.carry / A.carryS));
+    else if (sc === 'exodus') { bedK = D.bed * (0.6 + 0.4 * ST.energy); av *= C.road / A.ctx.road0 * 2; }
+    else if (sc === 'stunned') { target = CROWD_SFX.quiet; av *= C.road / A.ctx.road0; }
+    else if (sc === 'injury') target = A.injuryLvl;
+    else if (sc === 'victory') target = Math.max(target, A.victoryLvl);
+    if (!pre && (sc === 'defWall' || sc === 'offHush' || sc === 'party' || sc === 'restless' || sc === 'buzz')) av = bv = 0;
+    if (sc !== 'stunned' && sc !== 'injury' && sc !== 'carry' && sc !== 'victory') target *= bedK;
+    // one-shots of the scenes (the host only: they reach the guest as events)
+    if (crowdHost() && !paused) {
+      if (sc === 'lull' && now >= ST.yellAt && sndRnd() < dt * A.yellOdds) { ST.yellAt = now + A.lullYell * 1000; sndRec('yell', A.yellV, CROWD_YELL_O); }
+      if (pre && (sc === 'defWall' && crit || sc === 'kickBuild') && now >= ST.stompAt && typeof PULSE !== 'undefined') { ST.stompAt = now + PULSE.beat; CELEB_SFX.stomp(A.stompV * (0.5 + ten)); }
+      if (pre && sc === 'offHush' && crit && !ST.shushed && ST.energy >= A.shushE) { ST.shushed = true; sndRec('shush2', A.shushV, CROWD_SH_O); }
+      if (sc === 'party' && pre && now - ST.waveAt > A.waveS * 1000 && !liteOn()) { ST.waveAt = now; crowdFx.wave = animNow(); }
+    }
+    if (D.hop && !liteOn() && (pre || sc === 'kickBuild')) { const an = animNow(); crowdFx.level = Math.max(an < crowdFx.until ? crowdFx.level : 0, D.hop); crowdFx.until = Math.max(crowdFx.until, an + 300); }
+    // the kickoff's pop at the foot
+    const koPre = sc === 'kickBuild'; if (ST.koPre && !koPre && state === 'kickoff' && crowdHost()) crowdPop(ST.lastScore === 'h' ? A.koBig : ST.lastScore === 'a' ? A.koAway : A.koPop, MATCH.home); ST.koPre = koPre;
+    // the reactions waiting on their lag
+    for (let i = 0; i < CROWD_Q.length; i++) { const e = CROWD_Q[i]; if (e.at && now >= e.at) { try { crowdAiFire(e); } catch (er) { e.at = 0; } } }
+  } else for (let i = 0; i < CROWD_Q.length; i++) CROWD_Q[i].at = 0;
+  // the layers: phones count them with the reaction layers against SFX_TOUCH.layers, and the scene's yield first
+  let allow = 2;
+  if (TOUCH) { if (now - ST.nrAt > 250) { ST.nrAt = now; ST.nr = 0; sfxLive.forEach(crowdLayCnt); } allow = Math.max(0, SFX_TOUCH.layers - ST.nr); }
+  if (live) { if (D.a && av > 0 && allow > 0) CROWD_LAY[D.a].t = av; if (D.b && bv > 0 && allow > 1) CROWD_LAY[D.b].t = bv; }
+  let any = false;
+  const tau = live && !pre && state !== 'done' ? A.cut : A.fade / 3, kk = 1 - Math.exp(-dt / tau), g = volOf('crowd') * duck;
+  for (let i = 0; i < CROWD_LAY_K.length; i++) {
+    const L = CROWD_LAY[CROWD_LAY_K[i]];
+    L.v += (L.t - L.v) * kk; if (L.t === 0 && L.v < 0.002) L.v = 0;
+    if (L.v > 0) {
+      any = true;
+      if (!L.h) L.h = bedLoop(L.f, { from: L.from, to: L.to, vol: 0 });
+      if (L.h.paused) L.h.play(sndRnd() * (L.to - L.from));
+      sfxGain(L.h, L.v * g * crowdTrim(L.f));
+    } else if (L.h && !L.h.paused) L.h.pause();
+  }
+  ST.layOn = any;
+  // the bed's low-pass (eased toward the scene's; set on the beds only when it moved)
+  const want = live ? lpT : 22000; ST.lp += (want - ST.lp) * Math.min(1, dt * 3 / A.fade);
+  if (crowdAmb) for (let i = 0; i < 2; i++) { const b = crowdAmb[i]; if (!b) continue; const c = b._clp || 22000; if (Math.abs(c - ST.lp) > c * 0.03) { b._clp = ST.lp; b.lp(ST.lp >= 21000 ? null : ST.lp, A.fade / 3); } }
+  return target;
+}
+const crowdAiLine = () => { const S = CROWD_ST; return `CROWD ${CROWD_AI.on ? S.scene : 'off'} e${S.energy.toFixed(2)} m${S.momentum >= 0 ? '+' : ''}${S.momentum.toFixed(2)} t${S.tension.toFixed(2)} pt${S.playTension.toFixed(2)} st${CROWD_CTX.stakes.toFixed(2)}${CROWD_CTX.split ? ' split' : ''}`; };
 let los, down, lineToGain, nextLos, nextDown, nextLtg;
 let camX = 33 * YD, camY = MID, zoom = 0.3;
 const keys = {}, lastTap = {};

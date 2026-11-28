@@ -337,6 +337,7 @@ function staffHalftime() {   // v0.64 staff traits at the half: Fire Starter III
 function nextPeriod() {
   game.quarter++; game.pendingQuarter = false;
   try { annPeriod(); } catch (e) {}   // (v0.74 the announcers: the break)
+  try { crowdPeriod(); } catch (e) {}   // (sound job E: the crowd at the break)
   if (SL.on) slTvWalk();   // (sideline: the TV official walks on for the break)
   if (game.quarter < 5) { game.secs = QUARTER_SECS; if (game.quarter === 3) { xfHalftime(); wearFreshArm = true; game.timeouts = diffTO(); if (twoP) twoP.to = 3; staffHalftime(); } return null; }
   const post = postseason();
@@ -1021,6 +1022,7 @@ function recLive() {   // after every play of a game you play: a game mark falli
     if (call && !pstStash) {
       const { p, x } = call, fav = p.team === 'off' ? (aiOff() ? 'opp' : 'you') : (aiOff() ? 'you' : 'opp');
       popup(p, 'NEW RECORD!', RB.color, fav, true, true, { k: 'trophy', c: RB.color });
+      try { crowdOvation(fav); } catch (err) {}   // (sound job E: the long ovation, a visitor's short)
       try { celebNote('rec', p); } catch (err) {}   // (a record fell on this play: its celebration is bigger, celebHype)
       showTopCallout(x.res.own ? `${rbShort(x.e.n).toUpperCase()} TOPS HIS OWN ${x.book === 'L' ? 'LEAGUE' : 'TEAM'} RECORD: ${rbFmt(x.c, x.e.v)} ${x.c.l}` : `${rbShort(x.e.n).toUpperCase()} ${x.res.broke ? 'BREAKS' : 'TIES'} ${rbHolder(x.c, x.res.old).toUpperCase()}'S ${x.book === 'L' ? 'LEAGUE' : 'TEAM'} RECORD: ${rbFmt(x.c, x.e.v)} ${x.c.l}`, RB.color);      try { crowdCheer(x.book === 'L' ? 0.9 : 0.7, fav, false, true, x.book === 'L'); } catch (err) {}
       if (rec && !rec.replaying) rec.big = true;
@@ -1480,6 +1482,7 @@ function newGame() {
   pstGame = null; playPass = null;   // (a new game's stat lines)
   if (game) { game.penQ = null; game.penPick = null; game.penDeclined = false; } revWait = null; REV = null;   // (v0.68: no flag card / review left over from a game quit mid-way)
   annClear(true);  // (the announcers: new bags, the baked faces freed)
+  crowdNewGame();   // (sound job E: the crowd logic's state starts over, its context is rebuilt)
   fillMorale();   // (every roster entry has morale / rehab fields)
   depthSync(MATCH.you);   // (your locked depth-chart men lead their groups again, so startersOf / the sims agree with the chart)
   if (twoP && twoP.flipped) flipSides();   // (quit mid-game: back to Player 1's side first)

@@ -579,7 +579,7 @@ function updateReturner(d, dt) {
     const yours = aiOff() && !tut && d.team === 'def';   // (your pick six on defense)
     d.coast = { v: Math.max(Math.hypot(d.vx, d.vy), 4 * YD), dir: -1 };
     celebAsk('td', d);
-    if (yours) { showBanner('TOUCHDOWN!', '#ff2a2a', '#3a0000', who(d)); crowdCheer(1, 'you', false, true, true); }
+    if (yours) { showBanner('TOUCHDOWN!', '#ff2a2a', '#3a0000', who(d)); crowdCheer(1, crowdDefFav(), false, true, true); }
     else if (!tut) showBanner('TOUCHDOWN!', '#ff2a2a', '#3a0000', `${who(d)}  -  ${tryTxt.replace(/^\w/, c => c.toUpperCase())}`);   // (their return TD gets the banner too, with the try's result under it)   // (the banner's default red: showBanner turns it green for you on defense)
   } else if (!feetInBounds(d)) {
     if (puntRet) puntReturned(d, 'Pushed out  -  ');

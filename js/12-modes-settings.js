@@ -1956,7 +1956,8 @@ function wxIcon(code, cx, cy, r, roof, ink) {
 // sound: wind = audio/wind.mp3 looping (a gusting swell, louder with the mph; filtered noise only if the file can't play); rain = audio/rain.mp3
 // looping, louder the heavier it falls. Silent off the field; snow makes no sound. rain / wind = volume at the heaviest (x VOL), fade = change per s
 const WX_SND = { rain: 0.12, wind: 0.32, fade: 0.5, menuK: 3 };   // menuK = how much faster the loops fade out when the game goes to a menu
-let wxAud = null, wxRainEl = null, wxWindEl = null, wxSndT = 0;
+let wxAud = null, wxRainEl = null, wxWindEl = null, wxSndT = 0, wxThunderW = false;
+const WX_THUNDER = ['audio/thunder1.mp3', 'audio/thunder2.mp3', 'audio/thunder3.mp3', 'audio/crack.mp3'];
 // one looping weather element eased toward want (tracked _v: phones that ignore .volume read 1 back)
 function wxLoopEl(el, want, dt) {
   const v = el._v || 0, nv = Math.max(0, Math.min(1, v + Math.max(-WX_SND.fade * dt, Math.min(WX_SND.fade * dt, want - v))));
@@ -1979,14 +1980,15 @@ function wxAudio() {
   wxSndT = now;
   const on = sndOn() && wxLive() && !(rec && rec.replaying && rec.paused);   // (a paused replay silences the weather too)
   if (!sndOn()) { if (results && !paused && dt) { for (const el of [wxRainEl, wxWindEl]) if (el) wxLoopEl(el, 0, dt * WX_SND.menuK); return; } silenceLoops(); return; }   // (v0.70: off to a menu = faded out; a pause / hidden tab still stops dead)
-  // rain: an HTML audio loop (works from a file too)
+  // rain: a bed loop (v0.79: a decoded buffer, the file cut to its steadiest 40 s with the seam cross-faded; the old element from a file)
   const want = on ? WXI.rain * WX_SND.rain * volOf('sfx') * duck * crowdDuck() : 0;   // (crowdDuck: under a celebration's crowd pop)
-  if (want > 0.002 && !wxRainEl) { try { wxRainEl = new Audio('audio/rain.mp3'); wxRainEl.loop = true; wxRainEl.volume = 0; } catch (e) {} }
+  if (want > 0.002 && !wxRainEl) wxRainEl = bedLoop('audio/rain.mp3', { xfade: BED.rainXf });
+  if (game && game.wx && (game.wx.ext === 'storm' || game.wx.brew === 'storm') && !wxThunderW && sbufOn() && !liveNow()) { wxThunderW = true; for (const f of WX_THUNDER) sbufWant(f); }   // (v0.79: a storm's first thunder was silent on a phone: decoded at a dead ball once one is coming)
   if (wxRainEl) wxLoopEl(wxRainEl, want, dt);
   // wind: the recorded loop, same mph curve x a slow gust (performance mode: no wind)
   const gt = now / 1000, gust = 0.7 + 0.25 * Math.sin(gt * 0.6) + 0.15 * Math.sin(gt * 1.9 + 1);
   const windK = on && !liteGame() && WXI.mph > 7 ? Math.min(1, (WXI.mph - 7) / 27) * gust : 0;
-  if (windK > 0.002 && !wxWindEl) { try { wxWindEl = new Audio('audio/wind.mp3'); wxWindEl.loop = true; wxWindEl.volume = 0; wxWindEl.onerror = () => { wxWindEl._bad = true; }; } catch (e) {} }
+  if (windK > 0.002 && !wxWindEl) wxWindEl = bedLoop('audio/wind.mp3', { xfade: 0 });   // (v0.79: a bed loop; the file already loops)
   if (wxWindEl && !wxWindEl._bad) { wxLoopEl(wxWindEl, windK * WX_SND.wind * volOf('sfx') * duck * crowdDuck(), dt); return; }
   const a = actx && actx.state === 'running' ? actx : null;
   if (!a || !noiseBuf) return;
@@ -2004,10 +2006,11 @@ function wxAudio() {
   wxAud.wg.gain.setTargetAtTime(wind * crowdDuck(), t, 0.25);
   wxAud.wf.frequency.setTargetAtTime(280 + 260 * gustN, t, 0.3);
 }
-// --- footsteps: audio/footsteps.mp3 (only its steady stretch, from..to, loops). Two players only: the one you control (vol) and the
+// --- footsteps: audio/footsteps.mp3 (only its steady stretch, from..to, loops; v0.79: the file is cut to 3.87 s around it with no re-encode, the old 0.75-3.6 s
+// = 0.503-3.353 s now in Chrome's decode, checked with tools/bench/snd/cut-check.js: 0 samples differ). Two players only: the one you control (vol) and the
 // fastest other man on screen (other x vol). Playback rate follows his speed (rate at a standstill .. at WR_TOP, capped at max),
 // so the steps quicken as he speeds up; min = yd/s under which he's silent
-const STEPS = { from: 0.75, to: 3.6, vol: 0.12, other: 0.3, rate: [0.55, 1.9], max: 2.2, min: 1.5, fade: 1.2 };
+const STEPS = { from: 0.503, to: 3.353, vol: 0.12, other: 0.3, rate: [0.55, 1.9], max: 2.2, min: 1.5, fade: 1.2 };
 const stepEls = [null, null];
 function controlledPlayer() {
   if (!['drop', 'pocket', 'flight', 'run', 'picked', 'loose', 'fumble', 'kickoff', 'punt'].includes(state)) return null;
@@ -2041,7 +2044,7 @@ function stepAudio() {
   if (!stepTried && actx) stepLoad();
   if (!sndOn()) { silenceLoops(); return; }
   const on = sndOn() && !liteGame() && !(rec && rec.replaying) && state !== 'pre' && state !== 'done';   // (performance mode: no footstep loops)
-  const me = on ? controlledPlayer() : null, spd = p => p ? Math.hypot(p.vx || 0, p.vy || 0) / YD : 0;
+  const me = on ? controlledPlayer() : null, spd = stepSpd;
   // the other one: the fastest man near the camera, not on the ground
   let other = null;
   if (on) {
@@ -2051,7 +2054,8 @@ function stepAudio() {
       if (!other || spd(p) > spd(other)) other = p;
     }
   }
-  [[me, STEPS.vol], [other, STEPS.vol * STEPS.other]].forEach(([p, base], i) => {
+  for (let i = 0; i < 2; i++) {   // (v0.79: a plain loop, the same order and arithmetic: the old forEach over fresh arrays made garbage every frame)
+    const p = i ? other : me, base = i ? STEPS.vol * STEPS.other : STEPS.vol;
     const s = spd(p), airborne = p && (p.z > 2 * S || p.action === 'dive' || p.action === 'slide' || p.action === 'down');
     const want = p && !airborne && s > STEPS.min ? base * Math.min(1, (s - STEPS.min) / 4) * volOf('players') * duck : 0;
     if (stepBuf && actx && actx.state === 'running') {   // the loop as a Web Audio buffer: sample-exact loop points on zero crossings, nothing is seeked (the HTML element's seek back to the loop start was the click)
@@ -2069,11 +2073,11 @@ function stepAudio() {
         n.g.gain.setTargetAtTime(p && !airborne && s > STEPS.min ? base * Math.min(1, (s - STEPS.min) / 4) : 0, t, 0.08);   // (the master gain already carries the volume setting and the pause duck)
       }
       if (stepEls[i] && !stepEls[i].paused) stepEls[i].pause();
-      return;
+      continue;
     }
     let el = stepEls[i];   // (the volume is tracked here, never read back off the element: phones that ignore .volume read 1, which kept the steps playing at full volume)
-    if (want > 0.002 && !el) { try { el = stepEls[i] = new Audio('audio/footsteps.mp3'); el.volume = 0; el.preservesPitch = false; el.mozPreservesPitch = false; el.webkitPreservesPitch = false; } catch (e) { return; } }
-    if (!el) return;
+    if (want > 0.002 && !el) { try { el = stepEls[i] = new Audio('audio/footsteps.mp3'); el.volume = 0; el.preservesPitch = false; el.mozPreservesPitch = false; el.webkitPreservesPitch = false; } catch (e) { continue; } }
+    if (!el) continue;
     const ev = el._v || 0, nv = Math.max(0, Math.min(1, ev + Math.max(-STEPS.fade / 60, Math.min(STEPS.fade / 60, want - ev))));
     el._v = nv; sfxGain(el, nv);
     const top = WR_TOP / YD, r = STEPS.rate[0] + (STEPS.rate[1] - STEPS.rate[0]) * Math.min(1, s / top);
@@ -2083,8 +2087,9 @@ function stepAudio() {
       else if (el.currentTime > STEPS.to) { sfxGain(el, 0); el._dip = now + 90; el.currentTime -= STEPS.to - STEPS.from; }   // (the steady stretch loops: a seek clicks, so he is muted for a beat around it)
       if (el._dip > now) sfxGain(el, 0);
     } else if (!el.paused) el.pause();
-  });
+  }
 }
+function stepSpd(p) { return p ? Math.hypot(p.vx || 0, p.vy || 0) / YD : 0; }
 // the matchup screen: the forecast card (franchise) or the weather picker (exhibition)
 const WX_BTN = { x: 530, y: 522, w: 220, h: 76 };
 function drawWxCard(ex) {
@@ -4867,7 +4872,7 @@ const TOUCH_HELP = [
 // the debug page: goes over the settings screen (DEBUG, bottom of the settings panel)
 let dbgUI = false;
 const DBG_PANEL = { x: 330, y: 50, w: 620, h: 650 };
-const DBG_BTNS = { hit: { x: 370, y: 140, w: 265, h: 54 }, fld: { x: 645, y: 140, w: 265, h: 54 }, mobile: { x: 370, y: 204, w: 265, h: 54 }, hash: { x: 645, y: 204, w: 265, h: 54 }, tools: { x: 370, y: 268, w: 265, h: 54 }, blit: { x: 645, y: 268, w: 265, h: 54 }, perf: { x: 370, y: 332, w: 265, h: 54 }, tick: { x: 645, y: 332, w: 265, h: 54 }, net: { x: 370, y: 396, w: 265, h: 54 }, gpu: { x: 645, y: 396, w: 265, h: 54 }, dyn: { x: 370, y: 460, w: 265, h: 54 }, store: { x: 645, y: 460, w: 265, h: 54 }, turn: { x: 370, y: 522, w: 174, h: 48 }, shadow: { x: 553, y: 522, w: 174, h: 48 }, res: { x: 736, y: 522, w: 174, h: 48 }, edge: { x: 370, y: 578, w: 174, h: 48 }, marks: { x: 553, y: 578, w: 174, h: 48 }, lock: { x: 736, y: 578, w: 174, h: 48 }, back: { x: 736, y: 636, w: 174, h: 46 }, zones: { x: 370, y: 636, w: 174, h: 46 }, routes: { x: 553, y: 636, w: 174, h: 46 } };   // (zones / routes = the DBG_OV field overlay)
+const DBG_BTNS = { hit: { x: 370, y: 140, w: 265, h: 54 }, fld: { x: 645, y: 140, w: 265, h: 54 }, mobile: { x: 370, y: 204, w: 265, h: 54 }, hash: { x: 645, y: 204, w: 265, h: 54 }, tools: { x: 370, y: 268, w: 265, h: 54 }, blit: { x: 645, y: 268, w: 265, h: 54 }, perf: { x: 370, y: 332, w: 265, h: 54 }, tick: { x: 645, y: 332, w: 265, h: 54 }, net: { x: 370, y: 396, w: 265, h: 54 }, gpu: { x: 645, y: 396, w: 265, h: 54 }, dyn: { x: 370, y: 460, w: 265, h: 54 }, store: { x: 645, y: 460, w: 265, h: 54 }, turn: { x: 370, y: 522, w: 85, h: 48 }, turnTex: { x: 459, y: 522, w: 85, h: 48 }, shadow: { x: 553, y: 522, w: 85, h: 48 }, crowd: { x: 642, y: 522, w: 85, h: 48 }, res: { x: 736, y: 522, w: 85, h: 48 }, menuRes: { x: 825, y: 522, w: 85, h: 48 }, edge: { x: 370, y: 578, w: 174, h: 48 }, marks: { x: 553, y: 578, w: 174, h: 48 }, lock: { x: 736, y: 578, w: 174, h: 48 }, back: { x: 736, y: 636, w: 174, h: 46 }, zones: { x: 370, y: 636, w: 174, h: 46 }, routes: { x: 553, y: 636, w: 174, h: 46 } };   // (zones / routes = the DBG_OV field overlay)
 const DBG_OV = { zones: false, routes: false, live: null, key: -1, n: 0 };   // debug overlay (not saved): ZONES = each zone defender's area + man lines + the coverage, ROUTES = every route + the combos; live and in replays (rec.kits.dbg)   // (phase 5: edge / marks / lock = PHONE_TEST.edge, PHONE_TEST.marks, FPS_CAP.gapLock)   // (v0.70: turn / shadow / res = PHONE_TEST)   // (dyn = ADAPTIVE: LAST GAME readout)   // (perf = the frame-time readout, see PERF_HUD; net = FAKE LAG for testing online, see NET_SIM)
 function drawDebug() {
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
@@ -4884,7 +4889,7 @@ function drawDebug() {
   menuBtn(DBG_BTNS.blit, `FIELD BLIT: ${PHONE_TEST.blit}`, Y, 20); menuBtn(DBG_BTNS.tick, `TICK PATHS: ${PHONE_TEST.tickPath ? 'ON' : 'OFF'}`, Y, 20);   // (v0.74 white-line hunt 2, PHONE_TEST.blit / tickPath)   // (the start screen's ANIMATION LIBRARY + TEST MODE)
   menuBtn(DBG_BTNS.perf, `FRAME TIMES: ${SETTINGS.perfHud ? 'ON' : 'OFF'}`, Y, 20);   // (fps + update / draw ms in a corner of every screen)
   menuBtn(DBG_BTNS.net, `FAKE LAG: ${SETTINGS.netSim || 'OFF'}`, Y, 24);   // (online test bench: delays / drops what this device receives)
-  menuBtn(DBG_BTNS.gpu, 'GPU: ' + PHONE_TEST.gpu, Y, 20); menuBtn(DBG_BTNS.turn, 'TURN: ' + PHONE_TEST.turn, Y, 20); menuBtn(DBG_BTNS.shadow, 'SHADOW: ' + PHONE_TEST.shadow, Y, 20); menuBtn(DBG_BTNS.res, 'RES: ' + PHONE_TEST.res, Y, 20);   // (v0.70 phone test switches, not saved)
+  menuBtn(DBG_BTNS.gpu, 'GPU: ' + PHONE_TEST.gpu, Y, 20); menuBtn(DBG_BTNS.turn, 'TURN\n' + PHONE_TEST.turn, Y, 16); menuBtn(DBG_BTNS.turnTex, 'TURN TEX\n' + PHONE_TEST.turnTex, Y, 16); menuBtn(DBG_BTNS.shadow, 'SHADOW\n' + PHONE_TEST.shadow, Y, 16); menuBtn(DBG_BTNS.crowd, 'CROWD\n' + (CROWD_AI.on ? 'ON' : 'OLD'), Y, 16); menuBtn(DBG_BTNS.res, 'RES\n' + PHONE_TEST.res, Y, 16); menuBtn(DBG_BTNS.menuRes, 'MENU RES\n' + PHONE_TEST.menuRes, Y, 16);   // (resolution job: turn / res halved for TURN TEX / MENU RES)   // (v0.70 phone test switches, not saved)
   menuBtn(DBG_BTNS.edge, 'EDGE: ' + PHONE_TEST.edge, Y, 18); menuBtn(DBG_BTNS.marks, 'MARKS: ' + PHONE_TEST.marks, Y, 18); menuBtn(DBG_BTNS.lock, 'FPS LOCK: ' + (FPS_CAP.gapLock ? 'OLD' : 'PAINT'), Y, 18);   // (phase 5 phone switches, not saved)
   menuBtn(DBG_BTNS.zones, `ZONES: ${DBG_OV.zones ? 'ON' : 'OFF'}`, Y, 18); menuBtn(DBG_BTNS.routes, `ROUTES: ${DBG_OV.routes ? 'ON' : 'OFF'}`, Y, 18);
   menuBtn(DBG_BTNS.back, 'DONE', Y, 24);
@@ -4924,7 +4929,7 @@ function drawDynDebug() {   // the last judged game, per adaptive master (tuning
   menuBtn({ x: 515, y: 556, w: 250, h: 56 }, 'BACK', IN_GAME_PAPER.yellow, 22);
 }
 function phoneTestNext(k) {   // (v0.70: the DEBUG page's phone test cyclers; the console can set PHONE_TEST.* the same way, then call this with no key to apply)
-  const T = PHONE_TEST, L = { turn: T.turns, shadow: T.shadows, res: T.ress, gpu: T.gpus }[k];
+  const T = PHONE_TEST, L = { turn: T.turns, shadow: T.shadows, res: T.ress, gpu: T.gpus, menuRes: T.menuRess, turnTex: T.turnTexs }[k];
   if (L) T[k] = L[(L.indexOf(T[k]) + 1) % L.length];
   btnSprClear(); fitScreen();   // (baked buttons keep the old blur; a pinned scale applies at once)
 }
@@ -4940,6 +4945,8 @@ function debugClick(p) {
   else if (inBtn(p, DBG_BTNS.perf)) SETTINGS.perfHud = !SETTINGS.perfHud;
   else if (inBtn(p, DBG_BTNS.net)) netSimNext();
   else if (inBtn(p, DBG_BTNS.gpu)) phoneTestNext('gpu');
+  else if (inBtn(p, DBG_BTNS.crowd)) CROWD_AI.on = !CROWD_AI.on;   // (prompt 3: crowd logic ON / OLD = the old flat crowd; sound only, not saved)
+  else if (inBtn(p, DBG_BTNS.menuRes) || inBtn(p, DBG_BTNS.turnTex)) phoneTestNext(inBtn(p, DBG_BTNS.menuRes) ? 'menuRes' : 'turnTex');   // (menuRes applies on the next frame (frame()'s hi rule))
   else if (inBtn(p, DBG_BTNS.edge)) { PHONE_TEST.edge = PHONE_TEST.edge === 'INSET' ? 'AS IS' : 'INSET'; fitScreen(); }   // (phase 5: the turned page clear of the status bar / as before)
   else if (inBtn(p, DBG_BTNS.marks)) PHONE_TEST.marks = PHONE_TEST.marks === 'LIVE' ? 'OLD' : 'LIVE';   // (phase 5: the field cache is baked again on the next frame (its nm key))
   else if (inBtn(p, DBG_BTNS.lock)) { FPS_CAP.gapLock = !FPS_CAP.gapLock; fpsCap.lock = false; fpsCap.over = 0; }   // (phase 5: OLD = late gaps alone may lock 30)

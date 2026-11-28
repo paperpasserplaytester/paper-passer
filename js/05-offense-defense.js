@@ -1360,7 +1360,7 @@ function showTick() {
 function showFail(c) {
   try { if (celebHome(c)) crowdGroan(0.6); } catch (e) {}
   const name = c.src && c.src.name;
-  if (name && xpcOn()) (LEAGUE.celFines || (LEAGUE.celFines = [])).push({ name, move: c.show.id, fail: 1, yr: LEAGUE.year || 1, wk: season ? season.week : 0, team: MATCH[celebFav(c)] });
+  if (name && xpcOn()) (LEAGUE.celFines || (LEAGUE.celFines = [])).push({ name, move: c.show.id, fail: 1, yr: LEAGUE.year || 1, wk: season ? season.week : 0, team: celebFav(c) === 'you' ? meK() : meK() === MATCH.you ? MATCH.opp : MATCH.you });   // (sound job D3: celebFav = the real you; MATCH is flipped on their drives)
   showEnd(c);
 }
 // a score: showing off now or a second ago = the celebration's hype bonus (touchdown, before the whistle code)

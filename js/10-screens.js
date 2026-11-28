@@ -740,9 +740,10 @@ function menuBtn(b, label, bg, size = 24, face, on = true) {
 const BTN_SPR = new Map(), BTN_SPR_MAX = 360, BTN_SPR_PAD = 8;
 let BTN_SPR_ON = true;   // (false = every button drawn live, as before v0.55)
 const BTN_BAKE = { at: 0, ms: 0, n: 0, skip: 0 };   // (v0.70: this paint's sprite baking: ms spent, how many, how many left for later frames; budget BTN_FX.bakeMs)
+const sprK = v => RK * Math.round(v / RK * 8) / 8;   // (resolution job: a sprite's bake scale in 1/8 steps OF THE CANVAS SCALE: a resting button is baked at exactly RK (was 1.125 at RK 1.1: resampled), hover / wiggle scales still share buckets)
 function btnSprClear() { for (const c of BTN_SPR.values()) freeCanvas(c); BTN_SPR.clear(); if (typeof btnMatClear === 'function') btnMatClear(); }
 function btnSprite(b, label, paper, size, face, on) {
-  const T = tornPts(b), m = DM_P.getTransform.call(ctx), s = Math.round(Math.hypot(m.a, m.b) * 8) / 8;
+  const T = tornPts(b), m = DM_P.getTransform.call(ctx), s = sprK(Math.hypot(m.a, m.b));
   if (!s || s > 6) return false;
   const cx = b.x + b.w / 2, cy = b.y + b.h / 2, plain = paper === '#fffdf4' || paper === '#fff3a0';
   ctx.save(); ctx.translate(cx, cy); ctx.rotate(T.tilt); ctx.translate(-cx, -cy);
@@ -787,7 +788,7 @@ function btnSprite(b, label, paper, size, face, on) {
 // points at the bake canvas while draw() runs, with the main ctx's own hooks copied on (hand font, star text, dark-mode wrappers), so it comes out as it
 // would on screen, dark mode included. Returns the canvas (c._x / _y / _w / _h = where it goes).
 function ctxBake(x0, y0, w, h, draw) {
-  const m = DM_P.getTransform.call(ctx), s = Math.round(Math.hypot(m.a, m.b) * 8) / 8 || 1, main = ctx;
+  const m = DM_P.getTransform.call(ctx), s = sprK(Math.hypot(m.a, m.b)) || 1, main = ctx;
   const c = document.createElement('canvas'); c.width = Math.ceil(w * s); c.height = Math.ceil(h * s);
   const g = c.getContext('2d');
   for (const k of Object.getOwnPropertyNames(main)) Object.defineProperty(g, k, Object.getOwnPropertyDescriptor(main, k));
@@ -1227,7 +1228,7 @@ function btnMatLabel(b, label, size, mat, K, paper) {
 const BTN_MAT_SPR = new Map();
 function btnMatClear() { for (const L of BTN_MAT_SPR.values()) { freeCanvas(L.sh); for (const f of L.fr) if (f) { freeCanvas(f.base); freeCanvas(f.front); } } BTN_MAT_SPR.clear(); }
 function btnMatLayers(b, label, size, mat, K, paper, f) {
-  const s = Math.round(Math.hypot(DM_P.getTransform.call(ctx).a, DM_P.getTransform.call(ctx).b) * 8) / 8;
+  const s = sprK(Math.hypot(DM_P.getTransform.call(ctx).a, DM_P.getTransform.call(ctx).b));
   const ss = K.state ? K.state(b, label) : '';   // (v0.66: a kind's state (scaffold / sweat / week + opponent) is part of the key: it re-bakes only when that changes)
   const key = `${mat.k}|${mat.ico || ''}|${mat.job || ''}|${b.x},${b.y},${b.w},${b.h}|${label}|${size}|${paper}|${s}|${dmOn ? 1 : 0}|${ss}`;
   let L = BTN_MAT_SPR.get(key);

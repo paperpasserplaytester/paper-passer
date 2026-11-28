@@ -364,6 +364,7 @@ function endPlay(text, next, kind) {
   recLive();   // (records that fell this play)
   hsScoreRec(text, next, kind);   // (the halftime reel: how good a highlight was it)
   annPlayEnd(text, next, kind, wasKickoff, pen);   // (the announcers: the result, or a crazy play's call)
+  try { crowdPlayEnd(text, next, kind, wasKickoff, pen); } catch (e) {}   // (sound job E: the crowd logic: momentum, restless, carry, its reactions)
   // the play's yardage floats up over whoever had it (+7 YDS / -3 YDS); nothing on incompletions or turnovers
   const gainer = runner || (playCatcher && playCatcher.hasBall ? playCatcher : null) || (/SACKED/.test(text) ? qb : null) ||
     (['drop', 'pocket', 'run'].includes(state) && !ball.inAir && !ball.loose && kind !== 'punt' && kind !== 'turnover' ? qb : null);   // (a scrambling QB carries the ball without hasBall)
@@ -471,7 +472,7 @@ function endPlay(text, next, kind) {
   firstDownBig = firstDownCall && (down === 4 || (down >= 2 && togo >= 7) || gain > BIG_PLAY);
   if (rec && (firstDownBig || gain > BIG_PLAY)) rec.big = true;
   if (gain >= POST.hugeYds && !tut && patMode === null && kind !== 'fg' && kind !== 'fgmiss' && (!game.big || gain > game.big.gain) && !(twoP && twoP.flipped)) { const hp = isRunPlay ? runner : playCatcher; if (hp && hp.team === 'off') game.big = { gain, who: (hp.name || (hp.src && hp.src.name) || ''), run: !!isRunPlay, td: kind === 'td' }; }   // (your longest play of the game: a Post story)
-  if (kind === 'turnover') crowdCheer(0.9, aiOff() && !tut ? 'you' : 'opp');   // (their drive on defense: a turnover is yours)
+  if (kind === 'turnover') crowdCheer(0.9, crowdDefFav());   // (the defense's: in MATCH's terms the side with the ball is 'you', flipped or not)
   else if (firstDownBig) crowdCheer(down === 4 || gain > BIG_PLAY ? 0.85 : 0.7);
   if (kind === 'td' || kind === 'turnover') playHype = 0;
   else if (kind !== 'punt') crowdPayoff(gain, gain >= CROWD_OK_GAIN || firstDownCall);   // (a gain of 4+ never disappoints the crowd)
@@ -1183,7 +1184,7 @@ function intercept(d, diving = false) {
   showBanner('INTERCEPTION!');
   if (rec) rec.big = rec.int = true;   // (rec.int: an interception is replayed whenever replays are on)
   pickThrown = true;   // (counts as an incompletion for the star factors)
-  crowdCheer(0.9, aiOff() && !tut && d.team === 'def' ? 'you' : 'opp', false, true, true);   // (your own defender's pick on defense: your side's crowd)
+  crowdCheer(0.9, d.team === 'def' ? crowdDefFav() : crowdOffFav(), false, true, true);   // (the defender's pick: the defense's crowd)
   // overtime: a pick on your possession ends it the moment it's thrown when they've already had the ball and lead
   if (patMode === null && game.ot && game.quarter >= 5 && !game.over && d.team === 'def') {
     game.ot.done.BLUE = true; game.ot.started.BLUE = true; game.ot.score = game.blue + game.red;
@@ -1545,7 +1546,7 @@ function fumble(c, big, called) {   // called = already announced (STRIPPED / ST
   msg = called ? `${called}!` : big ? 'BOOM!  FUMBLE!' : 'FUMBLE!';
   if (!called) popup(c, 'FUMBLE', '#ff6b6b');   // (not drawn: hooks only)
   if (!tut) showBanner('FUMBLE!', c.team === 'def' ? '#7dff8a' : '#ff2a2a', c.team === 'def' ? '#0a3a14' : '#3a0000');   // every fumble gets the banner (red when the offense coughs it up, green a pick / scoop returner; flipped on defense)
-  if (!tut) crowdCheer(0.6, (c.team === 'off') === !aiOff() ? 'opp' : 'you', false, true);   // (the crowd reacts the moment it comes out, not only when somebody falls on it)
+  if (!tut) crowdCheer(0.6, c.team === 'off' ? crowdDefFav() : crowdOffFav(), false, true);   // (the crowd reacts the moment it comes out, not only when somebody falls on it)
 }
 
 // EVERY sack goes through here (the pocket sack and its strip, a QB tackled or run down behind the line by the computer or the defender you
@@ -1560,7 +1561,7 @@ function sackCall() {
   sackPid = runPid;
   annSay('sack', { pri: 3, vars: annWho(qb, typeof lastTkl !== 'undefined' && lastTkl && lastTkl.team !== qb.team ? lastTkl : null) });   // (the announcers)
   if (rec && !rec.replaying) rec.big = true;
-  crowdCheer(SACK_CROWD, aiOff() ? 'you' : 'opp', false, true);
+  crowdCheer(SACK_CROWD, crowdDefFav(), false, true);
 }
 function sack(r) {
   if (ucShield()) return;   // (still taking the snap under center: he gets there a beat later)
