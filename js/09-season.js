@@ -16,8 +16,9 @@ function advanceResults() {
   if (!MENU_SCREENS.includes(results.screen) && !['exhibition', 'playoffs', 'exstats'].includes(results.screen)) return;   // (Space only moves on from screens that have a continue button: not the animation library, settings pages, etc.)
   if (OFF_SCREENS.includes(results.screen) || ['trade', 'tradeb', 'toffers', 'staff', 'roster', 'hof', 'post', 'chof', 'practice', 'hire', 'board'].includes(results.screen)) return;   // (the offseason and trade screens have their own buttons)
   if (results.screen === 'home' && season && season.offseason && !exhibition) { offHomeNext(); return; }   // OFFSEASON
-  if (tutPrompt === 'ask' || tutPrompt === 'coach' || tutPrompt === 'ready' || tutPrompt === 'setup') return;                            // (answer the tutorial card first)
+  if (tutPrompt === 'ask' || tutPrompt === 'ft' || tutPrompt === 'coach' || tutPrompt === 'ready' || tutPrompt === 'setup' || tutPrompt === 'same') return;                            // (answer the tutorial card first)
   if (tutPrompt === 'play' && results.screen === 'matchup') { tutPrompt = null; startTutorial(); return; }
+  if (results.screen === 'home' && !exhibition && campDue()) { if (tutPrompt === 'continue') tutPrompt = null; campOpen(); return; }   // (v0.77 part 2: PRACTICE = the camp)
   if (tutPrompt === 'continue' && results.screen === 'home') tutPrompt = 'play';
   if (results.screen === 'playoffs') poPrimary();   // NEXT / PLAY / CONTINUE on the bracket
   else if (results.screen === 'home' && season && season.week > SEASON_WEEKS && !exhibition) { if (!po) poStart(); results.screen = 'playoffs'; }   // PLAYOFFS
@@ -258,7 +259,7 @@ function seasonGameDone(blue, red) {
   coachGame(blue, red);   // (coach XP from the result; goals done this week boost the players' XP below)
   upgradeGame();   // (and XP toward attribute upgrades)
   for (const q of ROSTER[season.team]) if (q.newWk > 0) q.newWk--;   // (the NEW tag lasts two games)
-  if (g) { if (g.h === season.team) { g.hs = blue; g.as = red; } else { g.hs = red; g.as = blue; } season.last = season.week; season.lastPO = null; season.played = (season.played || 0) + 1; rbYards(g); try { recTeamGame(g, season.week); } catch (e) {} }
+  if (g) { if (g.h === season.team) { g.hs = blue; g.as = red; } else { g.hs = red; g.as = blue; } season.last = season.week; season.lastPO = null; season.played = (season.played || 0) + 1; jobGameDone(blue, red); rbYards(g); try { recTeamGame(g, season.week); } catch (e) {} }
   seasonWeekStep(g);   // (the week you played; a bye after it now waits on the home screen for CONTINUE: seasonByeStep)
   try { rbWeek(season.week > SEASON_WEEKS ? 'end' : 'wk'); } catch (e) { console.warn('record book', e); }   // (season marks so far / locked once the regular season is over, careers)
   lpstSave(true);   // (v0.72: written by the full autosave that follows)
@@ -1595,7 +1596,15 @@ const offHomeStage = () => OFF && OFF.stage ? (OFF.stage === 'resign' && OFF.exp
 function offHomeNext() {
   const st = offHomeStage();
   if (!st) { offBegin(); return; }
-  if (st === 'resign') { results.screen = 'resign'; offTip('resign'); } else offToFA();
+  if (st === 'resign') { results.screen = 'resign'; offTip('resign'); } else if (unlFirstOff()) { offAutoFA(season.team); offToDraft(); } else offToFA();   // (v0.77: the first offseason has no free agency step: it runs by itself)
+}
+function offAutoFA(me) {   // the first offseason's free agency, done for you: a position below its starters gets the best free agent you can fit (spot, cap, credits), as signing him by hand would
+  const R = ROSTER[me]; if (!R) return;
+  for (const g of Object.keys(STARTERS)) {
+    if (R.filter(q => q.group === g).length >= (STARTERS[g] || 0)) continue;
+    const p = FA_POOL.filter(q => q.group === g && faHasSpot(me, q) && capRoom(me) >= (q.salary || 0) && LEAGUE.coins >= signCost(q)).sort((a, b) => b.stars - a.stars)[0];
+    if (p) faSign(p);
+  }
 }
 function offToFA() {
   results.screen = 'fa'; OFF.fa.page = 0; OFF.fa.sel = null; offTip('fa');
@@ -2228,7 +2237,7 @@ function offToDraft() {
 // D.pi = the slot on the clock, D.turn = that slot is yours. draftStep() makes ONE computer pick (false = it is your turn or the draft is
 // over): NEXT PICK = one step, SIM TO MY PICK = steps until your slot (draftSim). Every pick is made at its real slot; a slot's owner is
 // read again when it comes up, so a trade made mid-round counts.
-const draftSlim = p => ({ name: p.name, short: p.short, tag: p.tag, group: p.group, stars: p.stars, face: p.face, num: p.num });
+const draftSlim = p => ({ name: p.name, short: p.short, tag: p.tag, group: p.group, stars: p.stars, face: p.face, num: p.num, call: p.call, callS: p.callS });
 const draftCur = () => { const D = OFF.draft; return (D.plans && D.plans[D.round]) || []; };
 let draftPop = null;   // the cell that was just filled: { r, i, t0 } (it pops in; never saved)
 function draftRound() {   // the next round's slots (false = that was the last round: the draft is over)
@@ -2249,7 +2258,7 @@ function draftPass(e) {   // you pass on the slot on the clock (a round with no 
 }
 function draftStep() {
   const D = OFF.draft, me = season.team;
-  if (!D || D.done || D.turn) return false;
+  if (!D || D.done || D.turn || D.call) return false;   // (a scout on the phone holds the draft)
   saveFreeze();   // (v0.75: a sim pick is no input: a save still packing takes its text first, so it holds whole picks)
   if (D.pi >= draftCur().length && !draftRound()) return false;
   const e = draftCur()[D.pi];
@@ -2272,6 +2281,7 @@ function draftSim(now) {   // to your pick / the end: one computer pick every DR
 let draftSimQ = null;   // a sim running pick by pick: { at (ms of the last pick), n } (never saved; a click anywhere finishes it at once)
 function draftSimTick() {
   const Q = draftSimQ; if (!Q || !OFF.draft) { draftSimQ = null; return; }
+  if (OFF.draft.call) return;   // (on hold while a scout calls)
   const gap = DRAFT_GRID.simGap * 1000, now = performance.now();
   for (let k = 0; k < 3 && (Q.n === 0 || now - Q.at >= gap); k++) {   // (a slow frame catches up a few picks, never a burst)
     Q.at = Q.n === 0 ? now : Q.at + gap;
@@ -2315,7 +2325,84 @@ function draftLoadOf(o) {   // false = not loadable (the caller falls back to fr
   OFF.draft = D; draftPop = null; draftSimQ = null;   // (D.turn comes back as saved: no bell, draftTurnOn is not called)
   return true;
 }
-function draftTurnOn(v) { const D = OFF.draft; if (v && !D.turn && !D.skipAll) try { sndRec('bell', 0.8, { ms: 1400, fade: 500, tag: 'dr' }); } catch (e) {} D.turn = v; }
+function draftTurnOn(v) { const D = OFF.draft, bell = v && !D.turn && !D.skipAll; if (bell) try { sndRec('bell', 0.8, { ms: 1400, fade: 500, tag: 'dr' }); } catch (e) {} D.turn = v; if (bell) draftCallTurn(true); }
+// --- scout calls (v0.75, scouts on only): a scout phones during your pick. D.call = { side, kind ('take' / 'boom' / 'bust'), name, rung }, D.calls = calls made per side,
+// D.callAt = the pick a call was made on (one call a pick), D.bustAsk = BUST prospects already warned about; all saved with the draft. The phone sits on the desk (DRAFT_PHONE).
+const DRAFT_PHONE = { x: 1222, y: 84, s: 24 }, CALL_P = { x: 250, y: 200, w: 780, h: 290 };
+const CALL_OK = { x: CALL_P.x + CALL_P.w - 190, y: CALL_P.y + CALL_P.h - 70, w: 160, h: 50 }, CALL_SHOW = { x: CALL_P.x + CALL_P.w - 370, y: CALL_P.y + CALL_P.h - 70, w: 160, h: 50 };
+let draftCallT = null, draftCallBell = false;   // (ui clock the call first showed, and whether your pick's bell rang first: never saved, a load shows the call without a second ring)
+function draftCallMax(sc) {   // calls this scout makes in a draft, by stars (SCOUT.call.per) + a hashed share
+  const P = SCOUT.call.per, s = Math.max(1, Math.min(5, sc.stars)), i = Math.min(3, Math.floor(s) - 1), n = P[i] + (P[i + 1] - P[i]) * (s - 1 - i);
+  return Math.floor(n + bdHash(`${sc.name}:${OFF.draft.year}:calls`));
+}
+function draftCallOk(side) {
+  const D = OFF.draft; if (!scoutsOn() || D.skipAll || D.call || D.done || D.callAt === `${D.round}:${D.pi}`) return false;
+  return ((D.calls || {})[side] || 0) < draftCallMax(scoutsOf(season.team)[side]);
+}
+function draftCallSet(side, kind, p, bell) {
+  const D = OFF.draft; D.call = { side, kind, name: p.name, rung: 0 }; D.calls = D.calls || {}; D.calls[side] = (D.calls[side] || 0) + 1; D.callAt = `${D.round}:${D.pi}`;
+  draftCallT = null; draftCallBell = !!bell; draftSimQ = null;
+}
+function draftCallTurn(bell) {   // your pick came up: one scout may call with his man (seen on his side; draftChoice for your team = talent through your scout's grades + your needs)
+  const D = OFF.draft, S = scoutsOf(season.team), left = Math.max(1, DRAFT.rounds - D.round + 1); let best = null;
+  for (const side of ['off', 'def']) {
+    if (!draftCallOk(side)) continue;
+    const sc = S[side], room = draftCallMax(sc) - ((D.calls || {})[side] || 0);
+    if (bdHash(`${D.year}:${D.round}:${D.pi}:${side}:ring`) >= room / left) continue;
+    const pool = D.pool.filter(p => (OFF_GROUPS.includes(p.group) === (side === 'off')) && p.call !== 'bust' && (p.seen || p.rep || scoutNamed(sc, p)));
+    if (!pool.length) continue;
+    const p = draftChoice(season.team, pool, [], D.gk, false, { n: D.n + 1, round: D.round });
+    if (p && (!best || sc.stars > best.sc.stars || (sc.stars === best.sc.stars && bdHash(`${D.year}:${D.round}:${D.pi}:tie`) < 0.5))) best = { side, sc, p };   // (both want it: the better scout, a tie = a coin from the hash)
+  }
+  if (best) draftCallSet(best.side, best.p.call === 'boom' && best.p.callS === best.side ? 'boom' : 'take', best.p, bell);
+}
+function draftCallBust(p) {   // on your clock, the first look at (or try to pick) a prospect stamped BUST: his scout calls once to warn you
+  const D = OFF.draft; if (!D.turn || !p || p.call !== 'bust' || p.drafted) return;
+  D.bustAsk = D.bustAsk || {}; if (D.bustAsk[p.name]) return; D.bustAsk[p.name] = 1;
+  if (draftCallOk(p.callS)) draftCallSet(p.callS, 'bust', p);
+}
+function draftPhoneDraw(t) {   // the doodled phone on the desk; t > 0 = rattling
+  const P = DRAFT_PHONE; ctx.save(); ctx.translate(P.x, P.y); ctx.scale(P.s, P.s); ctx.lineWidth = 2 / P.s;
+  try { DOODLE.phone({ c: '#3a3a3a' }, t); } catch (e) {}
+  ctx.restore();
+}
+function draftCallDraw() {
+  const D = OFF.draft; if (!D || D.done || !scoutsOn()) return;
+  const c = D.call; if (!c) { draftPhoneDraw(0); return; }
+  const C = SCOUT.call, now = uiNow(); if (draftCallT == null) draftCallT = now;
+  const s = (now - draftCallT) / 1000, wait = draftCallBell ? C.bellGap : 0, ring = s >= wait && s < wait + C.ringS;
+  if (s >= wait && !c.rung) { c.rung = 1; try { sndRec('phone', 0.8, { ms: C.ringS * 1000, fade: 300, tag: 'call' }); } catch (e) {} }
+  if (s < wait + Math.max(C.ringS, C.openS)) menuMoving = true;
+  if (s < wait) { draftPhoneDraw(0); return; }
+  ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(-640, -40, 2560, 800); uiModal();
+  draftPhoneDraw(ring ? s : 0);
+  const o = Math.min(1, (s - wait) / C.openS), e = 1 - Math.pow(1 - o, 3), B = CALL_P, sc = scoutsOf(season.team)[c.side];
+  ctx.save(); ctx.translate(B.x + B.w / 2, B.y + B.h / 2); ctx.scale(0.85 + 0.15 * e, 0.85 + 0.15 * e); ctx.translate(-B.x - B.w / 2, -B.y - B.h / 2); ctx.globalAlpha = e;
+  ctx.fillStyle = 'rgba(40,25,5,0.25)'; ctx.fillRect(B.x + 5, B.y + 6, B.w, B.h); ctx.fillStyle = RES.bright; ctx.fillRect(B.x, B.y, B.w, B.h);
+  ctx.strokeStyle = RES.line; ctx.lineWidth = 3; ctx.strokeRect(B.x, B.y, B.w, B.h);
+  if (sc.face) drawAvatar(sc.face, B.x + 110, B.y + 120, 70);
+  ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 15px monospace';
+  ctx.fillText(sc.name.toUpperCase(), B.x + 110, B.y + 212, 200); ctx.font = 'bold 12px monospace'; ctx.fillText(c.side === 'off' ? 'OFFENSE SCOUT' : 'DEFENSE SCOUT', B.x + 110, B.y + 234);
+  const bx = B.x + 230, by = B.y + 34, bw = B.w - 260, bh = 140;   // the speech bubble, its tail at his face
+  ctx.fillStyle = '#fffdf4'; ctx.strokeStyle = RES.line; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(bx + 18, by); ctx.lineTo(bx + bw - 18, by); ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + 18); ctx.lineTo(bx + bw, by + bh - 18); ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - 18, by + bh);
+  ctx.lineTo(bx + 18, by + bh); ctx.quadraticCurveTo(bx, by + bh, bx, by + bh - 18); ctx.lineTo(bx, by + 92); ctx.lineTo(bx - 34, by + 104); ctx.lineTo(bx, by + 70); ctx.lineTo(bx, by + 18); ctx.quadraticCurveTo(bx, by, bx + 18, by); ctx.closePath(); ctx.fill(); ctx.stroke();
+  const L = SCOUT_CALL_LINES[c.kind] || SCOUT_CALL_LINES.take, line = L[Math.floor(bdHash(`${c.name}:${c.kind}`) * L.length)].replace('{p}', c.name);
+  ctx.font = `bold 26px ${HAND_FONT}`; ctx.textAlign = 'left'; ctx.fillStyle = RES.line;
+  const words = line.split(' '), rows = []; let cur = '';
+  for (const w of words) { const t = cur ? cur + ' ' + w : w; if (ctx.measureText(t).width > bw - 40 && cur) { rows.push(cur); cur = w; } else cur = t; }
+  rows.push(cur); rows.forEach((r, i) => ctx.fillText(r, bx + 22, by + bh / 2 + (i - (rows.length - 1) / 2) * 34));
+  const p = D.pool.find(q => q.name === c.name);
+  if (p && p.call && p.callS === c.side) scoutStamp(bx + bw - 44, by - 6, p.call, p.callS, 0.9);
+  ctx.restore();
+  if (o >= 1) { if (c.kind !== 'bust' && p) menuBtn(CALL_SHOW, 'SHOW HIM', RES.bright, 20, null, true); menuBtn(CALL_OK, 'OK', IN_GAME_PAPER.green, 22, null, true); }
+}
+function draftCallClick(pt) {
+  const D = OFF.draft, c = D.call, s = draftCallT == null ? 0 : (uiNow() - draftCallT) / 1000;
+  if (s < (draftCallBell ? SCOUT.call.bellGap : 0) + SCOUT.call.openS) return;
+  if (inBtn(pt, CALL_SHOW) && c.kind !== 'bust') { const p = D.pool.find(q => q.name === c.name); D.call = null; if (p) { D.sel = p; D.selK = null; } return; }
+  if (inBtn(pt, CALL_OK)) D.call = null;
+}
 function draftTake(p) {   // you pick him
   const D = OFF.draft, me = season.team, R = ROSTER[me], e = draftCur()[D.pi]; saveFreeze(); autosaveSoon();
   D.pool.splice(D.pool.indexOf(p), 1);
@@ -2323,7 +2410,7 @@ function draftTake(p) {   // you pick him
   uniqueNum(R, p); R.splice(depthAt(R, p), 0, p);
   moveMood(p, 1); recalcTeamStars(); cardShowAdd(p, me, 'DRAFTED');
   if (e) { e.p = draftSlim(p); e.n = D.n; draftPop = { r: D.round, i: D.pi, t0: performance.now() }; }
-  D.sel = null; D.used++; D.pi++; D.turn = false; D.page = 0; D.view = 'board'; D.viewR = D.round;   // (back to the board: the next pick is yours to play or sim)
+  D.sel = null; D.call = null; D.used++; D.pi++; D.turn = false; D.page = 0; D.view = 'board'; D.viewR = D.round;   // (back to the board: the next pick is yours to play or sim)
 }
 function xpAdd(year, round) { (LEAGUE.xp || (LEAGUE.xp = {}))[`${year}:${round}`] = { owner: season.team, orig: season.team }; }   // a skipped pick becomes an extra slot in next year's round: tradeable (picksOf, x: true)
 function draftSkip(all) {   // pass on your picks in this round (or in the whole draft: the rest is simulated)
@@ -2376,6 +2463,7 @@ function drawDraftCell(c, r) {
   if (e.p) {
     drawPortrait(e.p, b.x + 30, cy + 20, 1.5, e.k);
     ctx.fillStyle = RES.line; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = 'bold 13px monospace'; ctx.fillText(e.p.short || e.p.name, b.x + 58, cy - 24, b.w - 62);
+    if (e.p.call && scoutsOn()) scoutStamp(b.x + b.w - 30, cy + 22, e.p.call, e.p.callS, 0.62);   // (v0.75: your scout's stamp)
     ctx.font = 'bold 17px monospace'; ctx.fillText(e.p.tag, b.x + 58, cy - 2);
     drawStar(b.x + 66, cy + 22, 8, '#ffd23f', '#8a5a00', 1.5);
     ctx.fillStyle = RES.line; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = 'bold 15px monospace'; ctx.fillText(String(e.p.stars), b.x + 79, cy + 23);
@@ -2421,7 +2509,8 @@ function draftBoardClick(pt) {
   if (c.e.p) { const q = (ROSTER[c.e.k] || []).find(x => x.name === c.e.p.name); if (q) { D.sel = q; D.selK = c.e.k; } }   // (his card, if he made the team)
   else if (D.turn && D.viewR === D.round && c.i === D.pi) { D.view = 'pool'; D.page = 0; }
 }
-function drawDraft() {
+function drawDraft() { drawDraft0(); if (OFF && OFF.draft && season) draftCallDraw(); }   // (v0.75: the scouts' phone + a call over every draft view)
+function drawDraft0() {
   if (!OFF || !OFF.draft || !season) { results.screen = 'home'; return; }
   const D = OFF.draft, me = season.team;
   draftFix(D);
@@ -2441,7 +2530,7 @@ function drawDraft() {
   menuBtn(DRAFT_VIEW_BTN, 'BOARD', RES.bright, 22);
   ctx.font = 'bold 12px monospace'; ctx.fillStyle = D.turn ? '#1f8a3b' : RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText((D.turn ? 'YOU ARE ON THE CLOCK   ' : '') + (D.log.length ? `JUST PICKED: ${D.log.join('   ')}` : ''), W / 2, 88);
-  list.slice(D.page * OFFSEASON.perPage, (D.page + 1) * OFFSEASON.perPage).forEach((p, i) => { rosterCard(p, ROSTER_CARDS[i], me, null, `${fmtM(p.salary)} ${p.years}Y`); if (p.flag && scoutsOn()) scoutBadge(ROSTER_CARDS[i], p.flag); else if (p.warn && scoutsOn()) scoutBadge(ROSTER_CARDS[i], 'warn', p.warn); });
+  list.slice(D.page * OFFSEASON.perPage, (D.page + 1) * OFFSEASON.perPage).forEach((p, i) => { rosterCard(p, ROSTER_CARDS[i], me, null, `${fmtM(p.salary)} ${p.years}Y`); if (p.flag && scoutsOn()) scoutBadge(ROSTER_CARDS[i], p.flag); else if (p.warn && scoutsOn()) scoutBadge(ROSTER_CARDS[i], 'warn', p.warn); if (p.call && scoutsOn()) scoutStamp(ROSTER_CARDS[i].x + ROSTER_CARDS[i].w - 48, ROSTER_CARDS[i].y + 34, p.call, p.callS, 0.8); });
   if (pages > 1) {
     ROSTER_ARROWS.forEach((b, i) => menuBtn(b, i ? '▸' : '◂', RES.bright, 30));
     ctx.font = 'bold 16px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`SCREEN ${D.page + 1} / ${pages}`, W / 2, 620);
@@ -2457,12 +2546,14 @@ function drawDraftPage(p) {
   const spot = faHasSpot(me, p), can = !p.scout && D.scouts > 0, mine = spot && D.turn;
   menuBtn(DRAFT_SCOUT_BTN, p.scout ? 'SCOUTED' : `SCOUT\n${D.scouts} LEFT`, can ? RES.bright : CARD_GRAY, 20, null, can);
   if (scoutsOn() && p.flag) { ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.line; ctx.fillText(p.flag === 'gen' ? 'SCOUT REPORT: GENERATIONAL' : 'SCOUT REPORT: UNDERRATED', DRAFT_SCOUT_BTN.x, DRAFT_SCOUT_BTN.y - 20, 480); }   // (just the report, above the SCOUT button: the scout's read range was a tip running under the panel)
+  if (scoutsOn() && p.call) scoutStamp(DRAFT_SCOUT_BTN.x - 60, DRAFT_SCOUT_BTN.y + DRAFT_SCOUT_BTN.h / 2, p.call, p.callS, 1.1);   // (v0.75: BOOM / BUST stamp beside the SCOUT button)
   menuBtn(DRAFT_PICK_BTN, D.turn ? `DRAFT\n${fmtM(p.salary)} / ${p.years}Y` : 'NOT YOUR\nPICK YET', mine ? IN_GAME_PAPER.green : CARD_GRAY, 19, null, mine);
   if (!spot) { ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#c81b1b'; ctx.fillText('NO ROSTER SPOT: BACK, THEN ROSTER > DROP', 130, 660); }
 }
 function draftClick(pt) {
   const D = OFF.draft, me = season.team;
   draftFix(D);
+  if (D.call) { draftCallClick(pt); return; }   // (a scout on the phone: only his buttons)
   if (draftSimQ && !D.sel && D.view !== 'pool' && !inBtn(pt, DRAFT_VIEW_BTN)) { draftSim(true); return; }   // (a sim running pick by pick: a click on the board finishes the rest at once; the prospects / a card / PROSPECTS keep working while it runs)
   if (D.sel) {
     const p = D.sel;
@@ -2477,6 +2568,7 @@ function draftClick(pt) {
       return;
     }
     if (inBtn(pt, DRAFT_PICK_BTN) && D.turn) {
+      draftCallBust(p); if (D.call) return;   // (his BUST scout calls first)
       if (!faHasSpot(me, p)) { dTip('full'); spotFullPop(p, `There is no open ${OFF_GROUPS.includes(p.group) ? 'offensive' : 'defensive'} roster spot for ${p.name}. Go back, open the ROSTER and DROP a player first.`); return; }
       if (p.salary > capRoom(me)) { offPopShow({ title: 'NOT ENOUGH CAP', lines: [`Need ${fmtM(p.salary - capRoom(me))} more. Drop someone first.`], more: `You need ${fmtM(p.salary - capRoom(me))} more cap room to draft ${p.name}. Drop a player to free up salary.` }); return; }
       offPopShow({ title: 'DRAFT HIM?', lines: [`${p.name} (${p.tag}, ${p.stars} stars)`, `${fmtM(p.salary)} a year for ${p.years} years`, `Round ${D.round}, pick ${D.pi + 1} (#${D.n + 1} overall).`],
@@ -2504,7 +2596,7 @@ function draftClick(pt) {
   const a = ROSTER_ARROWS.findIndex(b => inBtn(pt, b));
   if (a >= 0 && pages > 1) { D.page = (D.page + (a ? 1 : -1) + pages) % pages; return; }
   const i = ROSTER_CARDS.findIndex(b => inBtn(pt, b)), p = i >= 0 ? list[D.page * OFFSEASON.perPage + i] : null;
-  if (p) { D.sel = p; dTip('page'); if (!faHasSpot(me, p)) dTip('full'); return; }
+  if (p) { D.sel = p; draftCallBust(p); dTip('page'); if (!faHasSpot(me, p)) dTip('full'); return; }
   if (inBtn(pt, MENU_NEXT)) {
     if (!D.turn) { D.view = 'board'; return; }
     offPopShow({ title: 'SKIP?', lines: wrapLines('A round you skip carries one pick to next year\'s draft. It expires there if you do not use it.', 54),
@@ -3013,6 +3105,7 @@ function leagueWeek(me) {
   try { conWeek(); } catch (e) { console.warn('contracts', e); }   // (another team may call for one of your staff)
   try { boardWeek(); } catch (e) { console.warn('board', e); }   // (the draft board: this week's prospect form)
   try { unretWeek(); } catch (e) { console.warn('unretire', e); }   // (player decline: a recent retiree may call)
+  try { jobsWeek(me); } catch (e) { console.warn('jobs', e); }   // (head coach firings / hires, offers to you and pulls)
   for (const k of Object.keys(ROSTER)) for (const q of ROSTER[k]) if (q.susp > 0) q.susp--;   // (saga suspensions: one game served a week)
   if (FA_POOL.length < 10) for (let i = 0; i < 14; i++) FA_POOL.push(genFreeAgent());
   for (const k of Object.keys(ROSTER).filter(k => NFL[k] && k !== me)) {
@@ -3325,7 +3418,7 @@ function offStaff(me) {   // coordinators' contracts: an extension, or he's gone
   const msgs = [];
   for (const [k, s] of Object.entries(STAFF)) for (const r of ['oc', 'dc']) {
     const c = s[r]; c.years = (c.years == null ? rint(1, 3) : c.years) - 1;
-    const mine = k === me && contractsOn(), sour = mine && c.sour && Math.random() < CONTRACT.staff.refuseLeave;   // (MANAGE CONTRACTS: yours leaves when his deal ends unless you extended him)
+    const mine = k === me && conStaffOn(), sour = mine && c.sour && Math.random() < CONTRACT.staff.refuseLeave;   // (MANAGE CONTRACTS: yours leaves when his deal ends unless you extended him)
     if (c.years > 0 && !sour) continue;
     if (mine || Math.random() < 0.4) {
       const n = { role: c.role, name: `${pick(NAME_FIRST)} ${pick(NAME_LAST)}`, stars: Math.max(1, Math.min(5, c.stars + rint(-1, 1))), trait: pick(traitPool(coordRole(c))), quirk: hireQuirk('oc'), years: rint(2, 4), face: makeFace(Math.random, true) };
@@ -3337,7 +3430,7 @@ function offStaff(me) {   // coordinators' contracts: an extension, or he's gone
   return msgs;
 }
 // who offers you a job, from your record and playoff run (scaled by how many games you actually coached)
-const offerMerit = () => { const me = season.team, T = seasonTable()[me], fin = (season.fin || {})[me] || 0, conf = Math.min(1, (season.played || 0) / 17); return (0.55 * winPct(T) + 0.45 * fin) * Math.pow(conf, 1.5); };   // how good your year was, 0-1
+const offerMerit = () => { const me = season.team, T = jobMyT(me), fin = (season.fin || {})[me] || 0, conf = Math.min(1, (season.played || 0) / 17); return (0.55 * winPct(T) + 0.45 * fin) * Math.pow(conf, 1.5); };   // how good your year was, 0-1
 function offerWant(k, P = offerMerit()) {   // 0-1: how much team k wants you
   const st = teamStars(k), n = (st.off + st.def - 2) / 8;   // 0 = worst team, 1 = best
   let prob = n <= 0.3 ? 0.1 + 0.75 * P : P > n ? Math.min(0.85, 0.1 + (P - n) * 1.8) : 0;
@@ -3367,13 +3460,15 @@ function offOffers() {
   return offers;
 }
 function offFinishFA() {
-  const me = season.team;
+  const me = season.team, firstOff = unlFirstOff();   // (v0.77: no job offers after the first season)
+  if (OFF.retiredYou && OFF.retiredYou.length) unlEv('retire');
   retireAskAll();   // (player decline: a letter nobody answered = he retires)
   offAIPickups(me);
   try { postIssue('off'); } catch (e) { console.warn('post', e); }
   starsByAverage = true;
   recalcTeamStars();
-  OFF.offers = offOffers();   // (this season's record, before the new season replaces it)
+  try { jobSeasonEnd(); } catch (e) { console.warn('jobs', e); }   // (openings left are filled; a handshake's waits for you)
+  { const sh = jobsOn() && LEAGUE.jobs && LEAGUE.jobs.shake; OFF.offers = sh ? { [sh.team]: sh.cr } : offOffers(); OFF.shake = sh ? sh.team : null; }   // (this season's record, before the new season replaces it)
   const staff = offStaff(me), lines = [];
   try { staff.push(...conSeasonEnd(me)); } catch (e) { console.warn('contracts', e); }   // (your head coach pay + incentives, the owner's patience)
   const retired = OFF.retiredYou.map(r => r.text), star = OFF.retiredLg.filter(r => r.p.stars >= 4).slice(0, 3).map(r => `${r.p.name} (${r.k} ${r.p.tag}) retired`);
@@ -3399,7 +3494,7 @@ function offFinishFA() {
     { name: 'AROUND THE LEAGUE', lines: lg.length ? ['Stars who retired around the league.'] : ['No stars retired.'], cards: lg.map(r => ({ p: r.p, team: r.k, sub: `${r.k}  RETIRED`, retire: true })) },
     { name: 'LEAGUE TRADES', lines: swaps.length ? swaps.flatMap(t => wrapLines(t, 90)) : ['No big trades.'], cards: tcards }];
   dlPhysShow();   // (player decline: the PHYSICALS clipboard, before the new-season list)
-  catPopShow({ title: `NEW SEASON  ${nflYear()}`, cats, noOpen: true, done: () => { results.screen = 'offers'; offTip('offers'); } });
+  catPopShow({ title: `NEW SEASON  ${nflYear()}`, cats, noOpen: true, done: () => { if (firstOff && !capBlocked()) offFinish(season.team); else { results.screen = 'offers'; offTip('offers'); } } });
 }
 function offFinish(team) {
   if (team !== season.team) {
@@ -3409,7 +3504,8 @@ function offFinish(team) {
     MATCH.you = team; LEAGUE.approval = 0.5; LEAGUE.streak = 0;
     newSeason(team);
     moveArrive(old, team);
-    conNewTeam(team);   // (your head coach deal belongs to the team: this one's offer replaces it)
+    jobDealCarry(team);   // (v0.78: the new team assumes your deal; a fired coach gets the lapse deal)
+    try { jobOldCoach(old, false); const J = jobsS(); if (J.shake && J.shake.team === team) J.shake = null; } catch (e) { console.warn('jobs', e); }
   }
   OFF = null; results.screen = 'home'; saveHonors();
 }
@@ -3432,8 +3528,8 @@ function rivalK(lv) {   // diffLvl on top: a rival's team plays harder (flipped 
   return o;
 }
 function tenureTally() {   // once per season, when the Paper Bowl rings are handed out
-  const t = tenureOf(), T = seasonTable()[season.team], g = season.played || 0;
-  t.games += g; t.wins += Math.round(winPct(T) * g); t.seasons++;
+  const t = tenureOf(), T = seasonTable()[season.team], m = season.mine, g = m ? m.g : season.played || 0;   // (after a midseason move: only the games you coached here)
+  t.games += g; t.wins += m ? m.w : Math.round(winPct(T) * g); t.seasons++;
   if (((season.fin || {})[season.team] || 0) > 0) t.po++;
   try { trophySeason(); } catch (e) { console.warn('trophies', e); }   // (the trophy room's shelf: playoff wins, accomplishments)
   if (season.pb && season.pb.win === season.team) {
@@ -3464,25 +3560,262 @@ function moveLeave(old) {   // before MATCH.you changes
   LEAGUE.capHold[old] = capBase(old);   // (the team you leave keeps the cap it had)
   const t = career.tenure;
   if (t && t.team === old) {
-    (career.past = career.past || []).push({ ...t, pts: Math.round(tenurePts(t) * 10) / 10 });
+    (career.past = career.past || []).push({ ...t, left: LEAGUE.year, pts: Math.round(tenurePts(t) * 10) / 10 });
     if (tenurePts(t) >= MOVE.need && (career.hcCeil || 5) < 6) { career.hcCeil = 6; career.ceilNews = true; }
   }
   career.tenure = null;
+  if (career.prac) { (LEAGUE.facOf = LEAGUE.facOf || {})[old] = career.prac.fac; if (STAFF[old] && career.prac.tr) STAFF[old].tr = career.prac.tr; }   // (your buildings and trainers stay with the team you leave)
 }
 function moveArrive(old, team) {   // after newSeason
   if (LEAGUE.capHold) delete LEAGUE.capHold[team];   // (the new team uses the leaguewide cap)
-  const tier = facTier(team), up = [];
-  if (career.prac) for (const [n, f] of Object.entries(career.prac.fac)) { const hit = Math.random() < MOVE.facUp; f.lvl = hit ? tier : 1; f.build = null; if (hit && tier > 1) up.push(n.toUpperCase()); }
+  const up = [];
+  if (career.prac) { career.prac.fac = facOfTeam(team); for (const [n, f] of Object.entries(career.prac.fac)) if (f.lvl > 1) up.push(`${n.toUpperCase()} ${f.lvl}`); }   // (v0.78: the team's own buildings, as its offer showed them)
+  try { const S = foFill(team); if (career.prac && S.tr) career.prac.tr = S.tr; S.hc = null; delete jobsS().open[team]; } catch (e) { console.warn('jobs', e); }   // (you inherit its coordinators, trainers and scouts; its interim steps aside)
   career.tenure = null; tenureOf();
-  if (STAFF[team]) STAFF[team].sc = null;   // (the scouts you find there are new to you: scoutsOf rolls them at SCOUT.start)
   const dv = NFL[team].conf;   // (same division as the team you left: its other teams are now rivals)
   if (isPast(team)) (career.redeem = career.redeem || {})[team] = true;   // (back on a team you left: your first title here glows silver)
   career.rivals = NFL[old].conf === dv ? Object.keys(NFL).filter(k => NFL[k].conf === dv && k !== team && ROSTER[k]) : [];
-  const lines = [`Welcome to the ${teamFull(team)}.`, up.length ? `Facilities upgraded: ${up.join(', ')} (LVL ${tier}).` : 'Their facilities are old: all four buildings start at LVL 1.'];
+  const lines = [`Welcome to the ${teamFull(team)}.`, up.length ? `Their facilities: ${up.join(', ')}.` : 'Their facilities are old: every building is LVL 1.'];
   if (career.rivals.length) lines.push(`Your old division is now your rivals: ${career.rivals.join(', ')}.`);
   if (career.ceilNews) { lines.push('Your success with ' + NFL[old].city + ' raised your head coach ceiling: a 6th (red) star is now possible.'); career.ceilNews = false; }
   setTimeout(() => offPopShow({ title: 'NEW TEAM', lines, btns: [{ label: 'OK', green: true }] }), 0);
   postNote('newTeam', { coach: coachName(), team: pTeam(team), old: pTeam(old) }, { w: 16, team });
+}
+
+// --- job market (head coach movement all year; tunables JOBS in 01)
+// LEAGUE.jobs = { open: { team: { wk, yr, old, interim, rec0, why } }, offers: { team: offer }, hist: [pulled / filled offers], shake: { team, cr } | null, out (name out), news: [lines], pass: { team: year } }
+// offer = { k, cr, wk0, due, why: { k: 'fired' | 'left' | 'cold', old, w, l, t, wk }, st: 'open' | 'cooling' | 'shook', cause, cw, unread }. Every offer and pull points at something that really happened:
+// the weekly checks only READ league state. Franchise only, never in the tutorial year or the first-run flow.
+const jobsOn = () => { try { return !!season && !exhibition && !tut && xpcOn() && !ftGate() && !LEAGUE.firstRun; } catch (e) { return false; } };
+function jobsS() {
+  const J = LEAGUE.jobs || (LEAGUE.jobs = {});
+  J.open = J.open || {}; J.offers = J.offers || {}; J.hist = J.hist || []; J.news = J.news || []; J.pass = J.pass || {};
+  if (J.shake === undefined) J.shake = null;
+  return J;
+}
+const jobRec = k => { const T = (season ? seasonTable()[k] : null) || { w: 0, l: 0, t: 0 }; return { w: T.w, l: T.l, t: T.t }; };
+const jobRecS = r => `${r.w}-${r.l}${r.t ? '-' + r.t : ''}`;
+const jobPct = r => winPct(r);
+function jobStreak(k) {   // + wins / - losses in a row, from the real results
+  let s = 0;
+  for (let w = Math.min(season.week, SEASON_WEEKS + 1) - 1; w >= 1; w--) {
+    const g = (season.sched[w - 1] || []).find(x => x.h === k || x.a === k); if (!g || g.hs == null) continue;
+    const a = g.h === k ? g.hs : g.as, b = g.h === k ? g.as : g.hs, r = a > b ? 1 : a < b ? -1 : 0;
+    if (!r || (s && Math.sign(s) !== r)) break; s += r;
+  }
+  return s;
+}
+function jobLastGame(k) {   // the team's last real result: { opp, us, them }
+  for (let w = Math.min(season.week, SEASON_WEEKS + 1) - 1; w >= 1; w--) {
+    const g = (season.sched[w - 1] || []).find(x => x.h === k || x.a === k); if (!g || g.hs == null) continue;
+    return { opp: g.h === k ? g.a : g.h, us: g.h === k ? g.hs : g.as, them: g.h === k ? g.as : g.hs, wk: w };
+  }
+  return null;
+}
+const jobExp = k => { const st = teamStars(k), n = Math.max(0, Math.min(1, (st.off + st.def - 2) / 8)); return JOBS.expLo + (JOBS.expHi - JOBS.expLo) * n; };
+const jobQB = k => (ROSTER[k] || []).filter(p => p.group === 'QB').sort((a, b) => b.stars - a.stars)[0] || null;
+const jobNewCoach = interim => ({ name: `${pick(NAME_FIRST)} ${pick(NAME_LAST)}`, face: makeFace(Math.random, true), yr: LEAGUE.year, interim: !!interim });
+const jobMoves = () => (career.past || []).filter(p => p.left != null ? LEAGUE.year - p.left < JOBS.hopYears : true).length;
+function jobNews(line, post, sl, team) {
+  const J = jobsS(); J.news.push(line); if (J.news.length > 8) J.news.shift();
+  if (post) try { postNote(post, sl, { w: 10, team }); } catch (e) {}
+}
+function jobFire(k, why) {   // the CPU team's head coach is really let go; a named interim takes over
+  const J = jobsS(), S = foFill(k), old = S.hc ? S.hc.name : 'their coach', r = jobRec(k), it = jobNewCoach(true);
+  S.hc = it;
+  J.open[k] = { wk: season.week, yr: LEAGUE.year, old, interim: it.name, rec0: r, why: Object.assign({ k: 'fired', old, w: r.w, l: r.l, t: r.t, wk: season.week }, why || {}) };
+  const line = `The ${teamFull(k)} fired head coach ${old} at ${jobRecS(r)}. ${it.name} is the interim.`;
+  (LEAGUE.coachNews = LEAGUE.coachNews || []).push(line);
+  jobNews(line, 'hcFired', { team: pTeam(k), city: NFL[k].city, old, interim: it.name, rec: jobRecS(r) }, k);
+  return J.open[k];
+}
+function jobHire(k, quiet) {   // a team with an opening really hires: a named coach for good, the opening closed, an offer to you from them is pulled at once
+  const J = jobsS(), S = foFill(k), c = jobNewCoach(false);
+  S.hc = c; delete J.open[k];
+  if (J.offers[k] && J.offers[k].st !== 'shook') jobPull(k, 'filled', { name: c.name });
+  if (quiet) return c;
+  const line = `The ${teamFull(k)} hired ${c.name} as their head coach.`;
+  (LEAGUE.coachNews = LEAGUE.coachNews || []).push(line);
+  jobNews(line, 'hcHired', { team: pTeam(k), name: c.name }, k);
+  return c;
+}
+const JOB_WHY = {   // one line for each cause (offer.why / a pull's data)
+  fired: w => `They fired ${w.old} at ${w.w}-${w.l}${w.t ? '-' + w.t : ''}.`, left: w => `${w.old} left them for another job.`, cold: w => `You forced your way in.`,
+  filled: d => `They hired ${d.name}.`, interim: d => `Their interim went ${d.w}-${d.l} and keeps the job for now.`,
+  cooled: d => d.streak ? `You lost ${-d.streak} straight.` : `You lost ${d.us}-${d.them}${d.them_k ? ' to them' : ''}.`,
+  rebuild: d => `Their QB ${d.qb} is out for the season and they are rebuilding.`, late: () => 'You let the deadline pass.',
+  stayed: () => 'You signed an extension where you are.', leak: () => 'Your name got out and they did not like it.', hopper: d => `${d.n} moves in ${JOBS.hopYears} years scared them off.`,
+  closed: () => 'You took another job.', expired: () => 'The season ended.' };
+const jobWhyLine = (k, d) => { try { return JOB_WHY[k] ? JOB_WHY[k](d || {}) : ''; } catch (e) { return ''; } };
+function jobOffer(k, force) {   // only a team with a real opening can offer
+  const J = jobsS(), O = J.open[k]; if (!O || J.offers[k] || J.shake || k === season.team || !moveOk(k)) return null;
+  const want = Math.max(0.05, offerWant(k)), o = { k, cr: Math.max(JOBS.cr[0], Math.min(JOBS.cr[1], offerBonus(k, want))), wk0: season.week, due: season.week + JOBS.dueWk, why: Object.assign({}, O.why), st: 'open', unread: true, yr: LEAGUE.year };
+  J.offers[k] = o;
+  const why = jobWhyLine(o.why.k, o.why);
+  jobNews(`The ${teamFull(k)} called about their head coach job. ${why}`, 'jobOffer', { team: pTeam(k), coach: coachName(), why }, k);
+  return o;
+}
+function jobPull(k, cause, d) {   // 'filled' = gone at once; every other cause cools for a week first
+  const J = jobsS(), o = J.offers[k]; if (!o || o.st === 'shook') return false;
+  o.cause = cause; o.cd = d || {};
+  const why = jobWhyLine(cause, o.cd);
+  if (cause !== 'filled' && cause !== 'closed' && cause !== 'expired' && o.st === 'open') {
+    o.st = 'cooling'; o.cw = season.week;
+    jobNews(`The ${teamFull(k)} have gone quiet. ${why}`, null);
+    return true;
+  }
+  delete J.offers[k]; o.st = 'pulled'; o.pw = season.week;
+  J.hist.unshift(o); if (J.hist.length > JOBS.histMax) J.hist.length = JOBS.histMax;
+  if (cause !== 'closed' && cause !== 'expired') jobNews(`The ${teamFull(k)} ${cause === 'filled' ? 'filled the job' : 'pulled their offer'}. ${why}`, 'jobPull', { team: pTeam(k), coach: coachName(), why }, k);
+  return true;
+}
+// my own record since a midseason move (season.mine); no move = the team's record, as before
+const jobMyT = (me = season.team) => season && season.mine ? season.mine : (seasonTable()[me] || { w: 0, l: 0, t: 0 });
+function jobGameDone(blue, red) { const m = season && season.mine; if (!m) return; m.g++; if (blue > red) m.w++; else if (blue < red) m.l++; else m.t++; }
+// the pull check: reads the league, never changes it to make a reason true. Returns [cause, data] or null
+function jobPullWhy(k, o, me, force) {
+  const J = jobsS(), O = J.open[k], R = Math.random, ok = p => force || R() < p;
+  if (!O) return ['filled', { name: (STAFF[k] && STAFF[k].hc && STAFF[k].hc.name) || 'a new coach' }];
+  if (O.yr === LEAGUE.year && O.wk != null) { const r = jobRec(k), s = { w: r.w - O.rec0.w, l: r.l - O.rec0.l, t: r.t - O.rec0.t };
+    if (s.w + s.l + s.t >= JOBS.interimG && jobPct(s) >= JOBS.interimPct && ok(0.5)) return ['interim', s]; }
+  const st = jobStreak(me), lg = jobLastGame(me);
+  if (st <= -JOBS.coolStreak && ok(JOBS.coolOdds)) return ['cooled', { streak: st }];
+  if (lg && lg.wk === season.week - 1 && lg.them - lg.us >= JOBS.blowout && ok(JOBS.coolOdds * (lg.opp === k ? JOBS.coolThem : 1))) return ['cooled', { us: lg.us, them: lg.them, them_k: lg.opp === k }];
+  const qb = jobQB(k); let mode = null; try { mode = tcx()[k].mode; } catch (e) {}
+  if (qb && qb.inj && qb.inj.season && mode === 'rebuild' && ok(0.6)) return ['rebuild', { qb: qb.name }];
+  if (season.week > o.due) return ['late', {}];
+  if (J.leakWk === season.week && ok(JOBS.leakPull)) return ['leak', {}];
+  const n = jobMoves(); if (n >= JOBS.hopMax && ok(JOBS.hopOdds)) return ['hopper', { n }];
+  return null;
+}
+function jobsWeek(me) {   // from leagueWeek (simmed weeks too)
+  if (!jobsOn() || season.offseason) return;
+  const J = jobsS();
+  if (JOBS.force) { const f = JOBS.force; JOBS.force = null; jobsForce(f); }
+  // CPU firings and hires
+  for (const k of Object.keys(ROSTER).filter(k => NFL[k] && k !== me)) {
+    if (J.open[k]) { if (season.week - J.open[k].wk >= JOBS.hireWait && !(J.shake && J.shake.team === k) && Math.random() < JOBS.hire) jobHire(k); continue; }
+    if (Object.keys(J.open).length >= JOBS.maxOpen) continue;
+    const S = STAFF[k]; if (S && S.hc && S.hc.yr === LEAGUE.year) continue;   // (a coach hired this year gets the year)
+    const r = jobRec(k), g = r.w + r.l + r.t; if (g < JOBS.fireMin) continue;
+    const gap = jobExp(k) - jobPct(r), sk = jobStreak(k);
+    const p = JOBS.fire * Math.max(0, gap - JOBS.fireGap) / 0.3 + (sk <= -JOBS.fireStreak ? JOBS.streakK : 0);
+    if (p > 0 && Math.random() < p) jobFire(k, { exp: Math.round(jobExp(k) * 100), streak: sk });
+  }
+  // the name-out leak
+  if (J.out && Math.random() < JOBS.leak) {
+    J.leakWk = season.week;
+    try { if (contractsOn()) { const d = hcDeal(); if (d) d.patience = Math.max(0, d.patience - 1); } } catch (e) {}
+    jobNews(`Word leaked that you are listening to offers. ${contractsOn() ? 'Your owner noticed.' : ''}`, 'jobLeak', { coach: coachName(), team: pTeam(me) }, me);
+  }
+  // pulls: cooling -> pulled, then the open ones
+  for (const k of Object.keys(J.offers)) {
+    const o = J.offers[k]; if (o.st === 'shook') continue;
+    if (o.st === 'cooling') { if (season.week > o.cw) jobPull(k, o.cause, o.cd); continue; }
+    const w = jobPullWhy(k, o, me); if (w) jobPull(k, w[0], w[1]);
+  }
+  // new offers
+  if (J.shake) return;
+  const st = jobStreak(me); let K = JOBS.offer;
+  if (J.out) K *= JOBS.outK;
+  try { const d = hcDeal(); if (d && d.yrs <= 1) K *= JOBS.lastYrK; } catch (e) {}
+  if (st >= JOBS.hotStreak) K *= JOBS.hotK;
+  K *= Math.pow(JOBS.hopK, jobMoves());
+  for (const k of Object.keys(J.open)) {
+    if (J.offers[k] || J.pass[k] === LEAGUE.year || k === me) continue;
+    if (Math.random() < offerWant(k) * K) jobOffer(k);
+  }
+}
+function jobsForce(s) {   // test hook: 'fire:TEAM' | 'offer:TEAM' | 'pull:TEAM:cause' (a pull still needs its reason to be true)
+  const [a, k, c] = String(s).split(':'), J = jobsS();
+  if (!NFL[k]) return 'no team';
+  if (a === 'fire') { if (k === season.team) return 'yours'; return jobFire(k) ? 'fired' : 'no'; }
+  if (a === 'offer') { if (!J.open[k]) jobFire(k); return jobOffer(k, true) ? 'offered' : 'refused'; }
+  if (a === 'pull') {
+    const o = J.offers[k]; if (!o) return 'no offer'; if (o.st === 'shook') return 'refused';   // (a handshake can't be pulled)
+    if (c === 'filled') { jobHire(k); return 'pulled'; }
+    if (c === 'stayed') { jobPull(k, 'stayed', {}); return 'cooling'; }
+    if (c === 'late' && season.week <= o.due) return 'refused';
+    const w = jobPullWhy(k, o, season.team, true);
+    if (!w || (c && w[0] !== c)) { console.warn('[jobs] pull refused: no real reason for', c, w); return 'refused'; }
+    jobPull(k, w[0], w[1]); return 'cooling';
+  }
+  return 'no';
+}
+function jobStayed() { const J = LEAGUE.jobs; if (!J || !jobsOn()) return; for (const k of Object.keys(J.offers || {})) if (J.offers[k].st === 'open') jobPull(k, 'stayed', {}); }
+function jobColdPrice(k) {   // DEMAND A MOVE: offerPrice (how good the team is) x how safe its coach is
+  const C = JOBS.cold, J = jobsS();
+  let sec = C.open;
+  if (!J.open[k]) { const hc = foFill(k).hc, yrs = hc && hc.yr != null ? LEAGUE.year - hc.yr : C.yrs; sec = Math.max(C.lo, Math.min(C.hi, 1 + C.win * (jobPct(jobRec(k)) - 0.5) + C.perYr * (yrs - C.yrs))); }
+  return Math.max(JOBS.cr[0], Math.min(JOBS.cr[1], Math.round(offerPrice(k) * sec)));
+}
+const jobInPO = () => !!po && !!season && !season.offseason;
+function jobWhyNot(team, how) {   // null = allowed, else a short reason
+  const J = jobsS();
+  if (!jobsOn()) return 'NOT IN THIS CAREER';
+  if (!NFL[team] || team === season.team) return 'YOUR TEAM';
+  if (J.shake) return 'YOU ALREADY SHOOK HANDS';
+  const o = J.offers[team];
+  if (how === 'shake') return o && o.st === 'open' ? null : 'NO LIVE OFFER';
+  if (season.offseason) return 'OFFSEASON: USE JOB OFFERS';
+  if (jobInPO()) return 'NOT IN THE PLAYOFFS';
+  if (how === 'now') return o && o.st === 'open' ? null : 'NO LIVE OFFER';
+  if (how === 'cold') { if (o) return 'THEY ALREADY CALLED'; if (!moveOk(team)) return 'THEY WON\'T TAKE YOU BACK'; if ((LEAGUE.coins || 0) < jobColdPrice(team)) return 'NOT ENOUGH CREDITS'; return null; }
+  return 'NO';
+}
+function jobTake(team, how) {   // 'now' = move this week, 'shake' = next year (can't be pulled), 'cold' = DEMAND A MOVE (you pay, their coach is fired)
+  const no = jobWhyNot(team, how); if (no) return no;
+  const J = jobsS(), o = J.offers[team];
+  if (how === 'shake') {
+    J.shake = { team, cr: o.cr, wk: season.week, yr: LEAGUE.year }; o.st = 'shook'; o.unread = false;
+    for (const k of Object.keys(J.offers)) if (k !== team) jobPull(k, 'closed', {});
+    jobNews(`You shook hands with the ${teamFull(team)}: their job is yours next season.`, null);
+    autosaveSoon(); return 'ok';
+  }
+  if (how === 'now') { LEAGUE.coins += o.cr; payToFly += o.cr; payFrom = [W / 2, H / 2]; }
+  else { const pr = jobColdPrice(team); LEAGUE.coins -= pr; jobFire(team, { k: 'cold' }); }
+  jobMoveNow(team);
+  autosaveSoon(); return 'ok';
+}
+function jobMoveNow(team) {   // what offFinish does, without newSeason: same week, same schedule
+  const old = season.team, J = jobsS();
+  { const t = tenureOf(), m = season.mine, T = seasonTable()[old] || { w: 0, l: 0, t: 0 };   // (the old tenure gets the games you coached there this season)
+    const g = m ? m.g : (season.played || 0); t.games += g; t.wins += m ? m.w : Math.round(winPct(T) * g); t.seasons++; if (t.left == null) t.left = LEAGUE.year; }
+  moveLeave(old);
+  MATCH.you = team; LEAGUE.approval = 0.5; LEAGUE.streak = 0;
+  season.team = team; season.mine = { w: 0, l: 0, t: 0, g: 0 };
+  LEAGUE.depth = {};   // (depth locks are by name, for the old roster)
+  if (career.prac) { if (career.prac.ses) career.prac.ses.done = []; career.prac.bat = []; }   // (this week's practice and the battles were the old roster's)
+  try { TCX = null; } catch (e) {}
+  seasonMatch();
+  moveArrive(old, team);
+  jobDealCarry(team);
+  jobOldCoach(old, true);
+  for (const k of Object.keys(J.offers)) jobPull(k, 'closed', {});
+  delete J.offers[team]; J.out = false;
+}
+function jobDealCarry(team) {   // the new team assumes your contract: only the team changes (a fired coach still gets the lapse deal); the new owner's patience starts fresh
+  const d = career.hcDeal;
+  if (!d || d.fired) { conNewTeam(team); return; }
+  d.team = team; d.patience = CONTRACT.owner.patience; d.g0 = career.goalsDone || 0;
+}
+function jobOldCoach(old, mid) {   // the team you left: an interim for the rest of the year (midseason), a named coach in the offseason
+  const J = jobsS(), S = foFill(old), name = coachName();
+  if (mid) { const it = jobNewCoach(true); S.hc = it; J.open[old] = { wk: season.week, yr: LEAGUE.year, old: name, interim: it.name, rec0: jobRec(old), why: { k: 'left', old: name, wk: season.week } };
+    (LEAGUE.coachNews = LEAGUE.coachNews || []).push(`The ${teamFull(old)} named ${it.name} interim head coach after you left.`); }
+  else { delete J.open[old]; const c = jobNewCoach(false); S.hc = c; (LEAGUE.coachNews = LEAGUE.coachNews || []).push(`The ${teamFull(old)} hired ${c.name} to replace you.`); }
+}
+function jobSeasonEnd() {   // offseason (offFinishFA): every opening left is filled, except a handshake's (its interim waits for you); live offers end
+  const J = jobsS();
+  for (const k of Object.keys(J.offers)) if (J.offers[k].st !== 'shook') jobPull(k, 'expired', {});
+  for (const k of Object.keys(J.open)) if (!(J.shake && J.shake.team === k)) jobHire(k, true);
+  J.out = false; J.pass = {};
+}
+// facilities belong to a team: LEAGUE.facOf[team] (built once from facTier, so an offer shows what you would get)
+function facOfTeam(k) {
+  const F = LEAGUE.facOf || (LEAGUE.facOf = {});
+  if (!F[k]) { const tier = facTier(k); F[k] = {}; for (const n of Object.keys(PRAC_FAC)) { const hit = Math.random() < MOVE.facUp; F[k][n] = { lvl: hit ? tier : 1, build: null }; } }
+  return F[k];
 }
 
 // --- job offers (looks like the team picker; teams that did not call are greyed out)

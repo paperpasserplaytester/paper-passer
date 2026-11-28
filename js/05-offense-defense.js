@@ -32,7 +32,7 @@ function updateQB(dt) {
     }
     clampField(qb);
   }
-  qb.stiff = state === 'pocket' && keys.KeyQ && !qb.action ? (qb.stiff || { t: 0 }) : (runner === qb ? qb.stiff : null);
+  qb.stiff = state === 'pocket' && keys.KeyQ && !qb.action && (aiOff() || ftCan('stiff')) ? (qb.stiff || { t: 0 }) : (runner === qb ? qb.stiff : null);
   setVelocity(qb, px, py, dt);
   // eased velocity for throw range only (accuracy on the run still uses his real speed)
   // (the drop itself doesn't count: it starts from standing once he's set in the pocket)
@@ -46,14 +46,7 @@ function updateQB(dt) {
   qb.cock = false;   // (no more ball up over the helmet while aiming: he keeps it at his chest in both hands)
   qb.ready = qb.cradle && !!aim && runner !== qb;   // aiming: the chest hold raised just a little, ready to throw
   if (qb.cock) qb.cradle = false;   // aiming, and all through the drop and the pocket: ball up at the chest in both hands (it used to sit at his feet, hidden behind him, once the snap was in)
-  if (state === 'pocket' && qb.x > los) {
-    state = 'run';
-    runner = qb;
-    runStart = clock;
-    aim = null;
-    qb.speed = Math.hypot(qb.vx, qb.vy);
-    msg = 'QB run!  -  ' + RUN_HELP.replace('dive', 'slide');
-  }
+  lineCheck();   // (any part of him past the line: a QB run, the throw gone for the play)
 }
 
 // A hard cut can fool the defender on him: on a double move he usually bites on the fake,
@@ -68,7 +61,9 @@ const lagOf = d => d.lag * (lookingAt(d) === 'receiver' ? 0.6 : lookingAt(d) ===
 // and a corner who won his jam at the line (d.cov is set per play in rateDefense)
 const DEEP_COV = { bonus: 0.55, between: 1.0, trailK: 0.3 };   // (big job defense step 2: between 0.7, trailK 0.15 before)   // trailK = x the "get between" step for a DB who trailed his man the whole route;   // better cover men stay with deep routes: extra speed x (covOf - 1) on a deep route; between = how much of the way (x skill) he gets between the receiver and a ball in the air
 const COVER_SKILL = { team: 0.035, star: 0.06, lb: 1.8, jam: 2.1, speed: 0.5 };   // (jam: a won jam makes him much better in coverage the rest of the play)
-const ROUTE_END = { after: 0.8, deep: 0.5 };   // a receiver who has run his whole route (not a stop route) while the QB still holds it: after `after` s he goes deep (odds `deep`) or works toward the QB's side
+const ROUTE_END = { after: 0.8, deep: 0.5, apart: 6, reread: 0.3, awrMin: 1, look: 0.8, room: 8, lane: 4, laneK: 1.2, moveK: 0.15, noise: 3 };   // apart = yd a spot is kept from every other catcher (now and where he is headed, look s ahead); an aware man (rm awr >= awrMin) picks a spot every reread / rm s by room from the nearest defender (capped room yd) + laneK x the throwing lane (capped lane yd) - moveK x yd moved, + noise x (2 - rm) of luck; a low-aware man keeps the drift below, spacing still obeyed
+// the spots an aware receiver weighs (yd from where he is: along the field, across): stay, a ring at 4, a ring at 7
+const ROUTE_END_CAND = [[0, 0]]; for (const R of [4, 7]) for (let i = 0; i < 8; i++) ROUTE_END_CAND.push([R * Math.cos(i * Math.PI / 4), R * Math.sin(i * Math.PI / 4)]);   // a receiver who has run his whole route (not a stop route) while the QB still holds it: after `after` s he goes deep (odds `deep`) or works toward the QB's side
 const COVER_FADE = { after: 2.5, per: 0.07, min: 0.55 };   // coverage skill x (1 - per) for every second a play runs past `after` s (floor min): the longer a play lasts, the worse the coverage
 const covOf = d => (d.cov || 1) * (d.man && abilOn(d, 'mirror') ? ABIL_FX.mirror : 1) * (d.jamWon ? COVER_SKILL.jam : 1) * (tut ? 1 : Math.max(COVER_FADE.min, 1 - COVER_FADE.per * Math.max(0, clock - COVER_FADE.after)));
 const COVER_YOU_DEF = 1;   // x the computer's coverage speed while you play defense (1 = the original quality)
@@ -233,15 +228,21 @@ function relDecide(r) {
   const prs = 0.5 * zpt(d, 'str') + 0.5 * zpt(d, 'cov') + (abilOn(d, 'jammer') ? REL.bottleneck : abilOn(d, 'strongJam') ? REL.bottleneck * ABIL_FX.strongJamRel : 0) + REL.body * Math.log(jamBody(r, d));
   let tot = REL.base + relTotal(r, m) + (m.type === 'speed' ? -1 : m.type === 'combo' ? 2 : m.type === 'free' ? 0 : 1) + (R.good ? REL.good : 0) + (R.poor ? REL.poor : 0) - (R.slow ? REL.quick : 0);
   if ((m.type === 'fake' || m.type === 'combo') && cov >= REL.read) tot -= REL.readPen;   // a man who reads it isn't fooled by footwork
-  const diff = m.type === 'speed' && 0.5 * (rpt(d, 'str') + cov) < REL.weakPress ? 99 : tot - prs + (Math.random() * 2 - 1) * REL.noise;
+  const tech = dfxOn(JAM2) && !udCtl(d) ? jam2Tech(d, r) : null, J = JAM2;   // (JAM2: his technique moves his press score)
+  const diff = m.type === 'speed' && 0.5 * (rpt(d, 'str') + cov) < REL.weakPress ? 99 : tot - (tech ? prs + (tech === 'two' ? J.twoPrs : tech === 'mirror' ? J.mirPrs : J.offPrs) : prs) + (Math.random() * 2 - 1) * REL.noise;
   d.jamTried = true;
   if (diff >= REL.win) {
     R.res = 'clean';
-    d.falseStepUntil = clock + JAM.missStep * REL.beat; d.lungeY = -R.L * R.inS;   // lunged at air, toward the fake side
+    d.falseStepUntil = clock + JAM.missStep * REL.beat * (tech === 'two' ? J.two[2] : 1); d.lungeY = -R.L * R.inS;   // lunged at air, toward the fake side
+    if (tech === 'two') d.jbP = runPid;   // (JAM2: beat a two-hand jam = he starts the route out of phase)
     if (REL.call) popup(r, m.name, '#7fe3ff', undefined, true);
     if (Math.random() < SELL.stumble * REL.cleanStumble * sellK(r)) { reelQuiet = true; try { routeStumble(d, r); } finally { reelQuiet = false; } }   // (a clean release can leave the press man stumbling)
   } else if (diff >= REL.hold) {
     R.res = 'delay'; r.slow = Math.max(r.slow || 0, REL.delay.slow); d.stickUntil = clock + REL.delay.stick;
+  } else if (tech === 'mirror') {   // (JAM2: no hands thrown: a stalemate, he is on him in phase)
+    R.res = 'delay'; r.slow = Math.max(r.slow || 0, REL.delay.slow); d.stickUntil = clock + JAM.stick * J.stick;
+  } else if (tech) {
+    R.res = 'jam'; R.done = true; const T = tech === 'two' ? J.two : J.off, jm = r.jamMult; r.jamMult = (jm || 1) * T[1]; landJam(r, d); r.jamMult = jm;   // (rerouted: longer off two hands)
   } else {
     R.res = 'jam'; R.done = true; landJam(r, d);
   }
@@ -486,10 +487,18 @@ function runRoute(r, dt) {
     let cx = r.cont.x, cy = r.cont.y;
     if (!tut && !isRunPlay && (state === 'drop' || state === 'pocket') && r.pathDoneAt != null && clock - r.pathDoneAt >= ROUTE_END.after) {
       if (r.endPlan == null) r.endPlan = Math.random() < ROUTE_END.deep ? 'deep' : 'qb';
-      if (r.endPlan === 'deep') { cx = 1; cy = 0.15 * (Math.sign(r.cont.y) || 0); }
-      else if (Math.abs(qb.y - r.y) > 2 * YD) { cx = 0.3; cy = Math.sign(qb.y - r.y) * 0.9; }
-      else { cx = 0.6; cy = 0; }
-      r.speed = Math.max(r.speed, 0.7 * WR_TOP);
+      const aw = coldNo() ? rm(r, 'awr', A5.wr.space) : 0;
+      if (aw >= ROUTE_END.awrMin) {   // aware: works to open space (room, a lane, never next to a teammate)
+        if (!(clock < r.esT)) { r.esT = clock + ROUTE_END.reread / aw; routeEndPick(r, aw); }
+        const dx = r.esX - r.x, dy = r.esY - r.y, l = Math.hypot(dx, dy);
+        if (l > 0.6 * YD) { cx = dx / l; cy = dy / l; } else { cx = cy = 0; r.speed = Math.min(r.speed, 1.5 * YD); }
+      } else {
+        if (r.endPlan === 'deep') { cx = 1; cy = 0.15 * (Math.sign(r.cont.y) || 0); }
+        else if (Math.abs(qb.y - r.y) > 2 * YD) { cx = 0.3; cy = Math.sign(qb.y - r.y) * 0.9; }
+        else { cx = 0.6; cy = 0; }
+        if (coldNo() && routeEndCrowd(r, r.x + cx * 3 * YD, r.y + cy * 3 * YD)) { cy = -cy || (r.y > MID ? -0.8 : 0.8); cx *= 0.5; }   // (headed next to a teammate: the other way)
+      }
+      if (cx || cy) r.speed = Math.max(r.speed, 0.7 * WR_TOP);
     }
     turnMove(r, r.x + cx * 3 * YD, r.y + cy * 3 * YD, step, dt);
     if (r.x > ROUTE_X_MAX) {            // flatten at the back of the end zone instead of running out of it
@@ -503,10 +512,46 @@ function runRoute(r, dt) {
   } else if ((r.workBack || 0) < TOP.workBack.yd * YD && (state === 'drop' || state === 'pocket')) {
     // work back to the QB: a settled hitch / curl / comeback comes back a step to show a target
     const st = TOP.workBack.speed * YD * dt, dx = qb.x - r.x, dy = (qb.y - r.y) * 0.3, l = Math.hypot(dx, dy) || 1;
+    if (!tut && coldNo() && routeEndCrowd(r, r.x + dx / l * 1.5 * YD, r.y + dy / l * 1.5 * YD)) { r.speed = 0; return; }   // (working back would put him next to a teammate: he holds)
     r.x += dx / l * st; r.y = clampRouteY(r.y + dy / l * st); r.workBack = (r.workBack || 0) + st; r.speed = TOP.workBack.speed * YD;
   } else {
     r.speed = 0;
   }
+}
+
+// --- open space (ROUTE_END): not in the cold open (its scripted men), never next to another catcher
+const coldNo = () => !(typeof CO !== 'undefined' && CO);
+// another catcher (on or off a route, the back too) is within ROUTE_END.apart yd of (x, y), now or where he is headed (his own spot, or look s on)
+function routeEndCrowd(r, x, y) {
+  const A = ROUTE_END.apart * YD, T = ROUTE_END.look;
+  for (let i = -1; i < recs.length; i++) {
+    const c = i < 0 ? rb : recs[i];
+    if (!c || c === r || c.teBlock || (c === rb && (!rb.route || rb.protect))) continue;
+    if (Math.hypot(c.x - x, c.y - y) < A) return true;
+    const fx = c.esT != null && c.pathDoneAt != null ? c.esX : c.x + (c.vx || 0) * T, fy = c.esT != null && c.pathDoneAt != null ? c.esY : c.y + (c.vy || 0) * T;
+    if (Math.hypot(fx - x, fy - y) < A) return true;
+  }
+  return false;
+}
+// an aware receiver's next spot: the best open one by room from the defense + a throwing lane, a short move; a spot by a teammate is never picked
+function routeEndPick(r, aw) {
+  const E = ROUTE_END; let best = -1e9, bx = r.x, by = r.y, any = false;
+  for (const o of ROUTE_END_CAND) {
+    const x = Math.min(ROUTE_X_MAX, Math.max(los + 2 * YL, r.x + o[0] * YL)), y = clampRouteY(r.y + o[1] * YD);
+    if (routeEndCrowd(r, x, y)) continue;
+    let room = E.room * YD, lane = E.lane * YD;
+    const lx = x - qb.x, ly = y - qb.y, ll = lx * lx + ly * ly || 1;
+    for (const d of back7) {
+      if (!d || d.action) continue;
+      room = Math.min(room, Math.hypot(d.x - x, d.y - y));
+      const t = Math.max(0, Math.min(1, ((d.x - qb.x) * lx + (d.y - qb.y) * ly) / ll));
+      lane = Math.min(lane, Math.hypot(d.x - qb.x - lx * t, d.y - qb.y - ly * t));
+    }
+    const s = (room + E.laneK * lane - E.moveK * Math.hypot(x - r.x, y - r.y)) / YD + Math.random() * E.noise * Math.max(0, 2 - aw);
+    if (s > best) { best = s; bx = x; by = y; any = true; }
+  }
+  if (!any && r.esX != null && !routeEndCrowd(r, r.esX, r.esY)) return;   // (nowhere clear: keep the spot he had if it still is)
+  r.esX = bx; r.esY = by;
 }
 
 // Two route runners within ROUTE_SPACING.yards of each other (past the release) slide apart: each shifts
@@ -809,10 +854,10 @@ function updateCarrier(c, top, dt) {
   // (a screen catcher set up to throw has the QB's pocket controls: no truck, no sprint)
   const setUp = passerMode && c === passer;
   c.guard = !setUp && !!keys.KeyG && (!c.action || c.action === 'dive' || c.action === 'slide');
-  c.stiff = (keys.KeyQ || (c.stiffLock && clock - (c.stiffLock.t0 ?? 0) < STIFF.minHold)) && !c.action && !c.guard ? (c.stiff || { t: 0, t0: clock }) : null;   // (a hold-off that has started lasts at least STIFF.minHold, even on a tap)
+  c.stiff = ((keys.KeyQ && (aiOff() || ftCan('stiff'))) || (c.stiffLock && clock - (c.stiffLock.t0 ?? 0) < STIFF.minHold)) && !c.action && !c.guard ? (c.stiff || { t: 0, t0: clock }) : null;   // (a hold-off that has started lasts at least STIFF.minHold, even on a tap)
   if (!c.stiff) c.stiffSide = 0;   // (a new hold picks the arm again)
   ballArm(c);   // the ball rides in his outside arm (nearest the sideline), so the free arm is on the field side
-  c.truck = !setUp && keys.KeyC && !c.action && !c.guard;
+  c.truck = !setUp && keys.KeyC && !c.action && !c.guard && (aiOff() || ftCan('truck'));
   c.sprint = false;   // (no sprint any more, on any device: a held key / the phone's automatic one made runners and returners drift. The carrier's speed has BURST built in instead: see below)
   if (c.stiffLock && updateStiffLock(c)) return;   // the stiff arm ended in a tackle
   if (state === 'run' && stumbleCheck(c)) return;   // a stumble can take him down (balance)
@@ -1183,7 +1228,7 @@ function updateMesh(c, dt, top) {
       meshTook(c);
     }
   }
-  if (!c.awaiting && runner === c) { runStart = clock; msg = 'Handoff!  -  ' + RUN_HELP; }
+  if (!c.awaiting && runner === c) { runStart = clock; msg = 'Handoff!  -  ' + RUN_HELP; if (DCS.mr) dcMrRun(); }
 }
 // the ball in the QB's hands on the way to a handoff: out toward the back as he closes (EXCH_QB ext / y). False = no handoff going on
 function exchHold() {
@@ -1581,7 +1626,7 @@ function rbpPinFit() {
   const s = rb.side || 1, P = p => (p.y - MID) * s, F = RBP.pin.fit, tes = rbpPinTes(P), end = Math.max(...ols.map(P), ...tes.map(P));
   let k = tes.length ? F.te : 1;
   if (SPLITS.de * YD > end + RBP.pin.wide * YD) k *= F.wideEnd;   // (their end lines up wide of the last blocker: hard to pin)
-  if (BLITZ_COVERAGES.includes(coverage) || coverage === COVER_0) k *= F.blitz;   // (pressure off the edge gets there before the pullers)
+  if (covBlitz(coverage) || coverage === COVER_0) k *= F.blitz;   // (pressure off the edge gets there before the pullers)
   else k *= 1 + (F.tight - 1) * Math.min(1, runHeat() / RUN_STREAK.max);   // (the box loaded up after run on run: get outside it)
   return k;
 }
@@ -2821,6 +2866,7 @@ function updateLine(dt) {
       }
       continue;
     }
+    if (r.peel && dcPeel(r)) continue;   // (DEF_CALLS: a blitzer with a peel takes the back who leaks out)
     let px = r.x, py = r.y;
     // stunt: the crasher drives across into the next gap, taking that blocker with him
     if (r.stCrash && clock < r.stCrash.until) r.y += Math.sign(r.stCrash.y - r.y) * Math.min(Math.abs(r.stCrash.y - r.y), STUNT.crashSpd * YD * dt);
@@ -3191,6 +3237,17 @@ const DB_READ = { min: 0.6, max: 1.4 };   // how well a DB reads his man's break
 const dbReadK = d => Math.max(DB_READ.min, Math.min(DB_READ.max, covOf(d) * rm(d, 'cov', A5.cov.cover)));
 const DB_FLIP_FAST = 0.9;           // a receiver moving faster than this x the DB's backpedal speed outruns the pedal and forces the flip at the trigger cushion
 // turning the hips takes a beat: coverage + agility shorten it
+// DB_GAIT (phase 2): a deep man opens when a vertical threat gets within the cushion; once open (d.gtO = this play) he stays turned until the threat is
+// underneath him by DB_GAIT.release yd (or it's thrown: then the zone code no longer runs this)
+function dbGait(d, bp, sprint, broke) {
+  const G = DB_GAIT, vert = !!bp && bp.vx > G.vert * WR_TOP;
+  if (vert && d.x - bp.x < G.cushion * YD) sprint = true;
+  if (d.gtO === runPid) {   // (open: only the man who turned him lets him square up again, by settling underneath him)
+    const r = d.gtR;
+    if (r && r.x < d.x - G.release * YD && r.vx < G.vert * WR_TOP && !(vert && bp !== r)) { d.gtO = -runPid; d.gtR = null; } else sprint = true;
+  } else if (sprint && d.gtO !== -runPid) { d.gtO = runPid; d.gtR = bp || null; }
+  return sprint;
+}
 function dbSetHips(d, want) {
   if (want !== d.hips) {
     if (d.hipWant !== want) { d.hipWant = want; d.hipAt = clock + DB_TURN.flip / (covOf(d) * rm(d, 'agi', 'cut')); }
@@ -3263,6 +3320,28 @@ function speedCushion(d, r) {
   const g = Math.min(1, gap / SPEED_CUSH.full), cv = diffX('cpuCov', 1), S2 = SPEED_CUSH;
   return { yd: Math.max(S2.ydMin, Math.min(S2.ydMax, (S2.yd[0] + (S2.yd[1] - S2.yd[0]) * g) * cv)), flip: 1 + S2.flip * g * cv, run: 1 + S2.run * g * cv };
 }
+// JAM2 (phase 6): he waits for the release to declare (or JAM2.wait), then picks his technique by ratings and help over the top
+function jam2Ready(d, r) {
+  if (r.jy0 === undefined || r.jyP !== runPid) { r.jy0 = r.y; r.jyP = runPid; }
+  return clock > JAM2.wait || Math.abs(r.vy || 0) > JAM2.declare * WR_TOP || Math.abs(r.y - r.jy0) > JAM2.declYd * YD;
+}
+function jam2Tech(d, r) {   // (mirror = a weak jammer or past the jam zone; two-hand = strong with a safety deep on his side; else the off hand)
+  const J = JAM2, z = Math.max(-2, Math.min(2, rz(d, 'str')));
+  let help = false;
+  for (const o of back7) if (o !== d && o.zone && o.zone.deep && !o.blitz && Math.abs(o.y - r.y) < J.helpYd * YD) { help = true; break; }
+  return (d.jtk = z < J.weakZ || r.x - los > JAM_ZONE ? 'mirror' : help && z > J.strongZ ? 'two' : 'off');
+}
+function jam2Try(d, r, deep) {
+  const J = JAM2, far = r.x - los > JAM_ZONE, tech = jam2Tech(d, r);
+  if (tech === 'mirror') { d.stickUntil = deep && far ? 0 : clock + JAM.stick * J.stick; return; }   // (no contact: he mirrors, in phase)
+  const T = tech === 'two' ? J.two : J.off;
+  if (dist(d, r) <= JAM_RANGE * 1.6 && (Math.random() < JAM.chance * T[0] * (deep ? PRESS_DEEP.jam : 1) * rm(d, 'str', 'jam') / rm(r, 'agi', 'jamEvade') * jamBody(r, d) * (abilOn(d, 'strongJam') ? ABIL_FX.strongJam : 1) || abilOn(d, 'jammer'))) {
+    const jm = r.jamMult; r.jamMult = (jm || 1) * T[1]; landJam(r, d); r.jamMult = jm;   // (rerouted: held longer by a two-hand jam, less by the off hand)
+  } else {
+    d.falseStepUntil = clock + JAM.missStep * (tech === 'two' ? J.two[2] : 1);
+    if (tech === 'two') d.jbP = runPid;   // (beaten: he starts the route out of phase)
+  }
+}
 function pressMan(d, dt) {
   if (!d.action && stumbleRecover(d, dt)) return;
   const r = d.man, px = d.x, py = d.y;
@@ -3275,6 +3354,13 @@ function pressMan(d, dt) {
     setVelocity(d, px, py, dt); d.face = -1; d.moving = true;
     return;
   }
+  const j2 = dfxOn(JAM2) && !udCtl(d);
+  if (j2 && !d.jamTried && !jam2Ready(d, r)) {   // (JAM2: patience: square on him, feet mirrored, until he shows inside or outside)
+    moveToward(d, r.x + JAM_RANGE * 0.8, d.y + (r.y - d.y) * Math.min(1, 7 * dt), 3.5 * YD * dt);
+    setVelocity(d, px, py, dt); d.face = -1; d.moving = true;
+    return;
+  }
+  if (!d.jamTried && j2) { d.jamTried = true; jam2Try(d, r, deep); }
   if (!d.jamTried && (clock > 0.5 || dist(d, r) <= JAM_RANGE * 1.2)) {
     d.jamTried = true;
     const far = r.x - los > JAM_ZONE;
@@ -3396,7 +3482,7 @@ function zoneDefend(d, dt) {
     dbSetHips(d, 'square'); d.headTo = 'qb'; d.lookAt = qb;   // (bitten: hips square, eyes on the QB's hand)
     return;
   }
-  if (coverage === 'Cover 4' && !d.man && !d.blitz && d.zone && d.zone.deep && (d.role === 'CB' || d.role === 'S') && (state === 'drop' || state === 'pocket')) patternMatch(d);
+  if (covMatch(coverage) && !d.man && !d.blitz && d.zone && d.zone.deep && (d.role === 'CB' || d.role === 'S') && (state === 'drop' || state === 'pocket')) patternMatch(d);
   if (stumbleRecover(d, dt)) return;
   if (d.man && (state === 'drop' || state === 'pocket' || state === 'flight')) return pressMan(d, dt);
   const jam = recs.find(r => r.jammer === d && clock < (r.jamUntil || 0));
@@ -3421,7 +3507,7 @@ function zoneDefend(d, dt) {
   // a deep safety owns his whole strip of the field (Cover 2: a half) and holds his landmark until a receiver actually threatens it
   const strip = z.deep && d.role === 'S' && !tut ? zoneShape(d) : null, inStrip = p => !strip || Math.abs(p.y - strip.cy) < strip.ry;
   for (const p of seen) {
-    const dL = Math.hypot(p.x - Lx, p.y - Ly);
+    const dL = Math.hypot((p.x - Lx) * (z.rd && !z.deep ? z.r / z.rd : 1), p.y - Ly);   // (DEF_CALLS: an underneath zone is an ellipse, rd deep)
     const approaching = (Lx - p.x) * p.vx + (Ly - p.y) * p.vy > 0 && Math.hypot(p.vx, p.vy) > 2 * YD && dL < R * 2;
     // a corner also owns the boundary on his side: a man working toward or along the sideline there is his
     // (so does an underneath dropper whose zone sits out toward that sideline: the curl-flat player)
@@ -3551,6 +3637,7 @@ function zoneDefend(d, dt) {
       d.eyes = 'qb';
       tx = Math.max(Lx, Math.max(verts[0].x, verts[1].x) + SAFETY_SPLIT.cushion * YD);
       ty = (verts[0].y + verts[1].y) / 2;
+      if (d.role === 'S' && prOn(POS_RULES.saf)) ty = prSplit(d, verts[0], verts[1], tx, ty);   // (POS_RULES: post over corner, lean to the QB's eyes)
     }
   }
   // an over route (a deep crosser) coming across his side with nobody running vertical at him: the deep
@@ -3571,6 +3658,7 @@ function zoneDefend(d, dt) {
   }
   // nothing threatens deep (no receiver running vertical past threatX): the deep safety keeps shallow instead of bailing out
   if (d.role === 'S' && z.deep && !broke && !seen.some(p => p.x > los + SAFETY_SHALLOW.threatX * YL && p.vx > SAFETY_SHALLOW.vert * WR_TOP)) tx = Math.min(tx, los + SAFETY_SHALLOW.depth * YL);
+  if (strip && !best && !broke && (state === 'drop' || state === 'pocket') && !isRunPlay && prOn(POS_RULES.saf)) ty = prHelp(d, seen, ty, strip);   // (POS_RULES: an empty strip slides toward the nearest deep threat, the QB's side first)
   // a deep zone's first job: stay on top of everybody in it. He's never shallower than the deepest man in his zone (plus a cushion, led by his speed downfield)
   if (z.deep && (state === 'drop' || state === 'pocket') && !isRunPlay) {
     let top = -Infinity;
@@ -3596,7 +3684,7 @@ function zoneDefend(d, dt) {
     }
   }
   let lbCarry = seamCarry;
-  if (d.role === 'LB' && !z.deep && best && !broke && !seamCarry) {
+  if ((d.role === 'LB' || (d.role === 'S' && POS_RULES.saf.down && prOn(POS_RULES.saf) && !udCtl(d))) && !z.deep && best && !broke && !seamCarry) {   // (POS_RULES: a down safety / robber carries #2 up the seam too)
     const p = best.p;
     if (p.vx > LB_DROP.vert * WR_TOP && p.x > d.x - 2 * YD && p.x < los + LB_DROP.carry * YL && Math.abs(p.y - Ly) < R * 1.6) {
       lbCarry = true; d.carrying = p.r; d.coverOn = p.r;
@@ -3604,7 +3692,10 @@ function zoneDefend(d, dt) {
     }
   }
   // ...and he doesn't jump up on the short stuff before the throw: he holds his depth and drives on it from there
-  if (d.role === 'LB' && !z.deep && !lbCarry) tx = Math.max(tx, los + LB_DROP.floor * YL);
+  let prB = false;
+  if (!z.deep && !broke && !lbCarry && (d.role === 'LB' || d.role === 'S') && prOn(POS_RULES.lb)) { tx = prUnder(d, seen, best, tx, ty, Ly, R); ty = PR_Y; prB = PR_B; }   // (POS_RULES: draw / screen reads, the back's release, walling a crosser)
+  if (d.role === 'LB' && !z.deep && !lbCarry && !prB) tx = Math.max(tx, los + LB_DROP.floor * YL);
+  if (d.role === 'CB' && !z.deep && !broke && prOn(POS_RULES.cb)) tx = prFlatCB(d, seen, tx, Ly, R);   // (POS_RULES: the flat corner sinks under #1, comes up only on the throw)
   // the QB's rolled out of the pocket: the underneath men on his side play both ways, sinking toward a spot
   // between their man and the QB's running lane, ready to come up if he tucks it
   // (after a few QB runs the deep men squeeze too, and everyone reacts harder to a QB running at the line)
@@ -3646,15 +3737,27 @@ function zoneDefend(d, dt) {
   const rk = dbReadK(d);   // (a worse DB reads it later)
   const flipCue = !!bp && live && !d.carrying && ((bp.x > d.x - DB_PAST_HIPS * rk * YD && bp.vx > 0.2 * WR_TOP) ||
     (Math.abs(bp.y - d.y) > DB_BREAK_TRIGGER / rk * YD && Math.sign(bp.y - d.y) * bp.vy > 0.3 * WR_TOP && Math.hypot(bp.x - d.x, bp.y - d.y) < DB_BREAK_TRIGGER * 2 * rk * YD));
-  const sprint = broke || carry || flipCue || tx - d.x > (z.deep ? 2.5 : 4) * YD ||
+  let sprint = broke || carry || flipCue || tx - d.x > (z.deep ? 2.5 : 4) * YD ||
     (z.deep && best && best.p.vx > 0.5 * WR_TOP && best.p.x > d.x - (d.role === 'S' ? DEEP_BALL.alert : 5) * YD);   // safeties open up and run sooner
+  const gait = z.deep && live && !isRunPlay && dfxOn(DB_GAIT) && !udCtl(d);
+  if (gait) sprint = dbGait(d, bp, broke || carry || flipCue, broke);   // (gait men open only on a real threat, never just to cover ground to the spot: that is the pedal)   // (DB_GAIT: opens at the cushion, then stays turned: no run -> pedal -> run)
   if (sprint !== !!d.turned) { d.turned = sprint; d.hipT = sprint ? DB_FLIP_DELAY / (covOf(d) * rm(d, 'agi', 'cut')) : 0.2; }   // (a flip takes a beat; squaring back up is quicker)
   d.hipT = (d.hipT || 0) - dt;
   dbZone(d, best, sprint, Lx, Ly, R, leash, coveredBy);
+  if (live && !lbCarry && dfxOn(QB_EYES) && qeTrack(d, dt)) {   // (QB_EYES: a slight lean toward where he reads your QB's arc pointing; QB position keeps priority)
+    const Q = QB_EYES, gx = d.qeX - tx, gy = d.qeY - ty, gl = Math.hypot(gx, gy);
+    if (gl < Q.far * YD && gl > 0) { const m = Math.min(Q.shade * YD, gl * Q.k) * d.qeW; tx += gx / gl * m; ty += gy / gl * m; }
+  }
   if (z.deep && DEEP_HOLD.on && live && !isRunPlay) tx = Math.max(tx, d.x - DEEP_HOLD.give * YD, los + DEEP_HOLD.floor * YL);   // (deep zone before the throw: never downhill; he widens toward threats and only gives a step)
   const px = d.x, py = d.y;
   const drop = !sprint && live && tx > d.x;   // dropping into his zone before the throw: a backpedal, a fraction of top speed
-  steer(d, tx, ty, sprint ? d.zoneTop : drop ? Math.min(d.zoneTop, effTop(d, d.zoneTop) * DB_BACKPEDAL_FRAC) : Math.min(d.zoneTop, 6.5 * YD), d.accel * (d.hipT > 0 ? 0.5 : 1), dt);
+  let sideTop = Math.min(d.zoneTop, 6.5 * YD);
+  if (gait) {   // (DB_GAIT: the target eased, a shuffle for short slides, a crossover run past crossYd)
+    const G = DB_GAIT, k = d.gtK === runPid ? 1 - Math.exp(-dt / G.ease) : 1;
+    d.gtX = d.gtK === runPid ? d.gtX + (tx - d.gtX) * k : tx; d.gtY = d.gtK === runPid ? d.gtY + (ty - d.gtY) * k : ty; d.gtK = runPid; tx = d.gtX; ty = d.gtY;
+    sideTop = Math.abs(ty - d.y) > G.crossYd * YD ? d.zoneTop * G.cross : Math.min(d.zoneTop, G.shuffle * YD);
+  }
+  steer(d, tx, ty, sprint ? d.zoneTop : drop ? Math.min(d.zoneTop, effTop(d, d.zoneTop) * DB_BACKPEDAL_FRAC) : sideTop, d.accel * (d.hipT > 0 ? 0.5 : 1), dt);
   clampField(d);
   setVelocity(d, px, py, dt);
   if (!sprint) d.face = -1;
@@ -3694,13 +3797,130 @@ function fooled(d, dt) {
 const ATTACH_RANGE = 3.5;   // a defender this close (yd) to the target when it's thrown stays on him instead of leaving him for the ball
 const YAC_ANGLE = { near: 40, onMan: 3, lead: 0.3, cap: 7, side: 0.25 };   // a defender who can't reach the pass: within near yd of the catch spot he aims (lead x his distance, capped at cap) yd downfield of it, side = how much of his own lateral spot he keeps; onMan = closer than this to the receiver he just stays on him
 const TACKLE_FIRST = { run: 0.9, dive: 0.9, near: 14 };   // a defender who can't reach the pass: x his run reach, x the dive lunge counted, and how close (yd) the receiver must be for him to play the tackle
+// BALL_PHASE (phase 3): where he is on his man with the ball in the air. d.bpK = 'under' / 'top' / 'trail' (read by the catch's pick / breakup odds and the
+// tip look), d.bpP = the play it is for. Returns 1 in phase (looks back for it late), 0 out of phase (eyes on the receiver)
+function bpPhase(d, remaining) {
+  const B = BALL_PHASE, rx = d.x - tgt.x, ry = d.y - tgt.y, vs = Math.hypot(tgt.vx || 0, tgt.vy || 0);
+  const along = vs > 0.5 * YD ? (rx * tgt.vx + ry * tgt.vy) / vs : rx;
+  const ux = (ball.fx ?? qb.x) - tgt.x, uy = (ball.fy ?? qb.y) - tgt.y, ul = Math.hypot(ux, uy) || 1, lane = (rx * ux + ry * uy) / ul, side = Math.abs(rx * uy - ry * ux) / ul;
+  d.bpK = along < -B.trailYd * YD || (d.jbP === runPid && along < B.topYd * YD) ? 'trail' : lane > B.underYd * YD && side < B.laneYd * YD ? 'under' : rx > B.topYd * YD ? 'top' : 'trail'; d.bpP = runPid;
+  const inPh = d.bpK !== 'trail' && Math.hypot(rx, ry) <= B.phaseYd * YD;
+  if (inPh && remaining < B.lookT) d.eyes = 'ball';
+  return inPh ? 1 : 0;
+}
+// the catch: his try's odds by where he is (i 0 = pick, 1 = breakup); 1 when off or not read this play
+function bpMul(d, i) { return d && d.bpP === runPid && d.bpK && dfxOn(BALL_PHASE) ? BALL_PHASE[d.bpK][i] : 1; }
+// QB_EYES (phase 4): his guess at where your QB's aim points (d.qeX / qeY, trust d.qeW 0-1, for play d.qeP). Live only while he looks at the QB in a drop /
+// pocket with an aim set, not past the line, not rolling out / looking to run, never for the computer's QB. No Math.random: the offset comes from the play +
+// his number. True = the guess is usable this frame
+function qeTrack(d, dt) {
+  const Q = QB_EYES;
+  if (!aim || aiOff() || d.man || d.spy || udCtl(d) || lookingAt(d) !== 'qb' || qbPastLine() || rollingOut() || qbLooksRun() || runner) { if (d.qeP === runPid) d.qeW = 0; return false; }
+  let dx = -MIRROR * (aim.cx - aim.sx) * AIM_POWER, dy = (aim.sy - aim.cy) * AIM_POWER;
+  const L = Math.hypot(dx, dy), cap = maxThrow(dx, dy); if (L > cap && L > 0) { dx *= cap / L; dy *= cap / L; }
+  const ax = qb.x + dx, ay = qb.y + dy;
+  const z = Math.max(-2, Math.min(2, diffAwrZ(d, rz(d, 'cov')))), off = (Q.errMin + Q.err * (1 - (z + 2) / 4)) * YD;
+  const h = Math.sin((runPid * 12.9898 + (d.num || 0) * 78.233)) * 43758.5453, a = (h - Math.floor(h)) * 2 * Math.PI;
+  const sx = ax + Math.cos(a) * off, sy = ay + Math.sin(a) * off;
+  if (d.qeP !== runPid || d.qeAx === undefined) { d.qeP = runPid; d.qeX = sx; d.qeY = sy; d.qeT = clock; d.qeW = 0; }
+  else {
+    if (Math.hypot(ax - d.qeAx, ay - d.qeAy) > Q.jump * YD) d.qeT = clock;   // (the arc jumped: he has to find it again)
+    const k = 1 - Math.exp(-dt / Q.lag); d.qeX += (sx - d.qeX) * k; d.qeY += (sy - d.qeY) * k;
+  }
+  d.qeAx = ax; d.qeAy = ay; d.qeW = Math.max(0, Math.min(1, (clock - d.qeT) / Q.dwell));
+  return d.qeW > 0;
+}
+// --- position rules: safeties (POS_RULES.saf; no allocations, no random numbers)
+// two verticals in his strip: a post + a corner with a deep corner on that side = he stays on top of the post; else his midpoint leans toward the QB's eyes
+function prSplit(d, a, b, tx, ty) {
+  if (udCtl(d)) return ty;
+  const P = POS_RULES.saf, k = prSkill(d), sa = Math.hypot(a.vx, a.vy), sb = Math.hypot(b.vx, b.vy);
+  const ia = sa > 0 && Math.abs(a.vy) > P.turn * sa ? Math.sign(a.vy) * Math.sign(MID - a.y) : 0, ib = sb > 0 && Math.abs(b.vy) > P.turn * sb ? Math.sign(b.vy) * Math.sign(MID - b.y) : 0;
+  if (ia * ib < 0) {
+    const post = ia > 0 ? a : b, cor = ia > 0 ? b : a;
+    for (const o of back7) if (o !== d && o.role === 'CB' && o.zone && o.zone.deep && !o.blitz && !o.man && Math.sign(o.y - MID) === Math.sign(cor.y - MID)) return ty + (post.y - ty) * (0.5 + 0.5 * k);
+  }
+  if (d.qeP === runPid && d.qeW > 0 && dfxOn(QB_EYES)) { const m = P.lean * YD * k * d.qeW; ty += Math.max(-m, Math.min(m, d.qeY - ty)); }
+  return ty;
+}
+// nobody threatens his strip: slide toward the nearest deep threat (the side the QB is looking first), never past his strip
+function prHelp(d, seen, ty, strip) {
+  if (udCtl(d)) return ty;
+  const qs = d.qeP === runPid && d.qeW > 0 && dfxOn(QB_EYES) ? Math.sign(d.qeY - d.y) : 0;
+  let pick = null, pd = Infinity;
+  for (const p of seen) {
+    if (p.x < los + SAFETY_STRIP.minDepth * YL || p.vx < VERT_CARRY.vx * WR_TOP) continue;
+    const g = Math.abs(p.y - d.y) + (qs && Math.sign(p.y - d.y) !== qs ? 40 * YD : 0);
+    if (g < pd) { pd = g; pick = p; }
+  }
+  if (!pick) return ty;
+  const m = POS_RULES.saf.help * YD * prSkill(d);
+  return Math.max(strip.cy - strip.ry, Math.min(strip.cy + strip.ry, ty + Math.max(-m, Math.min(m, pick.y - ty))));
+}
+// a deep safety on a run: holds his depth (shading outside the runner) until the ball is past the line, then comes down as the alley man (pursuit takes the angle)
+function prAlley(d, c, dt) {
+  if (!isRunPlay || c !== rb || d.role !== 'S' || !d.zone || !d.zone.deep || d.man || udCtl(d) || !prOn(POS_RULES.saf)) return false;
+  if (c.x >= los + POS_RULES.saf.alleyYd * YL * (prSkill(d) - 0.5) || dist(d, c) < RUN_READ.near * YD) return false;
+  const px = d.x, py = d.y;
+  steer(d, d.x, c.y + (Math.sign(c.y - MID) || 1) * 2 * YD, d.top * 0.5, d.accel, dt);
+  clampField(d); setVelocity(d, px, py, dt); d.face = -1;
+  return true;
+}
+// --- position rules: corners (POS_RULES.cb)
+function prFlatCB(d, seen, tx, Ly, R) {
+  if (isRunPlay || (state !== 'drop' && state !== 'pocket') || udCtl(d)) return tx;
+  const C = POS_RULES.cb, s = Math.sign(Ly - MID) || 1;
+  tx = Math.max(tx, los + C.flatFloor * YL);
+  for (const p of seen) if (Math.sign(p.y - MID) === s && p.vx > VERT_CARRY.vx * WR_TOP && p.x > los + 6 * YL && Math.abs(p.y - Ly) < R * 1.6) {
+    const want = Math.min(p.x - 2 * YD, los + C.sinkMax * YL);
+    if (want > tx) tx += (want - tx) * (0.5 + 0.5 * prSkill(d));
+    break;
+  }
+  return tx;
+}
+const prScreenOK = (p, r, yd) => !!p && !!p.route && !!p.route.screen && !p.hasBall && p.x < los && Math.hypot(p.x - r.x, p.y - r.y) < yd * YD;
+// --- position rules: everyone (POS_RULES.all). Late in a half with the defense ahead: a tackler near the sideline shades outside the carrier
+function prInbounds(d, c, A) {
+  const P = POS_RULES.all;
+  if (!(game.quarter === 2 || game.quarter >= 4) || game.secs > lateS(P.lateS) || game.red <= game.blue || toSideline(c) > P.sideYd * YD) return;
+  const s = c.y > MID ? 1 : -1;
+  A.y = Math.max(Y_MIN, Math.min(Y_MAX, Math.max(A.y * s, (c.y + s * P.shade * YD * (0.5 + prSkill(d))) * s) * s));
+}
+// --- position rules: underneath zone men (POS_RULES.lb). prUnder returns his x and leaves his y in PR_Y (read at once by zoneDefend)
+let PR_Y = 0, PR_B = false;   // (PR_B: he took the released back: no depth floor)
+function prNear(d, x, y, lbOnly) {   // (no free underneath backer / safety (the men who run these rules) is closer to this spot than he is)
+  const g = Math.hypot(d.x - x, d.y - y);
+  for (const o of back7) if (o !== d && !o.blitz && !o.man && !o.action && o.zone && !o.zone.deep && (lbOnly ? o.role === 'LB' : o.role === 'LB' || o.role === 'S') && Math.hypot(o.x - x, o.y - y) < g) return false;
+  return true;
+}
+function prUnder(d, seen, best, tx, ty, Ly, R) {
+  PR_Y = ty; PR_B = false;
+  if (isRunPlay || (state !== 'drop' && state !== 'pocket') || udCtl(d)) return tx;
+  const U = POS_RULES.lb, k = prSkill(d);
+  if (U.drawT && d.role === 'LB' && clock < U.drawT * k && rb && (rb.protect || rb.passBlock || rb.exSet)) { PR_Y = d.y + (ty - d.y) * 0.3; return Math.min(tx, d.x + 0.3 * YD); }   // (draw read: the back stays home = hold a beat)
+  if (d.role === 'LB' && clock > U.screenT * (1.5 - k)) for (const p of seen) if (prScreenOK(p.r, d, U.screenYd) && prNear(d, p.x, p.y, true)) { PR_Y = p.y; return p.x + 2 * YD; }   // (screen read: a screen catcher sitting behind the line)
+  if (U.rel && rb && rb.route && !rb.protect && !rb.passBlock && clock > U.relT * (1.5 - k)) {   // (the back releases: the nearest free underneath man has him)
+    let manned = false; for (const o of back7) if (o.man === rb && !o.blitz) manned = true;
+    if (!manned) for (const p of seen) if (p.r === rb) { if (p.x > los - 2 * YL && Math.hypot(p.x - d.x, p.y - d.y) < U.relReach * YD && prNear(d, p.x, p.y, false)) { PR_Y = p.y; PR_B = true; d.coverOn = rb; return p.x + 1.5 * YD; } break; }
+  }
+  if (best && best.p && U.wall) {   // (a crosser through his zone: step into his path, pass him on once he is out of it)
+    const p = best.p, sp = Math.hypot(p.vx, p.vy);
+    if (sp > 0.5 * WR_TOP && Math.abs(p.vy) > 0.7 * sp && p.x < los + 12 * YL && Math.abs(p.y - Ly) < R) { PR_Y = Math.max(Ly - R, Math.min(Ly + R, p.y + p.vy * U.wall * k)); tx = Math.max(tx, p.x + 0.5 * YD); }
+  }
+  return tx;
+}
+function qeReact(d) {
+  if (d.qeP !== runPid || !(d.qeW > 0.5) || !dfxOn(QB_EYES)) return 1;
+  const g = Math.hypot(ball.tx - d.qeX, ball.ty - d.qeY);
+  return g < QB_EYES.near * YD ? 1 - QB_EYES.react : g > QB_EYES.wide * YD ? 1 + QB_EYES.wrong : 1;
+}
 function defendBall(d, dt) {
   if (d.action) return updateAction(d, dt);
   if (fooled(d, dt)) return;
   // a deep shot: the safeties read it off the QB's arm and go get it
   const deepShot = d.role === 'S' && !d.blitz && ball.tx > los + DEEP_BALL.air * YL;
   const react = (deepShot ? Math.min(d.react, DEEP_BALL.react) : d.zone.deep && ball.tx > los + 15 * YL ? Math.min(d.react, 0.15) : d.react) * btReadK(d) * abilReactK(d);   // (abilities: Click and Close, Zone Eyes, Ball Eyes, Robber, Jump the Route; Tunnel Vision QB = later) (ball skills: a good one finds it sooner)
-  if (ball.age <= react) return zoneDefend(d, dt);
+  if (ball.age <= react * qeReact(d)) return zoneDefend(d, dt);   // (QB_EYES: thrown where he read it = a beat sooner, away from it = a beat later)
   if (deepShot) d.eyes = 'ball';
   const px = d.x, py = d.y;
   // beaten: the receiver will get there first, so play through him and go up to bat it away
@@ -3738,6 +3958,7 @@ function defendBall(d, dt) {
   }
   // (a safety on a deep shot plays the ball, not the man, unless he's beaten and has to play through him)
   // thrown right at him with no receiver within catching range of it: he leaves the man and goes for the ball
+  if (covering && !deepShot && dfxOn(BALL_PHASE) && !udCtl(d)) bpPhase(d, remaining);   // (BALL_PHASE: in phase he looks back for it late; out of phase his eyes stay on the man, who he is already playing)
   const stray = !beaten && Math.hypot(tgt.x - ball.tx, tgt.y - ball.ty) > CATCH_RADIUS * 1.5 && Math.hypot(d.x - ball.tx, d.y - ball.ty) < 14 * YD;
   if (stray) d.eyes = 'ball';
   // already on the receiver (within 3.5 yd) and not beaten: he stays attached rather than peeling off for the ball
@@ -4101,6 +4322,9 @@ function pursuitPoint(d, c, speed, dir, err = 1, out = null) {
     const dt = c.vsx === undefined || c.velAt === undefined ? 1 : clock - c.velAt;
     const k = dt <= 0 || dt > 0.5 ? 1 : 1 - (1 - PURSUIT.smooth) ** (dt * 60);
     c.vsx = (c.vsx ?? 0) + ((c.vx || 0) - (c.vsx ?? 0)) * k; c.vsy = (c.vsy ?? 0) + ((c.vy || 0) - (c.vsy ?? 0)) * k;
+    // (PURSUIT2: his displacement over the last ~headT s = the heading read from far away: a juke barely turns it)
+    const kl = c.vlx === undefined || dt <= 0 || dt > 0.5 ? 1 : 1 - Math.exp(-dt / PURSUIT2.headT);
+    c.vlx = (c.vlx ?? 0) + ((c.vx || 0) - (c.vlx ?? 0)) * kl; c.vly = (c.vly ?? 0) + ((c.vy || 0) - (c.vly ?? 0)) * kl;
     c.velAt = clock;
   }
   speed = steerTop(d, speed);   // (the speed steer will really give him: his attribute cap and the yards he has already run this play. It used to plan on the asked-for
@@ -4108,6 +4332,10 @@ function pursuitPoint(d, c, speed, dir, err = 1, out = null) {
   const P = PURSUIT, buf = PP_BUF, N = buf.length / 2;
   let px = c.x, py = c.y, s = Math.hypot(c.vsx, c.vsy), ux = dir, uy = 0, best = -1, far = -1, n = 0, run = 0, side = false, end = 0;
   if (s > 0.5 * YD) { ux = c.vsx / s; uy = c.vsy / s; }
+  if (dfxOn(PURSUIT2) && c.vlx !== undefined) {   // (PURSUIT2: far from him, the heading comes from his last ~0.3 s, not this instant; blended in over closeYd..2 x closeYd)
+    const g = Math.hypot(c.x - d.x, c.y - d.y) / YD, cy = PURSUIT2.closeYd, w = Math.max(0, Math.min(1, (g - cy) / cy)), sl = Math.hypot(c.vlx, c.vly);
+    if (w > 0 && sl > 0.5 * YD) { ux += (c.vlx / sl - ux) * w; uy += (c.vly / sl - uy) * w; const l = Math.hypot(ux, uy) || 1; ux /= l; uy /= l; }
+  }
   const lo = Y_MIN + P.edge, hi = Y_MAX - P.edge, reach = LUNGE_RANGE * 0.6, goal = dir > 0 ? FIELD : 0;
   // his run, predicted: he speeds up to his real top at his real accel (a man who just took the ball, caught it or came out of a cut is still slow) and bends
   // toward the end zone over P.bend s; at the sideline he turns and runs up it (he can't run out)
@@ -4164,6 +4392,40 @@ function likelyTackler(pool, c, skip = null) {
 function pursuitLate(d, aim, base, speed) {
   if (!base.met) return true;
   return Math.hypot(aim.x - d.x, aim.y - d.y) / Math.max(YD, steerTop(d, speed)) > base.t * PURSUIT.late + PURSUIT.lateT;
+}
+
+// PURSUIT2 (defensive overhaul phase 1): far = the aim between where he meets the carrier if he cuts cone deg either way (the average of the two turned
+// meeting points = the straight one pulled toward the carrier by cos(cone)); close = the near hip with a short lead, staying between him and the goal line
+// when in front; then the aim moves no faster than the carrier's run + his own agility allows (good movers hold up to a juke, poor ones get beaten)
+// DEF_CALLS run fits (prompt 2 phase 5): while he is still in front of the runner, the force man keeps outside leverage (or spills it inside, DCS.spill),
+// the alley man fills just inside him, and the backside cutback man stays home inside the runner's track instead of chasing flat. Writes A only.
+function dcFitAim(d, c, A, cdir) {
+  const F = DCALL.fit;
+  if ((d.x - c.x) * cdir < F.near * YD) return;
+  const s = Math.sign(c.y + (c.vy || 0) * F.look - MID) || 1, mine = d.fitS === s;
+  let y = A.y;
+  if (mine && d.fitF) y = c.y + (DCS.spill ? -s * F.spillYd : s * F.forceYd) * YD;
+  else if (mine && d.fitA) y = c.y - s * F.alleyYd * YD;
+  else if (!mine && d.fitC) y = c.y - s * F.cutYd * YD;
+  else return;
+  A.y = Math.max(Y_MIN + YD, Math.min(Y_MAX - YD, A.y + (y - A.y) * F.k));
+}
+function pp2Aim(d, c, A, chase, cdir) {
+  const P = PURSUIT2, g = Math.hypot(c.x - d.x, c.y - d.y), cy = P.closeYd * YD;
+  const wc = Math.max(0, Math.min(1, (g - cy) / cy)), k = 1 - wc * P.coneW * (1 - Math.cos(P.cone / 57.3));
+  A.x = c.x + (A.x - c.x) * k; A.y = c.y + (A.y - c.y) * k;
+  if (g < cy) {   // (close: the meeting point stays (it shrinks to him on its own), shaded to his near hip; in front of him it never falls behind his hip)
+    const w = 1 - Math.max(0, Math.min(1, (g - 0.6 * cy) / (0.4 * cy))), side = Math.sign(d.y - c.y) || 1;
+    A.y += (c.y + side * P.hipYd * YD - A.y) * w * P.hipK;
+    if ((d.x - c.x) * cdir > 0) A.x = cdir > 0 ? Math.max(A.x, c.x) : Math.min(A.x, c.x);
+  }
+  const ck = runPid * 64 + (c.num || 0), ex = A.x - d.x, ey = A.y - d.y, e = Math.hypot(ex, ey), an = Math.atan2(ey, ex);
+  if (d.raK !== ck || d.raT === undefined || clock - d.raT > 0.1 || clock < d.raT || e < 0.5 * YD) { d.raK = ck; d.raX = an; d.raT = clock; return; }
+  // (the bearing to his aim turns no faster than the carrier's ~0.3 s run swings it across his line + his own turn: deg / s by agility)
+  const z = Math.max(-2, Math.min(2, rz(d, 'agi'))), vx = c.vlx ?? c.vx ?? 0, vy = c.vly ?? c.vy ?? 0, mx = (Math.abs(vx * ey - vy * ex) / (e * Math.max(YD, g)) + P.turn / 57.3 * Math.max(P.turnMin, 1 + P.turnAgi * z)) * (clock - d.raT);
+  let da = an - d.raX; da -= 2 * Math.PI * Math.round(da / (2 * Math.PI));
+  d.raX += Math.max(-mx, Math.min(mx, da)); d.raT = clock;
+  if (Math.abs(da) > mx) { A.x = d.x + Math.cos(d.raX) * e; A.y = d.y + Math.sin(d.raX) * e; }
 }
 
 // --- pursuit debug (PURSUIT.debug, dev only): each chase of a man who started in front of the carrier ends either in lunge range in front of him or behind him
@@ -4234,6 +4496,7 @@ function pursueMove(d, c, dt) {
     d.stiffBy = null;
   }
   if (rbpFrozen(d, c, dt)) return;   // (biting on the QB's fake / the read key sitting home)
+  if (prAlley(d, c, dt)) return;   // (POS_RULES: a deep safety holds his depth until the run is past the line; corners' contain / cutback = dcFitAim's run fits)
   const reading = c.awaiting || runReading(d, c);   // mesh not finished: nobody triggers yet (the ball isn't in the back's hands): they read it from their spots / drops
   const readHold = () => {
     if (d.zone && !dl.includes(d)) return zoneDefend(d, dt);
@@ -4299,6 +4562,7 @@ function pursueMove(d, c, dt) {
         if (ofs) { const mv = c.truck ? 'truck' : spun ? 'spin' : juked ? 'juke' : null; if (mv) wearMove(mv); }
         miss /= rm(d, 'tck', 'tackle');
         if (d.secure) miss *= DEF.secure.miss;   // G: a sure wrap-up
+        if (d.gaP === runPid && clock - (d.gaT ?? -9) < TACKLE2.gatherT && dfxOn(TACKLE2)) miss *= Math.max(0.5, TACKLE2.miss - TACKLE2.missTck * Math.max(-2, Math.min(2, rz(d, 'tck'))));   // (TACKLE2: broke down first = a surer tackle)
         if (hit && udCtl(d)) miss = Math.min(0.95, miss * USER_HIT.miss);   // your big hits whiff more often
         if (c.pos === 'WR') miss *= 0.8;          // big wideouts are easier to bring down
         if (d.role === 'LB') miss *= 0.6 * (isRunPlay ? WR_BLOCK.lbTackle : 1);   // linebackers are sure tacklers (best of all against the run)
@@ -4520,7 +4784,7 @@ function pursueMove(d, c, dt) {
   // he commits to his angle: the planned meeting point is held, re-planned only on a real cut (the carrier's smoothed heading turns over P.cutDeg) or when the
   // meeting point has moved over P.replanYd; inside P.holdNear yd he tracks it live (scrimmage chases only: kick coverage keeps its own lanes)
   if (!kickoffPlay && PURSUIT.hold) {
-    const hd = Math.atan2(c.vsy || 0, c.vsx || 0);
+    const hd = dfxOn(PURSUIT2) && c.vlx !== undefined ? Math.atan2(c.vly, c.vlx) : Math.atan2(c.vsy || 0, c.vsx || 0);   // (PURSUIT2: a cut = his ~0.3 s heading turning, not one juke frame)
     let da = Math.abs(hd - (d.pHd ?? hd)); if (da > Math.PI) da = 2 * Math.PI - da;
     if (d.pPid !== runPid || d.pC !== c || dist(d, c) < PURSUIT.holdNear * YD || da > PURSUIT.cutDeg / 57.3 || Math.hypot(aimAt.x - d.pAx, aimAt.y - d.pAy) > PURSUIT.replanYd * YD) { d.pPid = runPid; d.pC = c; d.pAx = aimAt.x; d.pAy = aimAt.y; d.pHd = hd; }
     else { aimAt.x = base.x = d.pAx; aimAt.y = base.y = d.pAy; }
@@ -4568,12 +4832,15 @@ function pursueMove(d, c, dt) {
     aimAt.x = d.x + (c.team === 'off' ? 1 : -1) * 0.2 * YD;   // (settles, doesn't come on)
     aimAt.y = d.y + (Math.max(Y_MIN + YD, Math.min(Y_MAX - YD, c.y + kOff * KICK_COVER.space)) - d.y) * KICK_HOLD.lane;   // (shades toward his own lane)
   }
+  if (!kickoffPlay && dfxOn(PURSUIT2) && !udCtl(d)) pp2Aim(d, c, aimAt, chase, cdir);   // (PURSUIT2: cut cone far, near hip close, re-aim limited by his agility)
+  if (!kickoffPlay && isRunPlay && !d.blitz && (d.fitF || d.fitA || d.fitC) && dcOn() && !udCtl(d)) dcFitAim(d, c, aimAt, cdir);   // (DEF_CALLS run fits: force / alley / cutback)
+  if (!kickoffPlay && c.team === 'off' && prOn(POS_RULES.all) && POS_RULES.all.late && !udCtl(d)) prInbounds(d, c, aimAt);   // (POS_RULES: late with a lead, take the sideline away)
   if (!closing) {   // (hawking him down: aim through the meeting point, so he arrives at full speed instead of easing up onto it)
     const ax = aimAt.x - d.x, ay = aimAt.y - d.y, L = Math.hypot(ax, ay), need = chase * PURSUIT.through;
     if (L > 1 && L < need) { aimAt.x = d.x + ax / L * need; aimAt.y = d.y + ay / L * need; }
   }
   if (PURSUIT.debug) pdbNote(d, c, aimAt);
-  steer(d, aimAt.x, aimAt.y, chase * (gunP ? PUNT_GUN.speed : 1), d.accel * (koCov ? (kickoff && kickoff.punt ? PURSUIT.accel * PUNT_COVER.accel : KICK_COVER.accel) : PURSUIT.accel), dt);
+  steer(d, aimAt.x, aimAt.y, chase * (gunP ? PUNT_GUN.speed : 1) * (kickoffPlay || udCtl(d) || !dfxOn(TACKLE2) ? 1 : tk2Gather(d, c)), d.accel * (koCov ? (kickoff && kickoff.punt ? PURSUIT.accel * PUNT_COVER.accel : KICK_COVER.accel) : PURSUIT.accel), dt);
   clampField(d);
   setVelocity(d, px, py, dt);
   // momentum: a defender sprinting at one spot without changing direction builds up a head of steam
@@ -4597,6 +4864,7 @@ function pursueMove(d, c, dt) {
   if (!safe && (dist(d, c) <= LUNGE_RANGE || trailing)) {
     // squared up at full speed (not chasing from behind): sometimes he lays the big hit
     d.hitStick = !d.sucker && spd > 0.7 * d.top && headOn && Math.random() < (d.role === 'LB' ? 0.52 : HIT_STICK) * rm(d, 'str', 'bigHit') * rm(d, 'tck', 'bigHit') / rm(c, 'str', 'powerResist') * diffFor(d).hit + 0.3 * (d.mom || 0);   // a head of steam makes the big hit likelier
+    if (!kickoffPlay && dfxOn(TACKLE2) && !udCtl(d)) tk2Lone(d, c);
     d.hitSpeed = spd / d.top;
     // (the dive carries him through the hit: a faster hitter flies further and stays in the air longer, and lands past where he left from)
     const fr = Math.min(1.2, d.hitSpeed), mom = 0.7 + 0.5 * fr + 0.2 * (d.mom || 0);
@@ -4609,6 +4877,7 @@ function pursueMove(d, c, dt) {
     d.tkStyle = d.hitStick ? (headOn && Math.random() < TKV.fold ? 'fold' : 'hit') : !d.isKicker && Math.random() < (headOn ? GATOR.front : GATOR.other) + saAdapt(d, c) ? 'gator'
               : (headOn || justCaught) && Math.random() < (justCaught ? TKV.hugCatch : TKV.hug) ? 'hug' : 'wrap';
     d.lowDive = (trailing || Math.random() < saAdapt(d, c)) && !d.hitStick;   // (a shoestring dive from behind goes at the ankles: under any stiff arm)
+    if (!kickoffPlay && dfxOn(TACKLE2) && !udCtl(d)) tk2Pick(d, c, aheadDot, notBehind, headOn);   // (TACKLE2: the tackle follows the angle; a lone big hit is rarer)
     ooTk(d);
     d.tackling = true;
     d.resolved = false;
@@ -4617,6 +4886,28 @@ function pursueMove(d, c, dt) {
   }
 }
 
+// TACKLE2 (phase 5): the gather step. Inside gatherYd (outside lunge range), coming at him from the front or side: he breaks down (speed x, by his tackling)
+// and is noted as gathered (d.gaT / d.gaP) for the tackle's miss odds
+function tk2Gather(d, c) {
+  const T = TACKLE2, g = Math.hypot(c.x - d.x, c.y - d.y);
+  if (g > T.gatherYd * YD || g <= LUNGE_RANGE) return 1;
+  const cs = Math.hypot(c.vx || 0, c.vy || 0) || 1;
+  if (((d.x - c.x) * (c.vx || 0) + (d.y - c.y) * (c.vy || 0)) / (g * cs) < -0.2) return 1;   // (from behind: no breaking down, he has to catch him)
+  d.gaT = clock; d.gaP = runPid;
+  return Math.max(0.7, T.gather - T.gatherTck * Math.max(-2, Math.min(2, rz(d, 'tck'))));
+}
+// the tackle picked by the angle: head-on and from the side keep the existing picks (wrap / hug / gator by angle), from behind = at the ankles with a
+// punch at the ball (d.tkB)
+function tk2Pick(d, c, aheadDot, notBehind, headOn) {
+  d.tkB = !notBehind ? runPid : 0;
+  if (!notBehind && !d.hitStick) { d.lowDive = true; return; }
+}
+function tk2Lone(d, c) {   // (before the dive: a lone big hit with no sideline behind him is often a plain wrap, so the dive is sized for it)
+  const T = TACKLE2; if (!d.hitStick || toSideline(c) <= T.lineYd * YD) return;
+  for (const o of back7) if (o !== d && !o.action && dist(o, c) < T.helpYd * YD) return;
+  for (const o of dl) if (o !== d && !o.action && dist(o, c) < T.helpYd * YD) return;
+  if (Math.random() >= T.lone) d.hitStick = false;
+}
 function chaseLoose(d, dt) {
   if (d.action) return updateAction(d, dt);
   // a tipped ball: every eye goes to it and he breaks on where it's coming down

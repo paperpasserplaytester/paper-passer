@@ -1094,10 +1094,10 @@ const onlHostOnly = () => !onlLobbyActive() || exhibition.myRole === 'you';
 function matchupClick(p) {
   const ex = results.screen === 'exhibition';
   if (ex && onlLobbyActive()) return onlLobbyClick(p);
-  if (!ex && season && inBtn(p, GOALS_BTN) && goalsEnsure()) { goalsShow('WEEKLY GOALS'); return true; }
+  if (!ex && season && unlOn('goalsW') && inBtn(p, GOALS_BTN) && goalsEnsure()) { goalsShow('WEEKLY GOALS'); return true; }
   if (!ex && !simLocked() && inBtn(p, SIM_GAME_BTN)) { simMenu = !simMenu; return true; }
-  if (!ex && simMenu && inBtn(p, SIM_ALL_BTN)) { simMenu = false; simMode = 'none'; suspended = null; startSimGame(); return true; }
-  if (!ex && simMenu && (inBtn(p, SIM_O_BTN) || inBtn(p, SIM_D_BTN))) { simMenu = false; suspended = null; simMode = inBtn(p, SIM_O_BTN) ? 'offense' : 'defense'; reset(); return true; }   // (PLAY, with one side simulated)
+  if (!ex && simMenu && !ftSimLock() && inBtn(p, SIM_ALL_BTN)) { simMenu = false; simMode = 'none'; suspended = null; startSimGame(); return true; }
+  if (!ex && simMenu && !ftSimLock() && (inBtn(p, SIM_O_BTN) || inBtn(p, SIM_D_BTN))) { simMenu = false; suspended = null; simMode = inBtn(p, SIM_O_BTN) ? 'offense' : 'defense'; reset(); return true; }   // (PLAY, with one side simulated)
   if (simMenu) simMenu = false;   // (a click anywhere else closes it, and still does its own thing)
   if (!ex && inBtn(p, EXHIB_BTN)) { startExhibition(undefined); return true; }
   const roles = sideRoles();
@@ -1230,7 +1230,7 @@ function wxForecast() {
   return wxFc;
 }
 function wxNewGame() {
-  const on = SETTINGS.weather !== false && !tut, pickd = exhibition && exhibition.wx != null && exhibition.wx !== 'AUTO';
+  const on = SETTINGS.weather !== false && !tut && !indoorOn(), pickd = exhibition && exhibition.wx != null && exhibition.wx !== 'AUTO';
   const f = wxForecast();
   let c = { rain: 0, snow: 0, wind: 0 }, roof = null;
   if (on && pickd) c = wxFromCode(exhibition.wx);   // (picked: played outdoors, even in a dome, and it holds all game)
@@ -1243,7 +1243,7 @@ function wxNewGame() {
   game.wx = { on, roof, fixed: !!pickd, team: f.team, month: f.month, ...c, cp: 0, toast: null, coat: c.snow / 3 * WX_LOOK.coatStart,
               seed: Math.random(), wet: c.rain / 3 * WX_X.wet.at[1] * 0.9, ext: null, brew: null, q: game.quarter || 1 };
   wxWind(game.wx);
-  if (!c.wind && !c.rain && !c.snow) game.wx.mph = Math.round(Math.random() * 6);
+  if (!c.wind && !c.rain && !c.snow) game.wx.mph = indoorOn() ? 0 : Math.round(Math.random() * 6);   // (v0.76: no wind indoors)
   if (on && !tut) wxForceStart(game.wx);
   game.wx.st = game.wx.pst = game.wx.pst || wxStageOf(game.wx.wet);
   wxExtRoll(game.wx, true);   // (the first extreme roll: it can land at the end of the first quarter)
@@ -1516,7 +1516,7 @@ function wxExtRoll(g, first) {
     }
   }
   if (!first && g.ext === 'bliz') g.ang += (Math.random() * 2 - 1) * WX_X.bliz.gustShift;   // (the gusts swing round at a break)
-  if (g.fixed || g.roof || !g.on || WX_X.force) return;
+  if (g.fixed || g.roof || !g.on || WX_X.force || ftNoRisk()) return;   // (field tutorial game 1: no extreme weather)
   const E = WX_X.ext;
   if (g.ext) { if (Math.random() < E.back) g.brew = 'off'; return; }
   if (g.rain < 3 && g.snow < 3) return;
@@ -2159,14 +2159,16 @@ const sevName = inj => inj && inj.season ? INJ_SEASON.name : SEV_NAME[inj ? inj.
 const sevColor = inj => inj && inj.season ? INJ_SEASON.col : SEV_COLOR[inj ? inj.sev : 0];
 const injWk = inj => inj && inj.season ? 'the season' : `${inj ? inj.weeks : 0} wk`;
 let injuryCall = null;   // the injury timeout: { p (on the field), s (his ROSTER entry), re (reinjured: he's done) }
-const injuriesOn = () => SETTINGS.injuries && !exhibition && !tut;
+const injuriesOn = () => SETTINGS.injuries && !exhibition && !tut && !ftNoRisk();   // (field tutorial game 1: off)
 const yourStars = off => (ROSTER[MATCH.you] || []).filter(s => !off || OFF_GROUPS.includes(s.group));   // (off: just the offense; defenders wear down in simmed plays too)
 // a simmed tackle / sack / pick return on one of your defenders: condition goes down (kind: tackle / stick / sack)
 function simDefHit(p, kind) { if (p && injuriesOn() && ROSTER[MATCH.you].includes(p) && !isOut(p) && !p.restGame) p.cond = Math.max(0, condOf(p) - INJURY.cond[kind]); }
 const condOf = s => Math.round(s.cond ?? 100);
-const COND_EDGE = { hi: 90, lo: 30, cap: 20 };   // condition 90+ = every attribute +1 (never past cap), under 30 = every attribute -1
+const COND_EDGE = { hi: 90, lo: 30, cap: 16.5 };   // condition 90+ = every attribute +1, under 30 = every attribute -1; cap = no bonus (condition, morale, form) lifts an attribute past it
+// a bonus never lifts an attribute past COND_EDGE.cap; one already above it keeps its base; negative hits untouched
+const hitCap = (b, v) => v > b ? Math.min(v, Math.max(b, COND_EDGE.cap)) : v;
 const condShift = s => !s || !injuriesOn() ? 0 : (condOf(s) >= COND_EDGE.hi ? 1 : condOf(s) < COND_EDGE.lo ? -1 : 0) - rustOf(s);
-const condAt = (s, form = 1) => { const sh = condShift(s); return form === 1 && !sh ? s.at : Object.fromEntries(Object.entries(s.at).map(([k, v]) => [k, typeof v === 'number' ? Math.min(COND_EDGE.cap, v + sh) * form : v])); };
+const condAt = (s, form = 1) => { const sh = condShift(s); return form === 1 && !sh ? s.at : Object.fromEntries(Object.entries(s.at).map(([k, v]) => [k, typeof v === 'number' ? hitCap(v, hitCap(v, v + sh) * form) : v])); };
 const condFactor = s => 1 + INJURY.condK * (1 - condOf(s) / 100) ** 2;
 const isOut = s => !exhibition && !tut && !!(s.benchNext || s.outGame || s.susp > 0 || (SETTINGS.injuries && s.inj && s.inj.weeks > 0));
 const rint = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
@@ -2352,8 +2354,8 @@ const MENTOR = { vetYrs: 5, menteeYrs: 5, max: 2, each: 0.15, cap: 0.25, starsW:
 // bench: non-starters x xp XP; a group's non-starters (average stars minus base, x perStar, 0..cap) lift that group's starters' XP. No bench or a weak one = no bonus
 const BENCH_DEV = { xp: 1.2, base: 2.5, perStar: 0.12, cap: 0.2 };
 // position battles (one practice week): per group chance, a starter vs a non-starter within gap stars, at most maxWeek a week; winner = weighted roll (rating, awareness, condition, luck), gains minBoost-maxBoost stars of attribute points (1 star = 10 attribute points) as far as his potential allows; hist = results kept
-const BATTLE = { chance: 0.3, gap: 1, maxWeek: 2, minBoost: 0.3, maxBoost: 0.6, rateShare: 0.25, hist: 10, wRate: 1, wAwr: 0.5, wCond: 0.4, luck: 0.35, bigStars: 3, overK: 0.6,
-  rep: { n: 3, bias: 0.5 } };   // (big job: a win = minBoost..maxBoost stars in all, rateShare of it to his rating now, the rest to his potential only)   // rep = a watched / played battle: n reps each man; the bar starts at bias x (2 x the starter's rating share - 1) and each rep moves it by the score gap / n (the side ahead at the end wins)   // overK = share of a battle boost a player at his ceiling still gets (pracOverCeil, max 15 an attribute)
+const BATTLE = { chance: 0.15, gap: 1, maxWeek: 2, minBoost: 0.15, maxBoost: 0.3, potShare: [0.6, 0.8], hist: 10, wRate: 1, wAwr: 0.5, wCond: 0.4, luck: 0.35, bigStars: 3,
+  rep: { n: 3, bias: 0.5 } };   // (big job: a win = minBoost..maxBoost stars in all, potShare (random in range) of it raises his potential, the rest fills rating room under it; nothing past his ceiling)   // rep = a watched / played battle: n reps each man; the bar starts at bias x (2 x the starter's rating share - 1) and each rep moves it by the score gap / n (the side ahead at the end wins)
 const PRAC_GROUPS = ['QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'CB', 'S'];
 const FAC_MAX = 7;   // facility levels (the campus art tops out at 5; 6 and 7 add gold stars over the building)
 const PRAC_FAC = {
@@ -2717,6 +2719,7 @@ function pracDrillEnd(left) {   // the last rep's whistle, or LEAVE PRACTICE (le
   try { record = { ...record, ...JSON.parse(localStorage.getItem(RECORD_KEY) || '{}') }; } catch (e) {}
   results = { record, screen: 'practice' };
   endExhibition('practice'); pstExhibitionOff();
+  if (P.camp) return campEnd(P, left);   // (a camp pays and costs nothing: no session, grade or sticker; home again)
   pracOpen(P.bat ? 'battles' : 'field');
   if (P.bat) return pracBattleDone(P, left);   // (a battle pays no session: the winner's boost)
   const res = pracSesRun(P.unit, P.len, grade, P.hero, P.men);
@@ -2936,14 +2939,6 @@ function pracBoost(p, pts) {
   p.upg = had; p.upgAttr = had > 0 ? hold : null;
   return given;
 }
-// a battle winner with no potential left: still grows, x BATTLE.overK of the points, never past 15 an attribute; his ceiling rises with him. Returns the points given.
-function pracOverCeil(p, pts) {
-  let k = Math.round(Math.max(0, pts) * BATTLE.overK), given = 0;
-  const A = [...ATTRS[p.group]].sort((x, y) => p.raw[y] - p.raw[x]);
-  for (let g = 0; k > 0 && g < 100; g++) { const a = A[g % A.length], full = x => p.raw[x] + 1 > 15 || spdCapped(p, x); if (full(a)) { if (A.every(full)) break; continue; } p.raw[a]++; p.at[a]++; k--; given++; }
-  if (given) { p.potFixed = true; p.potCaps = null; p.stars = starsOfScore(scoreOf(p)); p.potPts = Math.max(p.potPts || 0, scoreOf(p)); p.potential = starsOfScore(p.potPts); autosaveSoon(); }
-  return given;
-}
 // a man's battle weight (the old roll's `w(s)` without its luck term): rating, awareness, condition
 const pracBattleW = s => BATTLE.wRate * scoreOf(s) / ATTR_TOTAL + BATTLE.wAwr * pracAwr(s) + BATTLE.wCond * (SETTINGS.injuries ? condOf(s) / 100 : 1);
 // next week's battles (max one a group, BATTLE.maxWeek a week, the old chance / pair rules): career.prac.bat = [{ g, a, b, yr }] by name
@@ -2970,14 +2965,14 @@ function pracBattleSettle(bt, winner, keep) {
   const P = prac(), me = MATCH.you, cx = pracCtx(), { g, a, b } = bt, w = s => pracBattleW(s) + BATTLE.luck * Math.random();
   if (!winner) { const wa = w(a), wb = w(b); winner = Math.random() * (wa + wb) < wa ? a : b; }
   const loser = winner === a ? b : a, R = ROSTER[me], at = keep ? R.map((s, i) => s.group === g ? i : -1).filter(i => i >= 0) : null, was = at && at.map(i => R[i]);
-  const all = Math.round((BATTLE.minBoost + Math.random() * (BATTLE.maxBoost - BATTLE.minBoost)) * 2 * STAR_HALF / SCORE_K), want = Math.round(all * BATTLE.rateShare);
-  const p0 = ptsOf(winner); winner.potPts = Math.min(ATTR_TOTAL, p0 + (all - want) * SCORE_K); winner.potential = starsOfScore(winner.potPts);   // (big job: most of a win raises his ceiling, never potFixed)
-  const pot = Math.max(0, winner.potPts - p0) / (2 * STAR_HALF), in1 = pracBoost(winner, want);
-  const got = in1 + pracOverCeil(winner, want - in1), stars = got * SCORE_K / (2 * STAR_HALF);   // (past his ceiling he still grows, a bit less: BATTLE.overK)
+  const all = Math.round((BATTLE.minBoost + Math.random() * (BATTLE.maxBoost - BATTLE.minBoost)) * 2 * STAR_HALF / SCORE_K), ps = BATTLE.potShare, want = Math.round(all * (1 - (ps[0] + Math.random() * (ps[1] - ps[0]))));
+  const p0 = ptsOf(winner), to = Math.min(ATTR_TOTAL, p0 + (all - want) * SCORE_K);   // (most of a win raises his ceiling, the way BOOST HIS POTENTIAL does)
+  if (to > p0) { winner.potPts = to; winner.potFixed = true; winner.potCaps = null; winner.potential = starsOfScore(to); }
+  const pot = Math.max(0, ptsOf(winner) - p0) / (2 * STAR_HALF), got = pracBoost(winner, want), stars = got * SCORE_K / (2 * STAR_HALF);   // (the rest only fills room under his potential: never past it)
   if (keep) at.forEach((i, j) => { R[i] = was[j]; });   // (the boost's upgrades re-sorted the group: put it back, START HIM? decides)
   else resortGroup(me, g);   // (a backup who passed the starter takes the job)
   const big = Math.max(a.stars, b.stars) >= BATTLE.bigStars, took = cx.st.has(loser) && !startersOf(me).has(loser);
-  const line = `${g} battle: ${winner.short} beat ${loser.short}${got ? `, ▲${stars.toFixed(1)}★` : ''}${pot > 0.01 ? `, ▲${pot.toFixed(1)}★ potential` : ''}${took ? ', starter' : ''}`;
+  const line = `${g} battle: ${winner.short} beat ${loser.short}${pot > 0.01 ? `, ▲${pot.toFixed(1)}★ potential` : ''}${got ? `, ▲${stars.toFixed(1)}★ rating` : ''}${took ? ', starter' : ''}`;
   const rec = { g, win: winner.name, lose: loser.name, stars, pot, got, took, big, wk: season ? season.week : 0, yr: LEAGUE.year, line };
   P.hist.unshift(rec); P.hist.length = Math.min(P.hist.length, BATTLE.hist);
   if (big) (LEAGUE.pracNews = LEAGUE.pracNews || []).push(rec);   // (v0.52: the whole record: the home popup draws both cards)
@@ -3108,16 +3103,37 @@ function scoutWeek() {   // once a week of the season (from homeNews): both scou
 function scoutDraftDay(pool) {   // the draft opens: whoever they had not got to yet is looked at now
   const S = scoutsOf(season.team);
   for (const side of ['off', 'def']) scoutLook(S[side], side, pool, 1);
+  for (const side of ['off', 'def']) scoutCalls(S[side], side, pool);
+}
+function scoutCalls(sc, side, pool) {   // v0.75: BOOM / BUST stamps (p.call + p.callS = the scout's side) on the prospects he is very sure about; rarely wrong, by stars, from a hash (a reload can't reroll it)
+  const C = SCOUT.call, off = side === 'off', yr = LEAGUE.year, wrong = Math.max(0, C.wrong - C.wrongStar * (sc.stars - 1));
+  pool.forEach((p, j) => {
+    if (p.call || OFF_GROUPS.includes(p.group) !== off || !(p.seen || p.rep || scoutNamed(sc, p))) return;
+    if (DRAFT.scoutErr * scoutErrK(sc, p) >= C.sure) return;
+    const rnd = Math.min(7, Math.floor(j / SCOUT.perRound) + 1), real = draftValue(scoreOf(p), ptsOf(p)), kind = scoutKind(p, j);
+    let k = kind && (kind === 'gen' || rnd - real >= C.gap) ? 'boom' : j < SCOUT.perRound * SCOUT.bustRounds && real - rnd >= C.gap && ptsOf(p) - scoreOf(p) < SCOUT.bustGap ? 'bust' : null;
+    if (!k) return;
+    if (bdHash(`${p.name}:${yr}:call`) < wrong) k = k === 'boom' ? 'bust' : 'boom';
+    p.call = k; p.callS = side;
+  });
 }
 function scoutDraftOver() {   // the class is gone: named assignments and the prospects' marks go with it
   for (const sc of Object.values(scoutsOf(season.team))) if (sc.asg && sc.asg.names) sc.asg = null;
-  for (const p of [...Object.values(ROSTER).flat(), ...FA_POOL]) if (p.seen || p.flag || p.warn || p.rep || p.scQ) { delete p.seen; delete p.flag; delete p.warn; delete p.rep; delete p.scQ; }
+  for (const p of [...Object.values(ROSTER).flat(), ...FA_POOL]) if (p.seen || p.flag || p.warn || p.rep || p.scQ || p.call) { delete p.seen; delete p.flag; delete p.warn; delete p.rep; delete p.scQ; delete p.call; delete p.callS; }
 }
 function scoutBadge(b, flag, why) {   // on a prospect's card in the draft (warn = Bust Detector: why = the reason)
   const gen = flag === 'gen', warn = flag === 'warn', t = gen ? 'GENERATIONAL' : warn ? why || 'BUST RISK' : 'UNDERRATED';
   ctx.font = 'bold 12px monospace'; const w = gen ? 112 : warn ? ctx.measureText(t).width + 16 : 96, x = b.x + b.w - w - 6, y = b.y - 8;
   ctx.fillStyle = gen ? '#ffd23f' : warn ? '#ff8a7a' : '#6cc070'; ctx.fillRect(x, y, w, 20); ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, 20);
   ctx.fillStyle = '#1a1a1a'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(t, x + w / 2, y + 11);
+}
+function scoutStamp(x, y, call, side, k = 1) {   // v0.75: a rubber stamp BOOM (green) / BUST (red) with the scout's initials, centred at (x, y)
+  const sc = scoutsOf(season.team)[side || 'off'], ini = (sc.name || '').split(' ').map(w => w[0] || '').join('').toUpperCase(), boom = call === 'boom', col = boom ? '#1f8a3a' : '#c0282b';
+  ctx.save(); ctx.translate(x, y); ctx.scale(k, k); ctx.rotate(boom ? -0.14 : 0.12); ctx.globalAlpha = 0.88;
+  ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.strokeRect(-36, -15, 72, 30); ctx.lineWidth = 1; ctx.strokeRect(-32, -11, 64, 22);
+  ctx.fillStyle = col; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 15px monospace'; ctx.fillText(boom ? 'BOOM' : 'BUST', 0, 0);
+  ctx.font = 'bold 10px monospace'; ctx.fillText(ini, 26, 19);
+  ctx.restore();
 }
 // the scouts on the FACILITIES campus (bottom right): click one to assign him (one position group, or up to SCOUT.maxPlayers prospects by name)
 const PR_SCOUT = { off: { x: 690, y: 492, w: 275, h: 120 }, def: { x: 975, y: 492, w: 275, h: 120 } };
@@ -3282,10 +3298,10 @@ function hireOffseason() {   // a year goes by: ages, contracts, retirements, po
     if (!coord && !p.interim) p.years--;   // (coordinators' contracts run in offStaff)
     let gone = null;
     if (p.age >= HIRE.retire && Math.random() < (p.age - HIRE.retire + 1) * 0.15) gone = 'retired';
-    else if (!contractsOn() && !p.interim && p.sal < market * HIRE.poach && Math.random() < 0.3 + 0.1 * Math.max(0, p.stars - 3) + 0.4 * (HIRE.poach - p.sal / market)) gone = 'was poached by another team (you underpaid him)';
-    else if (!coord && contractsOn() && !p.interim && p.sour && Math.random() < CONTRACT.staff.refuseLeave) gone = 'left: he never forgave the offer you refused';
+    else if (!conStaffOn() && !p.interim && p.sal < market * HIRE.poach && Math.random() < 0.3 + 0.1 * Math.max(0, p.stars - 3) + 0.4 * (HIRE.poach - p.sal / market)) gone = 'was poached by another team (you underpaid him)';
+    else if (!coord && conStaffOn() && !p.interim && p.sour && Math.random() < CONTRACT.staff.refuseLeave) gone = 'left: he never forgave the offer you refused';
     else if (!coord && p.years <= 0) {
-      if (!contractsOn() && !p.interim && p.sal >= market * 0.95 && crewPay() - p.sal + market <= staffBudget() && Math.random() < 0.7) { p.sal = market; p.years = rint(2, 3); lines.push(`${p.name} (${HIRE_ROLE[r].short}) re-signed at ${market}M.`); }
+      if (!conStaffOn() && !p.interim && p.sal >= market * 0.95 && crewPay() - p.sal + market <= staffBudget() && Math.random() < 0.7) { p.sal = market; p.years = rint(2, 3); lines.push(`${p.name} (${HIRE_ROLE[r].short}) re-signed at ${market}M.`); }
       else gone = 'left when his contract ended';
     }
     if (gone) { lines.push(`${p.name} (${HIRE_ROLE[r].short}) ${gone}. An interim fills in: open the hiring board.`); hireSet(r, hireInterim(r)); }
@@ -3296,7 +3312,9 @@ function hireOffseason() {   // a year goes by: ages, contracts, retirements, po
 
 // the staff screen: the four people as cards, the crewPay against the budget
 const HB = { role: 'oc', sel: null, sal: 0, yrs: 2, msg: null, pg: 0 };   // pg 1 = the staff screen shows the scouts
-const hirePageRoles = () => HB.pg && scoutsOn() ? SCOUT_ROLES : HIRE_ROLES;   // the staff screen's cards: coaches and trainers, or the two scouts
+const hirePageRoles = () => HB.pg && scoutsOn() && unlOn('scouts') ? SCOUT_ROLES : unlOn('fac') ? HIRE_ROLES : HIRE_COORDS;   // (v0.77: coordinators only until trainers open with FACILITIES)
+const HIRE_COORDS = ['oc', 'dc'];
+const hireRolesShown = () => hireRolesAll().filter(r => (unlOn('fac') || HIRE_COORDS.includes(r)) && (!isScout(r) || unlOn('scouts')));   // (the hiring board's tabs: display only, every role still runs)   // the staff screen's cards: coaches and trainers, or the two scouts
 const HIRE_CARDS = HIRE_ROLES.map((r, i) => ({ x: 30 + i * 308, y: 92, w: 292, h: 506 }));
 const HIRE_BOARD_BTN = { x: 130, y: 625, w: 250, h: 80 };
 const hireFireBtn = i => ({ x: HIRE_CARDS[i].x + 66, y: HIRE_CARDS[i].y + HIRE_CARDS[i].h - 46, w: 160, h: 34 });
@@ -3345,7 +3363,7 @@ function drawHire() {
   ctx.fillText('COACHING & TRAINING STAFF', W / 2, 46);
   coinBox(26, 22, LEAGUE.coins, RES.bright);
   hirePageRoles().forEach((r, i) => { drawHireCard(HIRE_CARDS[i], hireGet(r), r, i); menuBtn(HIRE_FIRE[i], 'FIRE', RES.bright, 16); });
-  if (scoutsOn()) menuBtn(HIRE_PG_BTN, HB.pg ? '< COACHES & TRAINERS' : 'SCOUTS >', RES.bright, 18);
+  if (scoutsOn() && unlOn('scouts')) menuBtn(HIRE_PG_BTN, HB.pg ? '< COACHES & TRAINERS' : 'SCOUTS >', RES.bright, 18);
   menuBtn(HIRE_BOARD_BTN, 'HIRING BOARD', RES.bright, 22);
   const B = { x: 410, y: 636, w: 560, h: 26 }, bud = payrollBar(B);   // (ends before the +5M BUDGET button)
   ctx.fillStyle = RES.dim; ctx.font = '13px monospace'; ctx.fillText(`The budget is $${bud.toFixed(0)}M. Stars cost more: you can't afford four.`, B.x, B.y + 44);
@@ -3361,7 +3379,7 @@ function hireClick(pt) {
   if (inBtn(pt, BACK_BTN)) { results.screen = HB.hireBack || 'practice'; return; }   // (v0.58: back to where STAFF & HIRING was opened: practice or the front office)
   if (inBtn(pt, HIRE_BOARD_BTN)) { HB.sel = null; HB.back = 'hire'; results.screen = 'board'; return; }
   if (inBtn(pt, BUDGET_UP_BTN)) { budgetBuy(BUDGET_UP_BTN); return; }
-  if (scoutsOn() && inBtn(pt, HIRE_PG_BTN)) { HB.pg = HB.pg ? 0 : 1; return; }
+  if (scoutsOn() && unlOn('scouts') && inBtn(pt, HIRE_PG_BTN)) { HB.pg = HB.pg ? 0 : 1; return; }
   hirePageRoles().forEach((r, i) => {
     if (!inBtn(pt, HIRE_FIRE[i])) return;
     const p = hireGet(r), cost = buyoutOf(p);
@@ -3435,11 +3453,11 @@ function drawSpendFx() {
 const BOARD_SCOUTS = [];   // (cached so each button keeps its hover / press animation state)
 const BOARD_SCOUT = i => BOARD_SCOUTS[i] || (BOARD_SCOUTS[i] = { x: BOARD_CARD(i).x + 48, y: BOARD_CARD(i).y + 258, w: 140, h: 28 });
 function drawBoard() {
-  paperBg(); hireAll(); if (!hireRolesAll().includes(HB.role)) HB.role = 'oc';
+  paperBg(); hireAll(); if (!hireRolesShown().includes(HB.role)) HB.role = 'oc';
   const pool = hirePool()[HB.role], cur = hireGet(HB.role), c = HB.sel && pool.includes(HB.sel) ? HB.sel : null;
   ctx.fillStyle = RES.line; ctx.font = 'bold 36px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('HIRING BOARD', W / 2, 44); coinBox(26, 22, LEAGUE.coins, RES.bright);
-  hireRolesAll().forEach((r, i, a) => menuBtn(boardTab(i, a.length), HIRE_ROLE[r].short, HB.role === r ? SEL : RES.bright, a.length > 4 ? 16 : 20));
+  hireRolesShown().forEach((r, i, a) => menuBtn(boardTab(i, a.length), HIRE_ROLE[r].short, HB.role === r ? SEL : RES.bright, a.length > 4 ? 16 : 20));
   const [main] = kitColors(MATCH.you, 'home');
   pool.forEach((p, i) => {   // each candidate is a paper scrap button: lifts on hover, presses in on click, yellow when picked
     const b = BOARD_CARD(i), cx = b.x + b.w / 2, side = HIRE_ROLE[HB.role].side;
@@ -3495,7 +3513,7 @@ function boardClick(pt) {
   if (tourQClick(pt)) return;
   if (inBtn(pt, BACK_BTN)) { results.screen = HB.back || 'hire'; return; }
   const pool = hirePool()[HB.role];
-  hireRolesAll().forEach((r, i, a) => { if (inBtn(pt, boardTab(i, a.length))) { HB.role = r; HB.sel = null; HB.cand = null; } });
+  hireRolesShown().forEach((r, i, a) => { if (inBtn(pt, boardTab(i, a.length))) { HB.role = r; HB.sel = null; HB.cand = null; } });
   if (inBtn(pt, BOARD_BUDGET_BTN)) { budgetBuy(BOARD_BUDGET_BTN); return; }
   if (inBtn(pt, BOARD_REROLL)) {
     if (LEAGUE.coins < HIRE.reroll) { HB.msg = { t: performance.now(), text: `NEED ${HIRE.reroll} ¤ TO REROLL` }; return; }
@@ -3567,6 +3585,13 @@ const TOUR_STEPS = {
     { scr: 'qsetup', rect: () => (L => ({ x: Math.min(...L.map(r => r.x)), y: Math.min(...L.map(r => r.y)), w: Math.max(...L.map(r => r.x + r.w)) - Math.min(...L.map(r => r.x)), h: Math.max(...L.map(r => r.y + r.h)) - Math.min(...L.map(r => r.y)) }))(QS_HIRE.map((_, i) => QS_HNOTE(i))), text: 'Choose who gets to call you.',
       more: 'HIRING PREFERENCE decides who hires you: your favorite team, a rebuild, a contender or a surprise. Some origins only get calls from the weaker half of the league.' },
   ],
+  jobs: [   // v0.78: the job market (the Post's classifieds)
+    { scr: 'jobs', rect: () => [{ x: 150, y: 190, w: 470, h: 360 }], text: 'Teams with an opening call here.',
+      more: 'A team fires its coach, then it may call you. Each offer has a few weeks on its calendar. TAKE IT NOW moves you this week, SHAKE ON NEXT YEAR locks it in for the offseason and nobody can pull it. Offers can go cold if you lose, their interim wins, or they hire someone else.' },
+    { scr: 'jobs', rect: () => [JM_BTN.out, JM_BTN.demand], text: 'Fish for calls, or force it.',
+      more: 'PUT MY NAME OUT brings more calls, but word can leak and your owner will not like it. DEMAND A MOVE lets you buy your way into any team: their coach gets fired, the price grows with how good and how safe that job is.' },
+    { scr: 'jobs', rect: () => [{ x: 150, y: 560, w: 980, h: 140 }], text: 'Pulled offers land down here.',
+      more: 'Every offer that was withdrawn or filled is kept with the real reason stapled to it.' }],
   deals: [   // the front office's filing drawer (MANAGE CONTRACTS on)
     { scr: 'staff', enter: () => { staffView.sel = null; FOT.tab = 'staff'; }, rect: () => FO_TAB_BTNS, text: 'Coaches, your deal, player deals.',
       more: 'CONTRACTS: the front office is a filing drawer with three tabs. STAFF is your coaches, MY CONTRACT is your own deal, PLAYER DEALS is where you extend players before they hit free agency. Rather not deal with any of it? SETTINGS > DEALS: AUTO hands every contract back to the game.' },
@@ -3645,6 +3670,14 @@ const TOUR_STEPS = {
     { scr: 'practice', enter: () => { PR.tab = 'fac'; }, rect: () => [PR_SCOUT.off, PR_SCOUT.def], text: 'Scouts hunt draft gems for you.',
       more: 'SCOUTS (if the SCOUTS setting is on): your offense and defense scouts watch the next draft class all season and report generational or underrated prospects. Click one to assign him a position group or a few prospects by name: his reads on those get sharper.' },
   ],
+  bookDef: [
+    { scr: 'book', rect: () => BOOK_DEF_TABS.map((t, i) => bookTabD(i)), text: 'Base, situations, pressures.',
+      more: 'His playbook, sorted three ways. BASE = his everyday calls, the middle tabs = what he likes in each situation, PRESSURES = his blitzes. A better coordinator knows more calls and picks the right one for the look he sees.' },
+    { scr: 'book', rect: () => [bookMk(0, 0), bookMk(0, 1)], text: 'Circle it: he calls it more.',
+      more: 'A circle makes a call come up more, a cross-out takes it off his sheet. Your marks come from his and your head coach stars. They leave with him if he goes.' },
+    { scr: 'book', rect: () => [BOOK_DIAG], text: 'Tap a man to pencil a job.',
+      more: 'Each call shows where your own defenders line up. Tap one to give him a new job for this call only: deep, middle, flat, man or blitz. Pencils are limited too.' },
+  ],
   pracField: [
     { scr: 'practice', enter: () => { PR.tab = 'field'; }, rect: () => PRAC_SES.units.map((u, i) => prMag(i)), text: 'Tap a unit to see them.',
       more: 'Each magnet is a unit: offense, defense, kicking, punting, returns. Its players are pinned below with their XP bar, condition bar and a green arrow when an upgrade is close. Hover a magnet to preview a session.' },
@@ -3676,8 +3709,8 @@ const TOUR_STEPS = {
       more: 'Each row: starters and bench ratings, the DEPTH BONUS a strong bench gives, how many veterans coach young players, XP a week per player and upgrades per season.' },
   ],
   pracBattles: [
-    { scr: 'practice', enter: () => { PR.tab = 'battles'; }, rect: () => ({ x: 30, y: 84, w: 600, h: 530 }), text: 'Close battles. Winner gets better.',
-      more: "THIS WEEK'S BATTLES: a starter and a backup close in rating battle in practice. The winner gains, the loser can sulk. The bar shows who is favored." },
+    { scr: 'practice', enter: () => { PR.tab = 'battles'; }, rect: () => ({ x: 30, y: 84, w: 600, h: 530 }), text: 'Winner raises his ceiling.',
+      more: "THIS WEEK'S BATTLES: a starter and a backup close in rating battle in practice. The winner mostly gains potential, plus a little rating if he has room. The loser can sulk. The bar shows who is favored." },
     { scr: 'practice', enter: () => { PR.tab = 'battles'; }, rect: () => { const r = prBatRows(); if (!r.length) return { x: 30, y: 84, w: 600, h: 530 }; const b = prBatBtns(0); return [b.watch, b.a, b.b]; }, text: 'Settle it yourself.',
       more: 'WATCH: three quick reps each, the computer plays both men. PLAY: you take one of them. The man ahead on the bar after the reps wins the boost, and if the backup wins you can start him. Leave it alone and the battle is settled at the end of the week.' },
     { scr: 'practice', enter: () => { PR.tab = 'battles'; }, rect: () => ({ x: 650, y: 84, w: 600, h: 530 }), text: 'Every result lands right here.',
@@ -3728,39 +3761,46 @@ function tourEnd() {
   if (tour.id === 'trade') { Object.assign(TR, { sel: s.sel, page: s.page, partner: s.partner, give: s.give, get: s.get, tab: s.tab, pg: s.pg }); TR.v++; TCX = null; }
   results.screen = s.scr; const was = tour.id; tour = null;
   if (was === 'pracAll') PR.tab = 'field';
-  if (was === 'home') tutPrompt = LEAGUE.firstRun === 'after' ? 'setup' : 'ready';   // (the intro is over: continue to the football tutorial? first franchise: the setup questions first)
+  if (was === 'home') tutPrompt = LEAGUE.firstRun === 'after' ? 'setup' : null;   // (v0.77: no old tutorial question)   // (the intro is over: continue to the football tutorial? first franchise: the setup questions first)
 }
-// facilities + practice unlock after the first offseason (year 2): a popup says so and the two buttons flash in
-const facOn = () => (LEAGUE.year || 1) > 1;
-const FAC_FLASH = { secs: 3.5, rate: 3 };   // the unlocked buttons' flash: for secs, rate pulses per second
-let facFlashAt = 0;
-function facUnlockWatch() {
-  if (!facOn() || results.screen !== 'home' || (career.tut || {}).facSeen) return;
-  if (!career.tut) career.tut = {};
-  career.tut.facSeen = true; autosaveSoon();
-  offPopShow({ title: 'NEW: FACILITIES', demo: { k: 'fac' }, lines: ['New on your home screen. Build it up!'], more: 'Your first offseason is done, so your staff has opened the FACILITIES button on the home screen. Upgrade your buildings there. Your first visit comes with a quick tutorial.', btns: [{ label: 'OK', green: true, on: () => { facFlashAt = performance.now(); } }] });
+// v0.77: FACILITIES / PRACTICE and every other off-field screen open on the UNLOCKS table (01): unlWatch shows ONE card a home visit, the button flashes in after OK
+const facOn = () => unlOn('fac');
+function unlWatch() {   // (from tourWatch, on the home screen with nothing else up)
+  if (results.screen !== 'home' || UNL.used || !unlLive()) return;
+  const U = LEAGUE.unl;
+  for (const k in UNLOCKS) { const o = UNLOCKS[k].opt; if (typeof o === 'string' && U.on[o] && !U.on[k]) U.on[k] = 1; }   // (an event card made pointless by a later unlock: opens silently)
+  for (let id = unlNext(); id; id = unlNext()) {
+    U.on[id] = 1; autosaveSoon();
+    const c = UNLOCKS[id].card; if (!c) continue;   // (silent ones open and don't use up the visit)
+    UNL.used = true;
+    offPopShow({ title: c[0], lines: [c[1]], demo: unlDemo(c[2]), more: c[3], tip: { t: c[4], ico: c[5] }, unl: id, btns: [{ label: 'OK', green: true, on: () => { UNL.fx = id; UNL.fxT = uiNow(); } }] });
+    break;
+  }
+  if (Object.keys(UNLOCKS).every(k => U.on[k] || UNLOCKS[k].opt)) U.all = true;   // (everything open: LEAGUE.unl stops mattering)
 }
-function pracUnlockWatch() {   // PRACTICE opens a little later than FACILITIES (PRAC_FROM): said once
-  const t = career.tut || (career.tut = {});
-  if (t.pracSeen || results.screen !== 'home' || !pracShown()) return;
-  t.pracSeen = true; autosaveSoon();
-  if (!t.pracAll) offPopShow({ title: 'NEW: PRACTICE', demo: { k: 'prac' }, lines: ['New on your home screen. Train smarter.'], more: 'Your staff has opened the PRACTICE button on the home screen: set how hard each unit trains during the week. Your first visit comes with a quick tutorial.', btns: [{ label: 'OK', green: true }] });
+const unlDemo = k => k === 'form' ? { k, f: FORMS[0] } : { k };
+function unlFlash(b, id) {   // the button that just opened: a pulsing outline for UNL_FX.secs (uiNow + menuMoving only while it runs)
+  if (UNL.fx !== id || !b) return;
+  const t = (uiNow() - UNL.fxT) / 1000; if (t > UNL_FX.secs) { UNL.fx = null; return; }
+  const k = 0.5 + 0.5 * Math.sin(t * UNL_FX.rate * Math.PI * 2); menuMoving = true;
+  ctx.save(); ctx.strokeStyle = `rgba(232,182,28,${0.35 + 0.65 * k})`; ctx.lineWidth = 4 + 4 * k; ctx.strokeRect(b.x - 6, b.y - 6, b.w + 12, b.h + 12); ctx.restore();
 }
 function tourWatch() {   // the first time a tutorial's screen is open in this franchise
+  if (results && results.screen !== 'home') UNL.used = false;   // (a new home visit may show the next unlock card)
   if (tour || !results || !season || exhibition || teamPick || offPop || tutPrompt) return;
-  facUnlockWatch();
-  if (offPop) return;
-  pracUnlockWatch();
+  unlWatch();
   if (offPop) return;
   if (career.tutOff) return;   // (the questionnaire's SHOW PAGE TOURS: off)
   const t = career.tut || {};
-  if (!t.xp && results.screen === 'home' && xpcOn() && xpBank() >= 1 && !coinFly.length) { tourStart('xp'); return; }   // (the first XP in the bank: what it is and where it is spent)
+  if (!t.xp && results.screen === 'home' && xpcOn() && unlOn('sched') && xpBank() >= 1 && !coinFly.length) { tourStart('xp'); return; }   // (the first XP in the bank: what it is and where it is spent)
   if (!t.pencil && results.screen === 'roster' && rosterView.sel && DL_CARD.worn) { tourStart('pencil'); return; }   // (player decline: a worn career pencil)
   if (!t.pracAll && results.screen === 'practice' && PR.tab !== 'fac') tourStart('pracAll');
   else if (!t.prac && results.screen === 'practice' && PR.tab === 'fac') tourStart('prac');
   else if (!t.trade && !TR.awSel && (results.screen === 'trade' || results.screen === 'tradeb')) tourStart('trade');   // (not when a weekly-award card opened the trade page)
   else if (!t.hire && (results.screen === 'hire' || results.screen === 'board')) tourStart('hire');
-  else if (!t.deals && results.screen === 'staff' && staffView.sel == null && !staffView.team && !NG && contractsOn()) tourStart('deals');   // (the front office's contract tabs)
+  else if (!t.bookDef && results.screen === 'book' && BK && BK.role === 'dc' && !BK.ro && DCALL.on) tourStart('bookDef');   // (the defensive binder's tabs and marks)
+  else if (!t.jobs && results.screen === 'jobs' && JM && !JM.sel && !JM.list) tourStart('jobs');   // (v0.78: the job market)
+  else if (!t.deals && results.screen === 'staff' && staffView.sel == null && !staffView.team && !NG && contractsOn() && unlOn('deals')) tourStart('deals');   // (the front office's contract tabs)
 }
 const PRAC_Q_BTN = { x: 26, y: 14, w: 50, h: 50 };   // (top left: the credits / XP boxes are top right on every page)
 function tourQDraw() {   // the "?" button that replays the tutorial of the screen you are on
@@ -3772,7 +3812,7 @@ function tourQClick(pt) {   // true when the "?" was hit
   if (!id || !inBtn(pt, id === 'trade' && scr === 'trade' ? TR_HELP_BTN : id.startsWith('prac') || id === 'scouts' ? PRAC_Q_BTN : id === 'hire' ? HIRE_Q_BTN : TOUR_Q_BTN)) return false;
   tourStart(id, true); return true;
 }
-const TOUR_NAMES = { trade: 'TRADES', prac: 'FACILITIES', home: 'YOUR FRANCHISE', deals: 'CONTRACTS', carDiff: 'DIFFICULTY', locker: 'LOCKER ROOM', hire: 'HIRING', xp: 'XP BANK', scouts: 'SCOUTS', pencil: 'PLAYER AGING' };
+const TOUR_NAMES = { bookDef: 'DEFENSE BINDER', trade: 'TRADES', prac: 'FACILITIES', home: 'YOUR FRANCHISE', deals: 'CONTRACTS', carDiff: 'DIFFICULTY', locker: 'LOCKER ROOM', hire: 'HIRING', xp: 'XP BANK', scouts: 'SCOUTS', pencil: 'PLAYER AGING' };
 const tourDo = st => !!(st && st.do && (!st.can || st.can()));   // (a do-it-to-advance step: no NEXT, the lit rects take clicks, done = it moves on by itself)
 function tourHandSpot(rects, pad) {   // where the pointing hand goes: under the first lit rect, over it near the bottom, inside a huge one; returns its tip + box
   const r = rects[0]; if (!r) return null;
@@ -3885,9 +3925,9 @@ function drawTradeMeter(k) {
 
 // the screen: a top-down campus (left) beside the dashboard (right)
 const PR = { draft: null, sel: 'field', drag: null, msg: null, done: null, tab: 'field', unit: 'off', office: 'plan', pick: null, land: null, pv: null };   // (unit = the FIELD tab's unit magnet, office = the COACHES' OFFICE page, pick = the START PRACTICE picker, land = the sticker landing)
-// PRACTICE is introduced after FACILITIES: from week PRAC_FROM.week of season PRAC_FROM.year (a franchise that already opened practice keeps it)
+// PRACTICE opens on the UNLOCKS table (v0.77: year 2 week 2 in a ROOKIE franchise, always open otherwise)
 const PRAC_FROM = { year: 2, week: 2 };
-const pracOpenYet = () => { const y = LEAGUE.year || 1, t = career.tut || {}; return y > PRAC_FROM.year || (y === PRAC_FROM.year && !!season && (season.offseason || season.week >= PRAC_FROM.week)) || !!t.pracAll || !!t.pracSeen; };
+const pracOpenYet = () => unlOn('prac');   // (v0.77: the UNLOCKS table; PRAC_FROM is kept only as the table's week)
 const pracShown = () => !!season && !exhibition && !tut && pracOpenYet();   // (franchise only: no PRACTICE button in exhibitions or the tutorial)
 const PR_TABS = [['field', 'FIELD'], ['battles', 'BATTLES'], ['week', 'REPORT'], ['office', "COACHES' OFFICE"]];   // (the office tab shows PR.tab 'plan' or 'groups': PR_SUB)   // (FACILITIES is not a tab: its home button opens the campus alone, tab 'fac')
 const PR_TAB_BTNS = PR_TABS.map((t, i) => ({ k: t[0], x: 96 + i * 250, y: 14, w: 240, h: 50 }));
@@ -3909,7 +3949,7 @@ function pracClick(pt) {
   if (SCU) { if (PR.tab === 'fac' && scoutsOn()) scuClick(pt); else SCU = null; return; }
   if (inBtn(pt, BACK_BTN)) { results.screen = 'home'; return; }
   if (PR.tab === 'field' && pracFieldClick(pt)) return;   // (the picker is modal: it takes every click while open)
-  if (PR.tab !== 'fac') for (const b of PR_TAB_BTNS) if (inBtn(pt, b)) { PR.tab = b.k === 'office' ? PR.office : b.k; PR.drag = null; return; }
+  if (PR.tab !== 'fac') for (const b of PR_TAB_BTNS) if ((b.k === 'field' || unlOn('battles')) && inBtn(pt, b)) { PR.tab = b.k === 'office' ? PR.office : b.k; PR.drag = null; return; }
   if (prOffice()) for (const b of PR_SUB) if (inBtn(pt, b)) { PR.tab = PR.office = b.k; PR.drag = null; return; }
   if (PR.tab === 'battles') { pracBattlesClick(pt); return; }
   if (PR.tab === 'groups') {   // FOCUS toggles (up to PRAC_FOCUS.max groups)
@@ -4148,7 +4188,8 @@ function drawPractice() {
   if (PR.tab === 'fac') drawPracFac(false);
   else if (PR.tab === 'plan') drawPracFac(true);
   else { paperBg(); coinBox(26, 22, LEAGUE.coins, RES.bright); ({ field: drawPracField, week: drawPracWeek, groups: drawPracGroups, battles: drawPracBattles })[PR.tab](); menuBtn(BACK_BTN, '', RES.bright, 22, backArrow); }
-  if (PR.tab !== 'fac') PR_TAB_BTNS.forEach((b, i) => menuBtn(b, PR_TABS[i][1], PR.tab === b.k || (b.k === 'office' && prOffice()) ? '#f2c230' : RES.bright, 20));
+  if (PR.tab !== 'fac' && !unlOn('battles') && PR.tab !== 'field') PR.tab = 'field';   // (v0.77: FIELD only until POSITION BATTLES opens the other tabs)
+  if (PR.tab !== 'fac') PR_TAB_BTNS.forEach((b, i) => (b.k === 'field' || unlOn('battles')) && menuBtn(b, PR_TABS[i][1], PR.tab === b.k || (b.k === 'office' && prOffice()) ? '#f2c230' : RES.bright, 20));
   if (prOffice()) PR_SUB.forEach(b => menuBtn(b, b.label, PR.tab === b.k ? '#f2c230' : RES.bright, 18));
   if (PR.tab === 'field') pracPickDraw();
   if (SCU && PR.tab === 'fac' && scoutsOn()) drawScu(); else SCU = null;
@@ -4649,7 +4690,7 @@ const SET_MAIN = { x: 240, y: 50, w: 800, h: 620 };
 const SET_CAT_ROWS = {
   controls: ['autoSw', 'zoom', 'swap'],   // (+ the keybinds list; swap = touch only, with TOUCH_HELP instead of the keys)
   rules: ['qtr', 'inj', 'pinj', 'wx', 'morale', 'flags', 'booth', 'dir'],
-  franchise: ['scouts', 'deals', 'decline', 'simDef', 'spd', 'setup'],
+  franchise: ['scouts', 'deals', 'decline', 'simDef', 'spd', 'notes', 'setup'],
   sound: ['vol', 'ann'],   // (vol = volDn + the bar + volUp)
   shows: ['ht', 'pg', 'rep', 'recPop', 'batPop', 'taunt', 'post', 'ktips'],
   graphics: ['bri', 'lite', 'fps', 'dark', 'side', 'flash'] };   // (bri = briDn + the brightness bar + briUp)
@@ -4670,7 +4711,7 @@ let setResetAt = 0;   // (when the first click armed it)
 const SET_RESET_MAP = {   // row key -> the SETTINGS keys it puts back to SETTINGS_FACTORY (missing there = deleted); difficulty keeps its own page and RESET
   autoSw: ['autoSwitch'], zoom: ['camZoom'], swap: ['swapSides'], inj: ['injuries'], pinj: ['pracInjuries'], wx: ['weather'], morale: ['morale'],
   flags: ['penalties', 'exPenalties'], booth: ['booth', 'exBooth'], dir: ['driveDir'], qtr: ['quarterMin'], scouts: ['scouts'], deals: ['contracts'], decline: ['decline'],
-  simDef: ['simDefense'], spd: ['simST'], ann: ['announcers'], rep: ['replays'], recPop: ['hideRecPop'], ktips: ['hideKeyTips'], batPop: ['hideBattlePop'], taunt: ['taunts'],
+  simDef: ['simDefense'], spd: ['simST'], ann: ['announcers'], rep: ['replays'], recPop: ['hideRecPop'], ktips: ['hideKeyTips'], notes: ['coachNotes'], batPop: ['hideBattlePop'], taunt: ['taunts'],
   post: ['post'], lite: ['liteMode'], fps: ['fps'], dark: ['darkMode'], side: ['sideline'], flash: ['flashes'], volDn: ['volume'], briDn: ['brightness'],
   ht: ['halftime', 'ht'], pg: ['pregame', 'pg'], keys: ['binds'] };
 function setResetAll() {   // every setting on the settings pages back to its default (in a game: the locked ones stay)
@@ -4706,6 +4747,7 @@ const SET_ROW_TEXT = {   // each row's NAME: VALUE (the old button labels on one
   simDef: () => `CPU DEFENSE: ${simDefLocked() || SETTINGS.simDefense ? 'ON' : 'OFF'}`, spd: () => `SIMULATE KICKS: ${SETTINGS.simST ? 'ON' : 'OFF'}`, setup: () => 'SETUP QUESTIONS',
   ann: () => `ANNOUNCERS: ${SETTINGS.announcers === false ? 'OFF' : 'ON'}`,
   ht: () => 'HALFTIME SHOW', pg: () => 'PREGAME SHOW', rep: () => `REPLAYS: ${SETTINGS.replays}`,
+  notes: () => `COACH NOTES: ${SETTINGS.coachNotes !== false ? 'ON' : 'OFF'}`,
   recPop: () => `RECORD POPUPS: ${SETTINGS.hideRecPop ? 'OFF' : 'ON'}`, ktips: () => `KEY TIPS: ${SETTINGS.hideKeyTips ? 'OFF' : 'ON'}`, batPop: () => `BATTLE POPUPS: ${SETTINGS.hideBattlePop ? 'OFF' : 'ON'}`,
   taunt: () => `TAUNTS: ${SETTINGS.taunts || 'NORMAL'}`, post: () => `THE POST: ${SETTINGS.post !== false ? 'ON' : 'OFF'}`,
   lite: () => `GRAPHICS: ${gfxMode()}`, fps: () => `FRAME RATE: ${SETTINGS.fps || 'AUTO'}`, dark: () => `DARK MODE: ${SETTINGS.darkMode ? 'ON' : 'OFF'}`,
@@ -4743,6 +4785,7 @@ const SET_GAME_LOCK = ['setup', 'flags', 'booth', 'inj', 'pinj', 'wx', 'diff', '
 const setInGame = () => !results && typeof game !== 'undefined' && !!game && !game.over;
 const SET_TIP_Y = 598;   // the main page's one-line tip / note (popups: SET_POP.tipY)
 const SET_TIPS = {   // hover tips: ONE short line each, copy rules (plain, no parentheses / semicolons); functions = different text on / off
+  notes: () => SETTINGS.coachNotes === false ? 'COACH NOTES: off. No lessons or reminders.' : 'COACH NOTES: the coach shows new moves.',
   ktips: () => SETTINGS.hideKeyTips ? 'KEY TIPS: off. No key list in games.' : 'KEY TIPS: what to press, top left in games.',
   recPop: () => SETTINGS.hideRecPop ? 'RECORD POPUPS: off. The Post still reports them.' : 'RECORD POPUPS: a popup when a record falls.',
   ann: () => SETTINGS.announcers === false ? 'ANNOUNCERS: off. A quiet broadcast.' : 'ANNOUNCERS: two voices call the action.',
@@ -4804,7 +4847,8 @@ const TOUCH_HELP = [
 // the debug page: goes over the settings screen (DEBUG, bottom of the settings panel)
 let dbgUI = false;
 const DBG_PANEL = { x: 330, y: 50, w: 620, h: 650 };
-const DBG_BTNS = { hit: { x: 370, y: 140, w: 265, h: 54 }, fld: { x: 645, y: 140, w: 265, h: 54 }, mobile: { x: 370, y: 204, w: 265, h: 54 }, hash: { x: 645, y: 204, w: 265, h: 54 }, tools: { x: 370, y: 268, w: 265, h: 54 }, blit: { x: 645, y: 268, w: 265, h: 54 }, perf: { x: 370, y: 332, w: 265, h: 54 }, tick: { x: 645, y: 332, w: 265, h: 54 }, net: { x: 370, y: 396, w: 265, h: 54 }, gpu: { x: 645, y: 396, w: 265, h: 54 }, dyn: { x: 370, y: 460, w: 265, h: 54 }, store: { x: 645, y: 460, w: 265, h: 54 }, turn: { x: 370, y: 522, w: 174, h: 48 }, shadow: { x: 553, y: 522, w: 174, h: 48 }, res: { x: 736, y: 522, w: 174, h: 48 }, edge: { x: 370, y: 578, w: 174, h: 48 }, marks: { x: 553, y: 578, w: 174, h: 48 }, lock: { x: 736, y: 578, w: 174, h: 48 }, back: { x: 370, y: 636, w: 540, h: 46 } };   // (phase 5: edge / marks / lock = PHONE_TEST.edge, PHONE_TEST.marks, FPS_CAP.gapLock)   // (v0.70: turn / shadow / res = PHONE_TEST)   // (dyn = ADAPTIVE: LAST GAME readout)   // (perf = the frame-time readout, see PERF_HUD; net = FAKE LAG for testing online, see NET_SIM)
+const DBG_BTNS = { hit: { x: 370, y: 140, w: 265, h: 54 }, fld: { x: 645, y: 140, w: 265, h: 54 }, mobile: { x: 370, y: 204, w: 265, h: 54 }, hash: { x: 645, y: 204, w: 265, h: 54 }, tools: { x: 370, y: 268, w: 265, h: 54 }, blit: { x: 645, y: 268, w: 265, h: 54 }, perf: { x: 370, y: 332, w: 265, h: 54 }, tick: { x: 645, y: 332, w: 265, h: 54 }, net: { x: 370, y: 396, w: 265, h: 54 }, gpu: { x: 645, y: 396, w: 265, h: 54 }, dyn: { x: 370, y: 460, w: 265, h: 54 }, store: { x: 645, y: 460, w: 265, h: 54 }, turn: { x: 370, y: 522, w: 174, h: 48 }, shadow: { x: 553, y: 522, w: 174, h: 48 }, res: { x: 736, y: 522, w: 174, h: 48 }, edge: { x: 370, y: 578, w: 174, h: 48 }, marks: { x: 553, y: 578, w: 174, h: 48 }, lock: { x: 736, y: 578, w: 174, h: 48 }, back: { x: 736, y: 636, w: 174, h: 46 }, zones: { x: 370, y: 636, w: 174, h: 46 }, routes: { x: 553, y: 636, w: 174, h: 46 } };   // (zones / routes = the DBG_OV field overlay)
+const DBG_OV = { zones: false, routes: false, live: null, key: -1, n: 0 };   // debug overlay (not saved): ZONES = each zone defender's area + man lines + the coverage, ROUTES = every route + the combos; live and in replays (rec.kits.dbg)   // (phase 5: edge / marks / lock = PHONE_TEST.edge, PHONE_TEST.marks, FPS_CAP.gapLock)   // (v0.70: turn / shadow / res = PHONE_TEST)   // (dyn = ADAPTIVE: LAST GAME readout)   // (perf = the frame-time readout, see PERF_HUD; net = FAKE LAG for testing online, see NET_SIM)
 function drawDebug() {
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
   if (dbgUI === 'dyn') return drawDynDebug();
@@ -4822,6 +4866,7 @@ function drawDebug() {
   menuBtn(DBG_BTNS.net, `FAKE LAG: ${SETTINGS.netSim || 'OFF'}`, Y, 24);   // (online test bench: delays / drops what this device receives)
   menuBtn(DBG_BTNS.gpu, 'GPU: ' + PHONE_TEST.gpu, Y, 20); menuBtn(DBG_BTNS.turn, 'TURN: ' + PHONE_TEST.turn, Y, 20); menuBtn(DBG_BTNS.shadow, 'SHADOW: ' + PHONE_TEST.shadow, Y, 20); menuBtn(DBG_BTNS.res, 'RES: ' + PHONE_TEST.res, Y, 20);   // (v0.70 phone test switches, not saved)
   menuBtn(DBG_BTNS.edge, 'EDGE: ' + PHONE_TEST.edge, Y, 18); menuBtn(DBG_BTNS.marks, 'MARKS: ' + PHONE_TEST.marks, Y, 18); menuBtn(DBG_BTNS.lock, 'FPS LOCK: ' + (FPS_CAP.gapLock ? 'OLD' : 'PAINT'), Y, 18);   // (phase 5 phone switches, not saved)
+  menuBtn(DBG_BTNS.zones, `ZONES: ${DBG_OV.zones ? 'ON' : 'OFF'}`, Y, 18); menuBtn(DBG_BTNS.routes, `ROUTES: ${DBG_OV.routes ? 'ON' : 'OFF'}`, Y, 18);
   menuBtn(DBG_BTNS.back, 'DONE', Y, 24);
 }
 function drawStoreDebug() {   // DEBUG > STORAGE: storeReport, per slot and the biggest keys
@@ -4880,6 +4925,8 @@ function debugClick(p) {
   else if (inBtn(p, DBG_BTNS.lock)) { FPS_CAP.gapLock = !FPS_CAP.gapLock; fpsCap.lock = false; fpsCap.over = 0; }   // (phase 5: OLD = late gaps alone may lock 30)
   else if (inBtn(p, DBG_BTNS.turn) || inBtn(p, DBG_BTNS.shadow) || inBtn(p, DBG_BTNS.res)) phoneTestNext(inBtn(p, DBG_BTNS.turn) ? 'turn' : inBtn(p, DBG_BTNS.shadow) ? 'shadow' : 'res');
   else if (inBtn(p, DBG_BTNS.mobile)) { DEVICE.mobile = !TUI.on; saveDevice(); tuiSet(DEVICE.mobile); }   // (touch controls: on by default on a phone / tablet, off on a PC; this overrides that)
+  else if (inBtn(p, DBG_BTNS.zones)) { DBG_OV.zones = !DBG_OV.zones; DBG_OV.key = -1; }
+  else if (inBtn(p, DBG_BTNS.routes)) { DBG_OV.routes = !DBG_OV.routes; DBG_OV.key = -1; }
   else if (inBtn(p, DBG_BTNS.back) || !inBtn(p, DBG_PANEL)) dbgUI = false;
   saveSettings();
 }
@@ -4953,7 +5000,7 @@ function drawSettingsMain() {
   resPanel(SET_MAIN.x, SET_MAIN.y, SET_MAIN.w, SET_MAIN.h, [['SETTINGS', null]], RES.bright);
   const B = SET_BTNS;
   const Y = IN_GAME_PAPER.yellow;   // (the settings buttons are yellow, to stand out from the white panels)
-  { const lock = setInGame(); for (const k of SET_GAME_LOCK) B[k].lockGrey = lock; if (simDefLocked()) B.simDef.lockGrey = true; }   // (big job: two players on a phone = CPU DEFENSE locked on)   // opened from the pause menu: what would change this game is a flat grey scrap that doesn't move (menuBtn)
+  { const lock = setInGame(); for (const k of SET_GAME_LOCK) B[k].lockGrey = lock; if (simDefLocked()) B.simDef.lockGrey = true; } if (ftDefLock()) B.simDef.lockGrey = true;   // (big job: two players on a phone = CPU DEFENSE locked on; field tutorial: until the defense card is answered)   // opened from the pause menu: what would change this game is a flat grey scrap that doesn't move (menuBtn)
   menuBtn(B.save, 'SAVE GAME', canSave() ? Y : '#a9a9a9', 24, null, canSave());
   menuBtn(B.load, 'LOAD GAME', hasSave() && !tut ? Y : '#a9a9a9', 24, null, hasSave() && !tut);
   for (const c of SET_CATS) {   // the category objects, each laid a little crooked on the desk
@@ -5317,7 +5364,7 @@ function settingsClick(p) {
   else if (main && (inBtn(p, SET_BRI_MAIN.dn) || inBtn(p, SET_BRI_MAIN.up))) setVolStep(inBtn(p, SET_BRI_MAIN.up), 'brightness');
   else if (inBtn(p, B.rep)) SETTINGS.replays = REPLAY_MODES[(REPLAY_MODES.indexOf(SETTINGS.replays) + 1) % REPLAY_MODES.length];
   else if (inBtn(p, B.simDef)) {
-    if (ONL.on) return;   // (online: defense is always played)
+    if (ONL.on || ftDefLock()) return;   // (online: defense is always played; field tutorial: the defense card decides it first)
     SETTINGS.simDefense = !SETTINGS.simDefense;
     if (!twoP || (twoP.ai && !twoP.flipped)) twoP = SETTINGS.simDefense || tut ? null : { flipped: false, to: 3, ai: true };   // (takes effect at their next drive)
     else if (!twoP.ai) twoP.def = !SETTINGS.simDefense;   // (two players: the defender plays live, or not)
@@ -5340,6 +5387,7 @@ function settingsClick(p) {
   else if (inBtn(p, B.fps)) { SETTINGS.fps = FPS_MODES[(FPS_MODES.indexOf(SETTINGS.fps || 'AUTO') + 1) % FPS_MODES.length]; fpsCap.lock = false; fpsCap.over = 0; }   // (v0.62 FRAME RATE: phones only, see FPS_CAP)
   else if (inBtn(p, B.side)) { SETTINGS.sideline = SL_MODES[(SL_MODES.indexOf(SETTINGS.sideline || 'ALL') + 1) % SL_MODES.length]; slSetting(); }
   else if (inBtn(p, B.post)) SETTINGS.post = SETTINGS.post === false;   // (the Paper Passer Post: newspaper, story arcs and midweek events; franchise only)
+  else if (inBtn(p, B.notes)) ftNotesSet(SETTINGS.coachNotes === false);   // (v0.77 COACH NOTES: off = no lessons / notes / reminders, everything open for good)
   else if (inBtn(p, B.ktips)) SETTINGS.hideKeyTips = !SETTINGS.hideKeyTips;   // (the in-game key tips, top left)
   else if (inBtn(p, B.recPop)) SETTINGS.hideRecPop = !SETTINGS.hideRecPop;   // (v0.52: the home screen's RECORD BOOK popup; the Post still reports every record)
   else if (inBtn(p, B.batPop)) SETTINGS.hideBattlePop = !SETTINGS.hideBattlePop;
@@ -5937,7 +5985,7 @@ function autoAssignSlot() {   // a brand-new career: saved at once, to the first
   curSlot = null;
   if (i >= 0) saveToSlot(i, true);
 }
-function loadFromSlot(i) { choreFlush('loadFromSlot'); SAVE_FP = {};   // (v0.72: a save still being written lands first)
+function loadFromSlot(i) { choreFlush('loadFromSlot'); SAVE_FP = {}; ftClearAsk();   // (v0.72: a save still being written lands first)
   let d = null;
   try { d = lsJson(localStorage.getItem(SLOT_KEY(i))); } catch (e) {}
   if (!d || !d.season) { note('NO SAVED GAME'); return; }
@@ -6070,7 +6118,7 @@ function trashIcon(cx, cy, k = 1) {
 }
 function newCareerScreen() {   // (from the start screen's FRANCHISE, or a LOAD screen: possibly from inside a game)
   SETTINGS.diffMode = 'dynamic';   // (ADAPTIVE difficulty is ticked by default on the new career screen)
-  career.quick = typeof coldLocked === 'function' && coldLocked() && !slotMetas().some(m => m);   // (first time, straight out of the cold open: only the coach's name, then the field; see firstCareerGo)
+  career.quick = true; career.path = null;   // (v0.77: one short flow for every new franchise: the name card, the locker, then ROOKIE / VETERAN) (first time, straight out of the cold open: only the coach's name, then the field; see firstCareerGo)
   slotUI = null; settingsOpen = false; career.fav = false; career.hire = 'surprise'; career.origin = 'slate'; Object.assign(career, randCareer()); career.prac = null; career.tut = {}; PR.draft = null;   // (a new coach every time a franchise is set up;"start with favorite team" is off by default; the settings screen the load screen came from closes)
   if (!results) {
     let record = { w: 0, l: 0, t: 0 };
@@ -6385,10 +6433,10 @@ const QS_CARD = (i, y = 200, h = 300) => ({ x: 350 + i * 284, y, w: 262, h });
 const QS_ROW = i => ({ x: 360, y: 206 + i * 56, w: 530, h: 48 });
 const QS_SIGN = { x: 420, y: 420, w: 400, h: 92 };
 const QS_HELP = { acct: { x: 380, y: 330, w: 220, h: 64 }, keys: { x: 640, y: 330, w: 220, h: 64 } };
-const qsPages = () => QS ? QS_PAGES.filter(p => QS.full || p.id !== 'locker') : QS_PAGES;
+const qsPages = () => QS ? (QS.only ? QS_PAGES.filter(p => p.id === QS.only) : QS_PAGES.filter(p => QS.full || p.id !== 'locker')) : QS_PAGES;   // (QS.only: one page alone, the new franchise's locker)
 const qsPg = () => qsPages()[QS.page] || qsPages()[0];
-function qsOpen(full) {
-  QS = { full: !!full, page: 0, turn: null, signT: 0, tours: full ? true : !career.tutOff, lk: null };
+function qsOpen(full, only) {
+  QS = { full: !!full, only: only || null, page: 0, turn: null, signT: 0, tours: full ? true : !career.tutOff, lk: null };
   if (full) results.screen = 'qsetup';
 }
 function qsClose() { QS = null; }
@@ -6729,7 +6777,7 @@ function drawQs() {
   // the locker room page: the clipboard slides to the side and the lockers fill the screen
   const lockOn = pg.id === 'locker', sk = QS.slide = (QS.slide == null ? (lockOn ? 1 : 0) : QS.slide + ((lockOn ? 1 : 0) - QS.slide) * 0.18), bx = -QS_SLIDE() * sk;
   if (sk < 0.98) qsCoach(150, 470, pg.say);
-  qsBoard(bx); qsTabs(bx);
+  qsBoard(bx); if (!QS.only) qsTabs(bx);
   if (sk < 0.5) {
     qsPaper(QS_PAPER.x + bx, QS_PAPER.y, QS_PAPER.w, QS_PAPER.h);
     if (!lockOn) {
@@ -6754,7 +6802,8 @@ function drawQs() {
   // ◂ BACK / USE RECOMMENDED / NEXT ▸ (the last page: START SEASON / DONE)
   const last = QS.page === P.length - 1, B = lockOn ? QS_LBTN : QS_BTN;
   menuBtn(B.back, QS.page ? '◂ BACK' : QS.full ? '◂ CAREER' : '◂ SETTINGS', RES.bright, 18);
-  if (!last) { menuBtn(B.rec, 'USE\nRECOMMENDED', '#fff3a0', 17); menuBtn(B.next, 'NEXT ▸', RES.bright, 20); }
+  if (QS.only) menuBtn(B.next, 'SIGN ▸', IN_GAME_PAPER.green, 20);   // (the new franchise's locker: sign, then the start)
+  else if (!last) { menuBtn(B.rec, 'USE\nRECOMMENDED', '#fff3a0', 17); menuBtn(B.next, 'NEXT ▸', RES.bright, 20); }
   else menuBtn(QS_BTN.start, QS.full ? 'START SEASON ▸' : 'DONE ▸', QS.stamped ? '#3f8a5a' : CARD_GRAY, 20, null, !!QS.stamped);
 }
 QS_BTN.start = { x: 600, y: 630, w: 304, h: 54 };
@@ -6762,7 +6811,8 @@ function qsClick(p) {
   const P = qsPages(), pg = qsPg(), last = QS.page === P.length - 1, lockOn = pg.id === 'locker', B = lockOn ? QS_LBTN : QS_BTN;
   const bx = -QS_SLIDE() * (QS.slide || 0);
   const ti = P.findIndex((_, i) => inBtn(p, { ...QS_TAB(i), x: QS_TAB(i).x + bx }));
-  if (ti >= 0) { qsGo(ti); return; }
+  if (ti >= 0 && !QS.only) { qsGo(ti); return; }
+  if (QS.only && inBtn(p, B.next)) { QS = null; qsOnlyDone(); return; }
   if (inBtn(p, B.back)) { if (QS.page) qsGo(QS.page - 1); else if (QS.full) { QS = null; results.screen = 'franchise'; } else { QS = null; firstRunQsDone(); } return; }
   if (!last && inBtn(p, B.rec)) { qsRecommend(); return; }
   if (!last && inBtn(p, B.next)) { qsGo(QS.page + 1); return; }
@@ -7865,3 +7915,62 @@ POP_SCENE.rings = (x, y, w, h, o) => { const n = Math.max(0, Math.min(12, o.n ||
   for (let i = 0; i < n; i++) { const k = Math.min(1, Math.max(0, (age - i * 0.18) / 0.4)), cx = x + w / 2 - (n - 1) * gap / 2 + i * gap, cy = pdL(y - 30, y + h / 2, 1 - (1 - k) * (1 - k)) + (k >= 1 ? 0 : 0);
     if (k <= 0) continue; ctx.save(); ctx.strokeStyle = '#d9a520'; ctx.lineWidth = 6; ctx.beginPath(); ctx.ellipse(cx, cy, 16, 13, 0, 0, 7); ctx.stroke(); ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.arc(cx, cy - 13, 5, 0, 7); ctx.fill(); ctx.restore(); }
   pdText(`${n} PAPER BOWL TITLE${n > 1 ? 'S' : ''}`, x + w / 2, y + h - 18, RES.line, 15); };
+
+// v0.77 unlock cards (UNLOCKS in 01): one small looping demo each (POP_SCENE; clock = PDM, still frame in performance mode)
+Object.assign(POP_SCENE, {
+  uRoster(x, y, w, h) { const f = PDM.still ? 1 : PDM.f; pdCard(x + 50, y + 40, 110, 150); pdStarRow(x + 210, y + 70, 5, Math.min(3.5, f * 8), 14); pdPent(x + w - 150, y + h / 2 + 12, 72, Math.min(1, f * 1.6));
+    pdLabel('his stars', x + 280, y + 130, 0.15, 0.98, [x + 260, y + 84]); pdLabel('five skills', x + w - 150, y + 24, 0.3, 0.98); },
+  uUpg(x, y, w, h) { const cx = x + w * 0.32, cy = y + h / 2 + 10, r = 78, g = PDM.still ? 1 : pdS(pdE(PDM.f, 0.3, 0.65)), v = [0.55 + 0.35 * g, 0.55, 0.75, 0.45, 0.6];
+    const pt = (i, k) => [cx + Math.cos(-Math.PI / 2 + i * Math.PI * 2 / 5) * r * k, cy + Math.sin(-Math.PI / 2 + i * Math.PI * 2 / 5) * r * k];
+    pdLn([0, 1, 2, 3, 4, 0].map(i => pt(i, 1)), 'rgba(34,48,90,0.2)', 1); pdLn([0, 1, 2, 3, 4, 0].map(i => pt(i, v[i])), RES.line, 2.4);
+    if (g > 0 && g < 1) { const a = pt(0, 0.5), b = pt(0, 0.95); pdArrow(a[0] + 18, a[1], b[0] + 18, b[1], PD_COL.good, 3); }
+    pdStarRow(x + w * 0.6, y + 80, 5, 3 + g, 14); pdLabel('+1 skill', pt(0, 1)[0] + 80, pt(0, 1)[1] + 6, 0.4, 0.98); pdLabel('his potential', x + w * 0.73, y + 140, 0.55, 0.98, [x + w * 0.72, y + 96]); },
+  uGoals(x, y, w, h) { const f = PDM.still ? 1 : PDM.f;
+    ['200 PASS YARDS', '2 TOUCHDOWNS', 'NO TURNOVERS'].forEach((t, i) => { const yy = y + 52 + i * 52, k = PDM.still ? 1 : pdE(f, 0.15 + i * 0.22, 0.3 + i * 0.22);
+      ctx.save(); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.strokeRect(x + 120, yy - 14, 28, 28); ctx.restore(); pdText(t, x + 300, yy, RES.line, 18);
+      if (k > 0) { const a = Math.min(1, k * 2), b = Math.max(0, k * 2 - 1); pdLn([[x + 124, yy], [x + 124 + 8 * a, yy + 9 * a], [x + 132 + 12 * b, yy + 9 - 21 * b]], PD_COL.good, 4); }
+      if (k >= 1) pdText('+ credits', x + 500, yy, '#8a5a00', 18); }); },
+  uInj(x, y, w, h) { qsTurf(x, y, w, h); const f = PDM.f, gy = y + h * 0.72, a = PDM.still ? 1 : pdS(pdE(f, 0.35, 0.8));
+    pmMan(x + 150, gy, PD_COL.off, 0, 1); ctx.save(); ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x + 150, gy - 12, 26, 0, 7); ctx.stroke(); ctx.restore();
+    pdBench(x + w - 200, gy - 6, 140); pmMan(pdL(x + w - 130, x + 250, a), gy - 10 * (1 - a), PD_COL.off, a > 0 && a < 1 ? f * 60 : 0, 0);
+    if (a > 0) pdArrow(x + w - 150, gy - 60, pdL(x + w - 150, x + 270, a), gy - 60, PD_COL.good, 2.5);
+    pdLabel('hurt starter', x + 150, y + 30, 0.05, 0.98, [x + 150, gy - 40]); pdLabel('his backup starts', x + w - 150, y + 30, 0.3, 0.98); },
+  uHc(x, y, w, h) { const f = PDM.still ? 1 : PDM.f, k = PDM.still ? 1 : pdE(f, 0.15, 0.3);
+    ctx.fillStyle = '#c9a26b'; ctx.fillRect(x + w / 2 - 130, y + 18, 260, h - 36); ctx.fillStyle = '#fffdf4'; ctx.fillRect(x + w / 2 - 110, y + 38, 220, h - 76); pdText('OFFICE', x + w / 2, y + 66, RES.dim, 16);
+    if (k > 0) qsStamp(x + w / 2, y + h / 2 + 18, 'HEAD COACH', '#c0392b', -0.1, PDM.still ? 1 : Math.max(1, 2 - k), 26); else pdText('INTERIM', x + w / 2, y + h / 2 + 18, RES.dim, 24); },
+  uRetire(x, y, w, h) { const f = PDM.still ? 0.8 : PDM.f, L = pdL(470, 70, pdS(pdE(f, 0.1, 0.8))); dlPencil(x + 100, y + h / 2, L, 26, { seed: 3 });
+    pdText(`AGE ${24 + Math.round(f * 12)}`, x + w / 2, y + 40, RES.line, 20); pdLabel('worn to a stub', x + 120, y + h - 30, 0.6, 0.98, [x + 110, y + h / 2 + 14]); },
+  uTrade(x, y, w, h) { const a = PDM.still ? 0.5 : pdS(pdE(PDM.f, 0.2, 0.7)); pdText('YOU', x + 120, y + 24, RES.line, 18); pdText('THEM', x + w - 120, y + 24, RES.line, 18);
+    pdCard(pdL(x + 70, x + w - 170, a), y + 50 - Math.sin(a * Math.PI) * 30, 100, 140, -0.1 + a * 0.2); pdCard(pdL(x + w - 170, x + 70, a), y + 60 + Math.sin(a * Math.PI) * 30, 100, 140, 0.1 - a * 0.2);
+    pdLabel('swap players', x + w / 2, y + h - 18, 0.3, 0.98); },
+  uBench(x, y, w, h) { const a = PDM.still ? 1 : pdS(pdE(PDM.f, 0.15, 0.6));
+    ['QB', 'RB', 'WR'].forEach((s, i) => { const yy = y + 36 + i * 58; ctx.save(); ctx.strokeStyle = RES.line; ctx.lineWidth = 2; ctx.setLineDash([5, 4]); ctx.strokeRect(x + w - 300, yy, 220, 42); ctx.restore();
+      pdText(s, x + w - 330, yy + 21, RES.dim, 16); if (i !== 1) pdText(i ? 'J. BELL' : 'T. HART', x + w - 190, yy + 21, RES.line, 16); });
+    const tx = pdL(x + 70, x + w - 300, a), ty = pdL(y + h - 52, y + 94, a); ctx.save(); ctx.fillStyle = '#fff3b0'; ctx.fillRect(tx, ty, 220, 42); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.6; ctx.strokeRect(tx, ty, 220, 42); ctx.restore();
+    pdText('R. STONE', tx + 110, ty + 21, RES.line, 16); pdCursor(tx + 170, ty + 28, a < 1); pdLabel('drag him in', x + 170, y + 40, 0.1, 0.6); },
+  uRec(x, y, w, h) { POP_SCENE.fac(x, y, w, h, { b: 'rec' }); },
+  uBook(x, y, w, h) { const f = PDM.still ? 1 : PDM.f, c = PDM.still ? 1 : pdE(f, 0.1, 0.35), b = PDM.still ? 1 : pdE(f, 0.45, 0.85);
+    ctx.fillStyle = '#fff3a0'; ctx.fillRect(x + 40, y + 16, 300, h - 32); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.strokeRect(x + 40, y + 16, 300, h - 32);
+    ['SLANTS', 'MESH', 'FOUR VERTS', 'INSIDE ZONE'].forEach((t, i) => pdText(t, x + 190, y + 50 + i * 44, RES.line, 18));
+    if (c > 0) { ctx.save(); ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.ellipse(x + 190, y + 94, 90, 18, -0.05, 0, Math.PI * 2 * c); ctx.stroke(); ctx.restore(); }
+    pdText('CALLED', x + w - 170, y + 30, RES.dim, 14); pdBars(x + w - 240, y + 50, [0.3, 0.3 + 0.55 * b, 0.25, 0.35], [PD_COL.off, PD_COL.good, PD_COL.off, PD_COL.off]); pdLabel('called more', x + w - 170, y + h - 30, 0.5, 0.98); },
+  uBattle(x, y, w, h) { const f = PDM.f, m = PDM.still ? 0.8 : pdL(0.5, 0.82, pdS(pdE(f, 0.1, 0.8))) + 0.04 * Math.sin(f * 40) * (1 - pdE(f, 0.6, 0.8)), x0 = x + 140, x1 = x + w - 140, by = y + h / 2 + 20;
+    pmMan(x0 - 50, by + 20, PD_COL.off, 0, 0); pmMan(x1 + 50, by + 20, PD_COL.def, 0, 0); ctx.fillStyle = 'rgba(120,100,70,0.15)'; ctx.fillRect(x0, by - 9, x1 - x0, 18);
+    ctx.fillStyle = PD_COL.good; ctx.fillRect(x0, by - 9, (x1 - x0) * m, 18); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.5; ctx.strokeRect(x0, by - 9, x1 - x0, 18);
+    pdLn([[x0 + (x1 - x0) * m, by - 16], [x0 + (x1 - x0) * m, by + 16]], '#c0392b', 3); pdText('ONE STARTING JOB', x + w / 2, y + 34, RES.line, 18); pdLabel('winner grows', x0 + 60, by - 60, 0.75, 0.99); },
+  uRedact(x, y, w, h) { const k = PDM.still ? 1 : pdS(pdE(PDM.f, 0.3, 0.7)), cx = x + w / 2 - 140;
+    ctx.fillStyle = '#fffdf4'; ctx.fillRect(cx, y + 20, 280, h - 40); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.6; ctx.strokeRect(cx, y + 20, 280, h - 40);
+    ['COACH: R. VANCE', 'STARS: 4', 'LOVES THE BLITZ'].forEach((t, i) => { const yy = y + 62 + i * 46; pdText(t, cx + 140, yy, RES.line, 18); ctx.fillStyle = '#22252b'; ctx.fillRect(cx + 20 + 240 * k, yy - 14, 240 * (1 - k), 28); });
+    pdLabel('scout them', x + w - 90, y + 40, 0.2, 0.98); },
+  uHof(x, y, w, h) { const f = PDM.still ? 1 : PDM.f; pdLn([[x + 40, y + h - 40], [x + w - 40, y + h - 40]], '#8a5a3a', 5);
+    [['RECORDS', 0.1], ['HALL OF FAME', 0.35], ['TROPHY ROOM', 0.6]].forEach(([t, at], i) => { const cx = x + w * (0.2 + i * 0.3), k = PDM.still ? 1 : pdE(f, at, at + 0.12);
+      ctx.save(); ctx.globalAlpha *= 0.25 + 0.75 * k;
+      if (i === 0) { ctx.fillStyle = '#2a62b0'; ctx.fillRect(cx - 35, y + h - 122, 70, 82); ctx.fillStyle = '#fffdf4'; ctx.fillRect(cx - 25, y + h - 110, 50, 8); }
+      else if (i === 1) { ctx.fillStyle = '#2b2b2b'; ctx.fillRect(cx - 40, y + h - 132, 80, 92); drawStar(cx, y + h - 90, 16, '#ffd23f', '#8a5a00', 1.5); }
+      else drawStar(cx, y + h - 82, 34, '#ffd23f', '#8a5a00', 2);
+      ctx.restore(); pdText(t, cx, y + 30, RES.line, 16); }); },
+  uPoach(x, y, w, h) { const a = PDM.still ? 1 : pdS(pdE(PDM.f, 0.15, 0.6)), px = pdL(x + 60, x + w - 260, a);
+    ctx.fillStyle = '#9b6a43'; ctx.fillRect(x + 20, y + h - 80, w - 40, 60);
+    ctx.save(); ctx.translate(px + 90, y + h - 110); ctx.rotate(-0.06 + a * 0.08); ctx.fillStyle = '#fffdf4'; ctx.fillRect(-90, -50, 180, 100); ctx.strokeStyle = RES.line; ctx.lineWidth = 1.6; ctx.strokeRect(-90, -50, 180, 100); ctx.restore();
+    pdText('OFFER', px + 90, y + h - 136, RES.line, 18); pdText('$2.5M A YEAR', px + 90, y + h - 106, PD_COL.good, 17); pdLabel('steal a coach', x + w / 2, y + 28, 0.3, 0.98); },
+});

@@ -5,8 +5,20 @@
 // QB's controls and view, and the others run their routes; dragging back again tucks it and runs.
 let passer = null, passerMode = false;
 const thrower = () => passer || qb;
-const qbPastLine = () => thrower() === qb && qb.x > los;   // (phase 5, 14d: past the line of scrimmage the QB is a runner: no aim, no throw, touch and mouse alike)
-const canPasserThrow = () => state === 'run' && passer && runner === passer && !passer.action && passer.x < los;
+// any part of him past the line: his leading edge (QB_EDGE scaled to his drawn body) is downfield of the line of scrimmage
+const pastLine = p => !!p && p.x + figX(p, QB_EDGE) > los;
+let lineOver = false;   // (the thrower crossed this play: committed to the run, stepping back never gives the throw back; cleared in reset)
+// once a step (06 update, every live state): the QB in the pocket crossing = a QB run; a passer already running crossing = no throw any more
+function lineCheck() {
+  if (lineOver) return;
+  const tp = thrower();
+  if (!tp || !pastLine(tp)) return;
+  if (tp === qb && state === 'pocket') { state = 'run'; runner = qb; runStart = clock; qb.speed = Math.hypot(qb.vx, qb.vy); msg = 'QB run!  -  ' + RUN_HELP.replace('dive', 'slide'); }
+  else if (!(state === 'run' && runner === tp && tp.hasBall)) return;
+  lineOver = true; aim = null; throwQueued = false; throwQueuedAim = null;
+}
+const qbPastLine = () => thrower() === qb && (lineOver || pastLine(qb));   // (phase 5, 14d: past the line of scrimmage the QB is a runner: no aim, no throw, touch and mouse alike)
+const canPasserThrow = () => state === 'run' && passer && runner === passer && !passer.action && !lineOver && !pastLine(passer);
 // the camera pulls out to the QB's view as soon as he drags the ball back to set up (and stays out while he's set)
 // (the same moment the others leave their blocks and go back into their routes)
 const screenPasserView = () => state === 'run' && passer && runner === passer && (passerMode || (aim && -MIRROR * (aim.cx - aim.sx) < -20));
@@ -139,7 +151,7 @@ function throwBall() {
     const wild = hitNow || heat > 0.5 ? Math.random() ** 0.6 * 1.5 : 0.35 + 0.65 * Math.random();
     let err = (((scramble * MOVING_ERROR + across * CROSS_BODY * onRun + backing * BACKPEDAL.err * shortK(t.dist) + crossField * CROSS_FIELD.err) * (trick ? 1 : moveAcc(P)) * (1 + SCRAMBLE_QB.err * (trick ? 0 : immobileQB(qb))) * onRun + (heat * PRESSURE_THROW.err * shortK(t.dist) + (hitNow ? PRESSURE_THROW.hitErr : 0)) * (aiOff() ? 1 : diffX('thrPress'))) * (1 - POCKET.accuracy * inPocket()) * ACC_PEN / rm(P, 'acc', 'accuracy') + shaky + deepErr) * t.dist * distK(t.dist) * wild * dots * (trick ? 1 : 1 - HANDED.acc * handLat(qb)) * (trick ? 1 : 1 - STEP_ACC * stepUp()) * (trick || (tut && tut.defOn) ? 1 : accHelp(P)) * (trick ? 1 : pulseErr(P) * scrambleAwr(aimX, aimY)), a = Math.random() * Math.PI * 2;
     if (aimX < los) err *= BEHIND_LOS.err * Math.max(0.4, rm(P, 'acc', 'accuracy'));   // (a screen / swing behind the line: very accurate, and the rating (divided out above) doesn't change it)
-    err /= aiOff() ? diffX('cpuAcc') : diffX('thrWin');   // (CPU QB ACCURACY / THROW ACCURACY WINDOW)
+    err /= aiOff() ? diffX('cpuAcc') : diffX('thrWin'); if (!aiOff()) err *= ftAccK();   // (field tutorial: drive 1 help)   // (CPU QB ACCURACY / THROW ACCURACY WINDOW)
     err = Math.min(err, MISS_CAP * YL);
     const ux = tdx / tdl, uy = tdy / tdl, x0 = t.x, y0 = t.y;
     const missAt = ang => {
@@ -190,6 +202,7 @@ function throwBall() {
     fx: relX, fy: P.y, tx: t.x, ty: t.y,
     p: 0, T: dist / speed * (grounded ? 1 : PASS_ARC.time) * (1 + CROSS_FIELD.time * crossField), h: grounded ? 2 * S : arcHeight(dist, bullet), z0: Math.max(0, RELEASE_BASE * S + BODY.release * S * hz(P)) * RELEASE_K,
   };
+  dcThrowNote(aimX);
   if (trick) {
     // the screen catcher lets it go: he's a passer now, not the ball carrier
     P.hasBall = false; runner = null; passer = null; passerMode = false; P.isPasser = true;
@@ -451,6 +464,7 @@ function endPlay(text, next, kind) {
   setTimeout(whistle, 150);
   // the crowd reacts to what just happened: big gains and first downs that matter
   const gain = next > 0 && kind !== 'punt' ? yardsFrom(next) : 0;   // (a punt's distance is not a gain)
+  if (!kickPlay && !tut && patMode === null) dcPlayNote(gain, firstDownCall);   // (the DCs' tendency notes)
   // (the crowd only gets loud for first downs that matter: 2nd or 3rd and long, any 4th down,
   // or a gain of 20+ yards)
   const togo = Math.round((lineToGain - los) / YL);
@@ -574,7 +588,9 @@ function settle(p, dt) {
   const f = Math.exp(-(p === ud && aiOff() && !p.hasBall ? AFTER_WHISTLE.ud : AFTER_WHISTLE.decay) * dt);   // (your returner carrying it eases up like any ball carrier)   // (momentum carries him on and he eases up; the defender you were steering pulls up a bit sooner)
   p.vx *= f; p.vy *= f;
   if (p.svx) { p.svx *= f; p.svy *= f; }
+  oobBrakeV(p, dt);   // (past a line he pulls up on the green, never sails into the ruler)
   p.x += p.vx * dt; p.y += p.vy * dt;
+  wallHold(p);
   const spr = celebSpread(p, dt);   // (v0.59: men not celebrating drift apart, out of the cast's space: 07-drawing)
   p.moving = Math.hypot(p.vx, p.vy) > 0.8 * YD || spr > CELEB_SPREAD.moveAt;
   p.reach = p.engaged = false;
@@ -617,7 +633,7 @@ function tryCatch(text, kind) {
   const traffic = cover ? rv(tgt, 'ctc', cover, 'ctc', 'contested') : 1;
   const AB = abilCatchFx(tgt, cover, onHim, kind); xfCont = onHim;   // (abilities: hands, clutch, mismatches, Lockdown)
   if (AB.lock) return Math.random() < XFX.lockdown.pick * pickK() ? intercept(cover) : breakUp(cover);
-  if (cover && !AB.noPbu && Math.random() < PBU.contest * (diffFor(cover).pbu ?? 1) * covOf(cover) / zoneAwr(cover) * (cover.eyes === 'ball' ? 1.3 : 1) * (onHim >= 2 ? 1.4 : 1) * (secure ? 0.75 : 1) * (1 - JUMP_TIMING.pbu * jq0) * AB.pbu / traffic) {
+  if (cover && !AB.noPbu && Math.random() < PBU.contest * (diffFor(cover).pbu ?? 1) * covOf(cover) / zoneAwr(cover) * (cover.eyes === 'ball' ? 1.3 : 1) * (onHim >= 2 ? 1.4 : 1) * (secure ? 0.75 : 1) * (1 - JUMP_TIMING.pbu * jq0) * AB.pbu * bpMul(cover, 1) / traffic) {
     return breakUp(cover);   // (breakUp's loose ball calls it: TIPPED)
   }
   const air = (ball.tx - ball.fx) / YL;
@@ -667,7 +683,7 @@ function tryCatch(text, kind) {
   }
   // fought for and lost: the DB on him often rips it away himself, else he knocks it down
   if (cover && dist(cover, tgt) <= CONTEST_RANGE) {
-    if (Math.random() < CONTEST_PICK * (cover.eyes === 'ball' ? 1.3 : 1) * (1 - JUMP_TIMING.pbu * jq) * rm(cover, 'ctc', 'ball') * (1 + DUCK_PICK * (ball.duck || 0)) * pickK()) return intercept(cover);
+    if (Math.random() < CONTEST_PICK * (cover.eyes === 'ball' ? 1.3 : 1) * (1 - JUMP_TIMING.pbu * jq) * rm(cover, 'ctc', 'ball') * (1 + DUCK_PICK * (ball.duck || 0)) * pickK() * bpMul(cover, 0)) return intercept(cover);
     return breakUp(cover);
   }
   ball.z = Math.max(ball.z, 8 * S);
@@ -1027,6 +1043,11 @@ function tipStyle(d, opts) {
          : pickOf(dl.includes(d) ? TIP_PICK.dl : d.role === 'LB' ? TIP_PICK.lb : one ? TIP_PICK.dbOne : TIP_PICK.db);
   if (!!tgt && tgt.overShoulder && !dl.includes(d) && d.role !== 'LB' && !one && !(opts && opts.trail) && Math.random() < TIP_PICK.osChop) st = 'chop';   // (over the shoulder catch: the DB chops down on his hands more often)
   if (st === 'rake' && Math.random() < TIP_PICK.over) st = 'pbuOver';   // (v0.43 looks: both hands over his shoulder instead)
+  if (d.bpP === runPid && dfxOn(BALL_PHASE) && !dl.includes(d) && d.role !== 'LB' && !one) {   // (BALL_PHASE: the look follows where he was: trailing rakes the hands, over the top reaches over, undercutting lunges; no new rolls)
+    if (d.bpK === 'trail' && st !== 'rake' && st !== 'pbuOver') st = 'pbuHands';
+    else if (d.bpK === 'top' && st === 'rake') st = 'pbuOver';
+    else if (d.bpK === 'under' && (st === 'rake' || st === 'pbuOver')) st = 'lunge';
+  }
   if (dl.includes(d) && d.engaged) st = 'tipSwat';   // (still locked on his blocker: one arm breaks free)
   if (MOVE_LOOK.force.tip && TIP_ST[MOVE_LOOK.force.tip]) st = MOVE_LOOK.force.tip;   // (the MOVES test)
   if (one && st !== 'one' && !(TIP_ST[st] && (TIP_ST[st].one || TIP_ST[st].oneOk))) st = 'one';   // (a one-handed stab stays one-handed)
@@ -1391,6 +1412,7 @@ function tackleCarrier(c, d, trip) {
   if (tut && c.guard) tutEvent('protect');   // (tutorial: tackled with both arms on the ball)
   const odds = abilFumBase(d, base) * FUMBLE_SCALE * (aiOff() ? DEF_FUMBLE : diffFor(d).fum) * (c === qb ? QB_FUMBLE * qbHitFumble(d) : c === rb ? RB_FUMBLE / rbVis(RB_VISION.fumble) : 1) * (c.sprint ? SPRINT_FUMBLE : 1) * (d && d.role === 'LB' ? 1.5 : 1) * (big && d && udCtl(d) ? USER_HIT.fumble : 1) * rm(d, 'tck', 'fumble') * rm(d, 'str', FUMBLE_STR) / rm(c, 'str', 'powerResist') / rm(c, 'str', FUMBLE_STR) * (c.guard ? PROTECT.fumble : 1) * (d && d.secure ? DEF.secure.fumble : 1)   // (a strong carrier keeps the ball secure)
               * (big && (moveOdds > 0 || hurdleHit) ? HIT_MOVE_FUMBLE : 1)   // (hit stick on a man mid break-tackle move)
+              * (d && d.tkB === runPid && dfxOn(TACKLE2) ? TACKLE2.behindFum : 1)   // (TACKLE2: from behind he punches at the ball as he wraps)
               * WEAR.zoneFum[wearZone(c)] / moraleMulP(c) * abilFumK(c, d, big) * (c.reachGoal ? REACH_FUMBLE : 1) * (c.star ? 1 : BACKUP_FUMBLE) * (1 + WXF.fumble * wxP()) * wxXK('fumble');   // (a backup's low ratings made him fumble a lot: tamed; tired = looser ball; Truzz: no tackle jars it)
   let showK = 1;
   if (sh) {   // x SHOW.fumK, x hitK more from behind (he is not looking), x 1.3 more with the ball held out
@@ -1859,8 +1881,9 @@ const OOB_ROOM = { body: 0.9, ball: 0.15 };   // body = yd of a player's feet ke
 const WALL_LIM = {};
 function wallLim(r = OOB_ROOM.body) {   // the rounded rectangle players' feet (r = OOB_ROOM.body) or the ball (OOB_ROOM.ball) stay inside: the bowl's field-side wall faces, r yd in (corners follow the drawn curve)
   if (WALL_LIM[r]) return WALL_LIM[r];
-  const G = bowlGeo(), b = r * YD, cx0 = G.X0 + G.ri, cx1 = G.X1 - G.ri, cy0 = G.Y0 + G.ri, cy1 = G.Y1 - G.ri;
-  return WALL_LIM[r] = { xl: G.X0 + G.tE + b, xr: G.X1 - G.tE - b, yt: G.Y0 + G.tT + b, yb: G.Y1 - G.tB - b, G, b,
+  const fo = r === OOB_ROOM.body ? FOOT : 0;   // (a player's y is FOOT above his drawn feet: the same room from the feet at both sidelines)
+  const G = bowlGeo(), b = r * YD, cx0 = G.X0 + G.ri, cx1 = G.X1 - G.ri, cy0 = G.Y0 + G.ri - fo, cy1 = G.Y1 - G.ri - fo;
+  return WALL_LIM[r] = { xl: G.X0 + G.tE + b, xr: G.X1 - G.tE - b, yt: G.Y0 + G.tT + b - fo, yb: G.Y1 - G.tB - b - fo, G, b,
     C: [[cx0, cy0, -1, -1, G.tT], [cx1, cy0, 1, -1, G.tT], [cx0, cy1, -1, 1, G.tB], [cx1, cy1, 1, 1, G.tB]] };   // (centre, outward signs, side wall's thickness)
 }
 // a point in a rounded corner: { centre, r = his distance from it, max = the room there, ux / uy = out from the centre }, or null off the corners
@@ -1895,6 +1918,20 @@ function oobBrake(p, dt) {   // (steer, before the move: past a sideline / end l
   if (outL > 0 && p.svx < 0) brake(outL, RXL, 'svx');
   const k = wallCorner(p.x, p.y);   // (a rounded corner: his speed outward from its centre is capped the same way)
   if (k) { const vo = p.svx * k.ux + p.svy * k.uy; if (vo > 0) { const vmax = Math.sqrt(2 * dec * Math.max(0, k.max - k.r)); if (vo > vmax) { p.svx -= (vo - vmax) * k.ux; p.svy -= (vo - vmax) * k.uy; } } }
+}
+// oobBrake on his real velocity (the coast after the whistle has no steer): the same braking, svx / svy put back after
+function oobBrakeV(p, dt) {
+  const sx = p.svx, sy = p.svy; p.svx = p.vx; p.svy = p.vy;
+  oobBrake(p, dt);
+  p.vx = p.svx; p.vy = p.svy; p.svx = sx; p.svy = sy;
+}
+// feet never cross into the stands: clampField, and any speed into the wall is killed (so he stops on the apron instead of sliding along it)
+// (a wall celebration sits on the wall on purpose: cel.wh)
+function wallHold(p) {
+  if (p.slOut || (p.cel && p.cel.wh != null)) return;
+  const x = p.x, y = p.y; clampField(p);
+  if (p.x !== x) p.vx = 0;
+  if (p.y !== y) p.vy = 0;
 }
 const OOB_AIM = { margin: 0.2, rzEdge: true };   // AI players aim margin yd inside the sideline; rzEdge = red-zone coverage aims inside the back of the end zone
 function clampField(p) {
@@ -1972,7 +2009,7 @@ function speedSetK(p) {
   return mine ? spdK.me : spdK.cpu;
 }
 const effTop = (p, base) => Math.min(spdCapTop(p), effTop0(p, base));   // (big job: the speed cap sits on the final top speed, so no boost goes round it)
-const effTop0 = (p, base) => base * (p.show ? showSpeedK(p) : 1) * speedSetK(p) * (p.spdMult || 1) * (xfAttrK(p, 'spd') ? 1 + XF_BOOST.spdPer * XF_BOOST.amt : 1) * abilSpdK(p) * (0.9 + 0.1 * p.stam) * (1 - p.slow) * (1 - p.fatigue) * (1 - WEAR.speed * (p.wear || 0)) * (p.fresh > 0 ? 1 + WEAR.fresh.top : 1) * Math.max(1, moraleMulP(p)) * limitedSpeedP(p) * (isRunPlay && !tut && (p === rb || ols.includes(p)) ? 1 - runHeat() * RUN_STREAK.spd : 1);   // (run after run tires the back and the line; low morale never slows a franchise player below scrimmage speed; fired up still helps)
+const effTop0 = (p, base) => base * (p.show ? showSpeedK(p) : 1) * speedSetK(p) * (p.spdMult || 1) * (xfAttrK(p, 'spd') ? 1 + XF_BOOST.spdPer * XF_BOOST.amt : 1) * abilSpdK(p) * (0.9 + 0.1 * p.stam) * (1 - p.slow) * (1 - p.fatigue) * (1 - WEAR.speed * (p.wear || 0)) * (p.fresh > 0 ? 1 + WEAR.fresh.top : 1) * (isRunPlay && !tut && (p === rb || ols.includes(p)) ? 1 - runHeat() * RUN_STREAK.spd : 1);   // (run after run tires the back and the line; top speed = his SPEED attribute only: no morale / LIMITED / condition hit)
 function tire(p, base, dt) {
   p.stam = Math.max(0, p.stam - STAMINA_DRAIN * dt * Math.min(1, Math.hypot(p.vx, p.vy) / base));
   if (!(p.falterUntil && clock < p.falterUntil)) p.slow = Math.max(0, p.slow - BREAK_RECOVER * dt);   // (no recovering while still stumbling: that was a speed boost mid-stumble)

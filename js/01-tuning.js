@@ -374,6 +374,7 @@ const INJURY_EXIT = { delay: 0.5, jog: 7, walk: 3.4, limp: 2, help: 2.6, cart: 7
   limpStride: 0.55, walkStride: 0.75, hang: 0.45,   // the hurt man drawn as himself walking off: leg swing x (limping / helped or walking), head hung (p.hang)
   kneeAll: true, kneeDelay: 0.6, clapSecs: 2.5, clapRate: 2.4, clapVol: 0.3, clapCrowd: 0.45, upPad: 3.5, benchYd: 44.4, benchD: 2.6, door: 2.6, inD: 3.4 };
 const figX = (p, x) => x * figK(p);                                    // a sideways offset tied to a spot on the old body -> that spot now
+const QB_EDGE = 0.4 * YD;   // half his drawn body width (old-figure units, through figX): any part of him past the line of scrimmage = no throw
 const figZ = (p, z) => (FOOT + z) * figK(p) * FIGURE.tall - FOOT;      // same for a height (z) on his body (scaled up from his feet)
 const figReach = (p, r) => S * figK(p) * (FIGURE.tall * (r / S + 14) - 14);   // a reach along a laid-out body (dives: stretched from the feet end)
 const Y_MIN = -FOOT, Y_MAX = FW - FOOT;   // feet on the sidelines
@@ -448,6 +449,11 @@ const TRACK = { settle: 1.2, read: 0.6, overrun: 0.8, looseAccel: 11 * YD, def: 
 //    top speed a second he sheds planting for a reversal, min = yd/s under which he just turns
 const BT = { k: 0.16, w: { ctc: 0.6, awr: 0.4, cov: 0.4 }, read: 0.35, blind: 0.1, err: 2.4, errDeep: 30, errBullet: 0.4, along: 0.75, lock: [0.4, 0.85],
              turn: 0.35, start: 0.12, early: 0.25, margin: 0.1, come: 0.85, from: 0.35, ease: 7, gather: 4, mom: { rate: 4.5, brake: 1.6, min: 2 } };
+// defensive overhaul phase 4: QB's eyes. Zone DBs / LBs looking at the QB read the area his aiming arc points at (YOUR QB only: the computer's QB has no aim
+// before his release). shade = most yd he leans (x k of the way from his spot to his guess), only when the guess is within far yd of his spot; his guess =
+// the true spot + an offset of errMin + err x (1 - skill) yd (skill = COVERAGE through CPU AWARENESS), eased over lag s, trusted after dwell s, the trust reset
+// when the aim jumps over jump yd in a frame. On the throw: break time x (1 - react) when it lands within near yd of his guess, x (1 + wrong) past wide yd
+const QB_EYES = { on: true, shade: 1.5, k: 0.35, far: 7, err: 5, errMin: 1, lag: 0.3, dwell: 0.35, jump: 4, react: 0.08, wrong: 0.05, near: 3, wide: 8 };
 const SPIRAL = { rate: 22, bullet: 1.4 };   // pass spin (radians/s of the laces rolling round; bullets spin faster)
 const CLASP_REACH = 30;     // (sprite units) once the ball is this close to a reaching catcher his hands close around it
 const CLASP_TIME = 0.28;     // seconds a receiver holds a fresh catch out front in both hands before tucking it
@@ -1077,6 +1083,13 @@ const JAM_RANGE = 1.3 * YD;
 // after = slowdown he carries off the jam (wears off at BREAK_RECOVER/s); stick = seconds the jammer stays glued to him
 // missStep = seconds a corner who whiffs on the jam stumbles before recovering
 // past JAM_ZONE: a corner only tries the jam farTry of the time (else he just trails tight), and a landed one works x far
+// defensive overhaul phase 6: the jam (pressMan). Patience: no jam until the receiver declares inside or outside (his lateral speed over declare x WR_TOP or
+// declYd yd off his line), wait s at the most. Technique by ratings and help: a weak jammer (strength z under weakZ) mirrors with no contact (stays in
+// phase stick x JAM.stick); with a safety deep on his side (within helpYd across) a strong one (z over strongZ) takes the two-hand jam (odds x two[0],
+// time x two[1], a miss = a false step x two[2]); else the off-hand jam (odds x off[0], time x off[1]). A missed two-hand jam starts him out of phase
+// On a press release (relDecide, where the game's jams are really decided: its release steps are the patience) the technique moves his press score by twoPrs /
+// offPrs / mirPrs; a mirror that would have jammed is a stalemate instead (in phase, no contact)
+const JAM2 = { on: true, declare: 0.25, declYd: 0.5, wait: 0.55, weakZ: -0.8, strongZ: 0.2, helpYd: 16, stick: 0.8, two: [1.15, 1.25, 1.7], off: [0.9, 0.85], twoPrs: 0.6, offPrs: -0.2, mirPrs: -0.4 };
 const JAM = { chance: 0.9, dur: [0.22, 0.36], cb: 1.3, slow: 0.15, down: 0.025, after: 0.4, stick: 7, missStep: 0.15, farTry: 0.25, far: 0.4,
               stickLag: 0.1, stickAccel: 2.4, stickSpeed: 1.24, stickLead: 1.1, hipGap: 0.55 * YD,
               // losing a jam: fights fight s first, then sit (shoved down) downSit of the time, else stumbles (stumDur s, +stumSlow slow, capped at stumSpeed x top);
@@ -1101,6 +1114,14 @@ const DB_TURN = { open: 4, openVx: 0.6, plantVx: 0.35, cross: 0.45, crossGap: 1.
                   enter: 0.9, run: 5, edge: 0.9, read: 0.35, pass: 0.3,                                // zone: x zone radius that counts as "in his zone" / yd behind a runner he still turns to run with / x leash = the zone edge (pass-off) / s to read the QB before eyes go to the man / s from the edge to sitting back down (both / coverage x awareness)
                   stem: 0.7, stemDepth: 3, match: 0.25, stumbleHips: 1.3, paRead: 0.8,                  // Cover 4 pattern match: #1 (the safety's #2) running vertical at >= stem x WR_TOP past stemDepth yd = turn and run man; s to read it (/ coverage x awareness) / x stumble odds on a double move while his hips are turned / play action: bite chance / (coverage sell rating ^ paRead)
                   debug: false };                                                                  // true = draw each DB's assignment, hips and head target
+// defensive overhaul phase 2: deep-zone gaits with a one-way turn (zoneDefend). Before the throw a deep man backpedals / shuffles; he opens to run when a
+// vertical threat (vx over vert x WR_TOP) gets within cushion yd, and once open he stays turned until the throw or the threat breaks off underneath him by
+// release yd. Lateral: shuffle under crossYd, a crossover run (cross x his top) past it; ease = s his target is eased over (no stop-start on a 1 yd move)
+const DB_GAIT = { on: true, cushion: 7, vert: 0.45, release: 3, crossYd: 3, cross: 0.85, shuffle: 6.5, ease: 0.15 };
+// defensive overhaul phase 3: going to the ball (defendBall + the contested catch). In phase = within phaseYd of his man and not trailing: he may look back
+// for it in the last lookT s; out of phase = he never looks back, plays the hands. Where he is at the catch sets the try: [pick x, breakup x]
+// under = undercutting the throwing lane, top = over the top, trail = behind him (rakes at the hands)
+const BALL_PHASE = { on: true, phaseYd: 1.4, lookT: 0.45, trailYd: 0.3, underYd: 0.4, laneYd: 1.2, topYd: 0.5, under: [1.4, 0.95], top: [1.15, 1], trail: [0.6, 1.3] };
 const COVER = { deepCushion: 3, attachGap: 0.28, zoneBlend: 0.95, manLead: 0.7, manSpeed: 1.18, breakRatio: 0.72, breakLead: 1.0, safetyLead: 0.8 };   // (big job defense steps 1-2: manLead 0.55, manSpeed 1.07, breakRatio 0.6, breakLead 0.7 before)
 // pre-snap: a receiver counts as covered if a defender is within lateral yards of him and no deeper than depth
 // yards off the ball; otherwise one rotates over him, shade yards inside
@@ -1141,7 +1162,12 @@ const SCOUT = {
   bustRounds: 3, bustGap: 4,                     // Bust Detector: looks at prospects on the board's first rounds whose real potential is this many points under the board's guess
   // v0.64 prospect scouting (draft board SCOUT button): a scout sends himself to a prospect for a week, then files a report
   slots: [1, 2, 3],                              // prospects a week a scout can look at, by stars (1-2 / 2.5-3.5 / 4+); + Extra Eyes
-  repErr: 0.25, repStar: 0.08,                   // a report cuts his potential error to this share (x (1 - repStar a star above 1))
+  repErr: 0.2, repStar: 0.08,                    // a report cuts his potential error to this share (x (1 - repStar a star above 1))
+  // v0.75 BOOM / BUST stamps (scoutCalls, draft day) + phone calls during your pick (draftCallTurn / draftCallBust in 09)
+  call: { sure: 1, gap: 2,                       // stamp only if his potential error (DRAFT.scoutErr x scoutErrK) is under sure pts AND the real gap is this many rounds (a GENERATIONAL always is)
+          wrong: 0.12, wrongStar: 0.03,          // share of stamps that are the wrong one = wrong - wrongStar x (stars - 1): about none at 5 stars (hash of name + year)
+          per: [1.2, 1.7, 2.3, 3.1, 4],          // calls a draft per scout by stars 1..5 (+ a hashed 0-1, floored): 1 star once or twice, a 5-star pair about every round
+          bellGap: 1.3, ringS: 1.6, openS: 0.35 },  // s from your pick's bell to the ring; s the phone rattles; s the bubble takes to open
 };
 // Draft board (your franchise; `// --- the draft board` in 09-season): next spring's class exists from week 1 (scoutClass / LEAGUE.nextClass, one class
 // ahead only). No college games: every prospect gets one form roll a week (boardWeek, from leagueWeek). Kept per prospect: p.bd = { pv (perceived score),
@@ -1228,6 +1254,9 @@ const STAFF_TRAITS = [
   { id: 'Disguise Artist', role: 'dc', lv: ['CPU QBs read coverage worse', 'much worse', 'they sometimes throw into it'], v: [0.12, 0.25, 0.25], into: 0.08 },
   { id: "Bend Don't Break", role: 'dc', lv: ['tighter coverage inside the 20', 'inside the 30', 'a boost on goal-line stands'], v: [20, 30, 30], cov: 0.9, gl: 0.8 },
   { id: 'Takeaway Culture', role: 'dc', lv: ['more punch-out tries', 'more tips become picks', 'longer returns'], v: [1.3, 1.3, 1.3], tips: 1.3, ret: 1.1 },
+  { id: 'Film Junkie', role: 'dc', lv: ['learns your habits faster', '+ reads your season film from 2 stars', '+ leans on this game harder'], v: [0.65, 0.5, 0.4], season: 2, game: 1.25 },   // (defense prompt 3: v = x the notes' prior (less = sooner), season = stars for season notes at II, game = x this game's notes at III)
+  { id: 'Halftime Genius', role: 'dc', lv: ['bigger halftime adjustments', 'adjusts from the 2nd quarter', 'even bigger adjustments'], v: [1.8, 1.8, 2.4] },   // (v = x his halftime re-weight)
+  { id: 'Mind Reader', role: 'dc', lv: ['sometimes reads run or pass at the snap', 'reads it more often', 'his men react to it even faster'], v: [0.06, 0.1, 0.12], read: 0.35, react: 0.6, react3: 0.4 },   // (v = chance a snap; read = x run read on a run, react = x zone reaction on a pass (III: react3))
   { id: 'Third Down Specialist', role: 'dc', lv: ['better calls on 3rd and long', 'every 3rd down', '4th down too'], v: [7, 1, 1], k: 0.88 },
   { id: 'Gem Finder', role: 'sc', lv: ['sharper on rounds 5-7', 'rounds 3-7', 'marks one hidden gem a year'], v: [5, 3, 3], err: 0.6 },
   { id: 'Bust Detector', role: 'sc', lv: ['warns off 1 prospect a year', '2 a year', 'says why'], v: [1, 2, 2] },
@@ -1238,7 +1267,7 @@ const STAFF_TRAITS = [
 ];
 const STAFF_TL = [3, 4];                          // a scout / trainer's trait level: 2 from this many stars, 3 from this many
 const TRAIT_OLD = { Likeable: "Players' Coach", Motivator: 'Fire Starter', Negotiator: 'Peacekeeper', Physio: 'Fresh Legs', Positive: 'Silver Lining', Scout: 'Extra Eyes' };   // coordinator renames (the trainer's Physio keeps its name)
-const TRAIT_ASK = ['Halftime Genius', 'Mind Reader', 'Eraser', 'Film Junkie'];   // waiting on Brandon: never in a pool until built
+const TRAIT_ASK = ['Eraser'];   // waiting on Brandon: never in a pool until built (Film Junkie / Halftime Genius / Mind Reader built in defense prompt 3)
 const STAFF_QUIRKS = {   // c.quirk: no levels, some staff only (QUIRK_ODDS of a generated man)
   Stubborn: { text: 'fewer pencils; his signature call stays', pens: -1, role: 'co' },
   Climber: { text: 'gets head coach calls sooner', poach: 1.6 },
@@ -1378,9 +1407,9 @@ const REF = {
 const flagsTest = () => !!REF.force;
 const refGate = () => !(typeof tut !== 'undefined' && tut) && !(typeof CO !== 'undefined' && CO) && !(typeof oo !== 'undefined' && oo) &&!(exhibition && exhibition.test && !flagsTest()) && !(typeof LG_SAND !== 'undefined' && LG_SAND);
 const refSet = k => exhibition ? SETTINGS['ex' + k[0].toUpperCase() + k.slice(1)] === true : SETTINGS[k] !== false;   // ('penalties' / 'booth': franchise default on, scrimmage / online default off)
-function flagsOn() { return refGate() && (refSet('penalties') || REF.force != null); }
+function flagsOn() { return refGate() && (refSet('penalties') || REF.force != null) && !ftNoRisk(3); }   // (field tutorial games 1-2: no flags)
 const flagK = key => flagsOn() ? REF.rate * diffX('flags') * diffX(key) : 0;   // (a penalty's odds multiplier: 0 with penalties off)
-function boothOn() { return refGate() && (refSet('booth') || REF.force === 'spot' || REF.force === 'spotGoal'); }
+function boothOn() { return refGate() && (refSet('booth') || REF.force === 'spot' || REF.force === 'spotGoal') && !ftNoRisk(3); }   // (field tutorial games 1-2: no booth review)
 // Contracts (SETTINGS.contracts, gate contractsOn(); code: `// --- contracts` in 11-cards-trades): your head coach deal (credits, paid at the
 // season's end), staff extensions / poach alerts, player extensions. Off = AUTO (the old behaviour, the HC deal renews by itself).
 const CONTRACT = {
@@ -1662,6 +1691,178 @@ const BASE_COVERAGES = ['Cover 2', 'Cover 3', 'Cover 4', 'Cover 1 Press'];
 const BLITZ_COVERAGES = ['Cover 1 Blitz', 'Corner Blitz', 'Edge Blitz', 'Fire Zone', 'Sim Pressure', 'Overload'];
 const COVER_0 = 'Cover 0';   // all-out man blitz, no deep help: only teams whose tendency says they call it (TEND_RAW)
 const COVERAGES = [...BASE_COVERAGES, ...BLITZ_COVERAGES, COVER_0];
+// --- defensive calls (defensive overhaul prompt 2: one table drives the calls; old names stay the keys, so saves / binders / tendencies keep working)
+// DCALL.on = master switch (off = the old alignDefense branches exactly). w = picker share of a new call (x its `like` call's weight),
+// neat = alignment slop by coverage rating (yd at an average rating; min share kept by the best).
+const DCALL = { on: true, w: { 'Cover 1 Robber': 0.45, '2 Man': 0.35, 'Tampa 2': 0.5, 'Cover 3 Cloud': 0.4, 'Cover 3 Buzz': 0.4, 'Cover 3 Match': 0.5, 'Palms': 0.4, 'Cover 6': 0.5, 'Bracket': 0.4 },
+                neat: { yd: 0.7, k: 0.35, min: 0.25 }, heavy: { lbUp: 1, lbIn: 0.8, boxX: 7, boxY: 5 }, trips: 2, apex: 4.5 };
+// DEF_CALLS[name] = { show (name on screen), sk (playbook shell key), like (old call it counts as for weights / tendencies), match ('mod' = patternMatch's
+// man-on-verticals for the deep CB / S), tags (situations, phase 2), j = jobs by role }. Roles: cbS / cbW (strong / weak corner), ss / fs, sam / mike / will;
+// strength = more receivers, then the tight end's side, then the wide side. A job:
+//   ['z', x, y, d, zy, r, deep]  zone: lines up x yd off the ball at y, zone d yd deep at zy, r yd big
+//   ['p', tgt]                   press man          ['m', tgt, x, fb]  man from x yd (fb = 'z' hook / 'b' blitz when nobody is left)
+//   ['o', tgt]                   deep zone over tgt  ['b', x, y]        blitz
+// y / zy: number = yd from his own sideline, 'm' = middle, ['m', n] = n yd off the middle toward his side (mike: the strong side), 'r1' / 'r2' / 'r3' = over
+// that receiver on his side (outside in), 'r1o' = a yard outside #1, 'ap' = apex between #2 and the tackle, 'best' = the offense's best receiver.
+// tgt: 'r1' / 'r2' / 'te' / 'best' / 'any' (nearest man nobody has), alternatives joined by '|'. A call with no j still runs its old branch.
+const DEF_CALLS = {
+  'Cover 1 Press': { show: 'COVER 1', sk: 'c1', j: { cbS: ['p', 'r1'], cbW: ['p', 'r1'], fs: ['z', 13, 'm', 17, 'm', 13, 1], ss: ['m', 'te|r2', 6, 'z'],
+                     sam: ['m', 'any', 5, 'z'], will: ['m', 'any', 5, 'z'], mike: ['z', 5, 'm', 5, 'm', 5] } },
+  'Cover 1 Robber': { show: 'COVER 1 ROBBER', sk: 'c1', like: 'Cover 1 Press', j: { cbS: ['p', 'r1'], cbW: ['m', 'r1', 6], fs: ['z', 13, 'm', 17, 'm', 13, 1], ss: ['z', 9, ['m', 3], 9, 'm', 5],
+                     sam: ['m', 'te|r2|any', 5, 'z'], mike: ['m', 'any', 5, 'z'], will: ['m', 'any', 5, 'z'] } },
+  'Cover 0': { show: 'COVER 0', sk: 'c0', j: { cbS: ['p', 'r1'], cbW: ['p', 'r1'], ss: ['m', 'te|r2|any', 4, 'b'], fs: ['m', 'r2|any', 4, 'b'],
+                     sam: ['m', 'any', 4, 'b'], mike: ['m', 'any', 4, 'b'], will: ['m', 'any', 4, 'b'] } },
+  '2 Man': { show: '2 MAN', sk: 'c2', like: 'Cover 2', j: { cbS: ['p', 'r1'], cbW: ['p', 'r1'], ss: ['z', 13, 17, 16, 14, 11, 1], fs: ['z', 13, 17, 16, 14, 11, 1],
+                     sam: ['m', 'te|r2|any', 5, 'z'], mike: ['m', 'any', 5, 'z'], will: ['m', 'any', 5, 'z'] } },
+  'Cover 2': { show: 'COVER 2', sk: 'c2', j: { cbS: ['z', 4, 'r1o', 5, 9, 5], cbW: ['z', 4, 'r1o', 5, 9, 5], ss: ['z', 13, 17, 16, 14, 11, 1], fs: ['z', 13, 17, 16, 14, 11, 1],
+                     sam: ['z', 5, 'ap', 9, 18, 5], mike: ['z', 5, 'm', 10, 'm', 5], will: ['z', 5, 'ap', 9, 18, 5] } },
+  'Tampa 2': { show: 'TAMPA 2', sk: 'c2', like: 'Cover 2', j: { cbS: ['z', 4, 'r1o', 5, 9, 5], cbW: ['z', 4, 'r1o', 5, 9, 5], ss: ['z', 13, 17, 16, 14, 11, 1], fs: ['z', 13, 17, 16, 14, 11, 1],
+                     sam: ['z', 5, 'ap', 9, 16, 5], mike: ['z', 6, 'm', 16, 'm', 8, 1], will: ['z', 5, 'ap', 9, 16, 5] } },
+  'Cover 3': { show: 'COVER 3 SKY', sk: 'c3', j: { cbS: ['z', 7.5, 'r1', 15, 9, 9, 1], cbW: ['z', 7.5, 'r1', 15, 9, 9, 1], fs: ['z', 13, 'm', 16, 'm', 9, 1], ss: ['z', 6, 13, 6, 9, 5],
+                     sam: ['z', 5, 'ap', 9, ['m', 6], 5], mike: ['z', 5, 'm', 9, ['m', -6], 5], will: ['z', 5, 'ap', 6, 9, 5] } },
+  'Cover 3 Cloud': { show: 'COVER 3 CLOUD', sk: 'c3', like: 'Cover 3', j: { cbS: ['z', 3, 'r1o', 5, 9, 5], cbW: ['z', 7.5, 'r1', 15, 9, 9, 1], ss: ['z', 11, 13, 15, 9, 9, 1], fs: ['z', 13, 'm', 16, 'm', 9, 1],
+                     sam: ['z', 5, 'ap', 9, ['m', 6], 5], mike: ['z', 5, 'm', 9, ['m', -6], 5], will: ['z', 5, 'ap', 6, 9, 5] } },
+  'Cover 3 Buzz': { show: 'COVER 3 BUZZ', sk: 'c3', like: 'Cover 3', j: { cbS: ['z', 7.5, 'r1', 15, 9, 9, 1], cbW: ['z', 7.5, 'r1', 15, 9, 9, 1], fs: ['z', 13, 'm', 16, 'm', 9, 1], ss: ['z', 7, ['m', 8], 8, ['m', 5], 5],
+                     sam: ['z', 4, 'ap', 6, 9, 5], mike: ['z', 5, 'm', 9, ['m', -5], 5], will: ['z', 5, 'ap', 6, 9, 5] } },
+  'Cover 3 Match': { show: 'COVER 3 MATCH', sk: 'c3', like: 'Cover 3', match: 'mod', j: { cbS: ['z', 7, 'r1', 15, 9, 9, 1], cbW: ['z', 7, 'r1', 15, 9, 9, 1], fs: ['z', 13, 'm', 16, 'm', 9, 1], ss: ['z', 6, 'r2', 8, 'r2', 5],
+                     sam: ['z', 5, 'ap', 8, ['m', 6], 5], mike: ['z', 5, 'm', 9, ['m', -6], 5], will: ['z', 5, 'ap', 8, 'r2', 5] } },
+  'Cover 4': { show: 'QUARTERS', sk: 'c4', match: 'mod', j: { cbS: ['z', 7, 'r1', 14, 8, 7, 1], cbW: ['z', 7, 'r1', 14, 8, 7, 1], ss: ['z', 9, 18, 14, 20, 7, 1], fs: ['z', 9, 18, 14, 20, 7, 1],
+                     sam: ['z', 5, 'ap', 6, 13, 5], mike: ['z', 5, 'm', 8, 'm', 5], will: ['z', 5, 'ap', 6, 13, 5] } },
+  'Palms': { show: 'PALMS', sk: 'c4', like: 'Cover 4', match: 'mod', j: { cbS: ['z', 6, 'r1', 7, 12, 5], cbW: ['z', 6, 'r1', 7, 12, 5], ss: ['z', 10, 15, 15, 9, 8, 1], fs: ['z', 10, 15, 15, 9, 8, 1],
+                     sam: ['z', 5, 'ap', 6, 17, 5], mike: ['z', 5, 'm', 8, 'm', 5], will: ['z', 5, 'ap', 6, 17, 5] } },
+  'Cover 6': { show: 'COVER 6', sk: 'c4', like: 'Cover 4', match: 'mod', j: { cbS: ['z', 7, 'r1', 14, 8, 7, 1], ss: ['z', 9, 18, 14, 20, 7, 1], cbW: ['z', 4, 'r1o', 5, 9, 5], fs: ['z', 13, 17, 16, 14, 11, 1],
+                     sam: ['z', 5, 'ap', 6, 13, 5], mike: ['z', 5, 'm', 8, 'm', 5], will: ['z', 5, 'ap', 9, 18, 5] } },
+  'Bracket': { show: 'BRACKET', sk: 'c1', like: 'Cover 1 Press', j: { cbS: ['m', 'best', 4, 'z'], ss: ['o', 'best'], cbW: ['m', 'r1|any', 6, 'z'], fs: ['z', 13, 'm', 17, 'm', 13, 1],
+                     sam: ['m', 'any', 5, 'z'], mike: ['m', 'any', 5, 'z'], will: ['m', 'any', 5, 'z'] } },
+  'Cover 1 Blitz': { show: 'COVER 1 BLITZ', sk: 'c1' }, 'Corner Blitz': { show: 'CORNER BLITZ', sk: 'c3' }, 'Edge Blitz': { show: 'EDGE BLITZ', sk: 'c2' },
+  'Fire Zone': { show: 'FIRE ZONE', sk: 'c3' }, 'Sim Pressure': { show: 'SIM PRESSURE', sk: 'c3' }, 'Overload': { show: 'OVERLOAD', sk: 'c3' },
+};
+const dcOn = () => DCALL.on && !tut && (typeof CO === "undefined" || !CO);   // (like dfxOn, but safe at load time: shellKey runs before 15 has made CO)
+function dcSplit(c, not) {   // the picked call or one of the calls that count as it (`like`), by DCALL.w (share against 1 for the call itself)
+  if (!dcOn()) return c;
+  let tot = 1;
+  for (const k in DCALL.w) if (DEF_CALLS[k].like === c && k !== not) tot += DCALL.w[k];
+  if (tot === 1) return c;
+  let r = Math.random() * tot - 1;
+  if (r < 0) return c;
+  for (const k in DCALL.w) if (DEF_CALLS[k].like === c && k !== not && (r -= DCALL.w[k]) < 0) return k;
+  return c;
+}
+// --- situation calls (prompt 2 phase 2): extra table calls + which calls fit which situation (tag -> { call: weight }, written onto DEF_CALLS[c].tags)
+// depths of 90+ = yd from the goal line (100 = on it, 98 = 2 yd short, 102 = 2 yd deep in the end zone); x is then capped at DCALL.sit.xMax. drop = the weak end drops into that zone.
+Object.assign(DEF_CALLS, {
+  'Prevent': { show: 'PREVENT', sk: 'c3', drop: [10, ['m', -4], 7], j: { cbS: ['z', 10, 'r1', 22, 9, 10, 1], cbW: ['z', 10, 'r1', 22, 9, 10, 1], fs: ['z', 18, 'm', 25, 'm', 12, 1], ss: ['z', 10, ['m', 8], 11, 13, 7],
+                sam: ['z', 8, 'ap', 11, ['m', 7], 7], mike: ['z', 8, 'm', 12, 'm', 7], will: ['z', 8, 'ap', 11, 13, 7] } },
+  'Hail Mary': { show: 'HAIL MARY', sk: 'c3', drop: [16, 'm', 8], j: { fs: ['z', 18, 'm', 101, 'm', 5, 1], ss: ['z', 16, ['m', 4], 100, ['m', 4], 5, 1], cbW: ['z', 16, ['m', 4], 100, ['m', 4], 5, 1],
+                cbS: ['z', 15, 12, 98, 12, 7, 1], sam: ['z', 8, 'ap', 18, 15, 7], mike: ['z', 8, 'm', 20, 'm', 8], will: ['z', 8, 'ap', 18, 15, 7] } },
+  'Short Yardage': { show: 'SHORT YARDAGE', sk: 'c1', j: { cbS: ['p', 'r1'], cbW: ['p', 'r1'], fs: ['z', 11, 'm', 13, 'm', 12, 1], ss: ['z', 4, ['m', 4], 5, ['m', 5], 6],
+                sam: ['z', 3.5, 'ap', 4, ['m', 6], 6], mike: ['z', 3.5, 'm', 4, 'm', 6], will: ['z', 3.5, 'ap', 4, ['m', 6], 6] } },
+  'Goal Line': { show: 'GOAL LINE', sk: 'c0', j: { cbS: ['p', 'r1'], cbW: ['p', 'r1'], ss: ['m', 'te|r2|any', 2, 'b'], fs: ['m', 'r2|any', 3, 'b'],
+                sam: ['m', 'any', 2, 'b'], will: ['m', 'any', 2, 'b'], mike: ['z', 2, 'm', 3, 'm', 5] } },
+  'Guts': { show: 'GUTS', sk: 'c0', todo: true }, 'Out Jacks': { show: 'OUT JACKS', sk: 'c0', todo: true },   // (goal-line calls Brandon named: rules not given yet, never picked)
+});
+Object.assign(DCALL, { sit: { xMax: 20, odds: { hail: 1, prevent: 0.85, short: 0.5, tl: 0.55, backed: 0.45, rz: 0.4, two: 0.5 },
+  blitz: { two: 0.5, backed: 1.8, tl: 0.8 },   // x the blitz rate in that situation
+  hailSecs: 8, hailYd: 35, prevSecs: 120, prevLead: [4, 16], prevYd: 25, twoSecs: 120, tlYd: 7, backedYd: 5, side: 2, sticks: 13 } });
+const DC_TAGS = {
+  hail: { 'Hail Mary': 1 }, prevent: { 'Prevent': 1 },
+  short: { 'Short Yardage': 1, 'Cover 1 Press': 0.5, 'Cover 0': 0.3 },
+  tl: { 'Cover 4': 1, 'Cover 6': 0.8, 'Palms': 0.6, '2 Man': 0.6, 'Cover 2': 0.6, 'Sim Pressure': 0.7 },
+  backed: { 'Cover 1 Blitz': 1, 'Fire Zone': 0.8, 'Cover 0': 0.5, 'Sim Pressure': 0.7, 'Edge Blitz': 0.6 },
+  rz: { 'Bracket': 1, 'Cover 1 Press': 0.8, 'Cover 3 Match': 0.7, '2 Man': 0.6, 'Cover 4': 0.5 },
+  two: { 'Cover 2': 1, 'Cover 6': 0.8, 'Cover 4': 0.8, 'Tampa 2': 0.6 },
+  gl: { 'Goal Line': 1, 'Guts': 0, 'Out Jacks': 0 },
+};
+// --- blitz package (prompt 2 phase 3): blitz = true (a pressure call), bw = its share of the blitz roll. Extra keys: drop / dropS (the weak / strong end drops),
+// slant (yd the weak tackle slants strong), noTell (no walk-up: the creeper), read (mug read-out: the backer away from the back drops to the low hole),
+// a blitz job's 4th item 'peel' = he peels onto the back if the back leaks out (DCALL.peel). Green dog = BLOCKER_MAN (a man job whose man stays in comes).
+Object.assign(DEF_CALLS, {
+  'Cover 1 Blitz': { show: 'COVER 1 BLITZ', sk: 'c1', blitz: true, bw: 1, j: { cbS: ['p', 'r1'], cbW: ['p', 'r1'], fs: ['z', 13, 'm', 16, 'm', 9, 1], ss: ['m', 'te|r2|any', 4, 'z'],
+                sam: ['m', 'any', 4, 'z'], will: ['m', 'any', 4, 'z'], mike: ['b', 1.5, ['m', 0.6]] } },
+  'Corner Blitz': { show: 'CORNER CAT', sk: 'c3', blitz: true, bw: 0.6, j: { cbW: ['b', 1.5, ['m', 9]], fs: ['z', 11, 13, 15, 9, 9, 1], ss: ['z', 13, 'm', 16, 'm', 9, 1], cbS: ['z', 7, 'r1', 15, 9, 9, 1],
+                sam: ['z', 5, 'ap', 6, 9, 5], mike: ['z', 5, 'm', 9, 'm', 5], will: ['z', 5, 'ap', 6, 10, 5] } },
+  'Edge Blitz': { show: 'EDGE BLITZ', sk: 'c2', blitz: true, bw: 0.8, j: { sam: ['b', 1, ['m', 6.5]], will: ['b', 1, ['m', 6.5]], cbS: ['z', 1.5, 'r1o', 5, 9, 5], cbW: ['z', 1.5, 'r1o', 5, 9, 5],
+                ss: ['z', 12, 17, 16, 14, 11, 1], fs: ['z', 12, 17, 16, 14, 11, 1], mike: ['z', 5, 'm', 9, 'm', 5] } },
+  'Fire Zone': { show: 'FIRE ZONE', sk: 'c3', blitz: true, bw: 1, drop: [5, 13, 5], j: { sam: ['b', 1, ['m', 6.5]], will: ['b', 1, ['m', 6.5]], mike: ['z', 5, 'm', 9, 'm', 5], ss: ['z', 6, 13, 6, 13, 5],
+                cbS: ['z', 7, 'r1', 15, 9, 9, 1], cbW: ['z', 7, 'r1', 15, 9, 9, 1], fs: ['z', 13, 'm', 16, 'm', 9, 1] } },
+  'Fire Zone Weak': { show: 'FIRE ZONE WEAK', sk: 'c3', blitz: true, bw: 0.8, drop: [5, 13, 5], dropS: true, j: { will: ['b', 1, ['m', 6.5]], mike: ['b', 1.5, ['m', -2]], sam: ['z', 5, 'ap', 9, ['m', 6], 5],
+                ss: ['z', 13, 'm', 16, 'm', 9, 1], fs: ['z', 6, 13, 6, 13, 5], cbS: ['z', 7, 'r1', 15, 9, 9, 1], cbW: ['z', 7, 'r1', 15, 9, 9, 1] } },
+  'Sim Pressure': { show: 'SIM PRESSURE', sk: 'c3', blitz: true, bw: 1, drop: [5, 13, 5], j: { will: ['b', 1, ['m', 6.5]], mike: ['z', 1.5, ['m', 1], 9, 'm', 5], sam: ['z', 5, 'ap', 9, ['m', 6], 5],
+                ss: ['z', 6, 13, 6, 13, 5], cbS: ['z', 7, 'r1', 15, 9, 9, 1], cbW: ['z', 7, 'r1', 15, 9, 9, 1], fs: ['z', 13, 'm', 16, 'm', 9, 1] } },
+  'Overload': { show: 'OVERLOAD', sk: 'c3', blitz: true, bw: 0.6, drop: [5, 13, 5], slant: 1.2, j: { sam: ['b', 1, ['m', 6.5]], ss: ['b', 1.5, ['m', 8.5]], mike: ['b', 1.5, ['m', 2]],
+                will: ['z', 5, 'm', 9, ['m', 6], 5], cbS: ['z', 7, 'r1', 15, 9, 9, 1], cbW: ['z', 7, 'r1', 15, 9, 9, 1], fs: ['z', 13, 'm', 16, 'm', 9, 1] } },
+  'Slot Fire': { show: 'SLOT FIRE', sk: 'c3', blitz: true, bw: 0.7, j: { sam: ['b', 1, ['m', 6]], ss: ['m', 'r2|te|any', 5, 'z'], mike: ['z', 5, 'm', 9, ['m', 4], 5], will: ['z', 5, 'ap', 6, 10, 5],
+                cbS: ['z', 7, 'r1', 15, 9, 9, 1], cbW: ['z', 7, 'r1', 15, 9, 9, 1], fs: ['z', 13, 'm', 16, 'm', 9, 1] } },
+  'Cross Dog': { show: 'CROSS DOG', sk: 'c1', blitz: true, bw: 0.7, j: { mike: ['b', 1.5, ['m', -1]], will: ['b', 1.5, ['m', -1]], cbS: ['p', 'r1'], cbW: ['p', 'r1'], ss: ['m', 'te|r2|any', 4, 'z'],
+                sam: ['m', 'any', 4, 'z'], fs: ['z', 13, 'm', 17, 'm', 13, 1] } },
+  'Mug Bring': { show: 'DOUBLE MUG BRING', sk: 'c1', front: 'wide', blitz: true, bw: 0.5, j: { mike: ['b', 1, ['m', 1]], will: ['b', 1, ['m', 1]], cbS: ['p', 'r1'], cbW: ['p', 'r1'], ss: ['m', 'te|r2|any', 4, 'z'],
+                sam: ['m', 'any', 4, 'z'], fs: ['z', 13, 'm', 17, 'm', 13, 1] } },
+  'Mug Drop': { show: 'DOUBLE MUG DROP', sk: 'c3', front: 'wide', blitz: true, bw: 0.4, j: { mike: ['z', 1.2, ['m', 1], 9, ['m', 5], 5], will: ['z', 1.2, ['m', 1], 9, ['m', 5], 5], sam: ['z', 5, 'ap', 6, 9, 5],
+                ss: ['z', 6, 13, 6, 13, 5], cbS: ['z', 7, 'r1', 15, 9, 9, 1], cbW: ['z', 7, 'r1', 15, 9, 9, 1], fs: ['z', 13, 'm', 16, 'm', 9, 1] } },
+  'Mug Read': { show: 'DOUBLE MUG READ', sk: 'c1', front: 'wide', blitz: true, bw: 0.4, read: true, j: { mike: ['b', 1, ['m', 1]], will: ['b', 1, ['m', 1]], cbS: ['p', 'r1'], cbW: ['p', 'r1'], ss: ['m', 'te|r2|any', 4, 'z'],
+                sam: ['m', 'any', 4, 'z'], fs: ['z', 13, 'm', 17, 'm', 13, 1] } },
+  'Mug 0': { show: 'DOUBLE MUG 0', sk: 'c0', front: 'wide', blitz: true, bw: 0.25, j: { mike: ['b', 1, ['m', 1]], will: ['b', 1, ['m', 1]], cbS: ['p', 'r1'], cbW: ['p', 'r1'], ss: ['m', 'te|r2|any', 4, 'b'],
+                fs: ['m', 'r2|any', 4, 'b'], sam: ['m', 'any', 4, 'b'] } },
+  'Creeper': { show: 'CREEPER', sk: 'c3', blitz: true, bw: 0.7, noTell: true, drop: [5, 13, 5], j: { sam: ['b', 1, ['m', 3]], mike: ['z', 5, 'm', 9, ['m', 5], 5], will: ['z', 5, 'ap', 6, 10, 5],
+                ss: ['z', 6, 13, 6, 13, 5], cbS: ['z', 7, 'r1', 15, 9, 9, 1], cbW: ['z', 7, 'r1', 15, 9, 9, 1], fs: ['z', 13, 'm', 16, 'm', 9, 1] } },
+  'Safety Edge': { show: 'SAFETY EDGE', sk: 'c3', blitz: true, bw: 0.6, j: { ss: ['b', 1.5, ['m', 8.5], 'peel'], sam: ['z', 5, 'ap', 6, 9, 5], mike: ['z', 5, 'm', 9, 'm', 5], will: ['z', 5, 'ap', 6, 10, 5],
+                cbS: ['z', 7, 'r1', 15, 9, 9, 1], cbW: ['z', 7, 'r1', 15, 9, 9, 1], fs: ['z', 13, 'm', 16, 'm', 9, 1] } },
+});
+Object.assign(DCALL, { peel: { yd: 6, depth: 1, t: 0.35 },   // (t: POS_RULES.peel: the read window after the snap)
+  // disguises (phase 4): odds of each look (x the men's coverage rating by rateK), spots in yd; learnK = extra show-and-drop in the first quarter (up to learnMax),
+  // hideRead = how much a no-tell blitz cuts the QB's read; memMin = net times the protection turned one way before later blitzes come from the other side
+  dis: { shell: 0.35, show: 0.18, hide: 0.3, bluff: 0.3, rateK: 0.3, twoX: 12.5, twoY: 17, downX: 7.5, downY: 14, oneX: 13.5, showX: 1.4, gapY: 2.5, learnK: 2, learnMax: 4, hideRead: 0.55, memMin: 2 } });   // a peeler takes the back once he leaks out within yd across of him and at least depth yd past the line
+const DC_BLITZ = Object.keys(DEF_CALLS).filter(c => DEF_CALLS[c].blitz);
+const covBlitz = c => BLITZ_COVERAGES.includes(c) || !!(DEF_CALLS[c] && DEF_CALLS[c].blitz && dcOn());
+function dcBlitzPick() {   // the blitz roll: the old list off, the table's blitz calls by bw on
+  if (!dcOn()) return pick(BLITZ_COVERAGES);
+  let tot = 0;
+  for (const c of DC_BLITZ) if (bookCallK(c, 'def') > 0) tot += DEF_CALLS[c].bw;
+  let r = Math.random() * tot;
+  for (const c of DC_BLITZ) if (bookCallK(c, 'def') > 0 && (r -= DEF_CALLS[c].bw) < 0) return c;
+  return DC_BLITZ[0];
+}
+for (const t in DC_TAGS) for (const c in DC_TAGS[t]) (DEF_CALLS[c].tags || (DEF_CALLS[c].tags = {}))[t] = DC_TAGS[t][c];
+const DCS = { sit: null, spill: false };   // this snap's situation (set when the call is picked), spill = the force men wrong-arm (run fits)
+Object.assign(DCALL, { fit: { near: 1, look: 0.4, forceYd: 1.5, spillYd: 0.8, alleyYd: 1.2, cutYd: 2, k: 0.7 } });   // run fits: yd off the runner's track, k = share of the pull on the aim, look = s of his sideways run read ahead
+function dcSitNow() {
+  if (!dcOn() || patMode || kickoffPlay || goalLineD()) return goalLineD() && dcOn() ? 'gl' : null;
+  const S = DCALL.sit, q = game.quarter, s = game.secs * CLOCK_REF.nfl / QUARTER_SECS, half = q === 2 || q === 4,   // (s = NFL seconds left)
+    off = aiOff() ? game.red - game.blue : game.blue - game.red;
+  const yd = (FIELD - los) / YL, ltg = (Math.min(lineToGain, FIELD) - los) / YL;
+  if (half && s <= S.hailSecs && yd >= S.hailYd) return 'hail';
+  if (q >= 4 && s <= S.prevSecs && -off >= S.prevLead[0] && -off <= S.prevLead[1] && yd >= S.prevYd) return 'prevent';
+  if (shortToGo() && down >= 3) return 'short';
+  if (down === 3 && ltg >= S.tlYd) return 'tl';
+  if (los <= S.backedYd * YL) return 'backed';
+  if (redZone()) return 'rz';
+  if (half && s <= S.twoSecs) return 'two';
+  return null;
+}
+function dcSitPick(t, not) {   // a situation's call, at its odds (a crossed-out binder call is never picked)
+  const P = t && DC_TAGS[t];
+  if (!P || t === 'gl' || Math.random() >= DCALL.sit.odds[t]) return null;
+  let tot = 0;
+  for (const c in P) if (c !== not && P[c] > 0 && bookCallK(c, 'def') > 0) tot += P[c];
+  let r = Math.random() * tot;
+  for (const c in P) if (c !== not && P[c] > 0 && bookCallK(c, 'def') > 0 && (r -= P[c]) < 0) return c;
+  return null;
+}
+const dcBlitzK = () => (dcOn() && DCS.sit && DCALL.sit.blitz[DCS.sit]) || 1;
+// --- sims (prompt 2 phase 6): a simmed play draws one call by the same shares (blitz roll, then a base call and its family); only its counters move
+// the odds: s = sack x, i = incompletion +, g = gain x for [run, pass]. A call's own `sim` overrides its shell's (DC_SIM by sk); blitz calls add DC_SIM.blitz.
+const DC_SIM = { c0: { s: 1.15, i: 0.02, g: [1.04, 1.08] }, c1: { s: 1, i: 0.03, g: [1.02, 1.03] }, c2: { s: 0.95, i: -0.01, g: [1.07, 0.93] },
+                 c3: { s: 1, i: 0, g: [1, 1] }, c4: { s: 0.95, i: 0.01, g: [0.94, 0.97] }, blitz: { s: 1.3, i: -0.02, g: [0.97, 1.1] }, rate: 0.16 };
+function dcSimCall(pass) {   // null with DCALL off (sims exactly as before)
+  if (!dcOn()) return null;
+  const c = Math.random() < DC_SIM.rate ? dcBlitzPick() : dcSplit(BASE_COVERAGES[Math.floor(Math.random() * BASE_COVERAGES.length)], null);
+  const C = DEF_CALLS[c], K = C.sim || DC_SIM[C.sk] || DC_SIM.c3, B = C.blitz ? DC_SIM.blitz : null, w = pass ? 1 : 0;
+  return { c, show: C.show, s: K.s * (B ? B.s : 1), i: K.i + (B ? B.i : 0), g: K.g[w] * (B ? B.g[w] : 1) };
+}
+const dcLive = c => dcOn() && !!(DEF_CALLS[c] && DEF_CALLS[c].j);   // (runtime only: dfxOn reads tut / CO)
+const dcLike = c => (dcOn() && DEF_CALLS[c] && DEF_CALLS[c].like) || c;
+const covShow = c => (DEF_CALLS[c] && DEF_CALLS[c].show) || String(c || '').toUpperCase();
+const covMatch = c => dcLive(c) ? DEF_CALLS[c].match === 'mod' : c === 'Cover 4';
 // how often each call comes up: blitzRate = chance of a blitz call; the base calls are weighted
 // (press man is the rarest of them)
 // defense vs designed runs: the back seven stay in their drops for runRead x read seconds after the
@@ -1740,6 +1941,20 @@ const PURSUIT = { step: 0.05, horizon: 3.5, edge: 0.6 * YD, smooth: 0.2, passAng
                   hold: true, cutDeg: 12, replanYd: 0.6, holdNear: 3,   // he commits to his angle: re-plans on a cut over cutDeg, a meeting point moved over replanYd yd, or inside holdNear yd
                   ramp: 1, bend: 0.8,   // the carrier's predicted run: x his accel getting up to his top; s over which his heading bends toward the end zone
                   debug: false };   // debug = dev only: aim points + the carrier's predicted path (test mode) and the 'came out behind %' count in the console (pdbNote)   // boost = x speed chasing a ball carrier (after a catch / on a run), accel = x their accel (sharper angles)   // DBs: look-ahead s, and how much of the usual angle error they make (0.15 = 15%: they take sharp angles)
+// --- defensive overhaul (prompt 1): how defenders move and react. Each phase has its own master switch (off = the old game step for step). Off in the
+// tutorial and the cold open (dfxOn), never moves the man you steer.
+// Phase 1, pursuit angles: headT = s of his displacement read for his heading far from him (a juke doesn't swing the target); closeYd = inside it he tracks
+// his near hip (hipK = share of the way from the meeting point across to his hip line, hipYd = shade to that side); cone = deg of cut either way the far aim still covers
+// (coneW = how much of that hedge); turn = deg / s the bearing to his aim may swing beyond what the carrier's run swings it, x (1 + turnAgi x his agility z), never under turnMin x that
+const PURSUIT2 = { on: true, headT: 0.3, closeYd: 6, hipK: 0.3, hipYd: 0.4, cone: 22, coneW: 1, turn: 90, turnAgi: 0.3, turnMin: 0.4 };
+const dfxOn = T => T.on && !tut && !CO;   // (runtime only: tut / CO live in later files)
+const prOn = g => POS_RULES.on && g.on && !tut && !CO;   // (POS_RULES group live; runtime only)
+// 0-1: how well this man follows a position rule (his COVERAGE, else PASS RUSH, through CPU / PLAYER AWARENESS); 0.5 = average
+function prSkill(d) { const a = attr5(d, 'cov', attr5(d, 'prs', 10)), S = POS_RULES.skill; return Math.max(0, Math.min(1, S.mid + S.k * diffAwrZ(d, (a - 10) / RATING.spread))); }
+// defensive overhaul phase 5: tackling. gatherYd = inside it (and outside lunge range) a man coming at the carrier from the front or side breaks down: speed x
+// (gather - gatherTck x his tackling z); a tackle within gatherT s of a gather misses x (miss - missTck x z). The look follows the angle: from behind at the ankles (lowDive) with a punch at the ball (fumble odds x behindFum). A big hit with no help within
+// helpYd of the carrier and no sideline within lineYd stays a big hit only lone share of the time
+const TACKLE2 = { on: true, gatherYd: 2.2, gather: 0.86, gatherTck: 0.03, gatherT: 0.35, miss: 0.85, missTck: 0.05, behindFum: 1.3, helpYd: 3, lineYd: 3, lone: 0.7 };
 const BREAKDOWN = { range: 4.5 * YD, k: 0.72 };   // special-teams coverage: inside range yd of the returner, a man slows to k x his speed (breaks down to tackle)
 // wrap-up tackles: he falls along runner x his velocity + tackler x the tackler's; met head-on he goes over
 // backwards unless his own forward momentum beats backBias x his speed; falls take fast..slow seconds (harder = faster)
@@ -1790,7 +2005,17 @@ function defSheet() {
                      : W({ 'Cover 4': 3, 'Cover 2': 1 });                                                        // dime / quarters, rush 4
   return {};
 }
-const pickCoverage = (not) => {
+const pickCoverage = (not, chk) => { DCS.sit = dcSitNow(); if (dcOn() && DCALL.force && DEF_CALLS[DCALL.force]) return DCALL.force;
+  if (dcOnE()) {   // (defense prompt 3: the coordinator's call engine; hail / prevent / goal line stay forced)
+    DCS.form = liveForm; DCS.air = null;
+    const f = (DCS.sit === 'hail' || DCS.sit === 'prevent') && dcSitPick(DCS.sit, not);
+    if (f) return f;
+    if (goalLineD()) return GOAL_LINE;
+    const c = dcPick(not, chk);
+    if (c) return c;
+  }
+  return dcSitPick(DCS.sit, not) || dcSplit(pickCoverage0(not), not); };   // (DCALL.force = test override)   // (DEF_CALLS: a picked call may become one of its family, DCALL.w)
+const pickCoverage0 = (not) => {
   if (goalLineD()) return GOAL_LINE;
   // (in the red zone and on two-point tries: far more press man, and more blitzes)
   // the other team's coordinator shapes the look: its favourite shell, press or off corners, how often it blitzes, Cover 0
@@ -1818,11 +2043,220 @@ const pickCoverage = (not) => {
   if (T && T.c0 && Math.random() < TEND_CALL.cover0 && COVER_0 !== not) return COVER_0;
   const ad = dcAdapt();   // a sharper coordinator reads the repeated play and calls the scheme to stop it
   const rate = (T ? T.blitzCall : COVERAGE_ODDS.blitzRate) + (short ? SHORT_YARDAGE.blitz : 0) + (inRz ? REDZONE_D.blitz : 0) + ad * ADAPT.blitz * (runStack() * RUN_STREAK.blitz + qbHeat() * QB_RUN_STREAK.blitz + passHeat() * PASS_STREAK.blitz);
-  const rateD = rate * (aiOff() ? 1 : diffX('blitz'));   // (CPU BLITZ FREQUENCY)
+  const rateD = rate * (aiOff() ? 1 : diffX('blitz')) * dcBlitzK();   // (CPU BLITZ FREQUENCY; DEF_CALLS situations: fewer in the two-minute drill, more with them backed up)
   let tries = 0;
-  do c = Math.random() < rateD ? pick(BLITZ_COVERAGES) : weighted(); while ((c === not || (bookCallK(c, 'def') <= 0 && tries < 12)) && ++tries < 40);   // (a crossed-out call is re-rolled; never an empty list)
+  do c = Math.random() < rateD ? dcBlitzPick() : weighted(); while ((c === not || (bookCallK(c, 'def') <= 0 && tries < 12)) && ++tries < 40);   // (a crossed-out call is re-rolled; never an empty list)
   return c;
 };
+// --- the defensive coordinator's call engine (defense prompt 3, phase 1): at the dead ball he guesses the play from what a real coordinator can see
+// (down / distance / spot / clock / score; the formation; the offense's season and game tendencies by his stars) and scores every call in his playbook
+// = fit vs the guess (DC_CALL.con) x fit with his men x his lean (tendOf) x binder marks (bookCallK); sharp = how hard a better DC leans on the top
+// score, noise = the share picked at random. on = false: pickCoverage exactly as before. Never reads the offense's real call.
+const DC_CALL = { on: true,
+  run0: [0.5, 0.5, 0.45, 0.25, 0.35], ltgK: 0.035, shortYd: 2, shortK: 0.3, runMin: 0.05, runMax: 0.88, behindK: 0.45, aheadK: 0.35, lateSecs: 300,   // situation prior (by down; - ltgK per yd past 5)
+  pass0: [0.55, 0.3, 0.15], deepLong: 0.12, inside: 0.6,   // pass split quick / deep / screen; deep +deepLong on 3rd and 8+; run split inside share
+  formW: 0.6, seasonW: 0.7, gameW: 0.8, prior: 6, half: 0.5, heatK: 0.12,   // blends: formation (2+ stars), season (4+), game (5; others after halftime x half), x n / (n + prior); run / pass heat
+  beatYd: 6, beatN: 2, beatK: 0.8, adMin: 0.25,   // a concept that gained beatYd+ (or a first down) beatN times this game: x (1 + beatK x adapt); adapt = adMin..1 by stars
+  sharp: [1.5, 4, 9, 18, 30], noise: [0.35, 0.22, 0.12, 0.06, 0.03], check: 3, rep: [0.12, 0.45], repStars: 3,   // by stars 1..5; check = stars for a pre-snap check
+  pressK: 1.6, pressRef: 0.95, prot: 0.35, sitK: 10, sitFit: 0.3, famK: 1.5, blitzMax: 0.5, sheetK: 0.6, c0Min: 0.02, leanK: [1, 0.8, 0.6, 0.45, 0.3],   // leanK = power on the old shares (lean, situation, sheet) by stars: a better DC trusts the fit more
+  // fit of a shell vs [quick, deep, screen, inside run, outside run]; blitz = x on top; byCall = a call's own row
+  con: { c0: [1.1, 0.75, 0.7, 1.3, 1.0], c1: [1.15, 0.95, 0.85, 1.18, 1.05], c2: [1.05, 0.88, 0.97, 0.85, 1.1], c3: [0.92, 1.1, 1.0, 1.08, 1.0], c4: [0.85, 1.22, 1.0, 0.95, 1.04] },
+  blitz: [0.85, 1.2, 0.6, 1.15, 0.9],
+  byCall: { 'Tampa 2': [1.0, 0.98, 0.97, 0.9, 1.1], 'Bracket': [1.12, 1.05, 0.85, 1.0, 1.0], 'Short Yardage': [1.0, 0.7, 0.85, 1.4, 1.2], 'Cover 3 Buzz': [1.0, 1.05, 1.0, 1.12, 1.0], 'Cover 6': [0.95, 1.12, 1.0, 1.0, 1.05] },
+  only: { 'Prevent': 'prevent', 'Hail Mary': 'hail', 'Short Yardage': 'short', 'Goal Line': 'gl' },   // calls only in their situation
+};
+const DCG = { run: 0.5, c: [0, 0, 0, 0, 0], k: [0, 0, 0, 0, 0] };   // this snap's guess (run share, concept shares) + scratch
+const DC_POOL = [], DCW = new Float64Array(64), DCF = new Float64Array(64), DCR = new Float64Array(64), DC_FAMW = {};
+const dcOnE = () => DC_CALL.on && dcOn();
+const dcTeam = () => (typeof aiOff === 'function' && aiOff()) ? MATCH.you : MATCH.opp;   // the defending team (you on defense = your DC)
+const dcOffTeam = () => (typeof aiOff === 'function' && aiOff()) ? MATCH.opp : MATCH.you;
+const dcCoach = () => (STAFF[dcTeam()] || STAFF.KC).dc;
+const dcStarsN = () => Math.max(1, Math.min(5, Math.round(dcCoach().stars || 3)));
+const dcAdK = () => DC_CALL.adMin + (1 - DC_CALL.adMin) * (dcStarsN() - 1) / 4;
+function dcGM() { return game.dcG || (game.dcG = { f: {}, beat: [0, 0, 0, 0, 0], last: [], h: 0 }); }   // this game's notes (game is new each newGame)
+function dcBlend(row, w, pk = 1) {   // row = [run, pass, -, quick, deep, screen, inside, outside] counts: pull the guess toward it by w x n / (n + prior)
+  const n = row[0] + row[1];
+  if (n <= 0 || w <= 0) return;
+  const P = DC_CALL.prior * pk, k = w * n / (n + P);
+  DCG.run += (row[0] / n - DCG.run) * k;
+  const np = row[3] + row[4] + row[5], nr = row[6] + row[7];
+  if (np > 0) for (let i = 0; i < 3; i++) DCG.k[i] += (row[3 + i] / np - DCG.k[i]) * w * np / (np + P);
+  if (nr > 0) DCG.k[3] += (row[6] / nr - DCG.k[3]) * w * nr / (nr + P);
+}
+function dcGuess() {   // fills DCG from what he can see
+  const st = dcStarsN(), C = DC_CALL, ltg = Math.max(1, (Math.min(lineToGain, FIELD) - los) / YL);
+  let run = (C.run0[down] || 0.4) - C.ltgK * (ltg - 5) + (ltg <= C.shortYd ? C.shortK : 0);   // (short yardage: the run)
+  const q4 = game.quarter >= 4, s = game.secs * CLOCK_REF.nfl / QUARTER_SECS, off = aiOff() ? game.red - game.blue : game.blue - game.red;
+  if (q4 && s <= C.lateSecs && off < 0) run *= C.behindK;
+  else if (q4 && s <= C.lateSecs && off > 0) run += (1 - run) * C.aheadK;
+  DCG.k[0] = C.pass0[0]; DCG.k[1] = C.pass0[1] + (down >= 3 && ltg >= 8 ? C.deepLong : 0); DCG.k[2] = C.pass0[2]; DCG.k[3] = C.inside;
+  DCG.run = run;
+  if (st >= 2 && liveForm && FORM_BY[liveForm]) DCG.run += (1 - FORM_BY[liveForm].pass - DCG.run) * C.formW;
+  const fk = liveForm || 'X';
+  const cc = dcCoach(), fj = traitOn(cc, 'Film Junkie'), hg = traitOn(cc, 'Halftime Genius'), FJ = TRAIT_BY['Film Junkie'], pk = fj ? FJ.v[fj - 1] : 1;   // (traits: Film Junkie reads sooner, Halftime Genius adjusts harder)
+  if (st >= (fj >= 2 ? FJ.season : 4)) { const T = LEAGUE.dcT && LEAGUE.dcT[dcOffTeam()]; if (T && T[fk]) dcBlend(T[fk], C.seasonW, pk); }
+  const G = dcGM(), h = G.h || (hg >= 2 && game.quarter >= 2), hk = hg ? TRAIT_BY['Halftime Genius'].v[hg - 1] : 1;
+  const gw = (st >= 5 ? C.gameW * (1 + (h ? C.half * hk : 0)) : h ? Math.min(1, C.gameW * C.half * hk * Math.max(hg ? 1 : 0, st - 1) / 4) : 0) * (fj >= 3 ? FJ.game : 1);
+  if (G.f[fk]) dcBlend(G.f[fk], gw, pk);
+  const ad = dcAdK();
+  DCG.run += C.heatK * ad * (runHeat() / RUN_STREAK.max - passHeat() / PASS_STREAK.max);
+  DCG.run = Math.max(C.runMin, Math.min(C.runMax, DCG.run));
+  const ps = DCG.k[0] + DCG.k[1] + DCG.k[2] || 1, r = DCG.run;
+  DCG.c[0] = (1 - r) * DCG.k[0] / ps; DCG.c[1] = (1 - r) * DCG.k[1] / ps; DCG.c[2] = (1 - r) * DCG.k[2] / ps; DCG.c[3] = r * DCG.k[3]; DCG.c[4] = r * (1 - DCG.k[3]);
+  let tot = 0;
+  for (let i = 0; i < 5; i++) { if (G.beat[i] >= C.beatN) DCG.c[i] *= 1 + C.beatK * ad; tot += DCG.c[i]; }
+  for (let i = 0; i < 5; i++) DCG.c[i] /= tot;
+}
+function dcFitOf(c) {   // fit of a call vs this snap's guess (1 = neutral)
+  const D = DEF_CALLS[c], row = DC_CALL.byCall[c] || DC_CALL.con[D.sk] || DC_CALL.con.c3, bz = D.blitz || c === COVER_0;
+  let f = 0;
+  for (let i = 0; i < 5; i++) f += DCG.c[i] * row[i] * (bz ? DC_CALL.blitz[i] : 1);
+  return f;
+}
+function dcMenFit(c) {   // press man with slow corners against fast receivers fits worse
+  const J = DEF_CALLS[c].j;
+  if (!J || !cbT || !cbB || !recs || recs.length < 2) return 1;
+  const pr = (J.cbS && J.cbS[0] === 'p' ? 0.5 : 0) + (J.cbW && J.cbW[0] === 'p' ? 0.5 : 0);
+  if (!pr) return 1;
+  let a = 0, b = 0;
+  for (const r of recs) { const v = effTop(r, r.top || WR_TOP); if (v > a) { b = a; a = v; } else if (v > b) b = v; }
+  const ratio = (effTop(cbT, cbT.top || WR_TOP) + effTop(cbB, cbB.top || WR_TOP)) / Math.max(1e-6, a + b);   // (corners run about pressRef of the two fastest receivers' top)
+  return ratio >= DC_CALL.pressRef ? 1 : Math.max(0.5, 1 - DC_CALL.pressK * (DC_CALL.pressRef - ratio) * pr);
+}
+// --- playbooks (defense prompt 3, phase 2): each DC has a scheme family (from his name) and a playbook = the first n calls of that family's order
+// (n by stars: book[0..4]), plus one call for any situation it would miss. Never stored unless the player edits it (c.pbook = his own list).
+const DC_FAMS = {
+  press: { fav: 'Cover 3', name: 'PRESS MAN', calls: ['Cover 1 Press', 'Cover 1 Blitz', '2 Man', 'Cover 1 Robber', 'Bracket', 'Cover 0', 'Cross Dog', 'Mug Bring', 'Cover 3 Match', 'Mug 0', 'Cover 3', 'Mug Read', 'Cover 4', 'Edge Blitz', 'Slot Fire', 'Cover 2', 'Safety Edge', 'Cover 6', 'Fire Zone', 'Tampa 2', 'Palms', 'Corner Blitz'] },
+  match: { fav: 'Cover 4', name: 'TWO-HIGH MATCH', calls: ['Cover 4', 'Palms', 'Cover 6', '2 Man', 'Cover 3 Match', 'Cover 2', 'Sim Pressure', 'Bracket', 'Creeper', 'Tampa 2', 'Cover 3 Cloud', 'Mug Drop', 'Cover 1 Robber', 'Edge Blitz', 'Cover 3', 'Fire Zone Weak', 'Cover 1 Press', 'Safety Edge', 'Cover 3 Buzz', 'Cover 1 Blitz', 'Slot Fire', 'Cover 0'] },
+  zblitz: { fav: 'Cover 3', name: 'ZONE BLITZ', calls: ['Cover 3', 'Fire Zone', 'Sim Pressure', 'Cover 3 Buzz', 'Fire Zone Weak', 'Creeper', 'Slot Fire', 'Overload', 'Cover 3 Cloud', 'Corner Blitz', 'Mug Drop', 'Safety Edge', 'Cover 1 Blitz', 'Cover 4', 'Cover 3 Match', 'Cover 2', 'Mug Read', 'Cover 1 Press', 'Edge Blitz', 'Palms', 'Tampa 2', 'Cover 0'] },
+  bend: { fav: 'Cover 2', name: "BEND DON'T BREAK", calls: ['Cover 2', 'Tampa 2', 'Cover 3', 'Cover 4', 'Cover 3 Cloud', 'Cover 6', 'Palms', 'Cover 3 Buzz', 'Edge Blitz', 'Cover 3 Match', 'Sim Pressure', 'Cover 1 Robber', 'Creeper', '2 Man', 'Bracket', 'Fire Zone', 'Cover 1 Press', 'Mug Drop', 'Corner Blitz', 'Cover 1 Blitz', 'Safety Edge', 'Overload'] },
+};
+const DC_FAM_KEYS = Object.keys(DC_FAMS);
+Object.assign(DC_CALL, { book: [8, 12, 15, 19, 22], sitAlways: ['Goal Line', 'Short Yardage', 'Prevent', 'Hail Mary'] });   // playbook size by stars; calls every book has (their situations only)
+const DC_BOOKS = new Map();   // key -> playbook (rebuilt from the name, never saved)
+function dcHash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h >>> 0; }
+function dcFamOf(c) { return DC_FAM_KEYS[dcHash(String((c && c.name) || 'DC')) % DC_FAM_KEYS.length]; }
+function dcBookOf(c) {   // this coordinator's playbook (array of DEF_CALLS names)
+  if (c && Array.isArray(c.pbook) && c.pbook.length) return c.pbook;
+  const st = Math.max(1, Math.min(5, Math.round((c && c.stars) || 3))), fam = dcFamOf(c), key = fam + '|' + st + '|' + ((c && c.name) || '');
+  let B = DC_BOOKS.get(key);
+  if (B) return B;
+  const order = DC_FAMS[fam].calls, n = DC_CALL.book[st - 1], h = dcHash(key);
+  B = order.slice(0, Math.min(3, n));
+  const rest = order.slice(B.length);   // (past his family's top three, a light name-seeded shuffle: two coaches of one family still differ a little)
+  for (let i = 0; i < rest.length - 1; i++) if ((h >>> (i % 24)) & 1) { const t = rest[i]; rest[i] = rest[i + 1]; rest[i + 1] = t; i++; }
+  for (const k of rest) if (B.length < n && DEF_CALLS[k] && !DEF_CALLS[k].todo) B.push(k);
+  for (const k of DC_CALL.sitAlways) if (!B.includes(k)) B.push(k);
+  for (const t in DC_TAGS) { let has = false, best = null, bw = 0; for (const k in DC_TAGS[t]) { if (B.includes(k)) has = true; if (DC_TAGS[t][k] > bw && !DEF_CALLS[k].todo) { bw = DC_TAGS[t][k]; best = k; } } if (!has && best) B.push(best); }   // (at least one call per situation)
+  if (!B.some(k => DEF_CALLS[k].blitz)) B.push(order.find(k => DEF_CALLS[k].blitz) || 'Cover 1 Blitz');
+  DC_BOOKS.set(key, B);
+  return B;
+}
+function dcFitAll(c, sit) { const D = DEF_CALLS[c]; return (dcFitOf(c) + (sit && D.tags && D.tags[sit] ? DC_CALL.sitFit * D.tags[sit] : 0)) * dcMenFit(c); }   // (fit vs the guess, the situation's own calls, his men)
+function dcPoolAll() { dcPool(); return DC_POOL; }
+function dcPool() {   // the calls he may score: the defending DC's playbook
+  if (!DC_POOL.length) {
+    for (const c in DEF_CALLS) if (!DEF_CALLS[c].todo) DC_POOL.push(c);
+    for (const c of BASE_COVERAGES) { DC_FAMW[c] = 1; for (const k in DCALL.w) if (DEF_CALLS[k].like === c) DC_FAMW[c] += DCALL.w[k]; }
+  }
+  return DC_CALL.books === false ? DC_POOL : dcBookOf(dcCoach());
+}
+function dcPick(not, chk) {   // the engine's call; chk = a pre-snap check after a shift / audible
+  const st = dcStarsN(), C = DC_CALL;
+  if (chk && st < C.check) return not;
+  const cc = dcCoach(), fam0 = dcFamOf(cc), mm = cc.book && cc.book.memo, favF = mm && mm.shell ? 'Cover ' + mm.shell : DC_FAMS[fam0].fav, sit = DCS.sit, pool = dcPool(), G = dcGM(), T = !MATCH.opp ? null : tendOf(dcTeam()), ad = dcAdK(), sharp = C.sharp[st - 1];
+
+  dcGuess();
+  // blitz share as before (tendencies, short yardage, red zone, heat, CPU BLITZ FREQUENCY, situation), split by bw; base calls by COVERAGE_ODDS + DCALL.w
+  const inRz = redZone();
+  const rate = Math.min(0.9, ((T ? T.blitzCall : COVERAGE_ODDS.blitzRate) + (shortToGo() ? SHORT_YARDAGE.blitz : 0) + (inRz ? REDZONE_D.blitz : 0) + ad * ADAPT.blitz * (runStack() * RUN_STREAK.blitz + qbHeat() * QB_RUN_STREAK.blitz + passHeat() * PASS_STREAK.blitz)) * (aiOff() ? 1 : diffX('blitz')) * dcBlitzK());
+  let bwT = 0, baseT = 0;
+  for (const c of DC_BLITZ) bwT += DEF_CALLS[c].bw;
+  for (const c of BASE_COVERAGES) baseT += COVERAGE_ODDS.base[c] * DC_FAMW[c];
+  const sheet = defSheet(), td = yourDefLive() && thirdDownOn();
+  let sheetT = 0;
+  for (const k in sheet) sheetT += sheet[k];
+  const mem = dcMem(), prot = mem.shows >= DCALL.dis.memMin ? C.prot * ad * Math.min(1, Math.abs(mem.slide) / mem.shows) : 0;
+  let tot = 0, n = 0;
+  for (let i = 0; i < pool.length; i++) {
+    const c = pool[i], D = DEF_CALLS[c];
+    DCW[i] = 0; DCF[i] = 0;
+    if (c === not || c === GOAL_LINE || (C.only[c] && C.only[c] !== sit)) continue;
+    const bk = bookCallK(c, 'def');
+    if (bk <= 0) continue;
+    const fam = D.like || c, bz = !!D.blitz;
+    let w;
+    if (bz) w = rate * D.bw / bwT;
+    else if (c === COVER_0) w = T && T.c0 ? TEND_CALL.cover0 : C.c0Min;
+    else if (C.only[c]) w = 1;
+    else {
+      if (!COVERAGE_ODDS.base[fam]) continue;
+      w = (1 - rate) * COVERAGE_ODDS.base[fam] * (D.like ? DCALL.w[c] || 0 : 1) / baseT;
+      if (T) w *= fam === favF ? TEND_CALL.own : fam === 'Cover 1 Press' ? (T.press ? TEND_CALL.press : TEND_CALL.off) : TEND_CALL.other;   // (his favourite shell = his family's, unless your head coach's memo sets one)
+      if (inRz && fam === 'Cover 1 Press') w *= REDZONE_D.man * Math.max(0.4, 1 + REDZONE_D.dc * dcEdge());
+    }
+    if (bz && prot) w *= 1 + prot;
+    if (sheetT > 0) w *= 1 + C.sheetK * (td ? 3 : 1) * (sheet[c] || sheet[fam] || 0) / sheetT * 4;
+    const f = dcFitAll(c, sit);
+    DCF[i] = f;
+    const fo = DC_FAMS[fam0].calls.indexOf(c);   // (his scheme family: its first calls are his favourites)
+    w = Math.pow(w, C.leanK[st - 1]) * (sit && D.tags && D.tags[sit] ? 1 + C.sitK * D.tags[sit] : 1) * bk * Math.exp(sharp * (f - 1)) * (fo < 0 ? 1 : 1 + C.famK * (1 - fo / DC_FAMS[fam0].calls.length));
+    if (st >= C.repStars) { const L = G.last, rk = (st - C.repStars + 1) / (6 - C.repStars); if (L[0] === c) w *= 1 - (1 - C.rep[0]) * rk; else if (L[1] === c || L[2] === c) w *= 1 - (1 - C.rep[1]) * rk; }
+    DCW[i] = w; tot += w; n++;
+  }
+  if (!n || tot <= 0) return null;
+  const u = C.noise[st - 1];
+  let bt = 0;   // (the blitz share stays within blitzMax x the old rate: blitzes the situation calls for don't count)
+  for (let i = 0; i < pool.length; i++) { if (DCF[i] <= 0) continue; DCW[i] = (1 - u) * DCW[i] / tot + u / n; const D = DEF_CALLS[pool[i]]; if ((D.blitz || pool[i] === COVER_0) && !(sit && D.tags && D.tags[sit])) bt += DCW[i]; }
+  const bk = bt > rate * C.blitzMax && bt < 1 ? (rate * C.blitzMax / bt) : 1, bn = bk < 1 ? (1 - rate * C.blitzMax) / (1 - bt) : 1;
+  let r = Math.random(), pi = -1;
+  for (let i = 0; i < pool.length; i++) { if (DCF[i] <= 0) continue; pi = i; const D = DEF_CALLS[pool[i]], ub = (D.blitz || pool[i] === COVER_0) && !(sit && D.tags && D.tags[sit]); if ((r -= DCW[i] * (ub ? bk : bn)) < 0) break; }
+  let rank = 0;   // (how many better fit levels the whole table had: tied calls share a level)
+  const fp = DCF[pi], A = dcPoolAll();
+  for (let i = 0; i < A.length; i++) DCR[i] = C.only[A[i]] && C.only[A[i]] !== sit ? 0 : dcFitAll(A[i], sit);
+  for (let i = 0; i < A.length; i++) if (DCR[i] > fp + 1e-9) { let j = 0; while (j < i && Math.abs(DCR[j] - DCR[i]) > 1e-9) j++; if (j === i) rank++; }
+  DCS.rank = rank; DCS.guess = DCG.run;
+  return pool[pi];
+}
+function dcCallMade(c) {   // the snap's call is final: this game's repeat list (newest first)
+  const L = dcGM().last;
+  if (L[0] === c) return;
+  L.unshift(c); if (L.length > 3) L.length = 3;
+}
+function dcThrowNote(aimX) { if (DCS.air == null) DCS.air = (aimX - los) / YL; if (DCS.mr) { const T = TRAIT_BY['Mind Reader'], k = DCS.mr >= 3 ? T.react3 : T.react; for (const d of back7) if (d.react) d.react *= k; DCS.mr = 0; } }
+function dcMrRoll() { DCS.mr = 0; const L = dcOnE() && !pracLive() ? traitOn(dcCoach(), 'Mind Reader') : 0; if (L && Math.random() < TRAIT_BY['Mind Reader'].v[L - 1]) DCS.mr = L; }   // (the snap: Mind Reader simply knows run or pass this play; never rolls without the trait)
+function dcMrRun() { if (!DCS.mr) return; for (const d of back7) if (d.runRead) d.runRead *= TRAIT_BY['Mind Reader'].read; DCS.mr = 0; }   // (the handoff: his men flow to it at once)   // throwBall: how far downfield the pass went (screen / quick / deep)
+function dcPlayNote(gain, first) {   // endPlay (scrimmage plays): what the offense ran from this formation, for the next calls
+  if (!dcOnE() || pracLive() || DCS.form === undefined) return;
+  const con = isRunPlay ? (rb && rb.runType === 'outside' ? 4 : 3) : DCS.air == null ? 0 : DCS.air < 0.5 ? 2 : DCS.air >= 15 ? 1 : 0;
+  const fk = DCS.form || 'X', G = dcGM(), run = isRunPlay;
+  const add = o => { const a = o[fk] || (o[fk] = [0, 0, 0, 0, 0, 0, 0, 0]); a[run ? 0 : 1]++; a[3 + con]++; };
+  add(G.f);
+  if (gain >= DC_CALL.beatYd || first) G.beat[con]++;
+  if (window.DC_LOG) window.DC_LOG.push({ c: coverage, g: DCS.guess, run, rank: DCS.rank, con, gain, st: dcStarsN() });
+  if (!exhibition && MATCH.opp) { const L = LEAGUE.dcT || (LEAGUE.dcT = {}), t = dcOffTeam(); add(L[t] || (L[t] = {})); }
+}
+// --- sims (defense prompt 3, phase 4): ONE fit number per matchup from the same engine: his stars and how his playbook's best calls fit the offense's
+// favourite formation (its run / pass lean); no per-play work. simK = how hard it moves a simmed play (incompletion +, gain x).
+Object.assign(DC_CALL, { sim: { starK: 0.03, fitK: 1, fitRef: 1.045, top: 3, inc: 0.25, gain: 0.6 } });   // fitRef = an average book's top-3 fit (so a 3-star DC = about 1)
+function dcSimFit(def, off) {   // ~0.9..1.15, 1 = an average coordinator (cached on game per matchup)
+  if (!dcOnE() || !STAFF[def]) return 1;
+  const M = game.dcSim || (game.dcSim = {}), key = def + '>' + off;
+  if (M[key] != null) return M[key];
+  const c = STAFF[def].dc, f = typeof ocFavForm === 'function' ? ocFavForm(off) : null, S = DC_CALL.sim;
+  DCG.run = f && FORM_BY[f] ? 1 - FORM_BY[f].pass : 0.45;
+  for (let i = 0; i < 3; i++) DCG.k[i] = DC_CALL.pass0[i];
+  DCG.k[3] = DC_CALL.inside;
+  const ps = DCG.k[0] + DCG.k[1] + DCG.k[2], r = DCG.run;
+  DCG.c[0] = (1 - r) * DCG.k[0] / ps; DCG.c[1] = (1 - r) * DCG.k[1] / ps; DCG.c[2] = (1 - r) * DCG.k[2] / ps; DCG.c[3] = r * DCG.k[3]; DCG.c[4] = r * (1 - DCG.k[3]);
+  const B = dcBookOf(c), fits = [];
+  for (const k of B) if (!DC_CALL.only[k] && DEF_CALLS[k]) fits.push(dcFitOf(k));
+  fits.sort((a, b) => b - a);
+  let top = 0; const n = Math.min(S.top, fits.length);
+  for (let i = 0; i < n; i++) top += fits[i];
+  return (M[key] = 1 + S.starK * ((c.stars || 3) - 3) + S.fitK * ((n ? top / n : S.fitRef) - S.fitRef));
+}
+function dcHalf() { if (dcOnE()) dcGM().h = 1; }   // staffHalftime: every DC re-weights by this game's tendencies (5 stars: harder)
 // --- coordinators: route calling and defensive logic ---
 // ocSkill 0..1: YOUR offensive coordinator's stars (OC_MIX share) and your offense's stars; the tutorial is 0.
 const OC_MIX = 0.8;
@@ -1839,12 +2273,40 @@ const dcEdge = () => {
   return Math.max(-1, Math.min(1, ((o - 3) / 2) * DC_MIX + ((t - 3) / 2) * (1 - DC_MIX)));
 };
 // the shell key the playbook uses for a call (blitzes play the shell behind them)
-const shellKey = c => c === 'Cover 2' || c === 'Edge Blitz' ? 'c2' : c === 'Cover 4' ? 'c4' : c === 'Cover 1 Press' || c === 'Cover 1 Blitz' ? 'c1'
+const shellKey = c => dcLive(c) || (dcOn() && DEF_CALLS[c]) ? DEF_CALLS[c].sk : c === 'Cover 2' || c === 'Edge Blitz' ? 'c2' : c === 'Cover 4' ? 'c4' : c === 'Cover 1 Press' || c === 'Cover 1 Blitz' ? 'c1'
                     : c === COVER_0 || c === GOAL_LINE ? 'c0' : 'c3';
 // Defensive logic (Defensive Logic PDF) at +1 edge (scaled by dcEdge, so a 3-star staff is exactly the old defense; a poor one is worse):
 // check = chance the DC checks out of a call the offense just beat (disguise / pattern-match), lag / react = faster reads and breaks,
 // seam = bigger seam-help reach and width, pa = quicker recovery from play-action, ball = more breakups, shed = linemen win their lanes sooner
 const DC_LOGIC = { check: 0.7, lag: 0.22, react: 0.2, seam: 0.35, pa: 0.4, ball: 0.1, shed: 0.08 };
+// position rules (read-and-react by spot): CPU defenders on both teams, never the man you steer, off in the tutorial / cold open (prOn).
+// on = master (false = the game before them, step for step); each group has its own on. How well a man follows one = prSkill (his COVERAGE /
+// awareness through diffAwrZ: CPU / PLAYER AWARENESS): good men on time, poor ones late or smaller. Never a speed change, no new random numbers.
+// peel = a blitzer with a peel reads the back only in the first DCALL.peel.t s (x late by skill) and only on his own side of the line, then rushes for good
+const POS_RULES = { on: true, skill: { k: 0.25, mid: 0.5 },
+  peel: { on: true, late: 0.5 },
+  // saf = safeties: lean = yd a splitting deep safety's midpoint leans toward the QB's eyes (QB_EYES' read, your QB only), turn = share of speed across that
+  // makes a post / corner (he stays on top of the post when a corner on that side is deep); help = yd an empty strip slides toward the nearest deep threat
+  // (the QB's side first); pa = a deep-zone safety never bites on play action (only a down one can); alley = a deep safety holds his depth on a run until the
+  // ball is alleyYd past the line (x skill: -0.5..+0.5 around 0), then comes down outside-in
+  saf: { on: true, lean: 2.5, turn: 0.3, help: 5, pa: true, alleyYd: 2, down: true },   // (down = a down safety / robber in an underneath zone carries a vertical like a backer)
+  // cb = corners: a flat (underneath) corner holds flatFloor yd before the throw and sinks under a vertical #1 on his side (to sinkMax yd, x skill).
+  // (run contain / cutback = DEF_CALLS run fits, dcFitAim: a scripted contain / fold on top measured worse and jerked the pursuit angle)
+  cb: { on: true, flatFloor: 4, sinkMax: 12 },
+  // lb = underneath zone men (backers, a down safety): rel = the back releasing out of the backfield is taken by the nearest free underneath man after relT s
+  // (x late by skill) within relReach yd; wall = s of a crosser's path a hook man steps into (x skill), passed on once he leaves the zone; screenT = s before the
+  // nearest backer finds a screen catcher sitting behind the line; drawT = s a backer holds before his drop while the back stays in (x skill: a poor one just drops)
+  lb: { on: true, rel: true, relT: 0.4, relReach: 10, wall: 0.45, screenT: 0.35, screenYd: 18, drawT: 0.3 },
+  // dl = the line: nothing new. Already there: edge contain + the backside end staying home on a fake / boot (DE_CONTAIN: wide until level with the QB,
+  // measured home 97% at 0.75 s on play action), a dropping lineman = zoneDefend's underneath zone, eyes on the QB. A free lineman's screen read was
+  // built and taken out: the offense's line never lets rushers through before a screen throw, so there is no free, easy rush to read (offense side first)
+  // all = everyone: pick = on a pick return the defender nearest the intended receiver blocks him, the free men lead 2 yd inside the returner (a wall up the
+  // sideline); late = in the last lateS(lateS) s of a half with the defense ahead, a tackler closing on a carrier within sideYd of the sideline takes the
+  // sideline away (aim shaded shade yd outside him, x skill): tackled in bounds. Already there: breaking down on a catch in front (TACKLE2's gather),
+  // rallying after the throw, no receiver behind the deepest man (DEEP_TOP + the Prevent / two-minute calls)
+  all: { on: true, pick: true, lead: 2, late: true, lateS: 120, sideYd: 7, shade: 1.5 },
+};
+
 let dcK = 0;   // this play's dcEdge (set in rateDefense)
 // the defense reads the concepts and checks to a shell that doesn't lose to them
 function dcCheck() {
@@ -1952,6 +2414,7 @@ const A5 = {
         blitzFrom: 8, blitzSpan: 6,   // your QB sees blitzers (red arrows): share of them shown = (awareness - from) / span
         openFrom: 7, openSpan: 7, openYd: 6, openRun: 0.85, openStem: 8, openAhead: 1 },   // openAhead s = where he's heading must be open too   // OPEN calls: share of open men he spots, yards of room that's "open" (x openRun on the run); only after the route's stem (its first break; a one-leg route once openStem yd deep)
   wr: { zone: 0.16,     // AWARENESS vs zone: PBUs / picks by zone defenders x 1 / this
+        space: 0.15,    // a finished route: how well / how often he finds open space (ROUTE_END)
         scramble: 0.2,  // QB out of the pocket: less spray on throws his way
         pick: 0.14,     // adjusts to a bad ball: fewer picks on throws to him
         jam: 0.1,       // off the jam sooner
@@ -2047,7 +2510,7 @@ function hotRouteClick(pt) {
 // (QB spray, drops) and lifts the home team (more on defense). Level 0..1 from the game situation, not the sound settings.
 const PULSE = { base: 0.3, tense: 0.45, red: 0.25, third: 0.12, err: 0.07, drop: 0.05, homeDef: 0.04, homeOff: 0.015, calm: 0.1, shake: 2.6, shakeFrom: 0.55, beat: 290 };   // (beat: ms a beat of the crowd's stomp-stomp-clap, crowdChant)
 function pulseLvl() {
-  if (!MATCH.home || tut || state === 'sim' || game.over) return 0;
+  if (!MATCH.home || tut || state === 'sim' || game.over || indoorOn()) return 0;   // (v0.76: no pulse in the gym)
   const imp = Math.max(0, Math.min(1, (gameImpact() - CROWD_IMPACT.min) / (CROWD_IMPACT.max - CROWD_IMPACT.min)));
   const red = MATCH.home !== 'you' ? Math.max(0, Math.min(1, (los - (FIELD - 20 * YL)) / (20 * YL))) : 0;   // (the road team knocking on the door: the place is rocking)
   return Math.max(0, Math.min(1, PULSE.base + PULSE.tense * imp + PULSE.red * red + (down >= 3 ? PULSE.third : 0))) * (typeof wxPulseK === 'function' ? wxPulseK() : 1);   // (thunderstorm: a soaked crowd; after a lightning delay: calm)
@@ -2058,7 +2521,7 @@ const pulseCatch = () => { const l = pulseLvl(); return !l ? 1 : roadOff() ? 1 -
 const pulseDef = () => { const l = pulseLvl(); return l && roadOff() ? 1 + PULSE.homeDef * l : 1; };
 function stadiumShake() {
   let s = 0;
-  if (!pvpOn() && !aiOff() && roadOff() && !(rec && rec.replaying) && (state === 'pre' || state === 'drop' || state === 'pocket')) {
+  if (!pvpOn() && !aiOff() && roadOff() && !indoorOn() && !(rec && rec.replaying) && (state === 'pre' || state === 'drop' || state === 'pocket')) {
     const l = pulseLvl(); if (l > PULSE.shakeFrom) s = PULSE.shake * (l - PULSE.shakeFrom) / (1 - PULSE.shakeFrom);
   }
   if (state === 'kick' && kick && kick.nv && (kick.phase === 'power' || kick.phase === 'aim' || kick.phase === 'snap')) s = Math.max(s, ICE.shake * kick.nv / kickPoise(rb));
@@ -2139,7 +2602,7 @@ function drawOpenWave() {
 function drawAwareness() {
   if (aiOff() || tut || (rec && rec.replaying)) return;
   if (state === 'pre') for (const d of back7) {
-    if (!d.blitz || !d.awrSeen || !d.walked) continue;   // (read only once he walks up: the disguise hides it until then)
+    if (d.dsgFake ? d.awrSeen : !d.blitz || !d.awrSeen || !d.walked || d.dsgHide) continue;   // (read only once he walks up: the disguise hides it until then; DEF_CALLS: a fake shows an arrow to a QB who misses it, a no-tell blitz none)
     const a = Math.atan2(qb.y - d.y, qb.x - d.x), L = Math.min(dist(d, qb) * 0.45, 5 * YD), ex = d.x + Math.cos(a) * L, ey = d.y + Math.sin(a) * L + FOOT;
     ctx.strokeStyle = ctx.fillStyle = '#ff3b3b'; ctx.lineWidth = 6;
     ctx.beginPath(); ctx.moveTo(d.x, d.y + FOOT); ctx.lineTo(ex, ey); ctx.stroke();
@@ -2179,6 +2642,14 @@ const reachK = p => Math.max(0.85, Math.min(1.2, 1 + BODY.catch * hz(p)));
 // kick returner's top speed (x the back's) by his position: ratings are within a position, so a tagged lineman is still a lineman
 const KR_PACE = { RB: 1, WR: 1.02, CB: 1.01, S: 0.98, LB: 0.92, TE: 0.9, QB: 0.88, DL: 0.82, OL: 0.7 };
 const JOB_MAX_STARS = 10;  // franchise without a favorite team: teams with this many off + def stars (or more) never hire you
+// head coach movement all year (09 `// --- job market`): CPU firings / hires, midseason offers to you, offers pulled for a real reason. force = test hook: null | 'fire:TEAM' | 'offer:TEAM' | 'pull:TEAM:cause' (read at the next week, or jobsForce(s) at once)
+const JOBS = { force: null,
+  fireMin: 4, fireGap: 0.18, fire: 0.22, fireStreak: 4, streakK: 0.12, maxOpen: 5, expLo: 0.2, expHi: 0.8,   // a CPU coach can go after fireMin games: expected win % = expLo..expHi by roster stars; chance = fire x (gap - fireGap) / 0.3 (+ streakK on a losing streak of fireStreak); at most maxOpen openings at once
+  hireWait: 2, hire: 0.14,   // weeks before a team with an opening may really hire, then the weekly chance
+  offer: 0.6, outK: 1.8, lastYrK: 1.5, hotStreak: 3, hotK: 1.4, hopYears: 4, hopK: 0.6, dueWk: 3,   // weekly offer chance = offerWant x offer x knobs (name out, last deal year, win streak; x hopK per move in hopYears); due = weeks the offer stands
+  interimG: 3, interimPct: 0.67, coolStreak: 3, blowout: 21, coolOdds: 0.35, coolThem: 2, leak: 0.18, leakPull: 0.5, hopMax: 3, hopOdds: 0.25,   // pull rules: the interim's record since the firing / your losing streak or a blowout (x coolThem against them) / name-out leak per week, then each offer's pull odds / too many moves
+  cold: { open: 0.6, win: 1.2, perYr: 0.06, yrs: 3, lo: 0.5, hi: 2 },   // DEMAND A MOVE price = offerPrice x security: open job = open; else 1 + win x (their win % - 0.5) + perYr x (coach years - yrs), clamped lo..hi
+  cr: [1, 25], histMax: 12 };
 const JOB_PREF = { rebuild: [0, 0.34], contender: [0.5, 1], weak: [0, 0.5] };   // a new career's hiring preference / origin catch: the band of the league (0 = worst roster, 1 = best) the first team comes from (the top 4 never hire a rookie)
 const ROSTERS = {
   ARI: 'QB 7 Jacoby Brissett 7 10 12 13;RB 4 Jeremiyah Love 9 12 5 10;WR 14 Michael Wilson 8 13 13 12;WR 17 Kendrick Bourne 5 13 12 11;TE 85 Trey McBride 10 13 14 11;TE 84 Elijah Higgins 7 13 11 9;LT 70 Paris Johnson Jr 13 13 13 12;C 72 Hjalte Froholdt 12 14 12 12;RE 10 Josh Sweat 11 12 12 12;DT 97 Walter Nolen III 11 11 11 12;MLB 1 Mack Wilson Sr 9 12 9 12;MLB 50 Jack Gibbens 8 12 8 12;CB 21 Garrett Williams 9 9 10 13;CB 2 Will Johnson 9 8 11 13;SS 3 Budda Baker 10 12 10 13;FS 28 Andrew Wingard 7 10 10 13',
@@ -4229,7 +4700,7 @@ function kickerFor(team, role = 'fg') {   // role 'ko' / 'punt' / 'fg' (default:
 // how far above (+) or below (-) average a player is in one attribute, in spread steps (0 for anyone unrated)
 // (in the tutorial the practice-squad defense is TUT_DEF steps worse at everything)
 // (and the other team's players are diffLvl().rz steps better / worse: the difficulty)
-const rz = (p, a) => (p && p.at && p.at[a] != null && p.grp ? (p.at[a] - RATING_AVG[p.grp][a]) / RATING.spread : 0) - (tut && p && p.team === 'def' ? TUT_DEF : 0) - (tut && tut.defOn && p && p.team === 'off' ? TUT_BAD_OFF : 0)
+const rz = (p, a) => (p && p.at && p.at[a] != null && p.grp ? ((a === 'spd' && p.spd0At === p.at ? p.spd0 : p.at[a]) - RATING_AVG[p.grp][a]) / RATING.spread : 0) - (tut && p && p.team === 'def' ? TUT_DEF : 0) - (tut && tut.defOn && p && p.team === 'off' ? TUT_BAD_OFF : 0)
   + (p && p.team === 'def' && p.grp ? diffFor(p).rz : 0) + (p && p.src ? abilRz(p) + xfAttrK(p, a) : 0);   // (any-position Abilities; a lit Star Factor's attribute boost)
 const TUT_DEF = 3;
 const TUT_PICK = { reach: 1.5, high: 30 * S, pull: 1.6 };   // tutorial defense: your jump's pick window x reach, + extra height it still gets (any hand on it = a pick), x the won pick's carry speed (DEF.pick.pull: the catch is still at his hands)
@@ -4375,3 +4846,79 @@ let replayUserZoom = 1;                     // scroll-wheel zoom in a replay
 let userZoomT = 1, replayZoomT = 1;
 const ZOOM_EASE = 8;
 
+// field tutorial (14-career-input.js, `// --- field tutorial`): slowK = step speed at the bottom of a live prompt's slow motion, slowS = its length (s, eased in and out);
+// tries = extra showings of a missed live prompt before it counts as done; accK = x the QB's throw error on drive 1 of the first game (never shown);
+// closeYd = a tackler this close (yd) brings up the forced run's move; tackleYd = the DIVE prompt's range; runHold = s of steering that finishes RUN;
+// deepX = the deep kickoff lands this share of the end zone deep (the KNEEL lesson); shortYd = until RUN is done, your returns land at least this far out (yd); debug = log every beat in the console
+// camps (v0.77 progression part 2, `// --- camps` in 14): r3Wait = s the third try waits before the camp does it for him; waitP = share of the pass's flight where a catch rep stops;
+// pocketT / autoThrowT = s after the snap a throw rep stops / the camp's QB lets it go; closeYd / hurdleYd = how near the tackler is when a run rep stops; skipMs = hold to skip;
+// b3Week = season 2's week the catch camp opens; b3Max = its in-game prompts a game; oneReach = yd past him a missed ball lands for the one-hander prompt; openYd = wide open
+const CAMP = { r3Wait: 1.4, waitP: 0.55, pocketT: 0.7, autoThrowT: 0.8, closeYd: 3.2, hurdleYd: [2.3, 3.5], snapS: 0.6, goS: 1.4, goMax: 4, skipMs: 1000, b3Week: 6, b3Max: 2, oneReach: [1.1, 2.6], openYd: 6,
+  reps: { 1: ['throw', 'bullet', 'jump', 'low'], 2: ['truck', 'stiff'], 3: ['hurdle', 'dive', 'rush'], 4: ['one', 'yac'] }, skip: { w: 230, h: 40 } };
+const FIELD_TUT = { slowK: 0.8, slowS: 0.35, tries: 2, accK: 0.6, closeYd: 4, tackleYd: 3.5, runHold: 0.3, deepX: 0.6, shortYd: 4, toastS: 4, fairYd: 8, diveYL: 2.5, tiredPlays: 7, debug: false,
+  runAsk: 2,   // (phase C) plays the "try a run" note shows before the snap while he keeps passing; then it waits in the reminder pool
+  remind: { bullet: 6, jump: 6, low: 6, spin: 5, juke: 5, truck: 5, stiff: 5, hurdle: 4, dive: 4, aud: 20, hot: 20, to: 6, out: 12 },   // (phase D) chances unused before its one reminder (out = plays after a timed-out lesson / the run note)
+  remGap: 3, throwPlays: 8, throwStuckS: 4,   // remGap = plays between two reminders; the throw reminder only in his first throwPlays plays, after a sack with no throw or throwStuckS s in the pocket with no drag
+  board: { w: 236, keysH: 84, cap: 46, gap: 10, behindYL: 11, gridX: 40, gridY: 30, topBand: 128, botBand: 70, touchCorner: 330, chkSteps: 54, pulse: 7, ringYd: 0.9 } };   // (phase B: the coach's board, one fixed screen spot per lesson; behindYL = first choice that far behind the QB; chkSteps = steps the green check stays)   // toastS = s the note after a NO on the defense card stays up
+
+// --- unlocks (v0.77 progression part 3: one table decides WHEN each off-field screen / button appears in a ROOKIE franchise)
+// id -> { y (franchise year, 1 = the first season), g (year-1 games played) | w (season week) | off (that year's offseason), ev (an event that pulls it forward:
+// unlEv(name) sets LEAGUE.unl.ev; no y = the event alone), opt (not needed for 'everything open'; an id = it opens silently once that one is open), card: [title, ONE line, demo k (POP_SCENE), more, coach tip, tip icon] or null (opens silently: it has its own tip / tour) }.
+// Order = the order cards show. State per franchise: LEAGUE.unl = { on: {id: 1}, ev: {}, y0 } (made by ftCareer for ROOKIE; none = everything open).
+// unlOn(id) = the ONE reader, used at every display site AND its click site. ONE card a home visit (unlWatch, from tourWatch); due ones queue for later visits.
+const UNLOCKS = {
+  sched:  { y: 1, g: 1, card: null },   // SCHEDULE, standings, credits box, the Post (the hiring card + home tour come with them)
+  roster: { y: 1, g: 1, card: ['NEW: ROSTER', 'Meet your players: stars and five skills.', 'uRoster', 'Open ROSTER on the home screen. Each card shows his stars and a five-point shape: one point per skill. A bigger shape is a better player. Moving players around opens up later in your career.', 'Stars sell tickets. Shapes win games.', 'pdHelmets'] },
+  upg:    { y: 2, w: 1, ev: 'upg', card: ['NEW: UPGRADES', 'Earned XP grows a player. Spend it here.', 'uUpg', 'Players earn XP in games. When the green arrow shows on ROSTER, open his card and pick a skill to raise. UPGRADE ALL spends every waiting upgrade at once. The gold stars show how high he can grow.', 'Grow the young ones first.', 'pdArrowUp'] },
+  goalsW: { y: 1, g: 2, card: ['NEW: WEEKLY GOALS', 'Hit goals each game for bonus credits.', 'uGoals', 'Before kickoff the matchup screen has a GOALS button: goals for this game. Each one you hit pays credits. They are in the pause menu too.', 'Credits buy everything. Chase them.', 'pdClip'] },
+  cond:   { y: 1, g: 2, card: ['NEW: CONDITION', 'Tired players play worse. Keep them fresh.', 'cond1', 'The TEAM panel now shows CONDITION. Every game wears your players down. Low condition shrinks ratings and brings injuries. Rest and light practice bring it back.', 'Fresh legs beat big names.', 'pdHourglass'] },
+  inj:    { ev: 'inj', opt: 'bench', card: ['NEW: INJURIES', 'Someone got hurt. Start his backup.', 'uInj', "Hurt players sit out for a few weeks. Open his backup's card on ROSTER and press PROMOTE to start him. The injury report after each game lists who is out.", 'Next man up. Always.', 'pdWhistle'] },
+  abil:   { y: 1, g: 3, card: null },   // abilities + STAR FACTORS on the card (its "?" popup explains them)
+  hc:     { y: 1, off: true, card: ['HEAD COACH!', 'The owner made it official. This team is yours.', 'uHc', 'No more interim tag. The owner liked your first season and hands you the team for good. This offseason is simple: keep or let go of expiring players, hire coordinators, then draft.', 'Build it your way now.', 'pdDoorSign'] },
+  retire: { ev: 'retire', opt: true, card: ['RETIREMENTS', 'Old players hang it up. Plan ahead.', 'uRetire', 'Every player has a career pencil. Each year wears it down. When it is a stub, he retires. Draft young players before it happens.', 'Draft his replacement a year early.', 'pdEraser'] },
+  trade:  { y: 2, w: 1, card: ['NEW: FRONT OFFICE', 'Trades are open. Swap players with any team.', 'uTrade', 'The FRONT OFFICE button is on the home screen. Inside: TRADES with every team in the league, your staff and hiring. Trades shut at the deadline.', 'Sell high on old stars.', 'pdSwap'] },
+  prac:   { y: 2, w: 2, card: ['NEW: PRACTICE', 'New on your home screen. Train smarter.', 'prac', 'Open PRACTICE on the home screen to run drills with a unit. Good drills grow players faster. Hard practice costs condition.', 'Practice smart, not long.', 'pdWhistle'] },
+  goalsY: { y: 2, w: 3, card: ['NEW: YEARLY GOALS', 'Five big goals for the whole season.', 'uGoals', 'The FRONT OFFICE has a YEARLY GOALS button: five season goals. Hit them for big rewards.', 'The owner is watching.', 'pdTrophy'] },
+  bench:  { y: 2, w: 4, card: ['NEW: DEPTH CHART', 'Choose who starts. Bench anyone.', 'uBench', "A player's card has BENCH and PROMOTE now. Bench a tired starter and the next man plays.", 'Rest a star before a big game.', 'pdMagnet'] },
+  drop:   { y: 2, w: 5, card: ['NEW: DROP', 'Cut a player to open a roster spot.', 'drop', "A player's card has DROP now. He goes to free agency and his pay leaves your cap. You need an open spot to sign someone.", 'Cut dead weight, not depth.', 'pdBin'] },
+  fa:     { y: 2, w: 6, card: ['NEW: FREE AGENTS', 'Sign unsigned players any week of the season.', 'sign', 'The FRONT OFFICE has FREE AGENTS now. You need an open roster spot and cap room. Good players go fast.', 'Cheap vets fill holes fast.', 'pdPen'] },
+  form:   { y: 2, w: 7, card: ['NEW: FORMATIONS', 'See your men lined up in every formation.', 'form', 'ROSTER can show FORMATION view: your players on the field in every set. Put a man on a spot, or press AUTO and the staff fills it.', 'Your best fit, not your best name.', 'pdBoard'] },
+  morale: { y: 2, w: 8, ev: 'morale', card: ['NEW: MORALE', 'Happy players play better. Wins help most.', 'morUD', 'The TEAM panel now shows MORALE. Wins, touchdowns and big plays raise it. Losses and turnovers drop it. High morale lifts every rating a little.', 'Winning fixes everything.', 'pdFlame'] },
+  fac:    { y: 2, w: 9, card: ['NEW: FACILITIES', 'New on your home screen. Build it up!', 'uRec', 'FACILITIES is on the home screen: six buildings to upgrade with credits. The Recovery Center gets players back faster, and you can hire trainers now.', 'Medical first. Always.', 'pdCrane'] },
+  book:   { y: 2, w: 10, card: ['NEW: PLAYBOOKS', 'Circle plays and your coordinator calls them more.', 'uBook', 'Open a coordinator in the FRONT OFFICE: PLAYBOOK is his binder. Circle plays he should call more. Coordinators learn traits too.', 'Circle what works for you.', 'pdPen'] },
+  scouts: { y: 2, w: 11, card: ['NEW: DRAFT BOARD', "Watch next year's rookies all season long.", 'scoutDraft', "The FRONT OFFICE has a DRAFT BOARD now: next year's class, ranked. Hire scouts and they report on the players you pick.", 'Scout the ones you love first.', 'pdBinoc'] },
+  battles:{ y: 2, w: 12, card: ['NEW: POSITION BATTLES', 'Two players fight for one job in practice.', 'uBattle', "PRACTICE has more tabs now: BATTLES, the weekly REPORT and the COACHES' OFFICE. The winner of a battle grows.", 'Let the kids compete.', 'pdFist'] },
+  deals:  { y: 2, w: 13, card: ['NEW: CONTRACTS', 'Negotiate deals with players and coaches.', 'contract', 'The FRONT OFFICE drawer has tabs now: STAFF, MY CONTRACT and PLAYER DEALS. NEGOTIATE extends a deal before it runs out.', 'Extend stars a year early.', 'pdEnvelope'] },
+  shop:   { y: 2, w: 14, card: ['NEW: XP SHOP', 'Spend banked XP on potential and upgrades.', 'xpHalf', "Banked XP buys more potential, a quick upgrade or a better ability on a player's card. TEAM UPGRADES on ROSTER buys roster spots.", 'Potential lasts. Spend it there.', 'pdPiggy'] },
+  league: { y: 2, w: 15, card: ['NEW: THE LEAGUE', "Look at any team's roster and coaching staff.", 'uRedact', "The ROSTER and FRONT OFFICE titles are menus now: pick any team. Scout another team's staff to see their secrets.", 'Know your rival.', 'pdBinoc'] },
+  hof:    { y: 2, w: 16, card: ['NEW: HALL OF FAME', 'Records, legends and trophies, all in one place.', 'uHof', 'ROSTER has a HALL OF FAME button. Inside are the RECORDS book and your TROPHY ROOM.', 'Break a record. Get a ring.', 'pdTrophy'] },
+  poach:  { y: 2, off: true, card: ['NEW: STAFF DEALS', 'Steal coaches. Keep yours from leaving.', 'uPoach', "Other teams can poach your coaches now, and you can poach theirs. Your staff's contracts run out too: extend the ones you want.", 'Pay the good ones early.', 'pdLetter'] },
+  extend: { y: 2, off: true, card: ['NEW: LONGER CAREERS', 'Buy an old star one more season.', 'uRetire', "An aging star's card can buy more years on his career pencil. It is not cheap.", 'Only for the great ones.', 'pdClip'] },
+};
+const UNL_FX = { secs: 3.5, rate: 3 };   // the unlocked button's flash: secs long, rate pulses a second (uiNow + menuMoving only while it runs)
+const UNL = { used: false, fx: null, fxT: 0 };   // runtime (never saved): used = this home visit already showed its card; fx = the id that flashes, fxT = when (uiNow)
+// unlLive = this franchise is still opening things up; everything is open for VETERAN, COACH NOTES off, old saves (no LEAGUE.unl), scrimmage, online, the tutorial
+function unlLive() { const U = LEAGUE && LEAGUE.unl; return !!(U && !U.all && season && !exhibition && !tut && !(typeof ONL !== 'undefined' && ONL.on) && !career.unlockAll && SETTINGS.coachNotes !== false && !SETTINGS.notesOff); }
+const unlOn = id => !unlLive() || !!LEAGUE.unl.on[id];
+const unlFO = () => unlOn('trade') || (unlOn('hc') && !!season && !!season.offseason);   // (the FRONT OFFICE button: with TRADES, or in the first offseason for STAFF & HIRING alone)
+const unlDrop = () => unlOn('drop') || !!(season && season.offseason);   // (DROP: always in the offseason, so a full roster never blocks a re-sign or the draft)
+const unlPromo = () => unlOn('inj') || unlOn('bench');   // (PROMOTE = start his backup: with the first injury)
+const unlYear = () => (LEAGUE.year || 1) - ((LEAGUE.unl && LEAGUE.unl.y0) || 1) + 1;   // (1 = the franchise's first season)
+const unlFirstOff = () => unlLive() && unlYear() === 1 && !!season && !!season.offseason;   // (the first offseason: simple, no free agency step, no job offers)
+const unlFresh = () => ({ on: {}, ev: {}, y0: LEAGUE.year || 1 });
+function unlEv(name) { const U = LEAGUE && LEAGUE.unl; if (U && !U.ev[name]) U.ev[name] = 1; }   // (an event happened: the unlocks waiting on it are due)
+function unlDue(id) {   // its time has come (or its event happened): shown at the next home visit with no card yet
+  const U = LEAGUE.unl, e = UNLOCKS[id]; if (!e || U.on[id]) return false;
+  if (e.ev && U.ev[e.ev]) return true;
+  if (e.y == null) return false;
+  const yr = (LEAGUE.year || 1) - (U.y0 || 1) + 1;
+  if (yr !== e.y) return yr > e.y;
+  if (!season) return false;
+  if (e.off) return !!season.offseason;
+  if (season.offseason) return true;
+  if (e.g != null) return unlGames() >= e.g;
+  return season.week >= e.w;
+}
+function unlGames() { return (LEAGUE.unl && LEAGUE.unl.gp) || 0; }   // (your games in this franchise so far: a new franchise steps in at the last week, so year 1 is one game plus any playoffs)
+function unlGameDone() { const U = LEAGUE && LEAGUE.unl; if (U && !exhibition) U.gp = (U.gp || 0) + 1; }   // (from seasonGameDone / poGameDone: played or simmed)
+function unlNext() { for (const id in UNLOCKS) if (unlDue(id)) return id; return null; }

@@ -62,7 +62,7 @@ function scoutClick(pt) {
     if (bonus) { LEAGUE.coins += bonus; payToFly += bonus; payFrom = [W / 2, H / 2]; } else LEAGUE.coins -= price;
     scoutUI.team = null; moveMode = false; offFinish(k); } }] });
 }
-const moveOk = k => k !== season.team && (!isPast(k) || !!(career.returnOk && career.returnOk[k]));   // (a team you left is closed unless it called)
+const moveOk = k => k !== season.team && (!isPast(k) || !!(career.returnOk && career.returnOk[k])) && !(OFF && OFF.shake && k !== OFF.shake);   // (a handshake: only that team)   // (a team you left is closed unless it called)
 let moveMode = false;   // the head coach page's MOVE TEAMS: the offers screen with every team open
 function jobOffersClick(pt) {
   if (scoutUI.team) { scoutClick(pt); return; }
@@ -71,6 +71,7 @@ function jobOffersClick(pt) {
   const b = PICK_BTNS.find(b => b.conf === pickConf && inBtn(pt, b));
   if (scoutUI.team) { scoutClick(pt); return; }
   if (b && b.key !== season.team) { scoutUI.team = b.key; return; }   // (any team can be looked at; taking the job is in the scouting report)
+  if (inBtn(pt, MENU_NEXT) && OFF && OFF.shake && !moveMode) { const k = OFF.shake, cr = offerOf(k); if (cr) { LEAGUE.coins += cr; payToFly += cr; payFrom = [W / 2, H / 2]; } offFinish(k); return; }   // (v0.78: the handshake is already signed)
   if (inBtn(pt, MENU_NEXT)) { if (moveMode) { moveMode = false; results.screen = 'staff'; } else if (conFired()) offPopShow({ title: 'YOU WERE FIRED', lines: ['Your old team let you go. Pick one of the teams on this screen.'] }); else if (!capBlocked()) offFinish(season.team); }
 }
 // HARD CAP: the new season can't start with a payroll over the cap: you have to drop players first (the ROSTER button on the popup)
@@ -240,6 +241,7 @@ function openResults() { choreFlush('openResults');
     if (condStart != null && condStart !== LEAGUE.condition) barAnims.cond = { from: condStart, t0: null };
   }
   results = { record, screen: 'result', fin: { blue: game.blue, red: game.red }, injAlert: !exhibition && SETTINGS.injuries && LEAGUE.injNotes.length ? [...LEAGUE.injNotes] : null };
+  if (results.injAlert && !noCount()) unlEv('inj');   // (v0.77: the first injury opens INJURIES)
   hsEndReel();   // (the game's best plays run behind the result screen)
   results.pay = null;   // (v0.69: no CREDITS EARNED screen after a game; the pay and goal credits are still in payToFly and fly into the box on the next screen with one)
   if (!exhibition && !tut && season) autosaveSoon(true);   // (every finished game autosaves to the franchise's slot; one without a slot yet gets the first free one)
@@ -438,7 +440,7 @@ function textBtn(b, label, ink = RES.line, size = 22, on = true) {
   UI_BTNS.push(b);
   const now = uiNow(), dt = uiDt(b.at, now);
   b.at = now;
-  const still = uiBehind() || (!!offPop && !popBtnDraw) || ((!!tour || tutPrompt === 'ask' || tutPrompt === 'coach' || tutPrompt === 'ready' || tutPrompt === 'setup' || !!(tut && tut.defAsk)) && !tourBtnDraw);
+  const still = uiBehind() || (!!offPop && !popBtnDraw) || ((!!tour || tutPrompt === 'ask' || tutPrompt === 'ft' || tutPrompt === 'coach' || tutPrompt === 'ready' || tutPrompt === 'setup' || tutPrompt === 'same' || !!(tut && tut.defAsk)) && !tourBtnDraw);
   const over = on && !still && hoverPt && inBtn(hoverPt, b);
   b.hov = (b.hov || 0) + ((over ? 1 : 0) - (b.hov || 0)) * Math.min(1, dt * 12);
   if (Math.abs((over ? 1 : 0) - b.hov) > 0.01) menuMoving = true;
@@ -696,7 +698,7 @@ function menuBtn(b, label, bg, size = 24, face, on = true) {
   UI_BTNS.push(b);
   const now = uiNow(), dt = uiDt(b.at, now);
   b.at = now; if (b === BACK_BTN || b === HOME_BACK) { backDrawn = now; backBtnNow = b; }
-  const still = uiBehind() || (!!offPop && !popBtnDraw) || (settingsPopUp() && !setPopDraw) || ((!!tour || tutPrompt === 'ask' || tutPrompt === 'coach' || tutPrompt === 'ready' || tutPrompt === 'setup' || !!(tut && tut.defAsk)) && !tourBtnDraw);   // (a popup or tutorial tip is up: the buttons behind it hold still)
+  const still = uiBehind() || (!!offPop && !popBtnDraw) || (settingsPopUp() && !setPopDraw) || ((!!tour || tutPrompt === 'ask' || tutPrompt === 'ft' || tutPrompt === 'coach' || tutPrompt === 'ready' || tutPrompt === 'setup' || tutPrompt === 'same' || !!(tut && tut.defAsk)) && !tourBtnDraw);   // (a popup or tutorial tip is up: the buttons behind it hold still)
   const over = on && !still && hoverPt && inBtn(hoverPt, b);
   b.hov = (b.hov || 0) + ((over ? 1 : 0) - (b.hov || 0)) * Math.min(1, dt * 12);
   if (Math.abs((over ? 1 : 0) - b.hov) > 0.01) menuMoving = true;   // (v0.55: still easing: the menu keeps painting)
@@ -831,19 +833,19 @@ const BTN_LABEL_MAT = {   // label (newlines read as spaces, ▸ and "(n)" dropp
   '< PREV': BM('clip'), 'NEXT >': BM('clip'), '◂': BM('clip'), '▸': BM('clip'), '▲': BM('clip'), '▼': BM('clip'), '-': BM('clip'), '+': BM('clip'),
   'BENCH': BM('folder'), 'BENCHED': BM('folder'), 'PROMOTE': BM('card', null, 'ok'), 'DROP': BM('card', null, 'danger'), 'TRADE': BM('carbon', 'btnSwap'), '+1': BM('card', null, 'gold'), 'HIT': BM('stamp'),
 };
-const BTN_OBJ_MAT = { gear: BM('index'), next: BM('clip', 'btnArrow'), clip: BM('clip'), trash: BM('redpen'), slot: BM('folder'), fo: BM('folder', 'btnFolder'), leave: BM('redpen', 'btnX'), cal: BM('calendar'), ball: BM('paperball') };
+const BTN_OBJ_MAT = { gear: BM('index'), next: BM('clip', 'btnArrow'), clip: BM('clip'), trash: BM('redpen'), slot: BM('folder'), fo: BM('folder', 'btnFolder'), leave: BM('redpen', 'btnX'), cal: BM('calendar'), ball: BM('paperball'), hitRed: BM('stampRed', null, 'danger') };
 const BTN_MAT_CACHE = new Map();
 function btnMatOf(b, label) {
   if (b.mat !== undefined) return b.mat;
   if (b === START_BTNS.diff || b === HOME_BTNS[0]) return BTN_OBJ_MAT.gear;   // (the settings gear: an index card, the gear spins)
   if (b === HOME_BTNS[1]) return BTN_OBJ_MAT.fo;                              // (FRONT OFFICE: the folder family, like the filing drawer inside it)
-  if (b === MENU_NEXT && results && results.screen === 'home' && season) return BTN_OBJ_MAT.cal;   // (v0.66: home's CONTINUE / PLAYOFFS / OFFSEASON...: the desk calendar)
+  if (b === MENU_NEXT && results && results.screen === 'home' && season) return label.startsWith('PRACTICE') ? BTN_LABEL_MAT.PRACTICE : BTN_OBJ_MAT.cal;   // (a camp waiting: the PRACTICE playbook)   // (v0.66: home's CONTINUE / PLAYOFFS / OFFSEASON...: the desk calendar)
   if (b === MENU_NEXT && results && results.screen === 'matchup' && /^(PLAY|RESUME)/.test(label)) return BTN_OBJ_MAT.ball;   // (v0.66: the paper football)
   if (b === MENU_NEXT) return label.startsWith('CONTINUE') && !/[▸►]/.test(label) ? BTN_OBJ_MAT.next : BTN_OBJ_MAT.clip;
   if (SLOT_TRASH.includes(b)) return BTN_OBJ_MAT.trash;
   if (SLOT_BTNS.includes(b)) return BTN_OBJ_MAT.slot;
   if (b === LEAVE_YES) return BTN_OBJ_MAT.leave;
-  if (b === CARD_HIT_BTN) return label === 'CLOSE' ? BTN_LABEL_MAT.CLOSE : BTN_LABEL_MAT.HIT;   // (HIT +0.5 etc.: the label carries a number)                              // (ARE YOU SURE?: leaving = the red pen + X, STAY = the green stamp; the online result's LEAVE keeps its label look)
+  if (b === CARD_HIT_BTN) return label === 'CLOSE' ? BTN_LABEL_MAT.CLOSE : label.startsWith('HIT -') ? BTN_OBJ_MAT.hitRed : BTN_LABEL_MAT.HIT;   // (HIT +0.5 etc.: the label carries a number)                              // (ARE YOU SURE?: leaving = the red pen + X, STAY = the green stamp; the online result's LEAVE keeps its label look)
   if (!label) return null;
   if (label === '▸' || label === '►') return BTN_LABEL_MAT['◂'];   // (a lone arrow: the ▸ would be stripped below)
   let m = BTN_MAT_CACHE.get(label);
@@ -1012,6 +1014,10 @@ const BTN_KIND = {
     body(b, m, paper) { bmFill(bmTorn, b, paper); if (paper !== '#fffdf4' && paper !== '#fff3a0') bmSheen(bmTorn, b); },
     snd: v => sndRec('tap', 0.6 * v) },
 };
+// the HIT button when his net hit is negative: the same stamp in red ink (its own kind, so the red is baked into its own sprite)
+BTN_KIND.stampRed = { ...BTN_KIND.stamp, ink: BTN_JOB.danger,
+  body(b) { bmFill(bmTorn, b, '#fffdf4'); ctx.strokeStyle = 'rgba(192,57,43,0.8)'; ctx.lineWidth = 2.2; ctx.strokeRect(b.x + 7, b.y + 7, b.w - 14, b.h - 14); ctx.lineWidth = 1; ctx.strokeRect(b.x + 10, b.y + 10, b.w - 20, b.h - 20); },
+  fx(st, b) { if (st.d > 0.04) bmStampText('HIT', b.x + b.w / 2, b.y + b.h / 2, BTN_JOB.danger, 1.3 - 0.3 * st.d, Math.min(1, st.d * 1.4), -0.14); } };
 // new doodle icons for the buttons (unit space, the in-game icons' pencil kit)
 Object.assign(DOODLE, {
   btnFootball(ic) { ddShape(ddEll(0, 0, 0.95, 0.56, 16), ic.c || '#8b4a1f'); ddLine([[-0.36, 0], [0.36, 0]], '#ffffff', 0.09); for (const x of [-0.2, 0, 0.2]) ddLine([[x, -0.13], [x, 0.13]], '#ffffff', 0.07); for (const x of [-0.62, 0.62]) ddLine([[x, -0.4], [x, 0.4]], '#ffffff', 0.08); },
@@ -1405,7 +1411,7 @@ function coinGo(xp) {
 }
 const xpcBoxSeen = () => !!coinAt && typeof spendFrame === 'number' && spendFrame - coinAt.frame <= 2;   // (a credits box was drawn on this page)
 function xpcBoxClick(pt) {   // a click on the box: credits <-> XP bank
-  if (!xpcOn() || !xpcBoxSeen() || !inBtn(pt, { x: coinAt.bx, y: coinAt.by, w: 130, h: 58 })) return false;
+  if (!xpcOn() || !xpcBoxSeen() || (results && results.screen === 'home' && !unlOn('sched')) || !inBtn(pt, { x: coinAt.bx, y: coinAt.by, w: 130, h: 58 })) return false;
   xpcBox.back = null; xpcFlip(!xpcBox.xp);
   return true;
 }
@@ -1815,7 +1821,7 @@ function drawPayOverlay() {
 function drawMenus() {
   ({ start: drawStart, franchise: drawCareer, qsetup: drawQs, result: drawResults, pgx: drawPgx, home: drawHome, matchup: drawMatchup, roster: drawRoster, staff: drawStaff, playoffs: drawPlayoffs,
      awards: drawAwards, pbowl: drawPbowl, resign: drawResign, draft: drawDraft, fa: drawFA, offers: drawOffers, trade: drawTrade, tradeb: drawTradeB, toffers: drawTOffers,
-     exhibition: () => drawMatchup(true), exstats: drawExStats, hof: drawHof, trophy: drawTrophyRoom, scrap: drawScrap, post: drawPost, pawards: drawPAwards, dboard: drawDBoard, book: drawBook, records: drawRecords, league: drawLeague, chof: drawCoachHof, practice: drawPractice, hire: drawHire, board: drawBoard, test: drawTest, onevone: drawOneVOne, oopick: drawOvPick, anims: drawAnims, coach: drawCoachEd, online: drawOnline, onresult: drawOnResult })[results.screen]();
+     exhibition: () => drawMatchup(true), exstats: drawExStats, hof: drawHof, trophy: drawTrophyRoom, scrap: drawScrap, post: drawPost, pawards: drawPAwards, dboard: drawDBoard, book: drawBook, jobs: drawJobs, records: drawRecords, league: drawLeague, chof: drawCoachHof, practice: drawPractice, hire: drawHire, board: drawBoard, test: drawTest, onevone: drawOneVOne, oopick: drawOvPick, anims: drawAnims, coach: drawCoachEd, online: drawOnline, onresult: drawOnResult })[results.screen]();
   if (teamPick) drawTeamPicker();
   drawTutPrompt();
   tourWatch(); drawTour();
@@ -2686,8 +2692,9 @@ function drawHome() {
   const T = seasonTable(), me = season.team, wk = season.week;
   paperBg();
   menuBtn(HOME_BTNS[0], "", '#8b8e90', HOME_FS, gearIcon);   // settings
-  if (postOn()) postHomeBtn(HOME_POST);
-  coinBox(HOME_COIN.x, HOME_COIN.y, LEAGUE.coins, RES.bright);
+  const sch = unlOn('sched');   // (v0.77: the day-one home screen has no schedule, standings, Post or credits box: they open after game 1)
+  if (postOn() && sch) postHomeBtn(HOME_POST);
+  if (sch) coinBox(HOME_COIN.x, HOME_COIN.y, LEAGUE.coins, RES.bright);
   resPanel(1150, 22, 110, 42, [], RES.bright);
   ctx.fillStyle = RES.line; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(`${nflYear()}`, 1205, 44);   // (click the box: coaching year <-> calendar year)
@@ -2705,7 +2712,7 @@ function drawHome() {
   noTape = true;   // (the home panels go without the tape strips: less clutter)
 
   // the schedule: a vertical, scrollable list down the left side (a played game shows its result and a W / L / T coloured dot)
-  const SB = SCHED_BOX;
+  if (sch) { const SB = SCHED_BOX;
   thinPanel(SB.x, SB.y, SB.w, SB.h);
   schedMap(SB);
   const done = wk > SEASON_WEEKS, cur = done ? SEASON_WEEKS : wk;
@@ -2763,11 +2770,12 @@ function drawHome() {
   const thumbY = B.y + (B.h - thumbH) * (schedMax() ? SCHED.scroll / schedMax() : 0);
   ctx.fillStyle = 'rgba(34,48,90,0.18)'; ctx.fillRect(B.x, B.y, B.w, B.h);
   ctx.fillStyle = RES.line; ctx.fillRect(B.x, thumbY, B.w, thumbH);
+  }
 
   // standings: your division, or (click the panel) your conference's playoff seeding
   const P = STANDINGS_PANEL, conf = NFL[me].conf.slice(0, 3);
   ctx.textBaseline = 'middle';
-  { const div = NFL[me].conf, title = showSeeds ? `${conf} SEEDS` : div, ry = openSection(P.x, P.y, P.w, title);   // (open section: title + a dim toggle beside it, W L T headings on the title row; the whole section is the click target)
+  if (sch) { const div = NFL[me].conf, title = showSeeds ? `${conf} SEEDS` : div, ry = openSection(P.x, P.y, P.w, title);   // (open section: title + a dim toggle beside it, W L T headings on the title row; the whole section is the click target)
     ctx.font = 'bold 22px monospace'; const tw = ctx.measureText(title).width;
     ctx.fillStyle = RES.dim; ctx.font = 'bold 16px monospace'; ctx.textAlign = 'left'; ctx.fillText(showSeeds ? 'DIVISION ›' : 'SEEDS ›', P.x + tw + 18, P.y + 13);
     ctx.fillStyle = RES.line; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'center';
@@ -2833,32 +2841,28 @@ function drawHome() {
     const ry = i => Tm.y + 62 + i * 44;
     ink(); ctx.fillText('OFFENSE', Tm.x + 6, ry(0)); starRow(Tm.x + 250, ry(0), LEAGUE.offense, offStarFill(), 12, offStarRim());
     ink(); ctx.fillText('DEFENSE', Tm.x + 6, ry(1)); starRow(Tm.x + 250, ry(1), LEAGUE.defense, defStarFill(), 12, defStarRim());
-    ink(); ctx.fillText('CONDITION', Tm.x + 6, ry(2)); pencilBar(Tm.x + 168, ry(2) - 13, 200, 26, cnd / 100, condTone(cnd), 10, 5);
-    ink(toneInk(cnd)); ctx.fillText(`${Math.round(cnd)}%`, Tm.x + 384, ry(2));
-    ink(); ctx.fillText('MORALE', Tm.x + 6, ry(3)); ink(toneInk(LEAGUE.morale)); ctx.fillText(`${LEAGUE.morale}%`, Tm.x + 168, ry(3)); drawFace(Tm.x + 246, ry(3) - 1, 12, '#ffd23a', LEAGUE.morale); moraleGauge(Tm.x + 272, ry(3) - 9, 96, 18, LEAGUE.morale);
+    if (unlOn('cond')) { ink(); ctx.fillText('CONDITION', Tm.x + 6, ry(2)); pencilBar(Tm.x + 168, ry(2) - 13, 200, 26, cnd / 100, condTone(cnd), 10, 5);
+    ink(toneInk(cnd)); ctx.fillText(`${Math.round(cnd)}%`, Tm.x + 384, ry(2)); unlFlash({ x: Tm.x, y: ry(2) - 18, w: Tm.w, h: 36 }, 'cond'); }
+    if (unlOn('morale')) { ink(); ctx.fillText('MORALE', Tm.x + 6, ry(3)); ink(toneInk(LEAGUE.morale)); ctx.fillText(`${LEAGUE.morale}%`, Tm.x + 168, ry(3)); drawFace(Tm.x + 246, ry(3) - 1, 12, '#ffd23a', LEAGUE.morale); moraleGauge(Tm.x + 272, ry(3) - 9, 96, 18, LEAGUE.morale); unlFlash({ x: Tm.x, y: ry(3) - 18, w: Tm.w, h: 36 }, 'morale'); }
     ctx.fillStyle = RES.line; ctx.textAlign = 'center';
   }
-  if (season && !exhibition) { drawHelpIcon(HOME_HELP.off); }   // what each side is missing; what condition / morale do
-  drawHomeAwards();
+  if (season && !exhibition && unlOn('cond')) { drawHelpIcon(HOME_HELP.off); }   // what each side is missing; what condition / morale do
+  if (sch) drawHomeAwards();
   noTape = false;
 
   // menu buttons: one row along the bottom, evenly spaced, one font size
   menuBtn(HOME_BACK, '', RES.bright, HOME_FS, backArrow);   // back to the start screen
-  menuBtn(HOME_BTNS[1], 'FRONT\nOFFICE', RES.bright, HOME_FS);
+  homeRow();   // (v0.77: only the opened buttons, centred between BACK and the green button; hidden ones sit off screen = not clickable)
+  if (unlFO()) { menuBtn(HOME_BTNS[1], 'FRONT\nOFFICE', RES.bright, HOME_FS); unlFlash(HOME_BTNS[1], 'trade');
   if (season && !exhibition) redDot(HOME_BTNS[1], offersNew());   // (unread trade offers)
   if (season && !exhibition && ['oc', 'dc'].some(r => { const c = (STAFF[MATCH.you] || {})[r]; return c && ((c.stars >= 5 && !c.trait2) || traitUpReady(c)); })) upgArrow(HOME_BTNS[1].x + HOME_BTNS[1].w - 38, HOME_BTNS[1].y + 3);   // (a coordinator can upgrade / add a trait)
-  menuBtn(HOME_BTNS[2], 'ROSTER', RES.bright, HOME_FS);
-  if (upgTotal(season.team) > 0) upgArrow(HOME_BTNS[2].x + HOME_BTNS[2].w - 38, HOME_BTNS[2].y + 3);   // (an upgrade is ready)
-  if (facOn()) {   // (unlocked after the first offseason; flashes in right after the popup)
-    const fl = facFlashAt ? (performance.now() - facFlashAt) / 1000 : 99, on = fl < FAC_FLASH.secs;
-    ctx.save(); if (on) ctx.globalAlpha = fl < 0.25 ? fl / 0.25 : 1;
-    menuBtn(HOME_BTNS[3], 'FACILITIES', RES.bright, HOME_FS);
-    menuBtn(HOME_PRAC, 'PRACTICE', RES.bright, HOME_FS);
-    ctx.restore();
-    if (on) { const k = 0.5 + 0.5 * Math.sin(fl * FAC_FLASH.rate * Math.PI * 2); ctx.save(); ctx.strokeStyle = `rgba(232,182,28,${0.35 + 0.65 * k})`; ctx.lineWidth = 4 + 4 * k; [HOME_BTNS[3], HOME_PRAC].forEach(b => ctx.strokeRect(b.x - 6, b.y - 6, b.w + 12, b.h + 12)); ctx.restore(); }
-  } else if (pracShown()) menuBtn(HOME_BTNS[3], 'PRACTICE', RES.bright, HOME_FS);   // (before the first offseason: the facilities are still locked, practice is open)
+  }
+  if (unlOn('roster')) { menuBtn(HOME_BTNS[2], 'ROSTER', RES.bright, HOME_FS); unlFlash(HOME_BTNS[2], 'roster');
+  if (unlOn('upg') && upgTotal(season.team) > 0) upgArrow(HOME_BTNS[2].x + HOME_BTNS[2].w - 38, HOME_BTNS[2].y + 3); }   // (an upgrade is ready)
+  if (facOn()) { menuBtn(HOME_BTNS[3], 'FACILITIES', RES.bright, HOME_FS); unlFlash(HOME_BTNS[3], 'fac'); }
+  if (pracShown()) { menuBtn(HOME_PRAC, 'PRACTICE', RES.bright, HOME_FS); unlFlash(HOME_PRAC, 'prac'); }
   // (no upgrade arrow next to PRACTICE, ever: practice news waits inside the screen)   // (news from practice: a battle, an injury, a new mentor pairing)
-  menuBtn(MENU_NEXT, season.offseason ? (offHomeStage() === 'resign' ? 'RE-SIGN ▸' : offHomeStage() === 'fa' ? 'FREE\nAGENCY ▸' : 'OFFSEASON ▸') : wk > SEASON_WEEKS ? 'PLAYOFFS ▸' : 'CONTINUE ▸', IN_GAME_PAPER.green, HOME_FS);
+  menuBtn(MENU_NEXT, season.offseason ? (offHomeStage() === 'resign' ? 'RE-SIGN ▸' : offHomeStage() === 'fa' ? (unlFirstOff() ? 'DRAFT ▸' : 'FREE\nAGENCY ▸') : 'OFFSEASON ▸') : campDue() ? 'PRACTICE ▸' : wk > SEASON_WEEKS ? 'PLAYOFFS ▸' : 'CONTINUE ▸', IN_GAME_PAPER.green, HOME_FS);
   if (homeLeave) {   // ARE YOU SURE? before leaving the franchise for the main menu
     ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
     resPanel(340, 200, 600, 300, [['ARE YOU SURE?', null]], RES.bright);
@@ -2886,7 +2890,16 @@ const HOME_FS = 22;   // one font size for every home button
 const HOME_BTNS = [{ x: 20, y: 14, w: 76, h: 66 }, { x: 132, y: 620, w: 209, h: 80 }, { x: 359, y: 620, w: 209, h: 80 },
                    { x: 586, y: 620, w: 209, h: 80 }];
 const HOME_PRAC = { x: 813, y: 620, w: 209, h: 80 };   // home screen: PRACTICE (beside FACILITIES; opens the practice load screen)
-const pracBtn = () => facOn() ? HOME_PRAC : HOME_BTNS[3];   // (the PRACTICE button: beside FACILITIES, or in its slot while that is locked)
+const pracBtn = () => HOME_PRAC;   // (v0.77: the row recentres, so PRACTICE keeps its own object)
+const HOME_ROW = { c: 586, w: 209, gap: 18, off: -9999 };   // the middle of the bottom row (between BACK and the green button): its centre, button width and gap
+function homeRow() {   // lay out the opened middle buttons, centred; locked ones go off screen (never drawn, never hit)
+  const list = [], all = [HOME_BTNS[1], HOME_BTNS[2], HOME_BTNS[3], HOME_PRAC], R = HOME_ROW;
+  if (unlFO()) list.push(HOME_BTNS[1]); if (unlOn('roster')) list.push(HOME_BTNS[2]); if (facOn() && !exhibition) list.push(HOME_BTNS[3]); if (pracShown()) list.push(HOME_PRAC);
+  for (const b of all) b.x = R.off;
+  const tot = list.length * R.w + Math.max(0, list.length - 1) * R.gap;
+  list.forEach((b, i) => { b.x = Math.round(R.c - tot / 2 + i * (R.w + R.gap)); });
+  return list;
+}
 const HOME_BACK = { x: 30, y: 620, w: 84, h: 80 };
 
 // ROSTER (from home): OFFENSE / DEFENSE tabs (like the AFC / NFC swap screen), a player card for each named player;
@@ -3079,7 +3092,7 @@ function moraleShift(s, d) {   // one of your players' morale moves by d (0-100)
   s.morale = Math.max(MORALE.lo, Math.min(MORALE.hi, moraleRaw(s) + d));
   moraleSync();
 }
-function moraleShiftAll(d) { if (moraleOn()) { for (const s of ROSTER[MATCH.you] || []) s.morale = Math.max(MORALE.lo, Math.min(MORALE.hi, moraleRaw(s) + d)); moraleSync(); } }   // (a team-wide event: the Post, the front office)
+function moraleShiftAll(d) { if (moraleOn()) { unlEv('morale'); for (const s of ROSTER[MATCH.you] || []) s.morale = Math.max(MORALE.lo, Math.min(MORALE.hi, moraleRaw(s) + d)); moraleSync(); } }   // (a team-wide event: the Post, the front office)
 // an on-field event: p = the player it happened to (field player); the scorer / QB also moves the rest of the team
 function moraleEvent(p, ev) {
   const s = p && p.src;
@@ -3103,6 +3116,7 @@ function moraleAfterGame(margin) {   // the game's over: a win lifts everyone wh
   if (!moraleOn()) return;
   const T = MORALE_TEAM, was = LEAGUE.morale, big = Math.abs(margin) >= T.blowoutBy ? T.blowout : 0;
   LEAGUE.mStreak = margin > 0 ? (LEAGUE.mStreak || 0) + 1 : 0;
+  if (big || LEAGUE.mStreak >= T.streakAt) unlEv('morale');   // (v0.77: the first team morale event opens MORALE early)
   let d = margin > 0 ? MORALE.ev.win + big + (LEAGUE.mStreak >= T.streakAt ? T.streak : 0) : margin < 0 ? MORALE.ev.loss - big : 0;
   if (margin < 0) {   // staff traits after a loss: Silver Lining (halved / none if close), Fire Starter II (a small lift)
     const sl = stT('Silver Lining'); if (sl >= 3 && -margin <= TRAIT_BY['Silver Lining'].close) d = 0; else if (sl >= 2) d *= TRAIT_BY['Silver Lining'].v[1];
@@ -3135,14 +3149,13 @@ function attrHit(p) {
   const rows = [], atC = {}, atI = {};
   for (const k of ATTRS[grp]) {
     const b = at0[k]; if (typeof b !== 'number') continue;
-    atC[k] = Math.min(COND_EDGE.cap, b + cs) * condM; atI[k] = atC[k] * hurtM;
-    rows.push({ k, base: b, fatigue: atC[k] - b, injury: atI[k] - atC[k], morale: atI[k] * mm - atI[k], final: atI[k] * mm });
+    atC[k] = hitCap(b, hitCap(b, b + cs) * condM); atI[k] = hitCap(b, atC[k] * hurtM); const fin = hitCap(b, atI[k] * mm);
+    rows.push({ k, base: b, fatigue: atC[k] - b, injury: atI[k] - atC[k], morale: fin - atI[k], final: fin });
   }
-  const wear = s && WEAR_MAP.has(s) ? WEAR_MAP.get(s) : 0, topAt = at => { const v = { grp, at, team: 'off' }; const a = absTop(v); return a != null ? a : WR_TOP * rm(v, 'spd', 'speed'); };
-  const sp = (at, w) => effTop({ grp, at, team: 'off', stam: 1, slow: 0, fatigue: 0, wear: w }, topAt(at)) / YD;
-  if (atI.spd != null) {
-    const t0 = sp(at0, 0), t1 = sp({ ...at0, ...atC }, wear), t2 = sp({ ...at0, ...atI }, wear) * (s && on && isLimited(s) ? RECOVERY.limited.speed : 1);
-    rows.push({ k: 'top', base: t0, fatigue: t1 - t0, injury: t2 - t1, morale: t2 * mm - t2, final: t2 * mm, unit: 'yd/s' });
+  const topAt = at => { const v = { grp, at, team: 'off' }; const a = absTop(v); return a != null ? a : WR_TOP * rm(v, 'spd', 'speed'); };
+  if (atI.spd != null) {   // (top speed = the SPEED attribute only: no condition / injury / morale hit, so the row stays flat)
+    const t0 = effTop({ grp, at: at0, team: 'off', stam: 1, slow: 0, fatigue: 0, wear: 0 }, topAt(at0)) / YD;
+    rows.push({ k: 'top', base: t0, fatigue: 0, injury: 0, morale: 0, final: t0, unit: 'yd/s' });
   }
   rows.s = s || p;
   return rows;
@@ -3383,7 +3396,7 @@ function drawRoster() {
   if (rosterView.sel != null) return drawPlayerPage(team, ps[rosterView.sel], kr);
   const poR = season && season.lastPO != null ? PO_ROUNDS[season.lastPO] : null, wkStats = rosterView.statsOnly ? (poR ? `${poR} STATS` : `WEEK ${season && season.last ? season.last : gamesPlayed()} STATS`) : null;   // (the post-game stats list: titled by the game, not the team)
   const title = wkStats || (dcg ? 'DEPTH CHART' : `${NFL[team].city.toUpperCase()} ROSTER`);
-  if (dcg && !wkStats) {   // (the in-game depth chart: a plain title, your team only; the roster screen's title is a button that looks at any team)
+  if ((dcg || !unlOn('league')) && !wkStats) {   // (v0.77: also before THE LEAGUE opens) (the in-game depth chart: a plain title, your team only; the roster screen's title is a button that looks at any team)
     const b = ROSTER_TITLE_BTN;
     ctx.fillStyle = RES.line; ctx.font = 'bold 38px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(title, b.x + b.w / 2, b.y + b.h / 2);
     drawLogo(team, b.x + 40, b.y + b.h / 2, 46); drawLogo(team, b.x + b.w - 40, b.y + b.h / 2, 46);
@@ -3397,11 +3410,11 @@ function drawRoster() {
   if (rosterView.side !== 'upg') {   // (the upgrades list shows both sides together: no tabs) left = OFFENSE / DEFENSE toggle, right = FORMATION / SIMPLE view (defense: simple only)
     menuBtn(ROSTER_TABS.off, rosterView.side === 'off' ? 'OFFENSE' : 'DEFENSE', dcg ? CARD_GRAY : SEL, 26, undefined, !dcg);
     const canForm = rosterView.side === 'off' && !rosterView.statsOnly && !(dcg && dcg.st);
-    menuBtn(ROSTER_VIEW_TAB, canForm && rosterUI.view === 'form' ? 'FORMATION' : 'SIMPLE', RES.bright, 22, undefined, canForm);
+    if (unlOn('form')) { menuBtn(ROSTER_VIEW_TAB, canForm && rosterUI.view === 'form' ? 'FORMATION' : 'SIMPLE', RES.bright, 22, undefined, canForm); unlFlash(ROSTER_VIEW_TAB, 'form'); }
     const tipUnder = (b, s) => { ctx.font = 'bold 12px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(s, b.x + b.w / 2, b.y + b.h + 10); };   // (what a click on the toggle brings up)
     const verb = TOUCH ? 'tap' : 'click';
     if (!dcg) tipUnder(ROSTER_TABS.off, `${verb} for ${rosterView.side === 'off' ? 'defense' : 'offense'}`);
-    if (canForm) tipUnder(ROSTER_VIEW_TAB, `${verb} for ${rosterUI.view === 'form' ? 'simple' : 'formation'}`);
+    if (canForm && unlOn('form')) tipUnder(ROSTER_VIEW_TAB, `${verb} for ${rosterUI.view === 'form' ? 'simple' : 'formation'}`);
   }
   if (team === MATCH.you && xpcOn() && !dcg) coinBox(ROSTER_COIN.x, ROSTER_COIN.y, LEAGUE.coins, RES.bright);   // (credits / XP bank, top right)
   const starting = dcg && dcg.field ? dcg.field : startersOf(team);   // (in-game depth chart: the men on the field this play)
@@ -3422,15 +3435,15 @@ function drawRoster() {
     drawPage(buy.slide.from, -sg * W * e); drawPage(buy.slide.to, sg * W * (1 - e));
   } else drawPage(pg, 0);
   if (upgView && !ps.length) { ctx.font = 'bold 26px monospace'; ctx.fillStyle = RES.dim; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('NO UPGRADES AVAILABLE', W / 2, 340); }
-  if (!rosterView.statsOnly && (nUpg > 0 || (upgView && team === MATCH.you))) menuBtn(UPG_BTN, upgView ? 'BACK TO\nROSTER' : `${nUpg} UPGRADE${nUpg === 1 ? '' : 'S'}`, '#7fd48f', upgView ? 22 : 21);
-  if (!rosterView.statsOnly && team === MATCH.you && upgView && nUpg > 0) menuBtn(UPG_ALL_BTN, 'UPGRADE\nALL', '#7fd48f', 16);
+  if (!rosterView.statsOnly && unlOn('upg') && (nUpg > 0 || (upgView && team === MATCH.you))) menuBtn(UPG_BTN, upgView ? 'BACK TO\nROSTER' : `${nUpg} UPGRADE${nUpg === 1 ? '' : 'S'}`, '#7fd48f', upgView ? 22 : 21);
+  if (!rosterView.statsOnly && unlOn('upg') && team === MATCH.you && upgView && nUpg > 0) menuBtn(UPG_ALL_BTN, 'UPGRADE\nALL', '#7fd48f', 16);
   ROSTER_ARROWS.forEach((b, i) => menuBtn(b, i ? '▸' : '◂', RES.bright, 30));   // (formation view: they flip formation / special-teams pages)
   const autoOn = rosterAutoOn(team);   // (AUTO = a small overlay in the view's bottom left, like the zoom / pan hint)
-  if (autoOn) menuBtn(FV_AUTO_BTN, FVS.autoDD ? 'AUTO ▴' : 'AUTO ▾', FVS.autoDD ? SEL : RES.bright, formView() ? 16 : 22);
-  if (!dcg && !rosterView.statsOnly) drawCapBar(team, 150, 636, 480, [], true);   // (the salary cap, bottom left beside BACK)
+  if (autoOn) menuBtn(FV_AUTO_BTN, rosterAutoList() ? 'AUTO' : FVS.autoDD ? 'AUTO ▴' : 'AUTO ▾', FVS.autoDD ? SEL : RES.bright, formView() ? 16 : 22);
+  if (!dcg && !rosterView.statsOnly && unlOn('drop')) drawCapBar(team, 150, 636, 480, [], true);   // (the salary cap, bottom left beside BACK)
   if (!dcg && !rosterView.statsOnly) {   // bottom right: TEAM UPGRADES (yours) and the HALL OF FAME
-    if (team === MATCH.you && season && !exhibition) menuBtn(BUY_SPOT_BTN, 'TEAM\nUPGRADES', RES.bright, 20);
-    menuBtn(HOF_ROSTER_BTN, 'HALL OF\nFAME', '#2b2b2b', 22);
+    if (team === MATCH.you && season && !exhibition && unlOn('shop')) { menuBtn(BUY_SPOT_BTN, 'TEAM\nUPGRADES', RES.bright, 20); unlFlash(BUY_SPOT_BTN, 'shop'); }
+    if (unlOn('hof')) { menuBtn(HOF_ROSTER_BTN, 'HALL OF\nFAME', '#2b2b2b', 22); unlFlash(HOF_ROSTER_BTN, 'hof'); }
   }
   menuBtn(BACK_BTN, '', RES.bright, 22, backArrow);
   if (formView()) fvOverlay(team);   // (the page quick-pick list, over everything)
@@ -3659,7 +3672,9 @@ const FV_AUTO_BTN = { x: FV.box.x + 10, y: FV.box.y + FV.box.h - 44, w: 110, h: 
 const FV_AUTO_B = [{}, {}];
 const FV_AUTO_SPOTS = { form: { ...FV_AUTO_BTN }, simple: { x: 1050, y: 632, w: 200, h: 68 }, list: { x: 960, y: 20, w: 140, h: 44 } };   // list = the roster's defense list (top, beside the credits box; its menu opens downward)   // formation view = the overlay; the in-game depth chart's simple list = bottom right
 // AUTO: your team, formation view (roster or depth chart) or the depth chart's simple list (never the roster's simple list); it also moves the button to that view's spot
-const rosterAutoOn = team => { const fv = formView(), dl = !fv && !dcg && rosterView.side === 'def'; Object.assign(FV_AUTO_BTN, fv ? FV_AUTO_SPOTS.form : dl ? FV_AUTO_SPOTS.list : FV_AUTO_SPOTS.simple); return depthOwn(team) && !rosterView.statsOnly && rosterView.side !== 'upg' && (fv || !!dcg || dl); };   // (v0.51: the defense list too: AUTO ALL re-sorts every group)
+const rosterAutoOn = team => unlOn('form') && rosterAutoOn0(team);   // (v0.77: AUTO opens with the FORMATION view)
+const rosterAutoOn0 = team => { const fv = formView(), dl = !fv && !dcg && (rosterView.side === 'def' || rosterView.side === 'off'); Object.assign(FV_AUTO_BTN, fv ? FV_AUTO_SPOTS.form : dl ? FV_AUTO_SPOTS.list : FV_AUTO_SPOTS.simple); return depthOwn(team) && !rosterView.statsOnly && rosterView.side !== 'upg' && (fv || !!dcg || dl); };   // (the offense / defense lists too: AUTO ALL at once, no menu)
+const rosterAutoList = () => !formView() && !dcg && (rosterView.side === 'def' || rosterView.side === 'off');   // (the simple lists: AUTO = AUTO ALL straight away)
 const fvAutoItems = () => ['AUTO THIS PAGE', 'AUTO ALL'].map((label, i) => ({ i, label, b: Object.assign(FV_AUTO_B[i], { x: FV_AUTO_BTN.x - 10, y: FV_AUTO_BTN.y < 200 ? FV_AUTO_BTN.y + FV_AUTO_BTN.h + 6 + (formView() ? i : 0) * 42 : FV_AUTO_BTN.y - (2 - i) * 42, w: 210, h: 38 }) })).filter(it => it.i === 1 || formView());   // (a button near the top opens its menu downward)   // (the simple list has no page: AUTO ALL only)
 function fvAuto(team, all) {   // AUTO: every slot gets its best-fit named man, written as locks (depthFill); ALL = every formation and special-teams page
   if (all) { depthAutoFull(team); for (const pg of fvPages()) depthFill(team, pg); }

@@ -4,7 +4,7 @@
 // undefined. Added one by one, every man walked his own path through the engine's shape tree and every new branch threw the optimized game code
 // back to the slow tiers ("dependent prototype chain changed", ~135 times in 8 plays: the boxed numbers that were most of update()'s garbage).
 // An undefined property reads exactly like a missing one; nothing checks for them with `in` (the online snapshot skips undefined values).
-const PLAYER_LAZY = ['slipS', 'engaged', 'reach', 'cx', 'sideTo', 'sx', 'sy', 'gs', 'fetchBall', 'fetched', 'downMiss', 'cpuJumpRoll', 'scrRoll', 'isPasser', 'screenStay', 'pulling', 'released',
+const PLAYER_LAZY = ['jy0', 'jyP', 'jtk', 'jbP', 'gaT', 'gaP', 'tkB', 'qeX', 'qeY', 'qeT', 'qeW', 'qeP', 'qeAx', 'qeAy', 'bpK', 'bpP', 'gtR', 'gtO', 'gtK', 'gtX', 'gtY', 'vlx', 'vly', 'raX', 'raT', 'raK', 'esT', 'esX', 'esY', 'slipS', 'engaged', 'reach', 'cx', 'sideTo', 'sx', 'sy', 'gs', 'fetchBall', 'fetched', 'downMiss', 'cpuJumpRoll', 'scrRoll', 'isPasser', 'screenStay', 'pulling', 'released',
   'pullHold', 'ranPid', 'ranYd', 'cy', 'stride', 'overShoulder', 'tipArms', 'tipK', 'sprPid', 'sprVy', 'sprVx', 'mpx', 'mpy', 'mvx', 'mvy', 'stLoop', 'stCrash',
   'countered', 'helped', 'tryAt', 'olHit', 'chaseKey', 'stuntHold', 'chip', 'pPid', 'pC', 'pAx', 'pAy', 'pHd', 'hy', 'hipOn', 'qbRead', 'paBiteUntil', 'rType', 'hipT',
   'hsy', 'wrAt', 'lockedTo', 'userJump', 'passX0', 'pancakeTried', 'pancakeAt', 'missK', 'settling', 'stopT', 'jamFightOn', 'handfight', 'rbl', 'rbp', 'coast', 'assign',
@@ -71,6 +71,7 @@ function placeRoster(team, slots) {
     if (!s && grp === 'QB') p.at = backupQbAt(p.at);   // a backup QB is far worse than any star QB
     const form = s && yours ? starForm(s) : 1;   // (condition / playing hurt)
     if (s && yours) p.at = condAt(s, form);   // (condition: +1 / -1 on every attribute, then playing hurt)
+    p.spd0 = s ? s.at.spd : null; p.spd0At = s ? p.at : null;   // (top speed reads his unshifted SPEED: rz while p.at is still this object)
     p.name = s ? s.short : null;
     p.lefty = grp === 'QB' && !!s && s.hand === 'L';   // (a lefty throws with his left arm; see HANDED)
     p.ht = s ? s.ht : null; p.wt = s ? s.wt : null; p.look = s ? s.look : null;
@@ -327,6 +328,7 @@ function clockOut() {
 function announceOT() { endWhistle(); showBanner('OVERTIME', '#ffd94a', '#3a2a00', 'Tied after four quarters'); }
 // on to the next quarter / period; starting overtime it tosses the coin and returns who receives
 function staffHalftime() {   // v0.64 staff traits at the half: Fire Starter III (trailing: a lift), Two-Minute Professor III (one free clock stop = a timeout), Script Writer III (the script again)
+  dcHalf();   // (every team's DC re-weights at the half: defense prompt 3)
   if (exhibition || !xpcOn()) return;
   if (stT('Fire Starter') >= 3 && game.blue < game.red) moraleShiftAll(TRAIT_BY['Fire Starter'].half);
   if (stT('Two-Minute Professor') >= 3) game.timeouts++;
@@ -1473,6 +1475,7 @@ function pstSimGame(g, wk) {
 }
 
 function newGame() {
+  if (typeof ftNewGame === 'function') ftNewGame();   // (field tutorial: no defense card or drive count left over, A1 / A2)
   if (typeof fpsQuiet === 'function') fpsQuiet(FPS_CAP.startMs, 'game start');   // (phase 5: the first seconds of a game never count toward the 30 lock)
   pstGame = null; playPass = null;   // (a new game's stat lines)
   if (game) { game.penQ = null; game.penPick = null; game.penDeclined = false; } revWait = null; REV = null;   // (v0.68: no flag card / review left over from a game quit mid-way)
@@ -1480,7 +1483,7 @@ function newGame() {
   fillMorale();   // (every roster entry has morale / rehab fields)
   depthSync(MATCH.you);   // (your locked depth-chart men lead their groups again, so startersOf / the sims agree with the chart)
   if (twoP && twoP.flipped) flipSides();   // (quit mid-game: back to Player 1's side first)
-  twoP = exhibition && exhibition.two && !tut ? { flipped: false, to: 3, def: !SETTINGS.simDefense && !simDefLocked() } : (simMode === 'offense' || (!SETTINGS.simDefense && simMode !== 'defense')) && !tut ? { flipped: false, to: 3, ai: true, simO: simMode === 'offense' } : null;   // (def: the other player defends live, IJKL / U / O, unless the settings' SIM DEFENSE is on; ai: you play their drives on defense)
+  twoP = exhibition && exhibition.two && !tut ? { flipped: false, to: 3, def: !SETTINGS.simDefense && !simDefLocked() } : (simMode === 'offense' || (!simDefOn() && simMode !== 'defense')) && !tut ? { flipped: false, to: 3, ai: true, simO: simMode === 'offense' } : null;   // (def: the other player defends live, IJKL / U / O, unless the settings' SIM DEFENSE is on; ai: you play their drives on defense)
   moveWear = { juke: 1, spin: 1, truck: 1, stiff: 1 }; lastMove = null; moveStreak = 0;
   SA_GAME = {};   // (stiff-arm wins this game, per runner: smart tacklers adapt, see saAdapt)
   halfHold = false;
@@ -1494,6 +1497,7 @@ function newGame() {
   if (!exhibition && xpcOn() && stT('Two-Minute Professor') >= 3) game.timeouts++;   // (Two-Minute Professor III: one free clock stop a half)
   nextLos = 25 * YL; nextDown = 1; nextLtg = 35 * YL;
   game.recvFirst = tossWinner || (Math.random() < 0.5 ? 'BLUE' : 'RED');   // the coin toss (already settled on the matchup screen)
+  if (LEAGUE.ft && LEAGUE.ft.g === 1 && !tut && !ONL.on && !exhibition) game.recvFirst = 'BLUE';   // (field tutorial: the opening kick comes to you)
   tossWinner = null;
   tossUntil = 0;                                            // (both teams are on the field from the first frame)
   game.kickPending = game.recvFirst;                        // the game starts with a kickoff
@@ -1526,7 +1530,7 @@ const catchers = () => {
 };
 
 let RESET_N = 0;   // counts reset() calls: online snapshots carry it (g.rz) so the guest cuts every player at a new line-up instead of sliding them there
-function reset() { choreFlush('reset'); RESET_N++;
+function reset() { choreFlush('reset'); RESET_N++; lineOver = false;
   runPid++;   // (a new play: everyone's yards run start over)
   annReset();   // (the announcers: a finished line goes, one still being written runs into the pre-snap)
   flagPen = null;   // (v0.68: no flag carries into the next play)
@@ -1596,7 +1600,7 @@ function reset() { choreFlush('reset'); RESET_N++;
 
   // the defense's look comes first: when it crowds the box to blitz, the offense brings in tight ends
   coverage = pickCoverage();
-  const blitzLook = BLITZ_COVERAGES.includes(coverage) || coverage === GOAL_LINE || coverage === COVER_0;
+  const blitzLook = covBlitz(coverage) || coverage === GOAL_LINE || coverage === COVER_0;
   const teRoll = Math.random();
   // (a very good star tight end gets used: fewer snaps without one, more with two)
   const teK = tut ? 0 : Math.max(0, Math.min(1, ((ROSTER[MATCH.you] || []).filter(s => s.group === 'TE' && !isOut(s)).reduce((m, s) => Math.max(m, s.stars || 0), 0) - TE_STAR.from + 1) / (6 - TE_STAR.from)));
@@ -1958,7 +1962,7 @@ function setPath(r, route, dir) {
   r.path = route.pts.map(([dx, dy]) => [Math.min(r.x + (route.screen ? Math.min(dx, SCREEN_UP) : dx) * YL, ROUTE_X_MAX), clampRouteY(r.y + dy * WS * YD * dir)]);
   r.runCatch = false; r.hitStick = false;
   r.screenCap = route.screen ? Math.max(r.x, ...r.path.map(p => p[0])) + 0.2 * YL : null;   // (a screen never goes past what its art shows: if the art stays behind the line, so does he)
-  r.leg = 0; r.pathDoneAt = null; r.endPlan = null; r.scrReact = null; r.hd = null; r.breakFx = null; r.chopFrom = null; r.chatterUntil = 0;
+  r.leg = 0; r.pathDoneAt = null; r.endPlan = null; r.esT = null; r.esX = null; r.esY = null; r.scrReact = null; r.hd = null; r.breakFx = null; r.chopFrom = null; r.chatterUntil = 0;
   r.rel = null; r.relFx = null; r.relLook = 0; r.tech = null; r.stackOn = null; r.workBack = 0; r.dblHoldUntil = 0; r.burstUntil = 0;   // (releases / top of the route / double moves)
   r.speed = startSpeed(r);
   r.jumped = false;
@@ -2000,7 +2004,8 @@ function blitzWalk(dt) {
     else { d.vx = d.vy = 0; d.moving = false; }
   }
 }   // blitzers line up this many yards (YL) off the ball (linebackers / safeties) so it reads like coverage; start = yd/s of running start at the snap
-const DEF_SPACE = { zone: 9, depth: 4, pos: 3.5, iters: 3 };   // alignDefense spacing: same-level zone landmarks (within depth yd of each other) at least zone yd apart across; pre-snap spots at least pos yd apart
+const BLITZ_PRE = { lb: 3.5, s: 4, cb: 3.5, show: 2, edgeY: 6, edgeOut: 1.2, slop: 0.7, gap: 2, behind: 2, manX: 8, front: { wide: 0.6, contain: 1 } };   // front: yd the tackles widen vs mugs / the contain end widens   // DEF_CALLS blitzers' pre-snap spot (yd off the ball; a call's bx overrides: mugs = 1), creep to show yd; a rush lane edgeY+ yd off the middle = an edge rusher, lined up edgeOut yd outside the end
+const DEF_SPACE = { zone: 9, depth: 4, pos: 3.5, iters: 3, rd: { deep: 5, under: 3.5, min: 2, share: 1 } };   // rd = DEF_CALLS zone depth sizes (yd): deep, underneath (max), min, share = yd an underneath zone may reach past the deep floor   // alignDefense spacing: same-level zone landmarks (within depth yd of each other) at least zone yd apart across; pre-snap spots at least pos yd apart
 function alignDefense() {
   const top = sides[0].recs, bot = sides[1].recs;
   blitzWalkT = 0; for (const d of back7) { d.blitzShow = null; d.walked = false; }
@@ -2019,18 +2024,27 @@ function alignDefense() {
   const blitz = (p, x, y) => {
     // disguised: backers and safeties line up where they would in coverage (their normal spot and spacing, not bunched on the gap), walk up late
     // before the snap (blitzWalk: the read) and get a running start at the snap (the goal line stays tight)
-    const B = BLITZ_DISGUISE.base, dis = coverage !== GOAL_LINE && !dl.includes(p);
-    const deep = dis ? Math.max(x, p.role === 'S' ? B.s : p.role === 'CB' ? B.cb : B.lb) : x;
+    const B = BLITZ_DISGUISE.base, dis = coverage !== GOAL_LINE && !dl.includes(p), T = dis && dcLive(coverage) && !DEF_CALLS[coverage].noTell ? DEF_CALLS[coverage] : null;
+    let deep = dis ? Math.max(x, p.role === 'S' ? B.s : p.role === 'CB' ? B.cb : B.lb) : x;
     let ay = y;
-    if (dis) {
+    if (T) {   // (DEF_CALLS: he lines up over his own rush lane, depth by the call (bx: mugs in the gap), an edge rusher outside the end; creeps to BLITZ_PRE.show)
+      const P = BLITZ_PRE, s = Math.sign(y - MID) || 1, de = MID + s * SPLITS.de * YD;
+      if (Math.abs(y - MID) >= P.edgeY * YD) ay = s > 0 ? Math.max(y, de + P.edgeOut * YD) : Math.min(y, de - P.edgeOut * YD);
+      deep = Math.max(x, T.bx != null ? T.bx : p.role === 'S' ? P.s : p.role === 'CB' ? P.cb : P.lb);
+      set(p, deep, ay, { d: 5, y: ay, r: 6 });
+      p.blitzShow = deep > P.show + 0.2 ? { x: los + Math.max(x, P.show) * YL, y: ay } : null;
+      p.walked = !p.blitzShow;
+    } else if (dis) {
       if (p.role === 'S') ay = p === sT ? fromTop(B.sY) : fromBot(B.sY);
       else if (p.role === 'CB') { const rr = p === cbT ? top[0] : bot[0]; ay = rr ? rr.y + Math.sign(MID - rr.y) * 0.8 * YD : y; }
       else ay = p === lbW ? MID - B.lbW * YD : p === lbS ? MID + B.lbW * YD : MID;
     }
-    set(p, deep, ay, { d: 5, y, r: 6 });
-    const sx = (BLITZ_DISGUISE.walk.showX[p.role === 'S' ? 's' : p.role === 'CB' ? 'cb' : 'lb']);
-    p.blitzShow = dis ? { x: los + Math.min(deep, Math.max(x, sx)) * YL, y: ay + (y - ay) * BLITZ_DISGUISE.walk.show } : null;
-    p.walked = !dis;
+    if (!T) {
+      set(p, deep, ay, { d: 5, y, r: 6 });
+      const sx = (BLITZ_DISGUISE.walk.showX[p.role === 'S' ? 's' : p.role === 'CB' ? 'cb' : 'lb']);
+      p.blitzShow = dis ? { x: los + Math.min(deep, Math.max(x, sx)) * YL, y: ay + (y - ay) * BLITZ_DISGUISE.walk.show } : null;
+      p.walked = !dis;
+    }
     Object.assign(p, { blitz: true, edge: Math.abs(y - MID) > 3 * YD, side: Math.sign(y - MID) || 1,
                        rush: (p.role === 'LB' ? 9.0 : 9.5) * YD * rm(p, 'spd', 'speed') * defTraitK(p, 'rush') /* (Send Everybody II: your blitzers get home faster) */, rushV: deep > x ? BLITZ_DISGUISE.start * YD : 0, push: 1.0 * YD, shedAt: 99, shed: false, rbHit: false });
   };
@@ -2052,7 +2066,8 @@ function alignDefense() {
   };
   // a lineman drops into a hook / flat: sits in the throwing lane (poor in coverage), never rushes
   const dropDE = (p, zone) => Object.assign(p, { dropZone: true, zone, man: null, lag: 0.26, react: 0.2, zoneTop: p.top * 0.95, pickTry: 0.4, reachZ: 44 * S, runRead: 0.3, cov: 0.8 });
-  if (coverage === 'Cover 1 Press') {
+  if (dcLive(coverage)) dcAlign(DEF_CALLS[coverage], { set, press, manOn, blitz, dropDE, top, bot });   // (DEF_CALLS: the table's jobs; the branches below = DCALL off / calls not on the table yet)
+  else if (coverage === 'Cover 1 Press') {
     // both corners press the outside receivers; free safety alone deep, everyone else in zones underneath
     press(cbT, top[0]);
     press(cbB, bot[0]);
@@ -2168,7 +2183,7 @@ function alignDefense() {
   }
   // (Defensive Logic PDF: a blitz is mostly paired with man coverage and one deep safety, not with empty zones) the other blitz calls
   // turn into man behind the rush most of the time: a free safety over the top, everyone else locked on the nearest receiver
-  if (!tut && BLITZ_COVERAGES.includes(coverage) && coverage !== 'Cover 1 Blitz' && Math.random() < BLITZ_MAN) {
+  if (!tut && !dcLive(coverage) && BLITZ_COVERAGES.includes(coverage) && coverage !== 'Cover 1 Blitz' && Math.random() < BLITZ_MAN) {   // (DEF_CALLS: the table already says what plays behind the rush)
     const live = back7.filter(d => !d.blitz && !d.man);
     const fs = live.find(d => d === fsP) || live.find(d => d.role === 'S');
     if (fs) {
@@ -2232,10 +2247,23 @@ function alignDefense() {
     for (const d of [sT, sB]) if (!d.blitz && !d.man) d.x = Math.min(d.x, los + SHORT_YARDAGE.sDepth * YL);
   }
   // spacing: no two zone landmarks (or pre-snap spots) of the same level stacked on top of each other: pushed apart across the field
-  if (!tut && !kickoffPlay && coverage !== GOAL_LINE) {
-    const zs = back7.filter(d => d.zone && !d.blitz && !d.man && !d.spy);
+  if (!tut && !kickoffPlay && (coverage !== GOAL_LINE || dcLive(coverage))) {
+    const tb = dcLive(coverage), zs = back7.filter(d => d.zone && (tb || (!d.blitz && !d.man)) && !d.spy);   // (DEF_CALLS: blitzers and man men join the spot half; blitzers are never pushed off their lane)   // (DEF_CALLS: blitzers join the spot half, never pushed off their lane)
     for (let it = 0; it < DEF_SPACE.iters; it++) for (let i = 0; i < zs.length; i++) for (let j = i + 1; j < zs.length; j++) {
       const a = zs[i], b = zs[j];
+      if ((a.man || b.man) && !a.blitz && !b.blitz) {   // (man men: spots only, never their man's landmark)
+        if (Math.abs(a.x - b.x) < DEF_SPACE.pos * YL && Math.abs(a.y - b.y) < DEF_SPACE.pos * YD) { const s = b.y >= a.y ? 1 : -1, push = (DEF_SPACE.pos * YD - Math.abs(b.y - a.y)) / 2; a.y = Math.max(Y_MIN + YD, a.y - s * push); b.y = Math.min(Y_MAX - YD, b.y + s * push); }
+        continue;
+      }
+      if (a.blitz || b.blitz) {
+        if (a.blitz && b.blitz) {   // (two blitzers on one lane: the one farther out moves out to his own gap)
+          if (Math.abs(a.y - b.y) < BLITZ_PRE.gap * YD && Math.abs(a.x - b.x) < DEF_SPACE.pos * YL) { const o = Math.abs(a.y - MID) >= Math.abs(b.y - MID) ? a : b, k = o === a ? b : a, s = Math.sign(o.y - MID) || (o.y >= k.y ? 1 : -1); o.y = k.y + s * BLITZ_PRE.gap * YD; o.zone = { ...o.zone, y: o.y }; if (o.blitzShow) o.blitzShow.y = o.y; }
+          continue;
+        }
+        const f = a.blitz ? b : a, o = a.blitz ? a : b;
+        if (Math.abs(f.x - o.x) < BLITZ_PRE.behind * YL && Math.abs(f.y - o.y) < BLITZ_PRE.gap * YD) { if (f.man) f.y = o.y + (f.man.y >= o.y ? 1 : -1) * BLITZ_PRE.gap * YD; else f.x = o.x + BLITZ_PRE.behind * YL; }   // (a zone man on a blitzer's spot sits behind him, a man defender steps toward his man: never pushed into the next lane)
+        continue;
+      }
       if (!!a.zone.deep === !!b.zone.deep && Math.abs(a.zone.d - b.zone.d) < DEF_SPACE.depth) {
         const gap = DEF_SPACE.zone * YD, dy = b.zone.y - a.zone.y;
         if (Math.abs(dy) < gap) { const s = dy >= 0 ? 1 : -1, push = (gap - Math.abs(dy)) / 2; a.zone = { ...a.zone, y: Math.max(Y_MIN + 2 * YD, Math.min(Y_MAX - 2 * YD, a.zone.y - s * push)) }; b.zone = { ...b.zone, y: Math.max(Y_MIN + 2 * YD, Math.min(Y_MAX - 2 * YD, b.zone.y + s * push)) }; }
@@ -2243,6 +2271,162 @@ function alignDefense() {
       if (Math.abs(a.x - b.x) < DEF_SPACE.pos * YL && Math.abs(a.y - b.y) < DEF_SPACE.pos * YD) { const s = b.y >= a.y ? 1 : -1, push = (DEF_SPACE.pos * YD - Math.abs(b.y - a.y)) / 2; a.y = Math.max(Y_MIN + YD, a.y - s * push); b.y = Math.min(Y_MAX - YD, b.y + s * push); }
     }
   }
+  if (dcLive(coverage)) { dcDisguise(); dcZoneRd(); }   // (DEF_CALLS: the pre-snap look, prompt 2 phase 4; zone depth sizes)
+  if (dcLive(coverage)) for (const d of back7) if (d.man && !d.blitz && d.x > los + BLITZ_PRE.manX * YL) d.x = los + BLITZ_PRE.manX * YL;   // (a man defender's shown depth is capped: a two-high show never leaves him 12 yd off his man)
+}
+
+// --- defensive calls: lining up from the table (DEF_CALLS in 01; dead ball only)
+const DC_ROLES = ['cbS', 'cbW', 'ss', 'fs', 'sam', 'mike', 'will'], DC_TAKEN = [];
+function dcAlign(C, H) {
+  const { set, press, manOn, blitz, dropDE, top, bot } = H;
+  const D = v => v >= 90 ? Math.max(1, (FIELD - los) / YL + v - 100) : v, X = v => v >= 90 ? Math.min(D(v), DCALL.sit.xMax) : v;   // (90+ = from the goal line, 100 = on it)
+  // strength: more receivers, then the tight end's side, then the wide side (the ball's far side)
+  const te = r => r.isTE ? 1 : 0, tT = top.reduce((s, r) => s + te(r), 0), tB = bot.reduce((s, r) => s + te(r), 0);
+  let sTop = top.length !== bot.length ? top.length > bot.length : tT !== tB ? tT > tB : (ball ? ball.y : MID) >= MID;
+  const Mm = game.dcMem;   // (phase 4: once the protection has shown which way it turns, pressure calls come from the other side)
+  if (C.blitz && Mm && game.quarter >= 2 && Math.abs(Mm.slide) >= DCALL.dis.memMin) sTop = Mm.slide > 0;
+  const sg = sTop ? -1 : 1, man = { cbS: sTop ? cbT : cbB, cbW: sTop ? cbB : cbT, ss: sTop ? sT : sB, fs: sTop ? sB : sT, sam: sTop ? lbW : lbS, mike: lbM, will: sTop ? lbS : lbW };
+  DCS.rm = man;   // (the binder's pencilled jobs read the same roles: bookJobsLive)
+  const sideOf = k => k === 'mike' || k === 'cbS' || k === 'ss' || k === 'sam' ? sg : -sg;
+  const best = recs.reduce((b, r) => !b || rz(r, 'ctc') + rz(r, 'spd') > rz(b, 'ctc') + rz(b, 'spd') ? r : b, null);
+  const Y = (v, s) => {
+    if (typeof v === 'number') return s < 0 ? fromTop(v) : fromBot(v);
+    if (v === 'm') return MID;
+    if (Array.isArray(v)) return MID + s * v[1] * YD;
+    const L = s < 0 ? top : bot;
+    if (v === 'r1') return L[0] ? L[0].y : MID + s * 9 * YD;
+    if (v === 'r1o') return L[0] ? L[0].y + s * YD : MID + s * 10 * YD;
+    if (v === 'r2') return L[1] ? L[1].y : MID + s * 6 * YD;
+    if (v === 'r3') return L[2] ? L[2].y : MID + s * 4 * YD;
+    if (v === 'ap') return L[1] ? (L[1].y + MID + s * DCALL.apex * YD) / 2 : MID + s * 5 * YD;
+    if (v === 'best') return best ? best.y : MID;
+    return MID;
+  };
+  DC_TAKEN.length = 0; for (const p of back7) p.peel = false;
+  const pickT = (tg, k) => {   // the receiver a man job means ('a|b' = first one there and free)
+    const s = sideOf(k), L = s < 0 ? top : bot, p = man[k];
+    for (const t of tg.split('|')) {
+      let r = null;
+      if (t === 'r1') r = L[0]; else if (t === 'r2') r = L[1]; else if (t === 'r3') r = L[2]; else if (t === 'best') r = best;
+      else if (t === 'te') r = recs.find(x => x.isTE && !DC_TAKEN.includes(x)) || null;
+      else if (t === 'any') { let bd = 1e9; for (const x of recs) if (!DC_TAKEN.includes(x) && Math.abs(x.y - p.y) < bd) { bd = Math.abs(x.y - p.y); r = x; } }
+      if (r && !DC_TAKEN.includes(r)) return r;
+    }
+    return null;
+  };
+  // pass 1: zones, blitzes and named men; pass 2: 'any' men (nearest free receiver, after everyone else has his)
+  for (let pass = 0; pass < 2; pass++) for (const k of DC_ROLES) {
+    const J = C.j[k], p = man[k], s = sideOf(k);
+    if (!J || (J[0] === 'm' && J[1].startsWith('any')) !== (pass === 1)) continue;
+    if (J[0] === 'z') set(p, Math.min(X(J[1]), X(J[3])), Y(J[2], s), { d: D(J[3]), y: Y(J[4], s), r: J[5], deep: !!J[6] });
+    else if (J[0] === 'b') { blitz(p, J[1], Y(J[2], s)); p.peel = J[3] === 'peel'; p.peeled = false; if (C.noTell) p.blitzShow = null; }
+    else if (J[0] === 'o') { const y = Y('best', s); set(p, 12, y, { d: 15, y, r: 8, deep: true }); }
+    else {
+      const r = pickT(J[1], k);
+      if (r) { DC_TAKEN.push(r); if (J[0] === 'p') press(p, r); else manOn(p, r, J[2]); }
+      else if (J[3] === 'b') blitz(p, 1.5, MID + s * 2 * YD);
+      else { const y = Y(['m', 4], s); set(p, 5, y, { d: 8, y, r: 6 }); }   // (nobody left: a hook)
+    }
+  }
+  // the front: heavy sets (two tight ends or three or fewer wide) squeeze the backers in and bring a down safety into the box; trips bump the mike over
+  const heavy = recs.filter(r => r.isTE).length >= 2 || recs.length <= 3, Hv = DCALL.heavy;
+  for (const p of [lbW, lbM, lbS]) if (heavy && p.zone && !p.blitz && !p.man && !p.zone.deep) { p.x = Math.max(los + 3 * YL, p.x - Hv.lbUp * YL); p.y = MID + (p.y - MID) * Hv.lbIn; }
+  if (heavy && man.ss.zone && !man.ss.zone.deep && !man.ss.blitz && !man.ss.man) { man.ss.x = los + Hv.boxX * YL; man.ss.y = MID + sg * Hv.boxY * YD; }
+  if ((sTop ? top : bot).length >= 3 && lbM.zone && !lbM.blitz && !lbM.man && !lbM.zone.deep) { lbM.y += sg * DCALL.trips * YD; lbM.zone = { ...lbM.zone, y: lbM.zone.y + sg * DCALL.trips * YD }; }
+  // situations: a dropping end, the goal line's shorter rush, the two-minute drill's sidelines, third and long's drops to the sticks
+  const SS = DCALL.sit, sit = DCS.sit;
+  if (C.drop) dropDE(sTop === !C.dropS ? dl[3] : dl[0], { d: D(C.drop[0]), y: Y(C.drop[1], C.dropS ? sg : -sg), r: C.drop[2] });
+  // the front adjusts to the call (table flags): mugged A gaps widen the tackles, the line slants away from an overload, the end away from a one-side blitz keeps contain
+  const F = BLITZ_PRE.front;
+  if (C.front === 'wide') { dl[1].y -= F.wide * YD; dl[2].y += F.wide * YD; }
+  if (C.slant) { dl[1].y -= sg * C.slant * YD; dl[2].y -= sg * C.slant * YD; }
+  if (C.blitz) { let bs = 0, n = 0; for (const p of back7) if (p.blitz) { bs += Math.sign(p.zone.y - MID); n++; } if (n && Math.abs(bs) === n) { const e = bs > 0 ? dl[0] : dl[3]; if (!e.dropZone) e.y += -Math.sign(bs) * F.contain * YD; } }
+  if (C.read) {   // mug read-out: the center turns away from the back, so the backer on the far side from him drops into the low hole
+    const far = [lbM, man.will].find(p => p.blitz && Math.sign(p.y - MID) !== Math.sign((rb ? rb.y : MID) - MID));
+    if (far) { const y = far.y; set(far, 1.5, y, { d: 5, y: MID, r: 6 }); far.peel = false; }
+  }
+  if (coverage === GOAL_LINE) for (const p of back7) if (p.blitz) p.rush *= GOAL_LINE_D.rush;
+  for (const p of back7) if (p.zone && !p.zone.deep && !p.blitz && !p.man) {
+    const o = p.zone.y - MID;
+    if (sit === 'two' && Math.abs(o) > 8 * YD) p.zone = { ...p.zone, y: p.zone.y + Math.sign(o) * SS.side * YD };
+    if (sit === 'tl') p.zone = { ...p.zone, d: Math.min(SS.sticks, Math.max(p.zone.d, (Math.min(lineToGain, FIELD) - los) / YL + 1)) };
+  }
+  dcFits(C);   // (phase 5: force / alley / cutback by side)
+  // nobody lines up perfectly: a little slop by coverage rating (the zone landmark is still right)
+  const N = DCALL.neat;
+  for (const p of back7) { const e = N.yd * Math.max(N.min, 1 - N.k * rz(p, 'cov')); p.x = Math.max(los + 0.8 * YL, p.x + (Math.random() * 2 - 1) * 0.5 * e * YL); p.y += (Math.random() * 2 - 1) * e * YD; if (p.blitz && p.zone) p.y = Math.max(p.zone.y - BLITZ_PRE.slop * YD, Math.min(p.zone.y + BLITZ_PRE.slop * YD, p.y)); }   // (a blitzer's slop stays over his lane)
+}
+
+// --- run fits by call (prompt 2 phase 5): per side, who forces (keeps the run inside, or spills it with an inside wrong-arm), who fills the alley inside him,
+// and who stays home for the cutback when the run goes away. Kinds: 'CB' / 'S' / 'LB' (outermost on that side) / 'flat' (outermost non-deep man not a corner) /
+// 'deep' (a deep safety: his side's, else the middle one). From C.run, else DC_FIT by the call's shell. Played in pursueMove (dcFitAim).
+const DC_FIT = { c2: { F: 'CB', A: 'S', C: 'LB', spill: false }, c3: { F: 'flat', A: 'deep', C: 'LB', spill: true }, c4: { F: 'LB', A: 'S', C: 'S', spill: false },
+                 c1: { F: 'flat', A: 'deep', C: 'LB', spill: true }, c0: { F: 'flat', A: 'LB', C: 'LB', spill: true } };
+function dcFits(C) {
+  const R = C.run || DC_FIT[C.sk] || DC_FIT.c3;
+  DCS.spill = !!R.spill;
+  for (const d of back7) { d.fitF = false; d.fitA = false; d.fitC = false; d.fitS = Math.sign(d.y - MID) || 1; }
+  const pickOf = (kind, s, not) => {
+    let b = null, bo = -1;
+    for (const d of back7) {
+      if (d.blitz || d === not || d.fitF || d.fitA) continue;
+      const deepOK = d.zone && d.zone.deep, side = d.fitS === s;
+      const ok = kind === 'CB' ? d.role === 'CB' && side : kind === 'S' ? d.role === 'S' && side : kind === 'LB' ? d.role === 'LB' && side
+               : kind === 'flat' ? d.role !== 'CB' && !deepOK && side : kind === 'deep' ? d.role === 'S' && deepOK : false;
+      if (!ok) continue;
+      const o = kind === 'deep' ? (side ? 2 : 1) * YD * 30 - Math.abs(d.y - MID) : Math.abs(d.y - MID);   // (outermost; a deep man prefers his own side)
+      if (o > bo) { bo = o; b = d; }
+    }
+    return b;
+  };
+  for (const s of [-1, 1]) {
+    const f = pickOf(R.F, s, null); if (f) { f.fitF = true; f.fitS = s; }   // (fitS = the side he serves: a middle deep man can alley to either)
+    const a = pickOf(R.A, s, f); if (a) { a.fitA = true; a.fitS = s; }
+  }
+  for (const s of [-1, 1]) { let c = null, bo = 1e9; for (const d of back7) if (!d.blitz && !d.fitF && !d.fitA && !d.fitC && d.fitS === s && (R.C === 'S' ? d.role === 'S' : d.role === 'LB') && Math.abs(d.y - MID) < bo) { bo = Math.abs(d.y - MID); c = d; } if (c) c.fitC = true; }
+}
+
+// a blitzer with a peel (DEF_CALLS 'peel') turns and runs with the back once the back has leaked out on his side; true = he left the rush
+function dcPeel(r) {
+  if (r.peeled || !rb || !rb.route || rb.protect || (state !== 'drop' && state !== 'pocket')) return false;
+  if (prOn(POS_RULES.peel)) {   // (POS_RULES: a snap read only: the back releasing to his side early is taken from in front; after the window or across the line he rushes for good)
+    if (clock > DCALL.peel.t * (1 + POS_RULES.peel.late * (1 - 2 * prSkill(r))) || r.x < los) { r.peel = false; return false; }
+    const s = Math.sign(r.y - qb.y) || 1;
+    if (Math.abs(rb.y - r.y) > DCALL.peel.yd * YD || ((rb.y - qb.y) * s <= 0 && rb.vy * s <= 0)) return false;
+  } else if (rb.x < los + DCALL.peel.depth * YL || Math.abs(rb.y - r.y) > DCALL.peel.yd * YD) return false;
+  r.peeled = true; r.peel = false; r.blitz = false; r.blitzShow = null; r.shed = false;
+  Object.assign(r, { man: rb, zone: { d: 5, y: rb.y, r: 6 }, jamTried: true, falseStepUntil: 0, passed: false });
+  return true;
+}
+
+// --- disguises and bluffs (prompt 2 phase 4): only the PRE-SNAP spots change (zones / men / rushes stay the call's), so at the snap everyone goes
+// where the call really sends him. dsgFake = shows a blitz he won't run (the QB's read and arrows can bite), dsgHide = a real blitzer with no tell.
+function dcDisguise() {
+  const X = DCALL.dis, M = dcMem(), early = game.quarter === 1 && M.shows < X.learnMax;
+  for (const d of back7) { d.dsgFake = false; d.dsgHide = false; }
+  const sk = z => Math.max(0.3, Math.min(1.5, 1 + X.rateK * rz(z, 'cov')));   // (sharper men disguise more)
+  // same shell, different coverage: one deep safety shows two high, two deep show one high (he rotates at the snap)
+  const deep = [sT, sB].filter(s => s.zone && s.zone.deep && !s.blitz), live = [sT, sB].filter(s => !s.blitz);
+  if (live.length === 2 && Math.random() < X.shell * (sk(sT) + sk(sB)) / 2) {
+    if (deep.length === 1) for (const s of live) { s.x = los + X.twoX * YL; s.y = s === sT ? fromTop(X.twoY) : fromBot(X.twoY); }
+    else if (deep.length === 2) { const dn = Math.random() < 0.5 ? sT : sB, up = dn === sT ? sB : sT; dn.x = los + X.downX * YL; dn.y = dn === sT ? fromTop(X.downY) : fromBot(X.downY); up.x = los + X.oneX * YL; up.y = MID; }
+  }
+  const blz = back7.filter(d => d.blitz), lbs = [lbW, lbM, lbS].filter(d => !d.blitz && !d.man && d.zone && !d.zone.deep);
+  const fake = d => { d.dsgFake = true; d.x = los + X.showX * YL; d.y = MID + (Math.sign(d.y - MID) || 1) * X.gapY * YD; };
+  if (!blz.length) {   // show blitz and drop out (more of it early: learning how they protect)
+    if (lbs.length && Math.random() < X.show * (early ? X.learnK : 1) * sk(lbs[0])) { fake(lbs[Math.floor(Math.random() * lbs.length)]); if (early) M.shows++; }
+  } else {
+    if (Math.random() < X.hide) for (const d of blz) { d.blitzShow = null; d.dsgHide = true; }   // show nothing and bring it
+    const side = Math.sign(blz.reduce((s, d) => s + d.y - MID, 0)) || 1, other = lbs.filter(d => Math.sign(d.y - MID) === -side);
+    if (other.length && Math.random() < X.bluff) fake(other[0]);   // bluff the other side so the line slides there
+  }
+}
+function dcMem() { return game.dcMem || (game.dcMem = { shows: 0, slide: 0 }); }   // this game's notes (game is new each newGame)
+function dcMemNote() {   // at the snap: where the protection turned when we showed pressure (read fakes), for later blitzes away from it
+  if (!dcOn()) return;
+  let s = 0;
+  for (const d of back7) if (d.dsgFake && d.qbRead) s += Math.sign(d.y - MID);
+  if (s) dcMem().slide += Math.sign(s);
 }
 
 // Nobody left uncovered at the line: any receiver with no defender over him gets one rotated onto him.
@@ -2263,21 +2447,38 @@ function lbExtraBlitz() {
 // Defensive Logic sheet draws them. Overlapping pairs are pushed apart sideways (keeping their order, so a flat stays outside
 // its hook); if the sideline stops that, they stack in depth, and as a last resort they shrink. Zones are drawn as ellipses
 // r yd long (downfield) and ZONE_GAP.tall x r wide.
-const ZONE_GAP = { tall: 0.6, margin: 1.5, passes: 8, minR: 4 };   // margin = yd of grass kept between neighbours
+const ZONE_GAP = { tall: 0.6, margin: 1.5, passes: 8, minR: 4, tMargin: -1 };   // tMargin = DEF_CALLS zones across (r + r + tMargin: a yard of shared edge allowed)   // margin = yd of grass kept between neighbours
 // how a zone is drawn (world units): centre y and half-length (downfield) / half-width. Underneath zones are the plain 0.6 ellipse; a deep zone
 // is stretched across to the whole strip of field it owns (halfway to the next deep zone, or to the sideline), e.g. Cover 2's two halves
 function zoneShape(d) {
-  const zn = d.zone, rx = Math.max(2, zn.r || 5) * YD;
-  if (!zn.deep) return { cy: zn.y, rx, ry: rx * ZONE_GAP.tall };
+  const zn = d.zone, rr = Math.max(2, zn.r || 5) * YD, rx = zn.rd ? Math.max(2, zn.rd) * YD : rr;   // (rd = DEF_CALLS depth size: the zone is played as this ellipse, zoneDefend)
+  if (!zn.deep) return { cy: zn.y, rx, ry: zn.rd ? rr * (d.role === 'S' ? 1.15 : 1) : rx * ZONE_GAP.tall };
   const deeps = back7.filter(o => !o.blitz && !o.man && o.zone && o.zone.deep).map(o => o.zone.y).sort((a, b) => a - b);
   const i = deeps.findIndex(y => y === zn.y), lo = i > 0 ? (deeps[i - 1] + zn.y) / 2 : Y_MIN, hi = i >= 0 && i < deeps.length - 1 ? (deeps[i + 1] + zn.y) / 2 : Y_MAX;
-  return { cy: (lo + hi) / 2, rx, ry: Math.max(rx * ZONE_GAP.tall, (hi - lo) / 2) };
+  return { cy: (lo + hi) / 2, rx, ry: Math.max(rr * ZONE_GAP.tall, (hi - lo) / 2) };
+}
+function dcZoneRd() {   // DEF_CALLS: every zone gets a depth size rd; an underneath zone is trimmed in depth (never width) to stop below the deep men's floor (alignDefense, again after spreadZones)
+  const Z = DEF_SPACE.rd;
+  let floor = Infinity;
+  for (const d of back7) if (d.zone && d.zone.deep && !d.blitz && !d.man) { d.zone.rd = Math.min(d.zone.r, Z.deep); floor = Math.min(floor, d.zone.d - d.zone.rd); }
+  const trim = d => { if (d.zone && !d.zone.deep && !d.blitz && !d.man) d.zone.rd = Math.max(Z.min, Math.min(d.zone.r, Z.under, floor + Z.share - d.zone.d)); };
+  for (const d of back7) trim(d);
+  for (const d of dl) if (d.dropZone) trim(d);
+  // two underneath zones still sharing grass across (a sideline left no room to spread them): split them in depth
+  for (const a of back7) for (const b of back7) {
+    if (a === b || !a.zone || !b.zone || a.zone.deep || b.zone.deep || a.blitz || b.blitz || a.man || b.man || !a.zone.rd || !b.zone.rd) continue;
+    const across = (a.zone.r * (a.role === 'S' ? 1.15 : 1) + b.zone.r * (b.role === 'S' ? 1.15 : 1)) * YD - Math.abs(a.zone.y - b.zone.y), lim = Math.abs(a.zone.d - b.zone.d) + Z.share * 2;
+    if (across <= Z.share * 2 * YD) continue;
+    while (a.zone.rd + b.zone.rd > lim && (a.zone.rd > Z.min || b.zone.rd > Z.min)) { if (a.zone.rd >= b.zone.rd) a.zone.rd = Math.max(Z.min, a.zone.rd - 0.25); else b.zone.rd = Math.max(Z.min, b.zone.rd - 0.25); }
+    if (a.zone.rd + b.zone.rd > lim) for (let k = 0; k < 40 && (a.zone.r * (a.role === 'S' ? 1.15 : 1) + b.zone.r * (b.role === 'S' ? 1.15 : 1)) * YD - Math.abs(a.zone.y - b.zone.y) > Z.share * 2 * YD && (a.zone.r > ZONE_GAP.minR || b.zone.r > ZONE_GAP.minR); k++) { a.zone.r = Math.max(ZONE_GAP.minR, a.zone.r - 0.25); b.zone.r = Math.max(ZONE_GAP.minR, b.zone.r - 0.25); }   // (same depth too: narrower, as spreadZones does)
+  }
 }
 function spreadZones() {
   const z = back7.filter(d => !d.blitz && !d.man && d.zone).map(d => d.zone), lo = Y_MIN + 3 * YD, hi = Y_MAX - 3 * YD;
   // sideways gap two zones still need (world y), 0 when they're already clear of each other downfield
   const need = (a, b) => {
     const R = (a.r + b.r + ZONE_GAP.margin) * YD, dx = ((a.d || 0) - (b.d || 0)) * YL;
+    if (a.rd && b.rd) { const Rd = (a.rd + b.rd + ZONE_GAP.margin) * YD; return Math.abs(dx) >= Rd ? 0 : (a.r + b.r + ZONE_GAP.tMargin) * YD * Math.sqrt(1 - (dx / Rd) ** 2); }   // (DEF_CALLS zones: as played, rd deep x r across)
     return Math.abs(dx) >= R ? 0 : ZONE_GAP.tall * R * Math.sqrt(1 - (dx / R) ** 2);
   };
   for (let pass = 0; pass < ZONE_GAP.passes; pass++) {
@@ -2305,6 +2506,7 @@ function spreadZones() {
     hiZ.d = (hiZ.d || 0) + 2; loZ.d = Math.max(3, (loZ.d || 0) - 2);
     while (Math.abs(a.y - b.y) < need(a, b) - 0.5 && (a.r > ZONE_GAP.minR || b.r > ZONE_GAP.minR)) { a.r = Math.max(ZONE_GAP.minR, a.r - 0.5); b.r = Math.max(ZONE_GAP.minR, b.r - 0.5); }
   }
+  if (dcLive(coverage)) dcZoneRd();   // (the depth sizes again, on the final spots)
 }
 function blitzCover() {
   if (tut || !back7.some(d => d.blitz)) return;
@@ -2459,7 +2661,7 @@ function audible() {
   audiblesLeft--;
   for (const s of sides) s.recs.forEach((r, i) => { if (r !== rb && !r.isTE) r.x = los - (i ? 1.2 : 0.8) * YD; });
   const moved = audibleFormation();
-  if (!pvpDef()) coverage = pickCoverage(coverage);   // the defense checks out of its call too (two players: only when its player audibles)
+  if (!pvpDef()) coverage = pickCoverage(coverage, true);   // the defense checks out of its call too (two players: only when its player audibles)
   assignRoutes();                      // (the coordinator calls the new concept against the new look)
   // (an aware QB's audible lands on a concept that beats the shell more often: a few re-draws)
   for (let i = 0; i < 3 && !aiOff() && !sides.some(s => s.beats && s.beats.includes(shellKey(coverage))) && Math.random() < A5.qb.audSmart * Math.max(0, rz(qb, 'awr') + 2); i++) assignRoutes();
@@ -2512,10 +2714,12 @@ function snap(run = false) {
     const acc = Math.max(BLITZ_READ.floor, Math.min(BLITZ_READ.max, awr != null ? BLITZ_READ.base + BLITZ_READ.perAwr * (awr - BLITZ_READ.awrFrom) : BLITZ_READ.base + BLITZ_READ.perStar * (stars - 1)));
     for (const d of back7) {
       const looks = d.blitz || (d.role !== 'CB' && d.x - los < BLITZ_READ.depth * YL);
-      if (looks && Math.random() < (d.blitz ? acc : (d === ud && defLive() ? acc : (1 - acc) * BLITZ_READ.bait))) d.qbRead = true;
+      if (looks && Math.random() < (d.blitz ? acc * (d.dsgHide ? DCALL.dis.hideRead : 1) : (d === ud && defLive() ? acc : (1 - acc) * BLITZ_READ.bait))) d.qbRead = true;   // (DEF_CALLS: a no-tell blitz is read less)
     }
     if (back7.some(d => d.qbRead)) { rb.protect = true; rb.passBlock = true; readBlitz = true; popup(qb, 'BLITZ!', '#ffd94a'); }
+    dcMemNote();
   }
+  if (dcOnE()) { dcCallMade(coverage); dcMrRoll(); }   // (the DC's repeat list; Mind Reader)
   sackPlay = false;
   rb.pickedUp = readBlitz;   // (a read blitz: he stays in for the whole play)
   passer = null; passerMode = false;
@@ -2529,6 +2733,7 @@ function snap(run = false) {
     if (heat > 0 && !d.blitz && Math.random() < (PLAY_ACTION.chance[d.role] || 0) * heat / rm(d, 'cov', A5.cov.sell) ** DB_TURN.paRead) {   // (a better cover man bites less)
       d.paBiteUntil = PLAY_ACTION.time[d.role] * heat * (0.7 + Math.random() * 0.6) * (1 - DC_LOGIC.pa * dcK);   // (a coached defense recovers to its drops)
       bit = bit || d;
+      if (d.role === 'S' && d.zone && d.zone.deep && !d.man && POS_RULES.saf.pa && prOn(POS_RULES.saf)) d.paBiteUntil = 0;   // (POS_RULES: a deep-zone safety's first step is back; only a down safety bites. The roll is kept: same random order)
     }
   }
   // (a sold fake is shown: the QB holds the ball out to the back and pulls it to his hip, the back folds his arms over an empty belly for a few steps. Looks only: PA_LOOK)

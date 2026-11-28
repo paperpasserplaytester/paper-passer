@@ -64,6 +64,117 @@ function bowlGeo() {
 const inRR = (px, py, x0, y0, x1, y1, r) => { if (px < x0 || px > x1 || py < y0 || py > y1) return false; const qx = Math.max(x0 + r - px, px - (x1 - r), 0), qy = Math.max(y0 + r - py, py - (y1 - r), 0); return qx * qx + qy * qy <= r * r; };
 const inBowlOut = (px, py, m = 0) => { const G = bowlGeo(); return inRR(px, py, G.X0 - G.D + m, G.Y0 - G.D + m, G.X1 + G.D - m, G.Y1 + G.D - m, Math.max(0, G.R - m)); };   // (inside the stands' outer rim, m px in)
 const crowdCanvases = I => { const out = []; if (I) for (const P of I.pieces || []) for (const c of [P.a.c0, P.a.c1]) if (c && !out.includes(c)) out.push(c); return out; };
+// --- indoor training facility (v0.76 progression part 2; looks + sound only). Practice drills, battles, camps and the old tutorial play inside a cardboard-box
+// gym on the desk: the same bowlGeo() walls (ballWall, viewInBowl, the camera clamp unchanged), padded walls, the box's sides where the stands were with roof
+// trusses across them, hanging lights and a whiteboard on the far wall. No fans, signs, desk things, weather or crowd sound. indoorOn() = the one gate.
+// Baked aside as a chore (one canvas a slice: the two side bands, the two end bands, the whiteboard; each band is ONE canvas = no tile seams), freed with
+// freeCanvas when a real game starts; plain fills until baked. Corners = vector.
+const INDOOR = { pad: '#3d5f8f', padDk: '#24395a', padHi: 'rgba(255,255,255,0.18)', padSeg: 4 * YL, box: '#c99d63', boxDk: '#8f6a3b', flap: '#dcb47c',
+  truss: '#8a8d94', trussDk: '#50535a', trussW: 10, every: 10 * YL, lamp: '#fff6cf', lampRim: '#55565c', lampR: 20, glow: 'rgba(255,246,207,0.22)',
+  wb: { w: 30 * YL, h: 0.6, frame: '#b9bcc2', face: '#fbfbf7', ink: ['#2a5bd7', '#d23a3a', '#1c1c24'] }, k: 0.5, turf: ['#3a9a4a', '#349046'] };
+const indoorOn = () => !!(tut || (exhibition && (exhibition.prac || exhibition.camp))) && !(typeof coldLive === 'function' && CO);
+let GYM = null, GYM_J = null;   // GYM = { k, b: [top, bottom, left, right] band canvases, wb } (null = not baked); GYM_J = the bake under way
+const gymCanvases = () => GYM ? GYM.b.concat([GYM.wb]).filter(Boolean) : [];
+function gymFree() { for (const c of gymCanvases()) freeCanvas(c); GYM = null; if (GYM_J) { for (const c of GYM_J.b.concat([GYM_J.wb])) freeCanvas(c); choreDrop('gym'); GYM_J = null; } }
+function gymBands() {   // the four straight bands between the rim and the walls: [x, y, w, h, across (true = trusses run along x)]
+  const G = bowlGeo();
+  return [[G.X0 + G.ri, G.Y0 - G.D, G.X1 - G.X0 - 2 * G.ri, G.D, true], [G.X0 + G.ri, G.Y1, G.X1 - G.X0 - 2 * G.ri, G.D, true],
+          [G.X0 - G.D, G.Y0 + G.ri, G.D, G.Y1 - G.Y0 - 2 * G.ri, false], [G.X1, G.Y0 + G.ri, G.D, G.Y1 - G.Y0 - 2 * G.ri, false]];
+}
+function gymBandDraw(g, B, j) {   // one band into its canvas (world px; g already scaled): the box's cardboard side, its ribs, trusses across it, lamps on them
+  const I = INDOOR, [bx, by, w, h, along] = B, len = along ? w : h, dep = along ? h : w;
+  g.fillStyle = I.box; g.fillRect(0, 0, w, h);
+  let s = 31 + j * 7; const r = () => (s = s * 16807 % 2147483647) / 2147483647;
+  g.strokeStyle = 'rgba(110,78,40,0.22)'; g.lineWidth = 1.2; g.beginPath();   // (corrugation ribs along the band)
+  for (let u = 6; u < dep; u += 9) { if (along) { g.moveTo(0, u); g.lineTo(w, u); } else { g.moveTo(u, 0); g.lineTo(u, h); } } g.stroke();
+  g.fillStyle = 'rgba(0,0,0,0.10)'; if (along) g.fillRect(0, j === 0 ? h - 26 : 0, w, 26); else g.fillRect(j === 2 ? w - 26 : 0, 0, 26, h);   // (the box's fold by the wall)
+  const x0 = along ? bx : by, first = Math.ceil(x0 / I.every) * I.every;
+  for (let a = first; a < x0 + len; a += I.every) {   // (trusses: two chords + zigzag web, wall to rim)
+    const u = a - x0, tw = I.trussW;
+    const L = (p, q, m, n) => along ? (g.moveTo(u + p, q), g.lineTo(u + m, n)) : (g.moveTo(q, u + p), g.lineTo(n, u + m));
+    g.strokeStyle = 'rgba(0,0,0,0.18)'; g.lineWidth = tw + 8; g.beginPath(); L(4, 0, 4, dep); g.stroke();   // (its soft shade on the cardboard)
+    g.strokeStyle = I.trussDk; g.lineWidth = 3; g.beginPath(); L(-tw, 0, -tw, dep); L(tw, 0, tw, dep);
+    for (let v = 0; v < dep; v += tw * 2) L(-tw, v, tw, v + tw), L(tw, v + tw, -tw, v + tw * 2);
+    g.stroke();
+    g.strokeStyle = I.truss; g.lineWidth = 1.4; g.beginPath(); L(-tw, 0, -tw, dep); L(tw, 0, tw, dep); g.stroke();
+    const lv = along ? (j === 0 ? dep * 0.72 : dep * 0.28) : (j === 2 ? dep * 0.72 : dep * 0.28), lx = along ? u : lv, ly = along ? lv : u;   // (a lamp near the field end)
+    g.fillStyle = I.glow; g.beginPath(); g.arc(lx, ly, I.lampR * 3, 0, Math.PI * 2); g.fill();
+    g.fillStyle = I.lampRim; g.beginPath(); g.arc(lx, ly, I.lampR + 3, 0, Math.PI * 2); g.fill();
+    g.fillStyle = I.lamp; g.beginPath(); g.arc(lx, ly, I.lampR, 0, Math.PI * 2); g.fill();
+    g.fillStyle = 'rgba(255,255,255,0.8)'; g.beginPath(); g.arc(lx - 5, ly - 5, 5 + r() * 2, 0, Math.PI * 2); g.fill();
+  }
+}
+function gymWbDraw(g, w, h) {   // the whiteboard: frame, face, a play drawn on it (X's, O's, routes), a smudge
+  const W2 = INDOOR.wb; g.fillStyle = W2.frame; g.fillRect(0, 0, w, h); g.fillStyle = W2.face; g.fillRect(8, 8, w - 16, h - 16);
+  g.fillStyle = 'rgba(160,170,190,0.18)'; g.fillRect(w * 0.62, h * 0.2, w * 0.2, h * 0.5);   // (an old wipe)
+  g.lineWidth = 4; g.lineCap = 'round'; g.lineJoin = 'round';
+  g.strokeStyle = W2.ink[2]; g.beginPath(); g.moveTo(w * 0.1, h * 0.55); g.lineTo(w * 0.9, h * 0.55); g.stroke();   // (the line of scrimmage)
+  for (let i = 0; i < 5; i++) { const x = w * (0.36 + i * 0.07), y = h * 0.66; g.strokeStyle = W2.ink[0]; g.beginPath(); g.arc(x, y, h * 0.06, 0, Math.PI * 2); g.stroke(); }
+  for (let i = 0; i < 4; i++) { const x = w * (0.3 + i * 0.13), y = h * 0.36, d = h * 0.05; g.strokeStyle = W2.ink[1]; g.beginPath(); g.moveTo(x - d, y - d); g.lineTo(x + d, y + d); g.moveTo(x + d, y - d); g.lineTo(x - d, y + d); g.stroke(); }
+  g.strokeStyle = W2.ink[0]; g.beginPath(); g.moveTo(w * 0.16, h * 0.66); g.lineTo(w * 0.16, h * 0.3); g.lineTo(w * 0.3, h * 0.18); g.stroke();   // (a post route)
+  g.beginPath(); g.moveTo(w * 0.84, h * 0.66); g.lineTo(w * 0.84, h * 0.42); g.lineTo(w * 0.7, h * 0.42); g.stroke();   // (an in)
+  g.fillStyle = W2.ink[0]; g.beginPath(); g.moveTo(w * 0.3, h * 0.18); g.lineTo(w * 0.27, h * 0.24); g.lineTo(w * 0.25, h * 0.17); g.fill();
+  g.font = `bold ${Math.round(h * 0.16)}px ${typeof HAND_FONT !== 'undefined' ? HAND_FONT : 'sans-serif'}`; g.fillStyle = W2.ink[2]; g.textAlign = 'center'; g.fillText('PRACTICE', w * 0.5, h * 0.2);
+  g.fillStyle = '#e8e3d6'; g.fillRect(w * 0.42, h - 10, w * 0.16, 7);   // (the marker tray)
+}
+function gymBake() {   // a chore: one canvas a slice (the bands are small next to the stands: ~1/20 of their memory)
+  if (GYM || GYM_J) return;
+  const k = Math.max(1 / 16, Math.round(crowdK() * INDOOR.k * 16) / 16), bands = gymBands(), J = GYM_J = { k, b: [], wb: null, i: 0 };
+  chore('gym bake', () => {
+    if (GYM_J !== J) return false;
+    const i = J.i++;
+    if (i < 4) {
+      const B = bands[i], c = document.createElement('canvas'); c.width = Math.ceil(B[2] * k); c.height = Math.ceil(B[3] * k);
+      const g = c.getContext('2d'); g.scale(c.width / B[2], c.height / B[3]); gymBandDraw(g, B, i); J.b[i] = c; return true;   // (scaled to the canvas's whole pixels: no half-pixel edge)
+    }
+    const W2 = INDOOR.wb, G = bowlGeo(), ww = W2.w, wh = G.D * W2.h, c = document.createElement('canvas'); c.width = Math.ceil(ww * k * 2); c.height = Math.ceil(wh * k * 2);
+    const g = c.getContext('2d'); g.scale(c.width / ww, c.height / wh); gymWbDraw(g, ww, wh); J.wb = c;
+    GYM = { k, b: J.b, wb: c, bands }; GYM_J = null; return false;
+  }, { key: 'gym', keep: true });
+}
+function drawGym() {   // drawCrowd's indoor branch: the box, its padded walls, the whiteboard; nothing outside but the desk (no lamp, no easter eggs)
+  if (!GYM) gymBake();
+  const G = bowlGeo(), I = INDOOR, L = G.L;
+  const zc = camZ(), vc = viewCenterY(), vTop = camY - (vc - TOP_BAR) / zc - 24, vBot = camY + (H - FIELD_BOT - vc) / zc + 24;
+  const vL = camX - (W / 2 + PAD) / zc - 48, vR = camX + (W / 2 + PAD) / zc + 48;
+  const allIn = (x0, y0, x1, y1, r) => inRR(vL, vTop, x0, y0, x1, y1, r) && inRR(vR, vTop, x0, y0, x1, y1, r) && inRR(vL, vBot, x0, y0, x1, y1, r) && inRR(vR, vBot, x0, y0, x1, y1, r);
+  if (allIn(G.X0 + G.tE, G.Y0 + G.tT, G.X1 - G.tE, G.Y1 - G.tB, G.ri - G.tT)) return;   // (all turf inside the walls)
+  ctx.save();
+  if (!allIn(G.X0, G.Y0, G.X1, G.Y1, G.ri)) {
+    ctx.beginPath(); rrAdd(G.X0 - G.D, G.Y0 - G.D, G.X1 + G.D, G.Y1 + G.D, G.R); rrAdd(G.X0, G.Y0, G.X1, G.Y1, G.ri); ctx.fillStyle = I.box; ctx.fill('evenodd');   // (corners + the bands until baked)
+    if (GYM) for (let i = 0; i < 4; i++) {
+      const B = GYM.bands[i], c = GYM.b[i]; if (!c || !c.width) continue;
+      const x0 = Math.max(B[0], vL), x1 = Math.min(B[0] + B[2], vR), y0 = Math.max(B[1], vTop), y1 = Math.min(B[1] + B[3], vBot);
+      if (x1 <= x0 || y1 <= y0) continue;   // (culled)
+      const sx = c.width / B[2], sy = c.height / B[3];
+      ctx.drawImage(c, (x0 - B[0]) * sx, (y0 - B[1]) * sy, (x1 - x0) * sx, (y1 - y0) * sy, x0, y0, x1 - x0, y1 - y0);
+    }
+    const W2 = I.wb, ww = W2.w, wh = G.D * W2.h, wx = FIELD / 2 - ww / 2, wy = G.Y0 - wh - 14;   // (the whiteboard on the far wall, midfield; read the right way round whatever MIRROR is)
+    if (GYM && GYM.wb && wx < vR && wx + ww > vL && wy < vBot && wy + wh > vTop) { ctx.save(); ctx.translate(FIELD / 2, 0); ctx.scale(MIRROR, 1); ctx.drawImage(GYM.wb, -ww / 2, wy, ww, wh); ctx.restore(); }
+  }
+  // the padded walls all the way round (the stands' wall loop), a seam every padSeg along the sidelines, a light edge on the field side
+  ctx.beginPath();
+  for (let i = 0; i < L.length; i++) { const p = L[i]; i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); } ctx.closePath();
+  for (let i = L.length - 1; i >= 0; i--) { const p = L[i], fx = p.x + p.nx * p.t, fy = p.y + p.ny * p.t; i === L.length - 1 ? ctx.moveTo(fx, fy) : ctx.lineTo(fx, fy); } ctx.closePath();
+  ctx.fillStyle = I.pad; ctx.fill('evenodd');
+  ctx.strokeStyle = I.padDk; ctx.lineWidth = 2; ctx.beginPath();
+  const xa = Math.max(G.X0 + G.ri, vL), xb = Math.min(G.X1 - G.ri, vR);
+  for (const [y0, t] of [[G.Y0, G.tT], [G.Y1 - G.tB, G.tB]]) { if (y0 + t < vTop || y0 > vBot) continue; for (let x = Math.ceil(xa / I.padSeg) * I.padSeg; x < xb; x += I.padSeg) { ctx.moveTo(x, y0 + 2); ctx.lineTo(x, y0 + t - 2); } }
+  ctx.stroke();
+  ctx.beginPath(); for (let i = 0; i < L.length; i++) { const p = L[i], fx = p.x + p.nx * (p.t - 3), fy = p.y + p.ny * (p.t - 3); i ? ctx.lineTo(fx, fy) : ctx.moveTo(fx, fy); } ctx.closePath();
+  ctx.strokeStyle = I.padHi; ctx.lineWidth = 3; ctx.stroke();
+  ctx.beginPath(); for (let i = 0; i < L.length; i++) { const p = L[i], fx = p.x + p.nx * 2.5, fy = p.y + p.ny * 2.5; i ? ctx.lineTo(fx, fy) : ctx.moveTo(fx, fy); } ctx.closePath();
+  ctx.strokeStyle = I.boxDk; ctx.lineWidth = 5; ctx.stroke();
+  ctx.restore();
+  if (inBowlOut(vL, vTop, 10) && inBowlOut(vR, vTop, 10) && inBowlOut(vL, vBot, 10) && inBowlOut(vR, vBot, 10)) return;
+  ctx.save();   // (outside the box: the desk, the box's top edge; no lamp, no easter eggs)
+  ctx.beginPath(); ctx.rect(G.X0 - G.D - 4000, G.Y0 - G.D - 3000, G.X1 - G.X0 + 2 * G.D + 8000, G.Y1 - G.Y0 + 2 * G.D + 6000);
+  rrAdd(G.X0 - G.D, G.Y0 - G.D, G.X1 + G.D, G.Y1 + G.D, G.R);
+  ctx.fillStyle = deskPattern() || CROWD.out; ctx.fill('evenodd');
+  ctx.beginPath(); rrAdd(G.X0 - G.D, G.Y0 - G.D, G.X1 + G.D, G.Y1 + G.D, G.R);
+  ctx.strokeStyle = I.flap; ctx.lineWidth = 12; ctx.stroke(); ctx.strokeStyle = I.boxDk; ctx.lineWidth = 3; ctx.stroke();
+  ctx.restore();
+}
 let crowdImg = null;
 // the benches stay put: home on the top sideline, the road team on the bottom (TEAMS.off is whoever is "you" right now, so pick by MATCH.home)
 const homeKit = () => MATCH.home === 'you' ? TEAMS.off : TEAMS.def, awayKit = () => MATCH.home === 'you' ? TEAMS.def : TEAMS.off;
@@ -259,6 +370,8 @@ function* crowdGen(J) {   // the stands' pieces, one fan drawn a step (yield); r
 // a rounded rectangle path (no beginPath: callers combine two for an even-odd band)
 const rrAdd = (x0, y0, x1, y1, r) => ctx.roundRect(x0, y0, x1 - x0, y1 - y0, Math.max(0, r));
 function drawCrowd() {
+  if (indoorOn()) { drawGym(); return; }   // (v0.76: practice / camps / the tutorial = the gym: no fans built or drawn)
+  if (GYM || GYM_J) gymFree();   // (a real game: the gym's canvases go)
   if (!crowdImg || (!PHOTO_SHOOT && (crowdImg.home !== homeKey() || crowdImg.kit !== benchKit()))) buildCrowd();
   else if (!PHOTO_SHOOT && (crowdImg.k !== crowdK() || crowdImg.lit !== crowdLit())) { if (state === 'pre' || state === 'done' || !!results) crowdRebuildSoon(); }   // (v0.74: baked as a chore, the old stands draw until the new set is done)
   else if (crowdJ && !crowdJ.swapped) crowdJobDrop();   // (back to what is drawn: the half-baked set is dropped)   // (v0.60: a graphics step's new stand size waits for the dead ball too, like the lighting)   // (a new sky = new lights, baked between plays; a new home team / kit / performance level: rebuilt)
@@ -903,6 +1016,7 @@ const SL = { sk: [], rbK: -1, rbO: null, coHide: [-1e9, -1e9], on: false, cast: 
   R: [], F: null, U: 0, TR: [], tF: null, tU: 0, r: null, f: null, u: 0, t: 0, lvl: 0,   // prop records / camera flashes / bench units on the field (live, tape, the frame's source)
   cx: 0, cy: 0, cf: 1, cOn: 0, xt: null, tin: [], cm: [], cmT: [],
   d0: null, d1: null, m0: 0, m1: 0, e0: null, e1: null, q0: 0, q1: 0, lc: new Int16Array(4), nc: 0, vL: 0, vR: 0, sv0: false, sv1: false, ve: null, rm: [], spr: null, sprL: -1, sprD: false, sprK: '' };
+const SL_INDOOR = { [SLK.COACH]: 1, [SLK.STAFF]: 1, [SLK.BENCH]: 1, [SLK.WATER]: 1, [SLK.TECH]: 1, [SLK.BALLBOY]: 1, [SLK.KICKER]: 1, [SLK.MEDIC]: 1, [SLK.GETBACK]: 1 };   // (v0.76: who is on the gym's sideline)
 const SL_VM = new WeakMap();   // cast -> its visible lists for the current setting / performance level (kept off the cast so tapes stay plain data)
 const SL_Q = new Float32Array(SL_CH), SL_QW = new Float32Array(SL_CH);   // (scratch: the pose being built, the walk overlay)
 const SL_P = { x: 0, y: 0, f: 1, dig: 0, wd: -1, hk: -1, ht: 0, md: -1, lt: 0, lq: 0, up: 0, hid: false };          // (scratch: where he is, facing, marker digit, distance walked or -1, hit kind / time)
@@ -1466,16 +1580,17 @@ function slCap(n) {   // scratch sized for the biggest cast seen (a game's, or a
 function slVis(C, lvl) {   // who is shown (and solid) on each side: x-sorted person indices for this setting + performance level (the crew and its judge, the cameramen and the injury cast are kept apart)
   const mode = SETTINGS.sideline || 'ALL', mt = mode === 'OFF' ? -2 : mode !== 'ALL' ? -1 : lvl >= 2 ? 0 : lvl === 1 ? 1 : 2;   // (the highest tier shown: 0 = the bench's sitters only, frozen)
   let e = SL_VM.get(C);
-  if (e && e.mt === mt) return e.v;
+  const io = indoorOn();   // (v0.76: the gym keeps only the coaches and the bench: SL_INDOOR kinds, no cameras, end-zone crews or props)
+  if (e && e.mt === mt && e.io === io) return e.v;
   SL.ve = null;
   const v = [new Int16Array(0), new Int16Array(0)], cam = [new Int16Array(0), new Int16Array(0)], ppl = C.people;
   for (let s = 0; s < 2; s++) {
     const ids = [], cm = [];
-    for (let i = 3; i < ppl.length; i++) { const P = ppl[i]; if (P.s !== s || (P.tier | 0) > mt || P.k === SLK.JUDGE || slXk(P) || P.k === SLK.TRAINER || P.k === SLK.TVOFF || P.k === SLK.REF || P.ez) continue; if (P.k === SLK.CAM) cm.push(i); else ids.push(i); }
+    for (let i = 3; i < ppl.length; i++) { const P = ppl[i]; if (P.s !== s || (P.tier | 0) > mt || P.k === SLK.JUDGE || slXk(P) || P.k === SLK.TRAINER || P.k === SLK.TVOFF || P.k === SLK.REF || P.ez || (io && !SL_INDOOR[P.k])) continue; if (P.k === SLK.CAM) cm.push(i); else ids.push(i); }
     ids.sort((a, b) => ppl[a].hx - ppl[b].hx); v[s] = Int16Array.from(ids); cam[s] = Int16Array.from(cm);
   }
   const pv = [new Int16Array(0), new Int16Array(0)], pr = C.props;
-  if (pr && mode === 'ALL') for (let s = 0; s < 2; s++) { const ids = []; for (let j = 0; j < pr.length; j++) if (pr[j].s === s) ids.push(j); ids.sort((a, b) => pr[a].x - pr[b].x); pv[s] = Int16Array.from(ids); }
+  if (pr && mode === 'ALL' && !io) for (let s = 0; s < 2; s++) { const ids = []; for (let j = 0; j < pr.length; j++) if (pr[j].s === s) ids.push(j); ids.sort((a, b) => pr[a].x - pr[b].x); pv[s] = Int16Array.from(ids); }
   // coarse x buckets a side: the solid things (a person = his index, a prop = -(index + 1)) whose reach overlaps each bucket
   const BW = SIDELINE.bin * YL, x0 = -ENDZONE - 6 * YD, nb = Math.ceil((FIELD + 2 * ENDZONE + 12 * YD) / BW), B = [[], []], reach = 2.4 * YD;
   for (let s = 0; s < 2; s++) {
@@ -1485,7 +1600,7 @@ function slVis(C, lvl) {   // who is shown (and solid) on each side: x-sorted pe
     for (let j = 0; j < pv[s].length; j++) { const P = pr[pv[s][j]]; if (P.ca) put(P.x, P.ca + YD, -(pv[s][j] + 1)); }
     B[s] = L.map(a => Int16Array.from(a));
   }
-  SL_VM.set(C, e = { mt, v, cam, pv, B, bw: BW, bx: x0, nb });
+  SL_VM.set(C, e = { mt, io, v, cam, pv, B, bw: BW, bx: x0, nb });
   return v;
 }
 function slFlashB(i, F, t) {   // how bright cameraman i's flash is at time t (0-1): a few short bursts after the moment, each man on his own beat
@@ -1603,7 +1718,7 @@ function slFrame() {   // once a frame (draw()'s far pass): the source (live or 
   }
   SL.rbK = -1; if (rf && !refHidden()) refRelayEx(C, t, k);   // (v0.69 the relay's ball, in y order with the players and officials)
   const ez = C.ez;   // end-zone crews: inside the field's width, so drawn in y order with the players (slExUpTo)
-  if (ez && e.mt >= 0) for (let j = 0; j < ez.length; j++) {
+  if (ez && e.mt >= 0 && !e.io) for (let j = 0; j < ez.length; j++) {
     const i = ez[j], P = ppl[i]; if (P.hx < vL - M || P.hx > vR + M || SL.exN >= SIDELINE.exMax) continue;
     slPose(P, SL.w[i], SL.a[i], SL.h[i], lvl >= 2 ? 0 : lvl === 1 ? Math.floor(t * hz) / hz : t);
     if (SL_P.x < vL || SL_P.x > vR || SL_P.y < vTop - YD || SL_P.y - 3 * YD > vBot) continue;
@@ -2911,7 +3026,7 @@ function slColP(p) {
   if (!p) return;
   if (p.cel && CELEB_MOVES[p.cel.id] && CELEB_MOVES[p.cel.id].sl) return;   // (v0.51: a wall / camera / mascot celebration runs through the sideline to its mark)
   const y = p.y, C = SL.cast; let s;
-  if (C.ez && (p.x < -ENDZONE - SIDELINE.gap * YD || p.x > FIELD + ENDZONE + SIDELINE.gap * YD) && SL.ce.mt >= 0) { const ez = C.ez; for (let j = 0; j < ez.length; j++) slHitTest(p, ez[j], C.people[ez[j]]); }   // (past an end line: the end-zone crews)
+  if (C.ez && (p.x < -ENDZONE - SIDELINE.gap * YD || p.x > FIELD + ENDZONE + SIDELINE.gap * YD) && SL.ce.mt >= 0 && !SL.ce.io) { const ez = C.ez; for (let j = 0; j < ez.length; j++) slHitTest(p, ez[j], C.people[ez[j]]); }   // (past an end line: the end-zone crews)
   if (y < SL.y0) s = 0; else if (y > SL.y1) s = 1; else return;   // (the broadphase: nobody inside `gap` of the sideline can touch anyone)
   const ppl = C.people, e = SL.ce, pr = C.props;
   if (SL.crewOn && s === C.cs && !slOffMode()) for (let i = 0; i < 3; i++) slHitTest(p, i, ppl[i]);
@@ -3568,8 +3683,9 @@ function fieldCacheDraw() {   // true = the static field was drawn from the cach
   const between = !!results || state === 'pre' || state === 'done' || state === 'sim';   // (a size change waits for the dead ball; a new home team / drive direction can't)
   const pud = wxPudKey();   // (puddles / mud: the field's wet stage, which only moves at a dead ball)
   const qt = TUI.on && gfxHi(), nm = qt && FIELD_CACHE.marksLive && PHONE_TEST.marks !== 'OLD';   // (phase 5, the end-zone name spelled twice: with marksLive the cache has no marks, they are drawn live at every zoom; DEBUG MARKS: OLD = baked + live over close shots)
-  if (!F || F.hk !== hk || F.mir !== MIRROR || F.logo !== logo || F.nm !== nm || ((F.s !== s || F.tui !== TUI.on || F.mk !== mk || F.pud !== pud) && between)) {
-    const A = fieldImgAlt, same = X => X && X.hk === hk && X.logo === logo && X.s === s && X.tui === TUI.on && X.mk === mk && X.pud === pud && X.nm === nm;
+  const io = indoorOn();   // (v0.76: the gym's turf colour is baked: a new venue = a rebuild at once)
+  if (!F || F.hk !== hk || F.mir !== MIRROR || F.logo !== logo || F.nm !== nm || F.io !== io || ((F.s !== s || F.tui !== TUI.on || F.mk !== mk || F.pud !== pud) && between)) {
+    const A = fieldImgAlt, same = X => X && X.hk === hk && X.logo === logo && X.s === s && X.tui === TUI.on && X.mk === mk && X.pud === pud && X.nm === nm && X.io === io;
     if (F && F.mir !== MIRROR && A && A.mir === MIRROR && same(A)) { fieldImgAlt = F; F = fieldImg = A; }   // (v0.72: the other direction is already baked)
     else {
     if (A) { freeCanvas(A.c); fieldImgAlt = null; }
@@ -3583,7 +3699,7 @@ function fieldCacheDraw() {   // true = the static field was drawn from the cach
     fieldNoMarks = nm;
     try { g.setTransform(s, 0, 0, s, ox * s, M * s); drawFieldStatic(); } finally { ctx = main; fieldBaking = false; fieldNoMarks = false; }
     if (!markerOn()) markerFree();   // (performance mode: the marker tiles were only needed for the bake)
-    F = fieldImg = { c, s, hk, mir: MIRROR, logo, tui: TUI.on, mk, pud, M, ox, nm };
+    F = fieldImg = { c, s, hk, mir: MIRROR, logo, tui: TUI.on, mk, pud, M, ox, nm, io };
     }
   }
   // the part of it on screen (canvas px -> world -> cache px, a pixel of slack each side)
@@ -3626,10 +3742,11 @@ let fieldLive = false;   // (the field is being drawn live this shot: FRAME TIME
 // the part of the field that never changes within a game (drawField: live, or once into FIELD_CACHE's canvas)
 function drawFieldStatic() {
   const mk = markerOn() || (fieldBaking && MARKER.on), pap = paperOn() || (fieldBaking && PAPER_TURF.on && MARKER.on);   // (v0.55: construction paper between the goal lines, marker end zones; baked into the cache = the full look in every graphics mode)
-  ctx.fillStyle = pap ? paperFill('#2f8f3a') : mk ? markerFill('#2f8f3a', 1) : '#2f8f3a';
+  const io = indoorOn(), g0 = io ? INDOOR.turf[0] : '#2f8f3a', g1 = io ? INDOOR.turf[1] : '#2a8334';   // (v0.76: the gym's turf; key F.io in fieldCacheDraw)
+  ctx.fillStyle = pap ? paperFill(g0) : mk ? markerFill(g0, 1) : g0;
   ctx.fillRect(-ENDZONE, 0, FIELD + 2 * ENDZONE, FW);
 
-  ctx.fillStyle = pap ? paperFill('#2a8334') : mk ? markerFill('#2a8334', -1) : '#2a8334';   // (paper: the 5-yard bands are a second sheet's shade; marker: the strokes ran the other way)
+  ctx.fillStyle = pap ? paperFill(g1) : mk ? markerFill(g1, -1) : g1;   // (paper: the 5-yard bands are a second sheet's shade; marker: the strokes ran the other way)
   for (let x = 0, i = 0; x < FIELD; x += 5 * YL, i++) if (i % 2 === 0) ctx.fillRect(x, 0, 5 * YL, FW);
 
   ctx.fillStyle = mk ? markerFill(homeColor(), 1) : homeColor();   // both end zones in the home team's colour
@@ -3791,6 +3908,59 @@ function drawRushArt() {
     const gun = kickoff.cover.filter(d => d.lane === 0 || d.lane === 9).sort((a, b) => a.y - b.y), jm = kickoff.front.slice(8).sort((a, b) => a.y - b.y);
     jm.forEach((j, i) => { const g = gun[i]; if (g && !j.action) drawBlockArt({ x: j.x, y: j.y, color: wxInk(RUSH_ART.jamCol) }, (j.x + g.x) / 2, (j.y + g.y) / 2); });
   }
+  ctx.restore();
+}
+// --- debug overlay (DEBUG > ZONES / ROUTES; looks only, plain strokes: no random numbers). One plain snapshot (numbers, strings, player indexes)
+// taken at the snap onto the recording (rec.kits.dbg, so kept clips carry it); live it is rebuilt only when the line-up / phase changes.
+const DBG_OV_LOOK = { zone: '#3fa7ff', deep: '#b04cff', man: '#ff5a5a', fill: 0.18, w: 3, routeW: 4, every: 30 };
+function dbgOvSnap() {
+  const all = allPlayers(), S = { los, cov: typeof coverage === 'string' ? coverage : (coverage && coverage.name) || '', combos: [], zones: [], man: [], routes: [] };
+  for (const s of sides || []) if (s && s.combo) S.combos.push(s.combo);
+  for (const d of back7) {
+    if (!d || d.blitz) continue;
+    if (d.man) { const i = all.indexOf(d), j = all.indexOf(d.man); if (i >= 0 && j >= 0) S.man.push([i, j]); }
+    else if (d.zone) { const z = zoneShape(d); S.zones.push([los + (d.zone.d || 0) * YL, z.cy, z.rx, z.ry, d.zone.deep ? 1 : 0]); }
+  }
+  for (const r of catchers()) {
+    if (!r.route || !r.path || !r.path.length) continue;
+    const pts = [r.x, r.y]; for (const q of r.path) pts.push(q[0], q[1]);
+    if (!r.route.stop && r.cont) { const n = pts.length; pts.push(pts[n - 2] + r.cont.x * 5 * YD, clampRouteY(pts[n - 1] + r.cont.y * 5 * YD)); }
+    S.routes.push({ c: r.color || '#fff', pts });
+  }
+  return S;
+}
+function dbgOvData() {
+  if (rec && rec.replaying) return rec.kits && rec.kits.dbg || null;
+  const key = RESET_N * 2 + (state === 'pre' ? 1 : 0);
+  if (key !== DBG_OV.key || ++DBG_OV.n >= DBG_OV_LOOK.every) { DBG_OV.key = key; DBG_OV.n = 0; DBG_OV.live = state === 'pre' || (rec && rec.kits && rec.kits.dbg) ? (state === 'pre' ? dbgOvSnap() : rec.kits.dbg) : DBG_OV.live; }
+  return DBG_OV.live;
+}
+function dbgOvWorld() {
+  if (state === 'sim' || state === 'kickoff' || (state === 'kick' && kick)) return;
+  const S = dbgOvData(); if (!S) return;
+  const L = DBG_OV_LOOK; ctx.save(); ctx.lineWidth = L.w; ctx.setLineDash([]);
+  if (DBG_OV.zones) {
+    for (const z of S.zones) {
+      ctx.beginPath(); ctx.ellipse(z[0], z[1], z[2], z[3], 0, 0, Math.PI * 2);
+      ctx.fillStyle = z[4] ? L.deep : L.zone; ctx.globalAlpha = L.fill; ctx.fill(); ctx.globalAlpha = 0.8; ctx.strokeStyle = ctx.fillStyle; ctx.stroke(); ctx.globalAlpha = 1;
+    }
+    const all = allPlayers(); ctx.strokeStyle = L.man;
+    for (const m of S.man) { const a = all[m[0]], b = all[m[1]]; if (!a || !b) continue; ctx.beginPath(); ctx.moveTo(a.x, a.y + FOOT); ctx.lineTo(b.x, b.y + FOOT); ctx.stroke(); }
+  }
+  if (DBG_OV.routes) {
+    ctx.lineWidth = L.routeW; ctx.setLineDash([14, 10]);
+    for (const r of S.routes) { const P = r.pts; ctx.strokeStyle = r.c; ctx.beginPath(); ctx.moveTo(P[0], P[1] + FOOT); for (let i = 2; i < P.length; i += 2) ctx.lineTo(P[i], P[i + 1] + FOOT); ctx.stroke(); }
+  }
+  ctx.restore();
+}
+function dbgOvText() {   // screen space: the coverage and each side's combo, bottom left above the down-and-distance band
+  if (state === 'kickoff' || (state === 'kick' && kick)) return;
+  const S = dbgOvData(); if (!S) return;
+  ctx.save(); ctx.font = 'bold 16px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom'; ctx.lineWidth = 4; ctx.strokeStyle = '#000'; ctx.fillStyle = '#fff';
+  let y = H - BOT_BAR - 64;   // (above the replay's own hint lines)
+  const line = t => { ctx.strokeText(t, 16, y); ctx.fillText(t, 16, y); y -= 20; };
+  if (DBG_OV.routes) for (let i = S.combos.length - 1; i >= 0; i--) line('ROUTES ' + (i + 1) + ': ' + S.combos[i].replace(/\s+/g, ' '));
+  if (DBG_OV.zones && S.cov) line('COVERAGE: ' + S.cov);
   ctx.restore();
 }
 const HG_ART = { back: 1.2, side: 0.9 };   // hitch & go route art: the hitch jabs back this many yards (YL) and across (YD)
@@ -10177,6 +10347,7 @@ function stanceOf(p) {   // 'two' | 'three' | 'four' | 'wr' | 'cb' | 's' | 'lb' 
     const i = (kick.rush || []).indexOf(p);
     if (kick.kp && !kick.punt) {   // (the kick protection engine's unit: wings and the men behind the rush stand up, everyone on the line is down)
       if (p === recs[0] || p === recs[3]) return 'two';
+      if (i >= 0 && p.kp && kick.phase === 'snap' && kick.t >= (p.kp.rt || 0) && !p.engaged) return null;   // (off the ball: a stance only while locked on a blocker, never free or before contact)
       if (i >= 0 && p.kp) return p.kp.st || (p.kp.role === 'line' ? (dl.includes(p) ? 'four' : 'three') : p.kp.role === 'over' ? 'three' : 'lb');   // (v0.56: each rusher's own stance, kproSetLook)
     }
     if (i >= 0 && p.kickBlocker && p.engaged) return kick.punt ? 'three' : i > 1 && i < kick.rush.length - 2 && dl.includes(p) ? 'four' : 'three';
@@ -11633,11 +11804,11 @@ let fourthPending = false, toast = null;
 // click he can still go for two instead
 const PAT_SWITCH_BTN = { x: W / 2 - 160, y: H - BOT_BAR - 62, w: 320, h: 44 };
 function patSwitch() {
-  if (state === 'kickoff' && kick && kick.userKo && kick.kickoff && (kick.phase === 'power' || kick.phase === 'target')) return { id: 'onside', label: 'ONSIDE KICK', fill: '#ffd94a' };   // (your mirrored kickoff)
+  if (state === 'kickoff' && kick && kick.userKo && kick.kickoff && (kick.phase === 'power' || kick.phase === 'target') && ftCan('onside')) return { id: 'onside', label: 'ONSIDE KICK', fill: '#ffd94a' };   // (your mirrored kickoff)
   if (tut || fourthPending || aiOff() || (rec && rec.replaying)) return null;   // (on defense it's their call, not yours; none during an instant replay)
   if (state === 'pre' && patMode === 'two') return { id: 'toPat', label: 'KICK THE PAT INSTEAD (1)', fill: '#2a6fe0' };
   if (state === 'kick' && patMode === 'kick' && kick && kick.phase === 'power') return { id: 'toTwo', label: 'GO FOR TWO INSTEAD (2)', fill: '#ffd94a' };
-  if (state === 'kick' && kick && kick.kickoff && kick.phase === 'power') return kick.onside ? { id: 'regular', label: 'KICK IT DEEP INSTEAD', fill: '#2a6fe0' } : { id: 'onside', label: 'ONSIDE KICK', fill: '#ffd94a' };
+  if (state === 'kick' && kick && kick.kickoff && kick.phase === 'power' && ftCan('onside')) return kick.onside ? { id: 'regular', label: 'KICK IT DEEP INSTEAD', fill: '#2a6fe0' } : { id: 'onside', label: 'ONSIDE KICK', fill: '#ffd94a' };
   return null;
 }
 function patSwitchClick() {

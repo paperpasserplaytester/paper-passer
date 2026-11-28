@@ -366,6 +366,7 @@ function kbSetup() {
 const QC = { card: { x: 390, y: 52, w: 500, h: 360 }, go: { x: 530, y: 300, w: 220, h: 72 } };
 function drawQuickCareer() {
   paperBg();
+  if (career.path === 'ask') return ftPathDraw();   // (franchise 2+: ROOKIE or VETERAN, after the locker)
   const C = QC.card, now = performance.now(), ink = RES.line;
   ctx.save(); ctx.translate(4, 6); tornPath(C); ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fill(); ctx.restore();
   tornPath(C); ctx.fillStyle = '#fffdf4'; ctx.fill();
@@ -380,8 +381,31 @@ function drawQuickCareer() {
   if (career.nameErr && now - career.nameErr < 2500) { ctx.fillStyle = '#d52b2b'; ctx.font = `bold 17px ${CAR_HAND}`; ctx.textAlign = 'center'; ctx.fillText('sign both lines to go on!', W / 2, 272); }
   menuBtn(QC.go, 'START ▸', IN_GAME_PAPER.green, 26);
 }
+// v0.77: every new franchise = name -> locker (the questionnaire's locker page alone) -> franchise 2+ one card: ROOKIE (the field tutorial, the setup questions after game 1) or
+// VETERAN (everything open, no notes or tours, a "same settings?" card). The first franchise ever skips the card and is ROOKIE (ftFirstEver).
+const QC_PATH = { rook: { x: 412, y: 150, w: 220, h: 160 }, vet: { x: 648, y: 150, w: 220, h: 160 } };   // (inside QC.card)
+const ftFirstEver = () => { let seen = false; try { seen = !!localStorage.getItem(FT_KEY); } catch (e) {} return !seen && !slotMetas().some(m => m); };
+function qsOnlyDone() { if (ftFirstEver()) { FT_PATH = 'rookie'; firstCareerGo(); } else { career.path = 'ask'; career.quick = true; results.screen = 'franchise'; } }
+function ftPathDraw() {
+  const C = QC.card, ink = RES.line;
+  ctx.save(); ctx.translate(4, 6); tornPath(C); ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fill(); ctx.restore();
+  tornPath(C); ctx.fillStyle = '#fffdf4'; ctx.fill();
+  ctx.fillStyle = ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `bold 30px ${CAR_HAND}`; ctx.fillText('HOW DO YOU START?', W / 2, C.y + 44);
+  menuBtn(QC_PATH.rook, 'ROOKIE\nEase me in', RES.bright, 24);
+  menuBtn(QC_PATH.vet, 'VETERAN\nEverything open', IN_GAME_PAPER.green, 24);   // (the highlighted default)
+}
+function ftPathClick(p) {
+  if (inBtn(p, QC_PATH.rook)) { career.path = null; FT_PATH = 'rookie'; firstCareerGo(); }
+  else if (inBtn(p, QC_PATH.vet)) { career.path = null; FT_PATH = 'vet'; vetCareerGo(); }
+}
+function vetCareerGo() {   // VETERAN: everything open, straight to the home screen, one "same settings?" card
+  career.quick = false; career.hire = career.hire || 'surprise';
+  careerStart(); career.tutOff = true; career.unlockAll = true; career.ftSkip = true; LEAGUE.ft = null;
+  if (curSlot === null) return;   // (every slot full: the save picker is up first)
+  tutPrompt = 'same'; autosaveSoon();
+}
 function firstCareerGo() {
-  for (const [k, v] of Object.entries(QS_REC)) if (k !== 'tours' && !(k === 'simDefense' && typeof ONL !== 'undefined' && ONL.on)) SETTINGS[k] = v;   // (the recommended answers: the questions themselves come after the first game)
+  for (const [k, v] of Object.entries(QS_REC)) if (k !== 'tours' && k !== 'simDefense') SETTINGS[k] = v;   // (field tutorial: the defense card asks it in the game) (the recommended answers: the questions themselves come after the first game)
   saveSettings();
   career.quick = false; career.hire = career.hire || 'surprise';
   careerStart(); career.tutOff = false;
@@ -391,14 +415,700 @@ function firstCareerGo() {
 }
 // the first game is over and the home screen comes up: now the hiring card, the home tour, then the setup questions
 function firstRunHome() { if (LEAGUE.firstRun === 'game' && LEAGUE.firstPlayed && season) { LEAGUE.firstRun = 'after'; tutPrompt = 'coach'; } }
-function firstRunQsDone() { if (LEAGUE.firstRun !== 'qs') return; LEAGUE.firstRun = null; settingsOpen = false; tutPrompt = 'ready'; autosaveSoon(); }
+function firstRunQsDone() { if (LEAGUE.firstRun !== 'qs') return; LEAGUE.firstRun = null; settingsOpen = false; tutPrompt = null; autosaveSoon(); }   // (no football tutorial question: the first game taught the field)
+
+// --- field tutorial
+// The first franchise game teaches the controls on the field, one beat at a time, the first time each comes up (tunables FIELD_TUT in 01).
+// Saved per franchise: LEAGUE.ft = { done: { beat: 1 }, tries: { beat: n }, def (the defense card's answer: null = not asked, 'no1' = no once, true / false), g (the tutorial game
+// being played, 1-3; SIM is locked while it still has a MUST lesson left: ftSimLock), drive / play / side (this game's drive count), koRet (your kick returns so far) } (missing / null = off,
+// every hook is one cheap check). Account key FT_KEY = the tutorial has been finished once (later franchises get a choice, career.ftSkip / unlockAll).
+// FT = this step's prompt (never saved): set in the step by ftTick (top of update), drawn by ftDraw (draw(), after the world) with the cold open's
+// coldPrompt (a hand on touch, the cursor / keys on a laptop). Live beats get a short eased slow motion = ftSlowK() in the frame loop's step speed.
+// Plays it steers: the forced run (snap -> handoff, liveRunCall = inside zone), the CPU's run / pass on the defense plays (aiWantsRun, aiTarget's aimUd).
+// Nothing seeds or replaces Math.random; every play is a real down.
+const FT_KEY = 'pocketPasser.fieldTutDone';
+const FT = { step: '', vis: false, live: false, t: 0, slowT: -1, inPlay: false, play: null, defP: null, game: null, ask: 0, args: null, koMine: false, deep: false,
+  ap: null, note: '', toast: null, sf: '', ver: 0, s2: '', pk: null, pass: false, sx: 0, sy: 0, dy: -60, kL: 'press', kT: 'press', lab: '', ch: '', keys: null, dir: null, tdx: 0, seen: false, hold: 0, nd: 0, retSeen: false, kSeen: false, mute: false,
+  rem: '', rk: false, pf: 0, pm: 0, thrown: false, pk2: 0, stuck: false, reh: false, bf: '', bx: 0, by: 0, bs: {}, kpC: '', kpT: -1, chk: 0, chkF: '', chkX: 0, chkY: 0, nlT: '', nlN: 1 };   // (board: bf = the lesson it belongs to, bs = each lesson's spot this game; reh = a rehearsal step; kpC / kpT = last key pressed (lighting); chk = steps the green check stays)
+const FT_KD = ['KeyD'], FT_D = [0, 0], ftDir = (x, y) => { FT_D[0] = x; FT_D[1] = y; return FT_D; };
+const FT_RUN = ['spin', 'juke', 'truck', 'stiff'], FT_DEF = ['d1', 'd2', 'd3'], FT_K4 = ['KeyW', 'KeyA', 'KeyS', 'KeyD'], FT_KWS = ['KeyW', 'KeyS'];
+const FT_PT = { x: 0, y: 0 }, FT_O = { t: 0, label: '', to: { x: 0, y: 0 }, dir: [0, 0], keys: null, ch: '', hold: false };   // (coldPrompt's target / opts: filled per paint, never new)
+const ftLog = s => { if (FIELD_TUT.debug) console.log('[FT] ' + s); };
+function ftFresh() { return { g: 1, done: { throw: 1, bullet: 1, jump: 1, low: 1 }, tries: {}, def: null, drive: 0, play: 0, side: '', koRet: 0, y0: LEAGUE.year }; }   // (y0: the gates lift at year 2, ftGate) (their drives wait in the sim box until the defense card is answered: ftDefWait, never a written setting)
+let FT_PATH = null;   // the new-franchise card's answer: 'rookie' | 'vet' (null = an older entry: the first franchise ever is ROOKIE, later ones open)
+function ftCareer() {   // (end of careerStart)
+  let seen = false; try { seen = !!localStorage.getItem(FT_KEY); } catch (e) {}
+  const rook = FT_PATH ? FT_PATH === 'rookie' : !seen; career.ftAsk = false; FT_PATH = null;
+  LEAGUE.ft = rook ? ftFresh() : null; if (!rook) career.unlockAll = true; LEAGUE.unl = rook ? unlFresh() : null;   // (v0.77: ROOKIE opens the off-field screens on the UNLOCKS table) ftLog('new franchise: ' + (rook ? 'ROOKIE, field tutorial on' : 'VETERAN, everything open'));
+}
+function ftChoose(yes) { career.ftAsk = false; career.ftSkip = !yes; career.unlockAll = !yes; LEAGUE.ft = yes ? ftFresh() : null; LEAGUE.unl = yes ? unlFresh() : null; tutPrompt = null; ftLog(yes ? 'replay chosen' : 'skipped'); autosaveSoon(); }
+const ftNotesOn = () => !SETTINGS || SETTINGS.coachNotes !== false;   // (settings COACH NOTES: off = no lessons, notes or reminders)
+const ftNoLock = () => !!(SETTINGS && SETTINGS.notesOff);   // (COACH NOTES was turned off once on this device: nothing is ever locked again)
+function ftNotesSet(on) {   // the settings row: off closes any open prompt at once and opens every feature for good; back on = notes only
+  SETTINGS.coachNotes = !!on;
+  if (!on) { SETTINGS.notesOff = true; FT.vis = false; FT.step = ''; FT.play = null; FT.s2 = ''; FT.rem = ''; FT.slowT = -1; FT.toast = null;
+    if (FT.ask) { const a = FT.args; FT.ask = 0; FT.args = null; FT.pass = true; try { if (a) startSim(a[0], a[1], a[2]); } finally { FT.pass = false; } } }
+  saveSettings(); ftLog('coach notes ' + (on ? 'on' : 'off'));
+}
+function ftOn() { const F = LEAGUE && LEAGUE.ft; return !!F && ftNotesOn() && !tut && !ONL.on && !exhibition && !oo && !LG_SAND && !game.over && !(typeof CO !== 'undefined' && CO); }
+const FT_MUST = ['run', 'spin', 'juke', 'truck', 'stiff', 'defq'];   // (+ d1-d3 once the defense card was answered PLAY)
+const FT_MUST2 = ['aud', 'hot', 'to'];   // (game 2's musts: counted from game 2 on)
+function ftMustLeft() { const F = LEAGUE.ft; for (let i = 0; i < FT_MUST.length; i++) if (!F.done[FT_MUST[i]] && !campAhead(FT_MUST[i])) return FT_MUST[i]; if (F.g >= 2) for (let i = 0; i < FT_MUST2.length; i++) if (!F.done[FT_MUST2[i]]) return FT_MUST2[i]; if (F.def === true) for (let i = 0; i < FT_DEF.length; i++) if (!F.done[FT_DEF[i]]) return FT_DEF[i]; return null; }
+const ftSimLock = () => campDue() || !!(LEAGUE && LEAGUE.ft && LEAGUE.ft.g <= 3 && !ftNoLock() && !career.unlockAll && !exhibition && ftMustLeft());
+const ftDefWait = () => !!(LEAGUE && LEAGUE.ft && (LEAGUE.ft.def == null || LEAGUE.ft.def === 'no1') && !career.unlockAll && !ftNoLock() && season && !exhibition && !tut && !ONL.on);   // (A4: their drives wait for the defense card)
+function simDefOn() { return SETTINGS.simDefense || ftDefWait(); }   // (SIM DEFENSE for this franchise's games: the setting, or the unanswered defense card)
+function ftClearAsk() { if (FT.ask) ftLog('defense card dropped'); FT.ask = 0; FT.args = null; }   // (leaving / loading / a new game: the card is asked again on their next drive)
+function ftNewGame() { ftClearAsk(); FT.bs = {}; FT.bf = ''; FT.chk = 0; FT.inPlay = false; FT.play = FT.defP = null; FT.vis = false; FT.step = ''; FT.slowT = -1; const F = LEAGUE && LEAGUE.ft; if (F && !LG_SAND) { F.drive = 0; F.play = 0; F.side = ''; } }   // (newGame: a real new game, A2)
+const ftDefLock = () => !!(LEAGUE && LEAGUE.ft && (LEAGUE.ft.def == null || LEAGUE.ft.def === 'no1') && !career.unlockAll && !ftNoLock());
+const ftNoRisk = (n = 2) => !!(LEAGUE && LEAGUE.ft && LEAGUE.ft.g < n && !career.unlockAll && !exhibition && !tut && !ONL.on);   // (n = the first tutorial game that follows the saved setting: injuries / extreme weather 2, flags / booth review 3; the saved settings are left alone)
+const ftLeft = id => !LEAGUE.ft.done[id];
+function ftDone(id) { const F = LEAGUE.ft; if (!F.done[id]) { F.done[id] = 1; FT.ver++; if (FT.bf === id) ftCheck(id); ftLog('done ' + id + (FT_MUST.includes(id) || FT_DEF.includes(id) ? ' (must; left: ' + (ftMustLeft() || 'none: SIM open') + ')' : '')); } }
+function ftMiss(id) { const F = LEAGUE.ft; if (F.done[id]) return; F.tries[id] = (F.tries[id] || 0) + 1; ftLog('miss ' + id + ' (' + F.tries[id] + ')'); if (F.tries[id] > FIELD_TUT.tries) { F.done[id] = 2; FT.ver++; ftLog('timed out ' + id + ' (open, not learned: left: ' + (ftMustLeft() || 'none: SIM open') + ')'); } }   // (A3: done 2 = open but not learned, a reminder later)
+const ftLearned = id => !!(LEAGUE && LEAGUE.ft && LEAGUE.ft.done[id] === 1);
+function ftSlowK() { if (FT.slowT < 0) return 1; return 1 - (1 - FIELD_TUT.slowK) * Math.sin(Math.PI * Math.min(1, FT.slowT / FIELD_TUT.slowS)); }   // (eased in and out; 1 outside the window)
+function ftAccK() { return ftOn() && LEAGUE.ft.g === 1 && LEAGUE.ft.drive === 1 && !aiOff() ? FIELD_TUT.accK : 1; }   // (drive 1 of the first game: a quiet accuracy help, never shown)
+function ftRunHead() { const F = LEAGUE.ft; for (let i = 0; i < FT_RUN.length; i++) if (ftLeft(FT_RUN[i]) && !campAhead(FT_RUN[i])) return i < 2 || F.drive >= 2 || F.g > 1 ? FT_RUN[i] : null; return null; }
+function ftDefHead() { const F = LEAGUE.ft; if (F.def == null || SETTINGS.simDefense || !aiOff()) return null; for (let i = 0; i < FT_DEF.length; i++) if (ftLeft(FT_DEF[i])) return FT_DEF[i]; return null; }
+function ftSnap() {   // (the snap wrapper, still in 'pre'): count the play, pick what it teaches
+  if (FT.inPlay || !ftOn()) return; FT.inPlay = true; game.ftPl = 1; FT.seen = false; FT.s2 = ''; FT.rem = ''; FT.thrown = false; FT.pk2 = 0; const F = LEAGUE.ft;
+  if (!aiOff() && patMode == null) { F.play++; F.pt = (F.pt || 0) + 1; FT.play = ftRunHead(); ftLog('snap: drive ' + F.drive + ' play ' + F.play + (FT.play ? ' (' + FT.play + ' cued if he carries it)' : '')); }
+  else if (aiOff()) { FT.play = FT.defP; if (FT.play) ftLog('snap: defense ' + FT.play); }
+}
+function ftNear(c, team) {   // nearest man of a team to c (no garbage); FT.nd = his distance
+  let best = null, bd = Infinity; const L = allPlayers();
+  for (let i = 0; i < L.length; i++) { const d = L[i]; if (d === c || d.team !== team) continue; const q = Math.hypot(d.x - c.x, d.y - c.y); if (q < bd) { bd = q; best = d; } }
+  FT.nd = bd; return best;
+}
+function ftNearRec(d) { let best = null, bd = Infinity; for (let i = 0; i < recs.length; i++) { const r = recs[i], q = Math.hypot(r.x - d.x, r.y - d.y); if (q < bd) { bd = q; best = r; } } return best; }
+function ftShow(step, live, ap, kL, kT, lab, note) {
+  { const c = step.indexOf(':'), f = c < 0 ? step : step.slice(0, c); if (ftY2(f)) { ftY2Note(f); FT.mute = true; return; } }   // (A6: year 2 = the first chance shows the one-line note instead of the lesson)
+  if (FT.step !== step) { FT.step = step; FT.t = 0; if (live && FIELD_TUT.slowS > 0) FT.slowT = 0; ftLog('open ' + step); const c = step.indexOf(':'), f = c < 0 ? step : step.slice(0, c); if (f !== FT.sf) { FT.sf = f; FT.ver++; } }
+  FT.vis = true; FT.reh = false; FT.rk = false; FT.live = live; FT.ap = ap; FT.note = note || ''; FT.dy = -60; FT.kL = kL; FT.kT = kT; FT.lab = lab; FT.keys = null; FT.dir = null; FT.tdx = 0; FT.ch = '';
+}
+const ftAnyKey = k => !!(k.KeyW || k.KeyA || k.KeyS || k.KeyD || k.ArrowUp || k.ArrowDown || k.ArrowLeft || k.ArrowRight);
+const FT_DB = () => ud && (ud === cbT || ud === cbB || ud === sT || ud === sB || ud === lbW || ud === lbM || ud === lbS);
+function ftSpec() {   // this step's prompt (false = none)
+  const F = LEAGUE.ft, k = kick, ko = kickoff;
+  if (F.g >= 2 && ftSpec2(F, k, ko)) return true;
+  // the kick meters: your field goal / PAT (one beat), then your punt and kickoff (the reticle's GO first)
+  if (state === 'kick' && k && !k.punt && !k.kickoff && !aiOff() && ftLeft('kick')) {
+    if (k.phase === 'power' || k.phase === 'aim') { FT.kSeen = true; ftShow('kick:' + k.phase, false, null, 'press', 'press', k.phase === 'power' ? 'STOP' : 'IN GREEN', k.phase === 'power' ? 'Yellow: more leg, less aim' : 'Stop it in the green'); FT.sx = W / 2 + 300; FT.sy = TOP_BAR + (k.phase === 'power' ? 32 : 84); return true; }
+    if (FT.kSeen && k.phase !== 'enter') { FT.kSeen = false; ftDone('kick'); }
+    return false;
+  }
+  if (state === 'kickoff' && k && k.userKo) {
+    const id = k.punt ? 'punt' : 'ko';
+    if (!ftLeft(id)) return false;
+    if (reticleOn()) { FT.kSeen = true; ftShow(id + ':go', false, null, 'press', 'press', 'GO', 'Pick your spot, then kick'); FT.sx = KICK_GO_BTN.x + KICK_GO_BTN.w / 2; FT.sy = KICK_GO_BTN.y + KICK_GO_BTN.h / 2; return true; }
+    if (k.phase === 'power' || k.phase === 'aim') { FT.kSeen = true; ftShow(id + ':' + k.phase, false, null, 'press', 'press', k.phase === 'power' ? 'STOP' : 'IN GREEN', k.phase === 'power' ? 'More power, more distance' : 'Stop it in the green'); FT.sx = W / 2 + 300; FT.sy = TOP_BAR + (k.phase === 'power' ? 32 : 84); return true; }
+    if (FT.kSeen) { FT.kSeen = false; ftDone(id); }
+    return false;
+  }
+  // kick returns: KNEEL on the deep one, RUN on the first
+  if ((state === 'kickoff' || state === 'run') && FT.koMine) {   // (after the catch the return is a 'run' play: kickoff is gone)
+    if (FT.deep && ftLeft('kneel')) {
+      if ((ko && ko.kneel) || (rb && rb.action === 'kneel')) { ftDone('kneel'); FT.deep = false; return false; }
+      const inEz = (ko && ko.phase === 'flight' && ko.flight && ko.flight.tx < 0) || (rb && rb.hasBall && rb.x < 0);
+      if (inEz) { FT.retSeen = true; ftShow('kneel', true, rb, 'keys', 'joystick', 'KNEEL', 'Deep kick? Kneel for the touchback'); FT.keys = FT_KD; FT.dir = ftDir(-MIRROR, 0); return true; }
+      return false;   // (ran it out: that works too; a miss, settled when the return ends)
+    }
+    if (ftLeft('ret') && rb && rb.hasBall && !aiOff()) {
+      FT.retSeen = true;
+      if (ftAnyKey(keys)) { FT.hold += 1 / 60; if (FT.hold >= FIELD_TUT.runHold) { ftDone('ret'); return false; } }
+      ftShow('ret', true, rb, 'keys', 'joystick', 'RUN', 'Steer him through the gaps'); FT.keys = FT_K4; FT.dir = ftDir(MIRROR, 0); return true;
+    }
+    return false;
+  }
+  // before the snap on offense: rehearse the move on deck, then recommend a run (never forced)
+  if (state === 'pre' && !aiOff() && patMode == null && !(rec && rec.replaying)) {
+    const h = ftRunHead(); if (h && ftReh(h)) return true;
+    if (ftLeft('run') && F.g === 1 && (F.runAsk || 0) < FIELD_TUT.runAsk && rb) { ftShow('run', false, rb, 'press', 'press', coldTouch() ? 'TAP HIM' : 'CLICK HIM', 'Try a run! Tap your back'); return true; }
+  }
+  // the run moves: cued as the first tackler closes (on any carry: no run is forced)
+  if (FT.play && !aiOff() && FT_RUN.includes(FT.play) && runner && runner.hasBall && state === 'run') {
+    const id = FT.play, c = runner;
+    if ((id === 'spin' && c.action === 'spin') || (id === 'juke' && c.action === 'juke') || (id === 'truck' && c.truck && keys.KeyC) || (id === 'stiff' && c.stiff && keys.KeyQ)) { ftDone(id); FT.play = null; return false; }
+    const tk = ftNear(c, 'def'); if (!FT.seen && FT.nd < FIELD_TUT.closeYd * YD) FT.seen = true;
+    if (!FT.seen) return false;
+    const ap = tk || c;   // (the "now" cue: a ring on the tackler; the keys stay on the board)
+    if (id === 'spin') ftShow('spin', true, ap, 'key1', 'circle', 'SPIN', 'Spin right out of his grab'), FT.ch = 'R';
+    else if (id === 'juke') { ftShow('juke', true, ap, 'keys', 'swipe', 'TAP TWICE', 'Juke leaves him grabbing air'); FT.keys = FT_KWS; }
+    else if (id === 'truck') ftShow('truck', true, ap, 'key1', 'press', 'HOLD', 'Lower the shoulder, run him over'), FT.ch = 'C';
+    else { ftShow('stiff', true, ap, 'key1', 'drag', 'HOLD', 'Shove the tackler away'); FT.ch = 'Q'; FT.tdx = -MIRROR * 130; }
+    if (coldTouch() && id === 'stiff') FT.lab = 'SWIPE BACK, HOLD';
+    return true;
+  }
+  // the defense plays
+  if (FT.play && aiOff() && ud && FT_DEF.includes(FT.play) || (state === 'pre' && FT.defP && aiOff() && ud)) {
+    const id = FT.play || FT.defP;
+    if (!ftLeft(id)) return false;   // (done this play: nothing more until the next lesson)
+    if (id === 'd1') {
+      if (!FT_DB()) { ftShow('d1:tap', state !== 'pre', lbM, 'press', 'press', 'TAP HIM', 'Pick the man you play'); return true; }
+      if (ftAnyKey(dkeys)) { ftDone('d1'); return false; }
+      ftShow('d1:move', state !== 'pre', ud, 'keys', 'joystick', 'MOVE', 'Stay with your man'); FT.keys = FT_K4; FT.dir = ftDir(MIRROR, 0); return true;
+    }
+    if (id === 'd2' && state === 'pre' && ftReh('d2')) return true;
+    if (id === 'd3' && state === 'pre' && (ud === sT || ud === sB) && ftReh('d3')) return true;
+    if (id === 'd2' && state === 'run' && runner && runner.hasBall) {
+      const n = ftNear(runner, ud.team), dU = Math.hypot(ud.x - runner.x, ud.y - runner.y);
+      if (FT.step === 'd2:dive' && ud.action) { ftDone('d2'); return false; }
+      if (dU < FIELD_TUT.tackleYd * YD) { ftShow('d2:dive', true, ud, 'key1', 'drag', 'DIVE', 'Dive and wrap him up'); FT.ch = 'F'; FT.tdx = -MIRROR * Math.sign(ud.vx || ud.face || 1) * 120; return true; }
+      if (n && n !== ud && FT.step !== 'd2:dive') { ftShow('d2:tap', true, n, 'press', 'press', 'TAP HIM', 'Grab the man in his path'); return true; }
+      return false;
+    }
+    if (id === 'd3') {
+      const safe = ud === sT || ud === sB;
+      if (state === 'pre' && !safe) { ftShow('d3:tap', false, sT, 'press', 'press', 'TAP HIM', 'Take the deep safety'); return true; }
+      if ((state === 'drop' || state === 'pocket') && safe) { const r = ftNearRec(ud); if (r) { ftShow('d3:move', true, ud, 'keys', 'joystick', 'MOVE', 'Drift toward his receiver'); FT.keys = FT_K4; FT.dir = ftDir(MIRROR * Math.sign(r.x - ud.x || 1), Math.sign(r.y - ud.y)); return true; } }
+      if (state === 'flight' && safe) { if (ud.action || ud.z > 0) { ftDone('d3'); return false; } ftShow('d3:jump', true, ud, 'key1', 'swipe', 'JUMP', 'Jump the route, steal it'); FT.ch = 'R'; return true; }
+    }
+  }
+  return ftRemind();
+}
+function ftTick(dt) {   // (top of update: every game step)
+  if (!ftOn()) { if (campLive()) { campTick(dt); return; } FT.vis = false; FT.step = ''; FT.slowT = -1; return; }   // (v0.77 part 2: a camp runs the board itself)
+  const F = LEAGUE.ft;
+  if (FT.slowT >= 0) { FT.slowT += dt / ftSlowK(); if (FT.slowT >= FIELD_TUT.slowS) FT.slowT = -1; }
+  if (FT.game !== game) { FT.game = game; FT.inPlay = false; FT.play = FT.defP = null; }   // (a resumed / loaded game keeps LEAGUE.ft's drive count: only newGame resets it, ftNewGame)
+  if (state === 'pre' && !aiOff() && patMode == null) { if (F.side !== 'off') { F.side = 'off'; F.drive++; F.play = 0; ftLog('drive ' + F.drive); } }
+  else if (aiOff()) F.side = 'def'; else if (state === 'kickoff' || state === 'sim') F.side = 'k';
+  if (state === 'pre' && !FT.inPlay) FT.defP = ftDefHead();
+  if (FT.inPlay && (state === 'done' || state === 'kickoff' || state === 'sim' || state === 'kick')) {   // (the play is over: a lesson it didn't get done is a miss)
+    ftPlayEnd(); FT.inPlay = false; if (FT.play && ftLeft(FT.play) && (FT.seen || !FT_RUN.includes(FT.play))) ftMiss(FT.play); FT.play = null; if (FT.s2 && ftLeft(FT.s2)) ftMiss(FT.s2); FT.s2 = '';
+  }
+  if (FT.koMine && state !== 'kickoff' && state !== 'run') {   // (the return is over)
+    if (FT.retSeen) { if (FT.deep) { if (/TOUCHBACK/.test(msg)) ftDone('kneel'); else ftMiss('kneel'); } else if (ftLeft('ret')) ftMiss('ret'); }
+    FT.hold = 0; FT.retSeen = false; FT.koMine = false; FT.deep = false;
+  }
+  ftWatch();
+  FT.t += dt / ftSlowK();
+  FT.mute = false; const sp = ftSpec(); if (FT.mute) { FT.vis = false; FT.step = ''; FT.slowT = -1; return; }
+  if (FT.chk > 0) FT.chk--;
+  if (sp && FT.vis) ftBoard(FT.sf);
+  if (!sp) { if (FT.step) { ftLog('close ' + FT.step); if (FT_ONCE.includes(FT.sf)) ftDone(FT.sf); } FT.step = ''; FT.vis = false; if (FT.sf) { FT.sf = ''; FT.ver++; } }
+}
+function ftDraw() {   // (draw(), after the world: screen space) the coach's board at its fixed spot; on the field only a ring on the man to watch / tap
+  if (FT.ask) return ftAskDraw();
+  if (paused || (rec && rec.replaying) || hl || HT) return;
+  if (FT.toast) { const age = uiNow() - FT.toast.t; if (age > FIELD_TUT.toastS) FT.toast = null; else { menuMoving = true; ftNote(FT.toast.text, W / 2 - COACH_NOTE.w / 2, TOP_BAR + 70); } }
+  const d0 = ctxDepth;
+  try {
+    if (FT.chk > 0 && !(FT.vis && FT.bf === FT.chkF)) ftCheckMark(FT.chkX + FIELD_TUT.board.w / 2, FT.chkY + 40, 1.6);   // (the step closed with the move: its check stays a moment)
+    if (campLive()) campDraw();   // (a camp: the HOLD TO SKIP tab)
+    if (!FT.vis || !(ftOn() || campLive())) return;
+    const touch = coldTouch(), kind = touch ? FT.kT : FT.kL, O = FT_O, B = FIELD_TUT.board, nh = ftNoteH();
+    O.t = FT.t; O.label = FT.lab; O.keys = FT.keys; O.ch = FT.ch;
+    if (FT.dir) { O.dir[0] = FT.dir[0]; O.dir[1] = FT.dir[1]; } else { O.dir[0] = 0; O.dir[1] = -1; }
+    if (FT.ap && !FT.reh) ftRing(FT.ap);   // (the "now" cue: a plain ring, never a control on the moving man)
+    else if (!FT.reh && !FT.rk) { FT_PT.x = FT.sx; FT_PT.y = FT.sy; O.to.x = FT.sx + FT.tdx; O.to.y = FT.sy; ftPrompt(kind, O); }   // (a button / meter: the hand / cursor points at it)
+    if (FT.note) ftNote(FT.note, FT.bx, FT.by);
+    ftGotDraw();
+    const ky = FT.by + nh + 4;
+    if (FT.reh || FT.rk || (FT.ap && kind !== 'press')) {   // (a move: its keys in a row under the note; on touch, or a drag, the gesture's hand demo)
+      if (touch || !(FT.ch || FT.keys)) { FT_PT.x = FT.bx + B.w / 2; FT_PT.y = ky + 28; O.to.x = FT_PT.x + FT.tdx * 0.6; O.to.y = FT_PT.y; O.label = FT.reh ? 'TAP TO TRY' : FT.lab; ftPrompt(kind, O); }
+      else ftKeysDraw(FT.bx + B.w / 2, ky + B.cap / 2 + 6);
+    } else if (FT.ap) ftLabel(FT.lab, FT.bx + B.w / 2, ky + 22);
+  } catch (e) { drawFail(e); } finally { while (ctxDepth > d0) ctx.restore(); }
+}
+function ftPrompt(kind, O) { if (kind === 'swipe') { O.dir = 'up'; coldPrompt(kind, FT_PT, O); O.dir = FT_O_DIR; } else coldPrompt(kind, FT_PT, O); }
+const FT_KEYCH = { KeyW: 'W', KeyA: 'A', KeyS: 'S', KeyD: 'D' }, FT_CHC = {}, FT_CF = { k: 0, f: '' };
+const ftChCode = ch => FT_CHC[ch] || (FT_CHC[ch] = 'Key' + ch);   // (no new string per paint)
+const ftCapFont = K => FT_CF.k === K ? FT_CF.f : (FT_CF.k = K, FT_CF.f = 'bold ' + Math.round(K * 0.5) + 'px monospace');
+function ftRR(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function ftKeysDraw(cx, cy) {   // the keycaps: lit while held, pulsing for the live cue, green once the move lands
+  const B = FIELD_TUT.board, K = B.cap, n = FT.ch ? 1 : (FT.keys ? FT.keys.length : 0); if (!n) return;
+  const tot = n * K + (n - 1) * B.gap, pul = FT.live ? 1 + 0.1 * Math.sin(FT.t * B.pulse * 2) : 1, now = uiNow(), ok = FT.chk > 0 && FT.chkF === FT.bf;
+  for (let i = 0; i < n; i++) {
+    const code = FT.ch ? ftChCode(FT.ch) : FT.keys[i], ch = FT.ch || FT_KEYCH[code] || '?';
+    const lit = !!(keys[code] || dkeys[code]) || (FT.kpC === code && now - FT.kpT < 0.3), dn = lit ? 3 : 0;
+    ctx.save(); ctx.translate(cx - tot / 2 + i * (K + B.gap) + K / 2, cy); ctx.scale(pul, pul);
+    ctx.fillStyle = 'rgba(40,50,90,0.3)'; ftRR(-K / 2 + 3, -K / 2 + 5, K, K, 9); ctx.fill();
+    ctx.fillStyle = ok ? '#7ad67a' : lit ? '#ffd23f' : '#fff6cf'; ftRR(-K / 2, -K / 2 + dn, K, K, 9); ctx.fill();
+    ctx.strokeStyle = '#2a2418'; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.fillStyle = '#2a2418'; ctx.font = ftCapFont(K); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(ch, 0, dn + 1);
+    ctx.restore();
+  }
+  if (ok) ftCheckMark(cx + tot / 2 + 24, cy, 1);
+  ftLabel(FT.reh ? 'TRY IT' : FT.lab, cx, cy + K / 2 + 18);
+}
+function ftLabel(t, x, y) { if (!t) return; ctx.save(); ctx.font = 'bold 16px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(20,16,8,0.85)'; ctx.strokeText(t, x, y); ctx.fillStyle = '#ffd23f'; ctx.fillText(t, x, y); ctx.restore(); }
+function ftCheckMark(x, y, k) { ctx.save(); ctx.translate(x, y); ctx.scale(k, k); ctx.lineCap = ctx.lineJoin = 'round'; ctx.strokeStyle = 'rgba(20,40,20,0.6)'; ctx.lineWidth = 9; ctx.beginPath(); ctx.moveTo(-11, 0); ctx.lineTo(-3, 9); ctx.lineTo(13, -10); ctx.stroke(); ctx.strokeStyle = '#4fc04f'; ctx.lineWidth = 5.5; ctx.stroke(); ctx.restore(); }
+function ftRing(p) { const z = camZ(), x = W / 2 + MIRROR * (p.x - camX) * z, y = viewCenterY() + (p.y - camY) * z, r = FIELD_TUT.board.ringYd * YD * z * (1 + 0.12 * Math.sin(FT.t * 8)); ctx.save(); ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 3.5; ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.45, 0, 0, Math.PI * 2); ctx.stroke(); ctx.restore(); }
+function ftNoteH() { if (FT.nlT !== FT.note) { FT.nlT = FT.note; FT.nlN = wrapLines(FT.note || ' ', COACH_NOTE.wrap).length; } return 40 + FT.nlN * COACH_NOTE.lh; }
+const ftBoardH = () => ftNoteH() + FIELD_TUT.board.keysH;
+const ftOv = (x, y, w, h, a, b, c, d) => Math.max(0, Math.min(x + w, a + c) - Math.max(x, a)) * Math.max(0, Math.min(y + h, b + d) - Math.max(y, b));
+function ftBoard(f) {   // (once per lesson, in the step) ONE screen spot: first choice behind the QB, else the emptiest patch clear of players, the HUD, the key tips and the announcers' band
+  if (FT.bf === f) return; FT.bf = f;
+  const s = FT.bs[f]; if (s) { FT.bx = s.x; FT.by = s.y; return; }   // (a rehearsed move's live cue comes back to the same spot)
+  const B = FIELD_TUT.board, bw = B.w, bh = ftBoardH(), z = camZ(), vc = viewCenterY(), tch = !!TOUCH;
+  let px = W / 2, py = vc;
+  if (qb) { px = W / 2 + MIRROR * (qb.x - B.behindYL * YL - camX) * z; py = vc + (qb.y - camY) * z; }
+  const L = allPlayers(), pw = 1.6 * YD * z, ph = 2.8 * YD * z, kt = KEY_TIPS_RECT, ktOn = !!keyTipsShown(), tgt = !FT.ap && !FT.reh;
+  const y0 = TOP_BAR + B.topBand, y1 = Math.max(y0, H - B.botBand - bh);
+  let bx = 16, by = y0, best = Infinity;
+  for (let x = 16; x <= W - bw - 16; x += B.gridX) for (let y = y0; y <= y1; y += B.gridY) {
+    let ov = 0;
+    for (let i = 0; i < L.length; i++) { const p = L[i]; ov += ftOv(x, y, bw, bh, W / 2 + MIRROR * (p.x - camX) * z - pw / 2, vc + (p.y - camY) * z - ph, pw, ph * 1.15); }
+    if (ktOn) ov += kt ? ftOv(x, y, bw, bh, kt.x, kt.y, kt.w, kt.h) : ftOv(x, y, bw, bh, PAUSE_BTN.x, TOP_BAR, KEY_TIPS.wTouch, 220);
+    if (tgt) ov += ftOv(x, y, bw, bh, FT.sx - 90, FT.sy - 90, 180, 180);
+    if (tch) ov += ftOv(x, y, bw, bh, 0, H - 260, B.touchCorner, 260) + ftOv(x, y, bw, bh, W - B.touchCorner, H - 260, B.touchCorner, 260);
+    const sc = ov * 10 + Math.hypot(x + bw / 2 - px, y + bh / 2 - py);
+    if (sc < best) { best = sc; bx = x; by = y; }
+  }
+  FT.bx = bx; FT.by = by; FT.bs[f] = { x: bx, y: by }; ftLog('board ' + f + ' at ' + bx + ',' + by);
+}
+// rehearse, then do: a live move's lesson opens before the snap on the board and asks for one practice press (eaten, never acts, never blocks the snap)
+const FT_REH = {   // id -> [key(s), laptop kind, touch kind, laptop note, touch note]
+  spin: ['R', 'key1', 'circle', 'Press R to spin', 'Circle to spin away'], juke: [FT_KWS, 'keys', 'swipe', 'Tap W or S to juke', 'Swipe sideways to juke'],
+  truck: ['C', 'key1', 'press', 'Hold C to truck', 'Hold TRUCK to run through'], stiff: ['Q', 'key1', 'drag', 'Hold Q to stiff arm', 'Swipe back to stiff arm'],
+  hurdle: ['E', 'key1', 'swipe', 'Press E to hurdle', 'Swipe up to hurdle'], dive: ['V', 'key1', 'swipe', 'Press V to dive', 'Swipe to dive ahead'],
+  d2: ['F', 'key1', 'drag', 'Press F to dive tackle', 'Swipe to dive tackle'], d3: ['R', 'key1', 'swipe', 'Press R to jump routes', 'Swipe up to jump routes'],
+  rush: ['R', 'key1', 'swipe', 'Press R to spin off blocks', 'Swipe to spin off blocks'] };
+function ftReh(id) {
+  const F = LEAGUE.ft, rh = F.rh || (F.rh = {}), R = FT_REH[id]; if (!R) return false;
+  if (rh[id] && !(FT.chkF === id && FT.chk > 0)) return false;   // (rehearsed: the check stays a moment, then the next thing)
+  ftShow(id, false, null, R[1], R[2], 'TRY IT', coldTouch() ? R[4] : R[3]); if (FT.mute) return true;
+  FT.reh = true; if (typeof R[0] === 'string') FT.ch = R[0]; else FT.keys = R[0];
+  return true;
+}
+const ftKeyOf = code => FT.ch ? code === ftChCode(FT.ch) : !!(FT.keys && FT.keys.includes(code));
+function ftCheck(f) { FT.chk = FIELD_TUT.board.chkSteps; FT.chkF = f; FT.chkX = FT.bx; FT.chkY = FT.by; }
+function ftRehDone() { const F = LEAGUE.ft, f = FT.sf; if (!F || !f) return; (F.rh || (F.rh = {}))[f] = 1; ftCheck(f); ftLog('rehearsed ' + f); }
+function ftKey(code) {   // (onKeyDown, first) lights the board's keys; a rehearsal's own key is eaten
+  FT.kpC = code; FT.kpT = uiNow();
+  if (!FT.vis || !FT.reh || !(ftOn() || campLive()) || !ftKeyOf(code)) return false;
+  if (campLive()) campRehDone(); else ftRehDone(); return true;
+}
+function ftBoardTap(p) {   // (pointerdown) the GOT IT tab, or a tap on a rehearsal's board = the practice press (touch has no keys)
+  if (campLive() && campTap(p)) return true;   // (the camp's HOLD TO SKIP tab)
+  if (!FT.vis || !(ftOn() || campLive())) return false;
+  if (!campLive() && ftGotTap(p)) return true;
+  if (!FT.reh) return false;
+  if (p.x < FT.bx || p.x > FT.bx + FIELD_TUT.board.w || p.y < FT.by - 10 || p.y > FT.by + ftBoardH()) return false;
+  if (campLive()) campRehDone(); else ftRehDone(); return true;
+}
+const FT_GOT = { x: 0, y: 0, w: 78, h: 26 };
+function ftGotRect() { const G = FT_GOT; G.x = FT.bx + FIELD_TUT.board.w - G.w + 6; G.y = FT.by - 18; return G; }
+function ftGotDraw() {   // the small GOT IT tab on every board note: known for good
+  if (campLive()) return;   // (no GOT IT in a camp: the camp is the lesson)
+  const G = ftGotRect(); ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.2)'; ftRR(G.x + 2, G.y + 3, G.w, G.h, 6); ctx.fill();
+  ctx.fillStyle = '#fffdf4'; ftRR(G.x, G.y, G.w, G.h, 6); ctx.fill(); ctx.strokeStyle = '#2a2418'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = '#2a2418'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('GOT IT', G.x + G.w / 2, G.y + G.h / 2 + 1); ctx.restore();
+}
+function ftGotTap(p) {
+  const G = ftGotRect(); if (p.x < G.x - 6 || p.x > G.x + G.w + 6 || p.y < G.y - 6 || p.y > G.y + G.h + 6) return false;
+  const F = LEAGUE.ft, f = FT.sf; if (!f) return false;
+  if (FT.rem) { ftRemSeen(FT.rem); FT.rem = ''; } else { if (!F.done[f] || F.done[f] === 2) { F.done[f] = 1; FT.ver++; } (F.rh || (F.rh = {}))[f] = 1; }
+  (F.got || (F.got = {}))[f] = 1; ftLog('GOT IT ' + f); FT.vis = false; FT.step = ''; FT.slowT = -1; if (FT.play === f) FT.play = null; if (FT.s2 === f) FT.s2 = '';
+  return true;
+}
+const FT_O_DIR = FT_O.dir, FT_NOTE = { tip: { t: '', ico: null } }, FT_NC = { x: 0, y: 0, w: 0, h: 0 };
+function ftNote(text, x, y) {   // the coach's sticky note (popTipNote's look), its top-left near (x, y)
+  FT_NOTE.tip.t = text; const ls = wrapLines(text, COACH_NOTE.wrap), h = 40 + ls.length * COACH_NOTE.lh;
+  FT_NC.x = Math.max(8, Math.min(W - COACH_NOTE.w - 8, x)) + 40; FT_NC.y = y + h * 0.45; FT_NC.w = 0; FT_NC.h = 0;   // (popTipNote hangs the note off a card's bottom-left corner: a zero-size card puts it at (x, y))
+  popTipNote(FT_NOTE, FT_NC);
+}
+function ftAskDraw() {   // the defense card (drawDefAsk's look): PLAY DEFENSE? -> NO -> ARE YOU SURE?
+  ctx.save();
+  ctx.fillStyle = 'rgba(30,25,10,0.55)'; ctx.fillRect(0, 0, W, H); uiModal();
+  const card = { x: W / 2 - 340, y: 230, w: 680, h: 320 };
+  ctx.save(); ctx.translate(4, 6); tornPath(card); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill(); ctx.restore();
+  tornPath(card); ctx.fillStyle = '#fffdf4'; ctx.fill();
+  ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.arc(W / 2, card.y + 10, 7, 0, Math.PI * 2); ctx.fill();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = RES.line; ctx.font = 'bold 34px monospace';
+  ctx.fillText('PLAY DEFENSE?', W / 2, card.y + 62);
+  ctx.font = 'bold 19px monospace';
+  ctx.fillText('Steer one defender on their drives.', W / 2, card.y + 128);
+  tourBtnDraw = true;
+  menuBtn(DEF_ASK.play, 'PLAY DEFENSE', IN_GAME_PAPER.green, 22);
+  menuBtn(DEF_ASK.sim, 'NOT NOW', IN_GAME_PAPER.blue, 22);
+  tourBtnDraw = false;
+  ctx.restore();
+}
+function ftAskClick(p) {
+  if (inBtn(p, DEF_ASK.play)) ftAnswer(true);
+  else if (inBtn(p, DEF_ASK.sim)) ftAnswer(false);
+}
+function ftAnswer(yes) {
+  if (!LEAGUE || !LEAGUE.ft) { ftClearAsk(); return; }
+  const F = LEAGUE.ft, again = F.def === 'no1'; F.def = yes ? true : again ? false : 'no1'; FT.ask = 0; SETTINGS.simDefense = !yes; saveSettings();
+  if (F.def !== 'no1') ftDone('defq');
+  if (!yes) FT.toast = { text: again ? 'Want defense? Settings, CPU DEFENSE off' : 'Next drive, you get another shot', t: uiNow() };
+  if (!twoP || (twoP.ai && !twoP.flipped)) twoP = SETTINGS.simDefense ? null : { flipped: false, to: 3, ai: true };   // (as the settings row does)
+  else if (!twoP.ai) twoP.def = !SETTINGS.simDefense;
+  ftLog('defense card: ' + (yes ? 'PLAY' : 'SIM') + ' (' + F.def + ')');
+  const a = FT.args; FT.args = null; FT.pass = true; try { if (a) startSim(a[0], a[1], a[2]); } finally { FT.pass = false; }
+}
+function ftChoiceDraw() {   // later franchises: the field tutorial again, or everything open
+  ctx.save();
+  ctx.fillStyle = 'rgba(30,25,10,0.45)'; ctx.fillRect(0, 0, W, H); uiModal();
+  const card = { x: W / 2 - 330, y: 190, w: 660, h: 320 };
+  ctx.save(); ctx.translate(4, 6); tornPath(card); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill(); ctx.restore();
+  tornPath(card); ctx.fillStyle = '#fffdf4'; ctx.fill();
+  ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = 'bold 36px monospace'; ctx.fillText('FIELD TUTORIAL?', W / 2, 250);
+  ctx.font = 'bold 19px monospace'; ctx.fillText('Learn the moves again in your first game?', W / 2, 310);
+  tourBtnDraw = true;
+  menuBtn(TUT_ASK.yes, 'PLAY IT', IN_GAME_PAPER.green, 26);
+  menuBtn(TUT_ASK.no, 'SKIP', RES.bright, 26);
+  tourBtnDraw = false;
+  ctx.restore();
+}
+function ftGameEnd() {   // (after endGame) the first game is over: SIM opens, the account remembers
+  const F = LEAGUE && LEAGUE.ft; if (!F || F.g > 3 || tut || ONL.on || exhibition || oo || LG_SAND) return;
+  FT.vis = false; FT.step = ''; FT.slowT = -1; FT.toast = null;
+  if (F.g === 1 && game.ftPl) { try { localStorage.setItem(FT_KEY, '1'); } catch (e) {} }
+  if (!game.ftPl) { ftLog('simmed game over: tutorial game ' + F.g + ' rolls to the next played game'); return; }   // (A5: SIM GAME ends through endGame too)
+  ftLog('tutorial game ' + F.g + ' over' + (F.g === 1 ? ', ' + FT_KEY + ' set' : '') + '; carried: ' + (ftMustLeft() || 'nothing')); F.g++;
+}
+// --- off until taught (v0.76): ftCan = the feature works and shows (display sites), ftLet = the same at an input site (+ the year-2 first-use note), ftHit = the lesson's thing was done
+// Features (= their lesson ids): spin juke truck stiff hurdle dive kneel fair aud hot to onside chal, on defense d1 (switch) d2 (dive tackle) rush (pass-rush moves).
+// Gated only in a tutorial franchise's year 1 (LEAGUE.ft.y0); the CPU is never gated (only your input sites call these). A lesson's own prompt opens its feature (FT.sf).
+const FT_ONCE = ['fourth', 'onside', 'onsideR', 'flag', 'chal'], FT_PRE = ['aud', 'hot', 'to', 'tired', 'fourth'];   // (ONCE: shown once = done; PRE: a snap with it open = a miss)
+const FT_FNOTE = { spin: 'New move: spin out of grabs', juke: 'New move: juke past tacklers', truck: 'New move: truck right through him', stiff: 'New move: stiff arm the tackler',
+  hurdle: 'New move: hurdle a diving tackler', dive: 'New move: dive for extra yards', kneel: 'Deep kick? Kneel for a touchback', fair: 'Covered? Signal a fair catch',
+  aud: 'Bad look? Audible to new routes', hot: 'Tap a receiver for a new route', to: 'Timeouts stop the clock', onside: 'Behind late? Try an onside kick',
+  chal: 'Bad spot? Challenge it in pause', d1: 'Tap a defender to switch', d2: 'Dive to wrap him up', rush: 'Spin off your blocker' };
+function ftGate() { const F = LEAGUE && LEAGUE.ft; return !!F && F.y0 != null && LEAGUE.year <= F.y0 && !ftNoLock() && !career.unlockAll && !career.ftSkip && !tut && !ONL.on && !exhibition && !oo && !LG_SAND && !(typeof CO !== 'undefined' && CO); }
+function ftCan(f) { return !ftGate() || !!LEAGUE.ft.done[f] || (FT.vis && FT.sf === f); }
+function ftY2(f) { const F = LEAGUE && LEAGUE.ft; return !!(F && ftNotesOn() && F.y0 != null && (LEAGUE.year > F.y0 || !!(F.camp && F.camp.op[f])) && !F.done[f] && FT_FNOTE[f] && !career.unlockAll && !career.ftSkip && !tut && !ONL.on && !exhibition); }
+function ftY2Note(f) { LEAGUE.ft.done[f] = 1; FT.ver++; FT.toast = { text: FT_FNOTE[f], t: uiNow() }; ftLog('year 2: ' + f + ' on, note shown'); }
+function ftLet(f) { if (ftY2(f)) ftY2Note(f); return ftCan(f); }   // (the press is only the fallback: ftShow notes it at the first chance)
+function ftHit(f) { if (CAMPR && CAMPR.id === f && campLive()) CAMPR.hit = true; if (FT.vis && FT.sf === f && ftOn()) ftDone(f); }   // (a camp's rep: the move landed)
+const FT_TIP = { audible: 'aud', 'new routes': 'aud', 'spin away': 'spin', spin: 'spin', 'stiff arm': 'stiff', hurdle: 'hurdle', 'leap over': 'hurdle', dive: 'dive', 'dive ahead': 'dive', 'switch man': 'd1', 'dive tackle': 'd2', 'take a knee': 'kneel' };
+const FT_TIPC = new Map();
+function ftTipRows(rows) {   // (drawKeyTips) the rows of untaught features left out; one array per row list, rebuilt only when FT.ver moves
+  if (!rows || !ftGate()) return rows;
+  let c = FT_TIPC.get(rows); if (!c) FT_TIPC.set(rows, c = { v: -1, out: [] });
+  if (c.v !== FT.ver) { c.v = FT.ver; c.out.length = 0; for (let i = 0; i < rows.length; i++) { const f = FT_TIP[rows[i][1]]; if (!f || ftCan(f)) c.out.push(rows[i]); } }
+  return c.out;
+}
+const ftAt = b => { FT.sx = b.x + b.w / 2; FT.sy = b.y + b.h / 2; };
+const ftL2 = id => ftLeft(id) && !campAhead(id);   // (a move the next camp teaches waits for it)
+function ftSpec2(F, k, ko) {   // games 2-3 (and after): one prompt at a time, the first time each comes up
+  if (campB3Spec(F)) return true;   // (season 2's catch prompts)
+  const off = !aiOff();
+  const pq = game.penQ;
+  if (pq && pq.mine === 'card' && pq.ph === 'pick' && ftLeft('flag')) { ftShow('flag', false, null, 'press', 'press', 'PICK ONE', 'Take the yards, or the play'); FT.sx = W / 2; FT.sy = H * PEN_CARD.y + PEN_CARD.h * 0.25; return true; }
+  if (ftLeft('chal') && chalOK()) { ftShow('chal', false, null, 'press', 'press', 'CHALLENGE', 'Bad spot? Challenge it in pause'); ftAt(PAUSE_BTN); return true; }
+  if (F.g >= 3 && ftLeft('kblock') && state === 'kick' && k && k.kp && k.kp.qte && k.kp.qte.ok === null) { ftDone('kblock'); FT.toast = { text: 'Hit the key, block the kick', t: uiNow() }; }
+  if (ftLeft('onsideR') && ((k && k.cpuKo && k.onside) || (ko && ko.onside && !(k && k.userKo))) && (state === 'kick' || state === 'kickoff')) { ftShow('onsideR', false, ball, 'keys', 'joystick', 'GET IT', 'Onside! Get to the ball'); FT.keys = FT_K4; FT.dir = ftDir(-MIRROR, 0); return true; }
+  if (ftLeft('onside') && state === 'kickoff' && k && k.userKo && k.kickoff && (k.phase === 'power' || k.phase === 'target') && game.quarter >= 4 && game.blue < game.red) { ftShow('onside', false, null, 'press', 'press', 'ONSIDE', 'Behind late? Try an onside kick'); ftAt(PAT_SWITCH_BTN); return true; }
+  if (ftLeft('fair') && state === 'kickoff' && ko && ko.punt && !(k && k.userKo) && rb) {
+    if (ko.fair) { ftDone('fair'); FT.s2 = ''; return false; }
+    if (ko.phase === 'flight' && ko.flight && ko.flight.tx > 0) { ftNear(rb, rb.team === 'off' ? 'def' : 'off'); if (FT.s2 === 'fair' || FT.nd < FIELD_TUT.fairYd * YD) { FT.s2 = 'fair'; ftShow('fair', true, rb, 'keys', 'joystick', 'FAIR CATCH', 'Covered? Signal a fair catch'); FT.keys = FT_KD; FT.dir = ftDir(-MIRROR, 0); return true; } }
+    else if (FT.s2 === 'fair') { FT.s2 = ''; ftMiss('fair'); }
+  }
+  if (ftLeft('fourth') && state === 'pre' && off && down === 4 && patMode == null && FT.pk && FT.pk.x != null) { ftShow('fourth', false, null, 'press', 'press', 'CHOOSE', 'Kick it, or go for it'); ftAt(FT.pk); return true; }
+  if (state === 'pre' && off && patMode == null && !(rec && rec.replaying)) {
+    if (ftLeft('aud')) { if (!audiblesLeft) ftDone('aud'); else if (!audibleLocked()) { ftShow('aud', false, null, 'press', 'press', 'AUDIBLE', 'Bad look? Call new routes'); ftAt(AUDIBLE_BTN); return true; } }
+    if (ftLeft('hot') && F.drive >= 2 && recs.length) { ftShow('hot', false, recs[0], 'press', 'press', 'TAP HIM', 'Tap him for a new route'); return true; }
+
+    if (ftL2('hurdle') && ftReh('hurdle')) return true;   // (rehearsed before the snap; cued when a tackler dives at him)
+    if (ftL2('dive') && ftReh('dive')) return true;
+  }
+  if (ftL2('rush') && aiOff() && state === 'pre' && ud && dl.includes(ud) && ftReh('rush')) return true;
+  const dead = state === 'pre' || (state === 'done' && playSettled());
+  if (ftLeft('to') && dead && patMode == null && !(rec && rec.replaying) && (game.quarter > 2 || (game.quarter === 2 && game.secs <= 120))) {
+    if (userTimeouts() <= 0) { ftDone('to'); return false; }
+    ftShow('to', false, null, 'press', 'press', 'TIMEOUT', 'Two minutes left: stop the clock'); ftAt(TIMEOUT_BTN); return true;
+  }
+  if (ftLeft('tired') && !ftLeft('to') && state === 'pre' && off && patMode == null && F.play >= FIELD_TUT.tiredPlays && userTimeouts() > 0) { ftShow('tired', false, null, 'press', 'press', 'TIMEOUT', 'Tired legs? A timeout helps'); ftAt(TIMEOUT_BTN); return true; }
+  if (state === 'run' && off && runner && runner.hasBall) {
+    const c = runner;
+    if (FT.s2 === 'hurdle' && c.action === 'hurdle') ftDone('hurdle');
+    if (FT.s2 === 'dive' && c.action === 'dive') ftDone('dive');
+    if (!c.action) {
+      if (!FT.s2) { const n = ftNear(c, 'def'); if (n && FT.nd < FIELD_TUT.closeYd * YD) {
+        if (ftL2('hurdle') && n.action === 'dive') FT.s2 = 'hurdle';
+        else if (ftL2('dive') && ((lineToGain > c.x && lineToGain - c.x < FIELD_TUT.diveYL * YL) || FIELD - c.x < FIELD_TUT.diveYL * YL)) FT.s2 = 'dive';
+      } }
+      if (FT.s2 === 'hurdle' && ftL2('hurdle')) { ftShow('hurdle', true, c, 'key1', 'swipe', 'HURDLE', 'He went low: leap over'); FT.ch = 'E'; return true; }
+      if (FT.s2 === 'dive' && ftL2('dive')) { ftShow('dive', true, c, 'key1', 'swipe', 'DIVE', 'Dive for the line'); FT.ch = 'V'; return true; }
+    }
+  }
+  if (ftL2('rush') && aiOff() && ud && ud.engaged && dl.includes(ud) && (state === 'drop' || state === 'pocket')) { FT.s2 = 'rush'; ftShow('rush', true, ud, 'key1', 'swipe', 'SPIN', 'Spin off your blocker'); FT.ch = 'R'; return true; }
+  return false;
+}
+celebNote = (o => function (kind) { if (kind === 'xf' && ftOn() && LEAGUE.ft.g >= 3 && ftLeft('xf')) { ftDone('xf'); FT.toast = { text: 'Star Factor on! Feed him the ball', t: uiNow() }; } return o.apply(this, arguments); })(celebNote);
+// --- camps (v0.77 progression part 2; tunables CAMP in 01): a short scripted practice in the indoor gym before tutorial games 1-3 (the 1st-3rd game he really
+// plays, LEAGUE.ft.g), and season 2's catch camp from CAMP.b3Week. ROOKIE franchises only (campsOn). Built on the drill sandbox (pracDrillBegin, PDR.camp = n:
+// nothing counts, noCount / pracLive) and the coach's board (FT state, ftDraw): one drill a move, up to 3 tries (a miss = the same rep again, the third the camp
+// does for him after CAMP.r3Wait); each rep = rehearse on the board before the snap, then the game stops at the moment (CAMPR.frz: update() returns) until he does it.
+// Pays and costs nothing: pracDrillEnd hands a camp to campEnd before any session / grade / sticker. State: LEAGUE.ft.camp = { done: {rep: 1}, fin: {n: 1}, skip: {n: 1},
+// op: {move: 1} = skipped moves (one note at the first chance: ftY2), b3: season 2's prompts }. Home's CONTINUE reads PRACTICE while one waits (campDue), SIM stays grey.
+let CAMPR = null;   // the rep being played: { id, n, ph 'reh' | 'snap' | 'live' | 'wait' | 'go', t, hit, frz, tries, sk (hold-to-skip start, uiNow) }
+const CAMP_REP = {   // id -> set (pass = you throw, catch = the camp throws, run, rush), ch / keys, laptop / touch kind, label, laptop note, touch note, rehearse first
+  throw: { set: 'pass', kL: 'drag', kT: 'drag', lab: 'THROW', n: 'Drag back from your QB, let go', nT: 'Drag back from your QB, let go' },
+  bullet: { set: 'pass', ch: 'V', kL: 'key1', kT: 'press', lab: 'BULLET', n: 'Press V, then throw a bullet', nT: 'Tap BULLET, then throw', reh: true },
+  jump: { set: 'catch', lob: true, ch: 'W', kL: 'key1', kT: 'swipe', lab: 'JUMP', n: 'High ball? Press W to go up', nT: 'High ball? Swipe up', reh: true },
+  low: { set: 'catch', lob: false, ch: 'S', kL: 'key1', kT: 'swipe', lab: 'SECURE', n: 'Low ball? Press S to secure it', nT: 'Low ball? Swipe down', reh: true },
+  truck: { set: 'run', ch: 'C', kL: 'key1', kT: 'press', lab: 'HOLD', n: 'Hold C to truck him', nT: 'Hold TRUCK to run through', reh: true },
+  stiff: { set: 'run', ch: 'Q', kL: 'key1', kT: 'drag', lab: 'HOLD', n: 'Hold Q to stiff arm', nT: 'Swipe back to stiff arm', reh: true },
+  hurdle: { set: 'run', ch: 'E', kL: 'key1', kT: 'swipe', lab: 'HURDLE', n: 'Press E to hurdle him', nT: 'Swipe up to hurdle', reh: true },
+  dive: { set: 'run', ch: 'V', kL: 'key1', kT: 'swipe', lab: 'DIVE', n: 'Press V to dive for the line', nT: 'Swipe to dive ahead', reh: true, togo: 2 },
+  rush: { set: 'rush', ch: 'R', kL: 'key1', kT: 'swipe', lab: 'SPIN', n: 'Press R to spin off him', nT: 'Swipe to spin off blocks', reh: true },
+  one: { set: 'catch', lob: true, keys: ['KeyD', 'KeyW'], kL: 'keys', kT: 'swipe', lab: 'ONE HAND', n: 'Hold D, press W: one hand', nT: 'Swipe up and over: one hand', reh: true },
+  yac: { set: 'catch', lob: false, ch: 'A', kL: 'key1', kT: 'press', lab: 'IN STRIDE', n: 'Wide open? Hold A, catch in stride', nT: 'Wide open? Catch in stride', reh: true } };
+const CAMP_NAME = { 1: 'CAMP 1', 2: 'CAMP 2', 3: 'CAMP 3', 4: 'CATCH CAMP' };
+const campsOn = () => !!(LEAGUE && LEAGUE.ft && ftNotesOn() && !career.unlockAll && !career.ftSkip && !ONL.on);
+const campOf = F => F.camp || (F.camp = { done: {}, fin: {}, skip: {}, op: {}, b3: {} });
+const CAMP_OF = { truck: 2, stiff: 2, hurdle: 3, dive: 3, rush: 3 };   // (the moves a camp teaches instead of a game: kept out of the game's own lessons until that camp is done or skipped)
+const campAhead = id => !!(CAMP_OF[id] && campsOn() && !campOf(LEAGUE.ft).fin[CAMP_OF[id]]);
+const campReps = n => CAMP.reps[n].filter(id => id !== 'rush' || LEAGUE.ft.def === true);   // (the pass-rush spin only if he plays defense)
+function campN() {   // the camp waiting now (0 = none)
+  if (!campsOn() || !season || season.offseason) return 0;
+  const F = LEAGUE.ft, C = campOf(F);
+  if (F.g >= 1 && F.g <= 3 && !C.fin[F.g]) return F.g;
+  if (F.y0 != null && LEAGUE.year === F.y0 + 1 && season.week >= CAMP.b3Week && !C.fin[4]) return 4;
+  return 0;
+}
+const campDue = () => !exhibition && !tut && campN() > 0;
+const campLive = () => !!(CAMPR && PDR && PDR.camp);
+function campOpen() {   // home's PRACTICE button: the camp from its first unfinished rep
+  const n = campN(); if (!n || PDR) return false;
+  const C = campOf(LEAGUE.ft), ids = campReps(n).filter(id => !C.done[id]);
+  if (!ids.length) { C.fin[n] = 1; return false; }
+  CAMPR = { n };   // (campDrill reads the camp number while the drills are made)
+  if (!pracDrillBegin('off', 'camp', ids.map(campDrill))) { CAMPR = null; return false; }
+  PDR.camp = n; exhibition.camp = n; ftLog('camp ' + n + ' from ' + ids[0]);
+  return true;
+}
+function campDrill(id) {
+  const R = CAMP_REP[id], set = R.set;
+  return { id: 'camp_' + id, camp: id, unit: 'off', name: (CAMP_NAME[CAMPR && CAMPR.n] || 'CAMP') + ': ' + R.lab, reps: 3, tip: R.n,
+    cast: set === 'run' ? () => ({ kind: 'rb', qb: pdBest('QB'), off: pdBest('RB'), def: pdBest('LB') }) : set === 'rush' ? () => ({ kind: 'ol', qb: pdBest('QB'), off: pdBest('OL'), def: pdBest('DL') }) : () => ({ kind: 'wr', qb: pdBest('QB'), off: pdBest('WR'), def: pdBest('CB') }),
+    hero: c => set === 'rush' ? c.def : set === 'pass' ? c.qb : c.off,
+    setup: first => {
+      if (set === 'run') { if (first) startTest('oo-run'); pdrSpot(25, 1, R.togo || 10); reset(); }
+      else if (set === 'rush') { pdrOO(first, 'duel', true); oo.hold = true; }
+      else pdrOO(first, 'rings');   // (no defender: the ball is always there to catch)
+      campRepStart(id);
+    },
+    score: () => campScore(id) };
+}
+function campRepStart(id) {
+  const sk = CAMPR ? CAMPR.sk || 0 : 0;
+  CAMPR = { id, n: PDR.camp, ph: CAMP_REP[id].reh && PDR.rep === 0 ? 'reh' : 'snap', t: 0, hit: false, frz: false, tries: PDR.rep + 1, sk, thrown: false, bul: false };
+  FT.vis = false; FT.step = ''; FT.bf = '';
+}
+function campShow(id, reh, ap, note, kL) {   // the board: this rep's note + keys (reh = the practice press before the snap)
+  const R = CAMP_REP[id], t = coldTouch(); FT.step = ''; delete FT.bs.camp; FT.bf = '';
+  ftShow('camp:' + id + (reh ? ':r' : ''), !reh, ap || null, kL || R.kL, R.kT, reh ? 'TRY IT' : R.lab, note || (t ? R.nT : R.n));
+  FT.reh = !!reh; if (!kL) { if (R.ch) FT.ch = R.ch; else if (R.keys) FT.keys = R.keys; }
+  ftBoard(FT.sf);
+}
+function campRehDone() { const C = CAMPR; if (!C || C.ph !== 'reh') return; ftCheck('camp'); C.ph = 'snap'; C.t = 0; C.frz = false; FT.vis = false; ftLog('camp rehearsed ' + C.id); }
+function campHold(code) { HELD.ai[code] = { k: code }; heldSync(); }   // (the third try: the camp holds the key, cleared with the rep: pracDrillRep's heldClear('ai'))
+function campThrow(lob) { const r = recs.find(q => q.pos === 'WR') || recs[0]; if (!r || !qb) return; const dx = r.x + 3 * YL - qb.x, dy = r.y - qb.y; aim = { sx: 0, sy: 0, cx: dx / (-MIRROR * AIM_POWER), cy: -dy / AIM_POWER }; bulletMode = !lob; throwBall(); }
+const campThrown = () => state !== 'pre' && state !== 'drop' && state !== 'pocket';
+function campMoment(C, R) {   // the moment this rep stops for (the man to ring), or null
+  if (R.set === 'pass') return (state === 'pocket' || state === 'drop') && clock > CAMP.pocketT ? qb : null;
+  if (R.set === 'catch') {
+    if ((state === 'pocket' || state === 'drop') && clock > CAMP.autoThrowT && !C.thrown) { C.thrown = true; campThrow(R.lob); return null; }
+    return state === 'flight' && tgt && ball.p >= CAMP.waitP ? tgt : null;
+  }
+  if (R.set === 'rush') return ud && ud.engaged && (state === 'drop' || state === 'pocket') ? ud : null;
+  const c = runner && runner.hasBall && state === 'run' ? runner : null; if (!c || c.action) return null;
+  if (C.id === 'dive') return lineToGain > c.x && lineToGain - c.x < FIELD_TUT.diveYL * YL ? c : null;
+  const n = ftNear(c, 'def'); if (!n) return null;
+  if (C.id === 'hurdle') return n.x > c.x && FT.nd > CAMP.hurdleYd[0] * YD && FT.nd < CAMP.hurdleYd[1] * YD ? c : null;
+  return FT.nd < CAMP.closeYd * YD ? c : null;
+}
+function campRelease(C, R) {   // while stopped: did he do it (or press the key that does it)?
+  const id = C.id;
+  if (id === 'throw') return campThrown() && (C.hit = true);
+  if (id === 'bullet') {
+    if (!C.bul && bulletMode) { C.bul = true; campShow(id, false, qb, 'Now drag back and throw it', 'drag'); }
+    return campThrown() && (C.hit = !!C.bul);
+  }
+  if (R.set === 'catch') {
+    const m = tgt && tgt.catchMode, right = !!(id === 'jump' ? m === 'jump' : id === 'low' ? m === 'secure' : id === 'one' ? /One/.test(m || '') : tgt && tgt.runCatch);
+    if (right) C.hit = true;
+    return right || !!m;   // (the wrong catch key = a miss: the rep plays out and comes again)
+  }
+  if (id === 'rush') return C.hit;
+  return !!(keys['Key' + R.ch] || (runner && runner.action === id));
+}
+function campHitNow(C) {   // after letting go: the move itself landed
+  const c = runner; if (!c) return false;
+  return C.id === 'truck' ? !!(c.truck && keys.KeyC) : C.id === 'stiff' ? !!(c.stiff && keys.KeyQ) : C.id === 'hurdle' || C.id === 'dive' ? c.action === C.id : false;
+}
+function campAuto(C, R) {   // the third try: the camp does it
+  const id = C.id;
+  if (R.set === 'pass') { if (!campThrown()) campThrow(id !== 'bullet'); }
+  else if (R.set === 'catch' && tgt) { if (id === 'jump') tgt.catchMode = 'jump'; else if (id === 'low') tgt.catchMode = 'secure'; else if (id === 'one') { tgt.catchMode = 'jumpOne'; tgt.hand = bestHand(); } else tgt.runCatch = true; }
+  else if (id === 'rush') { if (ud) userSpin(ud); }
+  else if (id === 'hurdle' || id === 'dive') { if (runner) runAction(id === 'dive' ? 'Tab' : 'KeyE'); }   // (what the E / V key handler calls)
+  else campHold('Key' + R.ch);
+  C.hit = true; ftLog('camp ' + id + ': third try, done for him');
+}
+function campTick(dt) {   // (ftTick, every game step of a camp; before update()'s freeze)
+  const C = CAMPR, R = CAMP_REP[C.id]; if (!R) return;
+  C.t += dt; FT.t += dt; if (FT.chk > 0) FT.chk--;
+  if (C.sk && uiNow() - C.sk >= CAMP.skipMs) { C.sk = 0; campSkipAll(); return; }
+  if (PDR.wait > 0) { C.frz = false; return; }
+  const auto = C.tries >= 3;
+  if (C.ph === 'reh') { if (state !== 'pre') return; C.frz = true; if (!FT.vis) campShow(C.id, true); if (auto && C.t > CAMP.r3Wait) campRehDone(); return; }
+  if (C.ph === 'snap') {
+    C.frz = false;
+    if (R.set === 'rush') { if (state !== 'pre') { C.ph = 'live'; C.t = 0; } return; }   // (the computer snaps on defense)
+    if (state === 'pre' && C.t > CAMP.snapS) { if (R.set === 'run') handoff(); else snap(false); C.ph = 'live'; C.t = 0; }
+    return;
+  }
+  if (C.ph === 'live') { const m = campMoment(C, R); if (m) { C.ph = 'wait'; C.t = 0; C.frz = true; campShow(C.id, false, m); } return; }
+  if (C.ph === 'wait') {
+    if (campRelease(C, R)) { C.ph = 'go'; C.t = 0; C.frz = false; FT.ap = null; }
+    else if (auto && C.t > CAMP.r3Wait) { campAuto(C, R); C.ph = 'go'; C.t = 0; C.frz = false; }
+    return;
+  }
+  C.frz = false; FT.vis = false;   // ('go')
+  if (!C.hit) C.hit = campHitNow(C);
+  if (C.t > (C.hit ? CAMP.goS : CAMP.goMax)) pracDrillRep('Camp', los, '', { camp: 1 });
+}
+function campScore(id) {   // (the drill's score, from pracDrillRep) a done move ends the drill; a miss runs the same rep again
+  const C = CAMPR, P = PDR; if (!C || !P) return 0;
+  const ok = C.hit || C.tries >= 3; C.frz = false; FT.vis = false;
+  if (ok) { campOf(LEAGUE.ft).done[id] = 1; P.rep = P.drills[P.di].reps - 1; FT.toast = { text: 'Got it!', t: uiNow() }; }
+  else FT.toast = { text: C.tries >= 2 ? 'One more: the coach will help' : 'Again: watch the board', t: uiNow() };
+  ftLog('camp ' + id + (ok ? ' done' : ' missed') + ' (try ' + C.tries + ')');
+  return ok ? 1 : 0;
+}
+function campSkipAll() {   // hold to skip: the camp's moves open now, each with one note at its first chance (ftY2 reads op)
+  const P = PDR; if (!P || !P.camp) return;
+  const n = P.camp, K = campOf(LEAGUE.ft); K.fin[n] = 1; K.skip[n] = 1;
+  for (const id of campReps(n)) { if (!K.done[id] && FT_FNOTE[id]) K.op[id] = 1; else if (K.done[id] && CAMP_OF[id]) LEAGUE.ft.done[id] = 1; }   // (a move he already did in the camp stays learned)
+  ftLog('camp ' + n + ' skipped'); pracDrillEnd(true);
+}
+function campEnd(P, left) {   // (pracDrillEnd, after its clean-up) home again; a camp with every rep done is finished and its moves learned
+  const F = LEAGUE.ft, K = campOf(F), n = P.camp; CAMPR = null; FT.vis = false; FT.step = ''; FT.sf = ''; FT.ap = null;
+  results.screen = 'home';
+  if (!K.fin[n] && campReps(n).every(id => K.done[id])) { K.fin[n] = 1; for (const id of campReps(n)) if (CAMP_OF[id]) F.done[id] = 1; FT.ver++; FT.toast = { text: 'Camp done! Bring it to the game', t: uiNow() }; }
+  else if (K.skip[n]) FT.toast = { text: 'Camp skipped: notes in the game', t: uiNow() };
+  ftLog('camp ' + n + (K.fin[n] ? ' finished' : ' left at ' + (campReps(n).find(id => !K.done[id]) || '?')));
+  autosaveSoon(); return null;
+}
+const CAMP_SK = { x: 0, y: 0, w: 0, h: 0 };
+function campSkipRect() { const S = CAMP.skip; CAMP_SK.w = S.w; CAMP_SK.h = S.h; CAMP_SK.x = W - S.w - 16; CAMP_SK.y = TOP_BAR + 12; return CAMP_SK; }
+function campDraw() {   // (ftDraw) the HOLD TO SKIP tab: fills while held
+  const B = campSkipRect(), k = CAMPR.sk ? Math.min(1, (uiNow() - CAMPR.sk) / CAMP.skipMs) : 0;
+  ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.2)'; ftRR(B.x + 2, B.y + 3, B.w, B.h, 8); ctx.fill();
+  ctx.fillStyle = '#fffdf4'; ftRR(B.x, B.y, B.w, B.h, 8); ctx.fill();
+  if (k > 0) { ctx.fillStyle = 'rgba(46,160,67,0.45)'; ftRR(B.x, B.y, B.w * k, B.h, 8); ctx.fill(); }
+  ctx.strokeStyle = '#2a2418'; ctx.lineWidth = 1.5; ftRR(B.x, B.y, B.w, B.h, 8); ctx.stroke();
+  ctx.fillStyle = '#2a2418'; ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('HOLD TO SKIP CAMP', B.x + B.w / 2, B.y + B.h / 2 + 1); ctx.restore();
+}
+function campTap(p) { const B = campSkipRect(); if (p.x < B.x || p.x > B.x + B.w || p.y < B.y || p.y > B.y + B.h) return false; CAMPR.sk = uiNow(); return true; }
+for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture', 'touchend', 'touchcancel', 'blur']) window.addEventListener(ev, () => { if (CAMPR) CAMPR.sk = 0; }, true);   // (every end path lets go of the hold)
+// season 2's catch camp, then in-game prompts (board style, one prompt each ever, at most CAMP.b3Max a game): the one-hander the play after a ball lands just past
+// two-hand reach, the catch in stride after he jumped / went to the ground for a ball he was wide open on
+const CAMP_B3 = ['one', 'yac'];   // (no array per step: ftSpec2 runs every game step)
+function campB3Spec(F) {   // (first in ftSpec2) true = a prompt is up
+  const K = F.camp; if (!K || !K.fin[4] || !campsOn()) return false;
+  const B = K.b3 || (K.b3 = {});
+  if (state === 'flight' && tgt && !aiOff()) { B.tg = tgt; B.cm = tgt.catchMode; ftNear(tgt, 'def'); B.open = FT.nd / YD; B.fl = true; }
+  else if (B.fl && state !== 'flight') {   // (the pass is over)
+    B.fl = false; const t = B.tg; B.tg = null;
+    if (t && !t.hasBall && state === 'done' && !B.one) { const d = Math.hypot(t.x - ball.x, t.y - ball.y) / YD; if (d > CAMP.oneReach[0] && d < CAMP.oneReach[1]) B.oneDue = 1; }
+    if (t && t.hasBall && !B.yac && (B.cm === 'jump' || B.cm === 'secure' || t.diveCaught || t.jumpCaught) && B.open >= CAMP.openYd) B.yacDue = 1;
+  }
+  if (state !== 'flight' || !tgt || aiOff() || (rec && rec.replaying)) return false;
+  if (game.ftB3 == null) game.ftB3 = 0;
+  for (let i = 0; i < CAMP_B3.length; i++) { const id = CAMP_B3[i];
+    if (FT.sf === id) { if (id === 'one' ? /One/.test(tgt.catchMode || '') : tgt.runCatch) { FT.vis = false; return false; } return true; }
+    if (B[id + 'Due'] && !B[id] && game.ftB3 < CAMP.b3Max && (id === 'one' || (ftNear(tgt, 'def'), FT.nd >= CAMP.openYd * YD))) {
+      B[id] = 1; B[id + 'Due'] = 0; game.ftB3++; const R = CAMP_REP[id];
+      ftShow(id, true, tgt, R.kL, R.kT, R.lab, coldTouch() ? R.nT : R.n); if (R.ch) FT.ch = R.ch; else FT.keys = R.keys; return true;
+    }
+  }
+  return false;
+}
+// --- reminders (v0.77, one rule for all): only for something learned (or a lesson that timed out, done 2), only after it went unused for FIELD_TUT.remind[id] chances,
+// once per move ever (F.rs), one at a time (FIELD_TUT.remGap plays apart), never while a lesson is open. A board note before the snap: no slow motion, no SIM lock.
+// Tracker LEAGUE.ft.use[id] = { u: uses, c: chances since the last use }, fed by the wrapped throwBall / audible / hotRouteClick / callTimeout and ftTick's play watch.
+const FT_REM = ['throw', 'bullet', 'jump', 'low', 'spin', 'juke', 'truck', 'stiff', 'hurdle', 'dive', 'aud', 'hot', 'to'];
+const FT_BASE = ['throw', 'bullet', 'jump', 'low'];   // (learned by default: the cold open taught them)
+const FT_MOVES = ['spin', 'juke', 'truck', 'stiff', 'hurdle', 'dive'];
+const FT_REM_TXT = { throw: 'Drag back from your QB, let go', bullet: 'Tight window? Fire a bullet', jump: 'High ball? Jump for it', low: 'Low ball? Dive for it',
+  spin: 'Tackler close? Spin away', juke: 'Juke him, leave him grabbing air', truck: 'Lower the shoulder, run him over', stiff: 'Stiff arm the next tackler',
+  hurdle: 'Diving tackler? Hurdle right over', dive: 'Near the line? Dive for it', aud: 'Bad look? Audible to new routes', hot: 'Tap a receiver for a new route',
+  to: 'Late in the half? Use a timeout', run: 'Try a run! Tap your back' };
+const FT_REM_KEY = { bullet: 'V', jump: 'W', low: 'S' };
+const ftRemIdx = id => FT_REM.indexOf(id);
+function ftU(id) { const F = LEAGUE.ft, U = F.use || (F.use = {}); return U[id] || (U[id] = { u: 0, c: 0 }); }
+function ftUse(id) { if (!ftOn()) return; const U = ftU(id); U.u++; U.c = 0; const i = ftRemIdx(id); if (i >= 0) FT.pm |= 1 << i; }
+function ftChance(id) { const i = ftRemIdx(id); if (i >= 0 && (FT.pm & (1 << i))) return; ftU(id).c++; }
+const ftKnown = id => { const d = LEAGUE.ft.done[id]; return d === 1 || d === 2 || (d == null && FT_BASE.includes(id)); };
+function ftRemSeen(id) { const F = LEAGUE.ft; if (F) (F.rs || (F.rs = {}))[id] = 1; }
+function ftPlayEnd() {   // (the play is over) count the chances this play gave
+  const F = LEAGUE.ft, pf = FT.pf;
+  if (pf & 1 && !(pf & 2)) ftChance('bullet');
+  if (pf & 8) { ftChance('jump'); ftChance('low'); }
+  if (pf & 4) for (let i = 0; i < FT_MOVES.length; i++) ftChance(FT_MOVES[i]);
+  if (pf & 16) { ftChance('aud'); ftChance('hot'); }
+  if (pf & 32) ftChance('to');
+  if (pf & 16) for (const id in F.done) if (F.done[id] === 2 && ftRemIdx(id) < 0) ftChance(id);   // (timed-out lessons: plays since)
+  if (pf & 16 && !(pf & 1) && /SACK/.test(msg)) FT.stuck = true;   // (a sack with no throw)
+  FT.pf = 0; FT.pm = 0;
+}
+function ftWatch() {   // (ftTick, every step) what this play offers / what he did
+  if (aiOff()) return;
+  if (state === 'pocket' || state === 'drop') { if (!aim && qb && !FT.thrown) { FT.pk2 += 1 / 60; if (FT.pk2 > FIELD_TUT.throwStuckS) FT.stuck = true; } }
+  else if (state === 'flight' && tgt && tgt.team === 'off') { FT.pf |= 8; if (tgt.action === 'jump') ftUse('jump'); else if (tgt.action === 'dive') ftUse('low'); }
+  else if (state === 'run' && runner && runner.hasBall) {
+    const c = runner; if (!(FT.pf & 4)) { ftNear(c, 'def'); if (FT.nd < FIELD_TUT.closeYd * YD) FT.pf |= 4; }
+    const a = c.action; if (a === 'spin' || a === 'juke' || a === 'hurdle' || a === 'dive') ftUse(a); else if (c.truck) ftUse('truck'); else if (c.stiff) ftUse('stiff');
+  }
+  if (state === 'pre' && patMode == null) { FT.pf |= 16; if (game.quarter > 2 || (game.quarter === 2 && game.secs <= 120)) { if (userTimeouts() > 0) FT.pf |= 32; } }
+}
+function ftRemind() {   // (ftSpec, last) a reminder before the snap, if one is due
+  if (state !== 'pre' || patMode != null || (rec && rec.replaying) || !ftNotesOn()) { FT.rem = ''; return false; }
+  const F = LEAGUE.ft, rs = F.rs || (F.rs = {}), off = !aiOff();
+  if (!FT.rem && (F.pt || 0) - (F.remAt == null ? -99 : F.remAt) >= FIELD_TUT.remGap) {
+    if (off && FT.stuck && !rs.throw && (F.pt || 0) <= FIELD_TUT.throwPlays) FT.rem = 'throw';
+    else if (off && ftLeft('run') && (F.runAsk || 0) >= FIELD_TUT.runAsk && !rs.run && (F.pt || 0) >= FIELD_TUT.remind.out) FT.rem = 'run';
+    else {
+      for (let i = 0; i < FT_REM.length && !FT.rem; i++) { const id = FT_REM[i], n = FIELD_TUT.remind[id]; if (id !== 'throw' && off && !rs[id] && ftKnown(id) && n && ftU(id).c >= n) FT.rem = id; }
+      if (!FT.rem) for (const id in F.done) if (F.done[id] === 2 && !rs[id] && ftRemIdx(id) < 0 && (FT_DEF.includes(id) || id === 'rush' ? !off : off) && ftU(id).c >= FIELD_TUT.remind.out) { FT.rem = id; break; }
+    }
+    if (FT.rem) { rs[FT.rem] = 1; F.remAt = F.pt || 0; FT.stuck = false; ftLog('reminder ' + FT.rem); }
+  }
+  if (!FT.rem) return false;
+  const id = FT.rem, R = FT_REH[id], txt = FT_REM_TXT[id] || FT_FNOTE[id] || (R && R[3]) || 'Give it a try';
+  if (id === 'hot' && recs.length) { ftShow('r_' + id, false, recs[0], 'press', 'press', coldTouch() ? 'TAP HIM' : 'CLICK HIM', txt); return true; }
+  if (id === 'run' && rb) { ftShow('r_' + id, false, rb, 'press', 'press', coldTouch() ? 'TAP HIM' : 'CLICK HIM', txt); return true; }
+  if (id === 'throw') { ftShow('r_' + id, false, null, 'drag', 'drag', 'DRAG, LET GO', txt); FT.rk = true; FT.tdx = -MIRROR * 110; return true; }
+  if (id === 'aud' || id === 'to') { ftShow('r_' + id, false, null, 'press', 'press', id === 'aud' ? 'AUDIBLE' : 'TIMEOUT', txt); ftAt(id === 'aud' ? AUDIBLE_BTN : TIMEOUT_BTN); return true; }
+  ftShow('r_' + id, false, null, R ? R[1] : 'key1', R ? R[2] : 'press', 'REMEMBER', txt); FT.rk = true;
+  if (R) { if (typeof R[0] === 'string') FT.ch = R[0]; else FT.keys = R[0]; } else if (FT_REM_KEY[id]) FT.ch = FT_REM_KEY[id];
+  else FT.rk = false;
+  return true;
+}
+// engine hooks (function declarations of earlier files, wrapped once here at load; 15's coldWrap may wrap them again on top)
+snap = (o => function (run) { if (state === 'pre' && ftOn()) { if (FT.vis && FT_PRE.includes(FT.sf)) { if (FT.sf === 'fourth') ftDone('fourth'); else ftMiss(FT.sf); } if (FT.vis && FT.sf === 'run' && !run && !fmBusy()) { const F = LEAGUE.ft; F.runAsk = (F.runAsk || 0) + 1; ftLog('passed over the run note (' + F.runAsk + ')'); } ftSnap(); } return o.apply(this, arguments); })(snap);
+handoff = (o => function () { if (ftOn() && !aiOff() && (state === 'pre' || state === 'drop' || state === 'pocket') && !fmBusy() && ftLeft('run')) ftDone('run'); return o.apply(this, arguments); })(handoff);   // (phase C: the run lesson = his first handoff)
+aiWantsRun = (o => function () { if (ftOn() && state === 'pre') { if (FT.defP === 'd2') return true; if (FT.defP === 'd3') return false; } return o.apply(this, arguments); })(aiWantsRun);
+startSim = (o => function (startYd, preface, team = 'RED') { if (team === 'RED' && !FT.ask && !FT.pass && ftOn() && ftDefLock()) { FT.ask = 1; FT.args = [startYd, preface, team]; ftLog('defense card'); return; } return o.apply(this, arguments); })(startSim);
+proceed = (o => function () { if (FT.ask) return; return o.apply(this, arguments); })(proceed);
+startKickoff = (o => function (punt = null, user = false) {
+  FT.koMine = false; FT.deep = false;
+  if (ftOn() && !punt && !user) { const F = LEAGUE.ft; F.koRet++; FT.koMine = true; FT.deep = F.koRet >= 2 && ftLeft('kneel') && !ftLeft('ret'); ftLog('kick return ' + F.koRet + (FT.deep ? ' (deep)' : '')); }
+  return o.apply(this, arguments);
+})(startKickoff);
+simAvailable = (o => function (id) { if (ftSimLock()) return false; return o.apply(this, arguments); })(simAvailable);
+throwBall = (o => function () { if (ftOn() && !aiOff()) { FT.thrown = true; FT.pf |= 1; ftUse('throw'); if (bulletMode) { FT.pf |= 2; ftUse('bullet'); } } return o.apply(this, arguments); })(throwBall);
+audible = (o => function () { const r = o.apply(this, arguments); if (ftOn() && !aiOff()) ftUse('aud'); return r; })(audible);
+hotRouteClick = (o => function () { const r = o.apply(this, arguments); if (r && ftOn()) ftUse('hot'); return r; })(hotRouteClick);
+callTimeout = (o => function (cpu) { if (!cpu && ftOn()) ftUse('to'); return o.apply(this, arguments); })(callTimeout);
+endGame = (o => function () { const r = o.apply(this, arguments); ftGameEnd(); return r; })(endGame);
 function careerClick(p) {
   career.focus = inBtn(p, CAR.first) ? 'first' : inBtn(p, CAR.last) ? 'last' : null;
   if (career.quick) {   // (the first-launch card: the name lines and START only)
     if (KB_TOUCH) { if (!kbIn) kbSetup(); kbSync(); }
+    if (career.path === 'ask') { career.focus = null; ftPathClick(p); return; }
     if (career.focus || !inBtn(p, QC.go)) return;
     if (!String(career.first || '').trim() || !String(career.last || '').trim()) { career.nameErr = performance.now(); career.focus = String(career.first || '').trim() ? 'last' : 'first'; return; }
-    firstCareerGo(); return;
+    qsOpen(true, 'locker'); return;   // (v0.77: the locker page alone, then the start)
   }
   if (KB_TOUCH) { if (!kbIn) kbSetup(); kbSync(); }
   if (career.focus) return;
@@ -439,6 +1149,7 @@ function careerStart() {   // the questionnaire's START SEASON: a new franchise
   tutPrompt = 'coach';
   autoAssignSlot();   // (always its own new slot; every slot full = the save screen opens so you pick one to replace)
   if (curSlot === null) { slotUI = { mode: 'save', scroll: 0, confirm: null }; note('SLOTS FULL: PICK ONE TO SAVE YOUR NEW FRANCHISE'); }
+  ftCareer();   // (field tutorial: forced the first time ever, a choice afterwards)
 }
 // the first team: your hiring preference (career.hire: fav / rebuild / contender / surprise), held to the weaker half if your origin says so (job 'weak')
 function careerTeam() {
@@ -828,6 +1539,15 @@ function drawTutPrompt() {
     menuBtn(TUT_ASK.yes, 'CONTINUE ▸', IN_GAME_PAPER.green, 26);
     menuBtn(TUT_ASK.no, 'SKIP', RES.bright, 26);
     tourBtnDraw = false;
+  } else if (tutPrompt === 'same' && results.screen === 'home') {   // VETERAN: the setup questions as one card
+    ctx.fillStyle = 'rgba(30,25,10,0.45)'; ctx.fillRect(0, 0, W, H); uiModal();
+    const card = { x: W / 2 - 330, y: 190, w: 660, h: 320 };
+    ctx.save(); ctx.translate(4, 6); tornPath(card); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fill(); ctx.restore();
+    tornPath(card); ctx.fillStyle = '#fffdf4'; ctx.fill();
+    ctx.fillStyle = RES.line; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = 'bold 34px monospace'; ctx.fillText('SAME SETTINGS AS LAST TIME?', W / 2, 250, 620);
+    tourBtnDraw = true; menuBtn(TUT_ASK.yes, 'YES', IN_GAME_PAPER.green, 26); menuBtn(TUT_ASK.no, 'CHANGE', RES.bright, 26); tourBtnDraw = false;
+  } else if (tutPrompt === 'ft' && results.screen === 'home') { ftChoiceDraw();
   } else if (tutPrompt === 'ready' && results.screen === 'home') {   // the franchise intro is done: on to the football tutorial?
     ctx.fillStyle = 'rgba(30,25,10,0.45)'; ctx.fillRect(0, 0, W, H); uiModal();
     const card = { x: W / 2 - 330, y: 190, w: 660, h: 320 };
@@ -866,7 +1586,9 @@ function drawTutPrompt() {
 function tutPromptClick(p) {
   if (!tutPrompt) return false;
   if (tutPrompt === 'coach' && LEAGUE.firstRun === 'after') { tutPrompt = null; tourStart('home'); if (!tour) tutPrompt = 'setup'; }   // (first franchise: no tutorial question, the home tour first)
-  else if (tutPrompt === 'coach') tutPrompt = 'ask';
+  else if (tutPrompt === 'coach') tutPrompt = null;   // (v0.77: no tutorial question: ROOKIE / VETERAN was picked before the start)
+  else if (tutPrompt === 'same') { if (inBtn(p, TUT_ASK.yes)) tutPrompt = null; else if (inBtn(p, TUT_ASK.no)) { tutPrompt = null; LEAGUE.firstRun = 'qs'; settingsOpen = true; qsOpen(false); } }   // (VETERAN: same settings, or the questions)
+  else if (tutPrompt === 'ft') { if (inBtn(p, TUT_ASK.yes)) ftChoose(true); else if (inBtn(p, TUT_ASK.no)) ftChoose(false); }
   else if (tutPrompt === 'setup') {
     if (inBtn(p, TUT_ASK.yes)) { tutPrompt = null; LEAGUE.firstRun = 'qs'; settingsOpen = true; qsOpen(false); }
     else if (inBtn(p, TUT_ASK.no)) { LEAGUE.firstRun = 'qs'; firstRunQsDone(); }
@@ -1321,11 +2043,11 @@ canvas.addEventListener('pointerdown', e => {
     if (results.screen === 'coach') { if (e.button === 0) coachClick(pointerPos(e)); return; }
     if (results.screen === 'online') { if (e.button === 0) olClick(pointerPos(e)); return; }
     if (results.screen === 'onresult') { if (e.button === 0) onResultClick(pointerPos(e)); return; }
-    if (e.button === 0 && results.screen === 'home' && !tutPrompt && !teamPick && season && inBtn(pointerPos(e), SCHED.btn)) { lgvOpen(); return; }   // (v0.72 SCHEDULE: the league screen)
-    if (e.button === 0 && results.screen === 'home' && !tutPrompt && !teamPick && awhClick(pointerPos(e))) return;
+    if (e.button === 0 && results.screen === 'home' && !tutPrompt && !teamPick && season && unlOn('sched') && inBtn(pointerPos(e), SCHED.btn)) { lgvOpen(); return; }   // (v0.72 SCHEDULE: the league screen)
+    if (e.button === 0 && results.screen === 'home' && !tutPrompt && !teamPick && unlOn('sched') && awhClick(pointerPos(e))) return;
     if (e.button === 0 && results.screen === 'home' && !tutPrompt && !teamPick) { const pp = pointerPos(e); if (pp.x >= 1150 && pp.x <= 1260 && pp.y >= 22 && pp.y <= 64) { yearCal = !yearCal; try { localStorage.setItem('pocketPasser.yearCal', yearCal ? '1' : '0'); } catch (err) {} return; } }
-    if (e.button === 0 && results.screen === 'home' && postOn() && inBtn(pointerPos(e), HOME_POST)) { postOpen(); return; }
-    if (e.button === 0 && results.screen === 'home' && inBtn(pointerPos(e), HOME_BTNS[2])) { results.screen = 'roster'; rosterView.page = 0; rosterView.sel = null; if (rosterView.side === 'upg') rosterView.side = rosterUI.side; rosterReturn = null; return; }
+    if (e.button === 0 && results.screen === 'home' && postOn() && unlOn('sched') && inBtn(pointerPos(e), HOME_POST)) { postOpen(); return; }
+    if (e.button === 0 && results.screen === 'home' && unlOn('roster') && inBtn(pointerPos(e), HOME_BTNS[2])) { results.screen = 'roster'; rosterView.page = 0; rosterView.sel = null; if (rosterView.side === 'upg') rosterView.side = rosterUI.side; rosterReturn = null; return; }
     if (e.button === 0 && results.screen === 'home') {
       const pt = pointerPos(e);
       if (facOn() && inBtn(pt, HOME_BTNS[3])) { if (exhibition) return; pracOpen('fac'); return; }   // FACILITIES
@@ -1334,15 +2056,15 @@ canvas.addEventListener('pointerdown', e => {
     if (results.screen === 'practice') { if (e.button === 0) pracClick(pointerPos(e)); return; }
     if (results.screen === 'hire') { if (e.button === 0) hireClick(pointerPos(e)); return; }
     if (results.screen === 'board') { if (e.button === 0) boardClick(pointerPos(e)); return; }
-    if (e.button === 0 && results.screen === 'home' && inBtn(pointerPos(e), HOME_BTNS[1])) { results.screen = 'staff'; staffView.sel = null; staffView.team = null; return; }
+    if (e.button === 0 && results.screen === 'home' && unlFO() && inBtn(pointerPos(e), HOME_BTNS[1])) { results.screen = 'staff'; staffView.sel = null; staffView.team = null; return; }
     if (results.screen === 'staff') { if (e.button === 0) staffClick(pointerPos(e)); return; }
     if (results.screen === 'trade' || results.screen === 'tradeb') { if (e.button === 0) tradeClick(pointerPos(e)); return; }
     if (results.screen === 'toffers') { if (e.button === 0) offersClick(pointerPos(e)); return; }
     if (e.button === 0 && results.screen === 'home' && inBtn(pointerPos(e), HOME_BACK)) { homeLeave = true; return; }
     if (e.button === 0 && results.screen === 'home' && season && !exhibition) {
-      if (inBtn(pointerPos(e), HOME_HELP.off)) { needsPop('off'); return; }
+      if (unlOn('cond') && inBtn(pointerPos(e), HOME_HELP.off)) { needsPop('off'); return; }
     }
-    if (e.button === 0 && results.screen === 'home' && inBtn(pointerPos(e), STANDINGS_PANEL)) { showSeeds = !showSeeds; return; }
+    if (e.button === 0 && results.screen === 'home' && unlOn('sched') && inBtn(pointerPos(e), STANDINGS_PANEL)) { showSeeds = !showSeeds; return; }
     if (results.screen === 'playoffs') { if (e.button === 0) poClick(pointerPos(e)); return; }
     if (results.screen === 'roster') { if (e.button === 0) rosterClick(pointerPos(e)); return; }
     if (results.screen === 'hof') { if (e.button === 0) hofClick(pointerPos(e)); return; }
@@ -1350,6 +2072,7 @@ canvas.addEventListener('pointerdown', e => {
     if (results.screen === 'pawards') { if (e.button === 0) pawardsClick(pointerPos(e)); return; }
     if (results.screen === 'dboard') { if (e.button === 0) dboardClick(pointerPos(e)); return; }
     if (results.screen === 'book') { if (e.button === 0) bookClick(pointerPos(e)); return; }
+    if (results.screen === 'jobs') { if (e.button === 0) jobsClick(pointerPos(e)); return; }
     if (results.screen === 'records') { if (e.button === 0) recClick(pointerPos(e)); return; }
     if (results.screen === 'league') { if (e.button === 0) lgvClick(pointerPos(e)); return; }
     if (results.screen === 'chof') { if (e.button === 0) chofClick(pointerPos(e)); return; }
@@ -1374,6 +2097,8 @@ canvas.addEventListener('pointerdown', e => {
   if (e.button === 0 && finalReplay() && !paused && btnHit(pointerPos(e), FINAL_BTN)) { finishLive(); return; }   // (the game's over: FINISH GAME first, before a celebration skip / tip / replay can take the press)
   celebSkip();   // (any tap ends a celebration; the tap still does whatever else it does)
   if (injuryShowing() && !paused && !showKeys && !overPauseButton(pointerPos(e))) { if (e.button === 0) injuryClick(pointerPos(e)); return; }   // the injury timeout
+  if (FT.ask) { if (e.button === 0) ftAskClick(pointerPos(e)); return; }   // (field tutorial: the defense card)
+  if (e.button === 0 && !paused && ftBoardTap(pointerPos(e))) return;   // (the board's GOT IT tab, or a rehearsal's practice tap)
   if (tut && tut.defAsk) {   // the offense lessons are done: play the defense lessons, or let the computer play defense
     if (e.button === 0) {
       const p = pointerPos(e);
@@ -1478,8 +2203,8 @@ canvas.addEventListener('pointerdown', e => {
     callTimeout(false, inBtn(pointerPos(e), pvpTO().def));
     return;
   }
-  if (e.button === 0 && !pvpOn() && (!tut || (tutStep() && tutStep().id === 'timeout')) && (state === 'pre' || state === 'done') && !(rec && rec.replaying) && inBtn(pointerPos(e), TIMEOUT_BTN)) {
-    callTimeout();
+  if (e.button === 0 && !pvpOn() && (!tut || (tutStep() && tutStep().id === 'timeout')) && (state === 'pre' || state === 'done') && !(rec && rec.replaying) && inBtn(pointerPos(e), TIMEOUT_BTN) && ftLet('to')) {
+    callTimeout(); ftHit('to'); ftHit('tired');
     return;
   }
   if (revOn() || pclipOn()) return;   // (v0.68 a booth review: hands off, it plays itself; v0.71 the penalty clip too)
@@ -1517,10 +2242,10 @@ canvas.addEventListener('pointerdown', e => {
   if (state === 'done') { if (!playSettled() || (bannerUp() && rec && rec.frames.length && !rec.played && replayWanted())) return; if (rec && rec.frames.length && !rec.played && !game.fastRunoff && replayWanted()) { startReplay(); rec.fromClick = true; } else proceed(); return; }
   if (state === 'pre') {
     const b = AUDIBLE_BTN;
-    if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) { audible(); return; }
+    if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h && ftLet('aud')) { audible(); ftHit('aud'); return; }
     { const f = clickedFB(p), w0 = screenToWorld(p); if (f && (!inCircle(p, qb) || Math.hypot(w0.x - f.x, w0.y - f.y) < Math.hypot(w0.x - qb.x, w0.y - qb.y))) { fbCarry(f); handoff(); return; } }   // (the fullback's RUN ring: he carries it; overlapping the QB's ring, the nearer man wins)
     if (clickedRB(p) && (!inCircle(p, qb) || rbCloser(p))) { handoff(); return; }   // (where the two rings overlap: the run play, unless the click is nearer the QB)
-    if ((!tut || (tutStep() || {}).id === 'hot') && !inCircle(p, qb) && hotRouteClick(p)) return;   // clicking a receiver: his next hot route
+    if ((!tut || (tutStep() || {}).id === 'hot') && !inCircle(p, qb) && ftLet('hot') && hotRouteClick(p)) { ftHit('hot'); return; }   // clicking a receiver: his next hot route
     if (tut && tutStep() && tutStep().def !== 'none' && !tutStep().recs) return;   // (the tutorial's run steps: only the hand-off)
     // clicking the QB snaps it; anywhere else in the backfield (behind the line, between the sidelines) only
     // snaps once you drag from there (a plain click does nothing)
@@ -1567,7 +2292,7 @@ canvas.addEventListener('pointerup', e => {
 canvas.addEventListener('pointercancel', e => { if (backfieldPress && backfieldPress.pid === e.pointerId) backfieldPress = null; });
 // the home screen's schedule: drag its scroll bar (pressed on the bar), or drag the strip itself sideways
 canvas.addEventListener('pointerdown', e => {
-  if (e.button !== 0 || !results || results.screen !== 'home' || teamPick || tutPrompt || settingsOpen) return;
+  if (e.button !== 0 || !results || results.screen !== 'home' || teamPick || tutPrompt || settingsOpen || !unlOn('sched')) return;   // (v0.77: no schedule on the day-one home screen)
   const p = pointerPos(e), B = SCHED.bar, S = SCHED_BOX, A = AWH_BOX;
   if (inBtn(p, SCHED.btn)) return;   // (v0.72 the SCHEDULE button over the list: never a drag / row click)
   if (p.x >= B.x - 6 && p.x <= B.x + B.w + 6 && p.y >= B.y && p.y <= B.y + B.h) { SCHED.drag = { bar: true }; schedBarTo(p.y); }
@@ -1816,6 +2541,7 @@ function onKeyDown(e) {
   }
   if (slotUI) { if (e.code === 'Escape') { e.preventDefault(); if (slotUI.confirm) slotUI.confirm = null; else slotUI = null; } return; }
   if (settingsOpen) { if (diffUI) { diffKey(e); return; } if (e.code === 'Escape') { e.preventDefault(); if (dbgUI) dbgUI = false; else if (spdUI) spdUI = false; else if (htUI) htUI = false; else if (setCat) { setCat = null; rebinding = null; } else settingsOpen = false; } return; }
+  if (!paused && !e.repeat && ftKey(e.code)) { if (e.preventDefault) e.preventDefault(); return; }   // (field tutorial: a rehearsal's practice press is eaten)
   if (injuryShowing() && !paused && e.code !== 'Escape') return;   // (answer the injury timeout first)
   if (state === 'done' && game && game.penQ && !paused && e.code !== 'Escape' && !(rec && rec.replaying)) { e.preventDefault(); if (!e.repeat) penKey(e.code); return; }   // (v0.68 the flag's accept / decline card)
   if (pclipOn()) { e.preventDefault(); if (!e.repeat) pclipEnd(true); return; }   // (v0.71 any key / Esc skips the penalty clip)
@@ -1873,7 +2599,7 @@ function onKeyDown(e) {
   if (!e.repeat && preKickKey(e.code)) return;   // (v0.68: B = FIELD GOAL / GO FOR IT, P = PUNT before the snap)
   if (e.code === 'Space' && !e.repeat && state === 'kickoff' && kick && kick.userKo) { kickClick(); return; }   // (your mirrored kick's meters)
   // T = timeout, on offense and on defense (before the snap, or once the play is over; on defense only once it has fully settled; two players: Shift+T is the defense's)
-  if (e.code === 'KeyT' && !e.repeat && (!tut || (tutStep() && tutStep().id === 'timeout')) && (state === 'pre' || state === 'done') && !(rec && rec.replaying)) { if (state === 'pre' || !aiOff() || playSettled()) callTimeout(false, pvpOn() && e.shiftKey); return; }
+  if (e.code === 'KeyT' && !e.repeat && (!tut || (tutStep() && tutStep().id === 'timeout')) && (state === 'pre' || state === 'done') && !(rec && rec.replaying) && ftLet('to')) { if (state === 'pre' || !aiOff() || playSettled()) { callTimeout(false, pvpOn() && e.shiftKey); ftHit('to'); ftHit('tired'); } return; }
   if (aiOff() && !(rec && rec.replaying)) { heldMark(e.code, 'd'); if (!e.repeat && defKeyDown(e)) return; }   // (on defense your keys steer your defender; the offense is the computer's)
   else heldMark(e.code, 'k');
   if (e.repeat) return;
@@ -1887,36 +2613,36 @@ function onKeyDown(e) {
     else if (state === 'sim') simAdvance();
     else if (state === 'kick') kickClick();
   } else if (e.code === 'KeyQ') {
-    if (state === 'pre') audible();   // while running, Q is read as held (stiff arm)
+    if (state === 'pre') { if (ftLet('aud')) { audible(); ftHit('aud'); } }   // while running, Q is read as held (stiff arm)
     else if (kcuOn()) { const rt = allPlayers().find(p => p.hasBall) || (puntPlay && puntPlay.ret); if (rt) kcuPick(rt, kcu); }   // (kick coverage: Q switches the man too)
   } else if (state === 'flight') flightAction(e.code);
   else if (kcuOn()) { const rt = allPlayers().find(p => p.hasBall) || (puntPlay && puntPlay.ret); if (['KeyE', 'KeyO'].includes(e.code) && rt) kcuPick(rt, kcu); }   // your kick coverage: switch to the man nearest the returner
   else if (state === 'pocket' || state === 'drop' || (state === 'run' && passerMode && runner === passer)) {   // (a set-up screen passer: same keys)
-    if (e.code === 'KeyR') pocketAction('KeyR');
+    if (e.code === 'KeyR') { if (ftLet('spin')) pocketAction('KeyR'); }
     else if (e.code === 'KeyW' || e.code === 'KeyS') {
       const now = performance.now() / 1000;
-      if (now - (lastTap[e.code] || -1) < DOUBLE_TAP) { pocketAction(e.code); lastTap[e.code] = -1; }
+      if (now - (lastTap[e.code] || -1) < DOUBLE_TAP) { if (ftLet('juke')) pocketAction(e.code); lastTap[e.code] = -1; }
       else lastTap[e.code] = now;
     }
   } else if (state === 'kickoff') {
     // D (back) while the kick is coming down in the end zone: take a knee on the catch (touchback)
-    if ((e.code === 'KeyD' || e.code === 'ArrowRight') && kickoff && kickoff.phase === 'flight' && kickoff.punt && !kickoff.fair && kickoff.flight.tx > 0) {   // a punt coming down in the field: D (back) signals a fair catch (no return, nobody can touch him)
+    if ((e.code === 'KeyD' || e.code === 'ArrowRight') && kickoff && kickoff.phase === 'flight' && kickoff.punt && !kickoff.fair && kickoff.flight.tx > 0 && ftLet('fair')) {   // a punt coming down in the field: D (back) signals a fair catch (no return, nobody can touch him)
       kickoff.fair = true; rb.fairSig = true;
       popup(rb, 'FAIR CATCH', '#ffd94a');
       msg = 'Fair catch signaled  -  the play ends where you catch it';
-    } else if ((e.code === 'KeyD' || e.code === 'ArrowRight') && kickoff && kickoff.phase === 'flight' && kickoff.flight.tx < 0 && !kickoff.kneel) {   // (out the back: it ends right there)
+    } else if ((e.code === 'KeyD' || e.code === 'ArrowRight') && kickoff && kickoff.phase === 'flight' && kickoff.flight.tx < 0 && !kickoff.kneel && ftLet('kneel')) {   // (out the back: it ends right there)
       kickoff.kneel = true;
       popup(rb, 'KNEEL', '#7fe3ff');
       msg = 'Taking a knee on the catch  -  touchback';
     }
   } else if (state === 'run') {
-    if (e.code === 'KeyR') runAction('KeyR');
-    else if ((e.code === 'KeyD' || e.code === 'ArrowRight') && kickoffPlay && runner === rb && rb.x < 0) runAction('KeyA');   // one tap of the back key (the way that runs him backwards) kneels in the end zone
-    else if (e.code === 'KeyV') runAction('Tab');   // dive forward (QB: slide); the action is still called 'Tab' inside runAction
-    else if (e.code === 'KeyE') runAction('KeyE'); // hurdle (needs space)
+    if (e.code === 'KeyR') { if (ftLet('spin')) runAction('KeyR'); }
+    else if ((e.code === 'KeyD' || e.code === 'ArrowRight') && kickoffPlay && runner === rb && rb.x < 0) { if (ftLet('kneel')) runAction('KeyA'); }   // one tap of the back key (the way that runs him backwards) kneels in the end zone
+    else if (e.code === 'KeyV') { if (ftLet('dive')) runAction('Tab'); }   // dive forward (QB: slide); the action is still called 'Tab' inside runAction
+    else if (e.code === 'KeyE') { if (ftLet('hurdle')) runAction('KeyE'); } // hurdle (needs space)
     else if (['KeyW', 'KeyS'].includes(e.code)) {
       const now = performance.now() / 1000;
-      if (now - (lastTap[e.code] || -1) < DOUBLE_TAP) { runAction(e.code); lastTap[e.code] = -1; }
+      if (now - (lastTap[e.code] || -1) < DOUBLE_TAP) { if (ftLet('juke')) runAction(e.code); lastTap[e.code] = -1; }
       else lastTap[e.code] = now;
     }
   }
@@ -2262,7 +2988,7 @@ function frame(now, bg) {   // bg: stepped by the background ticker (a hidden on
     if (rec && rec.replaying) replayTick(dt);
     else {   // (perf job phase 2: 60 fixed steps a second on every screen; a 30 Hz screen runs 2 a refresh, 120 Hz one every 2nd, 75 / 144 Hz an accumulator + the blend)
       deskGate = true; const k = loopSteps(gapMs), bl = FRAME_LOOP.blend && !frameLoop.rate; perfS.sN += k;   // (sN: FRAME TIMES' STEP N/s = game steps a second)
-      for (let i = 0; i < k; i++) { deskStepped = true; GRAV_K = 1; if (bl) loopPrev(); if (ONL.host) onlClkStep(); speedStep(Math.min(FRAME_LOOP.step * SPEED_BASE * celTSpeed(), 0.07)); }
+      for (let i = 0; i < k; i++) { deskStepped = true; GRAV_K = 1; if (bl) loopPrev(); if (ONL.host) onlClkStep(); speedStep(Math.min(FRAME_LOOP.step * SPEED_BASE * celTSpeed() * ftSlowK(), 0.07)); }
     }
   }
   if (!deskGate) frameLoop.bl.ok = false;   // (the game didn't step this frame: nothing to blend from when it comes back)

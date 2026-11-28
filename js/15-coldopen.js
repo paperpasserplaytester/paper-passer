@@ -24,7 +24,8 @@ const COLD = {
   f1: { acc: 12, dec: 16, brakeYd: 1, still: 0.3, faceYd: 0.6, beat: 4.2, bounce: 4, walk: 1.5, walkVar: 0.2, walkOut: 4 },   // F1: teammates' accel / decel (YD/s^2), the last yd they brake over, the dead zone (yd), the facing hysteresis (yd), the shared bounce beat (rad/s) + height (S); the Erasers' walk (YD/s + per-man), yd past the bottom sideline they head for
   // touch: CSS px the roll's push (up and back, from where that finger went down) must travel
   boil: { hz: 7, amp: 0.9, prompt: 1.7 },   // dream lines: redrawn this often (a second), jitter px, x this much while a prompt is up
-  rate: { prompt: 0.3, ease: 6 },        // game speed while a prompt waits (a play's own beats set theirs in COLD_PLAYS); how fast the rate eases (per s)
+  pace: 0.83,                            // (v0.77) the dream's scenes run this much of their written length (their clock CO.t runs 1 / pace as fast; plays, the gate and C5 untouched)
+  rate: { prompt: 0.4, ease: 6 },        // (v0.77: was 0.3) game speed while a prompt waits (a play's own beats set theirs in COLD_PLAYS); how fast the rate eases (per s)
   write: { cps: 18, messy: 0.5 },        // captions: characters a second, how much messier each later line gets
   hand: { h: 64, loop: 1.1, drag: 0.8, pause: 0.4, swipe: 0.25 },   // the pointing hand: height px, press loop s, drag slide s, pause s, swipe flick s
   keycap: 48,                            // a doodled keycap's size px
@@ -141,7 +142,7 @@ function coldFresh() {   // the pre-drawn field and stands are keyed by team: bo
 function coldEnd(skipped) {
   if (!CO) return;
   const mode = CO.mode;
-  try { if (mode === 'intro') { localStorage.setItem(COLD.intro, '1'); if (CO.first) localStorage.setItem(COLD_LOCK, '1'); } else localStorage.setItem(COLD.key, '1'); } catch (e) {}   // (the lock: the first launch's intro only, skipped or not; the debug replay never re-locks)
+  try { if (mode === 'intro') { localStorage.setItem(COLD.intro, '1'); } else localStorage.setItem(COLD.key, '1'); } catch (e) {}   // (the lock: the first launch's intro only, skipped or not; the debug replay never re-locks)
   for (const s of CO.snd) fadeSfx(s, 350);
   coldAmb(null);
   for (const k of Object.keys(CO.nfl)) NFL[k] = CO.nfl[k];
@@ -195,7 +196,7 @@ function coldAmb(k, vol = 1) {
 }
 function coldTick(dt) {
   const sc = CO.sc;
-  CO.t += dt; CO.T += dt; CO.frame = (CO.frame || 0) + 1;
+  CO.t += sc && !sc.play && !sc.wait && sc.id !== 'c5' ? dt / COLD.pace : dt; CO.T += dt; CO.frame = (CO.frame || 0) + 1;
   // this scene's sound cues and thunder
   for (let i = CO.fired + 1; i < (sc.snd || []).length && sc.snd[i][0] <= CO.t; i++) { const s = sc.snd[i]; coldSnd(s[1], s[2] == null ? 1 : s[2], s[3] || {}); CO.fired = i; }
   if (CO.thAt && CO.T >= CO.thAt) { CO.thAt = 0; coldSnd('thunder' + (1 + Math.floor(Math.random() * 2)), 0.7); }
@@ -704,26 +705,26 @@ const COLD_PLAYS = {
     off: { X: { route: [[10, null], [12.6, 'e0.75']], v: 7.6 }, H: { route: [[9, null], [16, -3]], v: 7.2 }, Y: { route: [[12, null]], v: 7 }, Z: { route: [[18, null]], v: 7.4 } },
     def: { cbT: { man: 'X', off: [-0.85, -0.15], lag: 0.08, up: 0.5 }, lbW: { path: [[0, 4, -5], [2.5, 7, -6]] },   // (every catch is made with a man on him: here the corner is draped all over the out, arms up for the ball)
            sT: { drop: 6 }, sB: { drop: 6 }, cbB: { path: [[0, 7, null], [3, 24, 'b9']] }, lbM: { drop: 3 }, lbS: { drop: 3 } },
-    throw: { windows: [{ id: 'out', at: [12.7, 'e0.7'], input: null, toe: 'tap', tapRate: 0.28, leap: true, one: true, flat: true, mode: 'KeyW', arc: 1.22, early: 0.5 }], rate: 0.35, speed: 1, lead: 15 },   // (leap: he goes up for it by himself, no prompt; one-handed, laid out over the sideline with both feet just in)   // (toe: a sideline toe-tap catch, shown slowed to tapRate)
-    after: 'oob', hold: 1.1, cam: { pre: [1.1, 0], live: [1.1, 0], flight: [1.2, 0], out: [1.75, 0] }, stop: 0.08 },
+    throw: { windows: [{ id: 'out', at: [12.7, 'e0.7'], input: null, toe: 'tap', tapRate: 0.35, leap: true, one: true, flat: true, mode: 'KeyW', arc: 1.22, early: 0.5 }], rate: 0.45, speed: 1, lead: 15 },   // (leap: he goes up for it by himself, no prompt; one-handed, laid out over the sideline with both feet just in)   // (toe: a sideline toe-tap catch, shown slowed to tapRate)
+    after: 'oob', hold: 1.1, cam: { pre: [1.1, 0], live: [1.1, 0], flight: [1.2, 0], out: [1.75, 0] }, stop: 0.065 },   // (v0.77 pace: rate 0.35 -> 0.45, tapRate 0.28 -> 0.35, stop 0.08 -> 0.065)
   p2: { down: 1, togo: 10, ball: 53, clock: 35, clockAfter: 22, shape: [2, 2], cover: 'Cover 3', snap: 'drag',
     off: { H: { route: [[33, null], [40, null]], v: 8.6 }, X: { route: [[14, null], [16, 't3']], v: 7.4 }, Y: { route: [[10, null], [12, 4]], v: 7 }, Z: { route: [[16, null]], v: 7.4 } },
     def: { sT: { man: 'H', off: [-0.6, 0.7], lag: 0.15, tackle: true }, cbT: { path: [[0, 7, null], [3, 26, 't7']] },   // (the safety runs with the seam, on his hip)
            cbB: { path: [[0, 7, null], [3, 24, 'b9']] }, sB: { drop: 7 }, lbW: { drop: 4 }, lbM: { drop: 3 }, lbS: { drop: 3 } },
-    throw: { bullet: true, lead: 43, windows: [{ id: 'seam', at: [24, null], of: 'H', input: 'down', mode: 'KeyS', arc: 0.85, short: 1.3, dive: 'twoHand' }], rate: 0.6, prompt: 0.5, promptRate: 0.05, beats: 2 },   // (a diving catch: the ball a stride past him, laid out for; short = yd he is kept short of it)
-    after: 'tackle', hold: 1.3, cam: { pre: [1.1, 0], live: [1.05, 0], flight: [1.2, 0], seam: [1.5, 0] }, stop: 0.12, ooh: true },
+    throw: { bullet: true, lead: 43, windows: [{ id: 'seam', at: [24, null], of: 'H', input: 'down', mode: 'KeyS', arc: 0.85, short: 1.3, dive: 'twoHand' }], rate: 0.7, prompt: 0.49, promptRate: 0.05, beats: 2 },   // (a diving catch: the ball a stride past him, laid out for; short = yd he is kept short of it)
+    after: 'tackle', hold: 1.3, cam: { pre: [1.1, 0], live: [1.05, 0], flight: [1.2, 0], seam: [1.5, 0] }, stop: 0.1, ooh: true },   // (v0.77 pace: rate 0.6 -> 0.7, the catch prompt opens at 0.49 (was 0.5) so its real window is unchanged, stop 0.12 -> 0.1)
   p3: { down: 4, togo: 'goal', ball: 88, clock: 4, clockAfter: 0, shape: [1, 3], cover: 'Cover 1 Press', snap: 'drag', pre: 2, ticks: true,
     off: { X: { route: [[7, 't6.5'], [20.9, 'e1.2']], v: 7.8 },   // (the fade runs to the back corner of the end zone: the ball is high-pointed there)
            Z: { route: [[9, null], [12, 4]], v: 7 }, Y: { route: [[6, null], [9, 2]], v: 7 }, W: { route: [[4, null], [5, -3]], v: 6.6 }, H: { route: [[8, null]], v: 7 } },
     def: { cbT: { man: 'X', off: [0.4, 0.5], lag: 0.05 }, sT: { path: [[0, 9, -5], [1.4, 12, -7], [2.8, 19.4, 't6.5']] }, cbB: { man: 'Z', off: [1.2, -0.6], lag: 0.2 }, sB: { man: 'Y', off: [1.4, 0], lag: 0.25 }, lbS: { man: 'W', off: [1.2, 0.4], lag: 0.25 },
            lbM: { path: [[0, 4, 0], [0.9, 1.4, 1.2]] }, lbW: { drop: 2 } },
     rush: { lose: { at: 0.55 }, close: 5 },   // (close = yd/s the free rusher is carried at the QB, on top of his own rush)
-    roll: { at: 1.4, keys: ['KeyW', 'KeyD'], dur: 0.4, rate: 0.15, wait: 0.07, spin: 0.46 },   // (spin: he first spins out of the rusher's hands (R / a circle), this many s of play before the roll-out is asked for; dur short = the throw comes early)
+    roll: { at: 1.4, keys: ['KeyW', 'KeyD'], dur: 0.4, rate: 0.19, wait: 0.07, spin: 0.46 },   // (spin: he first spins out of the rusher's hands (R / a circle), this many s of play before the roll-out is asked for; dur short = the throw comes early)
     // the game winner: one window in the back corner of the end zone, a two-handed leap that takes the ball at the top of his reach over the corner (look = the catch's style whatever the dice say (a CATCH_ST name),
     // over = the defender he goes up over, who ends up on the turf; one: true = a one-handed leap instead)
     throw: { windows: [{ id: 'high', at: [20.6, 'e1.3'], input: 'up', mode: 'KeyW', arc: 1.3, look: 'highPoint', over: 'cbT', inb: true }],
-             rate: 0.13, prompt: 0.6, promptRate: 0.03, beat: [58, 150], riser: true },
-    after: 'td', hold: 0.6, cam: { pre: [1.25, 0], live: [1.25, 0], flight: [1.6, 2], high: [1.9, -1], low: [1.8, 3] }, stop: 0.18, stopLow: 0.15 },
+             rate: 0.17, prompt: 0.597, promptRate: 0.03, beat: [58, 150], riser: true },
+    after: 'td', hold: 0.6, cam: { pre: [1.25, 0], live: [1.25, 0], flight: [1.6, 2], high: [1.9, -1], low: [1.8, 3] }, stop: 0.145, stopLow: 0.12 },   // (v0.77 pace: roll rate 0.15 -> 0.19, flight 0.13 -> 0.17 with the catch prompt at 0.597 (was 0.6), stops 0.18 / 0.15 -> 0.145 / 0.12)
 };
 
 // the booth's play-by-play in the top right corner (coldCall): play -> event (throw / catch / result) -> lines [who A play-by-play | B colour, text].
@@ -2050,7 +2051,7 @@ const COLD_LOCK = 'pocketPasser.coldLock', COLD_UNLOCKED = 'pocketPasser.coldUnl
 const COLD_FR_BTN = { x: 450, y: 368, w: 380, h: 104 };   // (locked: START YOUR FRANCHISE, a little bigger than FRANCHISE, on its spot)
 let coldIntro = null;   // the start screen's way in after the cold open: { t0 ms, rip { c (the page), tear } | null, skip, thump, handOn }
 let coldWig = null, coldUnfx = null, coldUnPend = false;   // a locked button wiggling { b, t0 }; the unlock's eraser pass { t0 }; it is waiting for the start screen
-const coldLocked = () => { try { return localStorage.getItem(COLD_LOCK) === '1'; } catch (e) { return false; } };
+const coldLocked = () => false;   // (v0.77: the menu is never locked; COLD_LOCK is only cleared from older builds' saves. The cold open still plays on the first FRANCHISE press)
 function coldUnlock(why) {   // your first franchise game ended / the career was made (COLD_UNLOCK picks which)
   if (COLD_UNLOCK !== why || !coldLocked()) return;
   try { localStorage.removeItem(COLD_LOCK); localStorage.setItem(COLD_UNLOCKED, '1'); } catch (e) {}
@@ -2227,6 +2228,7 @@ function coldWipeDraw(now) {
   startClick = function (p) {
     if (coldIntro && !coldIntro.handOn) return;   // (nothing until the hand is there)
     if (!quickMenu && !SETTINGS.hideTools && inBtn(p, COLD_BTN) && !coldLocked()) { coldStart(); return; }
+    if (inBtn(p, START_BTNS.fr) && !quickMenu && !coldSeen() && !slotMetas().some(m => m)) { coldHand = null; coldStart('fr'); if (CO) return; }   // (the first FRANCHISE press: the whole cold open, then the sign card)
     if (coldLocked()) {   // only FRANCHISE, the settings gear, ACCOUNT (a returning player's saves) and the debug stack work
       if (inBtn(p, COLD_FR_BTN) || inBtn(p, START_BTNS.fr)) { coldHand = null;
         if (!coldSeen() && !slotMetas().some(m => m)) { coldStart('fr'); if (CO) return; }   // (the first START YOUR FRANCHISE: the whole cold open, then the sign card)
@@ -2248,6 +2250,7 @@ try {
   if (slotMetas().some(m => m)) { localStorage.setItem(COLD.key, '1'); localStorage.setItem(COLD.intro, '1'); localStorage.removeItem(COLD_LOCK); }   // (saves already here, e.g. a cloud pull reloaded the page: no intro, no cold open, no lock)
   if (coldSeen()) localStorage.setItem(COLD.intro, '1');   // (saw the whole cold open before the intro was split off: not again)
   try { coldUnPend = localStorage.getItem(COLD_UNLOCKED) === '1'; } catch (e) {}
-  if (introSeen() && coldLocked()) coldHand = { t0: performance.now() };
+  localStorage.removeItem(COLD_LOCK);   // (an older build's lock)
+  if (introSeen() && !coldSeen() && !slotMetas().some(m => m)) coldHand = { t0: performance.now() };
 } catch (e) {}
 try { if (!introSeen() && results && results.screen === 'start' && !(typeof ONL !== 'undefined' && ONL.on) && !/[?&#]join=/i.test(location.href)) coldStart('intro'); } catch (e) { console.warn('cold open', e); CO = null; }

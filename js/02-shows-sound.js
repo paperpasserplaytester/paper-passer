@@ -91,6 +91,7 @@ function recordFrame(dt) {
   rec.t += dt;
   // (the tape's weather I = the full strength, not the eased value: a play right after a shift or the opening snap replays in the weather it was played in)
   if (!rec.kits) rec.kits = { wx: game.wx ? { wx: { ...game.wx, toast: null }, I: wxLive() ? { rain: game.wx.rain / 3, snow: game.wx.snow / 3, mph: game.wx.mph } : { rain: 0, snow: 0, mph: 0 } } : null, off: { ...TEAMS.off }, def: { ...TEAMS.def }, mirror: mirrorFor(), match: { you: MATCH.you, opp: MATCH.opp, youKit: MATCH.youKit, oppKit: MATCH.oppKit, home: MATCH.home } };   // (the teams as they were in the play: two players flip the sides when the ball changes hands, before the replay; the drive direction is worked out fresh, not read off the last drawn frame)
+  if (rec.kits && rec.kits.dbg === undefined) rec.kits.dbg = DBG_OV.zones || DBG_OV.routes ? dbgOvSnap() : null;   // (the debug overlay's zones / routes / combos as they were at the snap: replays draw from it)
   if (!rec.cast) castPlay();   // (who was on the field, for the highlights)
   if (SL.on && !rec.sl) slTapeStart(rec);   // (sideline people: a start copy + their events, no per-frame data)
   if (state === 'done' && rec.doneAt == null) rec.doneAt = rec.t;   // (the whistle, on the tape's clock: the halftime reel's clips end around it)
@@ -1722,7 +1723,7 @@ function drawHalfShow() {
   const s = HT.segs[HT.i]; if (!s) return;
   ({ cards: drawHsCards, lgclips: drawHsLgClip, league: drawHsLeague, hist: drawHsHist, qb: drawHsQB, def: drawHsDef, match: drawHsMatch })[s.k](s);
   if (HT) drawHsBar();   // (a staged league clip can end the show from its own draw)
-  if (HT) { annShow(s); if (ANN_S.cur) { ctx.save(); ctx.translate(0, ANN.showY - TOP_BAR - ANN.pad); annDraw(); ctx.restore(); } }   // (v0.74 the booth talks over each card, low left, clear of its title)
+  if (HT) { annShow(s); if (ANN_S.cur) { annDraw(H - BOT_BAR - 2 - ANN.pad); } }   // (v0.74 the booth talks over each card, low left: its bottom edge ANN.pad above the show's strip)
 }
 function drawHsCards(s) {
   hsFrame('HALFTIME HIGHLIGHTS', 'BEST PLAYS OF THE FIRST HALF');
@@ -2802,21 +2803,22 @@ function annBubble(c) {
   const t = ctxBake(0, 0, BW, BH, () => lines.forEach((ln, i) => cText(ln, x0, ys[i], size, darkOn() ? '#ecebe4' : cInk(), { messy: c.big ? 0.6 : 0.3, seed: seed + i, max: w })));
   return c.bub = { b, t, lines, ys, x0, size, w, BW, BH };
 }
-function annDraw() {
+function annDraw(showBot) {   // showBot = a show (HT): the box's bottom edge (card or bubble, the taller) sits there; no banner / touch / key-tips / two-player shifts
   const S = ANN_S;
   if (!S.cur) { S.rect = null; return; }
   annTick(); const c = S.cur; if (!c) { S.rect = null; return; }
   const now = annNow(), lite = annLite(), n = ANN.card, dk = darkOn();
   if (S.fcDark !== dk) { for (let j = 0; j < 2; j++) { freeCanvas(S.fc[j]); S.fc[j] = null; } if (S.card) { freeCanvas(S.card.b); freeCanvas(S.card.f); S.card = null; } annFreeLine(c); S.fcDark = dk; }   // (dark mode flipped: everything is baked again)
   const out = c.hold ? 1 : 1 - cClamp((now - (c.end + ANN.hold)) / ANN.fade); if (out <= 0) { S.rect = null; return; }
-  const kt = !pvpOn() && typeof keyTipsShown === 'function' && !!keyTipsShown();   // (v0.73: key tips up = top middle under the scoreboard, kept on screen)
-  let x = PAUSE_BTN.x; const y = Math.max(bannerUp() ? TOP_BAR + ANN.bannerY : 0, kt ? TOP_BAR + ANN.midPad + (TOUCH ? ANN.touchY : 0) : (pvpOn() ? LEFT_TO_BTN.y + LEFT_TO_BTN.h + ANN.pvpGap : TOP_BAR + ANN.pad) + (TOUCH ? ANN.touchY : 0)),   /* (a banner up: the box sits under it) */   /* (two players: under the left timeout / audible buttons) */ pc = lite ? 1 : cBack((now - S.popAt) / ANN.pop);
+  const kt = showBot == null && !pvpOn() && typeof keyTipsShown === 'function' && !!keyTipsShown();   // (v0.73: key tips up = top middle under the scoreboard, kept on screen)
+  let x = PAUSE_BTN.x, y = Math.max(bannerUp() ? TOP_BAR + ANN.bannerY : 0, kt ? TOP_BAR + ANN.midPad + (TOUCH ? ANN.touchY : 0) : (pvpOn() ? LEFT_TO_BTN.y + LEFT_TO_BTN.h + ANN.pvpGap : TOP_BAR + ANN.pad) + (TOUCH ? ANN.touchY : 0)),   /* (a banner up: the box sits under it) */   /* (two players: under the left timeout / audible buttons) */ pc = lite ? 1 : cBack((now - S.popAt) / ANN.pop);
   // bake the faces / card / bubble HERE, at the screen's own scale: baked inside the pop-in's scale (tiny on its first frames) they came out blurry and stayed so
   { const m = DM_P.getTransform.call(ctx), s0 = Math.round(Math.hypot(m.a, m.b) * 8) / 8 || 1, stale = cv => cv && cv._s < s0 - 0.01;
     for (let j = 0; j < 2; j++) if (stale(S.fc[j])) { freeCanvas(S.fc[j]); S.fc[j] = null; }
     if (S.card && stale(S.card.b)) { freeCanvas(S.card.b); freeCanvas(S.card.f); S.card = null; }
     if (c.bub && stale(c.bub.t)) annFreeLine(c);
     annFace(0); annFace(1); annCard(); annBubble(c); }
+  if (showBot != null) y = showBot - Math.max(n + 6, n / 2 + 3 + annBubble(c).BH / 2);   // (the taller of the card and a two-line bubble)
   if (kt) { const tw = n + 10 + Math.min(annBubble(c).BW, ANN.maxW); x = Math.max(PAUSE_BTN.x, Math.min(W - PAUSE_BTN.x - tw, W / 2 - tw / 2)); }
   ctx.save(); ctx.globalAlpha *= out * (lite ? cClamp((now - S.popAt) / ANN.pop) : 1);
   // the card + the speaker (the faces swap with a quick slide)
@@ -2967,7 +2969,7 @@ if (!REPLAY_MODES.includes(SETTINGS.replays)) SETTINGS.replays = 'BIG PLAYS';   
 if (SETTINGS.liteMode === 'ON') SETTINGS.liteMode = 'PERFORMANCE'; else if (SETTINGS.liteMode === 'OFF') SETTINGS.liteMode = 'QUALITY';   // (the old performance-mode values; see gfxMode)
 // Settings scopes: SETTINGS_DEF = the defaults (main menu / exhibitions / a new franchise, kept in localStorage); SETTINGS = the working copy.
 // Inside a franchise save (inSave) the working copy is that save's own (stored in its world.settings); only GLOBAL_SET (volume, replays) is shared by all.
-const GLOBAL_SET = ['volume', 'replays', 'hideTools', 'darkMode', 'cinema', 'liteMode', 'fps', 'sideline', 'taunts', 'perfHud', 'netSim', 'flashes', 'announcers', 'hideKeyTips', 'keyTipsShut'];
+const GLOBAL_SET = ['volume', 'replays', 'hideTools', 'darkMode', 'cinema', 'liteMode', 'fps', 'sideline', 'taunts', 'perfHud', 'netSim', 'flashes', 'announcers', 'hideKeyTips', 'keyTipsShut', 'coachNotes', 'notesOff'];
 const showOutcomes = () => !SETTINGS.hideTools;   // (big job: a decision's numbers / stakes / what it changed only show with the extra tools on, for debug; the story text always prints)
 // per-device settings: their own key, never in SETTINGS / franchise saves, and cloud sync skips it. mobile = the MOBILE MODE override (unset = on for phones / tablets, off for PCs)
 const DEVICE_KEY = 'pocketPasser.device';
@@ -3037,7 +3039,7 @@ const DIFF_SLIDERS = [
   { key: 'youCatch', group: 'MARGIN FOR ERROR', label: 'PLAYER CATCHING',   side: 'you',  e: 1.2,  n: 1, h: 0.85, o: 0.80, step: 0.05, w: 1, fmt: 'x', note: 'fewer drops (was CATCH TOLERANCE)' },
   { key: 'cpuCatch', group: 'MARGIN FOR ERROR', label: 'CPU CATCHING',      side: 'them', e: 0.92, n: 1, h: 1.08, o: 1.12, step: 0.05, w: 1, fmt: 'x', note: 'CPU receivers drop fewer' },
   { key: 'youAwr',   group: 'MARGIN FOR ERROR', label: 'PLAYER AWARENESS',  side: 'you',  e: 1.15, n: 1, h: 0.9,  o: 0.85, step: 0.05, w: 1, fmt: 'x', note: 'how much AWARENESS pays off' },
-  { key: 'cpuAwr',   group: 'MARGIN FOR ERROR', label: 'CPU AWARENESS',     side: 'them', e: 0.85, n: 1, h: 1.12, o: 1.2,  step: 0.05, w: 1, fmt: 'x', note: 'CPU QB feel, reads, ball tracking' },
+  { key: 'cpuAwr',   group: 'MARGIN FOR ERROR', label: 'CPU AWARENESS',     side: 'them', e: 0.85, n: 1, h: 1.12, o: 1.2,  step: 0.05, w: 1, fmt: 'x', note: "CPU QB feel, reads, ball tracking, QB's eyes" },
   { key: 'cpuAcc',   group: 'MARGIN FOR ERROR', label: 'CPU QB ACCURACY',   side: 'them', e: 0.88, n: 1, h: 1.1,  o: 1.15, step: 0.05, w: 1, fmt: 'x', note: 'tighter CPU throws' },
   { key: 'cpuBrk',   group: 'MARGIN FOR ERROR', label: 'CPU BREAK TACKLES', side: 'them', e: 0.9,  n: 1, h: 1.1,  o: 1.15, step: 0.05, w: 1, fmt: 'x', note: 'CPU runner moves beat tackles' },
   { key: 'cpuSec',   group: 'MARGIN FOR ERROR', label: 'CPU BALL SECURITY', side: 'them', e: 0.9,  n: 1, h: 1.1,  o: 1.15, step: 0.05, w: 1, fmt: 'x', note: 'CPU carriers fumble less' },
@@ -3990,6 +3992,7 @@ function booGate(level, huge) {
   return true;
 }
 function crowdCheer(level, fav = 'you', bad = false, sure = false, huge = false) {   // sure = skip the gate (a moment the crowd is already building to); huge = a touchdown / pick: two clips layered, longer
+  if (indoorOn()) return;   // (v0.76: no crowd in the practice gym)
   const home = fav === MATCH.home;
   if ((!home && bad) || (results && !reelLoud())) return;   // (no crowd in the menus, but for the reel behind the result screen)
   playCheered = true;
@@ -4060,6 +4063,7 @@ let groanAt = -1e9;
 const CLIMAX = { margin: 8, lateS: 120, scoreS: 60, gap: 350, ms: 9000, shake: 12 };   // a one-score game / NFL seconds left in the 4th for a sealing stop or turnover / for a go-ahead score / ms between the layered clips / how long it lasts / screen shake
 let climaxAt = -1e9;
 function crowdClimax(fav) {   // fav = 'you' | 'opp': whose moment it is
+  if (indoorOn()) return;   // (v0.76: no crowd in the practice gym)
   if (tut || (typeof simGame !== 'undefined' && simGame) || (results && !reelLoud()) || performance.now() - climaxAt < 4000) return;
   climaxAt = performance.now();
   try {
@@ -4071,6 +4075,7 @@ function crowdClimax(fav) {   // fav = 'you' | 'opp': whose moment it is
   } catch (e) {}
 }
 function crowdMoment(text, kind) {   // (BLUE is always the side with the ball; the points of this play are not on the board yet)
+  if (indoorOn()) return;   // (v0.76: no crowd in the practice gym)
   if (tut || game.over || patMode !== null) return;
   const q = game.quarter, off = aiOff() ? 'opp' : 'you', def = aiOff() ? 'you' : 'opp', lead = game.red - game.blue;   // (lead: the defense's)
   const stop = kind === 'turnover' || /INTERCEPT|PICK SIX|TURNOVER|on downs/i.test(String(text));
@@ -4079,6 +4084,7 @@ function crowdMoment(text, kind) {   // (BLUE is always the side with the ball; 
   if (add && (q >= 5 || (q === 4 && game.secs <= lateS(CLIMAX.scoreS))) && lead >= 0 && add > lead) crowdClimax(off);
 }
 function crowdFinal() {
+  if (indoorOn()) return;   // (v0.76: no crowd in the practice gym)
   const d = game.blue - game.red;
   if (!d || (game.quarter < 5 && Math.abs(d) > CLIMAX.margin)) return;
   climaxAt = -1e9; crowdClimax((d > 0) === !aiOff() ? 'you' : 'opp');
@@ -4165,6 +4171,7 @@ let crowdDuckUntil = 0, chantUntil = 0;
 const crowdDuck = () => performance.now() < crowdDuckUntil ? CELEB.crowd.duck : 1;   // (the weather loops drop under the pop)
 const crowdQuiet = () => tut || (results && !reelLoud()) || (typeof simGame !== 'undefined' && simGame);
 function crowdPop(k = 1, fav) {   // a short burst on top of whatever is going (the road team's: an ooh)
+  if (indoorOn()) return;   // (v0.76: no crowd in the practice gym)
   if (crowdQuiet()) return;
   const lv = Math.min(1, k * CELEB.crowdK);
   if (fav && fav !== MATCH.home) { oohSfx(0.35 + 0.3 * lv); return; }
@@ -4173,11 +4180,13 @@ function crowdPop(k = 1, fav) {   // a short burst on top of whatever is going (
   crowdDuckUntil = performance.now() + CELEB.crowd.duckMs;
 }
 function crowdOhh(v = 1) {   // a sack: the deep "OHHH"
+  if (indoorOn()) return;   // (v0.76: no crowd in the practice gym)
   if (crowdQuiet()) return;
   if (performance.now() - oohAt < 2500) return; oohAt = performance.now();   // (shares the ooh's gap so the two never stack)
   sndRec('gasp', 0.6 + 0.4 * v, { ms: 3200, fade: 700, in: CROWD_IMPACT.popIn });   // (the recorded stadium gasp)
 }
 function crowdChant(bars) {   // the recorded rhythmic chant, bars x 4 beats of the stadium pulse (PULSE.beat) long, fading out (stomp, stomp, clap synthesized if it can't play)
+  if (indoorOn()) return;   // (v0.76: no crowd in the practice gym)
   const C = CELEB.crowd, now = performance.now(), beat = PULSE.beat, ms = bars * beat * 4;
   if (now < chantUntil) return;
   chantUntil = now + ms;
@@ -4199,6 +4208,7 @@ function crowdChantSynth(bars) {   // (the old synthesized chant: the fallback)
 }
 // phase 'build' (it starts) / 'peak'; hy = its hype 0-1; fav = whose moment; ev = its event ('pick6' = a defensive score)
 function crowdCeleb(phase, hy, fav, ev) {
+  if (indoorOn()) return;   // (v0.76: no crowd in the practice gym)
   if (crowdQuiet()) return;
   const C = CELEB.crowd, K = CELEB.crowdK, home = fav === MATCH.home, turn = ev === 'pick' || ev === 'pick6' || ev === 'fumRec';
   if (phase === 'build') {
@@ -4216,6 +4226,7 @@ function crowdCeleb(phase, hy, fav, ev) {
   if (ev === 'poWin' || ev === 'bowlWin') for (let i = 0; i < C.fireworks; i++) setTimeout(() => { if (!crowdQuiet()) celebSfx('boom:' + (0.6 + 0.4 * Math.random())); }, 300 + i * 420 + 300 * Math.random());
 }
 function crowdGroan(level, hush = true) {
+  if (indoorOn()) return;   // (v0.76: no crowd in the practice gym)
   if (results) return;
   if (hush) { if (performance.now() - groanAt < GROAN_GAP) return; groanAt = performance.now(); }   // (not over and over)
   if (hush) hushUntil = animNow() + 2500;
@@ -4242,6 +4253,7 @@ const ANTICIPATE = { sackAfter: 0.8, sackRange: 4, bigRun: 12, deep: 18, airAt: 
 // the moment a hyped play is decided in the air or on the ground: a catch brings the roar, a drop or a break-up the groan
 // (your plays: at home the place erupts or sighs; on the road the boos / the home fans' cheers come from crowdCheer)
 function crowdReact(success, bonus = 0) {   // (was a second `crowdMoment`: it hid the game-deciding one above, which never ran)
+  if (indoorOn()) return;   // (v0.76: no crowd in the practice gym)
   if (playReact || results || playHype < CROWD_IMPACT.hype) return;
   playReact = true;
   const hype = playHype;
@@ -4370,7 +4382,7 @@ function liveHype0() {
 }
 function updateCrowd(dt) {
   try {
-    const on = !results && !showKeys, inGame = on;   // (the ambience plays only during the game: it fades out on the menu screens)
+    const on = !results && !showKeys && !indoorOn(), inGame = on;   // (v0.76: the gym is quiet)   // (the ambience plays only during the game: it fades out on the menu screens)
     // leaving the game for a menu: any cheer or boo still going stops with it
     if (!results !== updateCrowd.inGame) {
       updateCrowd.inGame = !results;

@@ -723,6 +723,13 @@ function chaseReturner(p, d, dt) {
 // Interception return: the defense's other players block for the man with the ball. Each goes after the
 // chaser closest to the returner (sharing out the work); getting to him he lands a short, sloppy block
 // (often whiffs) that holds the chaser for a moment.
+// POS_RULES.all: the defender nearest the intended receiver blocks him on a pick return (null = the old pick of chasers)
+function prPickT(b, picker) {
+  if (!tgt || tgt.team !== 'off' || tgt.action === 'down' || tgt.action === 'dive' || !prOn(POS_RULES.all) || !POS_RULES.all.pick || dist(tgt, picker) > 25 * YD) return null;
+  const g = dist(b, tgt);
+  for (const o of allPlayers()) if (o !== b && o !== picker && o.team === 'def' && !o.action && dist(o, tgt) < g) return null;
+  return tgt;
+}
 function returnBlock(b, picker, dt) {
   if (b.action) {
     updateAction(b, dt);
@@ -746,10 +753,10 @@ function returnBlock(b, picker, dt) {
   const chasers = [qb, rb, ...ols, ...recs].filter(p => p.action !== 'down' && p.action !== 'dive' && !(clock < (p.pickHeldUntil || 0)));
   const cost = p => dist(p, picker) + dist(p, b) * 0.6 + (p.pickBlocker && p.pickBlocker !== b ? PICK_RETURN.taken * YD : 0) +
                     (p.x < picker.x + 2 * YD ? 0 : PICK_RETURN.behind * YD);
-  const t = chasers.filter(p => dist(p, picker) < 25 * YD && dist(p, b) < 18 * YD).sort((p, q) => cost(p) - cost(q))[0];
+  const t = prPickT(b, picker) || chasers.filter(p => dist(p, picker) < 25 * YD && dist(p, b) < 18 * YD).sort((p, q) => cost(p) - cost(q))[0];   // (POS_RULES: the man nearest the intended receiver has him)
   if (!t) {
     // nobody to block: get out in front of him and lead the way, a little to his side
-    steer(b, picker.x - 4 * YD, picker.y + (b.y < picker.y ? -1 : 1) * 1.5 * YD, top, 12 * YD, dt);
+    steer(b, picker.x - 4 * YD, prOn(POS_RULES.all) && POS_RULES.all.pick ? picker.y + (Math.sign(MID - picker.y) || 1) * POS_RULES.all.lead * YD : picker.y + (b.y < picker.y ? -1 : 1) * 1.5 * YD, top, 12 * YD, dt);   // (POS_RULES: lead inside him, a wall up the sideline)
     clampField(b); setVelocity(b, px, py, dt);
     return;
   }
@@ -1153,24 +1160,26 @@ function saChop() {
   if (good) try { stiffSfx(); } catch (e) {}
 }
 // your presses while you're on defense (true: handled)
+const FT_RET = { KeyR: 'spin', KeyF: 'juke', KeyC: 'truck', KeyQ: 'stiff', KeyE: 'hurdle', KeyV: 'dive', Tab: 'dive' };   // (your pick return's moves: field tutorial gates)
 function defKeyDown(e) {
   const c = e.code;
   udInputAt = performance.now(); if (udAuto) udTakeBack();   // (any key: your defender is yours again, at once)
   if (state === 'kick' && kick && !kick.kickoff) return userKickRush(c);   // (their FG / PAT / punt: R leaps, V / Tab dives at it once your rusher is free)
   if (state === 'done' || state === 'sim' || state === 'kickoff' || state === 'kick') return false;
   if (c === 'KeyN') { SETTINGS.defHints = !SETTINGS.defHints; saveSettings(); return true; }
-  if (c === 'KeyX') { saChop(); return true; }   // X: CHOP at the arm that's holding you off (in its window)
-  if (state === 'picked' && ud && ud.hasBall && udCtl(ud) && ['KeyR', 'KeyF', 'KeyC', 'KeyQ', 'KeyE', 'KeyV', 'Tab'].includes(c)) { returnMove(c); return true; }   // the return: R spin, F juke, C truck, Q stiff arm, E hurdle, V / Tab dive (the pylon near the corner)
+  if (c === 'KeyX') { if (ftLet('rush')) saChop(); return true; }   // X: CHOP at the arm that's holding you off (in its window)
+  if (state === 'picked' && ud && ud.hasBall && udCtl(ud) && ['KeyR', 'KeyF', 'KeyC', 'KeyQ', 'KeyE', 'KeyV', 'Tab'].includes(c)) { if (ftLet(FT_RET[c])) returnMove(c); return true; }   // the return: R spin, F juke, C truck, Q stiff arm, E hurdle, V / Tab dive (the pylon near the corner)
   if (c === 'KeyQ' && state === 'pre') { defAudible(); return true; }   // Q: the defensive audible
+  if ((c === 'KeyO' || c === 'KeyQ' || c === 'KeyE') && !ftLet('d1')) return true;   // (field tutorial: switching opens with its lesson)
   if (c === 'KeyO' || c === 'KeyQ' || c === 'KeyE') { switchDefender(c === 'KeyE', c === 'KeyO'); if (tut) tutEvent('dswitch'); return true; }
   if (state === 'pre') return true;   // (the CPU snaps on its own clock: Space never hurries its snap)
   if (!ud || ud.action === 'down') return true;
   if (c === 'KeyC' || c === 'KeyV' || c === 'KeyG') ud.reqLag = lagRew();   // (online guest: the range is also measured on the picture he saw, lagDist in userTackle. The window still counts from the press reaching the host: the rewound range already covers his delay)
   if (c === 'KeyC') ud.hitReq = clock;       // C: the hit stick
-  else if (c === 'KeyV') ud.diveReq = clock; // V: a dive tackle
+  else if (c === 'KeyV') { if (ftLet('d2')) ud.diveReq = clock; } // V: a dive tackle
   else if (c === 'KeyF') { if (state === 'flight') defJump(true); } // F: in the air, a one-handed tip / pick
   else if (c === 'KeyG') ud.secureReq = clock; // G: a secure tackle
-  else if (c === 'KeyR') { if (ud.engaged && (dl.includes(ud) || ud.blitz || ud.userBlockUntil > clock)) userSpin(ud); else defJump(); }   // R: leap for the ball (a mistimed one can still knock it away); engaged: spin
+  else if (c === 'KeyR') { if (ud.engaged && (dl.includes(ud) || ud.blitz || ud.userBlockUntil > clock)) { if (ftLet('rush')) { userSpin(ud); ftHit('rush'); } } else defJump(); }   // R: leap for the ball (a mistimed one can still knock it away); engaged: spin
   return true;
 }
 // a break-tackle move for the defender you carry the interception with (the chasers' tackles are likelier to miss for a moment)
@@ -1738,8 +1747,9 @@ function formCall(key, ocS, c, pass) {
   const t = pass ? 'pass' : 'run', ok = f.plays.filter(p => p.t === t), bad = f.bad.filter(p => p.t === t);
   const good = !bad.length || !ok.length ? !!ok.length : Math.random() < FORM.goodCall[0] + (FORM.goodCall[1] - FORM.goodCall[0]) * ocS;
   const play = pick(good ? ok : bad.length ? bad : ok) || { n: t === 'run' ? 'Run' : 'Pass' };
-  const K = good ? FORM.good : FORM.bad;
-  return { f, play, good, sack: f.sack, inc: K.inc, gain: K.gain * (1 + FORM.sitGain * (f.sit[sit] - 0.6)) * (f === fav ? FORM.favGain : 1) * depthSimK(key, f), tag: `[${f.short}: ${play.n.toUpperCase()}]` };
+  const K = good ? FORM.good : FORM.bad, D = dcSimCall(pass);   // (DEF_CALLS: the defense's call, through its counters only)
+  return { f, play, good, sack: f.sack * (D ? D.s : 1), inc: K.inc + (D ? D.i : 0), gain: K.gain * (1 + FORM.sitGain * (f.sit[sit] - 0.6)) * (f === fav ? FORM.favGain : 1) * depthSimK(key, f) * (D ? D.g : 1),
+           tag: `[${f.short}: ${play.n.toUpperCase()}${D ? ' vs ' + D.show : ''}]`, dc: D && D.c };
 }
 // who lines up where for a team (your roster's formation view, the live fullback, the sims): your depth chart's locked slots first
 // (depthLocks: show = keep a hurt locked man in his slot, for the roster view only), then starters, the rules from the formation notes
@@ -1820,7 +1830,7 @@ function drawFormation(f, x, y, w, h, o = {}) {
   ctx.restore();
 }
 // the roster offense tab in FORMATION view (see "roster formation view" in 10-screens.js)
-const formView = () => rosterView.side === 'off' && rosterUI.view === 'form' && !rosterView.statsOnly && rosterView.sel == null;
+const formView = () => rosterView.side === 'off' && rosterUI.view === 'form' && !rosterView.statsOnly && rosterView.sel == null && unlOn('form');   // (v0.77: simple cards until FORMATIONS opens)
 
 // live plays: how each formation lines up in the game (reset). gun = shotgun snap, qbD / rb.d / fb.d = yards (YD) behind the line,
 // rb.w / fb.w = yards to the side (rb on its random side, a fullback on the other), te(roll) = tight ends, shape = the two sides outside-in
@@ -2181,7 +2191,7 @@ function aiPre(dt) {
   ai.snapped = true;
   ai.throwAt = tut && tutStep() && tutStep().hold ? tutStep().hold : DEF.throwAt[0] + Math.pow(Math.random(), tut ? 1 : DEF.throwSlow) * (DEF.throwAt[1] - DEF.throwAt[0]);   // (slightly slower on average: the same range, skewed toward the late end)   // (the tutorial's rush steps: he holds it so you have time to get there)
   // (he reads the blitz at the line: every extra rusher, and you coming, makes it a quicker throw)
-  if (!tut) { const blitzers = back7.filter(d => d.blitz).length + (ud && back7.includes(ud) && ud.x < los + 4 * YL ? 1 : 0); ai.throwAt *= Math.max(0.45, 1 - 0.18 * blitzers); ai.blitzers = blitzers; }
+  if (!tut) { const blitzers = back7.filter(d => dcOn() ? (d.blitz && !(d.dsgHide && !d.awrSeen)) || (d.dsgFake && !d.awrSeen) : d.blitz).length + (ud && back7.includes(ud) && ud.x < los + 4 * YL ? 1 : 0); ai.throwAt *= Math.max(0.45, 1 - 0.18 * blitzers); ai.blitzers = blitzers; }
   // (Play-Calling Guide part 5) leading late with the kneels enough to end it: victory formation
   if (!tut && patMode === null && aiFollows() && sheetPlan(sheetCtx()).kneel) { ai.kneel = true; ai.run = false; snap(false); return; }
   if (!tut && aiSpikeWanted()) { ai.spike = true; ai.run = false; snap(false); return; }   // (spike it: the clock stops for one down)
@@ -2261,7 +2271,7 @@ const AI_LEAD = { minSpd: 2, ahead: 0.3, away: 1.6, range: 5 };   // (ahead was 
 const LANE = { max: 4, weight: 0.3 };   // the computer's QB likes a clear throwing lane: yards of room to the nearest defender off the line (capped at max) x weight, added to the open-ness score
 const AI_JAM_OFF = 2.2, AI_JAM_LEAD = 1.7;   // s after a jam that the QB still treats him as covered unless he has separation; how much further he leads such a man
 function aiTarget(force) {
-  const st = tut && tutStep(), aimUd = (st && st.target === 'ud' && ud) || (!tut && exhibition && exhibition.forceInt && aiOff() && ud) || (oo && oo.target === 'ud' && aiOff() && ud), e = cpuEdge();   // (the test menu's INTERCEPTION RETURN also throws it right at your defender)
+  const st = tut && tutStep(), aimUd = (st && st.target === 'ud' && ud) || (!tut && exhibition && exhibition.forceInt && aiOff() && ud) || (oo && oo.target === 'ud' && aiOff() && ud) || (FT.play === 'd3' && aiOff() && (ud === sT || ud === sB) && ud), e = cpuEdge();   // (the test menu's INTERCEPTION RETURN also throws it right at your defender)
   // the decision sheet's throw: past the sticks on 3rd (and 2nd & 7+), short of the marker is a wasted throw, safe when ahead, depth when behind (x how closely he follows it)
   const sf = !tut && aiFollows() ? 1 : 0, sk = sf ? 0.6 + 0.9 * sheetFollow(ocSkill()) : 1, trail = game.red - game.blue, late = game.quarter >= 3;
   const needSticks = down >= 3 || (down === 2 && (lineToGain - los) / YL >= 7), short4 = !tut && down === 4;   // (4th down, any distance: get the first down, not yards: depth counts for little, being open and past the marker for more, a throw short of it hardly at all)
@@ -2742,7 +2752,7 @@ let SEP_MS = new Float64Array(64), SEP_MH = new Uint8Array(64);   // (separatePl
 function separatePlayers(dt) {
   const all = allPlayers();
   // (no body collisions at all once the play is dead: nobody gets pushed, slid or snapped after the whistle)
-  if (state === 'pre' || state === 'done' || state === 'sim' || state === 'kick' || (kickoff && kickoff.forming) || (rec && rec.replaying)) { for (const p of all) p.cx = null; return; }
+  if (state === 'pre' || state === 'done' || state === 'sim' || state === 'kick' || (kickoff && kickoff.forming) || (rec && rec.replaying)) { for (const p of all) p.cx = null; if ((state === 'done' || state === 'kick') && !(rec && rec.replaying)) for (const p of all) wallHold(p); return; }   // (no collisions, but the wall still holds: after the whistle and on a placekick)
   const R = COLLIDE.r * 2, k = Math.min(1, COLLIDE.ease * dt);
   let ms = SEP_MS, mh = SEP_MH; if (ms.length < all.length) ms = SEP_MS = new Float64Array(all.length * 2), mh = SEP_MH = new Uint8Array(all.length * 2); mh.fill(0);   // (each man's mass, worked out once a call, the first time a pair needs it: it was once per pair. Phase 4: scratch typed arrays, no new array a step)
   for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
@@ -2870,10 +2880,11 @@ function hipHands(dt) {
 const UPD_S = [[], [], [], []]; let UPD_I = 0;
 function updList(a, b, c, x) { const L = UPD_S[UPD_I = (UPD_I + 1) & 3]; L.length = 0; if (a) for (let i = 0; i < a.length; i++) L.push(a[i]); if (b) for (let i = 0; i < b.length; i++) L.push(b[i]); if (c) for (let i = 0; i < c.length; i++) L.push(c[i]); if (x !== undefined) L.push(x); return L; }
 function updQOT() { const L = UPD_S[UPD_I = (UPD_I + 1) & 3]; L.length = 0; L.push(qb); for (let i = 0; i < ols.length; i++) L.push(ols[i]); for (let i = 0; i < recs.length; i++) if (recs[i].teBlock) L.push(recs[i]); return L; }   // ([qb, ...ols, ...recs.filter(r => r.teBlock)])
-function update(dt) {
-  if (dt <= 0) return;
+function update(dt) {  if (dt <= 0 || FT.ask) return;   // (field tutorial: the defense card holds the game)
+  ftTick(dt);
   let ut = SETTINGS.perfHud ? PERF_NOW() : 0;   // (FRAME TIMES: u.* parts of the game step, perfDump(); 0 = off, every mark below is skipped)
   heldSync();   // (perf job: keys / dkeys = what every owner holds, at the top of every game step)
+  if (CAMPR && CAMPR.frz && PDR) return;   // (a camp: the game waits for him at the moment)
   if (PDR && pracDrillTick(dt)) return;   // (a practice drill: the next rep / the session's end, on the game clock)
   // (perf job phase 4: no DIFF_FRAME bump per game step any more: the kept diffLvl row is reused while diffSig is unchanged; frame() still bumps it once a frame for sliders edited in place)
   if (tut && tut.defAsk) return;   // (the tutorial's "play defense or sim it?" card: nothing moves until you pick)
@@ -2924,6 +2935,7 @@ function update(dt) {
   // (fast while simming ahead)
   if (state === 'sim' && simGame && sim && !halfHold && (sim.timer -= dt) <= 0) { simAdvance(); if (sim) sim.timer = simFast ? SIM_FAST : sim.quick ? SIM_QUICK : SIM_AUTO; }
   if (ut) ut = perfMark('u.misc', ut);
+  if (state === 'run') lineCheck();   // (a passer running: past the line = no throw)
 
   if (state === 'drop' || state === 'pocket') {
     updateQB(dt);

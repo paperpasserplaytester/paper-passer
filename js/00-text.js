@@ -35,6 +35,16 @@ const NEWS = {
                body: ['The {team} {pos} crossed {what} this week, {left}.', '{p} keeps climbing: {what} and counting.'] },
   newTeam: { big: true, head: ['{coach} Takes Over the {team}', 'New Era: {team} Hand the Keys to {coach}', '{team} Hire {coach} as Head Coach'],
              body: ['The {team} have a new head coach. {coach} arrives from {old} with big plans and a short honeymoon.', '{coach} left {old} for the {team}. The locker room is curious, the fans are hopeful.'] },
+  hcFired: { head: ['{team} Fire Head Coach {old}', '{old} Out in {city}', '{team} Show {old} the Door'],
+             body: ['The {team} let {old} go at {rec}. {interim} takes over for now.', 'At {rec}, the {team} had seen enough. {old} is out, {interim} runs things as the interim.'] },
+  hcHired: { head: ['{team} Name {name} Head Coach', '{name} Takes the {team} Job', 'Search Over: {team} Hire {name}'],
+             body: ['The {team} filled their opening: {name} is the new head coach.', '{name} signs on to lead the {team}. The interim steps aside.'] },
+  jobOffer: { head: ['{team} Call {coach}', 'Sources: {team} Want {coach}', '{coach} on the {team} Wish List'],
+              body: ['The {team} reached out to {coach} about their open job. {why}', 'League sources say the {team} want {coach}. {why}'] },
+  jobPull: { head: ['{team} Move On From {coach}', '{team} Pull Their Offer', 'Door Closes: {team} and {coach}'],
+             body: ['The {team} are no longer chasing {coach}. {why}', 'Whatever the {team} had in mind for {coach} is off. {why}'] },
+  jobLeak: { head: ['{coach} Is Listening', 'Is {coach} Looking Around?', 'Leak: {coach} Open to Offers'],
+             body: ['Word is out: {coach} would hear offers. The {team} front office is not amused.', 'Agents talk. {coach} has let it be known the phone is on.'] },
   coachHire: { head: ['{team} Hire {name} as {role}', '{team} Bring In {name} to Run the {side}', 'New {role}: {name} Joins {team}'],
                body: ['{name}, a {stars}-star {role}, signs on with {team}. Expect changes on {sideL}.', 'The {team} staff has a new face: {name} takes over as {role}.'] },
   coachFire: { head: ['{team} Fire {role} {name}', '{name} Out as {team} {role}', 'Shake-Up: {team} Part Ways With {name}'],
@@ -956,7 +966,121 @@ const DRAFT_SCHOOLS = ['BAYOU STATE', 'GREAT LAKES TECH', 'NORTH PRAIRIE', 'COAS
   'CEDAR FALLS STATE', 'GULF SHORE', 'HIGH PLAINS', 'MILL CREEK', 'CANYON STATE', 'LAKESHORE', 'EAST TIMBER', 'COPPER MOUNTAIN', 'RIVERBEND', 'STONE HARBOR', 'BLUE MESA', 'WEST DELTA', 'GRANITE STATE TECH',
   'MAGNOLIA', 'SILVER LAKE', 'FORT ASH', 'PALMETTO BAY', 'BIG SKY NORTH', 'CAPITAL CITY', 'THREE RIVERS', 'SAGEBRUSH', 'MAPLE GROVE', 'SOUTH RIDGE', 'TIDEWATER', 'ELK RAPIDS', 'SUNCOAST', 'BLACK HILLS TECH', 'WINDWARD'];
 const CHANGELOG = [
+  { v: "v0.78", secs: [
+    ["THE JOB MARKET", [
+      "Head coaches get fired all season. A team with an opening may call you, any week, and each offer says why they're calling.",
+      "Offers go cold for real reasons: they hired someone, their interim is winning, you lost a few, their QB is out for the year, or the deadline passed. Withdrawn offers stay in YESTERDAY'S PAPER.",
+      "TAKE IT NOW moves you this week, SHAKE ON NEXT YEAR locks the job in for the offseason, DEMAND A MOVE buys your way into any team.",
+      "PUT MY NAME OUT brings more calls, but word can leak.",
+      "JOB MARKET replaces DEMAND TRADE and VIEW OFFERS, all year long.",
+    ]],
+    ["MOVING TEAMS", [
+      "Your contract comes with you. Only a fired coach signs a new deal.",
+      "You take over the new team's coordinators, trainers, scouts and buildings, exactly as its ad showed them. Your old staff and buildings stay behind.",
+      "After a midseason move, your record and your pay only count the games you coached.",
+    ]],
+  ] },
+  { v: "v0.77", secs: [
+    ["A GENTLER START", [
+      "Every new franchise starts short: sign your name, pick a locker, play. Later franchises pick ROOKIE to be eased in or VETERAN to have everything open.",
+      "The main menu is never locked. The dream still plays the first time you start a franchise, a little quicker, with the same time to learn each move.",
+      "COACH NOTES in settings turns every lesson and reminder off. Every note has a GOT IT tab.",
+    ]],
+    ["THE COACH'S BOARD", [
+      "Lessons sit on one sticky note that stays put, with the keys under it. Nothing follows your player around.",
+      "Practice a move before the snap, then the same key pulses when the moment comes.",
+      "Runs are suggested, never forced. Tap your back when you want to.",
+      "A move you stop using gets one friendly reminder, once.",
+    ]],
+    ["CAMPS IN THE PRACTICE GYM", [
+      "Practice, battles and the tutorial now happen in an indoor gym. No crowd, no weather, just coaches and the bench.",
+      "ROOKIE franchises get a short camp before each of their first three games: throws and catches, then truck and stiff arm, then hurdle, dive and the pass-rush spin.",
+      "The game waits for you at the right moment. Miss and you go again. The third try, the coach helps.",
+      "CONTINUE reads PRACTICE while a camp waits. Leave halfway and it picks up where you stopped. Hold SKIP to jump ahead and get a quick note in the game instead.",
+      "Midway through year two, a catch camp teaches the one-handed catch and the catch in stride. A tip comes up in games when one would have helped.",
+      "Camps pay nothing and cost nothing.",
+    ]],
+    ["ONE THING AT A TIME", [
+      "A ROOKIE franchise opens with just your team, your next game and one button. Everything else arrives when you need it.",
+      "After your first game: the schedule, credits, the Post and your roster. Then goals, condition, upgrades and injuries as they come up.",
+      "Your first offseason is simple: the owner makes you head coach, you keep or let go of players, hire coordinators and draft. Free agency runs by itself.",
+      "Season two opens one thing a week: trades, practice, yearly goals, the depth chart, free agents, formations, morale, facilities, playbooks, the draft board, battles, contracts, the XP shop, the league and the Hall of Fame.",
+      "Each new thing gets one card with a little moving picture, and its button flashes in. VETERAN franchises, older saves and COACH NOTES off have everything open.",
+    ]],
+    ["FIXES", [
+      "Leaving, loading or starting a game while the defense question is up no longer leaves it stuck.",
+      "A resumed game keeps its tutorial place. A simmed game no longer counts as a tutorial game.",
+      "A lesson you ran out of tries on is opened but comes back as a reminder. Year two notes show at the first chance, not after you press the key.",
+    ]],
+  ]},
+  { v: "v0.76", secs: [
+    ["SMARTER DEFENDERS", [
+      "Chasers read where a runner is really going, not one juke. They close on his near hip and keep you from cutting back.",
+      "Good movers hold up to jukes. Slow-footed defenders still get beaten.",
+      "Deep defenders open their hips once and stay turned. No more backpedal hiccups that give up the deep ball.",
+    ]],
+    ["PLAYING THE BALL", [
+      "A defender in step with his man turns and plays the ball. A trailing one rakes at the hands instead.",
+      "Undercutting a route means more picks. Trailing means more breakups.",
+      "Zone defenders read where your QB is aiming and shade a little that way. Stare a man down and they jump it.",
+    ]],
+    ["TACKLES AND JAMS", [
+      "Tacklers break down before contact and miss less. From behind they go for the ankles and punch at the ball.",
+      "Big hits come mostly with help nearby or the sideline behind you.",
+      "Press corners wait for your release, then mirror, jam with one hand or jam with two when they have help deep.",
+    ]],
+    ["EVERY SPOT READS THE PLAY", [
+      "Blitzers who read the back do it at the snap. Once they rush, they keep rushing.",
+      "Deep safeties never bite on play action. They split two deep men, lean where your QB looks and stay on top of the post.",
+      "Flat corners sink under the deep throw and only jump the flat when the ball goes there.",
+      "Backers hold a beat on draws, find the screen back, take the back out of the backfield and wall off crossers.",
+      "Late with a lead, tacklers take the sideline away to keep the clock running.",
+    ]],
+    ["REAL DEFENSIVE CALLS", [
+      "Defenses now call Tampa 2, Cover 3 Cloud, Buzz and Match, Quarters, Palms, Cover 6, Robber, 2 Man and brackets.",
+      "They line up to your strength, walk out on slots and squeeze in against heavy sets.",
+      "Situations matter: prevent late, a Hail Mary shell, short yardage fronts, goal line man, more pressure when you're backed up.",
+      "New pressures: Fire Zones, Slot Fire, Cross Dog, Double Mug, Creeper and Safety Edge. Blitzers peel onto a leaking back.",
+      "Disguises: safeties rotate at the snap, backers show blitz and drop. A low-awareness QB sees fake blitz arrows.",
+      "Each call has its own run fits, and simmed games play against the calls too.",
+      "Blitzers line up over the gap they rush: mugs in the A gaps, edge rushers outside the end. The line slides to help.",
+      "No more stacked backers or zones on top of each other. Fire zones keep both seams and the middle covered.",
+      "Corners press on Cover 1 Blitz, and nobody plays man from 12 yards off behind a disguise.",
+    ]],
+    ["COORDINATORS WITH A PLAN", [
+      "Defensive coordinators read your down, distance, formation and habits, then pick the call that fits.",
+      "Better ones know more calls, learn your tendencies, adjust at halftime and stop repeating themselves.",
+      "Each one has a style: press man, two-high match, zone blitz or bend don't break.",
+      "Your DC's binder: BASE, situation and PRESSURE tabs with your own players. Circle or cross out calls.",
+      "Scout a rival DC to see his style and favourite calls. Simmed games feel his skill too.",
+      "New DC traits: Film Junkie reads your habits sooner, Halftime Genius adjusts harder, Mind Reader sometimes just knows.",
+    ]],
+  ] },
   { v: "v0.75", secs: [
+    ["SCOUTS ON THE PHONE", [
+      "A filed scouting report reads a prospect's potential almost exactly.",
+      "Scouts stamp prospects BOOM or BUST when they are very sure. Better scouts stamp more and are almost never wrong.",
+      "On draft day your scouts call the desk phone: one pushes his guy when your pick comes up, one warns you off a BUST. Better scouts call more.",
+      "A call holds the draft until you answer, and a save made mid-call brings the call back.",
+    ]],
+    ["FIELD TUTORIAL", [
+      "Your first franchise game teaches the field as it happens: run back the kick, spin, juke, truck and stiff arm, kneel on a deep kick, kick, punt.",
+      "Every lesson shows the real input and a coach's sticky note, with a short slow motion on live plays. Miss one and it comes back.",
+      "Play defense? You get asked twice. Say yes and three plays teach switching, tackling and the pick.",
+      "SIM stays greyed until the must-learn moves are done. No injuries, flags or extreme weather in that first game.",
+      "Moves, buttons and key tips stay hidden until their lesson. Anything still untaught opens in year 2, with a note the first time.",
+      "Game 2 teaches the audible, hot routes and the timeout, then hurdles, dives, fair catches, 4th down, pass rush and onside kicks when they come up.",
+      "Game 3 is everything on: flags and booth review return, with notes on your first flag, challenge, Star Factor and kick block. Injuries are back from game 2.",
+      "Finished it once? Later franchises can skip it.",
+    ]],
+    ["RATINGS, BATTLES AND THE LINE", [
+      "No bonus lifts an attribute past 16.5. Top speed comes from SPEED alone: condition, injury and morale never move it.",
+      "The HIT button turns red when the net hit is negative. AUTO works on the offense list too.",
+      "Position battles are half as common and give half the boost, mostly to potential. Nobody grows past his ceiling.",
+      "Any part of the QB past the line = no throw. Players pull up on the apron and never run into the stands.",
+      "Your rusher on their kicks goes at full speed from the snap. Blockers in front hold him, an open gap is free. Smarter receivers find open space away from teammates.",
+      "Fixes: the booth no longer hides under the pregame strip, and taking over a SIM GAME plays like a normal game. DEBUG has ZONES and ROUTES overlays, replays too.",
+    ]],
     ["TOUGHER DEFENSE, FAIRER FLAGS", [
       "Defenders read throws and route breaks quicker, cover tighter and take better angles after the catch: fewer easy yards after the catch.",
       "Penalties are rarer and only called for a foul you can see. Your own man is flagged only for what you steer him into. Almost no wrong calls.",
@@ -3519,4 +3643,10 @@ const ANN_NAMED = {
   td: { A: '{p} scores!|Touchdown, {p}!|{p} takes it in!|{p} finds the end zone!|Six for {p}!|{p} is in!', B: '{p} would not be denied.|What a play by {p}.|{p} has been huge today.|That is why {p} gets the ball.' },
   bigGain: { A: 'Big gain for {p}!|{p} rips off a big one!|{p} chews up yards!|{p} breaks a long one!', B: '{p} found room.|The blocking set up {p}.|{p} is rolling now.|{p} is too much for them.' },
   first: { A: 'First down, {p}!|{p} moves the chains!|{p} gets the first!|{p} picks up the first down.', B: '{p} fought for that.|{p} knows where the sticks are.|Clutch move by {p}.|{p} keeps the drive going.' },
+};
+// v0.75 scout calls on the draft phone ({p} = the prospect): one line each, coach voice
+const SCOUT_CALL_LINES = {
+  take: ['Coach, take {p}. Trust me on this one.', '{p} is your guy. I have seen enough.', 'Grab {p} here. He fills your hole.', 'I would run to the podium with {p}.'],
+  boom: ['{p} is a BOOM. Do not let him walk.', 'Take {p}. I stamped him BOOM myself.', 'BOOM all over {p}. Go get him.'],
+  bust: ['Stay off {p}. I stamped him BUST.', 'Not {p}, Coach. He will not pan out.', 'I would pass on {p}. Trust the stamp.'],
 };
